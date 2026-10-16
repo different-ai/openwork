@@ -21,8 +21,6 @@ const reasons = {
   engine_auth_blocked: true,
   engine_stale: true,
   engine_retry: true,
-  send_archive_unknown: true,
-  send_archive_held: true,
   send_model_transition: true,
   send_model_unavailable: true,
   send_admission_unknown: true,

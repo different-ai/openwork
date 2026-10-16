@@ -8,7 +8,7 @@ VM. It does not move the normal test suite or use real model credentials.
 
 ```sh
 pnpm --filter @openwork/review-app build
-pnpm evals:e2e web-checkpoint-fork --local --engine v1 --surface web --checkpoints
+pnpm evals:e2e web-checkpoint-fork --local --surface web --checkpoints
 # Any spec: tag its test { tags: ["checkpoints"] } and run it with --local --checkpoints.
 # Or open a standalone world, using the merged world/source API:
 pnpm world up ./packages/freestyle/worlds/evidence-web.ts --place freestyle --source app-web=sha:<full-pushed-sha>

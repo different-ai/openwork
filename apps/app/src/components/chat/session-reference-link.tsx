@@ -22,7 +22,7 @@ export function SessionReferenceLink({ reference, openReference, children, class
   return (
     <a
       href={sessionReferenceHref(reference)}
-      aria-label={`Open ${reference.archived ? "archived task" : "task"}: ${reference.title}`}
+      aria-label={`Open task: ${reference.title}`}
       title={reference.title}
       className={cn(SESSION_REFERENCE_LINK_CLASS_NAME, className)}
       onClick={open}

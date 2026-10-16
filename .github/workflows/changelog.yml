@@ -147,8 +147,8 @@ jobs:
       - name: Install opencode
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
         run: |
-          version="$(node -e "const fs=require('fs'); const parsed=JSON.parse(fs.readFileSync('constants.json','utf8')); process.stdout.write(String(parsed.opencodeVersion||'').trim().replace(/^v/,''));")"
-          curl -fsSL https://opencode.ai/install | bash -s -- --version "$version" --no-modify-path
+          # The OpenCode CLI that runs this repository's own .opencode/ agents, not the product engine.
+          curl -fsSL https://opencode.ai/install | bash -s -- --version 1.18.30 --no-modify-path
 
       - name: Draft changelog entries
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'

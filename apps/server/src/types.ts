@@ -18,14 +18,10 @@ export interface WorkspaceConfig {
   name?: string;
   preset?: string;
   workspaceType?: WorkspaceType;
-  baseUrl?: string;
-  directory?: string;
   displayName?: string;
   sandboxBackend?: string;
   sandboxRunId?: string;
   sandboxContainerName?: string;
-  opencodeUsername?: string;
-  opencodePassword?: string;
 }
 
 export interface WorkspaceInfo {
@@ -34,20 +30,10 @@ export interface WorkspaceInfo {
   path: string;
   preset: string;
   workspaceType: WorkspaceType;
-  baseUrl?: string;
-  directory?: string;
   displayName?: string;
   sandboxBackend?: string;
   sandboxRunId?: string;
   sandboxContainerName?: string;
-  opencodeUsername?: string;
-  opencodePassword?: string;
-  opencode?: {
-    baseUrl?: string;
-    directory?: string;
-    username?: string;
-    password?: string;
-  };
 }
 
 // Compile-time contract tripwires against the shared wire shape consumed by
@@ -93,10 +79,6 @@ export interface ServerConfig {
   token: string;
   hostToken: string;
   configPath?: string;
-  opencodeBaseUrl?: string;
-  opencodeDirectory?: string;
-  opencodeUsername?: string;
-  opencodePassword?: string;
   approval: ApprovalConfig;
   corsOrigins: string[];
   workspaces: WorkspaceInfo[];
@@ -132,14 +114,10 @@ export interface Capabilities {
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
-  engine: { rollover: boolean };
 
   approvals: { mode: ApprovalMode; timeoutMs: number };
   sandbox: { enabled: boolean; backend: SandboxBackend };
   tokens: { scoped: boolean; scopes: TokenScope[] };
-  proxy: {
-    opencode: boolean;
-  };
   toolProviders: {
     browser: {
       enabled: boolean;

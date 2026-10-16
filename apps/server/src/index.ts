@@ -10,8 +10,6 @@
  *   workspaces: ["/path/to/workspace"],
  *   token: clientToken,
  *   hostToken: hostToken,
- *   manageOpencode: true,
- *   opencodeBin: "/path/to/opencode",
  * });
  *
  * console.log(`Server at ${handle.url}`);

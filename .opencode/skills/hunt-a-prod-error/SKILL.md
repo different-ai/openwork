@@ -43,7 +43,7 @@ Sentry is connected through OpenWork Connect (`search_capabilities` →
 `desktop-app`, region `https://us.sentry.io`.
 
 Filter by the tags the server sets: `surface:server` and the templated
-`route` (for example `route:"/workspace/:id/opencode/*"`), plus `release`.
+`route` (for example `route:"/workspace/:id/opencode2/*"`), plus `release`.
 Read the top issue's stack, `firstSeen`, users, and event count. The exact
 exception message is the string a regression spec must reproduce.
 

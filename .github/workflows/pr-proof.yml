@@ -113,7 +113,7 @@ jobs:
           OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
           OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
           PROOF_SPEC: ${{ matrix.spec }}
-        run: node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v1 --surface web --checkpoints
+        run: node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --surface web --checkpoints
       - name: Save testkit and Vitest records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -162,11 +162,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(id -u)" -ne 0
-          if node evals/scripts/run-parity-proof.mjs --supports "$PROOF_SPEC"; then
-            xvfb-run -a node evals/scripts/run-parity-proof.mjs "$PROOF_SPEC"
-          else
-            xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local
-          fi
+          xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local
       - name: Save selected native testkit and Vitest records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -387,7 +383,7 @@ jobs:
           OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
           OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
           PROOF_SPEC: ${{ matrix.spec }}
-        run: xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v1 --surface web --checkpoints
+        run: xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --surface web --checkpoints
       - name: Save selected native testkit and Vitest records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

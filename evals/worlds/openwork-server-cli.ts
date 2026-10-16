@@ -1,9 +1,7 @@
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
-import { SkipError } from "@openwork/env";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 const serverRoot = join(repoRoot, "apps", "server");
@@ -57,18 +55,6 @@ export async function close(server: Server): Promise<void> {
   await new Promise<void>((resolveClose, reject) => server.close((error) => error ? reject(error) : resolveClose()));
 }
 
-export function engineBinary(): string | null {
-  const fromEnv = process.env.OPENWORK_OPENCODE_BIN?.trim();
-  if (fromEnv && existsSync(fromEnv)) return fromEnv;
-  const platform = process.platform === "darwin" ? "apple-darwin" : process.platform === "win32" ? "pc-windows-msvc" : "unknown-linux-gnu";
-  const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
-  const sidecar = join(repoRoot, "apps", "desktop", "resources", "sidecars", `opencode-${arch}-${platform}${process.platform === "win32" ? ".exe" : ""}`);
-  if (existsSync(sidecar)) return sidecar;
-  const onPath = spawnSync(process.platform === "win32" ? "where" : "which", ["opencode"], { encoding: "utf8" });
-  const found = onPath.status === 0 ? onPath.stdout.split(/\r?\n/).find((line) => line.trim()) : undefined;
-  return found ? found.trim() : null;
-}
-
 export function stopChild(child: ChildProcess): Promise<void> {
   return new Promise<void>((done) => {
     if (child.exitCode !== null || child.signalCode !== null) return done();
@@ -79,7 +65,7 @@ export function stopChild(child: ChildProcess): Promise<void> {
 }
 
 /**
- * Spawns the openwork-server CLI with a managed engine. Every stdout/stderr
+ * Spawns the openwork-server CLI, which starts OpenCode v2. Every stdout/stderr
  * chunk goes to `sink`; `listening` resolves with the base URL once the server
  * reports its port, or rejects when the process exits first.
  */
@@ -121,12 +107,18 @@ export function bootServer(env: NodeJS.ProcessEnv, token: string, workspace: str
   return { child, listening };
 }
 
+export type EngineModel = { providerID: string; id: string; variant?: string };
+
 export interface ManagedOpenworkServer {
   child: ChildProcess;
   base: string;
-  binary: string;
   workspaceId: string;
+  /** OpenCode v2's native API through the workspace's `/opencode2` mount, e.g. `engine("GET", "/api/model")`. */
   engine(method: string, path: string, body?: unknown): Promise<unknown>;
+  /** A new session located in the workspace folder. */
+  createSession(title?: string): Promise<string>;
+  /** Selects `model`, sends one prompt, and returns the native transcript (oldest first) once the session is idle again. */
+  prompt(sessionId: string, model: EngineModel, text: string): Promise<Record<string, unknown>[]>;
   stop(): Promise<void>;
 }
 
@@ -136,24 +128,35 @@ function firstWorkspaceId(value: unknown): string | null {
   return isRecord(first) && typeof first.id === "string" ? first.id : null;
 }
 
+/**
+ * An explicit engine binary for a server spawned with a filtered environment;
+ * empty when unset, so the server resolves opencode2 itself.
+ */
+export function engineBinaryEnv(): Record<string, string> {
+  const engineBin = process.env.OPENWORK_OPENCODE2_BIN?.trim();
+  return engineBin ? { OPENWORK_OPENCODE2_BIN: engineBin } : {};
+}
+
+/** OpenCode v2 wraps every response body in `{ data }`. */
+export function engineData(value: unknown): unknown {
+  return isRecord(value) && "data" in value ? value.data : value;
+}
+
 export async function bootManagedOpenworkServer(options: {
   scratch: string;
   workspace: string;
   token: string;
   sink: (chunk: string) => void;
-  binary?: string;
   env?: Record<string, string>;
   configPath?: string;
   preload?: string;
 }): Promise<ManagedOpenworkServer> {
-  const binary = options.binary ?? engineBinary();
-  if (!binary) throw new SkipError("set OPENWORK_OPENCODE_BIN or install opencode");
-
   const home = join(options.scratch, "home");
   await mkdir(home, { recursive: true });
   // The spec may itself run under an OpenWork or OpenCode session. The parent's
   // OPENCODE_* and OPENWORK_* variables (config path, models URL, credentials,
-  // workspaces) must not reach the isolated server and engine under test.
+  // workspaces) must not reach the isolated server and engine under test. Only
+  // an explicit engine binary passes; otherwise the server resolves its own.
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPENCODE") && !key.startsWith("OPENWORK_")));
   const env = {
     ...inherited,
@@ -162,8 +165,7 @@ export async function bootManagedOpenworkServer(options: {
     XDG_DATA_HOME: join(home, ".local", "share"),
     XDG_CACHE_HOME: join(home, ".cache"),
     XDG_STATE_HOME: join(home, ".local", "state"),
-    OPENWORK_MANAGE_OPENCODE: "1",
-    OPENWORK_OPENCODE_BIN: binary,
+    ...engineBinaryEnv(),
     ...options.env,
   };
 
@@ -172,35 +174,19 @@ export async function bootManagedOpenworkServer(options: {
     output += chunk;
     options.sink(chunk);
   };
-  let child: ChildProcess | null = null;
+  const booted = bootServer(env, options.token, options.workspace, sink, options);
+  const child = booted.child;
 
   try {
-    // The server spawns the managed engine with a fixed 15 s start budget; a slow
-    // moment on a fresh profile (plugin runtime install, cold transpile) can
-    // exceed it once and exit the server. Boot at most twice; the first attempt's
-    // output stays in the diagnostics.
-    let base = "";
-    for (let attempt = 1; ; attempt += 1) {
-      const booted = bootServer(env, options.token, options.workspace, sink, options);
-      child = booted.child;
-      try {
-        base = await booted.listening;
-        break;
-      } catch (error) {
-        await stopChild(booted.child);
-        child = null;
-        sink(`\n[world] boot attempt ${attempt} failed: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}\n`);
-        if (attempt >= 2 || !(error instanceof Error && error.message.startsWith("openwork-server exited early"))) throw error;
-      }
-    }
-
+    const base = await booted.listening;
     const headers = { authorization: `Bearer ${options.token}`, "content-type": "application/json" };
     const workspaces: unknown = await (await fetch(`${base}/workspaces`, { headers })).json();
     const workspaceId = firstWorkspaceId(workspaces);
     if (!workspaceId) throw new Error(`openwork-server reported no workspace: ${JSON.stringify(workspaces)}`);
+    const mount = `${base}/workspace/${encodeURIComponent(workspaceId)}/opencode2`;
 
     const engine = async (method: string, path: string, body?: unknown): Promise<unknown> => {
-      const response = await fetch(`${base}/workspace/${encodeURIComponent(workspaceId)}/opencode${path}`, {
+      const response = await fetch(`${mount}${path}`, {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -211,32 +197,70 @@ export async function bootManagedOpenworkServer(options: {
       return text ? JSON.parse(text) : null;
     };
 
-    // The managed engine starts after the HTTP server binds; on a fresh profile it
-    // first installs its plugin runtime, so give the first proxied call time.
-    const deadline = Date.now() + 150_000;
+    // OpenCode v2 starts after the HTTP server binds and may first resolve or
+    // download its pinned binary, so give the first proxied call time.
+    const deadline = Date.now() + 180_000;
     let ready = false;
     while (!ready && Date.now() < deadline) {
       try {
-        const response = await fetch(`${base}/workspace/${encodeURIComponent(workspaceId)}/opencode/session`, { headers, signal: AbortSignal.timeout(5_000) });
+        const response = await fetch(`${mount}/api/session`, { headers, signal: AbortSignal.timeout(5_000) });
         ready = response.ok;
       } catch {
         // keep polling
       }
       if (!ready) await new Promise((wait) => setTimeout(wait, 500));
     }
-    if (!ready) throw new Error(`The managed engine never answered through openwork-server:\n${output.slice(-3_000)}`);
+    if (!ready) throw new Error(`OpenCode v2 never answered through openwork-server:\n${output.slice(-3_000)}`);
 
-    const runningChild = child;
+    // Native pages are newest first; only user and assistant rows are turns.
+    const transcript = async (sessionId: string): Promise<Record<string, unknown>[]> => {
+      const rows = engineData(await engine("GET", `/api/session/${encodeURIComponent(sessionId)}/message?limit=200`));
+      return Array.isArray(rows) ? rows.filter(isRecord).filter((row) => row.type === "user" || row.type === "assistant").reverse() : [];
+    };
+
+    const createSession = async (title?: string): Promise<string> => {
+      const created = engineData(await engine("POST", "/api/session", { location: { directory: options.workspace }, ...(title === undefined ? {} : { title }) }));
+      if (!isRecord(created) || typeof created.id !== "string") throw new Error(`OpenCode v2 did not create a session: ${JSON.stringify(created)}`);
+      return created.id;
+    };
+
+    const prompt = async (sessionId: string, model: EngineModel, text: string): Promise<Record<string, unknown>[]> => {
+      const path = `/api/session/${encodeURIComponent(sessionId)}`;
+      const before = (await transcript(sessionId)).length;
+      // Workspace config providers reach the catalog asynchronously.
+      const listedBy = Date.now() + 45_000;
+      for (;;) {
+        const models = engineData(await engine("GET", "/api/model"));
+        if (Array.isArray(models) && models.some((entry) => isRecord(entry) && entry.providerID === model.providerID && entry.id === model.id)) break;
+        if (Date.now() > listedBy) throw new Error(`OpenCode v2 never listed ${model.providerID}/${model.id}: ${JSON.stringify(models).slice(0, 800)}`);
+        await new Promise((wait) => setTimeout(wait, 250));
+      }
+      await engine("POST", `${path}/model`, { model });
+      await engine("POST", `${path}/prompt`, { text });
+      // Settled: the session left the active list and an assistant turn follows the new prompt.
+      const settleBy = Date.now() + 90_000;
+      for (;;) {
+        const active = engineData(await engine("GET", "/api/session/active"));
+        const status = isRecord(active) ? active[sessionId] : undefined;
+        const running = isRecord(status) && status.type === "running";
+        const messages = await transcript(sessionId);
+        if (!running && messages.length > before + 1 && messages.at(-1)?.type === "assistant") return messages;
+        if (Date.now() > settleBy) throw new Error(`Session ${sessionId} did not settle: ${JSON.stringify(messages).slice(-800)}`);
+        await new Promise((wait) => setTimeout(wait, 250));
+      }
+    };
+
     return {
-      child: runningChild,
+      child,
       base,
-      binary,
       workspaceId,
       engine,
-      stop: () => stopChild(runningChild),
+      createSession,
+      prompt,
+      stop: () => stopChild(child),
     };
   } catch (error) {
-    if (child) await stopChild(child);
+    await stopChild(child);
     throw error;
   }
 }

@@ -11,15 +11,6 @@ export type GlobalPinnedSessionEntry = {
   group: WorkspaceSessionGroup;
   session: SessionListItem;
 };
-type ArchivedSession = SessionListItem & { time: { archived: number } };
-export type GlobalArchivedSessionEntry = {
-  group: WorkspaceSessionGroup;
-  session: ArchivedSession;
-};
-
-export const isSessionArchived = (session: SessionListItem): session is ArchivedSession =>
-  typeof session.time?.archived === "number" && session.time.archived > 0;
-
 /** Active agent work shown as the left-lane loader (never a completion / unread state). */
 export const isActiveWorkSessionStatus = (status: string | undefined) =>
   status === "running" ||
@@ -100,22 +91,11 @@ export const getSessionDescendantIds = (
   return descendants;
 };
 
-/** Split sessions into active vs. archived. Archived sessions live in their own section. */
-export const partitionArchivedSessions = (sessions: WorkspaceSessionGroup["sessions"]) => {
-  const active: SessionListItem[] = [];
-  const archived: ArchivedSession[] = [];
-  for (const session of sessions) {
-    if (isSessionArchived(session)) archived.push(session);
-    else active.push(session);
-  }
-  return { active, archived };
-};
-
 export function buildGlobalPinnedSessions(groups: WorkspaceSessionGroup[], pinnedIds: readonly string[]): GlobalPinnedSessionEntry[] {
   const sessionsById = new Map<string, GlobalPinnedSessionEntry>();
   for (const group of groups) {
     const seen = new Set<string>();
-    for (const session of getRootSessions(partitionArchivedSessions(group.sessions).active)) {
+    for (const session of getRootSessions(group.sessions)) {
       if (seen.has(session.id)) continue;
       seen.add(session.id);
       sessionsById.set(session.id, { group, session });
@@ -147,24 +127,6 @@ export function groupSessionRows(
     }
   }
   return { groupIds, rootRowsByGroup, ungroupedRows };
-}
-
-export function buildGlobalArchivedSessions(groups: WorkspaceSessionGroup[]): GlobalArchivedSessionEntry[] {
-  const entries: GlobalArchivedSessionEntry[] = [];
-  for (const group of groups) {
-    for (const session of partitionArchivedSessions(group.sessions).archived) {
-      entries.push({ group, session });
-    }
-  }
-  return entries.sort((a, b) => {
-    if (a.session.time.archived !== b.session.time.archived) {
-      return b.session.time.archived - a.session.time.archived;
-    }
-    if (a.group.workspace.id !== b.group.workspace.id) {
-      return a.group.workspace.id < b.group.workspace.id ? -1 : 1;
-    }
-    return a.session.id < b.session.id ? -1 : a.session.id > b.session.id ? 1 : 0;
-  });
 }
 
 /**
@@ -203,8 +165,7 @@ export const flattenSessionRows = (
   orderIds: string[] = EMPTY_ARRAY,
   rootFilter?: { include?: Set<string>; exclude?: Set<string> },
 ): FlattenedSessionRow[] => {
-  const { active } = partitionArchivedSessions(sessions);
-  return orderRootSessions(getRootSessions(active), pinnedIds, orderIds)
+  return orderRootSessions(getRootSessions(sessions), pinnedIds, orderIds)
     .filter((root) => (
       (!rootFilter?.include || rootFilter.include.has(root.id)) &&
       !rootFilter?.exclude?.has(root.id)

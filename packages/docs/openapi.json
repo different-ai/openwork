@@ -2446,7 +2446,6 @@
               "teamRoles",
               "sharedRoles",
               "agentPermissions",
-              "engineV2Upgrade",
               "remoteSessionEvents",
               "backgroundShellTasks",
               "orgDefaultModel",
@@ -2689,9 +2688,6 @@
                     "agentPermissions": {
                       "type": "boolean"
                     },
-                    "engineV2Upgrade": {
-                      "type": "boolean"
-                    },
                     "remoteSessionEvents": {
                       "type": "boolean"
                     },
@@ -2744,7 +2740,6 @@
                     "teamRoles",
                     "sharedRoles",
                     "agentPermissions",
-                    "engineV2Upgrade",
                     "remoteSessionEvents",
                     "backgroundShellTasks",
                     "orgDefaultModel",
@@ -3879,62 +3874,6 @@
                         "overrideApplies"
                       ]
                     },
-                    "engineV2Upgrade": {
-                      "type": "object",
-                      "properties": {
-                        "enabled": {
-                          "type": "boolean"
-                        },
-                        "source": {
-                          "type": "string",
-                          "enum": [
-                            "unavailable",
-                            "killed",
-                            "lock",
-                            "override",
-                            "everyone"
-                          ]
-                        },
-                        "everyone": {
-                          "type": "boolean"
-                        },
-                        "killed": {
-                          "type": "boolean"
-                        },
-                        "lock": {
-                          "anyOf": [
-                            {
-                              "type": "boolean"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "override": {
-                          "anyOf": [
-                            {
-                              "type": "boolean"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "overrideApplies": {
-                          "type": "boolean"
-                        }
-                      },
-                      "required": [
-                        "enabled",
-                        "source",
-                        "everyone",
-                        "killed",
-                        "lock",
-                        "override",
-                        "overrideApplies"
-                      ]
-                    },
                     "remoteSessionEvents": {
                       "type": "object",
                       "properties": {
@@ -4405,7 +4344,6 @@
                     "teamRoles",
                     "sharedRoles",
                     "agentPermissions",
-                    "engineV2Upgrade",
                     "remoteSessionEvents",
                     "backgroundShellTasks",
                     "orgDefaultModel",
@@ -4843,9 +4781,6 @@
                     "agentPermissions": {
                       "type": "boolean"
                     },
-                    "engineV2Upgrade": {
-                      "type": "boolean"
-                    },
                     "remoteSessionEvents": {
                       "type": "boolean"
                     },
@@ -4898,7 +4833,6 @@
                     "teamRoles",
                     "sharedRoles",
                     "agentPermissions",
-                    "engineV2Upgrade",
                     "remoteSessionEvents",
                     "backgroundShellTasks",
                     "orgDefaultModel",
@@ -6033,62 +5967,6 @@
                         "overrideApplies"
                       ]
                     },
-                    "engineV2Upgrade": {
-                      "type": "object",
-                      "properties": {
-                        "enabled": {
-                          "type": "boolean"
-                        },
-                        "source": {
-                          "type": "string",
-                          "enum": [
-                            "unavailable",
-                            "killed",
-                            "lock",
-                            "override",
-                            "everyone"
-                          ]
-                        },
-                        "everyone": {
-                          "type": "boolean"
-                        },
-                        "killed": {
-                          "type": "boolean"
-                        },
-                        "lock": {
-                          "anyOf": [
-                            {
-                              "type": "boolean"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "override": {
-                          "anyOf": [
-                            {
-                              "type": "boolean"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "overrideApplies": {
-                          "type": "boolean"
-                        }
-                      },
-                      "required": [
-                        "enabled",
-                        "source",
-                        "everyone",
-                        "killed",
-                        "lock",
-                        "override",
-                        "overrideApplies"
-                      ]
-                    },
                     "remoteSessionEvents": {
                       "type": "object",
                       "properties": {
@@ -6559,7 +6437,6 @@
                     "teamRoles",
                     "sharedRoles",
                     "agentPermissions",
-                    "engineV2Upgrade",
                     "remoteSessionEvents",
                     "backgroundShellTasks",
                     "orgDefaultModel",
@@ -30589,9 +30466,6 @@
                         "agentPermissions": {
                           "type": "boolean"
                         },
-                        "engineV2Upgrade": {
-                          "type": "boolean"
-                        },
                         "remoteSessionEvents": {
                           "type": "boolean"
                         },
@@ -30644,7 +30518,6 @@
                         "teamRoles",
                         "sharedRoles",
                         "agentPermissions",
-                        "engineV2Upgrade",
                         "remoteSessionEvents",
                         "backgroundShellTasks",
                         "orgDefaultModel",
@@ -31779,62 +31652,6 @@
                             "overrideApplies"
                           ]
                         },
-                        "engineV2Upgrade": {
-                          "type": "object",
-                          "properties": {
-                            "enabled": {
-                              "type": "boolean"
-                            },
-                            "source": {
-                              "type": "string",
-                              "enum": [
-                                "unavailable",
-                                "killed",
-                                "lock",
-                                "override",
-                                "everyone"
-                              ]
-                            },
-                            "everyone": {
-                              "type": "boolean"
-                            },
-                            "killed": {
-                              "type": "boolean"
-                            },
-                            "lock": {
-                              "anyOf": [
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ]
-                            },
-                            "override": {
-                              "anyOf": [
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ]
-                            },
-                            "overrideApplies": {
-                              "type": "boolean"
-                            }
-                          },
-                          "required": [
-                            "enabled",
-                            "source",
-                            "everyone",
-                            "killed",
-                            "lock",
-                            "override",
-                            "overrideApplies"
-                          ]
-                        },
                         "remoteSessionEvents": {
                           "type": "object",
                           "properties": {
@@ -32305,7 +32122,6 @@
                         "teamRoles",
                         "sharedRoles",
                         "agentPermissions",
-                        "engineV2Upgrade",
                         "remoteSessionEvents",
                         "backgroundShellTasks",
                         "orgDefaultModel",
@@ -32492,9 +32308,6 @@
                         "agentPermissions": {
                           "type": "boolean"
                         },
-                        "engineV2Upgrade": {
-                          "type": "boolean"
-                        },
                         "remoteSessionEvents": {
                           "type": "boolean"
                         },
@@ -32547,7 +32360,6 @@
                         "teamRoles",
                         "sharedRoles",
                         "agentPermissions",
-                        "engineV2Upgrade",
                         "remoteSessionEvents",
                         "backgroundShellTasks",
                         "orgDefaultModel",
@@ -33682,62 +33494,6 @@
                             "overrideApplies"
                           ]
                         },
-                        "engineV2Upgrade": {
-                          "type": "object",
-                          "properties": {
-                            "enabled": {
-                              "type": "boolean"
-                            },
-                            "source": {
-                              "type": "string",
-                              "enum": [
-                                "unavailable",
-                                "killed",
-                                "lock",
-                                "override",
-                                "everyone"
-                              ]
-                            },
-                            "everyone": {
-                              "type": "boolean"
-                            },
-                            "killed": {
-                              "type": "boolean"
-                            },
-                            "lock": {
-                              "anyOf": [
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ]
-                            },
-                            "override": {
-                              "anyOf": [
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ]
-                            },
-                            "overrideApplies": {
-                              "type": "boolean"
-                            }
-                          },
-                          "required": [
-                            "enabled",
-                            "source",
-                            "everyone",
-                            "killed",
-                            "lock",
-                            "override",
-                            "overrideApplies"
-                          ]
-                        },
                         "remoteSessionEvents": {
                           "type": "object",
                           "properties": {
@@ -34208,7 +33964,6 @@
                         "teamRoles",
                         "sharedRoles",
                         "agentPermissions",
-                        "engineV2Upgrade",
                         "remoteSessionEvents",
                         "backgroundShellTasks",
                         "orgDefaultModel",

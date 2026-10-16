@@ -31,11 +31,14 @@ test("app boots with a control route and meaningful visible content", async ({ w
     await user.see("Run task");
     const workspaceId = /^#\/workspace\/([^/]+)\/session$/.exec(await probe.hash())?.[1];
     if (!workspaceId) throw new Error("The packaged app did not open its empty workspace route.");
-    const sessions = await probe.desktopApi(`/workspace/${workspaceId}/opencode/session`);
+    const sessions = await probe.desktopApi(`/workspace/${workspaceId}/opencode2/api/session`);
     expect(sessions.status).toBe(200);
-    expect(sessions.body).toEqual([]);
-    const tools = await world.packagedToolIds();
-    expect(tools).toEqual(expect.arrayContaining(["openwork_docs_search", "openwork_query"]));
+    expect(sessions.body).toMatchObject({ data: [] });
+    const plugins = await probe.eventually(() => world.packagedPlugins(), {
+      within: 60_000, label: "the packaged context plugin is active",
+      until: plugins => plugins.some(plugin => plugin.id === "openwork.context" && plugin.status === "active"),
+    });
+    expect(plugins).toEqual(expect.arrayContaining([{ id: "openwork.context", status: "active" }]));
   } else {
     expect(world.workspace?.workspaceId).toBeTruthy();
     await user.looks([

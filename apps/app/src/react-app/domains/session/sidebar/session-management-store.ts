@@ -3,8 +3,7 @@
  * group mirror + expanded state). Persisted to localStorage via
  * zustand/middleware/persist.
  *
- * Archive is server-side (OpenCode session.time.archived). Session groups are
- * synced server-side; this store keeps a local optimistic mirror plus UI-only
+ * Session groups are synced server-side; this store keeps a local optimistic mirror plus UI-only
  * collapsed state. Components import it directly with selectors, avoiding
  * context/prop drilling.
  */

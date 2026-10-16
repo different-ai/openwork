@@ -279,7 +279,7 @@ mod tests {
                 .context("missing workspace id from /workspaces")?;
 
             let created: Value = client
-                .post(format!("{base_url}/w/{workspace_id}/opencode/session"))
+                .post(format!("{base_url}/workspace/{workspace_id}/opencode2/api/session"))
                 .bearer_auth(client_token)
                 .json(&json!({ "title": "Rust microsandbox smoke test" }))
                 .send()
@@ -288,13 +288,14 @@ mod tests {
                 .json()
                 .await?;
             let session_id = created
-                .get("id")
+                .get("data")
+                .and_then(|data| data.get("id"))
                 .and_then(Value::as_str)
                 .context("missing session id from session create response")?;
 
             client
                 .get(format!(
-                    "{base_url}/w/{workspace_id}/opencode/session/{session_id}"
+                    "{base_url}/workspace/{workspace_id}/opencode2/api/session/{session_id}"
                 ))
                 .bearer_auth(client_token)
                 .send()
@@ -303,7 +304,7 @@ mod tests {
 
             client
                 .get(format!(
-                    "{base_url}/w/{workspace_id}/opencode/session/{session_id}/message?limit=10"
+                    "{base_url}/workspace/{workspace_id}/opencode2/api/session/{session_id}/message?limit=10"
                 ))
                 .bearer_auth(client_token)
                 .send()

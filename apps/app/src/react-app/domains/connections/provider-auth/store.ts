@@ -5,7 +5,7 @@ import { applyEdits, modify, parse } from "jsonc-parser";
 import type {
   ProviderAuthAuthorization,
   ProviderListResponse,
-} from "@opencode-ai/sdk/v2/client";
+} from "@/app/lib/opencode-types";
 
 import { t } from "../../../../i18n";
 import {
@@ -18,7 +18,7 @@ import {
 import { readGatewayUsageScope } from "../../../../app/lib/gateway-usage-scope";
 import { refreshGatewayUsageAfterCloudSync } from "../../cloud/gateway-usage-refresh";
 import { getOpenworkGatewayOrigin } from "../../../../app/lib/gateway-runtime";
-import { unwrap, waitForHealthy } from "../../../../app/lib/opencode";
+import { unwrap } from "../../../../app/lib/opencode";
 import {
   readOpencodeConfig,
   writeOpencodeConfig,
@@ -40,7 +40,6 @@ import {
 import { getReactQueryClient } from "../../../infra/query-client";
 import {
   clearProviderListQueries,
-  ensureProviderCatalogQuery,
   ensureProviderListQuery,
   getConnectedProviderItems,
 } from "../../../infra/provider-list-query";
@@ -133,7 +132,6 @@ type GlobalCloudProviderSyncBatch = {
   resolve: (outcome: GlobalCloudProviderSyncOutcome) => void;
 };
 
-let lastGlobalProviderDisposeRefreshAt = 0;
 let activeGlobalCloudProviderSync: GlobalCloudProviderSyncBatch | null = null;
 let trailingGlobalCloudProviderSync: GlobalCloudProviderSyncBatch | null = null;
 let loggedGatewayCloudProviderSyncSkip = false;
@@ -411,7 +409,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
   // Providers that are not connected yet, loaded only when the Connect modal
   // opens. The everyday provider list holds connected providers only.
-  let providerCatalog: ProviderListItem[] = [];
+  let providerCatalog: ProviderAuthProvider[] = [];
+  // Native sign-in method ids by provider and method index, from the same load.
+  let oauthMethodIDs: Record<string, string[]> = {};
+  // The browser sign-in each provider is waiting on.
+  const oauthAttempts = new Map<string, { attemptID: string; methodIndex: number }>();
 
   const getProviderAuthProviders = (): ProviderAuthProvider[] => {
     const merged = new Map<string, ProviderAuthProvider>();
@@ -973,24 +975,18 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return false;
     }
 
-    const c = options.client();
     const openworkSnapshot = options.openworkServer.getSnapshot();
     const workspaceId = options.runtimeWorkspaceId();
     const workspaceType = options.selectedWorkspaceDisplay().workspaceType;
-    const canUseManagedRuntime = Boolean(openworkSnapshot.openworkServerClient && workspaceId?.trim() && workspaceType === "local");
-    if (!c && !canUseManagedRuntime) {
+    if (!openworkSnapshot.openworkServerClient || !workspaceId?.trim() || workspaceType !== "local") {
       throw new Error(t("providers.not_connected"));
     }
-    const config = c ? unwrap(await c.config.get()) : {};
-    const next = fallbackUpdate(config);
+    const next = fallbackUpdate({ disabled_providers: options.disabledProviders() });
     await updateManagedDisabledProviders({
-      opencodeClient: c,
       openworkClient: openworkSnapshot.openworkServerClient,
       workspaceId,
       workspaceType,
       disabledProviders: next.disabled_providers,
-      currentConfig: config,
-      removeFallbackKeyWhenEmpty: true,
     });
     return true;
   };
@@ -1057,13 +1053,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // and other built-in/env-backed providers can be disabled without editing
     // the user's opencode.jsonc. Fall back to project config only when the
     // managed runtime endpoint is unavailable.
-    const c = options.client();
     const openworkSnapshot = options.openworkServer.getSnapshot();
     const workspaceId = options.runtimeWorkspaceId();
     const workspaceType = options.selectedWorkspaceDisplay().workspaceType;
-    // Before the first workspace exists the client reaches the engine root,
-    // whose config belongs to no workspace a person will open. Leave project
-    // provider rules alone until there is a workspace to hold them.
+    // Provider rules belong to a workspace; leave them alone until one exists.
     if (!workspaceId?.trim() && !options.selectedWorkspaceRoot().trim()) {
       return false;
     }
@@ -1071,14 +1064,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       openworkSnapshot.openworkServerClient && workspaceId?.trim() && workspaceType === "local",
     );
 
-    if (canUseManagedRuntime || c) {
+    if (canUseManagedRuntime) {
       const result = await updateManagedDisabledProviders({
-        opencodeClient: c,
         openworkClient: openworkSnapshot.openworkServerClient,
         workspaceId,
         workspaceType,
         disabledProviders: nextDisabled,
-        removeFallbackKeyWhenEmpty: true,
         markReloadRequired: () => options.markOpencodeConfigReloadRequired(),
       });
       options.setDisabledProviders(result.disabledProviders);
@@ -1382,43 +1373,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     emitChange();
   };
 
-  const assertNoClientError = (result: unknown) => {
-    const maybe = result as { error?: unknown } | null | undefined;
-    if (!maybe || maybe.error === undefined) return;
-    throw new Error(describeProviderError(maybe.error, t("providers.request_failed")));
-  };
-
   const removeProviderAuthCredentials = async (providerId: string) => {
     const c = options.client();
     if (!c) {
       throw new Error(t("providers.not_connected"));
     }
-
-    const authClient = c.auth as unknown as {
-      remove?: (options: { providerID: string }) => Promise<unknown>;
-      set?: (options: { providerID: string; auth: unknown }) => Promise<unknown>;
-    };
-    if (typeof authClient.remove === "function") {
-      const result = await authClient.remove({ providerID: providerId });
-      assertNoClientError(result);
-      return;
-    }
-
-    const rawClient = (c as unknown as {
-      client?: { delete?: (options: { url: string }) => Promise<unknown> };
-    }).client;
-    if (rawClient?.delete) {
-      await rawClient.delete({ url: `/auth/${encodeURIComponent(providerId)}` });
-      return;
-    }
-
-    if (typeof authClient.set === "function") {
-      const result = await authClient.set({ providerID: providerId, auth: null });
-      assertNoClientError(result);
-      return;
-    }
-
-    throw new Error(t("providers.removal_unsupported"));
+    unwrap(await c.integration.disconnectProvider({ providerID: providerId }));
   };
 
   const describeProviderError = (error: unknown, fallback: string) => {
@@ -1562,37 +1522,35 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return merged;
   };
 
-  // Best effort: without the catalog the modal still offers connected
-  // providers, sign-in methods and cloud providers.
-  const loadProviderCatalog = async (client: Client) => {
-    try {
-      const catalog = filterProviderList(
-        await ensureProviderCatalogQuery(getReactQueryClient(), {
-          client,
-          baseUrl: options.providerBaseUrl(),
-          directory: options.selectedWorkspaceRoot(),
-        }),
-        options.disabledProviders(),
-      );
-      providerCatalog = catalog.all ?? [];
-    } catch {
-      providerCatalog = [];
-    }
-  };
-
+  // Every connectable provider and its sign-in methods come from the engine's
+  // integrations, loaded when the Connect modal opens.
   const loadProviderAuthMethods = async () => {
     const c = options.client();
     if (!c) {
       throw new Error(t("providers.not_connected"));
     }
-    const [methods] = await Promise.all([
-      c.provider.auth().then(unwrap),
-      loadProviderCatalog(c),
-    ]);
-    return buildProviderAuthMethods(
-      methods as Record<string, ProviderAuthMethod[]>,
-      getProviderAuthProviders(),
-    );
+    const integrations = unwrap(await c.integration.list());
+    const methods: Record<string, ProviderAuthMethod[]> = {};
+    const methodIDs: Record<string, string[]> = {};
+    for (const integration of integrations) {
+      const entries: ProviderAuthMethod[] = [];
+      const ids: string[] = [];
+      for (const method of integration.methods) {
+        if (method.type === "oauth") {
+          ids[entries.length] = method.id;
+          entries.push({ type: "oauth", label: method.label });
+        } else if (method.type === "key") {
+          entries.push({ type: "api", label: method.label ?? t("providers.api_key_label") });
+        }
+      }
+      if (entries.length) methods[integration.id] = entries;
+      methodIDs[integration.id] = ids;
+    }
+    // Environment-only integrations are configured outside OpenWork, so the
+    // catalog never offers them a key entry.
+    providerCatalog = integrations.map((integration) => ({ id: integration.id, name: integration.name, env: [] }));
+    oauthMethodIDs = methodIDs;
+    return buildProviderAuthMethods(methods, getProviderAuthProviders());
   };
 
   async function startProviderAuth(
@@ -1606,7 +1564,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
     try {
       const cachedMethods = state.providerAuthMethods;
-      const authMethods = Object.keys(cachedMethods).length
+      const authMethods = Object.keys(cachedMethods).length && providerId && oauthMethodIDs[providerId.trim()]
         ? cachedMethods
         : await loadProviderAuthMethods();
       const providerIds = Object.keys(authMethods).sort();
@@ -1640,10 +1598,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         throw new Error(`${t("providers.not_oauth_flow_prefix")} ${resolved}.`);
       }
 
-      const auth = unwrap(
-        await c.provider.oauth.authorize({ providerID: resolved, method: oauthIndex }),
-      );
-      return { methodIndex: oauthIndex, authorization: auth };
+      const methodID = oauthMethodIDs[resolved]?.[oauthIndex];
+      if (!methodID) {
+        throw new Error(`${t("providers.not_oauth_flow_prefix")} ${resolved}.`);
+      }
+      const attempt = unwrap(await c.integration.connectOAuth({ integrationID: resolved, methodID }));
+      oauthAttempts.set(resolved, { attemptID: attempt.attemptID, methodIndex: oauthIndex });
+      return {
+        methodIndex: oauthIndex,
+        authorization: { url: attempt.url, method: attempt.mode, instructions: attempt.instructions },
+      };
     } catch (error) {
       const message = describeProviderError(error, t("providers.connect_failed"));
       setStateField("providerAuthError", message);
@@ -1651,37 +1615,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
-  const isIncompatiblePermissionsConfigError = (error: unknown, depth = 0): boolean => {
-    if (depth > 5) return false;
-    if (typeof error === "string") {
-      try {
-        const parsed: unknown = JSON.parse(error);
-        return isIncompatiblePermissionsConfigError(parsed, depth + 1);
-      } catch {
-        return error.includes("V2 permissions are not supported by OpenCode V1");
-      }
-    }
-    if (!isRecord(error)) return false;
-    return isIncompatiblePermissionsConfigError(error.message, depth + 1)
-      || isIncompatiblePermissionsConfigError(error.data, depth + 1)
-      || (Array.isArray(error.issues) && error.issues.some(
-        (issue) => isRecord(issue) && isIncompatiblePermissionsConfigError(issue.message, depth + 1),
-      ));
-  };
-
   let providerRefreshGeneration = 0;
 
   async function refreshProviders(
-    optionsArg?: {
-      dispose?: boolean;
-      force?: boolean;
-      /**
-       * The caller just rewrote engine config (for example disabled_providers).
-       * Reload even inside the 10s dispose throttle; otherwise the read below
-       * returns the pre-change config and undoes the change in the UI.
-       */
-      configChanged?: boolean;
-    },
+    optionsArg?: { force?: boolean },
     isCurrent = () => !disposed,
   ) {
     const c = options.client();
@@ -1693,76 +1630,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       && generation === providerRefreshGeneration
       && baseUrl === options.providerBaseUrl()
       && directory === options.selectedWorkspaceRoot();
-    const force = Boolean(optionsArg?.dispose || optionsArg?.force || state.providerLoadState.error);
+    const force = Boolean(optionsArg?.force || state.providerLoadState.error);
     setStateField("providerLoadState", { status: "loading", error: state.providerLoadState.error });
 
-    const serverClient = options.openworkServer.getSnapshot().openworkServerClient;
-    const liveCatalog = optionsArg?.dispose && serverClient
-      ? await serverClient.getEngineV2PreviewStatus().then(status => status.enabled && status.chatRouting).catch(() => false)
-      : false;
-    if (optionsArg?.dispose && !liveCatalog) {
-      const now = Date.now();
-      const shouldDispose = Boolean(optionsArg?.configChanged)
-        || now - lastGlobalProviderDisposeRefreshAt >= 10_000;
-      const shouldUseServerReload = !(
-        isDesktopRuntime() && options.selectedWorkspaceDisplay().workspaceType === "local"
-      );
-      // Prefer the OpenWork server engine reload: it disposes the engine AND
-      // re-registers runtime-DB MCPs, so non-primary workspaces and pending
-      // changes are picked up instead of silently dropping (toggles "turn
-      // off").
-      let reloaded = false;
-      if (shouldDispose) {
-        lastGlobalProviderDisposeRefreshAt = now;
-        if (shouldUseServerReload) {
-          try {
-            const openworkSnapshot = options.openworkServer.getSnapshot();
-            const openworkClient = openworkSnapshot.openworkServerClient;
-            if (openworkSnapshot.openworkServerStatus === "connected" && openworkClient) {
-              const workspaceId =
-                options.runtimeWorkspaceId()?.trim() ||
-                (await options.ensureRuntimeWorkspaceId?.())?.trim() ||
-                "";
-              if (workspaceId) {
-                try {
-                  await openworkClient.reloadEngine(workspaceId);
-                } catch (error) {
-                  const unreachable =
-                    error instanceof OpenworkServerError && error.code === "opencode_engine_unreachable";
-                  if (!unreachable || !isDesktopRuntime()) {
-                    throw error;
-                  }
-                  await engineRestart({});
-                }
-                reloaded = true;
-              }
-            }
-          } catch {
-            // fall back to a direct engine dispose below
-          }
-        }
-
-        if (!reloaded) {
-          try {
-            unwrap(await c.instance.dispose());
-          } catch {
-            // ignore dispose failures and try reading current state anyway
-          }
-        }
-      }
-
-      try {
-        await waitForHealthy(options.client() ?? c, { timeoutMs: 8000, pollMs: 250 });
-      } catch {
-        // ignore health wait failures and still attempt provider reads
-      }
-    }
-
-    if (!isRefreshCurrent()) return null;
-    const activeClient = options.client() ?? c;
     try {
       const disabledProviders = await readManagedDisabledProviders({
-        opencodeClient: activeClient,
         openworkClient: options.openworkServer.getSnapshot().openworkServerClient,
         workspaceId: options.runtimeWorkspaceId(),
         workspaceType: options.selectedWorkspaceDisplay().workspaceType,
@@ -1770,7 +1642,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       if (!isRefreshCurrent()) return null;
       const updated = filterProviderList(
         await ensureProviderListQuery(getReactQueryClient(), {
-          client: activeClient,
+          client: c,
           baseUrl,
           directory,
           force,
@@ -1782,14 +1654,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       applyProviderListState(updated);
       setStateField("providerLoadState", { status: "ready", error: null });
       return updated;
-    } catch (error) {
+    } catch {
       if (isRefreshCurrent()) {
-        setStateField("providerLoadState", {
-          status: "error",
-          error: t(isIncompatiblePermissionsConfigError(error)
-            ? "settings.provider_load_incompatible_permissions"
-            : "settings.provider_load_error"),
-        });
+        setStateField("providerLoadState", { status: "error", error: t("settings.provider_load_error") });
       }
       return null;
     }
@@ -1815,62 +1682,29 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (!Number.isInteger(methodIndex) || methodIndex < 0) {
       throw new Error(t("providers.oauth_method_required"));
     }
-
-    const waitForProviderConnection = async (timeoutMs = 15000, pollMs = 2000) => {
-      const startedAt = Date.now();
-      while (Date.now() - startedAt < timeoutMs) {
-        try {
-          const updated = await refreshProviders({ dispose: true });
-          const connected = new Set(updated?.connected ?? []);
-          if (connected.has(resolved)) {
-            return true;
-          }
-        } catch {
-          // ignore and retry
-        }
-        await new Promise((resolve) => setTimeout(resolve, pollMs));
-      }
-      return false;
-    };
-
-    const isPendingOauthError = (error: unknown) => {
-      const text = error instanceof Error ? error.message : String(error ?? "");
-      return /request timed out/i.test(text) || /ProviderAuthOauthMissing/i.test(text);
-    };
+    const attempt = oauthAttempts.get(resolved);
+    if (!attempt || attempt.methodIndex !== methodIndex) {
+      throw new Error(t("providers.oauth_failed"));
+    }
 
     try {
       if (resolved.toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
         await ensureProjectProviderDisabledState(resolved, false);
       }
       const trimmedCode = code?.trim();
-      const result = await c.provider.oauth.callback({
-        providerID: resolved,
-        method: methodIndex,
-        code: trimmedCode || undefined,
-      });
-      assertNoClientError(result);
-      const updated = await refreshProviders({ dispose: true });
-      const connectedNow = Array.isArray(updated?.connected) && updated.connected.includes(resolved);
-      if (connectedNow) {
-        return { connected: true, message: `${t("status.connected")} ${resolved}` };
+      if (trimmedCode) {
+        unwrap(await c.integration.complete({ integrationID: resolved, attemptID: attempt.attemptID, code: trimmedCode }));
+      } else {
+        // A browser sign-in finishes on its own; the modal asks again until it does.
+        const status = unwrap(await c.integration.attempt({ integrationID: resolved, attemptID: attempt.attemptID }));
+        if (status.status === "pending") return { connected: false, pending: true };
+        if (status.status === "failed") throw new Error(status.message);
+        if (status.status === "expired") throw new Error(t("providers.oauth_failed"));
       }
-      const connected = await waitForProviderConnection();
-      if (connected) {
-        return { connected: true, message: `${t("status.connected")} ${resolved}` };
-      }
-      return { connected: false, pending: true };
+      oauthAttempts.delete(resolved);
+      await refreshProviders({ force: true });
+      return { connected: true, message: `${t("status.connected")} ${resolved}` };
     } catch (error) {
-      if (isPendingOauthError(error)) {
-        const updated = await refreshProviders({ dispose: true });
-        if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
-          return { connected: true, message: `${t("status.connected")} ${resolved}` };
-        }
-        const connected = await waitForProviderConnection();
-        if (connected) {
-          return { connected: true, message: `${t("status.connected")} ${resolved}` };
-        }
-        return { connected: false, pending: true };
-      }
       const message = describeProviderError(error, t("providers.oauth_failed"));
       setStateField("providerAuthError", message);
       throw error instanceof Error ? error : new Error(message);
@@ -1895,8 +1729,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       if (providerId.trim().toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
         await ensureProjectProviderDisabledState(providerId, false);
       }
-      await c.auth.set({ providerID: providerId, auth: { type: "api", key: trimmed } });
-      await refreshProviders({ dispose: true });
+      unwrap(await c.integration.connectKey({ integrationID: providerId, key: trimmed }));
+      await refreshProviders({ force: true });
       return `${t("status.connected")} ${providerId}`;
     } catch (error) {
       const message = describeProviderError(error, t("providers.save_api_key_failed"));
@@ -1957,10 +1791,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         await openworkClient.upsertUserEnv(envEntries);
       }
       if (primaryApiKey) {
-        await c.auth.set({
-          providerID: localProviderId,
-          auth: { type: "api", key: primaryApiKey },
-        });
+        unwrap(await c.integration.connectKey({ integrationID: localProviderId, key: primaryApiKey }));
         await mirrorCloudProviderEnv(provider, primaryApiKey, envEntries);
       }
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
@@ -2006,7 +1837,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       options.setDisabledProviders(nextDisabledProviders);
       if (!optionsArg?.silent) {
         options.markOpencodeConfigReloadRequired();
-        await refreshProviders({ dispose: true });
+        await refreshProviders({ force: true });
       }
       refreshSnapshot();
       emitChange();
@@ -2192,7 +2023,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   };
 
   const refreshProvidersAfterCloudSync = async (optionsArg: {
-    dispose?: boolean;
     force?: boolean;
   }, isCurrent = () => !disposed) => {
     const providerList = await refreshProviders(optionsArg, isCurrent);
@@ -2236,7 +2066,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const liveProviderMap = new Map(liveProviders.map((provider) => [provider.id, provider]));
     const failures: string[] = [];
     const processedLiveProviderIds = new Set<string>();
-    let configChanged = false;
     const restrictToCloud = options.checkDesktopAppRestriction({ restriction: "allowCustomProviders" });
 
     const canSyncProvider = (provider: DenOrgLlmProvider) =>
@@ -2255,7 +2084,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         try {
           await removeCloudProviderInternal(importedProvider.cloudProviderId, { silent: true });
           setCloudProviderSyncError(importedProvider.cloudProviderId, null);
-          configChanged = true;
         } catch (error) {
           failures.push(recordCloudProviderSyncError(importedProvider.cloudProviderId, reason, error));
         }
@@ -2290,7 +2118,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         // so the workspace kept the first-import snapshot forever (#2346).
         await connectCloudProviderInternal(liveProvider.id, { silent: true });
         setCloudProviderSyncError(liveProvider.id, null);
-        configChanged = true;
       } catch (error) {
         failures.push(recordCloudProviderSyncError(liveProvider.id, reason, error));
       }
@@ -2319,7 +2146,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       try {
         await connectCloudProviderInternal(liveProvider.id, { silent: true });
         setCloudProviderSyncError(liveProvider.id, null);
-        configChanged = true;
         const firstModel = liveProvider.models[0] ?? null;
         newlyImported.push({
           id: liveProvider.id,
@@ -2333,9 +2159,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
     }
 
-    const refreshedCatalog = await refreshProvidersAfterCloudSync(
-      configChanged ? { dispose: true } : { force: true },
-    ).catch(() => null);
+    const refreshedCatalog = await refreshProvidersAfterCloudSync({ force: true }).catch(() => null);
     if (refreshedCatalog && failures.length === 0 && usageScope === readGatewayUsageScope()
       && usageContext === getCloudProviderSyncContextKey()
       && Object.values(state.importedCloudProviders).every((provider) => liveProviderMap.has(provider.cloudProviderId))) {
@@ -2553,14 +2377,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           // Zen may have no stored credentials; disable still applies.
         }
         if (!isCurrentWorkspace()) throw new Error(t("providers.disconnect_unverified"));
-        const configChanged = await ensureProjectProviderDisabledState(resolved, true);
-        requireDiscovery(await refreshProviders({ dispose: true, configChanged }, isCurrentWorkspace), true);
+        await ensureProjectProviderDisabledState(resolved, true);
+        requireDiscovery(await refreshProviders({ force: true }, isCurrentWorkspace), true);
         removeProviderFromState(resolved);
         return `${t("providers.disconnected_prefix")} ${resolved}`;
       }
 
       await removeProviderAuthCredentials(resolved);
-      const updated = requireDiscovery(await refreshProviders({ dispose: true }, isCurrentWorkspace));
+      const updated = requireDiscovery(await refreshProviders({ force: true }, isCurrentWorkspace));
       if (updated.connected.includes(resolved)) {
         const stillConnected = updated.all.find((provider) => provider.id === resolved);
         if (stillConnected && stillConnected.source !== "env") {
@@ -2569,8 +2393,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           // alone can never disconnect it. Disable it via disabled_providers,
           // exactly like the built-in OpenCode Zen branch above, instead of
           // leaving the Disconnect button a silent no-op.
-          const configChanged = await ensureProjectProviderDisabledState(resolved, true);
-          requireDiscovery(await refreshProviders({ dispose: true, configChanged }, isCurrentWorkspace), true);
+          await ensureProjectProviderDisabledState(resolved, true);
+          requireDiscovery(await refreshProviders({ force: true }, isCurrentWorkspace), true);
           removeProviderFromState(resolved);
           return `${t("providers.disconnected_prefix")} ${resolved}`;
         }
@@ -2606,8 +2430,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       && workspaceKey === currentWorkspaceKey()
       && baseUrl === options.providerBaseUrl();
     try {
-      const configChanged = await ensureProjectProviderDisabledState(resolved, false);
-      await refreshProviders({ dispose: true, configChanged }, isCurrentWorkspace);
+      await ensureProjectProviderDisabledState(resolved, false);
+      await refreshProviders({ force: true }, isCurrentWorkspace);
       return `${t("providers.enabled_prefix")} ${resolved}`;
     } catch (error) {
       const message = describeProviderError(error, t("providers.enable_failed"));

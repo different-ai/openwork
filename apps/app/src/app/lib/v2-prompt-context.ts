@@ -2,7 +2,7 @@
  * An OpenCode v2 prompt is one string, while a user turn is several parts: the
  * person's words, pasted text, and hidden context OpenWork adds for the model
  * (attachment paths, pill instructions). This module owns that encoding in
- * both directions so the sent message renders the way v1 renders its parts.
+ * both directions so the sent message renders as its separate parts.
  *
  * - Pasted text is wrapped in `<pasted-text>` where it was pasted.
  * - An attached file is named in `<attachment>` where it was attached.

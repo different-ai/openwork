@@ -165,14 +165,14 @@ export function chatContinuity(app: Surface, workspaceId: string) {
           const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
           const path = new URL(url, location.href).pathname;
           const prompt = method === "POST"
-            ? path.match(/\/(?:opencode|opencode2\/api)\/session\/([^/]+)\/(?:prompt|prompt_async)$/)
+            ? path.match(/\/opencode2\/api\/session\/([^/]+)\/prompt$/)
             : null;
           if (prompt?.[1]) {
             const sessionId = decodeURIComponent(prompt[1]);
             state.promptPosts[sessionId] = (state.promptPosts[sessionId] ?? 0) + 1;
           }
           const history = method === "GET"
-            ? path.match(/\/(?:opencode|opencode2\/api)\/session\/([^/]+)\/message$/) : null;
+            ? path.match(/\/opencode2\/api\/session\/([^/]+)\/message$/) : null;
           if (history?.[1]) state.historyReads.push({
             sessionId: decodeURIComponent(history[1]), at: Date.now(), limit: new URL(url, location.href).searchParams.get("limit"),
           });

@@ -6,10 +6,8 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import type { Agent } from "@opencode-ai/sdk/v2/client";
+import type { Agent } from "@/app/lib/opencode-types";
 
-import type { OpenworkServerClient } from "@/app/lib/openwork-server";
-import { useOpencodeEngineControls } from "./opencode-engine-controls";
 import { t } from "@/i18n";
 import {
   Command,
@@ -94,7 +92,6 @@ export type SessionGroupOption = {
 };
 
 export type CommandPaletteProps = {
-  engineClient?: OpenworkServerClient | null;
   open: boolean;
   onClose: () => void;
   developerMode: boolean;
@@ -153,7 +150,6 @@ export function CommandPalette(props: CommandPaletteProps) {
   const platform = usePlatform();
   // Key hints read the way this OS writes them: ⌃⇧M on macOS, Ctrl+Shift+M elsewhere.
   const shortcutOs = resolveShortcutOs(platform.os, typeof navigator === "undefined" ? "" : navigator.platform);
-  const engine = useOpencodeEngineControls(props.engineClient, props.open);
   const [mode, setMode] = useState<CommandPaletteMode>("root");
   const [query, setQuery] = useState("");
   const [recents, setRecents] = useState(loadPaletteRecents);
@@ -458,10 +454,9 @@ export function CommandPalette(props: CommandPaletteProps) {
       ...rootItems,
       ...coreActionItems,
       ...settingsItems,
-      ...engine.items.map((item) => ({ ...item, action: () => { props.onClose(); item.action(); } })),
       ...(props.extraItems ?? []),
     ],
-    [coreActionItems, engine.items, props.extraItems, props.onClose, rootItems, settingsItems],
+    [coreActionItems, props.extraItems, rootItems, settingsItems],
   );
 
   const rootGroups = useMemo(

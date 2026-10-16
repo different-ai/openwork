@@ -148,9 +148,8 @@ function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-/** Reads the optional engine and model a headless thread may carry. */
+/** Reads the optional model a headless thread may carry. */
 export function remoteSessionThreadIdentity(thread) {
-  const engine = thread?.engine === "v1" || thread?.engine === "v2" ? thread.engine : undefined
   const raw = isRecord(thread?.model) ? thread.model : null
   const model = raw && typeof raw.providerId === "string" && raw.providerId && typeof raw.modelId === "string" && raw.modelId
     ? {
@@ -159,7 +158,7 @@ export function remoteSessionThreadIdentity(thread) {
       ...(typeof raw.variant === "string" && raw.variant ? { variant: raw.variant } : {}),
     }
     : undefined
-  return { ...(engine ? { engine } : {}), ...(model ? { model } : {}) }
+  return model ? { model } : {}
 }
 
 function messageText(message) {
@@ -175,20 +174,16 @@ function messageText(message) {
  * engine proxy routes the desktop UI and task recovery already use.
  * Returns undefined when the probe could not be read.
  */
-export async function readRemoteSessionWaitingFor(local, workspaceId, sessionId, engine, fetchImpl, signal) {
-  const workspace = `/workspace/${encodeURIComponent(workspaceId)}`
-  const session = encodeURIComponent(sessionId)
-  const [permissionPath, questionPath] = engine === "v2"
-    ? [`${workspace}/opencode2/api/session/${session}/permission`, `${workspace}/opencode2/api/session/${session}/form`]
-    : [`${workspace}/opencode/permission`, `${workspace}/opencode/question`]
+export async function readRemoteSessionWaitingFor(local, workspaceId, sessionId, fetchImpl, signal) {
+  const session = `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/session/${encodeURIComponent(sessionId)}`
   const list = async (requestPath) => {
     const payload = await requestJson(fetchImpl, local.baseUrl, local.token, requestPath, { signal })
     const rows = isRecord(payload) && "data" in payload ? payload.data : payload
     if (!Array.isArray(rows)) throw new Error("Invalid pending request list")
-    return rows.filter((row) => isRecord(row) && (engine === "v2" || row.sessionID === sessionId))
+    return rows.filter(isRecord)
   }
   try {
-    const [permissions, questions] = await Promise.all([list(permissionPath), list(questionPath)])
+    const [permissions, questions] = await Promise.all([list(`${session}/permission`), list(`${session}/form`)])
     if (permissions.length) return "permission"
     if (questions.length) return "question"
     return null
@@ -273,7 +268,7 @@ export async function watchRemoteSession(input) {
         observation = { status: "silent", messageCount: Array.isArray(snapshot?.messages) ? snapshot.messages.length : 0 }
       } else {
         const waitingFor = running
-          ? await readRemoteSessionWaitingFor(local, input.workspaceId, input.sessionId, input.engine, fetchImpl, input.signal)
+          ? await readRemoteSessionWaitingFor(local, input.workspaceId, input.sessionId, fetchImpl, input.signal)
           : null
         observation = remoteSessionObservation(snapshot, waitingFor)
       }
@@ -310,7 +305,7 @@ export async function watchRemoteSession(input) {
             ...observation,
             waitingFor: observation.waitingFor ?? null,
             error: observation.error ?? null,
-            ...(input.engine ? { engine: input.engine } : {}),
+            engine: "v2",
             ...(input.model ? { model: input.model } : {}),
             observedAt: Date.now(),
           })
@@ -505,7 +500,7 @@ export async function executeRemoteSessionRequest(assignment, options) {
     const snapshot = await client.getThreadSnapshot(assignment.sessionId, { signal: options.signal })
     const running = snapshot?.status?.type === "busy" || snapshot?.status?.type === "retry"
     const waitingFor = running
-      ? await readRemoteSessionWaitingFor(local, assignment.workspaceId, assignment.sessionId, assignment.engine ?? undefined, fetchImpl, options.signal)
+      ? await readRemoteSessionWaitingFor(local, assignment.workspaceId, assignment.sessionId, fetchImpl, options.signal)
       : null
     return { action: "read", result: remoteSessionTranscriptPage(snapshot, assignment.input, waitingFor ?? null) }
   }
@@ -596,13 +591,12 @@ export async function requestJson(fetchImpl, baseUrl, token, requestPath, option
   return payload
 }
 
-export function createWorkspaceSessionClient(local, workspaceId, fetchImpl, requireModelAvailability = false, engine = undefined) {
+export function createWorkspaceSessionClient(local, workspaceId, fetchImpl, requireModelAvailability = false) {
   return createHeadlessThreadClient({
     baseUrl: local.baseUrl,
     workspaceId,
     token: local.token,
     requireModelAvailability,
-    ...(engine ? { engine } : {}),
     // Automation run receipts own recovery; desktop restart must not independently
     // resume an occurrence that its scheduler may already have settled or retried.
     fetch: (input, init) => {
@@ -814,23 +808,6 @@ async function mapBounded(items, limit, task) {
   return results
 }
 
-function modelsFromV1Providers(payload) {
-  const providers = Array.isArray(payload?.all) ? payload.all : []
-  const connected = Array.isArray(payload?.connected) ? new Set(payload.connected) : null
-  const models = []
-  for (const provider of providers) {
-    const providerId = trimmedText(provider?.id, 160)
-    if (!providerId || (connected && !connected.has(providerId))) continue
-    const entries = provider?.models && typeof provider.models === "object" ? Object.entries(provider.models) : []
-    for (const [key, model] of entries) {
-      const modelId = trimmedText(model?.id, 160) ?? trimmedText(key, 160)
-      if (!modelId) continue
-      models.push({ providerId, modelId, name: trimmedText(model?.name, 200) ?? modelId })
-    }
-  }
-  return models
-}
-
 function modelsFromV2Catalog(payload) {
   const items = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : []
   return items.flatMap((model) => {
@@ -868,8 +845,6 @@ export async function collectDesktopInventory(options) {
   })
   const optional = (requestPath) => localRequest(requestPath).catch(() => null)
   const listed = await localRequest("/workspaces")
-  const status = await optional("/experimental/engine-v2-preview/status")
-  const engine = status?.enabled === true && status?.chatRouting === true ? "v2" : "v1"
   const items = (Array.isArray(listed?.items) ? listed.items : [])
     .filter((item) => typeof item?.id === "string" && item.id)
     .slice(0, INVENTORY_WORKSPACE_LIMIT)
@@ -877,14 +852,14 @@ export async function collectDesktopInventory(options) {
     const base = `/workspace/${encodeURIComponent(item.id)}`
     const [defaults, catalog] = await Promise.all([
       optional(`${base}/default-model`),
-      optional(engine === "v2" ? `${base}/opencode2/api/model` : `${base}/opencode/provider`),
+      optional(`${base}/opencode2/api/model`),
     ])
-    const models = engine === "v2" ? modelsFromV2Catalog(catalog) : modelsFromV1Providers(catalog)
+    const models = modelsFromV2Catalog(catalog)
     return {
       workspaceId: String(item.id).slice(0, 240),
       name: trimmedText(item.displayName, 120) ?? trimmedText(item.name, 120) ?? "Workspace",
       active: item.id === listed?.activeId,
-      engine,
+      engine: "v2",
       defaultModel: defaultModelFrom(defaults),
       models: models.slice(0, INVENTORY_MODEL_LIMIT),
     }
@@ -1483,7 +1458,6 @@ export function createDesktopAutomationRunner(options) {
         startRemoteSessionWatch(state, assignment.commandId, {
           sessionId: delivered.sessionId,
           workspaceId: delivered.workspaceId,
-          engine: delivered.engine,
           model: delivered.model ?? modelInputFromAssignment(assignment.model),
         })
       }
@@ -1512,7 +1486,6 @@ export function createDesktopAutomationRunner(options) {
     const watch = watchRemoteSession({
       sessionId: session.sessionId,
       workspaceId: session.workspaceId,
-      ...(session.engine ? { engine: session.engine } : {}),
       ...(session.model ? { model: session.model } : {}),
       ...(turn ? { turn } : {}),
       getLocalRuntime: options.getLocalRuntime,
@@ -1617,7 +1590,6 @@ export function createDesktopAutomationRunner(options) {
       startRemoteSessionWatch(state, assignment.commandId, {
         sessionId: assignment.sessionId,
         workspaceId: assignment.workspaceId,
-        engine: assignment.engine ?? undefined,
         model: followUp.model,
       }, followUp.turn)
     }

@@ -13,6 +13,16 @@ import { agentPermissionDenial, agentPermissionRulesOf } from "./agent-permissio
 const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
 /** Org-managed providers: Den-imported (lpr_), Gateway (ipr_) and hosted OpenWork Models. */
 const MANAGED_PROVIDER = /^(?:lpr_|ipr_)|^openwork$/i;
+/**
+ * The integration a credential write connects: a provider, or an MCP server
+ * (`mcp_…`). Removing a credential names none and stays allowed.
+ */
+function credentialIntegrationID(enginePath: string, input: Record<string, unknown>): string | undefined {
+  const connected = enginePath.match(/^\/integration\/([^/]+)\/connect(?:\/|$)/)?.[1];
+  if (connected) return connected;
+  return /^\/credential\/?$/.test(enginePath) && typeof input.integrationID === "string" ? input.integrationID : undefined;
+}
+
 /** One member's sign-in: another member of the same organization has another token. */
 function sessionKey(session: CloudProviderDenSession) { return `${session.baseUrl}\n${session.orgId}\n${session.token}`; }
 // The first cold read previously had 10s; keep two reads under the 15s plugin budget and one read under the 10s session-install budget.
@@ -230,11 +240,10 @@ class ManagedDesktopPolicy {
       }
       return;
     }
-    const enginePath = decoded.replace(/^\/opencode2?/, "").replace(/^\/api/, "");
+    const enginePath = decoded.replace(/^\/opencode2/, "").replace(/^\/api/, "");
     let input: Record<string, unknown> = {};
     if (request.body) {
-      // The HTTP adapter exposes a stream even for a bodyless POST (session
-      // creation and instance disposal both use one in the legacy engine).
+      // The HTTP adapter exposes a stream even for a bodyless POST.
       const text = await request.clone().text();
       this.identityChanged(generation);
       if (text.trim()) {
@@ -250,17 +259,16 @@ class ManagedDesktopPolicy {
     if (/\/session\/[^/]+\/command(?:\/|$)/.test(enginePath)) await assert("saved_command");
     if (/^\/(?:config|global\/config)(?:\/|$)/.test(enginePath)) await assert("engine_config");
     if (/^\/(?:mcp|plugins?|skills?|agents?)(?:\/|$)/.test(enginePath)) await assert("extensions");
-    if (/^\/(?:auth|providers?)(?:\/|$)/.test(enginePath)) {
-      const providerID = enginePath.match(/^\/auth\/([^/]+)(?:\/|$)/)?.[1]
-        ?? enginePath.match(/^\/provider\/([^/]+)\/oauth\/(?:authorize|callback)$/)?.[1];
-      await assert("provider", providerID ? { providerID } : {});
-    }
+    const integrationID = credentialIntegrationID(enginePath, input);
+    if (integrationID?.startsWith("mcp_")) await assert("extensions");
+    else if (integrationID) await assert("provider", { providerID: integrationID });
+    else if (/^\/(?:experimental\/integration|credential\/[^/]+\/activate)(?:\/|$)/.test(enginePath)) await assert("provider");
     const model = typeof input.model === "object" && input.model !== null ? Object.fromEntries(Object.entries(input.model)) : input;
     if ("providerID" in model) await assert("model", model);
   }
   /**
-   * While the rest of desktop policy is suspended, only model access (the AI Gateway's "Who can use models") is enforced, on the two engine
-   * requests that can reach a personal provider: signing in to one and sending with one of its models. Bodies that
+   * While the rest of desktop policy is suspended, only model access (the AI Gateway's "Who can use models") is enforced, on the engine
+   * requests that can reach a personal provider: connecting one (or storing its credential) and sending with one of its models. Bodies that
    * are not JSON are left alone, and nothing here waits on Den.
    */
   private async assertProviderUse(request: Request, path: string, engine: boolean): Promise<void> {
@@ -268,14 +276,15 @@ class ManagedDesktopPolicy {
     // Without a known restrictive policy there is nothing to check, so sends are never read or delayed.
     const policy = this.knownPolicy();
     if (policy?.allowCustomProviders !== false) return;
-    const enginePath = decodeURIComponent(path).replace(/^\/opencode2?/, "").replace(/^\/api/, "");
-    const providerID = enginePath.match(/^\/auth\/([^/]+)(?:\/|$)/)?.[1]
-      ?? enginePath.match(/^\/provider\/([^/]+)\/oauth\/(?:authorize|callback)$/)?.[1];
-    if (providerID) return this.assert("provider", { providerID });
-    if (!request.body || !/^\/session(?:\/|$)/.test(enginePath)) return;
+    const enginePath = decodeURIComponent(path).replace(/^\/opencode2/, "").replace(/^\/api/, "");
+    const connected = credentialIntegrationID(enginePath, {});
+    if (connected) return connected.startsWith("mcp_") ? undefined : this.assert("provider", { providerID: connected });
+    if (!request.body || !/^\/(?:session|credential)(?:\/|$)/.test(enginePath)) return;
     let body: unknown;
     try { body = JSON.parse(await request.clone().text()); } catch { return; }
     if (!isRecord(body)) return;
+    const stored = credentialIntegrationID(enginePath, body);
+    if (stored) return stored.startsWith("mcp_") ? undefined : this.assert("provider", { providerID: stored });
     const model = isRecord(body.model) ? body.model : body;
     if (typeof model.providerID === "string") await this.assert("model", { providerID: model.providerID });
   }

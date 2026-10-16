@@ -6,7 +6,7 @@
 // versa. `pending` is explicit: an unsettled catalog (still loading, cloud
 // provider sync incomplete, or superseded by a workspace switch) never
 // produces a definitive "unavailable" verdict.
-import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
+import type { ProviderListResponse } from "@/app/lib/opencode-types";
 
 import {
   isDesktopProviderBlocked,

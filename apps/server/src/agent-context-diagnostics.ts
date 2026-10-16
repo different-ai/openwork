@@ -18,12 +18,6 @@ import {
   sanitizeAgentContextDiagnosticText,
 } from "./agent-context-diagnostics-schema.js";
 import {
-  effectiveToolDecision,
-  validateEffectiveEngineSnapshot,
-  type EffectiveEngineSnapshot,
-  type InspectAgentDiagnosticsEngine,
-} from "./agent-context-engine-inspection.js";
-import {
   differentialCloudVerdict,
   probeOpenworkCloudCatalog,
   type CloudCatalogProbe,
@@ -49,8 +43,14 @@ import {
   type McpConfigCollision,
   type McpInventoryInspection,
 } from "./mcp.js";
-import { resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
-import { buildOpenworkRuntimeConfigObjectFromSnapshot } from "./openwork-runtime-config.js";
+import { OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
+import {
+  openworkContextV2PluginPath,
+  openworkGatewayQuotaV2PluginPath,
+  openworkMcpReadinessV2PluginPath,
+  openworkMcpResultsV2PluginPath,
+  openworkProviderFiltersV2PluginPath,
+} from "./openwork-extensions-plugin-path.js";
 import {
   ENGINE_GLOBAL_RUNTIME_CONFIG_ID,
   inspectRuntimeOpencodeConfigState,
@@ -124,72 +124,14 @@ type DiagnosticMcpItem = Omit<McpItem, "source"> & {
   source: McpItem["source"] | "engine.config";
 };
 
-type EffectiveToolPolicyDecision = "allow" | "ask" | "deny";
-
 type DiagnosticDependencies = {
   fetchImpl?: typeof fetch;
   now?: () => number;
   uuid?: () => string;
-  inspectEffectiveEngine?: InspectAgentDiagnosticsEngine;
   signal?: AbortSignal;
   /** Test seam for the administrator-provisioned enterprise activation read. */
   readActivatedEnterpriseOrigin?: (signal?: AbortSignal) => Promise<string | null>;
 };
-
-type EffectiveToolPolicyAssessment = {
-  status: "available" | "denied" | "unavailable";
-  decisions: Record<string, EffectiveToolPolicyDecision>;
-  deniedToolIds: string[];
-  unavailableReasons: string[];
-};
-
-function assessEffectiveToolPolicy(
-  snapshot: EffectiveEngineSnapshot | null,
-): EffectiveToolPolicyAssessment {
-  if (!snapshot) {
-    return {
-      status: "unavailable",
-      decisions: {},
-      deniedToolIds: [],
-      unavailableReasons: ["effective_engine_snapshot_unavailable"],
-    };
-  }
-  const openworkAgent = snapshot.agents.find((agent) => agent.name === "openwork");
-  if (!openworkAgent) {
-    return {
-      status: "unavailable",
-      decisions: {},
-      deniedToolIds: [],
-      unavailableReasons: ["effective_openwork_agent_missing"],
-    };
-  }
-  if (
-    snapshot.defaultAgent !== "openwork"
-    || openworkAgent.hidden
-    || (openworkAgent.mode !== "primary" && openworkAgent.mode !== "all")
-  ) {
-    return {
-      status: "unavailable",
-      decisions: {},
-      deniedToolIds: [],
-      unavailableReasons: ["effective_openwork_agent_unusable_as_default"],
-    };
-  }
-  const decisions: Record<string, EffectiveToolPolicyDecision> = {};
-  for (const toolId of REQUIRED_CLOUD_AGENT_TOOL_IDS) {
-    decisions[toolId] = effectiveToolDecision(openworkAgent.permission, toolId);
-  }
-
-  const deniedToolIds = REQUIRED_CLOUD_AGENT_TOOL_IDS.filter(
-    (toolId) => decisions[toolId] === "deny",
-  );
-  return {
-    status: deniedToolIds.length > 0 ? "denied" : "available",
-    decisions,
-    deniedToolIds,
-    unavailableReasons: [],
-  };
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -1107,78 +1049,6 @@ function engineReadUnavailableCheck(
   });
 }
 
-function engineConfigCheck(
-  snapshot: EffectiveEngineSnapshot | null,
-  inspectionStatus: "observed" | "not-configured" | "not-supplied" | "invalid" | "unavailable",
-  engineApiReadPerformed: boolean,
-  durationMs: number,
-): AgentContextDiagnosticCheck {
-  if (!snapshot || inspectionStatus !== "observed") {
-    return engineReadUnavailableCheck(
-      "engine-config",
-      inspectionStatus === "observed" ? "invalid" : inspectionStatus,
-      engineApiReadPerformed,
-      durationMs,
-    );
-  }
-  return diagnosticCheck({
-    id: "engine-config",
-    status: "passed",
-    evidenceKind: "observed",
-    code: "effective_engine_config_observed",
-    message: "The selected engine returned its effective merged configuration.",
-    owner: "opencode-engine",
-    action: "No action is required.",
-    details: {
-      engineApiReadPerformed: true,
-      defaultAgentPresent: snapshot.defaultAgent !== null,
-      effectivePluginCount: snapshot.pluginSpecs.length,
-      effectiveMcpCount: snapshot.mcps.length,
-      rawConfigurationIncluded: false,
-    },
-    durationMs,
-  });
-}
-
-function engineAgentCheck(
-  snapshot: EffectiveEngineSnapshot | null,
-  inspectionStatus: "observed" | "not-configured" | "not-supplied" | "invalid" | "unavailable",
-  engineApiReadPerformed: boolean,
-  durationMs: number,
-): AgentContextDiagnosticCheck {
-  if (!snapshot || inspectionStatus !== "observed") {
-    return engineReadUnavailableCheck(
-      "engine-agent",
-      inspectionStatus === "observed" ? "invalid" : inspectionStatus,
-      engineApiReadPerformed,
-      durationMs,
-    );
-  }
-  const agent = snapshot.agents.find((candidate) => candidate.name === "openwork");
-  return diagnosticCheck({
-    id: "engine-agent",
-    status: agent ? "passed" : "failed",
-    evidenceKind: "observed",
-    code: agent ? "effective_openwork_agent_observed" : "effective_openwork_agent_missing",
-    message: agent
-      ? "The selected engine resolved the OpenWork agent."
-      : "The selected engine did not resolve an OpenWork agent.",
-    owner: agent ? "opencode-engine" : "openwork-server",
-    action: agent
-      ? "No action is required."
-      : "Restore the OpenWork runtime agent injection and restart the selected workspace engine.",
-    details: {
-      engineApiReadPerformed: true,
-      effectiveAgentCount: snapshot.agents.length,
-      openworkAgentPresent: Boolean(agent),
-      openworkAgentHidden: agent?.hidden ?? null,
-      permissionRuleCount: agent?.permission.length ?? null,
-      rawPromptIncluded: false,
-    },
-    durationMs,
-  });
-}
-
 function runtimeHealthCheck(
   workspace: WorkspaceInfo,
   engineConfigured: boolean,
@@ -1235,6 +1105,8 @@ export async function runAgentContextDiagnostics(input: {
   workspace: WorkspaceInfo;
   request: AgentContextDiagnosticsRequest;
   inspectRegistration: InspectMcpRegistration;
+  /** Whether the engine answered the live MCP status read behind `inspectRegistration`. */
+  engineReachable: boolean;
   dependencies?: DiagnosticDependencies;
 }): Promise<AgentContextDiagnosticsReport> {
   const request = agentContextDiagnosticsRequestSchema.parse(input.request);
@@ -1247,30 +1119,9 @@ export async function runAgentContextDiagnostics(input: {
   const startedMs = now();
   const startedAt = new Date(startedMs).toISOString();
   const runId = uuid();
-  const engineConfigured = Boolean(resolveWorkspaceOpencodeConnection(input.config, input.workspace).baseUrl?.trim());
-
-  let effectiveEngine: EffectiveEngineSnapshot | null = null;
-  let engineApiReadPerformed = false;
-  let engineInspectionStatus: "observed" | "not-configured" | "not-supplied" | "invalid" | "unavailable" = engineConfigured
-    ? "not-supplied"
-    : "not-configured";
-  const engineInspectionStarted = now();
-  if (engineConfigured && input.workspace.workspaceType === "local" && input.dependencies?.inspectEffectiveEngine) {
-    engineApiReadPerformed = true;
-    const timeoutSignal = AbortSignal.timeout(10_000);
-    const signal = input.dependencies.signal
-      ? AbortSignal.any([input.dependencies.signal, timeoutSignal])
-      : timeoutSignal;
-    try {
-      const payload = await input.dependencies.inspectEffectiveEngine(signal);
-      effectiveEngine = validateEffectiveEngineSnapshot(payload);
-      engineInspectionStatus = effectiveEngine ? "observed" : "invalid";
-    } catch {
-      input.dependencies?.signal?.throwIfAborted();
-      engineInspectionStatus = "unavailable";
-    }
-  }
-  const engineInspectionDuration = elapsed(engineInspectionStarted, now);
+  // Local workspaces run on the server's own OpenCode engine. Diagnostics
+  // reports configured intent; it does not read the engine's effective state.
+  const engineConfigured = input.workspace.workspaceType === "local";
 
   input.dependencies?.signal?.throwIfAborted();
   const runtimeStarted = now();
@@ -1290,28 +1141,11 @@ export async function runAgentContextDiagnostics(input: {
   const runtime = mergeRuntimeOpencodeConfigLayers(globalRuntimeInspection.config, runtimeInspection.config);
   input.dependencies?.signal?.throwIfAborted();
   const runtimeDuration = elapsed(runtimeStarted, now);
-  // The injected engine config file is rendered from the ENGINE_GLOBAL row
-  // only; the merged per-workspace runtime row informs MCP inventory below
-  // but is not part of the injected file.
-  const expectedRuntimeConfig = buildOpenworkRuntimeConfigObjectFromSnapshot(globalRuntimeInspection.config);
-  const expectedAgents = isRecord(expectedRuntimeConfig.agent) ? expectedRuntimeConfig.agent : {};
-  const expectedAgent = isRecord(expectedAgents.openwork) ? expectedAgents.openwork : null;
-  const effectiveOpenworkAgent = effectiveEngine?.agents.find((agent) => agent.name === "openwork") ?? null;
-  const effectiveAgentModeUsable = effectiveOpenworkAgent?.mode === "primary"
-    || effectiveOpenworkAgent?.mode === "all";
-  const effectiveAgentUsable = Boolean(
-    effectiveOpenworkAgent
-    && effectiveEngine?.defaultAgent === "openwork"
-    && !effectiveOpenworkAgent.hidden
-    && effectiveAgentModeUsable,
-  );
-  const agentEvidenceSource = effectiveEngine ? "effective-engine" as const : "configured-intent" as const;
-  const reportedAgent = effectiveEngine
-    ? effectiveOpenworkAgent
-      ? { prompt: effectiveOpenworkAgent.prompt }
-      : null
-    : expectedAgent;
-  const prompt = promptEvidence(reportedAgent);
+  // The engine receives OpenWork's operating prompt as a session instruction
+  // and Connect steering through the context plugin.
+  const expectedAgent: Record<string, unknown> = { prompt: OPENWORK_AGENT_PROMPT, mode: "primary" };
+  const agentEvidenceSource = "configured-intent" as const;
+  const prompt = promptEvidence(expectedAgent);
   const expectedPrompt = promptEvidence(expectedAgent);
   const promptMarkersPresent = prompt.markers.searchCapabilities
     && prompt.markers.executeCapability
@@ -1320,30 +1154,27 @@ export async function runAgentContextDiagnostics(input: {
     && expectedPrompt.sha256 !== null
     && prompt.sha256 === expectedPrompt.sha256;
   const promptMatchesCanonicalIntent = promptMarkersPresent && canonicalPromptDigestMatch;
-  const expectedPlugins = Array.isArray(expectedRuntimeConfig.plugin)
-    ? expectedRuntimeConfig.plugin.filter((value): value is string => typeof value === "string")
-    : [];
-  const reportedPlugins = effectiveEngine?.pluginSpecs ?? expectedPlugins;
+  const expectedPlugins = [
+    openworkContextV2PluginPath(),
+    openworkGatewayQuotaV2PluginPath(),
+    openworkProviderFiltersV2PluginPath(),
+    openworkMcpResultsV2PluginPath(),
+    openworkMcpReadinessV2PluginPath(),
+  ];
+  const reportedPlugins = expectedPlugins;
   const pluginLabels = [...new Set(reportedPlugins.flatMap((spec) => {
     const label = pluginLabel(spec);
     return label ? [label] : [];
   }))].slice(0, 100);
   const canonicalConnectPluginSpec = expectedPlugins.find(
-    (spec) => pluginLabel(spec) === "openwork-extensions-preview",
+    (spec) => pluginLabel(spec) === "openwork-context-v2",
   ) ?? null;
   const canonicalPluginSpecMatched = canonicalConnectPluginSpec !== null
     && reportedPlugins.some(
       (reportedPlugin) => pluginSpecIdentity(reportedPlugin) === pluginSpecIdentity(canonicalConnectPluginSpec),
     );
 
-  const projectAgent = effectiveEngine
-    ? {
-      available: false,
-      defaultAgentOverride: false,
-      agentConfigOverride: false,
-      agentFileOverride: false,
-    }
-    : await inspectProjectAgent(input.workspace, input.dependencies?.signal);
+  const projectAgent = await inspectProjectAgent(input.workspace, input.dependencies?.signal);
   input.dependencies?.signal?.throwIfAborted();
   const projectOverrideDetected = projectAgent.defaultAgentOverride
     || projectAgent.agentConfigOverride
@@ -1378,22 +1209,13 @@ export async function runAgentContextDiagnostics(input: {
   const branch = expectedConnectBranch(connectSnapshot);
   const crossWorkspaceSteeringDrift = connectSnapshot.cloudMcpPresent && !selectedCloudMcpPresent;
 
-  const { inventory, passiveLocalLayersAvailable } = effectiveEngine
-    ? { inventory: runtimeOnlyMcpInventory(runtime), passiveLocalLayersAvailable: false }
-    : await inspectMcpInventory(
-      input.workspace,
-      runtime,
-      input.dependencies?.signal,
-    );
-  const engineConfigItems = effectiveEngine?.mcps.map((item) => ({
-    ...item,
-    source: "engine.config" as const,
-    disabledByTools: item.name === OPENWORK_CLOUD_MCP_NAME
-      ? assessEffectiveToolPolicy(effectiveEngine).status === "denied" || undefined
-      : undefined,
-  }));
-  const inventoryTotal = inventory.items.length + (engineConfigItems?.length ?? 0);
-  const combinedInventoryItems = [...inventory.items, ...(engineConfigItems ?? [])];
+  const { inventory, passiveLocalLayersAvailable } = await inspectMcpInventory(
+    input.workspace,
+    runtime,
+    input.dependencies?.signal,
+  );
+  const inventoryTotal = inventory.items.length;
+  const combinedInventoryItems: DiagnosticMcpItem[] = [...inventory.items];
   const inventoryItems = combinedInventoryItems.slice(0, 200);
   const runtimeCloudItem = combinedInventoryItems.find((item) =>
     item.source === "config.remote" && item.name === OPENWORK_CLOUD_MCP_NAME,
@@ -1420,36 +1242,17 @@ export async function runAgentContextDiagnostics(input: {
   const runtimeCloudConfig = runtimeMcpMap(runtime)[OPENWORK_CLOUD_MCP_NAME] ?? null;
   const runtimeCloudRegistration = runtimeCloudItem && runtimeCloudConfig ? registrationForItem(runtimeCloudItem) : null;
   const staticallyDeniedCloudAgentToolIds = new Set(inventory.toolPolicy.deniedToolIds);
-  const effectiveToolPolicy = assessEffectiveToolPolicy(effectiveEngine);
-  const cloudToolPolicyStatus = effectiveEngine
-    ? effectiveToolPolicy.status
-    : staticallyDeniedCloudAgentToolIds.size > 0
-      ? "denied" as const
-      : "unavailable" as const;
-  const deniedCloudAgentToolIds = new Set(
-    cloudToolPolicyStatus === "denied"
-      ? effectiveEngine
-        ? effectiveToolPolicy.deniedToolIds
-        : staticallyDeniedCloudAgentToolIds
-      : [],
-  );
-  const policyUnavailableReasons = effectiveEngine
-    ? effectiveToolPolicy.unavailableReasons
-    : [
-      "effective_engine_snapshot_unavailable",
-      ...(inventory.toolPolicy.status === "unavailable" ? ["passive_static_policy_unavailable"] : []),
-    ];
-  const reportedToolPermission = (toolId: string): AgentContextToolPermission => {
-    if (deniedCloudAgentToolIds.has(toolId)) return "denied";
-    if (cloudToolPolicyStatus !== "available" && effectiveToolPolicy.status !== "denied") {
-      return "unspecified";
-    }
-    const decision = effectiveToolPolicy.decisions[toolId];
-    if (decision === "allow") return "allowed";
-    if (decision === "ask") return "approval-required";
-    return "unspecified";
-  };
-  const engineReachableNow = engineInspectionStatus === "observed" || engineInspectionStatus === "invalid";
+  const cloudToolPolicyStatus = staticallyDeniedCloudAgentToolIds.size > 0
+    ? "denied" as const
+    : "unavailable" as const;
+  const deniedCloudAgentToolIds = cloudToolPolicyStatus === "denied" ? staticallyDeniedCloudAgentToolIds : new Set<string>();
+  const policyUnavailableReasons = [
+    "effective_engine_snapshot_unavailable",
+    ...(inventory.toolPolicy.status === "unavailable" ? ["passive_static_policy_unavailable"] : []),
+  ];
+  const reportedToolPermission = (toolId: string): AgentContextToolPermission =>
+    deniedCloudAgentToolIds.has(toolId) ? "denied" : "unspecified";
+  const engineReachableNow = input.engineReachable;
   // Local workspaces only: the activation record describes this installation,
   // so it must never authorize egress on behalf of a remote workspace shell.
   const activatedEnterpriseOrigin = input.workspace.workspaceType === "local"
@@ -1591,51 +1394,23 @@ export async function runAgentContextDiagnostics(input: {
     }),
     diagnosticCheck({
       id: "agent-resolution",
-      status: effectiveEngine
-        ? effectiveAgentUsable ? "passed" : "failed"
-        : "warning",
-      evidenceKind: effectiveEngine
-        ? "observed"
-        : runtimeInspection.status === "available" ? "expected" : "unavailable",
-      code: effectiveEngine
-        ? !effectiveOpenworkAgent
-          ? "effective_openwork_agent_missing"
-          : effectiveEngine.defaultAgent !== "openwork"
-            ? "effective_default_agent_mismatch"
-            : effectiveOpenworkAgent.hidden
-              ? "effective_openwork_agent_hidden"
-              : !effectiveAgentModeUsable
-                ? "effective_openwork_agent_not_primary"
-            : "effective_openwork_agent_selected"
-        : projectOverrideDetected
-          ? "configured_agent_has_override_layers"
-          : "runtime_agent_intent_only",
-      message: effectiveEngine
-        ? !effectiveOpenworkAgent
-          ? "The effective engine configuration does not contain the OpenWork agent."
-          : effectiveEngine.defaultAgent !== "openwork"
-            ? "The effective engine default does not select the OpenWork agent."
-            : effectiveOpenworkAgent.hidden
-              ? "The effective OpenWork agent is hidden and cannot be used as the default agent."
-              : !effectiveAgentModeUsable
-                ? "The effective OpenWork agent is subagent-only and cannot be used as the default agent."
-            : "The effective engine default selects the resolved OpenWork agent."
-        : projectOverrideDetected
-          ? "The configured OpenWork agent intent has project override layers and could not be confirmed live."
-          : "Only the configured OpenWork agent intent was available; effective resolution was not observed.",
-      owner: effectiveEngine ? "opencode-engine" : projectOverrideDetected ? "member" : "opencode-engine",
-      action: effectiveEngine && effectiveAgentUsable
-        ? "No action is required."
-        : effectiveEngine
-          ? "Restore the OpenWork agent and default-agent injection, then restart the selected workspace engine."
-          : "Check the selected workspace engine health and rerun diagnostics.",
+      status: "warning",
+      evidenceKind: runtimeInspection.status === "available" ? "expected" : "unavailable",
+      code: projectOverrideDetected
+        ? "configured_agent_has_override_layers"
+        : "runtime_agent_intent_only",
+      message: projectOverrideDetected
+        ? "The configured OpenWork agent intent has project override layers and could not be confirmed live."
+        : "Only the configured OpenWork agent intent was available; effective resolution was not observed.",
+      owner: projectOverrideDetected ? "member" : "opencode-engine",
+      action: "Check the selected workspace engine health and rerun diagnostics.",
       details: {
-        configuredAgentPresent: Boolean(expectedAgent),
-        effectiveAgentPresent: effectiveEngine ? Boolean(effectiveOpenworkAgent) : null,
-        effectiveDefaultAgentIsOpenwork: effectiveEngine ? effectiveEngine.defaultAgent === "openwork" : null,
-        effectiveAgentHidden: effectiveOpenworkAgent?.hidden ?? null,
-        effectiveAgentMode: effectiveOpenworkAgent?.mode ?? null,
-        effectiveAgentUsableAsDefault: effectiveEngine ? effectiveAgentUsable : null,
+        configuredAgentPresent: true,
+        effectiveAgentPresent: null,
+        effectiveDefaultAgentIsOpenwork: null,
+        effectiveAgentHidden: null,
+        effectiveAgentMode: null,
+        effectiveAgentUsableAsDefault: null,
         projectLayersAvailable: projectAgent.available,
         projectDefaultAgentOverride: projectAgent.defaultAgentOverride,
         projectAgentConfigOverride: projectAgent.agentConfigOverride,
@@ -1646,24 +1421,18 @@ export async function runAgentContextDiagnostics(input: {
     diagnosticCheck({
       id: "agent-prompt-markers",
       status: promptMatchesCanonicalIntent ? "passed" : "failed",
-      evidenceKind: effectiveEngine ? "observed" : "expected",
+      evidenceKind: "expected",
       code: promptMatchesCanonicalIntent
-        ? effectiveEngine ? "effective_prompt_matches_canonical" : "configured_prompt_matches_canonical"
+        ? "configured_prompt_matches_canonical"
         : !promptMarkersPresent
-          ? effectiveEngine ? "effective_prompt_markers_missing" : "configured_prompt_markers_missing"
-          : effectiveEngine ? "effective_prompt_digest_mismatch" : "configured_prompt_digest_mismatch",
+          ? "configured_prompt_markers_missing"
+          : "configured_prompt_digest_mismatch",
       message: promptMatchesCanonicalIntent
-        ? effectiveEngine
-          ? "The effective OpenWork base prompt exactly matches the canonical configured injection and contains every required marker."
-          : "The configured OpenWork base prompt intent matches its canonical generated injection and contains every required marker."
+        ? "The configured OpenWork base prompt intent matches its canonical generated injection and contains every required marker."
         : !promptMarkersPresent
-          ? effectiveEngine
-            ? "The effective OpenWork base prompt is missing one or more required markers."
-            : "The configured OpenWork base prompt intent is missing one or more required markers."
-          : effectiveEngine
-            ? "The effective OpenWork base prompt contains the markers but does not match the canonical configured injection."
-            : "The configured OpenWork base prompt markers are present, but its digest does not match the canonical generated injection.",
-      owner: effectiveEngine ? "opencode-engine" : "openwork-server",
+          ? "The configured OpenWork base prompt intent is missing one or more required markers."
+          : "The configured OpenWork base prompt markers are present, but its digest does not match the canonical generated injection.",
+      owner: "openwork-server",
       action: promptMatchesCanonicalIntent
         ? "No action is required."
         : "Restore the canonical OpenWork runtime agent definition.",
@@ -1676,91 +1445,61 @@ export async function runAgentContextDiagnostics(input: {
     }),
     diagnosticCheck({
       id: "agent-connect-tool-permissions",
-      status: cloudToolPolicyStatus === "denied"
-        ? "failed"
-        : cloudToolPolicyStatus === "unavailable"
-          ? "warning"
-          : "passed",
-      evidenceKind: cloudToolPolicyStatus === "unavailable"
-        ? "unavailable"
-        : effectiveEngine ? "observed" : "derived",
+      status: cloudToolPolicyStatus === "denied" ? "failed" : "warning",
+      evidenceKind: cloudToolPolicyStatus === "unavailable" ? "unavailable" : "derived",
       code: cloudToolPolicyStatus === "denied"
-        ? !effectiveEngine && staticallyDeniedCloudAgentToolIds.size > 0
-          ? "required_connect_tools_denied_by_static_policy"
-          : "required_connect_tools_denied_by_effective_policy"
-        : cloudToolPolicyStatus === "unavailable"
-          ? "effective_connect_tool_policy_unavailable"
-          : "required_connect_tool_ids_not_denied_by_effective_policy",
+        ? "required_connect_tools_denied_by_static_policy"
+        : "effective_connect_tool_policy_unavailable",
       message: cloudToolPolicyStatus === "denied"
-        ? !effectiveEngine && staticallyDeniedCloudAgentToolIds.size > 0
-          ? "A passively inspected static OpenCode policy denies one or more required OpenWork Cloud capability tools."
-          : "The effective OpenCode agent policy hides one or more required OpenWork Cloud capability tools."
-        : cloudToolPolicyStatus === "unavailable"
-          ? "Required OpenWork Cloud tool visibility could not be verified from the effective selected-engine agent."
-          : "The effective OpenCode agent policy does not deny either required OpenWork Cloud candidate tool ID; the live engine tool registry was not read.",
-      owner: cloudToolPolicyStatus === "available"
-        ? "openwork-server"
-        : cloudToolPolicyStatus === "unavailable"
-          ? "opencode-engine"
-          : "member",
+        ? "A passively inspected static OpenCode policy denies one or more required OpenWork Cloud capability tools."
+        : "Required OpenWork Cloud tool visibility could not be verified from the effective selected-engine agent.",
+      owner: cloudToolPolicyStatus === "unavailable" ? "opencode-engine" : "member",
       action: cloudToolPolicyStatus === "denied"
         ? "Allow the denied openwork-cloud capability tool IDs in top-level or OpenWork agent permission policy, then rerun diagnostics."
-        : cloudToolPolicyStatus === "unavailable"
-          ? "Check the selected workspace engine health and rerun diagnostics."
-          : "No policy change is required; confirm catalog and registration evidence because this policy check alone does not prove live tool presence.",
+        : "Check the selected workspace engine health and rerun diagnostics.",
       details: {
         searchCapabilities: reportedToolPermission(`${OPENWORK_CLOUD_MCP_NAME}_search_capabilities`),
         executeCapability: reportedToolPermission(`${OPENWORK_CLOUD_MCP_NAME}_execute_capability`),
         deniedRelevantToolCount: cloudToolPolicyStatus === "unavailable" ? null : deniedCloudAgentToolIds.size,
         staticPolicyScope: inventory.toolPolicy.scope,
         staticPolicyLayerStatus: inventory.toolPolicy.status,
-        effectivePolicyStatus: effectiveToolPolicy.status,
-        effectivePolicySnapshotApplied: effectiveToolPolicy.status !== "unavailable",
+        effectivePolicyStatus: "unavailable",
+        effectivePolicySnapshotApplied: false,
         policyUnavailableReasons,
-        effectiveEnginePolicyNotObserved: effectiveToolPolicy.status === "unavailable",
+        effectiveEnginePolicyNotObserved: true,
       },
     }),
     diagnosticCheck({
       id: "plugin-registration",
       status: canonicalPluginSpecMatched ? "passed" : "failed",
-      evidenceKind: effectiveEngine ? "observed" : "expected",
+      evidenceKind: "expected",
       code: canonicalPluginSpecMatched
-        ? effectiveEngine ? "connect_steering_plugin_effective" : "connect_steering_plugin_configured"
+        ? "connect_steering_plugin_configured"
         : "connect_steering_plugin_missing",
       message: canonicalPluginSpecMatched
-        ? effectiveEngine
-          ? "The Connect steering plugin is present in the effective engine configuration."
-          : "The Connect steering plugin is present in the configured runtime injection intent."
-        : effectiveEngine
-          ? "The Connect steering plugin is missing from the effective engine configuration."
-          : "The Connect steering plugin is missing from the configured runtime injection intent.",
-      owner: effectiveEngine ? "opencode-engine" : "openwork-server",
+        ? "The Connect steering plugin is present in the configured runtime injection intent."
+        : "The Connect steering plugin is missing from the configured runtime injection intent.",
+      owner: "openwork-server",
       action: canonicalPluginSpecMatched
         ? "No action is required."
         : "Restore the canonical OpenWork runtime plugin bundle.",
       details: {
         configuredPluginLabels: pluginLabels,
         canonicalPluginSpecMatched,
-        effectivePluginConfigurationObserved: Boolean(effectiveEngine),
+        effectivePluginConfigurationObserved: false,
         pluginExecutionNotClaimed: true,
       },
     }),
     diagnosticCheck({
       id: "mcp-inventory",
-      status: effectiveEngine
-        ? inventoryTotal > 200 ? "warning" : "passed"
-        : inventoryTotal > 200
-          || inventory.collisions.length > 0
-          || !passiveLocalLayersAvailable
-          || layerHealthProblem
-          ? "warning"
-          : "passed",
-      evidenceKind: effectiveEngine ? "observed" : layerHealthProblem ? "unavailable" : "derived",
-      code: effectiveEngine
-        ? inventoryTotal > 200
-          ? "mcp_inventory_truncated"
-          : "engine_config_and_runtime_mcp_inventory_observed"
-        : layerHealthProblem
+      status: inventoryTotal > 200
+        || inventory.collisions.length > 0
+        || !passiveLocalLayersAvailable
+        || layerHealthProblem
+        ? "warning"
+        : "passed",
+      evidenceKind: layerHealthProblem ? "unavailable" : "derived",
+      code: layerHealthProblem
         ? "mcp_config_layer_unreadable"
         : inventoryTotal > 200
           ? "mcp_inventory_truncated"
@@ -1769,11 +1508,7 @@ export async function runAgentContextDiagnostics(input: {
             : !passiveLocalLayersAvailable
               ? "local_mcp_layers_unavailable"
               : "bounded_mcp_sources_inventoried",
-      message: effectiveEngine
-        ? inventoryTotal > 200
-          ? "The combined engine-configuration and runtime-managed MCP evidence exceeded the report limit and was truncated."
-          : "The selected engine's merged MCP configuration and OpenWork-managed dynamic injection intent were inventoried as separate evidence sources."
-        : layerHealthProblem
+      message: layerHealthProblem
         ? "One or more static MCP configuration layers are invalid or unreadable."
         : inventoryTotal > 200
           ? "The passive MCP inventory exceeded the report limit and was truncated."
@@ -1782,14 +1517,8 @@ export async function runAgentContextDiagnostics(input: {
             : !passiveLocalLayersAvailable
               ? "Only server-managed runtime MCP layers were available for this workspace."
               : "The server-managed runtime and selected project/global MCP sources were inventoried without claiming complete OpenCode resolution.",
-      owner: effectiveEngine
-        ? "opencode-engine"
-        : layerHealthProblem ? "member" : inventory.collisions.length > 0 ? "member" : "openwork-server",
-      action: effectiveEngine
-        ? inventoryTotal > 200
-          ? "Reduce the configured MCP count or inspect the engine and OpenWork runtime sources directly."
-          : "No action is required; review registration evidence for runtime-managed dynamic MCP connection state."
-        : layerHealthProblem
+      owner: layerHealthProblem ? "member" : inventory.collisions.length > 0 ? "member" : "openwork-server",
+      action: layerHealthProblem
         ? "Repair the invalid or unreadable OpenCode configuration layer, then rerun diagnostics."
         : inventory.collisions.length > 0
           ? "Review the listed MCP layer collisions and remove unintended duplicate definitions."
@@ -1799,20 +1528,18 @@ export async function runAgentContextDiagnostics(input: {
       details: {
         configuredMcpEntryCount: inventoryTotal,
         reportedMcpEntryCount: inventoryItems.length,
-        collisionCount: effectiveEngine ? 0 : inventory.collisions.length,
-        collisions: effectiveEngine ? [] : collisionDetails(inventory.collisions),
+        collisionCount: inventory.collisions.length,
+        collisions: collisionDetails(inventory.collisions),
         projectLayerStatus: inventory.layerStatus.project,
         globalLayerStatus: inventory.layerStatus.global,
-        inventoryScope: effectiveEngine
-          ? "engine-merged-config-plus-runtime-managed-injection"
-          : "bounded-openwork-sources",
+        inventoryScope: "bounded-openwork-sources",
         completeDynamicMcpStateClaimed: false,
-        engineConfigMcpCount: engineConfigItems?.length ?? 0,
+        engineConfigMcpCount: 0,
         runtimeManagedMcpCount: inventory.items.filter((item) => item.source === "config.remote").length,
       },
     }),
-    engineConfigCheck(effectiveEngine, engineInspectionStatus, engineApiReadPerformed, engineInspectionDuration),
-    engineAgentCheck(effectiveEngine, engineInspectionStatus, engineApiReadPerformed, engineInspectionDuration),
+    engineReadUnavailableCheck("engine-config", engineConfigured ? "not-supplied" : "not-configured", false, 0),
+    engineReadUnavailableCheck("engine-agent", engineConfigured ? "not-supplied" : "not-configured", false, 0),
     diagnosticCheck({
       id: "engine-plugin-tools",
       status: "warning",
@@ -1822,7 +1549,7 @@ export async function runAgentContextDiagnostics(input: {
       owner: "opencode-engine",
       action: "Review the canonical plugin match, effective permission, MCP registration, and cloud catalog checks together; use a controlled agent turn if execution proof is required.",
       details: {
-        effectivePluginConfigurationObserved: Boolean(effectiveEngine),
+        effectivePluginConfigurationObserved: false,
         canonicalPluginSpecMatched,
         engineToolCatalogReadPerformed: false,
         llmTurnStarted: false,
@@ -1881,14 +1608,14 @@ export async function runAgentContextDiagnostics(input: {
     }),
     diagnosticCheck({
       id: "engine-mcp-status",
-      status: "skipped",
-      evidenceKind: "unavailable",
-      code: "live_mcp_status_intentionally_not_queried",
-      message: "Live MCP status was not queried because that endpoint can connect every enabled MCP.",
-      owner: "opencode-engine",
-      action: "Review the bounded OpenWork Cloud catalog probe and exact managed registration response evidence instead.",
+      status: "warning",
+      evidenceKind: "derived",
+      code: "passive_mcp_registration_evidence",
+      message: "Only previously observed registration states are included. Diagnostics did not query live MCP status or activate workspace connectors.",
+      owner: "openwork-server",
+      action: "Use connection repair if the cached registration status reports a problem.",
       details: {
-        effectiveMcpConfigurationObserved: Boolean(effectiveEngine),
+        effectiveMcpConfigurationObserved: false,
         mcpStatusApiReadPerformed: false,
       },
     }),
@@ -1906,9 +1633,7 @@ export async function runAgentContextDiagnostics(input: {
       code: "sanitized_allowlist_report",
       message: "The report contains only allowlisted evidence, bounded sanitized engine error summaries, and credential-free transport metadata; diagnostics did not directly request mutations, provider operations, or capability calls.",
       owner: "openwork-server",
-      action: engineApiReadPerformed
-        ? "Be aware that reading a cold engine may initialize configured bootstrap or plugin hooks whose side effects this report does not inspect."
-        : "No action is required.",
+      action: "No action is required.",
       details: {
         rawPromptIncluded: false,
         authorizationHeaderValueIncluded: false,
@@ -1917,7 +1642,7 @@ export async function runAgentContextDiagnostics(input: {
         fullUrlIncluded: false,
         credentialFreeTransportProbePerformed: cloudEndpointTransportProbe.performed,
         sanitizedEngineErrorSummariesIncluded: failedRegistrationDetails.some((failure) => failure.errorSummary !== null),
-        engineBootstrapMayHaveRun: engineApiReadPerformed,
+        engineBootstrapMayHaveRun: false,
         engineBootstrapSideEffectsInspected: false,
       },
     }),
@@ -1947,23 +1672,10 @@ export async function runAgentContextDiagnostics(input: {
     checks,
     agent: {
       evidenceSource: agentEvidenceSource,
-      defaultAgent: safeText(
-        effectiveEngine ? effectiveEngine.defaultAgent : expectedRuntimeConfig.default_agent,
-        160,
-      ) || null,
+      defaultAgent: null,
       configuredOpenworkAgent: {
-        state: effectiveEngine
-          ? effectiveOpenworkAgent ? "present" : "missing"
-          : expectedAgent?.disable === true
-            ? "configured-disabled"
-            : expectedAgent
-              ? "present"
-              : "missing",
-        mode: effectiveOpenworkAgent
-          ? effectiveOpenworkAgent.mode
-          : expectedAgent?.mode === "subagent" || expectedAgent?.mode === "primary" || expectedAgent?.mode === "all"
-            ? expectedAgent.mode
-            : null,
+        state: "present",
+        mode: "primary",
         prompt,
         connectToolPermissions: {
           searchCapabilities: reportedToolPermission(`${OPENWORK_CLOUD_MCP_NAME}_search_capabilities`),
@@ -1999,8 +1711,8 @@ export async function runAgentContextDiagnostics(input: {
       directProviderOperationPerformed: false,
       directConfigurationMutationPerformed: false,
       directEphemeralCredentialMintPerformed: false,
-      engineApiReadPerformed,
-      engineBootstrapMayHaveRun: engineApiReadPerformed,
+      engineApiReadPerformed: false,
+      engineBootstrapMayHaveRun: false,
       engineBootstrapSideEffectsInspected: false,
       authSessionActivityMayBeRecorded: true,
       tokenValuesIncluded: false,

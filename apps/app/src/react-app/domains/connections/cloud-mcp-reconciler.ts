@@ -106,12 +106,6 @@ type CloudMcpReconcilerInput = {
   probe?: boolean;
 };
 
-type OpenCodeDisconnectClient = {
-  mcp: {
-    disconnect: (input: { directory: string; name: string }) => Promise<unknown>;
-  };
-};
-
 type CleanupClient = {
   baseUrl: string;
   removeMcp: (workspaceId: string, name: string) => Promise<unknown>;
@@ -590,20 +584,13 @@ export function cloudMcpDisplaySummary(input: {
 export async function cleanupOpenworkCloudMcpAfterSignOut(input: {
   context: CloudMcpScope;
   openworkClient: CleanupClient | null;
-  opencodeClient: OpenCodeDisconnectClient | null;
-  directory: string;
 }): Promise<void> {
   const scope = normalizeCloudMcpScope(input.context);
   if (scope) clearCloudMcpScopedMetadata(scope);
-
-  await Promise.all([
-    input.openworkClient && scope
-      ? input.openworkClient.removeMcp(scope.workspaceId, CLOUD_MCP_SERVER_NAME).catch(() => null)
-      : Promise.resolve(null),
-    input.opencodeClient && input.directory.trim()
-      ? input.opencodeClient.mcp.disconnect({ directory: input.directory.trim(), name: CLOUD_MCP_SERVER_NAME }).catch(() => null)
-      : Promise.resolve(null),
-  ]);
+  // Removing the entry also settles the engine's connection server-side.
+  if (input.openworkClient && scope) {
+    await input.openworkClient.removeMcp(scope.workspaceId, CLOUD_MCP_SERVER_NAME).catch(() => null);
+  }
 }
 
 export function recordCloudMcpDisabledIntent(scope: CloudMcpScope, state: CloudMcpUserState): void {

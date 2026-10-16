@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo } from "react";
-import type { Session, SessionStatus } from "@opencode-ai/sdk/v2/client";
+import type { Session, SessionStatus } from "@/app/lib/opencode-types";
 
 import { ensureWorkspaceSessionSync, trackWorkspaceSessionsSync } from "./session-sync";
 

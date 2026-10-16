@@ -5,7 +5,7 @@
  * through {@link resolveWorkspaceEndpoint} when you need:
  *   - an `OpenworkServerClient` for a workspace
  *   - a mounted `/workspace/<id>` URL prefix
- *   - the `/opencode` URL for the OpenCode SDK
+ *   - the `/opencode2` URL for the OpenCode engine
  *
  * Don't compose `<baseUrl>/workspace/<id>` by hand.
  */
@@ -28,7 +28,7 @@ export type ResolvedWorkspaceEndpoint = {
   client: OpenworkServerClient;
   /** Mounted base url: `<baseUrl>/workspace/<workspaceId>`. No trailing slash. */
   mountedBaseUrl: string;
-  /** OpenCode SDK base url: `<mountedBaseUrl>/opencode`. */
+  /** OpenCode engine base url: `<mountedBaseUrl>/opencode2`. */
   opencodeBaseUrl: string;
 };
 
@@ -67,21 +67,6 @@ export function resolveWorkspaceEndpoint(
     workspaceId,
     client,
     mountedBaseUrl,
-    opencodeBaseUrl: `${mountedBaseUrl}/opencode`,
+    opencodeBaseUrl: `${mountedBaseUrl}/opencode2`,
   };
-}
-
-/**
- * The local server's managed engine, addressed without a workspace. The
- * server runs its engine before the first workspace exists and proxies
- * `<server>/opencode/*` to it, so providers can be listed and connected
- * right after sign-in. Returns null without a connected local server.
- */
-export function resolveEngineRootEndpoint(
-  localServer: LocalServerHandle,
-): { opencodeBaseUrl: string; token: string } | null {
-  const baseUrl = (localServer.baseUrl ?? "").trim().replace(/\/+$/, "");
-  const token = (localServer.token ?? "").trim();
-  if (!baseUrl || !token) return null;
-  return { opencodeBaseUrl: `${baseUrl}/opencode`, token };
 }

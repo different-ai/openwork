@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import type { UIMessage } from "ai";
 import { replyModelFromInfo } from "./reply-model";
-import type { FilePart, Part, TextPart, ToolPart } from "@opencode-ai/sdk/v2/client";
+import type { FilePart, Part, TextPart, ToolPart } from "@/app/lib/opencode-types";
 
 import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../../../app/types";

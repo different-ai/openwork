@@ -1574,9 +1574,8 @@ describe("opening a thread", () => {
     if (!endpoint) throw new Error("Missing workspace endpoint");
     const runtimeWorkspaceId = "x";
     expect(endpoint.workspaceId).toBe(runtimeWorkspaceId);
-    // The route's resolved engine can be v2 even though endpoint.opencodeBaseUrl
-    // is v1. Both prefetch and the mounted primary surface use this resolved URL.
-    const opencodeBaseUrl = `${endpoint.mountedBaseUrl}/opencode2`;
+    // Both prefetch and the mounted primary surface use the resolved engine URL.
+    const opencodeBaseUrl = endpoint.opencodeBaseUrl;
     const draftScope = "org-a/member-a";
     const prefetchIdentity = sessionHistoryIdentity({ draftScope, opencodeBaseUrl, runtimeWorkspaceId: endpoint.workspaceId, sessionId: "a" });
     const surfaceIdentity = sessionHistoryIdentity({ draftScope, opencodeBaseUrl, runtimeWorkspaceId, sessionId: "a" });
@@ -1599,7 +1598,7 @@ describe("opening a thread", () => {
     const openingKey = openingSessionHistoryOptions(clicked).queryKey;
     for (const identity of [
       sessionHistoryIdentity({ draftScope: "org-a/member-b", opencodeBaseUrl, runtimeWorkspaceId, sessionId: "a" }),
-      sessionHistoryIdentity({ draftScope, opencodeBaseUrl: endpoint.opencodeBaseUrl, runtimeWorkspaceId, sessionId: "a" }),
+      sessionHistoryIdentity({ draftScope, opencodeBaseUrl: "http://localhost:7778/workspace/x/opencode2", runtimeWorkspaceId, sessionId: "a" }),
       sessionHistoryIdentity({ draftScope, opencodeBaseUrl, runtimeWorkspaceId: "other", sessionId: "a" }),
     ]) expect(openingSessionHistoryOptions({ ...clicked, ...identity }).queryKey).not.toEqual(openingKey);
     const rotated = { ...view.input("a", "rotated-token"), ...surfaceIdentity };

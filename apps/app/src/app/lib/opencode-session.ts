@@ -1,15 +1,8 @@
 /**
- * Typed helpers for OpenCode session operations.
- *
- * The OpenCode SDK (v2) exposes `session.abort`, `session.revert`,
- * `session.unrevert`, `session.shell`, and `command.list` as typed methods.
- * This module provides thin wrappers that avoid `as any` casts by using the
- * SDK types directly, and adds feature-detection for newer API surface
- * (e.g. `shellAsync`) that may not be present in older SDK versions.
+ * Typed helpers for OpenCode session operations on the app's engine client.
  */
-import type { Session } from "@opencode-ai/sdk/v2/client";
+import type { Session } from "./opencode-types";
 import type { Client, ModelRef } from "../types";
-import { isOpencodeV2Client } from "./opencode-v2-adapter";
 import { unwrap } from "./opencode";
 
 export type AbortSessionLogContext = {
@@ -123,30 +116,6 @@ export async function unrevertSession(
 }
 
 /**
- * Archive or unarchive a session via OpenCode's native `time.archived` field.
- *
- * Passing `archived: true` stamps the current time; `false` clears it (sends
- * `0`, which the server treats as "not archived"). Archiving is a non-destructive
- * primitive — the session and its context are preserved, which matters for orgs
- * with audit/retention policies that forbid deletion.
- */
-export async function setSessionArchived(
-  client: Client,
-  sessionID: string,
-  archived: boolean,
-  directory?: string,
-  options?: { signal?: AbortSignal },
-): Promise<void> {
-  unwrap(
-    await client.session.update({
-      sessionID,
-      directory,
-      time: { archived: archived ? Date.now() : 0 },
-    }, options),
-  );
-}
-
-/**
  * Set the exact model bound to an existing session without sending a prompt.
  *
  * OpenCode v2 persists this through the canonical `/api/session/:id/model`
@@ -160,9 +129,6 @@ export async function setSessionModel(
   variant?: string | null,
   options?: { signal?: AbortSignal },
 ): Promise<void> {
-  if (!isOpencodeV2Client(client)) {
-    throw new Error("Session model reassignment requires the OpenCode v2 session API.");
-  }
   const response = await client.session.setModel({
     sessionID,
     model: { providerID: model.providerID, modelID: model.modelID },
@@ -191,8 +157,7 @@ export async function setSessionModel(
 // ---------------------------------------------------------------------------
 
 /**
- * Execute a shell command in a session. Uses `shell` from the SDK.
- * Falls back to `promptAsync` with a `!` prefix if `shell` is unavailable.
+ * Execute a shell command in a session.
  */
 export async function shellInSession(
   client: Client,

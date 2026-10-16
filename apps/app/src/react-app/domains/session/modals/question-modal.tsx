@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useReducer } from "react";
-import type { QuestionInfo } from "@opencode-ai/sdk/v2/client";
+import type { QuestionInfo } from "@/app/lib/opencode-types";
 import { Check, ChevronRight, HelpCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";

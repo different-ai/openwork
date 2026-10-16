@@ -6,7 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router";
 import { dispatchDenSettingsChanged } from "../src/app/lib/den-session-events";
 import type { ResolvedWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
-import type { RouteSession, RouteSessionListTransport, RouteWorkspace } from "../src/react-app/shell/route-workspaces";
+import type { RouteSession, RouteWorkspace } from "../src/react-app/shell/route-workspaces";
 import type { DenAuthStore } from "../src/react-app/domains/cloud/den-auth-provider";
 
 function deferred<T>() {
@@ -29,50 +29,29 @@ let connection = { baseUrl: "http://localhost:4100", token: "token-1" };
 let denAuth: Pick<DenAuthStore, "status" | "isSignedIn" | "verifiedIdentity" | "user"> = {
   status: "signed_out", isSignedIn: false, verifiedIdentity: null, user: null,
 };
-let localStatus = deferred<{ enabled: boolean; chatRouting: boolean }>();
 let bootReadyCalls = 0;
 const markRouteReady = () => { bootReadyCalls += 1; };
 const requests: Array<{
   workspaceId: string;
-  engine: "v1" | "v2";
   endpoint: ResolvedWorkspaceEndpoint;
   response: ReturnType<typeof deferred<RouteSession[]>>;
 }> = [];
 
 const hydrationRequests: Array<{
   sessionId: string;
-  engine: "v1" | "v2";
   baseUrl: string;
   response: ReturnType<typeof deferred<RouteSession>>;
 }> = [];
-function requestHydration(sessionId: string, engine: "v1" | "v2", baseUrl: string) {
+function requestHydration(sessionId: string, baseUrl: string) {
   const response = deferred<RouteSession>();
-  hydrationRequests.push({ sessionId, engine, baseUrl, response });
+  hydrationRequests.push({ sessionId, baseUrl, response });
   return response.promise;
 }
 const nativeSessionModule = await import("../src/app/lib/opencode-session-native");
 mock.module("@/app/lib/opencode-session-native", () => ({
   ...nativeSessionModule,
   getNativeSession: (endpoint: Parameters<typeof nativeSessionModule.getNativeSession>[0], sessionId: string) =>
-    requestHydration(sessionId, "v1", endpoint.opencodeBaseUrl),
-}));
-const v2Module = await import("../src/app/lib/opencode-v2-adapter");
-const createV2Client = v2Module.createClientV2;
-mock.module("@/app/lib/opencode-v2-adapter", () => ({
-  ...v2Module,
-  createClientV2: (...args: Parameters<typeof createV2Client>) => {
-    const client = createV2Client(...args);
-    return {
-      ...client,
-      session: {
-        ...client.session,
-        get: async ({ sessionID }: { sessionID: string }) => ({
-          data: await requestHydration(sessionID, "v2", args[0]),
-          response: new Response(),
-        }),
-      },
-    };
-  },
+    requestHydration(sessionId, endpoint.opencodeBaseUrl),
 }));
 
 const serverModule = await import("../src/app/lib/openwork-server");
@@ -83,16 +62,14 @@ mock.module("@/app/lib/openwork-server", () => ({
     ...createServerClient(options),
     listWorkspaces: async () => ({ items: workspaces, activeId: "ws_1" }),
     activateWorkspace: async () => undefined,
-    getEngineV2PreviewStatus: async () => localStatus.promise,
   }),
 }));
 const routeWorkspaces = await import("../src/react-app/shell/route-workspaces");
-const v2Transport = routeWorkspaces.v2RouteSessionList;
 mock.module("@/react-app/shell/route-workspaces", () => ({
   ...routeWorkspaces,
-  listRouteSessions: (endpoint: ResolvedWorkspaceEndpoint, transport?: RouteSessionListTransport) => {
+  listRouteSessions: (endpoint: ResolvedWorkspaceEndpoint) => {
     const response = deferred<RouteSession[]>();
-    requests.push({ workspaceId: endpoint.workspaceId, engine: transport === v2Transport ? "v2" : "v1", endpoint, response });
+    requests.push({ workspaceId: endpoint.workspaceId, endpoint, response });
     return response.promise;
   },
 }));
@@ -173,10 +150,6 @@ function session(workspaceId: string, id: string): RouteSession {
   return { id, title: id, slug: id, projectID: "project", directory: `/tmp/${workspaceId}`, version: "1", time: { created: 1, updated: 1 } };
 }
 
-async function publishRouting(v2: boolean) {
-  await act(async () => { localStatus.resolve({ enabled: v2, chatRouting: v2 }); });
-}
-
 beforeEach(() => {
   input.preservePendingConversationRoute = false;
   window.localStorage.clear();
@@ -188,7 +161,6 @@ beforeEach(() => {
   bootReadyCalls = 0;
   connection = { baseUrl: "http://localhost:4100", token: "token-1" };
   denAuth = { status: "signed_out", isSignedIn: false, verifiedIdentity: null, user: null };
-  localStatus = deferred();
 });
 
 afterEach(async () => {
@@ -196,7 +168,6 @@ afterEach(async () => {
     root?.unmount();
     for (const request of requests) request.response.resolve([]);
     for (const request of hydrationRequests) request.response.resolve(session("ws_1", request.sessionId));
-    localStatus.resolve({ enabled: false, chatRouting: false });
   });
   root = null;
   container?.remove();
@@ -209,7 +180,6 @@ afterAll(async () => { if (ownedDom) await GlobalRegistrator.unregister(); });
 test("workspace initialization preserves an owned pending route and never hydrates its local identity", async () => {
   input.preservePendingConversationRoute = true;
   await mount("ws_1", undefined, "/session?pendingConversation=local-pending");
-  await publishRouting(false);
   expect(route().selectedWorkspaceId).toBe("ws_1");
   expect(router.pathname).toBe("/session");
   expect(router.search).toBe("?pendingConversation=local-pending");
@@ -221,7 +191,6 @@ test("workspace initialization preserves an owned pending route and never hydrat
 
 test("first-send publication updates the inventory ref before a stale list response lands", async () => {
   await mount("ws_1");
-  await publishRouting(false);
   const inventory = requests.find((request) => request.workspaceId === "ws_1");
   if (!inventory) throw new Error("Expected an in-flight session inventory");
   await act(async () => {
@@ -238,7 +207,7 @@ const unchangedDenSettings = {
   settings: { baseUrl: "https://den.invalid", authToken: "den-token", activeOrgId: "org_1" },
 };
 
-async function returnFromSettings(v2: boolean) {
+async function returnFromSettings() {
   denAuth = {
     status: "signed_in", isSignedIn: true,
     verifiedIdentity: { principalId: "user_1", organizationId: "org_1" },
@@ -246,9 +215,7 @@ async function returnFromSettings(v2: boolean) {
   };
   workspaces = [defaultWorkspaces[0]];
   await mount("ws_1", "selected");
-  await publishRouting(v2);
   expect(hydrationRequests).toHaveLength(1);
-  expect(hydrationRequests[0].engine).toBe(v2 ? "v2" : "v1");
   await act(async () => { hydrationRequests[0].response.resolve(session("ws_1", "selected")); });
   expect(route().sessionsByWorkspaceId.ws_1.map((item) => item.id)).toEqual(["selected"]);
   expect(requests).toHaveLength(1);
@@ -268,7 +235,6 @@ async function returnFromSettings(v2: boolean) {
   expect(requests).toHaveLength(2);
   expect(hydrationRequests).toHaveLength(2);
   expect(hydrationRequests[1].sessionId).toBe("selected");
-  expect(hydrationRequests[1].engine).toBe(v2 ? "v2" : "v1");
   expect(hydrationRequests[1].baseUrl).toBe(route().opencodeBaseUrl);
   await act(async () => { requests[0].response.resolve([session("ws_1", "obsolete")]); });
   expect(route().sessionsByWorkspaceId.ws_1).toEqual([]);
@@ -277,11 +243,9 @@ async function returnFromSettings(v2: boolean) {
   return { inventory: requests[1], hydration: hydrationRequests[1] };
 }
 
-for (const v2 of [false, true]) {
-  const engine = v2 ? "v2" : "v1";
-
-  test(`${engine} Settings return hydrates the selected session before a delayed empty inventory without losing it`, async () => {
-    const { inventory, hydration } = await returnFromSettings(v2);
+{
+  test(`Settings return hydrates the selected session before a delayed empty inventory without losing it`, async () => {
+    const { inventory, hydration } = await returnFromSettings();
     await act(async () => { hydration.response.resolve(session("ws_1", "selected")); });
     expect(route().sessionsByWorkspaceId.ws_1.map((item) => item.id)).toEqual(["selected"]);
     expect(route().retryingWorkspaceIds).toContain("ws_1");
@@ -294,8 +258,8 @@ for (const v2 of [false, true]) {
     expect(hydrationRequests).toHaveLength(2);
   });
 
-  test(`${engine} Settings return still hydrates the selected session after its inventory fails`, async () => {
-    const { inventory, hydration } = await returnFromSettings(v2);
+  test(`Settings return still hydrates the selected session after its inventory fails`, async () => {
+    const { inventory, hydration } = await returnFromSettings();
     await act(async () => {
       inventory.response.reject(new serverModule.OpenworkServerError(400, "invalid_response", "Invalid inventory response"));
     });
@@ -313,8 +277,8 @@ for (const v2 of [false, true]) {
   });
 
   for (const refresh of ["server", "Den"]) {
-    test(`${engine} same-identity ${refresh} settings refresh retains a directly hydrated session through an empty replacement inventory`, async () => {
-      const { inventory, hydration } = await returnFromSettings(v2);
+    test(`same-identity ${refresh} settings refresh retains a directly hydrated session through an empty replacement inventory`, async () => {
+      const { inventory, hydration } = await returnFromSettings();
       await act(async () => { hydration.response.resolve(session("ws_1", "selected")); });
       const endpointBefore = route().opencodeBaseUrl;
       const tokenBefore = route().selectedWorkspaceServerToken;
@@ -354,12 +318,10 @@ for (const v2 of [false, true]) {
   }
 }
 
-for (const v2 of [false, true]) {
-  const engine = v2 ? "v2" : "v1";
-  test(`${engine} cold deep link keeps an indexed session listed after selecting another one when its direct read lands first`, async () => {
+{
+  test(`cold deep link keeps an indexed session listed after selecting another one when its direct read lands first`, async () => {
     workspaces = [defaultWorkspaces[0]];
     await mount("ws_1", "other");
-    await publishRouting(v2);
     const inventory = requests.find((request) => request.workspaceId === "ws_1");
     if (!inventory) throw new Error("Expected an in-flight session inventory");
     expect(hydrationRequests.map((request) => request.sessionId)).toEqual(["other"]);
@@ -380,87 +342,27 @@ for (const v2 of [false, true]) {
   });
 }
 
-test("routing readiness starts the fifth selected local workspace before slow background lists finish", async () => {
+test("starts the fifth selected local workspace before slow background lists finish", async () => {
   workspaces = Array.from({ length: 5 }, (_, index): RouteWorkspace => ({
     id: `ws_${index + 1}`, name: `Workspace ${index + 1}`, displayNameResolved: `Workspace ${index + 1}`,
     workspaceType: "local", path: `/tmp/ws_${index + 1}`,
   }));
   await mount("ws_5");
   expect(route().selectedWorkspaceId).toBe("ws_5");
-  expect(requests).toHaveLength(0);
-
-  await publishRouting(true);
-  // No background response has resolved: the selected workspace must be in the first batch.
-  expect(requests.map((request) => request.workspaceId)).toEqual(["ws_5", "ws_1", "ws_2", "ws_3"]);
+  // No background response has resolved: the selected workspace is already loading.
+  expect(requests.map((request) => request.workspaceId)).toContain("ws_5");
   const selected = requests.find((request) => request.workspaceId === "ws_5");
   if (!selected) throw new Error("Expected selected workspace inventory load");
   await act(async () => { selected.response.resolve([session("ws_5", "selected")]); });
   expect(route().sessionsByWorkspaceId.ws_5.map((item) => item.id)).toEqual(["selected"]);
   expect(route().retryingWorkspaceIds).not.toContain("ws_5");
-  expect(requests).toHaveLength(4);
-
   await act(async () => {
     for (const request of requests) request.response.resolve([session(request.workspaceId, "background")]);
   });
-  expect(requests).toHaveLength(5);
-  await act(async () => {
-    requests.find((request) => request.workspaceId === "ws_4")?.response.resolve([session("ws_4", "background")]);
-  });
 });
-
-for (const staleCompletesFirst of [true, false]) {
-  test(`refreshes every local inventory after switching to v2; stale v1 completes ${staleCompletesFirst ? "first" : "last"}`, async () => {
-    await mount();
-    // Routing discovery must not gate workspace bootstrap.
-    expect(route().loading).toBe(false);
-    expect(bootReadyCalls).toBeGreaterThan(0);
-    expect(route().opencodeClient).toBeNull();
-    expect(requests).toEqual([]);
-
-    await publishRouting(false);
-    const initial = [...requests];
-    expect(initial.map((request) => request.workspaceId).sort()).toEqual(["ws_1", "ws_2"]);
-    expect(initial.every((request) => request.engine === "v1")).toBe(true);
-    await act(async () => {
-      initial.find((request) => request.workspaceId === "ws_2")?.response.resolve([session("ws_2", "cached-v1")]);
-    });
-    expect(route().sessionsByWorkspaceId.ws_2.map((item) => item.id)).toEqual(["cached-v1"]);
-    expect(route().retryingWorkspaceIds).not.toContain("ws_2");
-    const stale = initial.filter((request) => request.workspaceId === "ws_1");
-
-    localStatus = deferred();
-    await act(async () => { window.dispatchEvent(new Event("openwork-server-settings-changed")); });
-    await publishRouting(true);
-    const fresh = requests.filter((request) => request.engine === "v2");
-    // The delayed list cannot block v2, and the already-loaded, unselected inventory refreshes too.
-    expect(fresh.map((request) => request.workspaceId).sort()).toEqual(["ws_1", "ws_2"]);
-
-    const finishStale = async () => {
-      await act(async () => {
-        for (const request of stale) request.response.resolve([session(request.workspaceId, "obsolete")]);
-      });
-    };
-    if (staleCompletesFirst) {
-      await finishStale();
-      expect(route().sessionsByWorkspaceId.ws_1).toEqual([]);
-      expect(route().sessionsByWorkspaceId.ws_2.map((item) => item.id)).toEqual(["cached-v1"]);
-      expect(route().retryingWorkspaceIds).toContain("ws_1");
-      expect(route().retryingWorkspaceIds).toContain("ws_2");
-    }
-    await act(async () => {
-      for (const request of fresh) request.response.resolve([session(request.workspaceId, "fresh")]);
-    });
-    if (!staleCompletesFirst) await finishStale();
-    expect(route().sessionsByWorkspaceId.ws_1.map((item) => item.id)).toEqual(["fresh"]);
-    expect(route().sessionsByWorkspaceId.ws_2.map((item) => item.id)).toEqual(["fresh"]);
-    expect(route().retryingWorkspaceIds).not.toContain("ws_1");
-    expect(route().retryingWorkspaceIds).not.toContain("ws_2");
-  });
-}
 
 test("offline recovery reloads cleared inventories even when the unselected scope is unchanged", async () => {
   await mount();
-  await publishRouting(false);
   const initial = [...requests];
   expect(initial.map((request) => request.workspaceId).sort()).toEqual(["ws_1", "ws_2"]);
   await act(async () => {
@@ -488,7 +390,6 @@ test("offline recovery reloads cleared inventories even when the unselected scop
   const unselectedBefore = initial.find((request) => request.workspaceId === "ws_2");
   const unselectedAfter = recovered.find((request) => request.workspaceId === "ws_2");
   if (!unselectedBefore || !unselectedAfter) throw new Error("Expected unselected inventory before and after recovery");
-  expect(unselectedAfter.engine).toBe(unselectedBefore.engine);
   expect(unselectedAfter.endpoint.baseUrl).toBe(unselectedBefore.endpoint.baseUrl);
   expect(unselectedAfter.endpoint.token).toBe(unselectedBefore.endpoint.token);
   expect(unselectedAfter.endpoint.workspaceId).toBe(unselectedBefore.endpoint.workspaceId);
@@ -502,32 +403,16 @@ test("offline recovery reloads cleared inventories even when the unselected scop
   expect(requests).toHaveLength(4);
 });
 
-test("a rotated endpoint waits for its own routing and rejects the old endpoint's late inventory", async () => {
+test("a rotated endpoint rejects the old endpoint's late inventory", async () => {
   await mount();
-  await publishRouting(false);
   const stale = [...requests];
   connection = { baseUrl: "http://localhost:4200", token: "token-2" };
-  localStatus = deferred();
   await act(async () => { await route().refreshRouteState({ supersede: true }); });
-  expect(route().opencodeClient).toBeNull();
-  expect(requests.filter((request) => request.endpoint.baseUrl === connection.baseUrl)).toEqual([]);
   await act(async () => {
     for (const request of stale) request.response.resolve([session(request.workspaceId, "obsolete")]);
   });
   expect(route().sessionsByWorkspaceId.ws_1).toEqual([]);
-  await publishRouting(true);
   const fresh = requests.filter((request) => request.endpoint.baseUrl === connection.baseUrl);
   expect(fresh).toHaveLength(2);
-  expect(fresh.every((request) => request.engine === "v2" && request.endpoint.token === "token-2")).toBe(true);
-});
-
-test("a late routing-status response cannot switch inventories back to the old engine", async () => {
-  await mount();
-  const staleStatus = localStatus;
-  localStatus = deferred();
-  await act(async () => { window.dispatchEvent(new Event("openwork-server-settings-changed")); });
-  await publishRouting(true);
-  await act(async () => { staleStatus.resolve({ enabled: false, chatRouting: false }); });
-  expect(route().opencodeBaseUrl.endsWith("/opencode2")).toBe(true);
-  expect(requests.every((request) => request.engine === "v2")).toBe(true);
+  expect(fresh.every((request) => request.endpoint.token === "token-2")).toBe(true);
 });

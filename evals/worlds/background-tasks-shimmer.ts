@@ -63,7 +63,7 @@ export async function backgroundTasksShimmer(seed: Seed) {
     // The engine wakes the agent with the command's output once it ends.
     { promptMarker: item.output, latestUserTurn: true, finalReply: item.wake, steps: [] },
   ]) });
-  const app = await seed.appWeb({ name: "background-tasks-shimmer", workspacePath, webPort, den: den.ref, engine, mocks: { agent: mock } });
+  const app = await seed.appWeb({ name: "background-tasks-shimmer", workspacePath, webPort, den: den.ref, mocks: { agent: mock } });
   const witness = app.mocks.agent;
   if (!witness) throw new Error("Missing background shell model witness");
   await seed.signIn(app, den.admin, "Background tasks member");

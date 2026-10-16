@@ -35,7 +35,7 @@ claimed. Raw PR material and historical images are not committed here.
 | Install links | Permission-specific clipboard failure without browser internals or false success | `den-download-openwork.e2e.test.ts` |
 | Slack setup | Shared accessible settings controls and protected secret capture | `slack-assistant-setup.e2e.test.ts` |
 | Workbot attachments | Portaled blocked hint, touch/keyboard dismissal, no picker or write | `workbot-first-use.e2e.test.ts` |
-| Desktop upgrade | Optional notice below chrome, background continuity, explicit recovery, preserved backups/history/draft | `engine-v1-history-upgrade.e2e.test.ts` |
+| Earlier chat import | Optional notice below chrome, background continuity, explicit recovery, preserved backups/history/draft | `v1-chat-history-import.e2e.test.ts` |
 | Plugin sign-in | Compact approval heading with unchanged trusted client identity and consent | `opencode-plugin-sign-in.e2e.test.ts` |
 | Shared headers | Compact headings, unchanged content/navigation and immediate rollback | `den-flat-page-headers.e2e.test.ts` |
 | Audit history | Shared operation and capture settings rows, expandable changes, local timestamps, muted diagnostic disclosure | `audit-logs.e2e.test.ts` |

@@ -106,10 +106,9 @@ owner-scoped targets and receipts, without a separate registration mechanism.
   session receipt **before** initial prompt admission. Persist completion and
   control results **before** acknowledging them remotely.
 - Stable command/request-derived `msg_` IDs make native V2 prompt admission
-  replayable when the adapter opts into that guarantee. Mixed V1/V2 desktop
-  adapters conservatively treat uncertain sends as `ambiguous_send` rather
-  than retrying a potentially admitted V1 prompt. Keep the original request immutable: native deduplication does
-  not compare prompt text for the same ID.
+  replayable when the adapter opts into that guarantee. Keep the original
+  request immutable: native deduplication does not compare prompt text for the
+  same ID.
 - Native OpenCode V2 creation supports a deterministic `ses_` ID. The adapter
   verifies the returned ID, directory and ownership metadata before accepting
   it. A creation retry therefore returns the same native session.
@@ -125,8 +124,7 @@ owner-scoped targets and receipts, without a separate registration mechanism.
   evidence that the native operation failed.
 
 These boundaries provide idempotent admission and recoverable receipts; they
-**do not promise exactly-once model execution or tool side effects**. Legacy V1
-native prompt and create APIs have weaker guarantees than V2.
+**do not promise exactly-once model execution or tool side effects**.
 
 ## Inspection and shutdown
 

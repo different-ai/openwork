@@ -2,7 +2,7 @@
  * `pnpm world up ... --env KEY` records the explicitly selected, nonsecret keys
  * in this marker (the CLI already rejects credential-like names). Launchers
  * forward exactly those keys to the app they start, so an app setting such as
- * `OPENWORK_ENGINE_V2_PREVIEW=1` reaches a preview on every placement that can
+ * `OPENWORK_AUTOMATION_RUNNER=on` reaches a preview on every placement that can
  * apply it. Without the marker (ordinary eval runs) nothing is forwarded.
  */
 export const SELECTED_ENV_KEYS = "OPENWORK_WORLD_SELECTED_ENV_KEYS";

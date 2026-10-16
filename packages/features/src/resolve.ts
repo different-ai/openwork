@@ -39,6 +39,8 @@ export const RETIRED_FEATURE_KEYS = [
   "headlessAutomations", "calendarPolish",
   // Removed (2026-10): organization Dashboards
   "orgManagedDashboards",
+  // Removed (2026-10): OpenCode v2 is the only engine; the v1 history import is not gated
+  "engineV2Upgrade",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

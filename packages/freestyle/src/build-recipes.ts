@@ -10,6 +10,9 @@ systemctl enable --now mysql redis-server
 mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'password'; FLUSH PRIVILEGES;"
 mkdir -p /opt/openwork-preview/tools`;
 
+/** The engine the server runs, as constants.json `opencodeV2Version` pins it; `opencode2` lands on the tools PATH. */
+const OPENCODE_V2_VERSION = "2.0.26";
+
 export function toolsRecipe(world: PreviewWorld): string {
   if (world === "workbot") return WORKBOT_TOOLS;
   return `${world === "desktop" ? `node -e 'if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("Desktop previews require Node 24 or newer")'
@@ -25,10 +28,10 @@ printf '<!doctype html><meta http-equiv="refresh" content="0; url=vnc.html?autoc
 ${world === "acme-web" ? `systemctl enable --now mysql redis-server
 mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'password'; FLUSH PRIVILEGES;"` : ""}` : ""}
 mkdir -p /opt/openwork-preview/tools
-printf 'allowBuilds:\\n  opencode-ai: true\\n${world === "desktop" ? "  bun: true\\n" : ""}' > /opt/openwork-preview/tools/pnpm-workspace.yaml
-pnpm --dir /opt/openwork-preview/tools add opencode-ai@1.18.15${world === "desktop" ? " bun@1.3.14" : ""}
-node /opt/openwork-preview/tools/node_modules/opencode-ai/postinstall.mjs
-/opt/openwork-preview/tools/node_modules/.bin/opencode --version${world === "desktop" ? "\nnode /opt/openwork-preview/tools/node_modules/bun/install.js\n/opt/openwork-preview/tools/node_modules/.bin/bun --version" : ""}`;
+printf 'allowBuilds:\\n  "@opencode/cli": true\\n${world === "desktop" ? "  bun: true\\n" : ""}' > /opt/openwork-preview/tools/pnpm-workspace.yaml
+pnpm --dir /opt/openwork-preview/tools add @opencode/cli@${OPENCODE_V2_VERSION}${world === "desktop" ? " bun@1.3.14" : ""}
+node /opt/openwork-preview/tools/node_modules/@opencode/cli/postinstall.mjs
+/opt/openwork-preview/tools/node_modules/.bin/opencode2 --version${world === "desktop" ? "\nnode /opt/openwork-preview/tools/node_modules/bun/install.js\n/opt/openwork-preview/tools/node_modules/.bin/bun --version" : ""}`;
 }
 
 export function dependencyRecipe(world: PreviewWorld): string {

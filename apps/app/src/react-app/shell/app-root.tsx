@@ -38,7 +38,7 @@ import { useVisualViewportInset } from "../../hooks/use-visual-viewport-inset";
 import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
 import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
 import { CloudWorkspaceOverlay, CloudWorkspaceStatusProvider } from "./cloud-workspace-overlay";
-import { EngineMigrationOverlay } from "./engine-migration";
+import { ChatHistoryImportOverlay } from "./chat-history-import";
 import { MemberApiKeyDialog } from "../domains/connections/member-api-key-dialog";
 import { AppMenuProvider } from "./app-menu";
 import {
@@ -566,7 +566,7 @@ export function AppRoot() {
                   </Routes>
                   <LoadingOverlay />
                   <CloudWorkspaceOverlay />
-                  <EngineMigrationOverlay />
+                  <ChatHistoryImportOverlay />
                   <MemberApiKeyDialog />
                 </CloudWorkspaceStatusProvider>
               </OpenWorkWebAccessGate>

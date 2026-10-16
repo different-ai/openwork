@@ -1,11 +1,11 @@
-import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
+import type { SessionStatus } from "@/app/lib/opencode-types";
 
 import { markTaskRunStart } from "@/app/lib/analytics";
-import { createClient, createPromptMessageID, isPromptAdmissionUnknown, readPromptAdmission } from "@/app/lib/opencode";
+import { createPromptMessageID, isPromptAdmissionUnknown, readPromptAdmission } from "@/app/lib/opencode";
 import { shellInSession } from "@/app/lib/opencode-session";
 import { composeNativeSessionSnapshot, getNativeSession } from "@/app/lib/opencode-session-native";
-import { hasTerminalSessionReply, sendSessionCommand, sessionHasPendingSubmission, sessionWorkHeld, submitAfterInterruption } from "@/app/lib/opencode-interruption";
-import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
+import { hasTerminalSessionReply, sendSessionCommand, sessionHasPendingSubmission, submitAfterInterruption } from "@/app/lib/opencode-interruption";
+import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
 import type { ComposerDraft, ModelRef } from "@/app/types";
 import { isAutoModel } from "@/react-app/domains/models/model-catalog";
 import { AutoAccessRejected, autoAccessWallFromError, preflightAutoSubmission } from "@/app/lib/inference-access";
@@ -106,18 +106,16 @@ async function performQueuedDraftSend(
   assertQueuedSendCurrent(sessionId, generation);
   const text = draft.text.trim();
   if (!text && draft.attachments.length === 0 && !draft.command) return "cancelled";
-  const session = await getNativeSession({ opencodeBaseUrl: context.opencodeBaseUrl, token: context.openworkToken }, sessionId);
+  await getNativeSession({ opencodeBaseUrl: context.opencodeBaseUrl, token: context.openworkToken }, sessionId);
   assertQueuedSendCurrent(sessionId, generation);
-  if (session.time.archived || sessionWorkHeld(context.opencodeBaseUrl, sessionId)) return "cancelled";
 
   const sessionModelSelection = getSessionModelSelection(sessionId);
   const sendModel = sessionModelSelection?.model ?? context.model ?? readStoredDefaultModelSafely();
   const sendVariant = sessionModelSelection ? sessionModelSelection.variant : context.variant;
-  const createEngineClient = isOpencodeV2BaseUrl(context.opencodeBaseUrl) ? createClientV2 : createClient;
-  const opencodeClient = createEngineClient(
+  const opencodeClient = createClientV2(
     context.opencodeBaseUrl,
     context.workspaceRoot || undefined,
-    { token: context.openworkToken, mode: "openwork" },
+    { token: context.openworkToken },
   );
 
   if (context.isCurrent?.() === false) return "cancelled";
@@ -158,7 +156,7 @@ async function performQueuedDraftSend(
       runtimeKey: context.environmentRuntimeKey,
     });
     assertQueuedSendCurrent(sessionId, generation);
-    if (sessionWorkHeld(context.opencodeBaseUrl, sessionId) || context.isCurrent?.() === false) return "cancelled";
+    if (context.isCurrent?.() === false) return "cancelled";
     const result = await opencodeClient.session.promptAsync({
       sessionID: sessionId,
       messageID: draft.messageId,
@@ -222,8 +220,8 @@ function armObservationProbe(watched: WatchedSession) {
     void (async () => {
       const phase = getQueuedDrainState(watched.sessionId).phase;
       if (phase.kind === "admission_unknown") {
-        const client = createClient(watched.context.opencodeBaseUrl, watched.context.workspaceRoot || undefined, {
-          token: watched.context.openworkToken, mode: "openwork",
+        const client = createClientV2(watched.context.opencodeBaseUrl, watched.context.workspaceRoot || undefined, {
+          token: watched.context.openworkToken,
         });
         const admission = await readPromptAdmission(client, watched.sessionId, phase.messageID);
         if (watchedSessions.get(watched.sessionId) !== watched) return;
@@ -381,7 +379,6 @@ async function attemptDrain(sessionId: string) {
   const context = getQueuedSendContext(sessionId);
   const nextItem = getComposerQueuedDrafts(useComposerStateStore.getState(), sessionId)[0];
   if (!context || !nextItem || watched.lastObservedStatus?.type !== "idle") return;
-  if (sessionWorkHeld(context.opencodeBaseUrl, sessionId)) return;
   if (!canAdmitNextQueuedItem(getQueuedDrainState(sessionId))) return;
 
   const draft = { ...withoutRevertTarget(nextItem.draft), messageId: nextItem.draft.messageId ?? createPromptMessageID() };

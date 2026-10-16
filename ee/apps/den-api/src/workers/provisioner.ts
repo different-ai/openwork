@@ -257,7 +257,7 @@ async function provisionWorkerOnRender(
     : "openwork-server"
   const buildCommand = [
     `npm install -g ${shellQuote(openworkServerPackage)}`,
-    "node ./scripts/install-opencode.mjs",
+    "node ../../../scripts/install-opencode2.mjs --outdir ./bin",
   ].join(" && ")
   const startScript = `
 set -u
@@ -270,7 +270,7 @@ fi
 attempt=0
 while [ "$attempt" -lt 3 ]; do
   attempt=$((attempt + 1))
-  if OPENWORK_MANAGE_OPENCODE=1 OPENWORK_OPENCODE_BIN=./bin/opencode OPENWORK_EXTENSIONS_PLUGIN_DIR="$plugin_dir" openwork-server --workspace /tmp/workspace --host 0.0.0.0 --port "\${PORT:-10000}" --cors '*' --approval manual --verbose; then
+  if OPENWORK_OPENCODE2_BIN=./bin/opencode2 OPENWORK_EXTENSIONS_PLUGIN_DIR="$plugin_dir" openwork-server --workspace /tmp/workspace --host 0.0.0.0 --port "\${PORT:-10000}" --cors '*' --approval manual --verbose; then
     exit 0
   fi
   status=$?

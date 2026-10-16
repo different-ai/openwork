@@ -160,8 +160,7 @@
     }
   },
   "scripts": {
-    "build": "tsup && tsc -p tsconfig.build.json",
-    "test": "node --test src/*.test.ts"
+    "build": "tsup && tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "luxon": "^3.6.1",

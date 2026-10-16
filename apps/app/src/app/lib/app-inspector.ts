@@ -19,7 +19,7 @@ export type InspectorSliceGetter = () => unknown;
 
 type InspectorAPI = {
   version: number;
-  /** Active workspace's authenticated OpenCode SDK client when developer mode is enabled. */
+  /** Active workspace's authenticated OpenCode client when developer mode is enabled. */
   readonly opencode: Client | null;
   snapshot(): Record<string, unknown>;
   slice(name: string): unknown;

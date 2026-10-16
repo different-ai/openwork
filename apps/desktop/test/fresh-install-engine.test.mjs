@@ -25,26 +25,26 @@ test("a profile with no earlier OpenWork state is a new install and starts on v2
   });
 });
 
-test("any file an earlier OpenWork run left behind marks an update, which keeps its engine", () => {
+test("any file an earlier OpenWork run left behind marks an update, which also uses v2", () => {
   withProfile(({ markerPaths }) => {
     for (const marker of markerPaths) {
-      assert.equal(resolveFreshInstallEngine({ markerPaths, env: {}, exists: (filePath) => filePath === marker }), undefined, marker);
+      assert.equal(resolveFreshInstallEngine({ markerPaths, env: {}, exists: (filePath) => filePath === marker }), "v2", marker);
     }
   });
 });
 
-test("an updated install with a server config stays on its engine", () => {
+test("an updated install with a server config uses v2", () => {
   withProfile(({ dir, markerPaths }) => {
     const serverConfig = join(dir, "config", "openwork", "server.json");
     assert.ok(markerPaths.includes(serverConfig));
     mkdirSync(join(dir, "config", "openwork"), { recursive: true });
     writeFileSync(serverConfig, "{}");
-    assert.equal(resolveFreshInstallEngine({ markerPaths, env: {} }), undefined);
+    assert.equal(resolveFreshInstallEngine({ markerPaths, env: {} }), "v2");
   });
 });
 
-test("an explicit OPENWORK_ENGINE_V2_PREVIEW always wins over the new-install default", () => {
+test("a retired OPENWORK_ENGINE_V2_PREVIEW override cannot select v1", () => {
   withProfile(({ markerPaths }) => {
-    assert.equal(resolveFreshInstallEngine({ markerPaths, env: { OPENWORK_ENGINE_V2_PREVIEW: "0" } }), undefined);
+    assert.equal(resolveFreshInstallEngine({ markerPaths, env: { OPENWORK_ENGINE_V2_PREVIEW: "0" } }), "v2");
   });
 });

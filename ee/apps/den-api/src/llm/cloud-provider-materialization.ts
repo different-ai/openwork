@@ -1,6 +1,6 @@
 import { buildManagedProviderConfig } from "@openwork/types/managed-provider-config"
 import { createHash } from "node:crypto"
-import { materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast"
+import { catalogModelVariants } from "@openwork/types/cloud-model-fast"
 import type { GatewayProviderSummary } from "@openwork/types/den/gateway"
 import { and, asc, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
@@ -638,20 +638,31 @@ async function requestOk(input: {
   }
 }
 
+// The server's runtime provider config is what the engine mirrors its
+// providers from, and what patchRuntimeProviders writes.
+async function readRuntimeProviderConfig(input: {
+  fetchImpl: FetchImpl
+  instanceUrl: string
+  hostToken: string
+  label: string
+}) {
+  return requestJson({
+    fetchImpl: input.fetchImpl,
+    label: input.label,
+    url: `${input.instanceUrl}/runtime-config/providers`,
+    init: {
+      method: "GET",
+      headers: hostTokenHeaders(input.hostToken),
+    },
+  })
+}
+
 async function readRuntimeManagedProviders(input: {
   fetchImpl: FetchImpl
   instanceUrl: string
-  clientToken: string
+  hostToken: string
 }) {
-  const payload = await requestJson({
-    fetchImpl: input.fetchImpl,
-    label: "engine_config_read",
-    url: `${input.instanceUrl}/opencode/config`,
-    init: {
-      method: "GET",
-      headers: bearerHeaders(input.clientToken),
-    },
-  })
+  const payload = await readRuntimeProviderConfig({ ...input, label: "runtime_provider_read" })
   const provider = isRecord(payload.provider) ? payload.provider : null
   const managed: JsonRecord = {}
   if (!provider) {
@@ -734,11 +745,7 @@ function materializedProviderStateMatches(prepared: PreparedMaterialization, cur
     desiredManagedProviders[provider.runtimeProviderId] = provider.config
   }
 
-  const current = stableJson(currentManagedProviders)
-  // New v1 engines expose the expanded config; older servers still expose the
-  // disabled import metadata. Accept either to avoid reloads on every resolve.
-  return current === stableJson(desiredManagedProviders)
-    || current === stableJson(materializeLegacyFastProviders(desiredManagedProviders))
+  return stableJson(currentManagedProviders) === stableJson(desiredManagedProviders)
 }
 
 function materializedEnvStateMatches(entries: EnvEntry[], snapshot: EnvSnapshot) {
@@ -923,21 +930,18 @@ function looksLikeJsonObject(body: string): boolean {
 async function verifyRuntimeProviders(input: {
   fetchImpl: FetchImpl
   instanceUrl: string
-  clientToken: string
+  hostToken: string
   providerIds: string[]
 }) {
   if (input.providerIds.length === 0) {
     return
   }
 
-  const payload = await requestJson({
+  const payload = await readRuntimeProviderConfig({
     fetchImpl: input.fetchImpl,
+    instanceUrl: input.instanceUrl,
+    hostToken: input.hostToken,
     label: "provider_readback",
-    url: `${input.instanceUrl}/opencode/config`,
-    init: {
-      method: "GET",
-      headers: bearerHeaders(input.clientToken),
-    },
   })
   const provider = isRecord(payload.provider) ? payload.provider : null
   for (const providerId of input.providerIds) {
@@ -1163,7 +1167,7 @@ export async function materializeCloudWorkerProviders(input: {
     const currentManagedProviders = await readRuntimeManagedProviders({
       fetchImpl,
       instanceUrl,
-      clientToken: tokens.clientToken,
+      hostToken: tokens.hostToken,
     })
     const providerPatch = buildRuntimeProviderPatch(prepared, currentManagedProviders)
     const providerRollbackPatch = buildRuntimeProviderRollbackPatch(prepared, currentManagedProviders)
@@ -1210,7 +1214,7 @@ export async function materializeCloudWorkerProviders(input: {
       await verifyRuntimeProviders({
         fetchImpl,
         instanceUrl,
-        clientToken: tokens.clientToken,
+        hostToken: tokens.hostToken,
         providerIds: desiredProviderIds,
       })
     } catch (error) {

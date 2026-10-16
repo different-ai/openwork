@@ -218,16 +218,6 @@
               ],
               "description": "Agent permissions: Organization admins choose what agents can do on members' computers: run commands, edit files, open websites and use local skills and MCP servers, for everyone or per team. Renders DEN_FEATURE_AGENT_PERMISSIONS."
             },
-            "engineV2Upgrade": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Desktop: upgrade prompt to OpenCode v2: Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines. Renders DEN_FEATURE_ENGINE_V2_UPGRADE."
-            },
             "remoteSessionEvents": {
               "enum": [
                 "",
@@ -609,6 +599,16 @@
               "description": "Retired: no longer a feature switch. Ignored."
             },
             "orgManagedDashboards": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "engineV2Upgrade": {
               "enum": [
                 "",
                 "true",

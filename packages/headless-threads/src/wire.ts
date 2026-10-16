@@ -29,7 +29,7 @@ export const threadStatusSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("retry"), attempt: z.number(), message: z.string(), next: z.number() }),
 ]);
 
-export const sessionSchema = z
+const sessionSchema = z
   .object({
     id: z.string(),
     title: z.string().nullish(),
@@ -89,15 +89,10 @@ const todoSchema = z
   })
   .passthrough();
 
-export const threadMessagesSchema = z.array(messageSchema);
-export const threadTodosSchema = z.array(todoSchema);
-export const threadStatusesSchema = z.record(z.string(), threadStatusSchema);
-export const abortResultSchema = z.boolean();
-
 export const threadSnapshotSchema = z.object({
   session: sessionSchema,
-  messages: threadMessagesSchema,
-  todos: threadTodosSchema,
+  messages: z.array(messageSchema),
+  todos: z.array(todoSchema),
   status: threadStatusSchema,
 });
 

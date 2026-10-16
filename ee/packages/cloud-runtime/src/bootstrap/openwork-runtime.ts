@@ -59,11 +59,11 @@ function checkpointLastFlushMarkerPath(config: OpenWorkCheckpointConfig) {
 }
 
 function checkpointEnvironmentScript(config: OpenWorkCheckpointConfig) {
-  // The engine keeps its sessions in a SQLite database under its own data dir
-  // (opencode.db), which lives on the container overlay rather than a volume.
-  // It was missing from the checkpoint, so every recycle onto a new snapshot
-  // started the user from scratch. Resolved from $HOME in-shell so it tracks
-  // the image instead of a hardcoded /root.
+  // The engine keeps its sessions under the runtime data path. The previous
+  // engine kept them in a SQLite database under its own data dir (opencode.db)
+  // on the container overlay; it stays in the checkpoint so the one-time chat
+  // history import still finds it after a recycle. Resolved from $HOME
+  // in-shell so it tracks the image instead of a hardcoded /root.
   return `ENGINE_STATE_PATH=\${OPENWORK_ENGINE_STATE_PATH:-\$HOME/.local/share/opencode}
 OPENWORK_STATE_MANIFEST="${checkpointStateManifest(config)} \$ENGINE_STATE_PATH"
 CHECKPOINT_DIR=${shellQuote(checkpointDirectory(config))}
@@ -158,7 +158,7 @@ export function renderRestoreMarkerExistsCommand(config: Pick<OpenWorkCheckpoint
 export function renderOpenWorkBootstrapScript(config: OpenWorkBootstrapConfig) {
   const verifyRuntimeStep = [
     `if ! command -v openwork-server >/dev/null 2>&1; then echo 'openwork-server binary missing from ${config.imageDescription}; ${config.rebuildHint}' >&2; exit 1; fi`,
-    `if ! command -v opencode >/dev/null 2>&1; then echo 'opencode binary missing from ${config.imageDescription}; ${config.rebuildHint}' >&2; exit 1; fi`,
+    `if ! command -v opencode2 >/dev/null 2>&1; then echo 'opencode2 binary missing from ${config.imageDescription}; ${config.rebuildHint}' >&2; exit 1; fi`,
   ].join("; ")
   const openworkServe = [
     "OPENWORK_DATA_DIR=",
@@ -169,10 +169,8 @@ export function renderOpenWorkBootstrapScript(config: OpenWorkBootstrapConfig) {
     shellQuote(config.clientToken),
     " OPENWORK_HOST_TOKEN=",
     shellQuote(config.hostToken),
-    " OPENWORK_MANAGE_OPENCODE=",
-    shellQuote("1"),
-    " OPENWORK_OPENCODE_BIN=",
-    shellQuote("/usr/local/bin/opencode"),
+    " OPENWORK_OPENCODE2_BIN=",
+    shellQuote("/usr/local/bin/opencode2"),
     " OPENWORK_WEB_ROOT=",
     shellQuote("/opt/openwork/web"),
     // The instance still serves its own SPA copy for direct/debug access, but

@@ -47,7 +47,6 @@ export interface TestRunSummary {
 export type TraceStage = "world" | "body";
 export type TraceChannel = "seed" | "seed:raw" | "user" | "agent" | "probe" | "probe:raw" | "vision" | "step";
 export type TestOutcome = "passed" | "failed" | "skipped" | "unknown";
-export type EvalEngine = "v1" | "v2";
 
 export interface TraceEntry {
   seq: number;
@@ -79,7 +78,6 @@ export interface TestRunRecord {
   closedAt: string;
   gitSha?: string;
   sandboxRef?: string;
-  engine: EvalEngine;
   branch?: string;
   summary: TestRunSummary;
   artifacts: TestArtifact[];
@@ -316,12 +314,6 @@ function parseRecord(value: unknown, legacy: boolean): TestRunRecord | null {
   const specFile = typeof value.specFile === "string" ? value.specFile : undefined;
   const gitSha = typeof value.gitSha === "string" ? value.gitSha : undefined;
   const sandboxRef = typeof value.sandboxRef === "string" ? value.sandboxRef : undefined;
-  const engine: EvalEngine | null = value.engine === undefined || value.engine === "v1"
-    ? "v1"
-    : value.engine === "v2"
-      ? "v2"
-      : null;
-  if (engine === null) return null;
   const branch = typeof value.branch === "string" ? value.branch : undefined;
   const trace: TraceEntry[] = [];
   if (value.trace !== undefined) {
@@ -353,7 +345,6 @@ function parseRecord(value: unknown, legacy: boolean): TestRunRecord | null {
     closedAt: value.closedAt,
     gitSha,
     sandboxRef,
-    engine,
     branch,
     summary,
     artifacts,

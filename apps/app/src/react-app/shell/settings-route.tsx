@@ -13,7 +13,8 @@ import {
   resolveOpenWorkExtensionCatalogPlatform,
 } from "@/app/constants";
 import type { EnablementContext } from "@/app/enablement";
-import { createClient, unwrap } from "@/app/lib/opencode";
+import { unwrap } from "@/app/lib/opencode";
+import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
 import {
   createOpenworkServerClient,
   isLoopbackOpenworkServerUrl,
@@ -82,7 +83,6 @@ import {
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
 import ProviderAuthModal, { PROVIDER_LABELS } from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
 import { keylessProviderIds } from "@/react-app/domains/connections/provider-auth/provider-policy";
-import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
 // Side-effect imports: register extension config components into the registry.
 import { OllamaConfig } from "@/react-app/domains/settings/ollama-config";
@@ -93,7 +93,6 @@ import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "@/
 import { PreferencesView } from "@/react-app/domains/settings/pages/preferences-view";
 import { GeneralSettingsView } from "@/react-app/domains/settings/pages/general-view";
 import { AuthorizedFoldersPanel } from "@/react-app/domains/settings/panels/authorized-folders-panel";
-import { EffectivePermissionsPanel } from "@/react-app/domains/settings/panels/effective-permissions-panel";
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
 import { AdvancedView } from "@/react-app/domains/settings/pages/advanced-view";
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
@@ -201,7 +200,6 @@ import {
   createWorkspaceServerClientResolver,
   useWorkspaceServerClient,
 } from "@/react-app/infra/workspace-server-client";
-import { resolveEngineRootEndpoint } from "@/app/lib/workspace-endpoint";
 import {
   buildLocalProviderInstallPatch,
   buildLocalProviderSyncPatch,
@@ -542,7 +540,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [hideTitlebar, setHideTitlebar] = useState(() => readStoredBoolean(SETTINGS_HIDE_TITLEBAR_KEY, false));
   const [configActionStatus, setConfigActionStatus] = useState<string | null>(null);
   const [enablingProviderId, setEnablingProviderId] = useState<string | null>(null);
-  const [permissionsRefreshToken, setPermissionsRefreshToken] = useState(0);
   const [revealConfigBusy, setRevealConfigBusy] = useState(false);
   const [resetConfigBusy, setResetConfigBusy] = useState(false);
   const [renameWorkspaceId, setRenameWorkspaceId] = useState<string | null>(null);
@@ -633,15 +630,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     });
   };
   const selectedWorkspaceEndpoint = useWorkspaceServerClient(selectedWorkspace, { baseUrl, token });
-  // A member who signed in before creating a workspace still has the local
-  // server's managed engine; reach it directly so AI providers work.
-  const engineRootEndpoint = useMemo(
-    () => (isDesktopRuntime() && !loading && workspaces.length === 0
-      ? resolveEngineRootEndpoint({ baseUrl, token })
-      : null),
-    [baseUrl, loading, token, workspaces.length],
-  );
-  const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? engineRootEndpoint?.opencodeBaseUrl ?? "";
+  const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
 
   routeStateRef.current = {
     checkDesktopRestriction,
@@ -887,9 +876,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!client || !workspaceId || !orgId) return;
-    // Settings only has a safe, exact OpenCode client/directory for the active
-    // workspace here, so sign-out cleanup is intentionally scoped to that
-    // workspace instead of guessing across every configured worker.
+    // Sign-out cleanup is intentionally scoped to the active workspace
+    // instead of guessing across every configured worker.
     await cleanupOpenworkCloudMcpAfterSignOut({
       context: {
         denBaseUrl: settings.baseUrl,
@@ -898,8 +886,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         orgId,
       },
       openworkClient: client,
-      opencodeClient: routeStateRef.current.activeClient,
-      directory: routeStateRef.current.selectedWorkspaceRoot,
     });
     setCloudMcpHealthResult(null);
     await refreshMcpServersRef.current?.();
@@ -1103,21 +1089,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [runtimeWorkspaceId]);
 
   const opencodeClient = useMemo(() => {
-    if (!selectedWorkspaceEndpoint) {
-      return engineRootEndpoint
-        ? createClient(engineRootEndpoint.opencodeBaseUrl, undefined, { token: engineRootEndpoint.token, mode: "openwork" })
-        : null;
-    }
-    if (!selectedWorkspaceEndpoint.token) return null;
-    return createClient(
-      selectedWorkspaceEndpoint.opencodeBaseUrl,
-      selectedWorkspaceRoot || undefined,
-      {
-        token: selectedWorkspaceEndpoint.token,
-        mode: "openwork",
-      },
-    );
-  }, [engineRootEndpoint, selectedWorkspaceEndpoint, selectedWorkspaceRoot]);
+    if (!selectedWorkspaceEndpoint?.token) return null;
+    return createClientV2(selectedWorkspaceEndpoint.opencodeBaseUrl, selectedWorkspaceRoot || undefined, {
+      token: selectedWorkspaceEndpoint.token,
+    });
+  }, [selectedWorkspaceEndpoint, selectedWorkspaceRoot]);
 
   useEffect(() => {
     setActiveClient(opencodeClient);
@@ -1526,8 +1502,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     return reloadCoordinator.registerWorkspaceReloadControls({
       workspaceId: selectedWorkspace?.id || selectedWorkspaceId || "",
       applyLiveChanges: async () => {
-        const status = await openworkClient?.getEngineV2PreviewStatus();
-        if (!status?.enabled || !status.chatRouting) return false;
         await refreshProviderListQueries(getReactQueryClient()).catch(() => undefined);
         return true;
       },
@@ -2161,7 +2135,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               selectedWorkspaceRoot={selectedWorkspaceRoot}
               onConfigUpdated={() => {
                 setConfigActionStatus(t("settings.config_updated"));
-                setPermissionsRefreshToken((token) => token + 1);
                 void providerAuthStore.refreshProviders();
                 void connectionsStore.refreshMcpServers();
               }}
@@ -2445,7 +2418,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               cloudMcpHealth={cloudMcpHealth}
               refreshCloudMcpHealth={refreshCloudMcpHealth}
               organizationServer={denSession}
-              engineClient={openworkClient}
             />
             {platform.capabilities.localRuntimeControl ? (
               <RecoveryView
@@ -2462,13 +2434,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 onCleanupOpenworkDockerContainers={() => {}}
               />
             ) : null}
-            <EffectivePermissionsPanel
-              openworkServerClient={openworkClient}
-              openworkServerStatus={routeOpenworkStatus}
-              openworkServerCapabilities={routeOpenworkCapabilities}
-              runtimeWorkspaceId={runtimeWorkspaceId}
-              refreshToken={permissionsRefreshToken}
-            />
           </SettingsStack>
         );
       case "appearance":
@@ -2590,7 +2555,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       )}
 
       <CommandPalette
-        engineClient={openworkClient}
         open={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
         developerMode={developerMode}
@@ -2685,29 +2649,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         }}
         onSave={() => void handleSaveRenameWorkspace()}
         onTitleChange={setRenameWorkspaceTitle}
-      />
-      <ConnectionsModals
-        client={activeClient}
-        projectDir={selectedWorkspaceRoot}
-        reloadBlocked={activeReloadBlockingSessions.length > 0}
-        activeSessions={activeReloadBlockingSessions}
-        onForceStopSession={async (sessionId) => {
-          if (!activeClient) return;
-          await abortSessionSafe(activeClient, sessionId, undefined, {
-            source: "settings.connections.force_stop_session",
-            initiator: "user",
-            reason: "force stop active session from connections modal",
-          });
-        }}
-        onReloadEngine={reloadCoordinator.reloadWorkspaceEngine}
-        modalState={{
-          mcpAuthModalOpen: connectionsSnapshot.mcpAuthModalOpen,
-          mcpAuthEntry: connectionsSnapshot.mcpAuthEntry,
-          mcpAuthNeedsReload: connectionsSnapshot.mcpAuthNeedsReload,
-        }}
-        onCloseMcpAuthModal={() => connectionsStore.closeMcpAuthModal()}
-        onMcpAuthenticated={(name) => connectionsStore.recordMcpAuthenticated(name)}
-        onCompleteMcpAuthModal={() => connectionsStore.completeMcpAuthModal()}
       />
       <ModelPickerModal
         open={modelPicker.open}

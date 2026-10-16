@@ -14,7 +14,7 @@ export type ControlSessionWorkspace = {
 /**
  * The engine's session-level model as it arrives on the session record:
  * bound at creation or by the last prompt, `variant` being the reasoning
- * effort. The pinned SDK types predate this field, so it is declared here.
+ * effort. The app's `Session` shape leaves it out, so it is declared here.
  */
 export type ControlSessionEngineModel = {
   id?: string;
@@ -30,7 +30,6 @@ export type ControlSessionLike = {
   time?: {
     updated?: number;
     created?: number;
-    archived?: number;
   };
   model?: ControlSessionEngineModel | null;
 };
@@ -56,7 +55,7 @@ export type ListControlSessionsState = {
   attentionFor?: (workspaceId: string, sessionId: string) => SessionAttention | undefined;
 };
 
-/** Anything but a finished or failed turn still needs Stop before archive. */
+/** Anything but a finished or failed turn is still working. */
 export function isWorkingStatus(status: SessionActivityStatus): boolean {
   return status !== "idle" && status !== "error";
 }

@@ -402,22 +402,33 @@ function workerUnauthorized(response) {
   });
 }
 
-function workerMessage(session, role, id, text, parentID = null) {
-  return {
-    info: { id, sessionID: session.id, role, ...(parentID ? { parentID } : {}), time: { created: 1783612800000 } },
-    parts: [{ id: `${id}-part`, messageID: id, sessionID: session.id, type: "text", text }],
-  };
-}
-
+/** OpenCode v2 message rows, newest first as `GET /api/session/:id/message` lists them. */
 function workerMessages(session, includeReply) {
   const messages = [];
   if (session.prompt) {
-    messages.push(workerMessage(session, "user", session.messageId, session.prompt));
+    messages.push({ id: session.messageId, type: "user", text: session.prompt, time: { created: 1783612800000 } });
   }
   if (includeReply && session.prompt) {
-    messages.push(workerMessage(session, "assistant", `${session.messageId}-assistant`, `OpenWork worker reply: ${session.prompt}`, session.messageId));
+    const id = `${session.messageId}-assistant`;
+    messages.push({
+      id,
+      type: "assistant",
+      finish: "stop",
+      time: { created: 1783612801000 },
+      content: [{ id: `${id}-part`, type: "text", text: `OpenWork worker reply: ${session.prompt}` }],
+    });
   }
-  return messages;
+  return messages.reverse();
+}
+
+function workerSession(session) {
+  return {
+    id: session.id,
+    title: session.title,
+    metadata: session.metadata,
+    location: { directory: "/workspace" },
+    time: { created: 1783612800000, updated: 1783612801000 },
+  };
 }
 
 function handleWorker(state, request, response, url, rawBody) {
@@ -435,7 +446,14 @@ function handleWorker(state, request, response, url, rawBody) {
     return true;
   }
 
-  if (url.pathname === "/worker/workspace/ws_mock_cloud/opencode/session" && request.method === "POST") {
+  // OpenCode v2 binds a model to each session; the mock workspace names a fixed one.
+  if (url.pathname === "/worker/workspace/ws_mock_cloud/default-model" && request.method === "GET") {
+    sendJson(response, 200, { model: { providerID: "mock", modelID: "mock-model" } });
+    return true;
+  }
+
+  const v2 = "/worker/workspace/ws_mock_cloud/opencode2/api";
+  if (url.pathname === `${v2}/session` && request.method === "POST") {
     let body;
     try {
       body = parseJson(rawBody);
@@ -443,73 +461,74 @@ function handleWorker(state, request, response, url, rawBody) {
       sendJson(response, 400, { error: "invalid_json" });
       return true;
     }
-    const id = `ses_mock_${state.worker.nextSessionId++}`;
-    const session = { id, title: typeof body.title === "string" ? body.title : "Cloud connect session", prompt: null, messageId: null, polls: 0 };
+    const id = typeof body.id === "string" ? body.id : `ses_mock_${state.worker.nextSessionId++}`;
+    const session = {
+      id,
+      title: typeof body.title === "string" ? body.title : "Cloud connect session",
+      metadata: body.metadata ?? null,
+      prompt: null,
+      messageId: null,
+      polls: 0,
+    };
     state.worker.sessions.set(id, session);
-    sendJson(response, 200, { id, title: session.title, directory: "/workspace" });
+    sendJson(response, 200, { data: workerSession(session) });
     return true;
   }
 
-  const promptMatch = url.pathname.match(
-    /^\/worker\/workspace\/ws_mock_cloud\/opencode\/session\/([^/]+)\/prompt_async$/,
-  );
-  if (promptMatch && request.method === "POST") {
-    const session = state.worker.sessions.get(decodeURIComponent(promptMatch[1]));
-    if (!session) {
-      sendJson(response, 404, { error: "session_not_found" });
-      return true;
-    }
-    let body;
-    try {
-      body = parseJson(rawBody);
-    } catch {
-      sendJson(response, 400, { error: "invalid_json" });
-      return true;
-    }
-    const textPart = Array.isArray(body.parts)
-      ? body.parts.find((part) => part && part.type === "text" && typeof part.text === "string")
-      : null;
-    if (!textPart) {
-      sendJson(response, 400, { error: "text_part_required" });
-      return true;
-    }
-    session.prompt = textPart.text;
-    session.messageId = typeof body.messageID === "string" ? body.messageID : `${session.id}-user`;
-    session.polls = 0;
-    sendEmpty(response);
-    return true;
-  }
-
-  if (url.pathname === "/worker/workspace/ws_mock_cloud/opencode/session/status" && request.method === "GET") {
-    const statuses = {};
+  // v2 lists running sessions only: each prompt runs for exactly one poll.
+  if (url.pathname === `${v2}/session/active` && request.method === "GET") {
+    const running = {};
     for (const session of state.worker.sessions.values()) {
-      statuses[session.id] = { type: session.polls++ === 0 ? "busy" : "idle" };
+      if (session.prompt && session.polls++ === 0) running[session.id] = { type: "running" };
     }
-    sendJson(response, 200, statuses);
+    sendJson(response, 200, { data: running });
     return true;
   }
 
   const sessionMatch = url.pathname.match(
-    /^\/worker\/workspace\/ws_mock_cloud\/opencode\/session\/([^/]+)(?:\/(message|todo))?$/,
+    /^\/worker\/workspace\/ws_mock_cloud\/opencode2\/api\/session\/([^/]+)(?:\/(message|model|prompt))?$/,
   );
-  if (sessionMatch && request.method === "GET") {
-    const session = state.worker.sessions.get(decodeURIComponent(sessionMatch[1]));
-    if (!session) {
-      sendJson(response, 404, { error: "session_not_found" });
+  if (!sessionMatch) {
+    sendJson(response, 404, { error: "worker_mock_not_found", path: url.pathname });
+    return true;
+  }
+  const session = state.worker.sessions.get(decodeURIComponent(sessionMatch[1]));
+  if (!session) {
+    sendJson(response, 404, { error: "session_not_found" });
+    return true;
+  }
+  const action = sessionMatch[2] ?? "";
+
+  if ((action === "model" || action === "prompt") && request.method === "POST") {
+    let body;
+    try {
+      body = parseJson(rawBody);
+    } catch {
+      sendJson(response, 400, { error: "invalid_json" });
       return true;
     }
-    if (sessionMatch[2] === "message") {
-      sendJson(response, 200, workerMessages(session, session.polls > 0));
-    } else if (sessionMatch[2] === "todo") {
-      sendJson(response, 200, []);
-    } else {
-      sendJson(response, 200, {
-        id: session.id,
-        title: session.title,
-        directory: "/workspace",
-        time: { created: 1783612800000, updated: 1783612801000 },
-      });
+    if (action === "model") {
+      sendJson(response, 200, { data: workerSession(session) });
+      return true;
     }
+    if (typeof body.text !== "string" || !body.text) {
+      sendJson(response, 400, { error: "text_required" });
+      return true;
+    }
+    session.prompt = body.text;
+    session.messageId = typeof body.id === "string" ? body.id : `${session.id}-user`;
+    session.polls = 0;
+    sendJson(response, 200, { data: {} });
+    return true;
+  }
+
+  if (action === "message" && request.method === "GET") {
+    sendJson(response, 200, { data: workerMessages(session, session.polls > 0), cursor: { next: null } });
+    return true;
+  }
+
+  if (action === "" && request.method === "GET") {
+    sendJson(response, 200, { data: workerSession(session) });
     return true;
   }
 

@@ -75,7 +75,7 @@ test("main permission replies preserve once/always/reject bodies and HTTP failur
   try {
     for (const reply of ["once", "always", "reject"]) {
       const body = JSON.stringify({ reply });
-      const path = "/proxy/workspace/ws_fixture/opencode/permission/per_fixture/reply?directory=%2Ffixture%2Fa";
+      const path = "/proxy/workspace/ws_fixture/opencode2/api/session/ses_fixture/permission/per_fixture/reply?directory=%2Ffixture%2Fa";
       const response = await handler(owner, `${server.url}${path}`, {
         method: "POST", body, transferId: reply,
         headers: { Authorization: "Bearer fixture-only", "x-opencode-directory": "/fixture/a", "Content-Type": "application/json" },
@@ -102,7 +102,7 @@ test("main cancellation admission matches only permission reply POSTs and the ex
     return Response.json(true);
   });
   const owner = { sender: Object.assign(new EventEmitter(), { id: 1 }) };
-  for (const path of ["/permission/per_1/reply", "/workspace/ws_1/opencode/permission/per_1/reply", "/proxy/w/ws_1/opencode/permission/per_1/reply?directory=x", "/session/ses_1/abort"]) {
+  for (const path of ["/permission/per_1/reply", "/workspace/ws_1/opencode2/api/session/ses_1/permission/per_1/reply", "/proxy/workspace/ws_1/opencode2/api/session/ses_1/permission/per_1/reply?directory=x", "/session/ses_1/abort"]) {
     await handler(owner, `http://127.0.0.1${path}`, { method: "post", transferId: "fixture" });
     assert.ok(signals.at(-1) instanceof AbortSignal);
   }
@@ -141,7 +141,7 @@ for (const phase of ["headers", "body"]) {
       return response;
     });
     try {
-      const pending = handler(owner, `${server.url}/workspace/ws_1/opencode/permission/per_1/reply`, {
+      const pending = handler(owner, `${server.url}/workspace/ws_1/opencode2/api/session/ses_1/permission/per_1/reply`, {
         method: "POST", body: '{"reply":"once"}', transferId: "permission",
       });
       const rejected = assert.rejects(pending, { name: "AbortError" });

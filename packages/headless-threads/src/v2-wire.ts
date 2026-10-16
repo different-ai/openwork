@@ -1,19 +1,13 @@
 /**
- * The OpenCode v2 wire boundary, plus the server routes that pick an engine
- * and a model.
+ * The OpenCode v2 wire boundary, plus the server route that picks a model.
  *
- * v2 payloads are mapped into the v1 wire shapes `wire.ts` already parses, so
- * snapshots, transcripts, and waits behave the same on either engine.
+ * v2 payloads are mapped into the canonical wire shapes `wire.ts` parses, so
+ * snapshots, transcripts, and waits share one model.
  */
 import { z } from "zod";
 
 import type { HeadlessThreadModel } from "./types.js";
 import type { MessageWire, SessionWire } from "./wire.js";
-
-/** `GET /experimental/engine-v2-preview/status`. Only these two flags matter here. */
-export const engineStatusSchema = z
-  .object({ enabled: z.boolean(), chatRouting: z.boolean() })
-  .passthrough();
 
 /** `GET /workspace/:id/default-model`. */
 export const defaultModelSchema = z
@@ -152,7 +146,7 @@ function fromV2Content(messageId: string, content: V2Content, index: number): Me
   return [];
 }
 
-/** v2 errors are `{ type, message }`; give them the `name` v1 errors carry. */
+/** v2 errors are `{ type, message }`; give them the `name` the canonical shape carries. */
 function fromV2Error(error: unknown): unknown {
   const parsed = z.object({ type: z.string().optional(), name: z.string().optional() }).passthrough().safeParse(error);
   if (!parsed.success) return error;
@@ -161,7 +155,7 @@ function fromV2Error(error: unknown): unknown {
 }
 
 /**
- * Maps v2 messages, oldest first, into v1 message shapes. Only user and
+ * Maps v2 messages, oldest first, into canonical message shapes. Only user and
  * assistant turns are kept: v2 also records model switches, compactions, and
  * system entries that the conversation does not show.
  *

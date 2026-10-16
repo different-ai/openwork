@@ -3,6 +3,11 @@ import type {
   ApiError,
   ConfigProvidersResponse,
   FilePart,
+  IntegrationAttempt,
+  IntegrationAttemptStatus,
+  IntegrationInfo,
+  IntegrationMethod,
+  Message,
   Model,
   Part,
   PermissionRequest,
@@ -14,11 +19,12 @@ import type {
   Session,
   SessionStatus,
   TextPart,
+  Todo,
   ToolPart,
   UnknownError,
-} from "@opencode-ai/sdk/v2/client";
+} from "./opencode-types";
 
-import { createClient, createDesktopFetch, type FieldsResult } from "./opencode";
+import { createDesktopFetch, type FieldsResult } from "./opencode";
 import type { OpenworkSessionHistory } from "./openwork-server";
 import { isDesktopRuntime } from "./runtime-env";
 import type { McpStatusMap, OpencodeEvent } from "../types";
@@ -171,6 +177,17 @@ type PromptParameters = SessionParameters & {
   reasoning_effort?: string;
 };
 
+type CommandParameters = SessionParameters & {
+  messageID?: string;
+  agent?: string;
+  model?: string;
+  arguments?: string;
+  command?: string;
+  variant?: string;
+  parts?: PromptPart[];
+  reasoning_effort?: string;
+};
+
 type SessionCreateParameters = DirectoryParameters & {
   model?: ModelBinding;
   title?: string;
@@ -178,10 +195,7 @@ type SessionCreateParameters = DirectoryParameters & {
 
 type SessionUpdateParameters = SessionParameters & {
   title?: string;
-  time?: { archived?: number };
 };
-
-export const V2_SESSION_ARCHIVE_UNAVAILABLE = "Archiving and unarchiving are not available in the OpenCode v2 preview.";
 
 type PermissionReply = "once" | "always" | "reject";
 
@@ -189,12 +203,6 @@ type PermissionReplyParameters = DirectoryParameters & {
   requestID: string;
   reply?: PermissionReply;
   message?: string;
-};
-
-type PermissionRespondParameters = DirectoryParameters & {
-  sessionID: string;
-  permissionID: string;
-  response?: PermissionReply;
 };
 
 type V2PermissionReplyParameters = {
@@ -245,20 +253,7 @@ function mapV2Question(value: unknown): { request: QuestionRequest; fields: V2Qu
 type V2MessageRole = "user" | "assistant" | "system";
 
 export type V2MappedMessage = {
-  info: {
-    id: string;
-    sessionID: string;
-    role: V2MessageRole;
-    time: {
-      created: number;
-      completed?: number;
-    };
-    error?: UnknownError | ApiError;
-    model?: ModelBinding & { variant?: string };
-    modelID?: string;
-    providerID?: string;
-    resolvedModel?: { id: string; providerID?: string; name?: string };
-  };
+  info: Message;
   parts: Part[];
 };
 
@@ -474,7 +469,6 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
   const location = readRecord(source, "location");
   const created = readNumber(time, "created") ?? readNumber(source, "created") ?? eventCreated ?? 0;
   const updated = readNumber(time, "updated") ?? readNumber(source, "updated") ?? created;
-  const archived = readNumber(time, "archived");
   const parentID = readString(source, "parentID");
   const model = readRecord(source, "model");
   const modelID = readString(model, "id") ?? readString(model, "modelID");
@@ -490,11 +484,7 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
     // Keep native untitled sessions eligible for compatibility title recovery.
     title: readString(source, "title") || `New session - ${new Date(created).toISOString()}`,
     version: readString(source, "version") ?? "v2",
-    time: {
-      created,
-      updated,
-      ...(archived === undefined ? {} : { archived }),
-    },
+    time: { created, updated },
     ...(parentID ? { parentID } : {}),
     ...(providerID && modelID ? {
       model: { providerID, id: modelID, ...(variant ? { variant } : {}) },
@@ -650,8 +640,8 @@ function appEntriesFromScript(calls: unknown, output: unknown): Record<string, u
  * Code Mode runs OpenWork Cloud calls inside one `execute`, whose part keeps
  * only `{ tool, status, input }` per call. The server's v2 plugin
  * (openwork-mcp-results-v2) saves the calls that report a connection in
- * `openworkMcpResults`; surface each as the ordinary tool part v1 produces for
- * a direct call, so the chat's existing connection card finds it.
+ * `openworkMcpResults`; surface each as the ordinary tool part of a direct
+ * call, so the chat's existing connection card finds it.
  */
 export function codeModeConnectionParts(part: ToolPart): ToolPart[] {
   if (part.metadata?.openworkV2CodeMode !== true || !("metadata" in part.state) || !("time" in part.state)) return [];
@@ -842,8 +832,8 @@ function mapV2ReplyModel(value: Record<string, unknown>) {
 }
 
 /**
- * A native user turn stores the whole prompt string. Return the parts v1 keeps
- * for the same send: the words, pasted text marked as pasted, and hidden
+ * A native user turn stores the whole prompt string. Return the parts the
+ * transcript renders for the same send: the words, pasted text marked as pasted, and hidden
  * context as a synthetic part whose attachments the transcript shows as files.
  */
 function mapV2UserPart(part: Part): Part[] {
@@ -897,9 +887,10 @@ function mapV2Message(
   if (!isRecord(value)) return null;
   // Native instruction/catalog updates belong to the model context, not the
   // visible conversation. Filter by role so identical user text is preserved.
+  const role = messageRole(value);
   // The one exception is a background command's completion notice, which the
   // chat shows as a short row while `backgroundShellTasks` is on.
-  if (messageRole(value) === "system") {
+  if (role === "system") {
     const notice = backgroundShellTasksEnabled() ? readBackgroundShellCompletion(value) : null;
     const id = readString(value, "id") ?? readString(value, "messageID");
     if (!notice || !id) return null;
@@ -912,7 +903,6 @@ function mapV2Message(
   const created = readNumber(time, "created") ?? readNumber(value, "timestamp") ?? 0;
   const completed = readNumber(time, "completed");
   const resolvedSessionID = readString(value, "sessionID") ?? sessionID;
-  const role = messageRole(value);
   const nativeParts = mapV2MessageParts(value, id, resolvedSessionID, created, taskSessions);
   const parts = role === "user" ? nativeParts.flatMap(mapV2UserPart) : nativeParts;
   const rawError = readRecord(value, "error");
@@ -1011,7 +1001,7 @@ function mapV2Model(value: unknown): Model | null {
   const toolcall = rawCapabilities?.tools === true;
   const released = readNumber(rawTime, "released");
   // Native v2 advertises an array of named settings, while the picker consumes
-  // the v1 keyed variant map. Do not infer effort choices from the model name.
+  // a keyed variant map. Do not infer effort choices from the model name.
   const variants = Object.fromEntries((Array.isArray(value.variants) ? value.variants : []).flatMap((variant) => {
     const id = readString(variant, "id");
     return id ? [[id, readRecord(variant, "settings") ?? {}]] : [];
@@ -1068,7 +1058,7 @@ function mapV2Model(value: unknown): Model | null {
 }
 
 /**
- * Map a native v2 `/api/agent` row onto the v1 SDK `Agent` the picker expects.
+ * Map a native v2 `/api/agent` row onto the `Agent` the picker expects.
  * Use the API `id` as `name` — selection and `POST …/session/:id/agent` speak ids
  * (`build`, `plan`), not the display title (`Build`, `Plan`).
  */
@@ -1089,6 +1079,46 @@ export function mapV2Agent(value: unknown): Agent | null {
     ...(description ? { description } : {}),
     ...(color ? { color } : {}),
   };
+}
+
+function mapIntegrationMethod(value: unknown): IntegrationMethod | null {
+  const type = readString(value, "type");
+  if (type === "oauth") {
+    const id = readString(value, "id");
+    return id ? { type, id, label: readString(value, "label") ?? id } : null;
+  }
+  if (type === "key") {
+    const label = readString(value, "label");
+    return { type, ...(label ? { label } : {}) };
+  }
+  if (type === "env") return { type, names: stringArray(isRecord(value) ? value.names : undefined) };
+  return null;
+}
+
+/** Map a native `/api/integration` row; unknown method kinds are left out. */
+function mapV2Integration(value: unknown): IntegrationInfo | null {
+  if (!isRecord(value)) return null;
+  const id = readString(value, "id");
+  if (!id) return null;
+  const methods = (Array.isArray(value.methods) ? value.methods : []).flatMap((method) => {
+    const mapped = mapIntegrationMethod(method);
+    return mapped ? [mapped] : [];
+  });
+  const connections = (Array.isArray(value.connections) ? value.connections : []).flatMap((connection): IntegrationInfo["connections"] => {
+    const type = readString(connection, "type");
+    const connectionID = readString(connection, "id");
+    if (type === "credential" && connectionID) return [{ type, id: connectionID, label: readString(connection, "label") ?? "" }];
+    const name = readString(connection, "name");
+    return type === "env" && name ? [{ type, name }] : [];
+  });
+  return { id, name: readString(value, "name") ?? id, methods, connections };
+}
+
+function mapIntegrationAttemptStatus(value: unknown): IntegrationAttemptStatus | null {
+  const status = readString(value, "status");
+  if (status === "pending" || status === "complete" || status === "expired") return { status };
+  if (status === "failed") return { status, message: readString(value, "message") ?? "Sign-in failed." };
+  return null;
 }
 
 function mapDefaultModels(value: unknown): Record<string, string> {
@@ -2061,7 +2091,7 @@ function createWebFetch(auth: { token?: string }): typeof globalThis.fetch {
 
 function createV2Fetch(auth: { token?: string }): typeof globalThis.fetch {
   return isDesktopRuntime()
-    ? createDesktopFetch({ mode: "openwork", token: auth.token })
+    ? createDesktopFetch(auth.token)
     : createWebFetch(auth);
 }
 
@@ -2090,7 +2120,7 @@ function failedResult<T>(transport: TransportResult): FieldsResult<T> {
 
 /**
  * Map the native v2 `/api/mcp` catalog (`[{ name, status: { status, error? } }]`)
- * onto the v1 name-keyed status map the rest of the app consumes. `pending`
+ * onto the name-keyed status map the rest of the app consumes. `pending`
  * servers are omitted so callers treat them as not-yet-known instead of failed.
  */
 export function mapV2McpStatuses(payload: unknown): McpStatusMap | null {
@@ -2126,18 +2156,14 @@ function unsupportedResult<T>(baseUrl: string, operation: string, message?: stri
   };
 }
 
+/**
+ * The app's OpenCode client: every engine read and write the app makes, over
+ * a workspace's `/workspace/:id/opencode2` mount, answered in the app's own
+ * shapes (`opencode-types.ts`).
+ */
 export function isOpencodeV2BaseUrl(baseUrl: string): boolean {
-  try {
-    return new URL(baseUrl).pathname.replace(/\/+$/, "").endsWith("/opencode2");
-  } catch {
-    return baseUrl.replace(/\/+$/, "").endsWith("/opencode2");
-  }
-}
-
-const v2Clients = new WeakSet<ReturnType<typeof createClient>>();
-
-export function isOpencodeV2Client(client: ReturnType<typeof createClient>): client is OpencodeV2Client {
-  return v2Clients.has(client);
+  try { return new URL(baseUrl).pathname.replace(/\/+$/, "").endsWith("/opencode2"); }
+  catch { return baseUrl.replace(/\/+$/, "").endsWith("/opencode2"); }
 }
 
 export type SetSessionModelParameters = {
@@ -2153,7 +2179,6 @@ export function createClientV2(
 ) {
   const baseUrl = opencode2BaseUrl.replace(/\/+$/, "");
   const fetchImpl = createV2Fetch(auth);
-  const compatibilityClient = createClient(baseUrl, directory, { mode: "openwork", token: auth.token });
   const taskSessions = taskSessionAssociations(baseUrl);
   const permissionSessionByRequestID = new Map<string, string>();
   const questionFormsByID = new Map<string, NonNullable<ReturnType<typeof mapV2Question>>>();
@@ -2302,21 +2327,6 @@ export function createClientV2(
       requestID: parameters.requestID,
       reply: parameters.reply,
       message: parameters.message,
-    }, options);
-    if (result.error !== undefined) {
-      return { error: result.error, request: result.request, response: result.response };
-    }
-    return { data: true, request: result.request, response: result.response };
-  };
-
-  const respondPermission = async (
-    parameters: PermissionRespondParameters,
-    options?: RequestOptions,
-  ): Promise<FieldsResult<boolean>> => {
-    const result = await replySessionPermission({
-      sessionID: parameters.sessionID,
-      requestID: parameters.permissionID,
-      reply: parameters.response,
     }, options);
     if (result.error !== undefined) {
       return { error: result.error, request: result.request, response: result.response };
@@ -2509,7 +2519,7 @@ export function createClientV2(
         before = next;
       }
     },
-    todo: async (parameters: SessionParameters): Promise<FieldsResult<never[]>> =>
+    todo: async (parameters: SessionParameters, _options?: RequestOptions): Promise<FieldsResult<Todo[]>> =>
       localResult(baseUrl, `/api/session/${encodeURIComponent(parameters.sessionID)}/todo`, []),
     status: async (
       _parameters: DirectoryParameters = {},
@@ -2654,12 +2664,6 @@ export function createClientV2(
       parameters: SessionUpdateParameters,
       options?: RequestOptions,
     ): Promise<FieldsResult<Session>> => {
-      // The native preview exposes archived state but no archive mutation.
-      // Reject the entire update before a rename or read can imply success.
-      if (parameters.time?.archived !== undefined) {
-        if (options?.throwOnError) throw new Error(V2_SESSION_ARCHIVE_UNAVAILABLE);
-        return unsupportedResult(baseUrl, "session.archive", V2_SESSION_ARCHIVE_UNAVAILABLE);
-      }
       if (!parameters.title) return getSession(parameters, options);
       const result = await request(
         "PATCH",
@@ -2717,9 +2721,10 @@ export function createClientV2(
       const result = await request("DELETE", `/api/session/${encodeURIComponent(parameters.sessionID)}/revert`, undefined, options?.signal);
       return result.response.ok ? getSession(parameters, options) : failedResult(result);
     },
-    summarize: async (): Promise<FieldsResult<boolean>> => unsupportedResult(baseUrl, "session.summarize"),
-    shell: async (): Promise<FieldsResult<Record<string, never>>> => unsupportedResult(baseUrl, "session.shell"),
-    command: async (): Promise<FieldsResult<Record<string, never>>> => unsupportedResult(baseUrl, "session.command"),
+    shell: async (_parameters: SessionParameters & { command: string; messageID?: string }): Promise<FieldsResult<Record<string, never>>> =>
+      unsupportedResult(baseUrl, "session.shell"),
+    command: async (_parameters: CommandParameters): Promise<FieldsResult<Record<string, never>>> =>
+      unsupportedResult(baseUrl, "session.command"),
   };
 
   const listProviders = async (
@@ -2770,20 +2775,8 @@ export function createClientV2(
   };
 
   const adapter = {
-    global: {
-      health: async (options?: RequestOptions): Promise<FieldsResult<{ healthy: boolean; version: string }>> => {
-        const result = await request("GET", "/api/info", undefined, options?.signal);
-        if (!result.response.ok) return failedResult(result);
-        const data = responseData(result.payload);
-        return successfulResult(result, {
-          healthy: isRecord(data) && typeof data.version === "string" && typeof data.pid === "number",
-          version: readString(data, "version") ?? "v2",
-        });
-      },
-    },
     session,
     config: {
-      get: async (): Promise<FieldsResult<Record<string, never>>> => localResult(baseUrl, "/api/config", {}),
       // v2 only lists usable providers, so the connected list and the full
       // provider list are the same read.
       providers: async (
@@ -2808,16 +2801,14 @@ export function createClientV2(
       },
     },
     command: {
-      list: async (): Promise<FieldsResult<never[]>> => localResult(baseUrl, "/api/command", []),
+      list: async (_parameters: DirectoryParameters = {}): Promise<FieldsResult<never[]>> => localResult(baseUrl, "/api/command", []),
     },
     permission: {
       list: listPermissions,
       reply: replyPermission,
-      respond: respondPermission,
     },
     question: {
       list: listQuestions,
-      reply: settleQuestion,
       reject: (parameters: DirectoryParameters & { requestID: string }, options?: RequestOptions) => settleQuestion(parameters, options),
     },
     v2: {
@@ -2829,7 +2820,8 @@ export function createClientV2(
       },
     },
     find: {
-      files: async (): Promise<FieldsResult<never[]>> => localResult(baseUrl, "/api/fs/find", []),
+      files: async (_parameters: DirectoryParameters & { query: string; dirs?: "true" | "false"; limit?: number }): Promise<FieldsResult<string[]>> =>
+        localResult(baseUrl, "/api/fs/find", []),
     },
     mcp: {
       status: async (
@@ -2841,6 +2833,91 @@ export function createClientV2(
         const statuses = mapV2McpStatuses(result.payload);
         if (!statuses) return failedResult({ ...result, payload: { name: "InvalidV2McpCatalogResponse" } });
         return successfulResult(result, statuses);
+      },
+      // OpenWork owns MCP registration; its proxy turns this route into a
+      // restart of that one connection through the folder's reconciler.
+      connect: async (
+        parameters: DirectoryParameters & { name: string },
+        options?: RequestOptions,
+      ): Promise<FieldsResult<boolean>> => {
+        const result = await request("POST", `/mcp/${encodeURIComponent(parameters.name)}/connect`, {}, options?.signal);
+        return result.response.ok ? successfulResult(result, true) : failedResult(result);
+      },
+    },
+    // Model provider credentials live in the engine's integrations. The
+    // OpenWork proxy applies desktop policy to these writes and refreshes the
+    // catalog after each one.
+    integration: {
+      list: async (options?: RequestOptions): Promise<FieldsResult<IntegrationInfo[]>> => {
+        const result = await request("GET", "/api/integration", undefined, options?.signal);
+        if (!result.response.ok) return failedResult(result);
+        return successfulResult(result, responseItems(result.payload).flatMap((item) => {
+          const integration = mapV2Integration(item);
+          return integration ? [integration] : [];
+        }));
+      },
+      connectKey: async (
+        parameters: { integrationID: string; key: string },
+        options?: RequestOptions,
+      ): Promise<FieldsResult<boolean>> => {
+        const result = await request("POST", `/api/integration/${encodeURIComponent(parameters.integrationID)}/connect/key`,
+          { key: parameters.key }, options?.signal);
+        return result.response.ok ? successfulResult(result, true) : failedResult(result);
+      },
+      connectOAuth: async (
+        parameters: { integrationID: string; methodID: string },
+        options?: RequestOptions,
+      ): Promise<FieldsResult<IntegrationAttempt>> => {
+        const result = await request("POST", `/api/integration/${encodeURIComponent(parameters.integrationID)}/connect/oauth`,
+          { methodID: parameters.methodID, inputs: {} }, options?.signal);
+        if (!result.response.ok) return failedResult(result);
+        const data = responseData(result.payload);
+        const attemptID = readString(data, "attemptID");
+        const url = readString(data, "url");
+        const mode = readString(data, "mode");
+        if (!attemptID || !url || (mode !== "auto" && mode !== "code")) {
+          return failedResult({ ...result, payload: { name: "InvalidV2IntegrationAttemptResponse" } });
+        }
+        return successfulResult(result, { attemptID, url, mode, instructions: readString(data, "instructions") ?? "" });
+      },
+      attempt: async (
+        parameters: { integrationID: string; attemptID: string },
+        options?: RequestOptions,
+      ): Promise<FieldsResult<IntegrationAttemptStatus>> => {
+        const result = await request("GET",
+          `/api/integration/${encodeURIComponent(parameters.integrationID)}/connect/oauth/${encodeURIComponent(parameters.attemptID)}`,
+          undefined, options?.signal);
+        if (!result.response.ok) return failedResult(result);
+        const status = mapIntegrationAttemptStatus(responseData(result.payload));
+        return status ? successfulResult(result, status) : failedResult({ ...result, payload: { name: "InvalidV2IntegrationAttemptResponse" } });
+      },
+      complete: async (
+        parameters: { integrationID: string; attemptID: string; code?: string },
+        options?: RequestOptions,
+      ): Promise<FieldsResult<boolean>> => {
+        const result = await request("POST",
+          `/api/integration/${encodeURIComponent(parameters.integrationID)}/connect/oauth/${encodeURIComponent(parameters.attemptID)}/complete`,
+          parameters.code ? { code: parameters.code } : {}, options?.signal);
+        return result.response.ok ? successfulResult(result, true) : failedResult(result);
+      },
+      /** Remove every stored credential of the integration behind a model provider. */
+      disconnectProvider: async (
+        parameters: { providerID: string },
+        options?: RequestOptions,
+      ): Promise<FieldsResult<boolean>> => {
+        const providers = await request("GET", "/api/provider", undefined, options?.signal);
+        if (!providers.response.ok) return failedResult(providers);
+        const provider = responseItems(providers.payload).find((item) => readString(item, "id") === parameters.providerID);
+        const integrationID = readString(provider, "integrationID") ?? parameters.providerID;
+        const integration = await request("GET", `/api/integration/${encodeURIComponent(integrationID)}`, undefined, options?.signal);
+        if (!integration.response.ok) return failedResult(integration);
+        const credentials = mapV2Integration(responseData(integration.payload))?.connections
+          .flatMap((connection) => connection.type === "credential" ? [connection.id] : []) ?? [];
+        for (const credentialID of credentials) {
+          const removed = await request("DELETE", `/api/credential/${encodeURIComponent(credentialID)}`, undefined, options?.signal);
+          if (!removed.response.ok && removed.response.status !== 404) return failedResult(removed);
+        }
+        return successfulResult(integration, credentials.length > 0);
       },
     },
     event: {
@@ -2870,24 +2947,6 @@ export function createClientV2(
     },
   };
 
-  Object.assign(compatibilityClient.global, adapter.global);
-  Object.assign(compatibilityClient.session, adapter.session);
-  Object.assign(compatibilityClient.config, adapter.config);
-  Object.assign(compatibilityClient.provider, adapter.provider);
-  Object.assign(compatibilityClient.app, adapter.app);
-  Object.assign(compatibilityClient.command, adapter.command);
-  Object.assign(compatibilityClient.permission, adapter.permission);
-  Object.assign(compatibilityClient.question, adapter.question);
-  Object.assign(compatibilityClient.v2.session.permission, adapter.v2.session.permission);
-  Object.assign(compatibilityClient.find, adapter.find);
-  Object.assign(compatibilityClient.mcp, adapter.mcp);
-  Object.assign(compatibilityClient.event, adapter.event);
-  v2Clients.add(compatibilityClient);
-  /**
-   * Commands still running in this engine location, across conversations.
-   * Exited commands are not listed, so this is the truth to resync against
-   * after the volatile event stream may have dropped an exit.
-   */
   const listRunningShells = async (options?: RequestOptions): Promise<FieldsResult<EngineShell[]>> => {
     const query = directory ? `?${new URLSearchParams({ "location[directory]": directory }).toString()}` : "";
     const result = await request("GET", `/api/shell${query}`, undefined, options?.signal);
@@ -2899,17 +2958,12 @@ export function createClientV2(
     }));
   };
 
-  const client = Object.assign(compatibilityClient, {
+  return {
+    ...adapter,
     listRunningShells,
-    listSessionsPage: session.list, listMessagesPage: session.messages,
     listSessionQuestions: (parameters: SessionParameters, options?: RequestOptions) => listQuestions(parameters, options),
     replySessionQuestion: (parameters: SessionParameters & { requestID: string; answers: string[][] }, options?: RequestOptions) =>
       settleQuestion(parameters, options),
-  });
-  // The SDK exposes session through a getter; its object is augmented above,
-  // not reassigned. Reflect that runtime augmentation in the returned type.
-  return client as typeof client & {
-    session: typeof client.session & Pick<typeof adapter.session, "setModel">;
   };
 }
 

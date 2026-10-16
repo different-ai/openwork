@@ -16,9 +16,6 @@ export interface HeadlessThreadModel {
   variant?: string;
 }
 
-/** The OpenCode engine a thread runs on. */
-export type HeadlessThreadEngine = "v1" | "v2";
-
 export type HeadlessThreadStatus =
   | { type: "idle" }
   | { type: "busy" }
@@ -75,7 +72,7 @@ export interface HeadlessThreadUsage {
 
 export interface CreateThreadInput {
   title: string;
-  /** Native V2 creation identity. V1 rejects this before creating a session. */
+  /** Native creation identity; a repeated id returns the same session. */
   id?: string;
   /** Native V2 metadata, verified on the creation receipt before any prompt. */
   metadata?: Record<string, unknown>;
@@ -97,8 +94,6 @@ export interface HeadlessThread {
   createdAt: number | null;
   /** True when `createThread` was given a prompt and the engine accepted it. */
   started: boolean;
-  /** The engine that owns this thread. */
-  engine?: HeadlessThreadEngine;
   /** The model the thread was started with, when one was resolved. */
   model?: HeadlessThreadModel;
 }
@@ -106,7 +101,7 @@ export interface HeadlessThread {
 export interface HeadlessThreadTurnInput {
   prompt: string;
   model?: HeadlessThreadModel;
-  /** Stable message identity. V2 deduplicates admission atomically; V1 only checks history before submitting. */
+  /** Stable message identity. The engine admits a repeated id once. */
   messageId?: string;
   signal?: AbortSignal;
 }
@@ -234,11 +229,6 @@ export interface HeadlessThreadClientOptions {
    * server for the workspace's default model.
    */
   defaultModel?: HeadlessThreadModel;
-  /**
-   * The engine to drive. `auto` (the default) asks the server once which
-   * engine its chats use, so headless threads land where the app reads them.
-   */
-  engine?: HeadlessThreadEngine | "auto";
   requireModelAvailability?: boolean;
   /** Default `waitForThread` poll interval. Defaults to 500ms. */
   pollIntervalMs?: number;

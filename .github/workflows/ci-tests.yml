@@ -118,7 +118,6 @@ jobs:
       - name: Run eval framework tests (spec lint and its fixtures)
         run: |
           pnpm --dir evals run test:framework
-          pnpm --dir evals exec vitest run --config vitest.config.ts --project pr ../apps/server/test/session-title-sigv4.vitest.test.ts
       - name: Test native MCP readiness and Stop ownership
         run: pnpm --filter openwork-server test:readiness
       # Uses the pinned OpenCode that Setup tests put on PATH.
@@ -349,9 +348,6 @@ jobs:
       - name: Run all PR specs
         if: (success() || failure()) && steps.lane.outcome == 'success'
         run: pnpm sdk:build && pnpm --dir evals exec vitest run --config vitest.config.ts --project pr --no-file-parallelism
-      - name: Run engine smoke tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm test:e2e
       - name: Build server plugins
         if: (success() || failure()) && steps.setup.outcome == 'success'
         run: pnpm --filter openwork-server build

@@ -1,55 +1,35 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { freshInstallEngineState, readEngineV2PreviewState, seedFreshInstallEngineState } from "../src/engine-v2-preview.js";
+import { readEngineV2PreviewState } from "../src/engine-v2-preview.js";
 
-const fresh = { requested: "v2" as const, env: {}, stateFileExists: false, v1HistoryExists: false };
-
-test("a brand-new install starts on OpenCode v2", () => {
-  assert.deepEqual(freshInstallEngineState(fresh), { enabled: true, chatRouting: true });
-});
-
-test("updates, saved choices, v1 history and explicit overrides keep today's engine", () => {
-  assert.equal(freshInstallEngineState({ ...fresh, requested: undefined }), undefined);
-  assert.equal(freshInstallEngineState({ ...fresh, stateFileExists: true }), undefined);
-  assert.equal(freshInstallEngineState({ ...fresh, v1HistoryExists: true }), undefined);
-  assert.equal(freshInstallEngineState({ ...fresh, env: { OPENWORK_ENGINE_V2_PREVIEW: "0" } }), undefined);
-});
-
-type Profile = { configPath: string; freshInstallEngine: "v2" };
-
-function withProfile(run: (config: Profile, env: NodeJS.ProcessEnv, dir: string) => void): void {
-  const dir = mkdtempSync(join(tmpdir(), "openwork-fresh-engine-"));
+function withProfile(run: (config: { configPath: string }, dir: string) => void): void {
+  const dir = mkdtempSync(join(tmpdir(), "openwork-v2-only-"));
   const previous = process.env.OPENWORK_RUNTIME_DB;
-  process.env.OPENWORK_RUNTIME_DB = join(dir, "openwork", "runtime.sqlite");
-  try {
-    const config: Profile = { configPath: join(dir, "openwork", "server.json"), freshInstallEngine: "v2" };
-    run(config, { OPENCODE_DB: join(dir, "opencode", "opencode.db") }, dir);
-  } finally {
+  process.env.OPENWORK_RUNTIME_DB = join(dir, "runtime.sqlite");
+  try { run({ configPath: join(dir, "server.json") }, dir); }
+  finally {
     if (previous === undefined) delete process.env.OPENWORK_RUNTIME_DB;
     else process.env.OPENWORK_RUNTIME_DB = previous;
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-test("the fresh-install choice is saved once and a later switch back to v1 sticks", () => {
-  withProfile((config, env, dir) => {
-    assert.equal(seedFreshInstallEngineState(config, env), true);
+test("new and formerly v1 profiles both use v2", () => {
+  withProfile((config, dir) => {
     assert.deepEqual(readEngineV2PreviewState(config), { enabled: true, chatRouting: true });
-
-    writeFileSync(join(dir, "openwork", "engine-v2-preview.json"), JSON.stringify({ enabled: false, chatRouting: false }));
-    assert.equal(seedFreshInstallEngineState(config, env), false);
-    assert.deepEqual(JSON.parse(readFileSync(join(dir, "openwork", "engine-v2-preview.json"), "utf8")), { enabled: false, chatRouting: false });
+    writeFileSync(join(dir, "engine-v2-preview.json"), JSON.stringify({ enabled: false, chatRouting: false }));
+    assert.deepEqual(readEngineV2PreviewState(config), { enabled: true, chatRouting: true });
   });
 });
 
-test("a profile with OpenCode v1 history stays on v1", () => {
-  withProfile((config, env, dir) => {
-    mkdirSync(join(dir, "opencode"), { recursive: true });
-    writeFileSync(join(dir, "opencode", "opencode.db"), "");
-    assert.equal(seedFreshInstallEngineState(config, env), false);
-    assert.deepEqual(readEngineV2PreviewState(config), { enabled: false, chatRouting: false });
+test("retiring engine selection preserves interrupted history copies and receipts", () => {
+  withProfile((config, dir) => {
+    const checkpoint = { v1HistoryCopiedAt: 10, v1HistoryCopyStartedAt: 20,
+      historyCopyResult: { state: "error", imported: 1, skipped: 0, total: 2, error: "Copy paused" } };
+    writeFileSync(join(dir, "engine-v2-preview.json"), JSON.stringify({ enabled: false, chatRouting: false, ...checkpoint }));
+    assert.deepEqual(readEngineV2PreviewState(config), { enabled: true, chatRouting: true, ...checkpoint });
   });
 });

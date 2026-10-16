@@ -183,7 +183,6 @@ function journey(binary, extraEnv) {
     env: {
       OPENWORK_EVAL_ELECTRON_BINARY: binary,
       OPENWORK_EVAL_ELECTRON_RESOURCES_PREPARED: "1",
-      OPENWORK_EVAL_ENGINE: "v1",
       OPENWORK_EVAL_SURFACES_DIR: join(output, "profiles", JOURNEY),
       ELECTRON_RUN_AS_NODE: "",
       NODE_PATH: "", NODE_OPTIONS: "",

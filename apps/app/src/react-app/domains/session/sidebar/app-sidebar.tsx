@@ -10,8 +10,6 @@ import { useSessionPrefetchIntent } from "../surface/session-history";
 import {
   AlertCircle,
   AlertTriangle,
-  Archive,
-  ArchiveRestore,
   Blocks,
   CalendarDays,
   Clock3,
@@ -69,7 +67,6 @@ import {
 import {
   Collapsible,
   CollapsibleContent,
-  CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { ActionContextMenu } from "@/components/ui/action-context-menu";
 import { ActionMenuItems } from "@/components/ui/action-menu-items";
@@ -112,7 +109,6 @@ import {
 import type { SidebarContextValue } from "./app-sidebar-provider";
 import {
   MAX_SESSIONS_PREVIEW,
-  buildGlobalArchivedSessions,
   buildGlobalPinnedSessions,
   flattenSessionRows,
   formatSessionRelativeTime,
@@ -120,15 +116,12 @@ import {
   groupSessionRows,
   isActiveWorkSessionStatus,
   isNeedsAttentionSessionStatus,
-  isSessionArchived,
-  partitionArchivedSessions,
   workspaceKindLabel,
   workspaceLabel,
 } from "./utils";
-import type { FlattenedSessionRow, GlobalArchivedSessionEntry, GlobalPinnedSessionEntry, SessionListItem } from "./utils";
+import type { FlattenedSessionRow, GlobalPinnedSessionEntry, SessionListItem } from "./utils";
 import {
   useSessionManagementStore,
-  usePinnedSessionIds,
   useUnreadSessionIds,
   useSessionOrder,
   useWorkspaceGroups,
@@ -138,7 +131,6 @@ import { cn } from "@/lib/utils";
 import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
 import { SessionDotMatrixLoader } from "./session-dot-matrix-loader";
 import {
-  SIDEBAR_ROW_LANE,
   SIDEBAR_SECTION_LABEL,
   SIDEBAR_SECTION_LANE,
   SidebarGlyphSlot,
@@ -307,7 +299,7 @@ function SessionOutcomeIndicator({ status, isUnread, attentionLabel, attentionSo
 
 function useCanManageSession() {
   // Pin and group actions come from the Zustand store (always available).
-  // Rename/delete/archive depend on wired callbacks but the menu should
+  // Rename/delete depend on wired callbacks but the menu should
   // always render so pin/group remain accessible.
   return true;
 }
@@ -319,7 +311,6 @@ type SessionActionsProps = {
   sessionTitle?: string;
   workspaceTitle?: string;
   isPinned: boolean;
-  isArchived: boolean;
 };
 
 type SessionMenuActionsOptions = {
@@ -328,7 +319,6 @@ type SessionMenuActionsOptions = {
   sessionTitle?: string;
   workspaceTitle?: string;
   isPinned: boolean;
-  isArchived: boolean;
 };
 
 function useSessionMenuActions({
@@ -337,7 +327,6 @@ function useSessionMenuActions({
   sessionTitle,
   workspaceTitle,
   isPinned,
-  isArchived,
 }: SessionMenuActionsOptions): MenuAction[] {
   const ctx = useSidebarContext();
   const { groups, assignments } = useWorkspaceGroups(workspaceId);
@@ -412,12 +401,6 @@ function useSessionMenuActions({
     type: "item", id: "move-to-group", label: t("session_management.move_to_group"), icon: <Tag className="size-4" />,
     submenu: groupActions, submenuClassName: { dropdown: "w-52" },
   });
-  if (ctx.onArchiveSession && !ctx.archiveDisabledReason) actions.push({
-    type: "item", id: "archive",
-    label: isArchived ? t("session_management.unarchive_session") : t("session_management.archive_session"),
-    icon: isArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />,
-    onSelect: () => ctx.onArchiveSession?.(sessionId, !isArchived),
-  });
   if (ctx.onOpenDeleteSession) actions.push({ type: "separator" }, {
     type: "item", id: "delete", label: t("workspace_list.delete_session"), icon: <Trash2 className="size-4" />, variant: "destructive",
     onSelect: () => ctx.onOpenDeleteSession?.(sessionId),
@@ -425,8 +408,8 @@ function useSessionMenuActions({
   return actions;
 }
 
-function SessionActions({ className, sessionId, workspaceId, sessionTitle, workspaceTitle, isPinned, isArchived }: SessionActionsProps) {
-  const actions = useSessionMenuActions({ sessionId, workspaceId, sessionTitle, workspaceTitle, isPinned, isArchived });
+function SessionActions({ className, sessionId, workspaceId, sessionTitle, workspaceTitle, isPinned }: SessionActionsProps) {
+  const actions = useSessionMenuActions({ sessionId, workspaceId, sessionTitle, workspaceTitle, isPinned });
   if (!useCanManageSession()) return null;
 
   return (
@@ -449,19 +432,16 @@ type SessionHoverQuickActionsProps = {
   className?: string;
   sessionId: string;
   isPinned: boolean;
-  isArchived: boolean;
   relativeTime: string | null;
 };
 
-/** Pin → Archive → relative time — same trailing slot as status dots (Paper hover). */
+/** Pin → relative time — same trailing slot as status dots (Paper hover). */
 function SessionHoverQuickActions({
   className,
   sessionId,
   isPinned,
-  isArchived,
   relativeTime,
 }: SessionHoverQuickActionsProps) {
-  const ctx = useSidebarContext();
   const store = useSessionManagementStore;
 
   return (
@@ -484,21 +464,6 @@ function SessionHoverQuickActions({
       >
         {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
       </Button>
-      {ctx.onArchiveSession && !ctx.archiveDisabledReason ? (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-5 text-muted-foreground hover:bg-transparent hover:text-foreground"
-          aria-label={isArchived ? t("session_management.unarchive_session") : t("session_management.archive_session")}
-          data-testid={`session-archive-${sessionId}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            ctx.onArchiveSession?.(sessionId, !isArchived);
-          }}
-        >
-          {isArchived ? <ArchiveRestore className="size-3.5" /> : <Archive className="size-3.5" />}
-        </Button>
-      ) : null}
       {relativeTime ? (
         <span className={SESSION_ROW_METADATA_CLASS}>
           {relativeTime}
@@ -515,7 +480,6 @@ type SessionContextMenuProps = {
   sessionTitle?: string;
   workspaceTitle?: string;
   isPinned: boolean;
-  isArchived: boolean;
 };
 
 function SessionContextMenu({
@@ -525,9 +489,8 @@ function SessionContextMenu({
   sessionTitle,
   workspaceTitle,
   isPinned,
-  isArchived,
 }: SessionContextMenuProps) {
-  const actions = useSessionMenuActions({ sessionId, workspaceId, sessionTitle, workspaceTitle, isPinned, isArchived });
+  const actions = useSessionMenuActions({ sessionId, workspaceId, sessionTitle, workspaceTitle, isPinned });
   if (!useCanManageSession()) return children;
 
   return (
@@ -611,8 +574,6 @@ export type AppSidebarProps = {
   onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
   onOpenRenameSession?: (sessionId: string) => void;
   onOpenDeleteSession?: (sessionId: string) => void;
-  onArchiveSession?: (sessionId: string, archived: boolean) => void;
-  archiveDisabledReason?: string;
   onOpenCreateGroupModal?: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
@@ -723,8 +684,6 @@ export function AppSidebar(props: AppSidebarProps) {
     onCreateSplitTaskInWorkspace: props.onCreateSplitTaskInWorkspace,
     onOpenRenameSession: props.onOpenRenameSession,
     onOpenDeleteSession: props.onOpenDeleteSession,
-    onArchiveSession: props.onArchiveSession,
-    archiveDisabledReason: props.archiveDisabledReason,
     onOpenCreateGroupModal: props.onOpenCreateGroupModal,
     onOpenRenameWorkspace: props.onOpenRenameWorkspace,
     onRevealWorkspace: props.onRevealWorkspace,
@@ -742,10 +701,6 @@ export function AppSidebar(props: AppSidebarProps) {
   const pinnedSessions = React.useMemo(
     () => buildGlobalPinnedSessions(props.workspaceSessionGroups, pinnedIds),
     [pinnedIds, props.workspaceSessionGroups],
-  );
-  const archivedSessions = React.useMemo(
-    () => buildGlobalArchivedSessions(props.workspaceSessionGroups),
-    [props.workspaceSessionGroups],
   );
 
   return (
@@ -887,9 +842,6 @@ export function AppSidebar(props: AppSidebarProps) {
                 />
               ))}
             </Reorder.Group>
-            {archivedSessions.length > 0 ? (
-              <GlobalArchivedSessions entries={archivedSessions} />
-            ) : null}
           </m.div>
         </SidebarReorderScope>
 
@@ -943,64 +895,6 @@ function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[]
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
-  );
-}
-
-function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEntry[] }) {
-  const [expanded, setExpanded] = React.useState(false);
-
-  return (
-    <SidebarGroup data-global-archived-sessions className="mt-4 pb-1 pt-0">
-      <SidebarGroupContent>
-        <Collapsible open={expanded} onOpenChange={setExpanded} className="group/archived">
-          <CollapsibleTrigger
-            render={
-              <button
-                type="button"
-                className={cn("group/separator flex h-6 w-full cursor-pointer items-center gap-2 pe-2 rounded-md transition-colors hover:bg-sidebar-accent/50", SIDEBAR_ROW_LANE)}
-              >
-                <SidebarGlyphSlot>
-                  <Archive className="size-3.5 text-muted-foreground" />
-                </SidebarGlyphSlot>
-                <span className={SIDEBAR_SECTION_LABEL}>
-                  {t("session_management.archived_label")}
-                </span>
-                <span className="text-[10px] tabular-nums text-muted-foreground/70">{entries.length}</span>
-                <ChevronRight className="ml-auto size-3.5 text-muted-foreground transition-transform duration-200 group-data-open/archived:rotate-90" />
-              </button>
-            }
-          />
-          <CollapsibleContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuSub>
-                  {entries.map((entry) => (
-                    <GlobalArchivedSessionItem
-                      key={`${entry.group.workspace.id}:${entry.session.id}`}
-                      group={entry.group}
-                      session={entry.session}
-                    />
-                  ))}
-                </SidebarMenuSub>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </CollapsibleContent>
-        </Collapsible>
-      </SidebarGroupContent>
-    </SidebarGroup>
-  );
-}
-
-function GlobalArchivedSessionItem({ group, session }: GlobalArchivedSessionEntry) {
-  const pinnedIds = usePinnedSessionIds();
-
-  return (
-    <SessionMenuItem
-      session={session}
-      workspaceId={group.workspace.id}
-      isPinned={pinnedIds.has(session.id)}
-      workspaceName={workspaceLabel(group.workspace)}
-    />
   );
 }
 
@@ -1161,10 +1055,7 @@ function WorkspaceSidebarGroup({
     [assignments, pendingConversations, ctx.draftScope, workspace.id]);
   const store = useSessionManagementStore;
 
-  const { active: activeSessions } = React.useMemo(
-    () => partitionArchivedSessions(group.sessions),
-    [group.sessions],
-  );
+  const activeSessions = group.sessions;
   const sessionRows = React.useMemo(() => flattenSessionRows(
     group.sessions,
     wsGroups.length > 0 ? Number.MAX_SAFE_INTEGER : previewCount,
@@ -1904,7 +1795,6 @@ export function SessionMenuItem({
   const sessionAttentionLabel = ctx.sessionAttentionLabelById?.[session.id];
   const resolvedActiveWork = isActiveWorkSessionStatus(sessionActivityStatus);
   const isUnread = unreadIds.has(session.id) && !isSelected;
-  const isArchived = isSessionArchived(session);
   const relativeTime = formatSessionRelativeTime(session.time?.updated ?? session.time?.created);
   const shortcutDigit = ctx.sessionNumberShortcutByTarget.get(
     sessionNumberShortcutTargetKey(workspaceId, session.id),
@@ -1956,7 +1846,7 @@ export function SessionMenuItem({
     paddingInlineStart: sidebarRowPaddingInlineStart(0),
   } as const;
 
-  // Pinned/archived rows identify their workspace via the tooltip title
+  // Pinned rows identify their workspace via the tooltip title
   // only — no workspace color dot in these sections.
   const leading = (
     <SessionStatusIndicator
@@ -1973,7 +1863,6 @@ export function SessionMenuItem({
       <SessionHoverQuickActions
         sessionId={session.id}
         isPinned={isPinned}
-        isArchived={isArchived}
         relativeTime={relativeTime}
       />
     </>
@@ -1997,7 +1886,6 @@ export function SessionMenuItem({
         sessionTitle={displayTitle}
         workspaceTitle={workspaceName}
         isPinned={isPinned}
-        isArchived={isArchived}
       >
         <div className="relative min-w-0 flex-1">
           <SidebarMenuSubButton

@@ -3,7 +3,6 @@ const path = require("node:path");
 const asar = require("@electron/asar");
 
 const sidecarBases = [
-  "opencode",
   "opencode2",
 ];
 

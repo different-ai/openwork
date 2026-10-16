@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,8 +58,18 @@ async function fixture(directory: string, outputBytes = 260 * 1024 ** 2) {
 
 async function digest(path: string) {
   const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
+  const file = await open(path, "r");
+  const buffer = Buffer.alloc(1024 * 1024);
+  try {
+    let position = 0;
+    while (true) {
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, position);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+    return hash.digest("hex");
+  } finally { await file.close(); }
 }
 
 test("a complete large-thread copy resumes committed batches and repeated runs preserve v2 messages", { skip: !bin, timeout: 300_000 }, async () => {
@@ -194,8 +203,37 @@ test("closing OpenWork pauses a copy and startup resumes it before serving v2", 
     const engine = await createManagedOpencodeV2Server({ bin, rootDir: targetRoot, env: { OPENCODE_DISABLE_MODELS_FETCH: "1", HOME: directory } });
     await engine.close();
     await mkdir(directory, { recursive: true });
+    // A previously skipped import must gate an otherwise healthy engine too.
+    preview = createEngineV2Preview({ config, deferStart: true });
+    preview.start();
+    const initialDeadline = Date.now() + 30_000;
+    while (!preview.status().running) {
+      assert.ok(Date.now() < initialDeadline, "the unmigrated install starts its native engine");
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(preview.status().v1HistoryAvailable, true);
+    assert.equal(preview.status().migration.state, "idle");
+    assert.equal(preview.connection(), undefined, "v1 history without a receipt blocks all chat access");
+    await preview.stop(); preview = undefined;
+    // A completed preview import does not cover chats created later in v1.
+    await writeFile(join(directory, "engine-v2-preview.json"), JSON.stringify({ enabled: true, chatRouting: true,
+      v1HistoryCopiedAt: 0, historyCopyResult: { state: "completed", imported: 1, skipped: 0, total: 1 } }));
+    preview = createEngineV2Preview({ config, deferStart: true });
+    preview.start();
+    while (!preview.status().running) {
+      assert.ok(Date.now() < initialDeadline, "the preview receipt is checked before serving chats");
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(preview.status().v1HistoryAvailable, true, "newer v1 chats invalidate the old receipt");
+    assert.equal(preview.status().migration.state, "idle");
+    assert.equal(preview.connection(), undefined);
+    await preview.stop(); preview = undefined;
     await writeFile(join(directory, "engine-v2-preview.json"), JSON.stringify({ enabled: true, chatRouting: true, v1HistoryCopyStartedAt: 1 }));
     preview = createEngineV2Preview({ config, deferStart: true });
+    assert.deepEqual(preview.inspectMcpRegistration(directory, "unconfigured"), {
+      status: "not-recorded", source: "engine_status", recordAgeMs: null, errorSummary: null,
+    });
+    assert.equal(preview.status().running, false, "passive diagnostics does not start an engine");
     assert.equal(preview.status().migration.resumed, true);
     assert.equal(preview.connection(), undefined);
     preview.start();

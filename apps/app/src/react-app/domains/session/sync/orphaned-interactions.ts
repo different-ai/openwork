@@ -1,5 +1,5 @@
 import { isToolUIPart, type UIMessage } from "ai";
-import type { Part } from "@opencode-ai/sdk/v2/client";
+import type { Part } from "@/app/lib/opencode-types";
 
 // OpenCode asks questions and permissions from inside a tool call. When that
 // turn is aborted or superseded by a newer prompt, the engine marks the tool

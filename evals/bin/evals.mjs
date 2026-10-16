@@ -12,7 +12,7 @@ const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const worldsDir = join(evalsDir, "results/.worlds");
 
 function caseCommand(value) {
-  return `pnpm evals:e2e ${value.spec.replace(".e2e.test.ts", "")} ${value.example.placement} --engine ${value.example.engine} --case ${value.id}`;
+  return `pnpm evals:e2e ${value.spec.replace(".e2e.test.ts", "")} ${value.example.placement} --case ${value.id}`;
 }
 
 const caseExamples = registeredCases.map(caseCommand).join("\n");
@@ -28,7 +28,6 @@ Run E2E tests:
   --checkpoints      Save checkpoints for tests tagged "checkpoints" and steps marked { checkpoint: true };
                      worlds that cannot capture print one warning and run normally (requires --local)
                      (OPENWORK_EVAL_REF, default dev); OPENWORK_EVAL_STRICT_REF=1 does the same
-  --engine <v1|v2>   Select the app chat engine for a named test
   --surface <value>  Validate declared app surface (web|electron); never switches implementation
   --case <prefix>    Run one registered case by its exact prefix
 
@@ -114,10 +113,9 @@ export function parseArgs(args) {
     else if (arg === "--publish") options.publish = true;
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--force") options.force = true;
-    else if (["--engine", "--surface", "--case"].includes(arg)) {
+    else if (["--surface", "--case"].includes(arg)) {
       const value = valueAfter(args, index, arg);
-      if (arg === "--engine") options.engine = value;
-      else if (arg === "--surface") options.surface = value;
+      if (arg === "--surface") options.surface = value;
       else options.case = value;
       index += 1;
     }
@@ -152,20 +150,17 @@ export function parseArgs(args) {
     throw new Error(`--local is mutually exclusive with ${conflicts.join(" and ")}.`);
   }
 
-  if (options.engine !== undefined && !["v1", "v2"].includes(options.engine)) {
-    throw new Error(`Invalid --engine ${JSON.stringify(options.engine)}; expected v1 or v2.`);
-  }
   if (options.surface !== undefined && !["web", "electron"].includes(options.surface)) {
     throw new Error(`Invalid --surface ${JSON.stringify(options.surface)}; expected web or electron.`);
   }
-  if (!options.publish && (options.engine !== undefined || options.surface !== undefined) && options.testNames.length === 0 && !options.list) {
-    throw new Error("--engine and --surface require a named test.");
+  if (!options.publish && options.surface !== undefined && options.testNames.length === 0 && !options.list) {
+    throw new Error("--surface requires a named test.");
   }
   if (!options.publish && options.case !== undefined && options.testNames.length === 0) {
     throw new Error("--case requires exactly one named test.");
   }
-  if (options.list && (options.engine !== undefined || options.surface !== undefined || options.case !== undefined)) {
-    throw new Error("--list is mutually exclusive with --engine, --surface, and --case.");
+  if (options.list && (options.surface !== undefined || options.case !== undefined)) {
+    throw new Error("--list is mutually exclusive with --surface and --case.");
   }
 
   if (options.publish) {
@@ -177,7 +172,6 @@ export function parseArgs(args) {
     if (options.daytona) conflicts.push("--daytona");
     if (options.den !== undefined) conflicts.push("--den");
     if (options.strictRef) conflicts.push("--strict-ref");
-    if (options.engine !== undefined) conflicts.push("--engine");
     if (options.surface !== undefined) conflicts.push("--surface");
     if (options.case !== undefined) conflicts.push("--case");
     if (conflicts.length > 0) {
@@ -201,8 +195,8 @@ export function parseArgs(args) {
   return options;
 }
 
-// The complete caller environment, including OPENWORK_EVAL_ENGINE, is passed
-// through below. Only these remote-placement inputs are removed by --local.
+// The complete caller environment is passed through below. Only these
+// remote-placement inputs are removed by --local.
 const REMOTE_PLACEMENT_ENV = [
   "OPENWORK_WORLD_PLACE",
   "OPENWORK_EVAL_DAYTONA",
@@ -225,7 +219,6 @@ const TRANSPORT_SELECTOR_ENV = new Set([
   "OPENWORK_EVAL_DEN_API_URL",
   "OPENWORK_EVAL_DEN_WEB_URL",
   "OPENWORK_EVAL_REF",
-  "OPENWORK_EVAL_ENGINE",
   "OPENWORK_EVAL_APP_SURFACE",
   "OPENWORK_EVAL_CHROME_HEADLESS",
 ]);
@@ -393,23 +386,13 @@ export function resolveExecutionSelection(options, resolved, env = process.env, 
     }
   }
 
-  const engine = options.engine ?? (selectedCase ? (env.OPENWORK_EVAL_ENGINE || "v1").toLowerCase() : undefined);
-  if (selectedCase && !["v1", "v2"].includes(engine)) {
-    throw new Error(`Invalid effective engine ${JSON.stringify(engine)}; expected v1 or v2.`);
-  }
-  if (selectedCase && !selectedCase.engines.includes(engine)) {
-    throw new Error(`--case ${selectedCase.id} does not support engine ${engine}.`);
-  }
   const testNamePattern = selectedCase ? literalPrefixPattern(selectedCase.id) : undefined;
   const plan = planWorlds(resolved, { pattern: testNamePattern, casePrefix: selectedCase?.id, surface: options.surface, sources });
   const surface = plan.legacy.length ? undefined : plan.surfaces.includes("appWeb") && !plan.surfaces.includes("desktop") ? "web" : plan.surfaces.includes("desktop") && !plan.surfaces.includes("appWeb") ? "electron" : undefined;
 
-  if (engine !== undefined) childEnv.OPENWORK_EVAL_ENGINE = engine;
-  if (engine !== undefined) delete childEnv.OPENWORK_ENGINE_V2_PREVIEW;
   if (options.surface !== undefined) childEnv.OPENWORK_EVAL_APP_SURFACE = options.surface;
   return {
     env: childEnv,
-    engine,
     surface,
     caseId: selectedCase?.id,
     optIns: selectedCase?.optIns,
@@ -579,7 +562,7 @@ function run(options) {
   ];
   const alignment = resolveRefAlignment(placement, childEnv);
   const refWarning = refAlignmentWarning(alignment);
-  process.stderr.write(`selection: engine=${selection.engine ?? "legacy"} surface=${selection.surface ?? "legacy"} case=${selection.caseId ?? "all"}; placement: ${placement} (${reason})${refAlignmentLabel(alignment)}\n`);
+  process.stderr.write(`selection: surface=${selection.surface ?? "legacy"} case=${selection.caseId ?? "all"}; placement: ${placement} (${reason})${refAlignmentLabel(alignment)}\n`);
   for (const world of selection.plan.worlds) process.stderr.write(`contract: ${testName(world.file)}:${world.line} ${worldContract(world)}\n`);
   if (refWarning) {
     if (strictRefRequested(options)) throw new Error(refWarning);
@@ -611,7 +594,6 @@ function run(options) {
     lane: "e2e",
     daytona: placement === "daytona",
     placement,
-    engine: selection.engine ?? "legacy",
     surface: selection.surface ?? "legacy",
     contract: selection.plan,
     case: selection.caseId ?? null,
@@ -637,7 +619,7 @@ export function main(argv = process.argv.slice(2)) {
       return 0;
     }
     if (options.list) {
-      const cases = registeredCases.map(value => `${value.id}  ${value.spec}\n  engines: ${value.engines.join(", ")}\n  ${caseCommand(value)}`);
+      const cases = registeredCases.map(value => `${value.id}  ${value.spec}\n  ${caseCommand(value)}`);
       const files = options.testNames.length ? resolveTestNames(options.testNames) : journeyFiles();
       const entries = files.map(file => `${testName(file)}\n${discoverWorlds(file).map(world => `  ${worldContract(world)}`).join("\n")}\n  pnpm evals:e2e ${testName(file)}`);
       process.stdout.write(["Registered cases:", ...cases, "", "Discoverable tests:", ...entries].join("\n") + "\n");

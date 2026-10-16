@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Agent } from "@opencode-ai/sdk/v2/client";
+import type { Agent } from "@/app/lib/opencode-types";
 import { Cloud, Monitor, ArrowUp, Check, ChevronDown, FileText, LoaderCircle, RefreshCw, Square, Terminal, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
@@ -131,7 +131,6 @@ type ComposerProps = {
   /** Render inline in a page (new-task hero): no sticky dock chrome or inner max-width, aligning with sibling content. */
   flush?: boolean;
   topAccessory?: ReactNode;
-  runModeControl?: ReactNode;
   contextControl?: ReactNode;
 };
 
@@ -1409,7 +1408,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   onQueryChange={setPlusMenuQuery}
                   returnFocus={() => rootRef.current?.querySelector<HTMLElement>("[contenteditable='true']") ?? null}
                 />
-                {props.runModeControl}
                 </div>
 
                 <div data-composer-settings className="col-span-2 row-start-1 flex min-w-0 flex-wrap items-center gap-1 border-b border-dls-border pb-2 max-lg:flex-1 max-lg:flex-nowrap max-lg:border-0 max-lg:pb-0 @min-[560px]/composer:flex-1 @min-[560px]/composer:border-0 @min-[560px]/composer:pb-0">

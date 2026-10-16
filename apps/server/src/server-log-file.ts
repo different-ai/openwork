@@ -5,8 +5,8 @@ import { dirname } from "node:path";
  * Optional append-only file sink for the server logger.
  *
  * The desktop app runs openwork-server in-process, so its stdout is invisible
- * once packaged; without a file sink every engine rollover reason, reload
- * trigger, and MCP re-sync error is emitted and lost. The sink is enabled by
+ * once packaged; without a file sink every engine reload trigger and MCP
+ * sync error is emitted and lost. The sink is enabled by
  * OPENWORK_SERVER_LOG_FILE, always receives structured JSON lines regardless
  * of the stdout format, and rotates once so it cannot grow without bound.
  */

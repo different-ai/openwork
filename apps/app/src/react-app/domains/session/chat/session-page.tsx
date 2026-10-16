@@ -107,8 +107,7 @@ import { useRouteWorkbench, useWorkbenchStore, type WorkbenchSessionTab } from "
 import { isSameWorkbenchSession } from "./workbench-store";
 import { ReactSessionRuntime } from "../sync/runtime-sync";
 import { useSessionInteractions } from "../sync/use-session-interactions";
-import { createClient } from "@/app/lib/opencode";
-import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
+import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
 import {
   availableNarrowPane,
   NarrowPaneSwitcher,
@@ -233,9 +232,9 @@ export type SessionPageProps = {
   selectedWorkspaceError?: string | null;
   runtimeWorkspaceId: string | null;
   /**
-   * Pre-built OpenCode SDK base URL for the selected workspace's owning
+   * Pre-built OpenCode engine base URL for the selected workspace's owning
    * server. The parent route resolves this through `resolveWorkspaceEndpoint`
-   * so we never compose `<baseUrl>/workspace/<id>/opencode` here.
+   * so we never compose `<baseUrl>/workspace/<id>/opencode2` here.
    */
   opencodeBaseUrl?: string | null;
   workspaces: WorkspaceInfo[];
@@ -284,8 +283,6 @@ export type SessionPageProps = {
   newTaskComposer?: NewTaskComposerContext | null;
   onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string) => Promise<void> | void;
-  onArchiveSession?: (sessionId: string, archived: boolean) => Promise<void> | void;
-  archiveDisabledReason?: string;
   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
   /** Settings content rendered inside the right pane when the settings rail icon is active. */
   settingsSlot?: React.ReactNode;
@@ -352,10 +349,8 @@ function WorkbenchPaneHeader(props: {
 
 /** Every visible conversation owns its pending interactions, including the side pane. */
 function SplitSessionSurface({ metadataCallbacks, ...props }: SessionSurfaceProps & { metadataCallbacks?: SessionMetadataCallbacks }) {
-  const client = useMemo(() => isOpencodeV2BaseUrl(props.opencodeBaseUrl)
-    ? createClientV2(props.opencodeBaseUrl, props.workspaceRoot, { token: props.openworkToken })
-    : createClient(props.opencodeBaseUrl, props.workspaceRoot, { token: props.openworkToken, mode: "openwork" }),
-  [props.opencodeBaseUrl, props.openworkToken, props.workspaceRoot]);
+  const client = useMemo(() => createClientV2(props.opencodeBaseUrl, props.workspaceRoot, { token: props.openworkToken }),
+    [props.opencodeBaseUrl, props.openworkToken, props.workspaceRoot]);
   const interactions = useSessionInteractions({
     client, workspaceId: props.workspaceId, sessionId: props.sessionId, workspaceRoot: props.workspaceRoot ?? "",
   });
@@ -436,11 +431,6 @@ function controlStringArg(args: unknown, key: string) {
 }
 
 export function SessionPage(props: SessionPageProps) {
-  const archivedInWorkspace = (workspaceId: string, sessionId: string | null) => {
-    const session = props.sidebar.workspaceSessionGroups.find(group => group.workspace.id === workspaceId)
-      ?.sessions.find(session => session.id === sessionId);
-    return session ? Boolean(session.time?.archived) : undefined;
-  };
   const { config: shellConfig } = useShellConfig();
   const platform = usePlatform();
   const denAuth = useDenAuth();
@@ -514,7 +504,6 @@ export function SessionPage(props: SessionPageProps) {
       workspaceTitle: workspaceName,
       primarySessionId: props.selectedSessionId,
       sessionsKnown: workspaceGroup?.status === "ready",
-      archivedSessionIds: (workspaceGroup?.sessions ?? []).filter((session) => session.time?.archived).map((session) => session.id),
       sessions: (workspaceGroup?.sessions ?? []).map((session) => ({
         workspaceId: props.selectedWorkspaceId,
         sessionId: session.id,
@@ -1368,7 +1357,7 @@ export function SessionPage(props: SessionPageProps) {
           selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
           developerMode={props.sidebar.developerMode}
           selectedSessionId={props.sidebar.selectedSessionId}
-          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
+          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession)}
           sessionStatusById={props.sidebar.sessionStatusById}
           sessionAttentionLabelById={props.sidebar.sessionAttentionLabelById}
           sessionAttentionSourceById={props.sidebar.sessionAttentionSourceById}
@@ -1386,10 +1375,6 @@ export function SessionPage(props: SessionPageProps) {
             setSessionActionId(sessionId);
             setDeleteOpen(true);
           } : undefined}
-          onArchiveSession={props.onArchiveSession ? (sessionId, archived) => {
-            void props.onArchiveSession?.(sessionId, archived);
-          } : undefined}
-          archiveDisabledReason={props.archiveDisabledReason}
           onOpenCreateGroupModal={(workspaceId) => {
             setCreateGroupWorkspaceId(workspaceId);
             setCreateGroupLabel("");
@@ -1487,7 +1472,7 @@ export function SessionPage(props: SessionPageProps) {
                   : selectedSessionTitle || t("session.default_title")}
               </h1>
               {!props.primaryTitle && !props.mainContentTitle && !showWorkspaceSetupEmptyState ? (
-                // Pinned and archived sessions are listed across workspaces, so
+                // Pinned sessions are listed across workspaces, so
                 // the header names the workspace the open session belongs to.
                 <span
                   className="hidden min-w-0 shrink-0 items-center gap-1.5 text-[12px] text-dls-secondary lg:flex"
@@ -1765,8 +1750,6 @@ export function SessionPage(props: SessionPageProps) {
                             environmentClient={props.environmentClient}
                             workspaceId={props.runtimeWorkspaceId!}
                             sessionId={props.selectedSessionId!}
-                            archived={archivedInWorkspace(props.selectedWorkspaceId, props.selectedSessionId)}
-                            onRestoreSession={async () => { await props.onArchiveSession?.(props.selectedSessionId!, false); }}
                             isControlTarget={activeWorkbenchPane === "primary"}
                             chatPane={canRenderSplitSurface ? "primary" : undefined}
                             opencodeBaseUrl={reactSessionBaseUrl}
@@ -1843,8 +1826,6 @@ export function SessionPage(props: SessionPageProps) {
                                   workspaceId={splitPaneRuntime.runtimeWorkspaceId}
                                   workspaceRoot={splitPaneRuntime.workspaceRoot}
                                   sessionId={splitSession.sessionId}
-                                  archived={archivedInWorkspace(splitSession.workspaceId, splitSession.sessionId)}
-                                  onRestoreSession={async () => { await props.onArchiveSession?.(splitSession.sessionId, false); }}
                                   isControlTarget={activeWorkbenchPane === "secondary"}
                                   chatPane="secondary"
                                   opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}

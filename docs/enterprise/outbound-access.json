@@ -189,15 +189,7 @@
       "blockedEffect": "The Sentry MCP connection cannot connect when enabled.",
       "override": "MCP server URL setting"
     },
-    {
-      "host": "mcp.slack.com",
-      "kind": "fetched",
-      "components": ["renderer", "server"],
-      "purpose": "Slack MCP connection preset and OAuth guidance.",
-      "requirement": "opt-in",
-      "blockedEffect": "The Slack MCP connection cannot connect when enabled.",
-      "override": "MCP server URL setting"
-    },
+
     {
       "host": "mcp.stripe.com",
       "kind": "fetched",

@@ -20,24 +20,6 @@ export function executionRules(policy: DesktopExecutionPolicy | undefined): Engi
   }
   return rules;
 }
-type LegacyExecutionPermissions = {
-  bash?: Record<string, "allow" | "deny">;
-  webfetch?: "allow" | "deny";
-  websearch?: "allow" | "deny";
-};
-export function legacyExecutionPermissions(policy: DesktopExecutionPolicy | undefined): LegacyExecutionPermissions {
-  const permissions: LegacyExecutionPermissions = {};
-  for (const rule of executionRules(policy)) {
-    if (rule.action === "shell") {
-      permissions.bash ??= {};
-      permissions.bash[rule.resource] = rule.effect;
-    } else if (rule.action === "webfetch" || rule.action === "websearch") {
-      // The pinned engine accepts only scalar actions for these two tools.
-      permissions[rule.action] = rule.effect;
-    }
-  }
-  return permissions;
-}
 // Glob matching without a regular expression: repeated wildcard patterns must
 // not create catastrophic backtracking on a long command.
 function matches(pattern: string, value: string): boolean {
@@ -116,7 +98,6 @@ export function policyRequestActions(method: string, path: string): ManagedPolic
   if (/^\/workspace\/[^/]+\/(?:cloud-plugins|plugins|skills|commands|mcp)(?:\/|$)/.test(path)
     && !/\/mcp\/[^/]+\/(?:auth|managed\/connect)$/.test(path)) actions.push("extensions");
   if (/^\/workspace\/[^/]+\/(?:config|opencode-config|runtime-config|permissions|authorized-folders)(?:\/|$)/.test(path)) actions.push("settings");
-  if (path === "/experimental/engine-v2-preview") actions.push("settings");
   if (/\/opencode-config$/.test(path)) actions.push("engine_config");
   return actions;
 }

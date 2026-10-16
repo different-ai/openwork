@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useRef, useState } from "react";
-import type { Agent } from "@opencode-ai/sdk/v2/client";
+import type { Agent } from "@/app/lib/opencode-types";
 
 import type { CloudImportedPlugin } from "@/app/cloud/import-state";
 import { createDenClient, readDenSettings } from "@/app/lib/den";
@@ -11,7 +11,6 @@ import { TaskRecovery } from "@/components/chat/task-recovery";
 import { presentOpencodeSessionError, type OpencodeSessionErrorPresentation } from "../sync/session-error";
 import type { ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import { ReactSessionComposer } from "@/react-app/domains/session/surface/composer/composer";
-import { WorkspaceRunModeMenu } from "@/react-app/domains/session/surface/composer/workspace-run-mode-menu";
 import {
   snapshotComposerSessionState,
   persistableComposerDraftText,
@@ -508,7 +507,6 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
           setDestinationError(null);
         }}
       /> : null}
-      runModeControl={<WorkspaceRunModeMenu client={workspaceClient} workspaceId={workspaceId} busy={props.busy} />}
       draft={props.draft}
       mentions={mentions}
       onDraftChange={handleDraftChange}

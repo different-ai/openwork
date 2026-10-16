@@ -1,12 +1,12 @@
-import type { Message, Part, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
+import type { Message, Part, Session, SessionStatus, Todo } from "./opencode-types";
 
 import { closeSessionBrowserTabs } from "./desktop";
-import { createClient, unwrap, type FieldsResult } from "./opencode";
-import { createClientV2, isOpencodeV2BaseUrl } from "./opencode-v2-adapter";
+import { unwrap, type FieldsResult } from "./opencode";
+import { createClientV2 } from "./opencode-v2-adapter";
 import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "./openwork-server";
 import type { ResolvedWorkspaceEndpoint } from "./workspace-endpoint";
 
-type NativeSessionEndpoint = Pick<ResolvedWorkspaceEndpoint, "opencodeBaseUrl" | "token"> & { desktopTransport?: "main" };
+type NativeSessionEndpoint = Pick<ResolvedWorkspaceEndpoint, "opencodeBaseUrl" | "token">;
 type RequestOptions = { signal?: AbortSignal };
 type MessageReadOptions = RequestOptions & { limit?: number; before?: string };
 type HistoryReadOptions = MessageReadOptions & { messageIds?: readonly string[] };
@@ -61,33 +61,10 @@ function readOwnedSnapshotTarget(
 }
 
 function createNativeOperations(endpoint: NativeSessionEndpoint): NativeSessionOperations {
-  const v2 = isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)
-    ? createClientV2(endpoint.opencodeBaseUrl, undefined, { token: endpoint.token })
-    : undefined;
-  const client = v2 ?? createClient(endpoint.opencodeBaseUrl, undefined, { mode: "openwork", token: endpoint.token },
-    endpoint.desktopTransport ? { desktopTransport: endpoint.desktopTransport } : undefined);
+  const client = createClientV2(endpoint.opencodeBaseUrl, undefined, { token: endpoint.token });
   return {
     get: (sessionId, options) => client.session.get({ sessionID: sessionId }, options),
-    messages: async (sessionId, limit, options) => {
-      const parameters = { sessionID: sessionId, limit, before: options?.before };
-      const result = await client.session.messages(parameters, options);
-      if (result.data === undefined || limit === undefined || !Number.isInteger(limit) || limit <= 0) return result;
-      if (v2) {
-        const pagination = "pagination" in result ? result.pagination : undefined;
-        if (pagination === undefined) return result;
-        if (!pagination || typeof pagination !== "object"
-          || !("limit" in pagination) || typeof pagination.limit !== "number"
-          || !("nextCursor" in pagination) || (pagination.nextCursor !== null && typeof pagination.nextCursor !== "string")) {
-          throw new Error("Invalid session history pagination metadata.");
-        }
-        return { ...result, pagination: { before: options?.before, nextCursor: pagination.nextCursor, limit: pagination.limit } };
-      }
-      const nextCursor = result.response.headers.get("X-Next-Cursor");
-      if (nextCursor !== null && nextCursor === options?.before) {
-        throw new Error("Session history pagination cursor did not advance.");
-      }
-      return { ...result, pagination: { before: options?.before, nextCursor, limit } };
-    },
+    messages: (sessionId, limit, options) => client.session.messages({ sessionID: sessionId, limit, before: options?.before }, options),
     message: (sessionId, messageId, options) => client.session.message({ sessionID: sessionId, messageID: messageId }, options),
     todo: (sessionId, options) => client.session.todo({ sessionID: sessionId }, options),
     status: (options) => client.session.status(undefined, options),

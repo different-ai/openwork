@@ -12,10 +12,6 @@ export interface CliArgs {
   hostToken?: string;
   approvalMode?: ApprovalMode;
   approvalTimeoutMs?: number;
-  opencodeBaseUrl?: string;
-  opencodeDirectory?: string;
-  opencodeUsername?: string;
-  opencodePassword?: string;
   workspaces: string[];
   corsOrigins?: string[];
   readOnly?: boolean;
@@ -42,10 +38,6 @@ interface FileConfig {
   corsOrigins?: string[];
   authorizedRoots?: string[];
   readOnly?: boolean;
-  opencodeBaseUrl?: string;
-  opencodeDirectory?: string;
-  opencodeUsername?: string;
-  opencodePassword?: string;
   logFormat?: LogFormat;
   logRequests?: boolean;
 }
@@ -152,26 +144,6 @@ export function parseCliArgs(argv: string[]): CliArgs {
       index += 1;
       continue;
     }
-    if (value === "--opencode-base-url") {
-      args.opencodeBaseUrl = argv[index + 1];
-      index += 1;
-      continue;
-    }
-    if (value === "--opencode-directory") {
-      args.opencodeDirectory = argv[index + 1];
-      index += 1;
-      continue;
-    }
-    if (value === "--opencode-username") {
-      args.opencodeUsername = argv[index + 1];
-      index += 1;
-      continue;
-    }
-    if (value === "--opencode-password") {
-      args.opencodePassword = argv[index + 1];
-      index += 1;
-      continue;
-    }
     if (value === "--workspace") {
       const path = argv[index + 1];
       if (path) args.workspaces.push(path);
@@ -210,10 +182,6 @@ export function printHelp(): void {
     "  --host-token <token>     Host approval token",
     "  --approval <mode>        manual | auto",
     "  --approval-timeout <ms>  Approval timeout",
-    "  --opencode-base-url <url> OpenCode base URL to share",
-    "  --opencode-directory <path> OpenCode workspace directory to share",
-    "  --opencode-username <user> OpenCode server username",
-    "  --opencode-password <pass> OpenCode server password",
     "  --workspace <path>       Workspace root (repeatable)",
     "  --cors <origins>          Comma-separated origins or *",
     "  --read-only              Disable writes",
@@ -237,36 +205,12 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const configDir = dirname(configPath);
 
   const envWorkspaces = parseList(process.env.OPENWORK_WORKSPACES);
-  let workspaceConfigs: WorkspaceConfig[] =
+  const workspaceConfigs: WorkspaceConfig[] =
     cli.workspaces.length > 0
       ? cli.workspaces.map((path) => ({ path }))
       : envWorkspaces.length > 0
         ? envWorkspaces.map((path) => ({ path }))
         : fileConfig.workspaces ?? [];
-
-  const envOpencodeBaseUrl = process.env.OPENWORK_OPENCODE_BASE_URL;
-  const envOpencodeDirectory = process.env.OPENWORK_OPENCODE_DIRECTORY;
-  const envOpencodeUsername = process.env.OPENWORK_OPENCODE_USERNAME;
-  const envOpencodePassword = process.env.OPENWORK_OPENCODE_PASSWORD;
-  const opencodeBaseUrl = cli.opencodeBaseUrl ?? envOpencodeBaseUrl ?? fileConfig.opencodeBaseUrl;
-  const opencodeDirectory = cli.opencodeDirectory ?? envOpencodeDirectory ?? fileConfig.opencodeDirectory;
-  const opencodeUsername = cli.opencodeUsername ?? envOpencodeUsername ?? fileConfig.opencodeUsername;
-  const opencodePassword = cli.opencodePassword ?? envOpencodePassword ?? fileConfig.opencodePassword;
-
-  if (workspaceConfigs.length > 0 && (opencodeBaseUrl || opencodeDirectory || opencodeUsername || opencodePassword)) {
-    const allowDirectoryOverride = workspaceConfigs.length === 1 && opencodeDirectory;
-    workspaceConfigs = workspaceConfigs.map((workspace, index) => {
-      const nextDirectory =
-        workspace.directory ?? (allowDirectoryOverride && index === 0 ? opencodeDirectory : undefined);
-      return {
-        ...workspace,
-        baseUrl: workspace.baseUrl ?? opencodeBaseUrl,
-        directory: nextDirectory,
-        opencodeUsername: workspace.opencodeUsername ?? opencodeUsername,
-        opencodePassword: workspace.opencodePassword ?? opencodePassword,
-      };
-    });
-  }
 
   const workspaces = buildWorkspaceInfos(workspaceConfigs, configDir);
 
@@ -343,10 +287,6 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     token,
     hostToken,
     configPath,
-    opencodeBaseUrl,
-    opencodeDirectory,
-    opencodeUsername,
-    opencodePassword,
     approval,
     corsOrigins,
     workspaces,

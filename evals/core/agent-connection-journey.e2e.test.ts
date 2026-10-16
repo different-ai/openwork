@@ -1,15 +1,15 @@
 import { expect } from "vitest";
-import { resolveEvalEngine, spec } from "@openwork/testkit";
+import { spec } from "@openwork/testkit";
 import { engineConnectorsParity } from "../worlds/engine-connectors-parity.ts";
 
-// Web app + a real Den org connection ("Amber Reports") reached through OpenWork Cloud on both engines.
+// Web app + a real Den org connection ("Amber Reports") reached through OpenWork Cloud.
 const test = spec.world(engineConnectorsParity, {
   timeout: 420_000, resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
 });
 
 const PROMPT = "What does the latest amber report say?";
 
-test(`AGENT-VIS-04 ${resolveEvalEngine()}: a person asks for a report from a connected service and can see what went where and what came back`, async ({ world, user, probe, step, evidence }) => {
+test(`AGENT-VIS-04: a person asks for a report from a connected service and can see what went where and what came back`, async ({ world, user, probe, step, evidence }) => {
   await step("the person asks what the latest amber report says", async () => {
     await world.prepareReport(PROMPT);
     await user.type("composer", PROMPT);

@@ -15,7 +15,6 @@ import {
 } from "@openwork/paths";
 import { ensureDenStack } from "./den-stack.ts";
 import { selectedAppEnv } from "./app-env.ts";
-import { resolveEvalEngineValue } from "./eval-engine.ts";
 import type { ChildProcess } from "node:child_process";
 import { MOUSE_POINTER_CHROME_ARG } from "./types.ts";
 import type { DisposableHost, SurfaceHandle, ElectronSurfaceOptions, ChromeSurfaceOptions, DenServiceOptions, DenServiceHandle, ShareLinks } from "./types.ts";
@@ -511,10 +510,6 @@ export function electronSurfaceEnv(
   // Give local eval Electron surfaces isolated app data, config, and identity so
   // they cannot affect the user's real desktop app.
   return {
-    // Always explicit: a blank eval profile looks like a new install, which
-    // would otherwise start on OpenCode v2 instead of the selected engine. A
-    // selected `--env OPENWORK_ENGINE_V2_PREVIEW` below still wins.
-    OPENWORK_ENGINE_V2_PREVIEW: resolveEvalEngineValue(process.env.OPENWORK_EVAL_ENGINE) === "v2" ? "1" : "0",
     // Explicit `pnpm world up --env KEY` app settings come first so the
     // isolation keys below always win over a selected value.
     ...selectedAppEnv(),

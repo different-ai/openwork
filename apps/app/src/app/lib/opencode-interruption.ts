@@ -1,13 +1,6 @@
 import type { Client } from "../types";
-import type { Message, Part } from "@opencode-ai/sdk/v2/client";
-import { createClient, createPromptMessageID, isPromptAdmissionUnknown, PromptAdmissionUnknownError, unwrap } from "./opencode";
-import { isOpencodeV2BaseUrl } from "./opencode-v2-adapter";
-import { engineDirectory } from "./session-ownership";
-
-export function createSessionInterruptionClient(baseUrl: string, client: Client, directory?: string, token?: string): Client {
-  return isOpencodeV2BaseUrl(baseUrl) ? client
-    : createClient(baseUrl, directory?.trim() || undefined, { token, mode: "openwork" }, { desktopTransport: "main" });
-}
+import type { Message, Part } from "./opencode-types";
+import { createPromptMessageID, isPromptAdmissionUnknown, PromptAdmissionUnknownError, unwrap } from "./opencode";
 
 type Submission = {
   messageID?: string;
@@ -22,7 +15,6 @@ type Turn = {
   interruption?: Promise<void>;
   stopping: boolean;
   needsStop: boolean;
-  holds: number;
   listeners: Set<() => void>;
 };
 const turns = new Map<string, Turn>();
@@ -31,7 +23,7 @@ function turnFor(baseUrl: string, sessionID: string) {
   const key = JSON.stringify([baseUrl.replace(/\/+$/, ""), sessionID]);
   let turn = turns.get(key);
   if (!turn) {
-    turn = { generation: 0, submissions: new Set(), stopping: false, needsStop: false, holds: 0, listeners: new Set() };
+    turn = { generation: 0, submissions: new Set(), stopping: false, needsStop: false, listeners: new Set() };
     turns.set(key, turn);
   }
   return turn;
@@ -41,11 +33,10 @@ function turnFor(baseUrl: string, sessionID: string) {
  * the engine while Stop is still cancelling its predecessor's children. */
 export async function submitAfterInterruption<T>(baseUrl: string, sessionID: string, send: (afterStop: boolean) => Promise<T>, messageID?: string, waitForTerminal = false): Promise<T> {
   const turn = turnFor(baseUrl, sessionID);
-  if (turn.holds) throw new Error("This conversation is being archived.");
   const generation = turn.generation;
   const interruption = turn.interruption;
   await interruption;
-  if (turn.holds || turn.generation !== generation) throw new Error("Send cancelled by Stop.");
+  if (turn.generation !== generation) throw new Error("Send cancelled by Stop.");
   let cancel!: () => void;
   const cancelled = new Promise<never>((_, reject) => {
     cancel = () => reject(new Error("Send cancelled by Stop."));
@@ -86,7 +77,7 @@ export function submitImmediateSessionTurn<T>(
   send: (afterStop: boolean) => Promise<T>,
   options: { directory?: string; messageID?: string } = {},
 ): Promise<T> {
-  if (!sessionWorkHeld(baseUrl, sessionID) && foregroundDelegations(messages).some((part) =>
+  if (foregroundDelegations(messages).some((part) =>
     part.type === "tool" && ["pending", "running"].includes(part.state.status))) {
     void interruptSessionTurn(baseUrl, client, sessionID, options.directory);
   }
@@ -108,20 +99,6 @@ export function sendSessionCommand(baseUrl: string, client: Client, parameters: 
     }
     return result;
   }, messageID, true);
-}
-
-export function sessionWorkHeld(baseUrl: string, sessionID: string) {
-  return turnFor(baseUrl, sessionID).holds > 0;
-}
-
-export function holdSessionWork(baseUrl: string, sessionID: string) {
-  const turn = turnFor(baseUrl, sessionID);
-  turn.holds += 1;
-  for (const listener of turn.listeners) listener();
-  return () => {
-    turn.holds -= 1;
-    for (const listener of turn.listeners) listener();
-  };
 }
 
 export function hasTerminalSessionReply(messages: readonly { info: Message; parts: Part[] }[], sessionID: string, messageID: string) {
@@ -225,20 +202,18 @@ async function stopForegroundTree(
   // Stop must reach the engine even when session/transcript reads are broken.
   // Read concurrently to retain child references, but never gate the root abort
   // on discovery. Failed discovery still prevents claiming a complete handoff.
-  const [aborted, rootResult, childResult, ownerResult] = await Promise.allSettled([
+  const [aborted, rootResult, childResult] = await Promise.allSettled([
     abort(rootID),
     client.session.get({ sessionID: rootID, directory }, options).then(unwrap),
     children(rootID),
-    directory === undefined ? undefined : engineDirectory(client, directory, options),
   ]);
   // Do not let a fast discovery failure cancel an abort still in flight.
   if (aborted.status === "rejected") throw aborted.reason;
   if (rootResult.status === "rejected") throw rootResult.reason;
   if (childResult.status === "rejected") throw childResult.reason;
-  if (ownerResult.status === "rejected") throw ownerResult.reason;
   const root = rootResult.value;
   const before = childResult.value;
-  if (root.id !== rootID || (ownerResult.value !== undefined && root.directory !== ownerResult.value)) {
+  if (root.id !== rootID || (directory !== undefined && root.directory !== directory)) {
     throw new Error("Could not verify the conversation's workspace. Stop was not confirmed.");
   }
   const targets = new Set<string>();

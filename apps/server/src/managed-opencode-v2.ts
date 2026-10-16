@@ -107,7 +107,7 @@ export interface ManagedOpencodeV2Server extends OpencodeV2Connection {
   /**
    * Replace the mirrored providers. `disabledProviderIds` hides those
    * providers (including built-ins such as OpenCode Zen) from the native
-   * catalog, matching v1 `disabled_providers`.
+   * catalog, matching the runtime `disabled_providers` list.
    */
   setProviders(specs: OpencodeV2ProviderSpec[], disabledProviderIds?: string[]): Promise<void>;
   /** Extra absolute skill directories registered through native config `skills`. */
@@ -203,7 +203,7 @@ export function engineListsModel(provider: OpencodeV2ProviderSpec, model: Openco
 /** The whole generated engine config: every writer emits all current keys. */
 export function renderOpencodeV2Config(input: {
   providers: OpencodeV2ProviderSpec[];
-  /** v1 `disabled_providers` equivalent; applied through the catalog filter plugin. */
+  /** The runtime `disabled_providers` list, applied through the catalog filter plugin. */
   disabledProviderIds?: string[];
   permissions?: EnginePermissionRule[];
   skills: string[];
@@ -375,7 +375,7 @@ export async function createManagedOpencodeV2Server(
   // Replace the generated config before boot, removing stale managed-policy
   // registrations while retaining independent engine permissions. Leave the
   // old entrypoint on disk: another configuration may still reference it.
-  // Cloud skills use Connect on demand, just like v1. No generated Cloud
+  // Cloud skills use Connect on demand. No generated Cloud
   // skill directory is registered with the native engine.
   await writeConfig();
   const historyLease = await acquireEngineHistoryLease(options.rootDir);

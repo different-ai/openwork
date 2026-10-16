@@ -36,18 +36,14 @@ export function resolveDefaultServerUrl(): string {
     const baseUrl = openworkUrl === "/api/openwork" && typeof window !== "undefined"
       ? new URL(openworkUrl, window.location.origin).href
       : openworkUrl;
-    return `${baseUrl.replace(/\/+$/, "")}/opencode`;
+    return baseUrl.replace(/\/+$/, "");
   }
 
   if (isWebDeployment() && import.meta.env.PROD && typeof window !== "undefined") {
-    return `${window.location.origin}/opencode`;
+    return window.location.origin;
   }
 
-  const envUrl =
-    typeof import.meta.env?.VITE_OPENCODE_URL === "string"
-      ? import.meta.env.VITE_OPENCODE_URL.trim()
-      : "";
-  return envUrl || "http://127.0.0.1:4096";
+  return "http://127.0.0.1:4096";
 }
 
 type AppProvidersProps = {

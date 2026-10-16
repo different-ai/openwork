@@ -1,17 +1,6 @@
-import { afterEach, describe, expect, jest, mock, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
 
-let capturedFetch: typeof globalThis.fetch | null = null;
-
-const { createOpencodeClient: createSDKClient } = await import("@opencode-ai/sdk/v2/client");
-
-mock.module("@opencode-ai/sdk/v2/client", () => ({
-  createOpencodeClient: (options: Parameters<typeof createSDKClient>[0]) => {
-    capturedFetch = options?.fetch ?? null;
-    return createSDKClient(options);
-  },
-}));
-
-const { createClient, createPromptMessageID, PromptAdmissionUnknownError, hasAcceptedPromptMessage } = await import("../src/app/lib/opencode");
+const { createDesktopFetch } = await import("../src/app/lib/opencode");
 
 const originalWindow = globalThis.window;
 const originalFetch = globalThis.fetch;
@@ -34,7 +23,6 @@ function restoreGlobals() {
     configurable: true,
     value: originalFetch,
   });
-  capturedFetch = null;
 }
 
 function installControllableFetch() {
@@ -70,18 +58,7 @@ function installControllableFetch() {
 }
 
 function createCapturedFetch() {
-  capturedFetch = null;
-  createClient("https://web.example/workspace/ws_test/opencode");
-  if (!capturedFetch) {
-    throw new Error("SDK mock did not receive an OpenCode fetch implementation");
-  }
-  return capturedFetch;
-}
-
-function delay(milliseconds: number) {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, milliseconds);
-  });
+  return createDesktopFetch();
 }
 
 function trackPromise<T>(promise: Promise<T>) {
@@ -97,24 +74,24 @@ function trackPromise<T>(promise: Promise<T>) {
   return () => state;
 }
 
-describe("OpenCode transport timeouts", () => {
+describe("Desktop OpenCode transport timeouts", () => {
   afterEach(() => {
     jest.useRealTimers();
     restoreGlobals();
   });
 
-  test.each(["web URL", "web Request", "desktop Request"])("preserves caller cancellation and the deadline on history GETs (%s)", async (transport) => {
+  test.each(["URL", "Request"])("preserves caller cancellation and the deadline on history GETs (%s)", async (transport) => {
     jest.useFakeTimers();
-    installWindow(transport === "desktop Request" ? { __OPENWORK_ELECTRON__: {} } : undefined);
+    installWindow({ __OPENWORK_ELECTRON__: {} });
     const { observedSignal, attempts } = installControllableFetch();
     const fetchImpl = createCapturedFetch();
-    const url = "http://127.0.0.1:8788/workspace/ws_test/opencode/session/ses_1/message";
+    const url = "http://127.0.0.1:8788/workspace/ws_test/opencode2/api/session/ses_1/message";
     for (const cause of ["preaborted", "caller", "deadline"]) {
       const caller = new AbortController();
       const reason = new DOMException("History read canceled", "AbortError");
       if (cause === "preaborted") caller.abort(reason);
       const before = attempts();
-      const result = (transport === "web URL"
+      const result = (transport === "URL"
         ? fetchImpl(url, { signal: caller.signal })
         : fetchImpl(new Request(url, { signal: caller.signal }))).catch((error: unknown) => error);
       if (cause === "caller") caller.abort(reason);
@@ -131,7 +108,6 @@ describe("OpenCode transport timeouts", () => {
 
   test("desktop history Request init overrides signal and headers without dropping authentication", async () => {
     installWindow({ __OPENWORK_ELECTRON__: {} });
-    const { createDesktopFetch } = await import("../src/app/lib/opencode");
     let seen: Request | undefined;
     Object.defineProperty(globalThis, "fetch", {
       configurable: true,
@@ -142,7 +118,7 @@ describe("OpenCode transport timeouts", () => {
     });
     const original = new AbortController();
     const override = new AbortController();
-    const response = await createDesktopFetch({ mode: "openwork", token: "fixture-token" })(
+    const response = await createDesktopFetch("fixture-token")(
       new Request("http://127.0.0.1/session/ses_1/message", { signal: original.signal, headers: { "x-old": "old" } }),
       { signal: override.signal, headers: { "x-new": "new" } },
     );
@@ -212,66 +188,26 @@ describe("OpenCode transport timeouts", () => {
     expect(calls).toEqual(["__fetch"]);
   });
 
-  test("does not transport-timeout web OpenCode event streams", async () => {
-    installWindow(undefined);
-    const { cancel, observedSignal } = installControllableFetch();
-    const fetchImpl = createCapturedFetch();
-
-    const response = fetchImpl("https://web.example/workspace/ws_test/opencode/event", {
-      headers: { Accept: "text/event-stream" },
-    });
-    const state = trackPromise(response);
-
-    try {
-      await delay(10_050);
-
-      expect(observedSignal()).toBeNull();
-      expect(state()).toBe("pending");
-    } finally {
-      cancel();
-    }
-  }, 15_000);
-
-  test("keeps timing out ordinary web OpenCode requests", async () => {
-    installWindow(undefined);
-    const { cancel, observedSignal } = installControllableFetch();
-    const fetchImpl = createCapturedFetch();
-
-    const response = fetchImpl("https://web.example/workspace/ws_test/opencode/global/health");
-    const errorPromise = response.catch((error: unknown) => error);
-
-    try {
-      const error = await errorPromise;
-      expect(error).toMatchObject({ message: "Request timed out." });
-      expect(observedSignal()?.aborted).toBe(true);
-    } finally {
-      cancel();
-    }
-  }, 15_000);
-
-  test.each(["web URL", "web Request", "desktop Request"])("preserves caller cancellation on ordinary requests (%s)", async (transport) => {
-    installWindow(transport === "desktop Request" ? { __OPENWORK_ELECTRON__: {} } : undefined);
+  test("preserves caller cancellation on ordinary requests", async () => {
+    installWindow({ __OPENWORK_ELECTRON__: {} });
     const { observedSignal } = installControllableFetch();
     const fetchImpl = createCapturedFetch();
     const controller = new AbortController();
-    const url = "http://127.0.0.1:8788/session/ses_archive";
-    const response = transport === "web URL"
-      ? fetchImpl(url, { signal: controller.signal })
-      : fetchImpl(new Request(url, { signal: controller.signal }));
+    const response = fetchImpl(new Request("http://127.0.0.1:8788/api/session/ses_read", { signal: controller.signal }));
     const outcome = response.catch((error: unknown) => error);
-    const reason = new Error("Archive verification cancelled");
+    const reason = new Error("Read cancelled");
     controller.abort(reason);
     expect(observedSignal()?.aborted).toBe(true);
     expect(await outcome).toBe(reason);
   });
 
-  test.each(["web", "desktop"])("RequestInit.signal overrides Request.signal (%s)", async (transport) => {
-    installWindow(transport === "desktop" ? { __OPENWORK_ELECTRON__: {} } : undefined);
+  test("RequestInit.signal overrides Request.signal", async () => {
+    installWindow({ __OPENWORK_ELECTRON__: {} });
     const { observedSignal } = installControllableFetch();
     const fetchImpl = createCapturedFetch();
     const requestController = new AbortController();
     const initController = new AbortController();
-    const response = fetchImpl(new Request("http://127.0.0.1:8788/session/ses_archive", {
+    const response = fetchImpl(new Request("http://127.0.0.1:8788/api/session/ses_read", {
       signal: requestController.signal,
     }), { signal: initController.signal });
     const outcome = response.catch((error: unknown) => error);
@@ -283,13 +219,13 @@ describe("OpenCode transport timeouts", () => {
     expect(await outcome).toBe(reason);
   });
 
-  test.each(["web", "desktop"])("RequestInit.signal=null disconnects the input Request signal (%s)", async (transport) => {
+  test("RequestInit.signal=null disconnects the input Request signal", async () => {
     jest.useFakeTimers();
-    installWindow(transport === "desktop" ? { __OPENWORK_ELECTRON__: {} } : undefined);
+    installWindow({ __OPENWORK_ELECTRON__: {} });
     const { observedSignal } = installControllableFetch();
     const fetchImpl = createCapturedFetch();
     const controller = new AbortController();
-    const response = fetchImpl(new Request("http://127.0.0.1:8788/session/ses_archive", {
+    const response = fetchImpl(new Request("http://127.0.0.1:8788/api/session/ses_read", {
       signal: controller.signal,
     }), { signal: null });
     const outcome = response.catch((error: unknown) => error);
@@ -300,54 +236,18 @@ describe("OpenCode transport timeouts", () => {
     expect(observedSignal()?.aborted).toBe(true);
   });
 
-  test.each(["web URL", "web Request", "desktop Request"])("transport deadline aborts requests even with a caller signal (%s)", async (transport) => {
+  test("transport deadline aborts requests even with a caller signal", async () => {
     jest.useFakeTimers();
-    installWindow(transport === "desktop Request" ? { __OPENWORK_ELECTRON__: {} } : undefined);
+    installWindow({ __OPENWORK_ELECTRON__: {} });
     const { observedSignal } = installControllableFetch();
     const fetchImpl = createCapturedFetch();
     const controller = new AbortController();
-    const url = "http://127.0.0.1:8788/session/ses_archive";
-    const response = transport === "web URL"
-      ? fetchImpl(url, { signal: controller.signal })
-      : fetchImpl(new Request(url, { signal: controller.signal }));
+    const response = fetchImpl(new Request("http://127.0.0.1:8788/api/session/ses_read", { signal: controller.signal }));
     const outcome = response.catch((error: unknown) => error);
     jest.advanceTimersByTime(10_000);
     expect(await outcome).toMatchObject({ message: "Request timed out." });
     expect(observedSignal()?.aborted).toBe(true);
     expect(controller.signal.aborted).toBe(false);
-  });
-
-  test.each(["web URL", "web Request", "desktop Request"])("bounds prompt_async acceptance at 30 seconds without resending (%s)", async (transport) => {
-    jest.useFakeTimers();
-    installWindow(transport === "desktop Request" ? { __OPENWORK_ELECTRON__: {} } : undefined);
-    const { cancel, observedSignal, attempts } = installControllableFetch();
-    const fetchImpl = createCapturedFetch();
-
-    const url = "http://127.0.0.1:8788/workspace/ws_test/opencode/session/ses_send/prompt_async";
-    const init = {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    };
-    const response = transport === "web URL" ? fetchImpl(url, init) : fetchImpl(new Request(url, init));
-    const state = trackPromise(response);
-    const errorPromise = response.catch((error: unknown) => error);
-
-    try {
-      expect(observedSignal()).not.toBeNull();
-      jest.advanceTimersByTime(29_999);
-      await Promise.resolve();
-      expect(observedSignal()?.aborted).toBe(false);
-      expect(state()).toBe("pending");
-
-      jest.advanceTimersByTime(1);
-      expect(await errorPromise).toBeInstanceOf(PromptAdmissionUnknownError);
-      expect(observedSignal()?.aborted).toBe(true);
-      jest.advanceTimersByTime(60_000);
-      expect(attempts()).toBe(1);
-    } finally {
-      cancel();
-    }
   });
 
   test.each(["", "/ses_send/prompt"])("desktop v2 cold session write %s survives 21 seconds of organization setup", async (suffix) => {
@@ -401,132 +301,12 @@ describe("OpenCode transport timeouts", () => {
     } finally { cancel(); }
   });
 
-  test("keeps synchronous command and summarize requests untimed", async () => {
-    jest.useFakeTimers();
-    installWindow(undefined);
-    const { cancel, observedSignal } = installControllableFetch();
-    const fetchImpl = createCapturedFetch();
-
-    for (const path of ["command", "summarize"]) {
-      const response = fetchImpl(`https://web.example/workspace/ws_test/opencode/session/ses_send/${path}`, {
-        method: "POST",
-      });
-      const state = trackPromise(response);
-      const settled = response.catch(() => undefined);
-      jest.advanceTimersByTime(5 * 60_000);
-      await Promise.resolve();
-      expect(observedSignal()).toBeNull();
-      expect(state()).toBe("pending");
-      cancel();
-      await settled;
-    }
-  });
-
-  test.each([408, 500, 502, 503, 504, "network", "malformed"])("preserves uncertain prompt admission without replay (%s)", async (failure) => {
-    installWindow(undefined);
-    const requests: Request[] = [];
-    Object.defineProperty(globalThis, "fetch", {
-      configurable: true,
-      value: async (input: RequestInfo | URL, init?: RequestInit) => {
-        requests.push(new Request(input, init));
-        if (failure === "network") throw new TypeError("connection lost");
-        return new Response("not json", { status: failure === "malformed" ? 200 : failure });
-      },
-    });
-    const client = createClient("https://web.example/workspace/ws_test/opencode", "/workspace/test");
-    const messageID = createPromptMessageID();
-    await expect(client.session.promptAsync({
-      sessionID: "ses_parent", messageID, parts: [{ type: "text", text: "follow up" }],
-    })).rejects.toMatchObject({ name: "PromptAdmissionUnknownError", admission: "unknown", messageID });
-    expect(requests).toHaveLength(1);
-    expect(requests[0]?.method).toBe("POST");
-    expect(requests[0]?.url).toBe("https://web.example/workspace/ws_test/opencode/session/ses_parent/prompt_async");
-    expect(requests[0]?.headers.get("x-opencode-directory")).toBe("/workspace/test");
-    expect(await requests[0]?.json()).toMatchObject({ messageID });
-  });
-
-  test("keeps explicit client rejection distinct from unknown admission", async () => {
-    installWindow(undefined);
-    Object.defineProperty(globalThis, "fetch", {
-      configurable: true,
-      value: async () => Response.json({ message: "invalid prompt" }, { status: 400 }),
-    });
-    const client = createClient("https://web.example");
-    const result = await client.session.promptAsync({ sessionID: "ses_parent", parts: [] });
-    expect(result.error).toEqual({ message: "invalid prompt" });
-  });
-
-  test.each(["prompt", "acceptance check"])("bounds a stalled response body without repeating the %s", async (operation) => {
-    jest.useFakeTimers();
-    installWindow(undefined);
-    let attempts = 0;
-    let body: ReadableStreamDefaultController<Uint8Array> | undefined;
-    Object.defineProperty(globalThis, "fetch", {
-      configurable: true,
-      value: async () => {
-        attempts += 1;
-        return new Response(new ReadableStream<Uint8Array>({ start(controller) { body = controller; } }), {
-          status: 200, headers: { "Content-Type": "application/json" },
-        });
-      },
-    });
-    const client = createClient("https://web.example");
-    const messageID = createPromptMessageID();
-    const result = (operation === "prompt"
-      ? client.session.promptAsync({ sessionID: "ses_parent", messageID, parts: [] })
-      : hasAcceptedPromptMessage(client, "ses_parent", messageID)).catch((error: unknown) => error);
-    for (let index = 0; index < 20; index += 1) await Promise.resolve();
-    jest.advanceTimersByTime(operation === "prompt" ? 30_000 : 10_000);
-    const error = await result;
-    if (operation === "prompt") expect(error).toMatchObject({ admission: "unknown", messageID });
-    else expect(error).toMatchObject({ message: "Acceptance check timed out. The message is still held." });
-    jest.advanceTimersByTime(60_000);
-    expect(attempts).toBe(1);
-    body?.close();
-  });
-
-  test("the bounded native POST preserves the same message ID on its unknown error", async () => {
-    jest.useFakeTimers();
-    installWindow(undefined);
-    const { attempts } = installControllableFetch();
-    const client = createClient("https://web.example");
-    const messageID = createPromptMessageID();
-    const error = client.session.promptAsync({ sessionID: "ses_parent", messageID, parts: [] }).catch((error: unknown) => error);
-    jest.advanceTimersByTime(30_000);
-    expect(await error).toMatchObject({ admission: "unknown", messageID });
-    jest.advanceTimersByTime(60_000);
-    expect(attempts()).toBe(1);
-  });
-
-  test("lets caller AbortSignal cancel web streams", async () => {
-    installWindow(undefined);
-    const { cancel, observedSignal } = installControllableFetch();
-    const fetchImpl = createCapturedFetch();
-    const controller = new AbortController();
-
-    const response = fetchImpl("https://web.example/workspace/ws_test/opencode/output", {
-      headers: { Accept: "text/event-stream" },
-      signal: controller.signal,
-    });
-    const errorPromise = response.catch((error: unknown) => error);
-
-    try {
-      controller.abort();
-
-      expect(observedSignal()).toBe(controller.signal);
-      const error = await errorPromise;
-      expect(error).toMatchObject({ name: "AbortError" });
-    } finally {
-      cancel();
-    }
-  }, 15_000);
-
   test("leaves desktop OpenCode event streams untimed", async () => {
     installWindow({ __OPENWORK_ELECTRON__: {} });
     const { cancel, observedSignal } = installControllableFetch();
     const fetchImpl = createCapturedFetch();
 
-    const response = fetchImpl("https://web.example/workspace/ws_test/opencode/event", {
+    const response = fetchImpl("https://web.example/workspace/ws_test/opencode2/api/event", {
       headers: { Accept: "text/event-stream" },
     });
     const state = trackPromise(response);

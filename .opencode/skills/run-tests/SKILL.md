@@ -39,7 +39,7 @@ evals install and the Freestyle key:
 
 ```bash
 FREESTYLE_API_KEY="$(infisical secrets get FREESTYLE_API_KEY --env dev --path /openwork-ops --plain --silent)" \
-  node evals/bin/evals.mjs core/core-chat.e2e.test.ts --local --engine v1 --surface web
+  node evals/bin/evals.mjs core/core-chat.e2e.test.ts --local --surface web
 ```
 
 It runs against the pushed `HEAD` commit; push first. After changing the world

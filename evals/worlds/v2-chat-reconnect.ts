@@ -1,4 +1,4 @@
-import { resolveEvalEngine, type Place, type Seed } from "@openwork/env";
+import { type Place, type Seed } from "@openwork/env";
 import { chatContinuity } from "./chat-continuity.ts";
 import { configureProvider } from "./chat.ts";
 
@@ -18,8 +18,7 @@ export const streamedContinuityBullets = [
 
 /** Real v2 engine and chat, with a model that holds its answer between chunks. */
 export async function v2StreamReconnect(seed: Seed, _context: { place: Place }, withTool = true) {
-  const engine = resolveEvalEngine();
-  if (engine !== "v2") throw new Error("V2 recovery proof requires --engine v2");
+  const engine = "v2";
   const providerId = "reconnect-mock";
   const modelId = "reconnect-model";
   const workspacePath = seed.tmpPath("v2-chat-reconnect");

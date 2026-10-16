@@ -2,15 +2,14 @@
 //   node npm-web-smoke.mjs <path-to-installed>/bin/openwork-server.mjs <expected-version>
 // Runs `--version`, then `openwork-server web` against a fresh home directory
 // (so the OpenCode engine is downloaded as on a user's first run) and checks
-// the web UI, an authenticated API call, the engine proxy, the bundled
-// engine plugins and session creation. Exits non-zero on the first failure.
+// the web UI, an authenticated API call, the bundled engine plugins, the
+// engine proxy and session creation. Exits non-zero on the first failure.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join, resolve } from "node:path";
 
 const [launcher, expectedVersion] = process.argv.slice(2);
 if (!launcher || !expectedVersion) {
@@ -20,11 +19,9 @@ if (!launcher || !expectedVersion) {
 
 const READY_TIMEOUT_MS = 5 * 60_000;
 const REQUEST_TIMEOUT_MS = 20_000;
-// The first engine request for a folder sets the folder up. The package ships
-// OpenCode's plugin dependency install pre-resolved, so this should take a
-// few seconds; the budget still covers OpenCode installing it itself
-// (34-50 s measured on windows-2022 runners) if unpacking ever fails.
-const FIRST_ENGINE_REQUEST_TIMEOUT_MS = 3 * 60_000;
+// On a first run the server downloads and verifies the engine before it
+// starts it.
+const ENGINE_READY_TIMEOUT_MS = 3 * 60_000;
 const log = (message) => console.log(`[npm-web-smoke] ${message}`);
 const fail = (message) => {
   throw new Error(message);
@@ -107,10 +104,9 @@ try {
     if (Date.now() > deadline) fail("openwork-server web was not ready within 5 minutes");
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
-  if (!/Installed OpenCode \S+ to /.test(output)) fail("the OpenCode engine was not downloaded on first run");
-  if (!/Prepared OpenCode plugin dependencies in /.test(output)) {
-    fail("the bundled OpenCode plugin dependencies were not unpacked on first run");
-  }
+  const pluginDir = join(resolve(dirname(launcher), ".."), "dist", "opencode-plugins");
+  if (!existsSync(join(pluginDir, "openwork-context-v2.js"))) fail(`engine plugins missing from ${pluginDir}`);
+  log("engine plugins packaged");
 
   const health = await request(`${base}/health`);
   if (health.status !== 200 || JSON.parse(health.text).version !== expectedVersion) {
@@ -132,27 +128,27 @@ try {
   const workspaceId = JSON.parse(workspaces.text).items?.[0]?.id;
   if (!workspaceId) fail("no workspace was created for the working directory");
 
-  const config = await request(
-    `${base}/workspace/${workspaceId}/opencode/config`,
-    { headers: auth },
-    FIRST_ENGINE_REQUEST_TIMEOUT_MS,
-  );
-  if (config.status !== 200) fail(`engine config returned ${config.status}`);
-  log(`engine set the folder up in ${config.durationMs} ms`);
-  const plugins = JSON.parse(config.text).plugin ?? [];
-  const missing = plugins.filter((entry) => {
-    const spec = String(entry);
-    return spec.startsWith("file:") && !existsSync(fileURLToPath(spec));
-  });
-  if (plugins.length === 0 || missing.length > 0) fail(`engine plugins missing: ${JSON.stringify(missing.length ? missing : plugins)}`);
-  log(`engine loaded ${plugins.length} plugins from the package`);
+  const engineStartedAt = Date.now();
+  let engine = {};
+  while (engine.running !== true) {
+    if (Date.now() - engineStartedAt > ENGINE_READY_TIMEOUT_MS) fail(`the engine did not start: ${JSON.stringify(engine)}`);
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    const status = await request(`${base}/engine/status`, { headers: auth });
+    if (status.status !== 200) fail(`/engine/status returned ${status.status}`);
+    engine = JSON.parse(status.text);
+  }
+  log(`engine ${engine.version} (${engine.binSource}) running after ${Date.now() - engineStartedAt} ms`);
 
-  const created = await request(`${base}/workspace/${workspaceId}/opencode/session`, {
+  const models = await request(`${base}/workspace/${workspaceId}/opencode2/api/model`, { headers: auth });
+  if (models.status !== 200) fail(`engine model catalog returned ${models.status}: ${models.text}`);
+  log("engine answered through the proxy");
+
+  const created = await request(`${base}/workspace/${workspaceId}/opencode2/api/session`, {
     method: "POST",
     headers: { ...auth, "content-type": "application/json" },
     body: JSON.stringify({ title: "npm release smoke" }),
   });
-  if (created.status !== 200 || !JSON.parse(created.text).id) fail(`session create returned ${created.status}: ${created.text}`);
+  if (created.status !== 200 || !JSON.parse(created.text).data?.id) fail(`session create returned ${created.status}: ${created.text}`);
   log("session created through the engine");
   log("passed");
 } finally {

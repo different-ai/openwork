@@ -54,7 +54,6 @@ function nativeFixture() {
   let interrupts = 0
   let active = false
   let pendingPermission = false
-  let routing = "v2"
   let autoReply = false
   let loseCreateResponse = false
   let localToken = "local-credential"
@@ -66,9 +65,7 @@ function nativeFixture() {
     const headers = new Headers(init.headers)
     calls.push({ path: url.pathname, method, body, headers })
     if (url.pathname === "/workspaces") return response({ activeId: "workspace_fixture", items: [{ id: "workspace_fixture" }] })
-    if (url.pathname === "/experimental/engine-v2-preview/status") return response({ enabled: routing === "v2", chatRouting: routing === "v2" })
     if (url.pathname.endsWith("/default-model")) return response({ model: { providerID: "fixture", modelID: "fixture-model" } })
-    if (url.pathname.includes("/opencode/")) return response({ message: "missing session" }, 404)
     const prefix = "/workspace/workspace_fixture/opencode2/api"
     if (!url.pathname.startsWith(prefix)) return response({ message: "unexpected native path" }, 404)
     const path = url.pathname.slice(prefix.length)
@@ -104,7 +101,7 @@ function nativeFixture() {
   return {
     calls, messages, fetchImpl, getLocalRuntime: async () => ({ baseUrl: "http://localhost:8787", token: localToken }),
     get created() { return created }, get sessionId() { return sessionId }, get interrupts() { return interrupts },
-    set pendingPermission(value) { pendingPermission = value }, set routing(value) { routing = value },
+    set pendingPermission(value) { pendingPermission = value },
     set active(value) { active = value }, set autoReply(value) { autoReply = value },
     set loseCreateResponse(value) { loseCreateResponse = value }, set localToken(value) { localToken = value },
   }
@@ -206,10 +203,10 @@ test("native adapter creates an empty visible session before a stable initial pr
   assert.equal(native.created, 1)
 })
 
-test("V2 forwards stable create id and verifies metadata; V1 never receives those options", async () => {
+test("native creation forwards a stable id and verifies metadata", async () => {
   const native = nativeFixture()
   const client = createHeadlessThreadClient({
-    baseUrl: "http://localhost:8787", token: "fixture-token", workspaceId: "workspace_fixture", engine: "v2", fetch: native.fetchImpl,
+    baseUrl: "http://localhost:8787", token: "fixture-token", workspaceId: "workspace_fixture", fetch: native.fetchImpl,
   })
   const input = { title: "Remote fixture", id: "ses_stablefixture", metadata: { owner: "account_fixture", command: "command_fixture" },
     model: { providerId: "fixture", modelId: "fixture-model" } }
@@ -221,12 +218,6 @@ test("V2 forwards stable create id and verifies metadata; V1 never receives thos
   assert.deepEqual(create.body.metadata, input.metadata)
   await assert.rejects(client.createThread({ ...input, metadata: { ...input.metadata, owner: "wrong_account" }, prompt: "must not run" }), { code: "creation_identity_mismatch" })
   assert.equal(native.calls.some((call) => call.path.endsWith("/prompt")), false)
-  const v1 = createHeadlessThreadClient({
-    baseUrl: "http://localhost:8787", token: "fixture-token", workspaceId: "workspace_fixture", engine: "v1", fetch: native.fetchImpl,
-  })
-  const before = native.calls.length
-  await assert.rejects(v1.createThread(input), { code: "invalid_payload" })
-  assert.equal(native.calls.length, before)
   const adapter = createDesktopSessionAdapter({ ...native, creationOwner: "account_partition_fixture" })
   assert.equal(adapter.creation, "at_most_once")
   const receipt = await adapter.create(command("command_scoped"), new AbortController().signal)
@@ -267,7 +258,7 @@ test("native observation never uses the previous answer for a follow-up and neve
   assert.equal(page.historyScope, "full")
 })
 
-test("native stop compares the current turn; restart probes the original owning engine", async () => {
+test("native stop compares the current turn and survives a restart", async () => {
   const native = nativeFixture()
   const adapter = createDesktopSessionAdapter(native)
   const signal = new AbortController().signal
@@ -277,7 +268,6 @@ test("native stop compares the current turn; restart probes the original owning 
   assert.equal(native.interrupts, 0)
   assert.deepEqual(await adapter.stop(receipt, { messageId: null }, signal), { stopped: false, reason: null })
   assert.equal(native.interrupts, 0)
-  native.routing = "v1"
   native.localToken = "rotated-local-credential"
   const restarted = createDesktopSessionAdapter(native)
   assert.equal((await restarted.observe(receipt, signal)).engine, "v2")
@@ -388,45 +378,6 @@ test("ambiguous native creation is journaled before effects and is not duplicate
   assert.equal(native.created, 1)
   assert.equal(native.calls.some((call) => call.path.endsWith("/prompt")), false)
   assert.equal(completed.at(-1).status, "failed")
-})
-
-test("V1 uncertain prompt admission fails without automatic replay", async (t) => {
-  const root = await privateDirectory(t)
-  const native = nativeFixture()
-  native.routing = "v1"
-  let prompts = 0
-  const messages = []
-  const fetchImpl = async (input, init = {}) => {
-    const url = new URL(String(input))
-    if (!url.pathname.includes("/opencode/")) return native.fetchImpl(input, init)
-    const path = url.pathname.split("/opencode")[1]
-    const respond = (value) => new Response(JSON.stringify(value), { status: 200, headers: { "Content-Type": "application/json" } })
-    if (path === "/session" && init.method === "POST") return respond({ id: "session_fixture", title: "Remote fixture" })
-    if (path === "/session/session_fixture") return respond({ id: "session_fixture", title: "Remote fixture" })
-    if (path === "/session/session_fixture/message") return respond(messages)
-    if (path === "/session/session_fixture/todo") return respond([])
-    if (path === "/session/status") return respond({ session_fixture: { type: "idle" } })
-    if (path === "/session/session_fixture/prompt_async") {
-      prompts += 1
-      const body = JSON.parse(init.body)
-      messages.push({ info: { id: body.messageID, role: "user" }, parts: body.parts })
-      throw new TypeError("fetch failed after prompt admission")
-    }
-    throw new Error(`Unexpected V1 route ${path}`)
-  }
-  const completed = []
-  const store = createDesktopSessionJournal(root, desktopSessionRunnerPartition(denBaseUrl, account))
-  const runner = createSessionRunner({
-    adapter: createDesktopSessionAdapter({ getLocalRuntime: native.getLocalRuntime, fetchImpl }), store,
-    transport: { complete: async (_id, body) => { completed.push(body) }, report: async () => {}, completeRequest: async () => {} },
-  })
-  const signal = new AbortController().signal
-  const result = await runner.accept(command(), signal)
-  assert.equal(result.status, "failed")
-  assert.equal(result.error.code, "ambiguous_send")
-  await runner.reconcile(signal)
-  assert.equal(prompts, 1)
-  assert.equal(completed[0].error.code, "ambiguous_send")
 })
 
 test("decoded claims alone never unlock native journal replay before Den authenticates the bearer", async (t) => {

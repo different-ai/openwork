@@ -179,7 +179,7 @@ NODE
 
 snapshot() {
   echo "=== dev stack processes ==="
-  ps -Ao pid,ppid,command | awk '/node_modules\/electron\/dist\/Electron\.app\/Contents\/MacOS\/Electron|apps\/desktop\/scripts\/electron-dev\.mjs|apps\/desktop\/resources\/sidecars\/opencode( |\/)|openwork-server|vite|pnpm .*dev/ && !/awk/ && !/grep/' | sed -E 's#/Users/[^ ]*/#…/#g' | head -20
+  ps -Ao pid,ppid,command | awk '/node_modules\/electron\/dist\/Electron\.app\/Contents\/MacOS\/Electron|apps\/desktop\/scripts\/electron-dev\.mjs|apps\/desktop\/resources\/sidecars\/opencode2( |\/)|opencode2 serve|openwork-server|vite|pnpm .*dev/ && !/awk/ && !/grep/' | sed -E 's#/Users/[^ ]*/#…/#g' | head -20
 
   echo
   echo "=== openwork-server ==="
@@ -195,7 +195,7 @@ snapshot() {
 
   echo
   echo "=== orphans (parent == 1) ==="
-  ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /openwork-server|opencode( |\/)/' | head
+  ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /openwork-server|(^|\/)opencode2$/' | head
 
   echo
   echo "=== dev log sink ==="
@@ -223,7 +223,7 @@ tail_logs() {
 
 kill_orphans() {
   local pids
-  pids=$(ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /openwork-server|opencode( |\/)/ {print $1}')
+  pids=$(ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /openwork-server|(^|\/)opencode2$/ {print $1}')
   if [[ -z "$pids" ]]; then
     log "no orphans"
     return 0
@@ -407,7 +407,7 @@ stop() {
 
   # 5. Long-lived runtime helpers most likely to orphan after an unclean
   #    shutdown.
-  kill_by_pattern "apps/desktop/resources/sidecars/opencode( |/)"
+  kill_by_pattern "apps/desktop/resources/sidecars/opencode2( |/)"
   kill_by_pattern "openwork-server"
 
   # Safety net for stragglers we don't own directly.

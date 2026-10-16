@@ -103,18 +103,17 @@ export async function observeDesktop({ nonce, expectedWorkspacePath }, loadProdu
     flags.nativeWorkspaceMatches = Array.isArray(registry?.items) && registry.items.length === 1
       && nativeWorkspace.workspaceType === "local" && nativeWorkspace.path === expectedWorkspacePath && nativeWorkspace.preset === "starter"
       && nativeWorkspace.name === "OpenWork Chat"
-      && nativeWorkspace.id === workspace?.id && localUrl(nativeWorkspace.baseUrl) && localUrl(nativeWorkspace.opencode?.baseUrl)
-      && !nativeWorkspace.openworkHostUrl && !nativeWorkspace.openworkToken;
+      && nativeWorkspace.id === workspace?.id && !nativeWorkspace.openworkHostUrl && !nativeWorkspace.openworkToken;
     flags.noNativeCloudSession = cloud?.hasSession === false;
     flags.noProvisionedModel = record(providers?.provider) && emptyMap(providers.provider)
       && Array.isArray(cloud?.providers) && cloud.providers.length === 0 && Array.isArray(cloud?.skippedProviders) && cloud.skippedProviders.length === 0;
     if (!flags.nativeWorkspaceMatches) return flags;
     const prefix = `/workspace/${encodeURIComponent(nativeWorkspace.id)}`;
     const [config, runtime, sessions] = await Promise.all([
-      get(`${prefix}/config`), get(`${prefix}/runtime-config`), get(`${prefix}/opencode/session?limit=1`),
+      get(`${prefix}/config`), get(`${prefix}/runtime-config`), get(`${prefix}/opencode2/api/session?limit=1`),
     ]);
-    flags.noNativeConversations = Array.isArray(sessions) && sessions.length === 0;
-    const configs = [config?.opencode, runtime?.runtime, runtime?.effectiveRuntime,
+    flags.noNativeConversations = Array.isArray(sessions?.data) && sessions.data.length === 0;
+    const configs = [config?.opencode, runtime?.runtime,
       runtime?.sources?.projectOpencode?.config, runtime?.sources?.globalOpencode?.config];
     flags.noProvisionedModel = flags.noProvisionedModel && configs.every((entry) => record(entry) && emptyMap(entry.provider) && ordinaryModel(entry.model) && ordinaryModel(entry.small_model));
     const imports = config?.openwork?.cloudImports;

@@ -1,14 +1,14 @@
 // Engine calls are relayed only while a task the user started from the app is live.
 export const ACTIVATION_IDLE_MS = 15 * 60_000;
 export const ACTIVATION_MAX_MS = 2 * 60 * 60_000;
-const TASK_START_PATH = /\/session\/([^/]+)\/(prompt|prompt_async|message|command|summarize)$/;
-const TASK_END_PATH = /\/session\/([^/]+)(?:\/(?:abort|interrupt))?$/;
+const TASK_START_PATH = /\/session\/([^/]+)\/(prompt|command)$/;
+const TASK_END_PATH = /\/session\/([^/]+)(?:\/interrupt)?$/;
 
 export type TaskRoute = { kind: "start" | "end" | "model"; sessionID: string };
 /** Which task-lifecycle request the app sent through the OpenWork server, if any. */
 export function taskRoute(method: string, path: string): TaskRoute | null {
   const ended = method === "POST" || method === "DELETE" ? TASK_END_PATH.exec(path) : null;
-  if (ended && (method === "DELETE" || (path.endsWith("/abort") || path.endsWith("/interrupt")))) return { kind: "end", sessionID: decodeURIComponent(ended[1]) };
+  if (ended && (method === "DELETE" || path.endsWith("/interrupt"))) return { kind: "end", sessionID: decodeURIComponent(ended[1]) };
   const selected = method === "POST" ? /\/session\/([^/]+)\/model$/.exec(path) : null;
   if (selected) return { kind: "model", sessionID: decodeURIComponent(selected[1]) };
   const started = method === "POST" ? TASK_START_PATH.exec(path) : null;

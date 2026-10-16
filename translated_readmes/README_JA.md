@@ -71,7 +71,7 @@ OpenWorkは以下を目指して設計されています:
 - Node.js + `pnpm`
 - Rustツールチェーン（Tauri用）: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` でインストール
 - Tauri CLI: `cargo install tauri-cli`
-- OpenCode CLIがPATH上にインストールされていること: `opencode`
+- OpenCode CLIがPATH上にインストールされていること: `opencode2`
 
 ### ローカル開発の前提条件（デスクトップ）
 
@@ -125,7 +125,7 @@ pnpm dev:ui
 
 ```bash
 sudo pacman -S --needed webkit2gtk-4.1
-curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const fs=require('fs'); const parsed=JSON.parse(fs.readFileSync('constants.json','utf8')); process.stdout.write(String(parsed.opencodeVersion||'').trim().replace(/^v/,''));")" --no-modify-path
+node scripts/install-opencode2.mjs --outdir ~/.local/bin
 ```
 
 ## アーキテクチャ（概要）
@@ -136,7 +136,7 @@ curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const 
 プロジェクトフォルダを選択すると、OpenWorkはそのフォルダを使用してローカルでホストスタックを実行し、デスクトップUIを接続します。
 これにより、リモートサーバーなしで完全にマシン上でエージェントワークフローの実行、プロンプトの送信、進捗の確認が可能です。
 
-- UIは `@opencode-ai/sdk/v2/client` を使用して:
+- UIはOpenWorkサーバーの `/workspace/:id/opencode2` プロキシを使用して:
   - サーバーに接続
   - セッションの一覧表示/作成
   - プロンプトの送信
@@ -174,7 +174,7 @@ pnpm dev:ui
 pnpm typecheck
 pnpm build
 pnpm build:ui
-pnpm test:e2e
+pnpm evals:e2e
 ```
 
 ## トラブルシューティング
@@ -201,8 +201,8 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 ## コントリビューション
 
 - 変更を行う前に、`AGENTS.md`、`VISION.md`、`PRINCIPLES.md`、`PRODUCT.md`、`ARCHITECTURE.md` を確認してプロダクトの目標を理解してください。
-- リポジトリ内で作業する前に、Node.js、`pnpm`、Rustツールチェーン、および `opencode` がインストールされていることを確認してください。
-- チェックアウトごとに `pnpm install` を実行し、PRを作成する前に `pnpm typecheck` と `pnpm test:e2e`（または対象のスクリプトサブセット）で変更を検証してください。
+- リポジトリ内で作業する前に、Node.js、`pnpm`、Rustツールチェーン、および `opencode2` がインストールされていることを確認してください。
+- チェックアウトごとに `pnpm install` を実行し、PRを作成する前に `pnpm typecheck` と `pnpm evals:e2e`（または対象のスクリプトサブセット）で変更を検証してください。
 - PRを作成する際は `.github/pull_request_template.md` を使用し、実行したコマンド、結果、手動検証手順、およびエビデンスを含めてください。
 - CIが失敗した場合は、PRの本文でコード関連のリグレッションか外部/環境/認証のブロッカーかを分類してください。
 - 新しいPRDは `AGENTS.md` に記載されている `.opencode/skills/prd-conventions/SKILL.md` の規約に従い、`apps/app/pr/<name>.md` に追加してください。

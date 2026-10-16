@@ -1,16 +1,13 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import {
   type ConnectSnapshotOptions,
   getConnectSnapshot,
   writeConnectState,
 } from "../connect-state.js";
-import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
 import { readOpenWorkConnectSkillCatalog, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
 import { readOpenWorkAutomationCatalog, renderOpenWorkAutomationInstruction } from "../connect-automation-catalog.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
-import { syncManagedProviderAuth, type ManagedProviderAuthResult } from "../managed-provider-auth.js";
 import { ApiError } from "../errors.js";
 import { callExperimentalExtensionAction, listExperimentalExtensionActions } from "../extensions/index.js";
 import { callDriveFileAction } from "../extensions/drive-files.js";
@@ -18,36 +15,25 @@ import type { TokenService } from "../tokens.js";
 import type { Capabilities, ServerConfig, WorkspaceInfo } from "../types.js";
 import { addRoute, type Route } from "./registry.js";
 
-/**
- * Version reported by the engine binary actually in use. `opencodeVersion` on
- * /health is the version this server release was pinned to; the two differ
- * when an operator brings their own engine. Null until the launcher probes it.
- */
-let installedOpencodeVersion: string | null = null;
-
-export function setInstalledOpencodeVersion(version: string | null): void {
-  installedOpencodeVersion = version;
-}
-
-export function readInstalledOpencodeVersion(): string | null {
-  return installedOpencodeVersion;
-}
-
 type JsonResponse = (data: unknown, status?: number) => Response;
 type ReadJsonBody = (request: Request) => Promise<Record<string, unknown>>;
 type ParseOptionalBoolean = (value: string | null, name: string) => boolean | undefined;
 type FetchRuntimeControl = (path: string, init?: { method?: string; body?: unknown }) => Promise<unknown>;
-type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 
 interface RegisterCoreRoutesOptions {
-  nativeEngineForWorkspace?: ConnectSnapshotOptions["nativeEngineForWorkspace"];
+  nativeEngineForWorkspace: NonNullable<ConnectSnapshotOptions["nativeEngineForWorkspace"]>;
   routes: Route[];
   config: ServerConfig;
   tokens: TokenService;
   env: EnvService;
   serverVersion: string;
   opencodeVersion: string;
-  isReady?: () => boolean;
+  /**
+   * Version reported by the engine binary actually in use. `opencodeVersion`
+   * is the version this server release was pinned to; the two differ when an
+   * operator brings their own engine. Undefined until the engine answers.
+   */
+  engineVersion: () => string | undefined;
   jsonResponse: JsonResponse;
   readJsonBody: ReadJsonBody;
   readOptionalJsonBody: ReadJsonBody;
@@ -57,15 +43,10 @@ interface RegisterCoreRoutesOptions {
   fetchRuntimeControl: FetchRuntimeControl;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   resolveOpencodeDirectory: (workspace: WorkspaceInfo) => string | null;
-  createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
-  refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
   serializeWorkspace: (workspace: ServerConfig["workspaces"][number]) => unknown;
   resolveDevLogPath: () => string | null;
-  onManagedProviderAuthChanged?: (result: ManagedProviderAuthResult) => Promise<void>;
-  managedProviderAuthLogger?: {
-    warn: (message: string, attributes?: Record<string, unknown>) => void;
-    error: (message: string, attributes?: Record<string, unknown>) => void;
-  };
+  /** Stored credentials changed; the engine mirrors them into its providers. */
+  onProviderCredentialsChanged?: () => Promise<void>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -118,33 +99,25 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     fetchRuntimeControl,
     resolveWorkspace,
     resolveOpencodeDirectory,
-    createWorkspaceOpencodeClient,
-    refreshRegistrationFromLiveStatus,
     serializeWorkspace,
     resolveDevLogPath,
-    onManagedProviderAuthChanged,
-    managedProviderAuthLogger,
+    onProviderCredentialsChanged,
   } = options;
   const envPendingChangesByRuntime = new Map<string, boolean>();
 
   const connectSnapshotBaseOptions = {
     nativeEngineForWorkspace: options.nativeEngineForWorkspace,
     resolveOpencodeDirectory,
-    createWorkspaceOpencodeClient,
-    refreshRegistrationFromLiveStatus,
     serverMetadata: { serverVersion, expectedOpencodeVersion: opencodeVersion },
   };
 
-  const healthResponse = () => {
-    const ok = options.isReady?.() ?? true;
-    return jsonResponse({
-      ok,
-      version: serverVersion,
-      opencodeVersion,
-      opencodeInstalledVersion: installedOpencodeVersion,
-      uptimeMs: Date.now() - config.startedAt,
-    }, ok ? 200 : 503);
-  };
+  const healthResponse = () => jsonResponse({
+    ok: true,
+    version: serverVersion,
+    opencodeVersion,
+    opencodeInstalledVersion: options.engineVersion() ?? null,
+    uptimeMs: Date.now() - config.startedAt,
+  });
 
   addRoute(routes, "GET", "/health", "none", async () => healthResponse());
 
@@ -508,12 +481,9 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
       }
       throw error;
     }
-    // A stored credential is useless until the engine holds it: deliver it now
-    // rather than waiting for the next engine start.
-    const authResult = await syncManagedProviderAuth({ config, env, logger: managedProviderAuthLogger }).catch(() => undefined);
-    if (authResult && (authResult.delivered.length > 0 || authResult.removed.length > 0)) {
-      await onManagedProviderAuthChanged?.(authResult).catch(() => undefined);
-    }
+    // A stored credential is useless until the engine holds it: join its
+    // provider refresh rather than waiting for the next engine start.
+    await onProviderCredentialsChanged?.().catch(() => undefined);
     return jsonResponse({ ok: true, count: entries.length });
   });
 

@@ -46,13 +46,8 @@ export async function createV2ContextBridge(hostRequest: (path: string, init?: R
         return Response.json(await read("/experimental/connect/skills"));
       }
       const transport: OpenworkReadTransport = {
-        engine: "v2",
         activity: (workspaceId: string, sessionId: string) => readV2SessionActivity(path => read(path), workspaceId, sessionId),
         get: createV2ReadAdapter(path => read(path)),
-        // v1 still serves sessions created there (e.g. by headless callers)
-        // after the one-shot history import. Plain GETs through the host's v1
-        // mount keep its workspace ownership checks.
-        other: { engine: "v1", get: path => read(path) },
         post: async (path: string, body: Record<string, unknown>, signal?: AbortSignal) => {
           if (path !== "/experimental/ui-control/request" || !["context", "query"].includes(String(body.kind))) {
             throw new Error("Only OpenWork reads are available");

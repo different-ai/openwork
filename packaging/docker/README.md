@@ -322,7 +322,7 @@ pnpm dev:den:mysql:down
 
 ## Pre-baked Micro-Sandbox Image
 
-For micro-sandbox work, use the pre-baked image that compiles `openwork-server` from source and downloads the pinned `opencode` binary during `docker build`.
+For micro-sandbox work, use the pre-baked image that compiles `openwork-server` from source and installs the pinned, integrity-checked `opencode2` binary (`scripts/install-opencode2.mjs`) during `docker build`.
 
 Build it from the repo root:
 
@@ -363,7 +363,7 @@ This is a minimal packaging template to run the OpenWork Host contract in a sing
 It runs:
 
 - `openwork-server` published on `0.0.0.0:8787` (the only published surface)
-- Managed `opencode` launched internally by `openwork-server`
+- Managed `opencode2` launched internally by `openwork-server`
 
 ### Local run (compose)
 
@@ -396,5 +396,5 @@ Persistence:
 
 ### Notes
 
-- OpenCode is not exposed directly; access it via the OpenWork proxy (`/opencode/*`).
+- OpenCode is not exposed directly; access it via the OpenWork proxy (`/workspace/:id/opencode2/*`).
 - For PaaS, replace `./workspace:/workspace` with a volume or a checkout strategy (git clone on boot).

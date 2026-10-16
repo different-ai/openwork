@@ -1,6 +1,6 @@
 import { buildManagedProviderConfig, readProviderEnvNames, selectPrimaryCredentialEnvName } from "@openwork/types/managed-provider-config";
 import { applyEdits, modify } from "jsonc-parser";
-import type { ProviderConfig } from "@opencode-ai/sdk/v2/client";
+import type { ProviderConfig } from "@/app/lib/opencode-types";
 import type { GatewayUsableModel } from "@openwork/types/den/gateway";
 import type { ModelOption, ModelRef } from "@/app/types";
 import { catalogModelVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
