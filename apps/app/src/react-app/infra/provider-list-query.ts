@@ -56,10 +56,13 @@ export function providerCatalogQueryKey(input: {
   ] as const;
 }
 
+/** Invalidation refetches every active provider query once and waits for it;
+ * inactive ones refetch when next read. */
 export async function refreshProviderListQueries(queryClient: QueryClient) {
-  await queryClient.invalidateQueries({ queryKey: PROVIDER_LIST_QUERY_ROOT });
-  await queryClient.invalidateQueries({ queryKey: PROVIDER_CATALOG_QUERY_ROOT });
-  await queryClient.refetchQueries({ queryKey: PROVIDER_LIST_QUERY_ROOT, type: "active" });
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: PROVIDER_LIST_QUERY_ROOT }),
+    queryClient.invalidateQueries({ queryKey: PROVIDER_CATALOG_QUERY_ROOT }),
+  ]);
 }
 
 /** Drop account-sensitive provider snapshots when the Den session ends. */

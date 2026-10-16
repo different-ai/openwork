@@ -288,6 +288,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const hydratedRouteSessionIdsRef = useRef<Record<string, string>>({});
   const startupRetryTimerRef = useRef<number | null>(null);
   const [retryingWorkspaceIds, setRetryingWorkspaceIds] = useState<string[]>([]);
+  // A task list whose reads all failed. Sidebar-only: unlike errorsByWorkspaceId
+  // it does not mark the workspace's chats unavailable.
+  const [sessionListErrorsByWorkspaceId, setSessionListErrorsByWorkspaceId] = useState<Record<string, string>>({});
   const reconnectAttemptedWorkspaceIdRef = useRef("");
   const backgroundSessionLoadCoalescerRef = useRef(createRouteWorkspaceLoadCoalescer());
   const workspaceSessionLoadScopesRef = useRef(new Map<string, string | null>());
@@ -485,6 +488,12 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
               setSessionReferenceLoad(workspace.id, { scope, sessionIds: new Set([...itemIds, ...createdSessionIds]), createdSessionIds });
               loadedWorkspaceIdsRef.current.add(workspace.id);
               setErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: null }));
+              setSessionListErrorsByWorkspaceId((current) => {
+                if (!(workspace.id in current)) return current;
+                const next = { ...current };
+                delete next[workspace.id];
+                return next;
+              });
               setWorkspaceConnectionOverrides((current) => {
                 if (current[workspace.id]?.status !== "error") return current;
                 const next = { ...current };
@@ -511,6 +520,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
                 return;
               }
               invalidateSessionInventory(workspace.id);
+              // Without this the sidebar reads the failed list as "No tasks yet".
+              const message = error instanceof Error ? error.message : String(error);
+              setSessionListErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: message }));
               setRetryingWorkspaceIds((current) =>
                 current.includes(workspace.id) ? current.filter((id) => id !== workspace.id) : current,
               );
@@ -1437,6 +1449,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     setLegacySelectedWorkspaceId,
     retryingWorkspaceIds,
     setRetryingWorkspaceIds,
+    sessionListErrorsByWorkspaceId,
     startupRetryTimerRef,
     selectedWorkspaceId,
     selectedWorkspace,

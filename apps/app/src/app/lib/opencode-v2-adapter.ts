@@ -2726,12 +2726,13 @@ export function createClientV2(
     _parameters: DirectoryParameters = {},
     options?: RequestOptions,
   ): Promise<FieldsResult<ProviderListResponse>> => {
-    const modelsResult = await request("GET", "/api/model", undefined, options?.signal);
-    if (!modelsResult.response.ok) return failedResult(modelsResult);
-    const [defaultsResult, providersResult] = await Promise.all([
+    // One round trip: the server joins all three reads onto one folder-readiness wait.
+    const [modelsResult, defaultsResult, providersResult] = await Promise.all([
+      request("GET", "/api/model", undefined, options?.signal),
       request("GET", "/api/model/default", undefined, options?.signal),
       request("GET", "/api/provider", undefined, options?.signal),
     ]);
+    if (!modelsResult.response.ok) return failedResult(modelsResult);
     const providerNames = new Map<string, string>();
     if (providersResult.response.ok) {
       for (const provider of responseItems(providersResult.payload)) {

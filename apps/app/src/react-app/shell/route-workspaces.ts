@@ -488,17 +488,17 @@ export function toSessionGroups(
   sessionsByWorkspaceId: Record<string, RouteSession[]>,
   errorsByWorkspaceId: Record<string, string | null>,
   loadingWorkspaceIds: Set<string>,
+  sessionListErrorsByWorkspaceId: Record<string, string> = {},
 ): WorkspaceSessionGroup[] {
-  return workspaces.map((workspace) => ({
-    workspace,
-    sessions: sessionsByWorkspaceId[workspace.id] ?? [],
-    status: loadingWorkspaceIds.has(workspace.id)
-      ? "loading"
-      : errorsByWorkspaceId[workspace.id]
-        ? "error"
-        : "ready",
-    error: errorsByWorkspaceId[workspace.id],
-  }));
+  return workspaces.map((workspace) => {
+    const error = errorsByWorkspaceId[workspace.id] || sessionListErrorsByWorkspaceId[workspace.id] || null;
+    return {
+      workspace,
+      sessions: sessionsByWorkspaceId[workspace.id] ?? [],
+      status: loadingWorkspaceIds.has(workspace.id) ? "loading" : error ? "error" : "ready",
+      error,
+    };
+  });
 }
 
 export function isActiveSessionStatus(status: unknown) {
