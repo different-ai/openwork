@@ -20,8 +20,9 @@ type Context = CloudSkillContext & {
   tool: { transform(callback: (editor: { add(tool: Tool): void }) => void): Promise<{ dispose(): Promise<void> }> };
 };
 
-// Separate credentials authorize app reads and conversation-scoped browser
-// operations. Neither grants arbitrary host APIs or OpenWork app commands.
+// Separate credentials authorize app reads plus one Drive file upload, and
+// conversation-scoped browser operations. Neither grants arbitrary host APIs
+// or OpenWork app commands.
 export default {
   id: "openwork.context",
   async setup(context: Context) {
@@ -50,6 +51,24 @@ export default {
           },
         });
       }
+      editor.add({
+        name: "openwork_drive_upload",
+        description: "Upload one workspace file to the member's Google Drive through OpenWork Cloud, outside model context. Use this when the user asks to put a local file in Drive; it does not need a separate Google sign-in. Bytes, basename and MIME type are preserved without Office conversion. path is workspace-relative or an absolute path under an authorized workspace root. folderId selects a Drive parent folder; connectionId (google-workspace or emc_...) selects a Google account and never falls back to another. Returns the Drive file id. Never retry an unconfirmed upload automatically.",
+        input: { type: "object", properties: {
+          path: { type: "string" }, folderId: { type: "string" }, connectionId: { type: "string", pattern: "^(google-workspace|emc_[A-Za-z0-9]+)$" },
+        }, required: ["path"], additionalProperties: false },
+        options: { codemode: false },
+        async execute(input, call) {
+          const response = await fetch(context.options.url, {
+            method: "POST", redirect: "error", signal: call.signal,
+            headers: { Authorization: `Bearer ${context.options.token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ name: "openwork_drive_upload", input }),
+          });
+          const text = await response.text();
+          if (!response.ok) throw new Error(`Drive upload failed: ${text}`);
+          return { content: [{ type: "text", text }] };
+        },
+      });
       if (browser && browserDefinitions) for (const [name, definition] of Object.entries(browserDefinitions.tool)) {
         editor.add({
           name, description: definition.description,
