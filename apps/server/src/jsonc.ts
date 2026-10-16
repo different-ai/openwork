@@ -10,6 +10,8 @@ interface ParseResult<T> {
   raw: string;
   invalid?: boolean;
   missing?: boolean;
+  /** True when the file exists but could not be read due to OS permission denial (EPERM/EACCES). */
+  unreadable?: boolean;
 }
 
 export type ReadJsoncFileOptions = {
@@ -119,7 +121,14 @@ export async function readJsoncFile<T>(
     if (!(await exists(path))) {
       return { data: fallback, raw: "", missing: true };
     }
-    raw = await readFile(path, { encoding: "utf8", signal: options?.signal });
+    try {
+      raw = await readFile(path, { encoding: "utf8", signal: options?.signal });
+    } catch (error) {
+      if (hasErrorCode(error, "EPERM") || hasErrorCode(error, "EACCES")) {
+        return { data: fallback, raw: "", unreadable: true };
+      }
+      throw error;
+    }
   }
   const errors: { error: number; offset: number; length: number }[] = [];
   const data = parse(raw, errors, { allowTrailingComma: true }) as T;
