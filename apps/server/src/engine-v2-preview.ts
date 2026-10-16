@@ -1,7 +1,7 @@
 import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
 import { ApiError } from "./errors.js";
 import { hasV1Chat, hasV1ChatsSince, opencodeV1DatabasePath, runOpencodeV1HistoryMigration, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
-import { executionRules, teamEngineRules } from "./managed-policy-rules.js";
+import { executionRules, teamEngineRules, teamRuleNameDenial } from "./managed-policy-rules.js";
 import { agentPermissionEngineMcpDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
 import { registeredOrganizationMcpServers } from "./connect-mcp-server-catalog.js";
 import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
@@ -596,11 +596,11 @@ export function createEngineV2Preview(options: {
     // and an earlier registration is removed below like any other unwanted entry.
     // The agent permissions plugin learns of new organization servers first,
     // so it does not disable them as they are registered.
-    const mcpRules = agentPermissionRules.some((rule) => rule.action === "mcp");
+    const mcpRules = agentPermissionRules.some((rule) => rule.action === "mcp") || effective.managedPolicy?.rules?.some((rule) => rule.action === "mcp");
     if (mcpRules) await active.refreshConfig();
     const organizationMcp = mcpRules ? await registeredOrganizationMcpServers(config, [location.workspaceId]) : {};
     const desired = new Map(Object.entries(runtime).flatMap(([name, value]) => {
-      if (agentPermissionEngineMcpDenial(agentPermissionRules, name, value, organizationMcp)) return [];
+      if (agentPermissionEngineMcpDenial(agentPermissionRules, name, value, organizationMcp) || teamRuleNameDenial(effective.managedPolicy?.rules, "mcp", name, value, organizationMcp)) return [];
       const mapped = mapRuntimeMcpToV2(value);
       return mapped ? [[name, { config: mapped, fingerprint: JSON.stringify(mapped) }] as const] : [];
     }));
@@ -835,7 +835,7 @@ export function createEngineV2Preview(options: {
       skills: [globalSkills.openwork, globalSkills.agentLegacy],
       agentPermissions: async () => {
         const rules = agentPermissionRulesOf((await readGlobalRuntimeOpencodeConfig(config)).managedPolicy);
-        if (rules.length === 0) return { rules, organizationMcp: {} };
+        if (rules.length === 0 && !((await readGlobalRuntimeOpencodeConfig(config)).managedPolicy?.rules?.some((rule) => rule.action === "mcp"))) return { rules, organizationMcp: {} };
         const workspaceIds = (await listRuntimeOpencodeConfigRows(config)).map((row) => row.workspaceId);
         return { rules, organizationMcp: await registeredOrganizationMcpServers(config, workspaceIds) };
       },

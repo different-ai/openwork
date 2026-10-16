@@ -7,7 +7,7 @@ import { isRecord } from "./workspace-kv-store.js";
 import { externalFetch } from "./server-fetch.js";
 import { ApiError } from "./errors.js";
 import { clearManagedDesktopPolicy, readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProviderMap } from "./runtime-opencode-config-store.js";
-import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
+import { policyDenial, policyRequestActions, teamRuleNameDenial, type ManagedPolicyAction } from "./managed-policy-rules.js";
 import { agentPermissionDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
 
 const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
@@ -322,6 +322,11 @@ class ManagedDesktopPolicy {
       ? agentPermissionRulesOf(policy)
       : agentPermissionRulesOf((await readGlobalRuntimeOpencodeConfig(this.config)).managedPolicy);
     return rules.filter((rule) => rule.action === "webfetch");
+  }
+  /** Refuses a local skill or MCP server the member's team rules block, using the last verified policy. */
+  async assertTeamRule(action: "skill" | "mcp", name: string): Promise<void> {
+    const denial = teamRuleNameDenial((await readGlobalRuntimeOpencodeConfig(this.config)).managedPolicy?.rules, action, name);
+    if (denial) throw new ApiError(403, "organization_policy_denied", denial);
   }
   /** The policy to enforce now: verified for this sign-in, else the last one verified for it; never waits on Den. */
   private knownPolicy(): DesktopConfig | null {

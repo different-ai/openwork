@@ -298,7 +298,7 @@ export function renderOpencodeV2Config(input: {
     }] : []),
     ...(input.teamRules?.length && input.policiesPluginDirectory ? [{
       package: pathToFileURL(input.policiesPluginDirectory).href,
-      options: { rules: input.teamRules },
+      options: { rules: input.teamRules, organizationMcp: input.organizationMcp ?? {} },
     }] : []),
   ];
   // The engine applies the last matching rule, so the managed execution
@@ -464,7 +464,7 @@ export async function createManagedOpencodeV2Server(
   // has agent permissions; everyone else's engine config stays as it was.
   async function agentPermissionsConfig(read: NonNullable<ManagedOpencodeV2ServerOptions["agentPermissions"]>) {
     const { rules, organizationMcp } = await read();
-    if (rules.length === 0) return {};
+    if (rules.length === 0) return { organizationMcp };
     if (!agentPermissionsPluginWritten) {
       await mkdir(agentPermissionsPluginDirectory, { recursive: true, mode: 0o700 });
       await writeFile(join(agentPermissionsPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });

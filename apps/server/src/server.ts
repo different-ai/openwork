@@ -3782,6 +3782,7 @@ function createRoutes(
     const body = await readJsonBody(ctx.request);
     const name = String(body.name ?? "");
     await managedDesktopPolicy(config).assertAgentPermission("skill", name);
+    await managedDesktopPolicy(config).assertTeamRule("skill", name);
     const content = String(body.content ?? "");
     const description = body.description ? String(body.description) : undefined;
     await requireApproval(ctx, {
@@ -4034,6 +4035,7 @@ function createRoutes(
     const name = String(body.name ?? "").trim();
     validateUserMcpName(name);
     await managedDesktopPolicy(config).assertAgentPermission("mcp", name);
+    await managedDesktopPolicy(config).assertTeamRule("mcp", name);
     const serverUrl = typeof body.url === "string" ? body.url.trim() : "";
     const oauth = body.oauth && typeof body.oauth === "object" && !Array.isArray(body.oauth)
       ? body.oauth as Record<string, unknown>
@@ -4146,6 +4148,7 @@ function createRoutes(
     const name = String(body.name ?? "");
     validateUserMcpName(name);
     await managedDesktopPolicy(config).assertAgentPermission("mcp", name);
+    await managedDesktopPolicy(config).assertTeamRule("mcp", name);
     const configPayload = body.config as Record<string, unknown> | undefined;
     if (!configPayload) {
       throw new ApiError(400, "invalid_payload", "MCP config is required");
