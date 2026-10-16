@@ -748,6 +748,7 @@ export type AdminFeature = {
     | "slackWorkbotReplies"
     | "workbot"
     | "automationCalendar"
+    | "workbotMobile"
     | "permissions"
     | "teamRoles"
     | "sharedRoles"
@@ -815,6 +816,7 @@ export type AdminOrganizationsPageResponse = {
       slackWorkbotReplies: boolean;
       workbot: boolean;
       automationCalendar: boolean;
+      workbotMobile: boolean;
       permissions: boolean;
       teamRoles: boolean;
       sharedRoles: boolean;
@@ -975,6 +977,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       automationCalendar: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotMobile: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -1179,6 +1190,7 @@ export type AdminOverviewResponse = {
       slackWorkbotReplies: boolean;
       workbot: boolean;
       automationCalendar: boolean;
+      workbotMobile: boolean;
       permissions: boolean;
       teamRoles: boolean;
       sharedRoles: boolean;
@@ -1339,6 +1351,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       automationCalendar: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotMobile: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6631,6 +6652,7 @@ export type WorkbotSession = {
   calendar?: boolean;
   sideChats: boolean;
   model?: string | null;
+  mobile: boolean;
 };
 
 export type WorkbotRunToken = {
@@ -7600,6 +7622,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       slackWorkbotReplies: boolean;
       workbot: boolean;
       automationCalendar: boolean;
+      workbotMobile: boolean;
       permissions: boolean;
       teamRoles: boolean;
       sharedRoles: boolean;
@@ -7760,6 +7783,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       automationCalendar: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotMobile: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -7952,6 +7984,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       slackWorkbotReplies: boolean;
       workbot: boolean;
       automationCalendar: boolean;
+      workbotMobile: boolean;
       permissions: boolean;
       teamRoles: boolean;
       sharedRoles: boolean;
@@ -8112,6 +8145,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       automationCalendar: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotMobile: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;

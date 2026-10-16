@@ -49,6 +49,8 @@ const sessionSchema = z.object({
    * omitted by older Dens, means the headless runner's default.
    */
   model: z.string().nullable().optional(),
+  /** The person can use Workbot from the Workbot phone app (the workbotMobile feature). */
+  mobile: z.boolean(),
 }).meta({ ref: "WorkbotSession" })
 
 const runTokenSchema = z.object({ token: z.string(), expiresAt: z.iso.datetime() }).meta({ ref: "WorkbotRunToken" })
@@ -237,6 +239,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         calendar: features.workbot,
         sideChats: features.workbot,
         model,
+        mobile: features.workbot && features.workbotMobile,
       })
     },
   )

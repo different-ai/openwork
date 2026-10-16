@@ -44,6 +44,13 @@ const schema = z.object({
   WORKBOT_CALENDAR_MOCK_URL: origin(false).optional(),
   /** Serve the page from Vite with hot reload instead of the built files. */
   WORKBOT_DEV: z.enum(["0", "1"]).default("0"),
+  /** The Workbot app's Apple team ID: iOS then trusts it with its sign-in return address (apple-app-site-association). */
+  WORKBOT_IOS_TEAM_ID: z.string().regex(/^[A-Z0-9]{10}$/, "must be a 10-character Apple team ID").optional(),
+  /**
+   * SHA-256 fingerprints of the Workbot Android app's signing certificates, comma-separated: Android then trusts it
+   * with its sign-in return address (assetlinks.json).
+   */
+  WORKBOT_ANDROID_CERT_SHA256: z.string().optional(),
   /**
    * Optional error reports to Sentry (see error-reporting.ts). Unset, nothing is sent anywhere: self-hosted
    * installs ship without one. The release defaults to `workbot@<WORKBOT_VERSION>`.
@@ -54,6 +61,28 @@ const schema = z.object({
   /** Set by the Workbot image at build time. */
   WORKBOT_VERSION: optionalText,
 })
+
+/** The Workbot phone app (its production build). */
+export const WORKBOT_APP_ID = "com.openworklabs.workbot"
+/**
+ * Where the phone app comes back after signing in: a page on Workbot itself that iOS and Android open only in the
+ * Workbot app they verified (/.well-known); any other app can't receive it, and a browser just shows the page.
+ */
+export const WORKBOT_APP_CALLBACK_PATH = "/auth/app/callback"
+function appRedirectUris(publicUrl: string): string[] {
+  // A loopback address cannot establish app-link ownership. Never send OAuth
+  // codes to a private-use scheme, including on a development server.
+  return publicUrl.startsWith("https:") ? [`${publicUrl}${WORKBOT_APP_CALLBACK_PATH}`] : []
+}
+
+const CERT_SHA256 = /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/
+
+function certFingerprints(value: string | undefined): string[] {
+  const list = (value ?? "").split(",").map((entry) => entry.trim().toUpperCase()).filter(Boolean)
+  const invalid = list.filter((entry) => !CERT_SHA256.test(entry))
+  if (invalid.length > 0) throw new Error(`Invalid Workbot configuration:\nWORKBOT_ANDROID_CERT_SHA256: not a SHA-256 certificate fingerprint: ${invalid.join(", ")}`)
+  return list
+}
 
 export type Config = {
   publicUrl: string
@@ -67,6 +96,10 @@ export type Config = {
   calendarMockUrl: string | null
   /** Cookies are Secure (and __Host- prefixed) whenever Workbot is served over https. */
   secureCookies: boolean
+  /** Where the phone app may be sent back after signing in (exact matches). */
+  appRedirectUris: string[]
+  /** What verifies the Workbot app as the owner of its return address; nothing is served for what's unset. */
+  appLinks: { iosTeamId: string | null; androidCertSha256: string[] }
   /** Where error reports go; null (no DSN) sends none. */
   errorReporting: { dsn: string; environment?: string; release?: string } | null
 }
@@ -88,6 +121,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     dev: value.WORKBOT_DEV === "1",
     calendarMockUrl: value.WORKBOT_CALENDAR_MOCK_URL ?? null,
     secureCookies: value.WORKBOT_PUBLIC_URL.startsWith("https:"),
+    appRedirectUris: appRedirectUris(value.WORKBOT_PUBLIC_URL),
+    appLinks: { iosTeamId: value.WORKBOT_IOS_TEAM_ID ?? null, androidCertSha256: certFingerprints(value.WORKBOT_ANDROID_CERT_SHA256) },
     errorReporting: value.WORKBOT_SENTRY_DSN
       ? {
           dsn: value.WORKBOT_SENTRY_DSN,
