@@ -1030,6 +1030,13 @@
       "when": 1792104699960,
       "tag": "0147_free_auto_behavior",
       "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "5",
+      "when": 1792110155274,
+      "tag": "0148_permission_set_rules",
+      "breakpoints": true
     }
   ]
 }

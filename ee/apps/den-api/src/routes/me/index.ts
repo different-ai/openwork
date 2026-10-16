@@ -21,6 +21,7 @@ import { readAgentPermissionRulesForMember } from "../../agent-permissions.js"
 import { desktopConfigDefaultModel } from "../../default-model.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import { getOrganizationFeatures } from "../../features.js"
+import { permissionRulesForMember } from "../../permissions/rules.js"
 
 const DOWNLOAD_LINK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
 const DOWNLOAD_LINK_RATE_LIMIT_MAX = 5
@@ -387,9 +388,14 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         : undefined
       // The model new chats start with; only v2 desktops apply it. A failure leaves desktops on their own default.
       const defaultModel = await desktopConfigDefaultModel({ organizationId: organization.id, memberId: currentMember.id, featureOn: features.orgDefaultModel })
+      // Turning either feature off stops members' apps from applying permission rules.
+      const rules = features.permissions && features.permissionRules
+        ? await permissionRulesForMember({ organizationId: organization.id, memberId: currentMember.id })
+        : []
 
       return c.json({
         ...desktopPolicy,
+        ...(rules.length > 0 ? { rules } : {}),
         automationsEnabled: env.automations.enabled,
         dashboardEnabled: env.dashboardsEnabled,
         // Compatibility field for published desktops: Connect is always on.

@@ -172,6 +172,14 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  permissionRules: {
+    label: "Permission rules",
+    description: "Organization admins add OpenCode permission rules to Member, Admin and team permissions for the commands, websites, local skills and local MCP servers members' apps may use. Needs Permissions.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+
   teamRoles: {
     label: "Team roles",
     description: "Members › Teams shows each team's role (Member, Admin or Custom) with one Change role action, and Members gets a Roles tab to see and create roles.",

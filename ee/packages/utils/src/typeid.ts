@@ -128,6 +128,7 @@ export const idTypesMapNameToPrefix = {
   agentPermissionPolicy: "agp",
   agentPermissionSetting: "aps",
   orgDefaultModel: "odm",
+  permissionSetRule: "psr",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

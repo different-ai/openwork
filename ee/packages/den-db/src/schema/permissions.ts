@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm"
-import { index, mysqlEnum, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { index, json, mysqlEnum, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn } from "../columns"
 import { MemberTable, OrganizationTable } from "./org"
 import { TeamTable } from "./teams"
@@ -88,6 +88,34 @@ export const PermissionSetTeamTable = mysqlTable(
     index("permission_set_team_organization_id").on(table.organizationId),
     index("permission_set_team_team_id").on(table.teamId),
     uniqueIndex("permission_set_team_set_team").on(table.permissionSetId, table.teamId),
+  ],
+)
+
+export const permissionRuleActionValues = ["shell", "webfetch", "skill", "mcp"] as const
+export type PermissionRuleAction = (typeof permissionRuleActionValues)[number]
+export type PermissionRuleEntry = { resource: string; effect: PermissionStatus }
+
+/**
+ * Append-only permission rule history: each row is one action's whole ordered
+ * rule list for a set (OpenCode permission rules, last match wins). The latest
+ * row by (created_at, id) for a set and action is current; no row means no
+ * rules.
+ */
+export const PermissionSetRuleTable = mysqlTable(
+  "permission_set_rule",
+  {
+    id: denTypeIdColumn("permissionSetRule", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    permissionSetId: denTypeIdColumn("permissionSet", "permission_set_id").notNull(),
+    action: mysqlEnum("action", permissionRuleActionValues).notNull(),
+    rules: json("rules").$type<PermissionRuleEntry[]>().notNull(),
+    source: mysqlEnum("source", permissionChangeSourceValues).notNull(),
+    changedByOrgMembershipId: denTypeIdColumn("member", "changed_by_org_membership_id"),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("permission_set_rule_set_action_created").on(table.permissionSetId, table.action, table.createdAt, table.id),
+    index("permission_set_rule_organization_id").on(table.organizationId),
   ],
 )
 

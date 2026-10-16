@@ -10,6 +10,7 @@ export default defineConfig({
     "mcp-app-timing": "src/mcp-app-timing.ts",
     "connection-action-app": "src/connection-action-app.ts",
     "den/desktop-policies": "src/den/desktop-policies.ts",
+    "den/policy-rules": "src/den/policy-rules.ts",
     "den/agent-permissions": "src/den/agent-permissions.ts",
     "den/gateway": "src/den/gateway.ts",
     "den/gateway-usage-limits": "src/den/gateway-usage-limits.ts",

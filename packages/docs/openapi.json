@@ -2443,6 +2443,7 @@
               "workbot",
               "automationCalendar",
               "permissions",
+              "permissionRules",
               "teamRoles",
               "sharedRoles",
               "agentPermissions",
@@ -2680,6 +2681,9 @@
                     "permissions": {
                       "type": "boolean"
                     },
+                    "permissionRules": {
+                      "type": "boolean"
+                    },
                     "teamRoles": {
                       "type": "boolean"
                     },
@@ -2741,6 +2745,7 @@
                     "workbot",
                     "automationCalendar",
                     "permissions",
+                    "permissionRules",
                     "teamRoles",
                     "sharedRoles",
                     "agentPermissions",
@@ -3711,6 +3716,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "permissionRules": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "teamRoles": {
                       "type": "object",
                       "properties": {
@@ -4402,6 +4463,7 @@
                     "workbot",
                     "automationCalendar",
                     "permissions",
+                    "permissionRules",
                     "teamRoles",
                     "sharedRoles",
                     "agentPermissions",
@@ -4834,6 +4896,9 @@
                     "permissions": {
                       "type": "boolean"
                     },
+                    "permissionRules": {
+                      "type": "boolean"
+                    },
                     "teamRoles": {
                       "type": "boolean"
                     },
@@ -4895,6 +4960,7 @@
                     "workbot",
                     "automationCalendar",
                     "permissions",
+                    "permissionRules",
                     "teamRoles",
                     "sharedRoles",
                     "agentPermissions",
@@ -5865,6 +5931,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "permissionRules": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "teamRoles": {
                       "type": "object",
                       "properties": {
@@ -6556,6 +6678,7 @@
                     "workbot",
                     "automationCalendar",
                     "permissions",
+                    "permissionRules",
                     "teamRoles",
                     "sharedRoles",
                     "agentPermissions",
@@ -7179,6 +7302,43 @@
           "user"
         ]
       },
+      "DenSourcedPolicyRule": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "shell",
+              "webfetch",
+              "skill",
+              "mcp"
+            ]
+          },
+          "resource": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "effect": {
+            "type": "string",
+            "enum": [
+              "allow",
+              "deny"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "maxLength": 255
+          }
+        },
+        "required": [
+          "action",
+          "resource",
+          "effect",
+          "source"
+        ],
+        "additionalProperties": false
+      },
       "DenDesktopAgentPermissions": {
         "type": "object",
         "properties": {
@@ -7318,6 +7478,12 @@
               }
             },
             "additionalProperties": false
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DenSourcedPolicyRule"
+            }
           },
           "allowedDesktopVersions": {
             "type": "array",
@@ -15518,6 +15684,131 @@
           "isOwner",
           "isAdmin",
           "permissions"
+        ]
+      },
+      "DenPolicyRule": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "shell",
+              "webfetch",
+              "skill",
+              "mcp"
+            ]
+          },
+          "resource": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "effect": {
+            "type": "string",
+            "enum": [
+              "allow",
+              "deny"
+            ]
+          }
+        },
+        "required": [
+          "action",
+          "resource",
+          "effect"
+        ],
+        "additionalProperties": false
+      },
+      "PermissionSetRules": {
+        "type": "object",
+        "properties": {
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DenPolicyRule"
+            },
+            "description": "Each action's rules in order: shell, webfetch, skill, then mcp."
+          }
+        },
+        "required": [
+          "rules"
+        ]
+      },
+      "PermissionRulesNotFoundError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": [
+              "permission_set_not_found",
+              "organization_not_found",
+              "feature_disabled"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": {}
+      },
+      "PermissionRulesConflictError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "permission_set_archived"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ]
+      },
+      "UpdatePermissionSetRulesBody": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "shell",
+              "webfetch",
+              "skill",
+              "mcp"
+            ],
+            "description": "The OpenCode permission action these rules are for: shell (commands), webfetch (websites), skill (local skills) or mcp (local MCP servers)."
+          },
+          "rules": {
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "resource": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "effect": {
+                  "type": "string",
+                  "enum": [
+                    "allow",
+                    "deny"
+                  ]
+                }
+              },
+              "required": [
+                "resource",
+                "effect"
+              ]
+            },
+            "description": "The action's whole rule list, checked from first to last; the last rule whose pattern matches decides. An empty list removes the action's rules."
+          }
+        },
+        "required": [
+          "action",
+          "rules"
         ]
       },
       "OAuthClientConfigResponse": {
@@ -30580,6 +30871,9 @@
                         "permissions": {
                           "type": "boolean"
                         },
+                        "permissionRules": {
+                          "type": "boolean"
+                        },
                         "teamRoles": {
                           "type": "boolean"
                         },
@@ -30641,6 +30935,7 @@
                         "workbot",
                         "automationCalendar",
                         "permissions",
+                        "permissionRules",
                         "teamRoles",
                         "sharedRoles",
                         "agentPermissions",
@@ -31611,6 +31906,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "permissionRules": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "teamRoles": {
                           "type": "object",
                           "properties": {
@@ -32302,6 +32653,7 @@
                         "workbot",
                         "automationCalendar",
                         "permissions",
+                        "permissionRules",
                         "teamRoles",
                         "sharedRoles",
                         "agentPermissions",
@@ -32483,6 +32835,9 @@
                         "permissions": {
                           "type": "boolean"
                         },
+                        "permissionRules": {
+                          "type": "boolean"
+                        },
                         "teamRoles": {
                           "type": "boolean"
                         },
@@ -32544,6 +32899,7 @@
                         "workbot",
                         "automationCalendar",
                         "permissions",
+                        "permissionRules",
                         "teamRoles",
                         "sharedRoles",
                         "agentPermissions",
@@ -33514,6 +33870,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "permissionRules": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "teamRoles": {
                           "type": "object",
                           "properties": {
@@ -34205,6 +34617,7 @@
                         "workbot",
                         "automationCalendar",
                         "permissions",
+                        "permissionRules",
                         "teamRoles",
                         "sharedRoles",
                         "agentPermissions",
@@ -78809,6 +79222,182 @@
             "description": "Den TypeID with 'om_' prefix and a 26-character base32 suffix."
           }
         ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/permissions/sets/{permissionSetId}/rules": {
+      "get": {
+        "operationId": "getV1PermissionsSetsByPermissionSetIdRules",
+        "tags": [
+          "Permissions"
+        ],
+        "summary": "Get a set's permission rules",
+        "description": "Returns the OpenCode permission rules in one permission set: what members it applies to may run (shell), open (webfetch), and use as local skills (skill) or local MCP servers (mcp). Requires permissions.view and the Permissions and Permission rules features.",
+        "responses": {
+          "200": {
+            "description": "The set's rules.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionSetRules"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller lacks permissions.view.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The permission set or organization was not found, or a feature is turned off.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionRulesNotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "permissionSetId",
+            "schema": {
+              "format": "typeid",
+              "type": "string",
+              "minLength": 30,
+              "maxLength": 30
+            },
+            "required": true,
+            "description": "Den TypeID with 'pms_' prefix and a 26-character base32 suffix."
+          }
+        ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "putV1PermissionsSetsByPermissionSetIdRules",
+        "tags": [
+          "Permissions"
+        ],
+        "summary": "Change a set's permission rules",
+        "description": "Replaces one action's OpenCode permission rules in a set. Every change is kept in the set's rule history and audited. Only the owner and admins can change rules in Admin permissions, and archived sets can't be changed. Returns the set's rules. Requires permissions.manage, a recent sign-in, and the Permissions and Permission rules features.",
+        "responses": {
+          "200": {
+            "description": "Rules updated; the set's rules are returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionSetRules"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body was invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller lacks permissions.manage, needs a recent sign-in, or tried to change Admin permissions without being the owner or an admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The permission set or organization was not found, or a feature is turned off.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionRulesNotFoundError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The permission set is archived.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionRulesConflictError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "permissionSetId",
+            "schema": {
+              "format": "typeid",
+              "type": "string",
+              "minLength": 30,
+              "maxLength": 30
+            },
+            "required": true,
+            "description": "Den TypeID with 'pms_' prefix and a 26-character base32 suffix."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePermissionSetRulesBody"
+              }
+            }
+          }
+        },
         "security": [
           {
             "denApiKey": []

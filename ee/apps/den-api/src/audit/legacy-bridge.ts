@@ -38,4 +38,5 @@ export const LEGACY_ACTION_BRIDGE: Readonly<Record<LegacyOrganizationAuditAction
   "organization.permission_set.archived": "permission_set.archived",
   "organization.permission_set.renamed": "permission_set.renamed",
   "organization.permission_set.teams_changed": "permission_set.teams_changed",
+  "organization.permission_set.rules_changed": "permission_set.rules_changed",
 }
