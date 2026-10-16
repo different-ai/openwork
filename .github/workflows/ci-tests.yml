@@ -91,8 +91,10 @@ jobs:
           pnpm --filter @openwork-ee/headless-computer build
           pnpm --filter @openwork-ee/headless-computer test
           pnpm --filter @openwork-ee/headless-runner test:computer-config
-      - name: Test headless conversations (follow-ups, read-only lookups, waiting messages, bounded reads)
-        run: pnpm --filter @openwork-ee/headless-runner test:conversation
+      - name: Test headless conversations (follow-ups, read-only lookups, waiting messages, bounded reads, moving to Node)
+        run: |
+          pnpm --filter @openwork-ee/headless-runner test:conversation
+          pnpm --filter @openwork-ee/headless-runner test:transfer
       - name: Test opt-in error reporting (runner and Workbot)
         run: |
           pnpm --filter @openwork-ee/headless-runner test:error-reporting

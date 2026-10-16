@@ -4,15 +4,15 @@ import { AwsClient } from "aws4fetch"
 
 /**
  * Where saved files' bytes live. The runner keeps each file's name, type and owner in SQLite and only the
- * bytes here, so any backend works: a folder on the runner's disk, any S3-compatible bucket (AWS S3,
- * Cloudflare R2, MinIO, Tigris, Backblaze B2, Google Cloud Storage's XML API), or a private Vercel Blob store.
+ * bytes here: a folder on the runner's disk (development and single-disk installs), or any S3-compatible bucket
+ * (AWS S3, Cloudflare R2, MinIO, Tigris, Backblaze B2, Google Cloud Storage's XML API), which every host can share.
  * Files are optional: with no store configured, the file routes and tools are simply not offered.
  *
  * Keys are `sessions/<sessionId>/<fileId>` (plus `.preview/...` for page images); the runner only ever reads a
  * key it recorded for that session, so one conversation can never name another's bytes.
  */
 export type BlobStore = {
-  kind: "disk" | "s3" | "vercel"
+  kind: "disk" | "s3"
   put(key: string, bytes: Uint8Array<ArrayBuffer>, contentType: string): Promise<void>
   /** Null when the object does not exist. */
   get(key: string): Promise<Uint8Array<ArrayBuffer> | null>
@@ -113,45 +113,6 @@ export function s3BlobStore(options: S3Options): BlobStore {
       const response = await send("DELETE", key)
       if (!response.ok && response.status !== 404) throw await fail("delete", response)
       await response.body?.cancel()
-    },
-  }
-}
-
-const VERCEL_BLOB_TIMEOUT_MS = 120_000
-/** Larger uploads go in parallel parts, as Vercel recommends for big files. */
-const VERCEL_MULTIPART_BYTES = 64 * 1024 * 1024
-
-/**
- * A private Vercel Blob store (`HEADLESS_FILES=vercel`): every read and write needs its read-write token, which is
- * scoped to that one store. The token is always passed explicitly, so the SDK never falls back to whatever
- * BLOB_READ_WRITE_TOKEN or OIDC credentials happen to be in the environment. Reads skip the CDN cache so a file
- * revised in place is never served stale. The SDK is loaded only when this store is configured.
- */
-export async function vercelBlobStore(options: { token: string }): Promise<BlobStore> {
-  const { del, get, put } = await import("@vercel/blob")
-  const { token } = options
-  const signal = () => AbortSignal.timeout(VERCEL_BLOB_TIMEOUT_MS)
-  return {
-    kind: "vercel",
-    async put(key, bytes, contentType) {
-      await put(safeKey(key), Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), {
-        access: "private",
-        token,
-        contentType,
-        addRandomSuffix: false,
-        allowOverwrite: true,
-        multipart: bytes.byteLength > VERCEL_MULTIPART_BYTES,
-        abortSignal: signal(),
-      })
-    },
-    async get(key) {
-      const result = await get(safeKey(key), { access: "private", token, useCache: false, abortSignal: signal() })
-      if (!result || result.statusCode !== 200 || !result.stream) return null
-      return new Uint8Array(await new Response(result.stream).arrayBuffer())
-    },
-    async delete(key) {
-      // Succeeds when the blob is already gone.
-      await del(safeKey(key), { token, abortSignal: signal() })
     },
   }
 }

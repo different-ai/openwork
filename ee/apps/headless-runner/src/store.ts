@@ -847,4 +847,36 @@ export class Store {
   deleteFile(sessionId: string, path: string) {
     return Number(this.db.prepare("DELETE FROM files WHERE session_id = ? AND path = ?").run(sessionId, path).changes) > 0
   }
+
+  /** Every row of one conversation exactly as stored, to move it to another runner (GET /v1/sessions/:id/export). */
+  exportConversation(id: string): ConversationRows | null {
+    const session = this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id)
+    if (!session) return null
+    const rows = (table: ConversationTable) => z.array(sqlRow).parse(this.db.prepare(`SELECT * FROM ${table} WHERE session_id = ? ORDER BY rowid`).all(id))
+    return { session: sqlRow.parse(session), turns: rows("turns"), messages: rows("messages"), files: rows("files"), saved_files: rows("saved_files") }
+  }
+
+  /** The columns this database has for a table: an export from a newer runner can name ones it lacks. */
+  columns(table: "sessions" | ConversationTable): Set<string> {
+    return new Set(tableColumns.parse(this.db.prepare(`PRAGMA table_info(${table})`).all()).map((column) => column.name))
+  }
+
+  /** Writes an exported conversation in one transaction: all of it, or nothing. Columns must be checked first. */
+  importConversation(conversation: ConversationRows) {
+    const insert = (table: "sessions" | ConversationTable, row: SqlRow) => {
+      const names = Object.keys(row)
+      if (!names.length || names.some((name) => !/^[a-z_]+$/.test(name))) throw new Error("invalid_column")
+      this.db.prepare(`INSERT INTO ${table} (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")})`).run(...names.map((name) => row[name] ?? null))
+    }
+    this.transaction(() => {
+      insert("sessions", conversation.session)
+      for (const table of CONVERSATION_TABLES) for (const row of conversation[table]) insert(table, row)
+    })
+  }
 }
+
+export const CONVERSATION_TABLES = ["turns", "messages", "files", "saved_files"] as const
+type ConversationTable = (typeof CONVERSATION_TABLES)[number]
+export const sqlRow = z.record(z.string(), z.union([z.string(), z.number(), z.null()]))
+type SqlRow = z.infer<typeof sqlRow>
+export type ConversationRows = { session: SqlRow } & Record<ConversationTable, SqlRow[]>

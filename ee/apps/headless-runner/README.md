@@ -26,7 +26,7 @@ headless-runner (one Node process, SQLite file)
 | **Cheap** | One process serves many sessions, and an idle session is just rows. Anthropic prompt caching sits on the system prompt, the ends of the two newest earlier turns and the newest message, so each agent step, and each new turn, reuses the previous prefix. In the smoke test, 123k of 167k input tokens were cache reads. Tool output, file sizes and context are capped. A long turn drops its oldest large tool outputs in blocks, so the cached prefix survives most steps. |
 | **Reliable** | Every step is written to SQLite (WAL) before the next one starts. Sends are idempotent on `messageId`. Follow-ups sent while a turn runs are queued per conversation and answered in order, each seeing the earlier answers; the caller never has to retry "busy". After a crash or restart, turns are marked `interrupted`; sending the same `messageId` again resumes them. A tool call whose result was never recorded is **not re-run**: it is recorded as an error so the model can check its effect instead of repeating a possible write. Model calls retry on 408/409/425/429/5xx with backoff. Turns have no time or step limit by default (both are optional settings); every model and tool call has its own timeout, and a step that repeats the previous one (same calls, same results) is treated as waiting: each repeat first waits longer (5, 10, 20, then 30 seconds), so checking back on a desktop, CI, or a job is cheap. When the same failure has come back `maxIdenticalFailures` times, or the same answer has kept coming back for `maxWaitingMs`, the model is told (in the system prompt, not the transcript) to stop and report what it was waiting for; a model that still repeats the step ends as `stuck_repeating`. Each caller sets both limits per session in `repeats` (defaults: 10 minutes, 3 failures). A turn using a caller's MCP token pauses itself between steps every 50 minutes (`interrupted`, `credentials_refresh`) so the caller can resume it with a fresh token; no tool call is cut off. There is a global concurrency limit. Each turn logs one line when it starts and one when it ends (status, error code, steps, tool calls, elapsed time, tokens), never content or credentials. |
 | **Safe** | No shell, no host filesystem, no child processes. Network access goes only to the two operator-configured URLs (https, or http on loopback). Callers can't redirect it. Model keys and MCP tokens are supplied per turn, held in memory only, and never written to disk or logs (a test checks this). File paths are normalized so they can't escape the session. A service bearer token (≥32 chars) guards every `/v1` route. `HEADLESS_MCP_TOOL_ALLOWLIST` can narrow the MCP tools. The default system prompt asks the model to read and draft, and to change data only when explicitly asked. |
-| **Simple** | About 4,600 lines of source and six third-party runtime deps: `hono`, `@hono/node-server`, `@modelcontextprotocol/client` and `zod`, plus `aws4fetch` for S3 files and `@vercel/blob` (loaded only for `HEADLESS_FILES=vercel`). From the workspace: `@openwork/workbook` for Office files and `@openwork-ee/headless-computer` (loaded only when a computer is configured). SQLite is `node:sqlite`. No agent framework, no model provider SDKs. The build bundles `@openwork/workbook` and `aws4fetch` into `dist/server.js` with esbuild, so it runs on plain Node. |
+| **Simple** | About 4,600 lines of source and five third-party runtime deps: `hono`, `@hono/node-server`, `@modelcontextprotocol/client` and `zod`, plus `aws4fetch` for S3 files. From the workspace: `@openwork/workbook` for Office files and `@openwork-ee/headless-computer` (loaded only when a computer is configured). SQLite is `node:sqlite`. No agent framework, no model provider SDKs. The build bundles `@openwork/workbook` and `aws4fetch` into `dist/server.js` with esbuild, so it runs on plain Node. |
 
 ## API
 
@@ -47,6 +47,8 @@ All `/v1` routes require `Authorization: Bearer $HEADLESS_API_TOKEN`.
 | `GET` | `/v1/sessions/:id/files` | | `{ files: [{ path, size, updatedAt }] }` |
 | `GET` | `/v1/sessions/:id/files/content` | `?path=` | file text |
 | `DELETE` | `/v1/sessions/:id` | | `204` (also deletes its saved files' bytes and its computer). `409 session_busy` while a turn is queued or running |
+| `GET` | `/v1/sessions/:id/export` | | Every row of the conversation as stored, to [move it to Node](#move-conversations-to-node). `409 session_busy` while a turn is queued or running |
+| `POST` | `/v1/sessions/:id/import` | an export | Node only (celld answers `405`). `201 { id, rows }`, or `409 session_exists`; `400` (nothing written) for another conversation's, a cut-off or a newer runner's export |
 | `GET` | `/v1/files/status` | | `{ enabled, kind, maxFileBytes, maxSessionBytes }` |
 | `POST` | `/v1/sessions/:id/saved-files` | `?name=`, raw body typed by `Content-Type` | `201` saved file (`fl_…`). Send its id in a turn's `attachments`. `403 files_not_enabled` for a session without `files: true`; `413 file_too_large` or `413 files_full` past the limits |
 | `GET` | `/v1/sessions/:id/saved-files` | | `{ files }`, newest first, `source: user \| agent` |
@@ -106,7 +108,7 @@ The runner is a private service with one caller (Den), which authorizes each per
 - **Opt-in per session.** Configuring files or a computer makes them *available*; a session only gets them when it is created (or updated) with `files: true` / `computer: true`. Slack replies and Automations don't ask, so they keep their exact behavior: no file tools, no computer, no uploads, and the preview route never starts a computer for them.
 - **Files belong to one session.** Every read, download, preview and delete looks a file up by session id *and* file id, and bytes are stored under `sessions/<sessionId>/<fileId>`. Deleting a session deletes its bytes and its computer.
 - **Limits.** `HEADLESS_FILES_MAX_BYTES` (100 MB) per file, enforced while the upload streams in (with or without `Content-Length`), and on `save_file` and computer outputs. `HEADLESS_FILES_MAX_SESSION_BYTES` (5 GB) per session in total. Past either, the upload gets `413`, and the model is told why so it can say so.
-- **Storage credentials.** Use a store or bucket for this runner alone, with credentials scoped to it. For Vercel Blob, the store's own read-write token is passed explicitly, so the SDK never uses other `BLOB_READ_WRITE_TOKEN` or OIDC credentials in the environment. Neither the storage credentials nor the Freestyle key ever enter a computer.
+- **Storage credentials.** Use a store or bucket for this runner alone, with credentials scoped to it. Neither the storage credentials nor the Freestyle key ever enter a computer.
 - **Computers.** One VM per session, created only when that session first runs a command; it holds no credentials and has outbound internet only.
 
 ## Computer (optional)
@@ -130,6 +132,26 @@ The runner is a private service with one caller (Den), which authorizes each per
 The same runner also runs on celld, one SQLite cell per Workbot person or per Slack/Automation conversation, kept
 in an S3 bucket instead of a disk: [OWNER-CELLS.md](./OWNER-CELLS.md).
 
+## Move conversations to Node
+
+Every conversation can leave celld for a Node runner with nothing lost: export it, import it with the same id, and point
+Den and Workbot at the new URL. Every celld deploy proves this with its smoke conversation before it goes out.
+
+- **Same token, model and MCP settings** on the Node runner.
+- **Same bucket** (`HEADLESS_FILES=s3`): kept files' bytes stay there; the export carries only their keys.
+- **Same computer settings** (`HEADLESS_COMPUTER`, its key, snapshot, `HEADLESS_COMPUTER_SCOPE`): a conversation's computer
+  is found by a hash of its id, so it keeps its `/workspace`.
+
+Pause Slack, Automations and Workbot first (export refuses a conversation while a turn runs). Den knows every
+conversation (Slack threads, Automation runs' receipts, Workbot members); for each:
+
+```sh
+curl -sf -H "authorization: Bearer $FROM" ${OWNER:+-H "x-openwork-headless-owner: $OWNER"} "$FROM_URL/v1/sessions/$ID/export" |
+  curl -sf -X POST -H "authorization: Bearer $TO" --data-binary @- "$TO_URL/v1/sessions/$ID/import"
+```
+
+Nothing on celld changes, so pointing the URLs back is the rollback.
+
 ## Configuration
 
 | Variable | Default | |
@@ -150,11 +172,10 @@ in an S3 bucket instead of a disk: [OWNER-CELLS.md](./OWNER-CELLS.md).
 | `HEADLESS_MAX_OUTPUT_TOKENS` | `8192` | Output cap per model call: Anthropic `max_tokens`, OpenAI `max_completion_tokens` |
 | `HEADLESS_CONTEXT_CHAR_BUDGET` | `400000` | Past this, the oldest whole turns are left out, down to 60% of it (see [Long conversations](#long-conversations)). A turn that outgrows it alone replaces its oldest large tool outputs with a short note, in blocks of eight |
 | `HEADLESS_SYSTEM_PROMPT` | built-in | |
-| `HEADLESS_FILES` | `off` | Saved files: `off`, `disk`, `s3`, or `vercel`. Only sessions created with `files: true` use them. Off means the file routes answer `files_not_configured` |
+| `HEADLESS_FILES` | `off` | Saved files: `off`, `disk`, or `s3`. Only sessions created with `files: true` use them. Off means the file routes answer `files_not_configured` |
 | `HEADLESS_FILES_MAX_BYTES` | `104857600` (100 MB) | Largest single kept file |
 | `HEADLESS_FILES_MAX_SESSION_BYTES` | `5368709120` (5 GB) | Most one session may keep in total |
 | `HEADLESS_FILES_DIR` | `files` next to `HEADLESS_DB_PATH` | For `disk`. Defaults to the database's volume so files survive deploys; disk is for development, use a store in production |
-| `HEADLESS_VERCEL_BLOB_TOKEN` | | For `vercel`: the read-write token of one **private** Vercel Blob store used only by this runner |
 | `HEADLESS_S3_ENDPOINT` | | For `s3`: any S3-compatible endpoint, e.g. `https://<account>.r2.cloudflarestorage.com`, `https://s3.us-east-1.amazonaws.com`, or a self-hosted MinIO/RustFS |
 | `HEADLESS_S3_REGION` | `auto` | `auto` for R2; the bucket's region for AWS |
 | `HEADLESS_S3_BUCKET`, `HEADLESS_S3_ACCESS_KEY_ID`, `HEADLESS_S3_SECRET_ACCESS_KEY` | | For `s3` |
@@ -185,7 +206,7 @@ HEADLESS_API_TOKEN=… HEADLESS_MODEL_PROTOCOL=anthropic HEADLESS_MODEL_BASE_URL
 This is the single-node deployment: one `node dist/server.js` process with its SQLite file on a persistent disk. It
 is what Docker (`packaging/docker/Dockerfile.headless-runner`) and the AWS Terraform module run. OpenWork's own
 production runner runs on celld instead (see [Run on celld](#run-on-celld-no-disk)). **A celld deployment must set
-`HEADLESS_FILES=s3` or `off`**: it refuses `disk` and `vercel` (`cells_require_s3_files`); see
+`HEADLESS_FILES=s3` or `off`**: it refuses `disk` (`cells_require_s3_files`); see
 [OWNER-CELLS.md](./OWNER-CELLS.md).
 
 On Render, create a **private service** so it has no public URL; only den-api and Workbot reach it. Use Node 22.13 or later.
@@ -197,16 +218,7 @@ On Render, create a **private service** so it has no public URL; only den-api an
 | Disk | Mount at `/var/data`, then set `HEADLESS_DB_PATH=/var/data/headless.sqlite` |
 | Instances | 1. A service with a disk runs as a single instance, and a deploy restarts in-flight turns, which Den resumes |
 | Env | `HEADLESS_API_TOKEN`, `HEADLESS_MODEL_PROTOCOL`, `HEADLESS_MODEL_BASE_URL`, `HEADLESS_MODEL`, `HEADLESS_MODEL_API_KEY`, `HEADLESS_MCP_URL` |
-| Files (optional) | `HEADLESS_FILES=vercel` and `HEADLESS_VERCEL_BLOB_TOKEN`. Keep the 1 GB disk for SQLite only |
-
-**Kept files on a Node runner** can use a private Vercel Blob store (not on celld, see above). OpenWork's stores are in the `prologe` team, region `iad1` (next to the Render Virginia region):
-
-| Store | For | Token |
-|---|---|---|
-| `openwork-headless-files` | a Node runner on Render | Infisical `prod`, `/headless-runner/HEADLESS_VERCEL_BLOB_TOKEN` |
-| `openwork-headless-files-dev` | local runs and tests | Infisical `dev`, `/headless-runner/HEADLESS_VERCEL_BLOB_TOKEN` |
-
-Both are connected only to the empty Vercel project `openwork-headless-runner` (no code, no deployments), which exists to hold their tokens: production to the production environment, dev to development. Each token reaches only its own store.
+| Files (optional) | `HEADLESS_FILES=s3` with celld's bucket settings, so conversations moved from celld keep their files. Keep the disk for SQLite only |
 
 On den-api, set `DEN_HEADLESS_RUNNER_URL` to the private service address (for example `http://headless-runner:8795`) and `DEN_HEADLESS_RUNNER_TOKEN` to the same value as `HEADLESS_API_TOKEN`. With the runner set, scheduled cloud agent Automations run on it for organizations whose plan includes it (every organization when plan gating is off); there is no flag for it. For Slack, turn on **Slack Assistant** per organization in `/admin` and set up the Slack connector.
 

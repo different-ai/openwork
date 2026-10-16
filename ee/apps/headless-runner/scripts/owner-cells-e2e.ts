@@ -8,6 +8,11 @@ import { tmpdir } from "node:os"
 import { builtinModules } from "node:module"
 import { join } from "node:path"
 import { z } from "zod"
+import { createApp } from "../src/app.js"
+import type { ModelClient } from "../src/model.js"
+import { nodeSqlite } from "../src/node-sqlite.js"
+import { Runner } from "../src/runner.js"
+import { Store } from "../src/store.js"
 
 const runtime = process.argv.includes("--celld") ? "celld" : "wrangler"
 const project = join(import.meta.dirname, "..")
@@ -233,6 +238,23 @@ try {
   assert.equal((await call(`/v1/sessions/${main}`)).status, 200)
   assert.equal((await call(`/v1/sessions/${main}/files/content?path=memory/note.md`)).status, 200)
   console.log("PASS runtime-kill recovery, resume, persisted memory, and deleting a side chat without deleting its owner's state")
+
+  // The way off this host: a conversation's export imports into a Node runner and re-exports byte for byte.
+  const exported = await call(`/v1/sessions/${main}/export`)
+  assert.equal(exported.status, 200, await exported.clone().text())
+  const conversation = await exported.text()
+  assert.equal((await call(`/v1/sessions/${main}/import`, ownerA, { method: "POST", body: conversation })).status, 405)
+  const nodeStore = new Store(nodeSqlite(":memory:"))
+  const nodeModel: ModelClient = { complete: async () => { throw new Error("the Node runner only stores here") } }
+  const nodeApp = createApp({ store: nodeStore, apiToken: token, runner: new Runner({ store: nodeStore, model: nodeModel, defaultModel: "test-model", limits: { maxConcurrentTurns: 1, maxSteps: 1, turnTimeoutMs: 60_000, credentialRefreshMs: 60_000, contextCharBudget: 10_000 } }) })
+  const nodeAuth = { authorization: `Bearer ${token}` }
+  const intoNode = await nodeApp.request(`/v1/sessions/${main}/import`, { method: "POST", headers: nodeAuth, body: conversation })
+  assert.equal(intoNode.status, 201, await intoNode.clone().text())
+  assert.equal(nodeStore.readFile(main, "memory/note.md"), "shared-memory-witness")
+  assert.deepEqual(nodeStore.listSessions(ownerA, 10).map((session) => session.id), [main])
+  assert.equal(await (await nodeApp.request(`/v1/sessions/${main}/export`, { headers: nodeAuth })).text(), conversation)
+  nodeStore.close()
+  console.log("PASS a conversation moves off this host into a Node runner with nothing lost; this host refuses imports")
 } catch (error) {
   console.error(error)
   console.error(output.slice(-8_000))

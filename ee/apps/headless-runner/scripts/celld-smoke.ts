@@ -1,10 +1,15 @@
 /**
- * A real turn against a deployed runner: owner cell, model answer, delete. Prints no credentials.
+ * A real turn against a deployed runner: owner cell, model answer, the conversation moved into a Node runner (so the
+ * way off celld is proven on every deploy), delete. Prints no credentials.
  *
  *   SMOKE_BASE=http://127.0.0.1:8080 HEADLESS_API_TOKEN=... tsx scripts/celld-smoke.ts
  */
 import { randomUUID } from "node:crypto"
 import { z } from "zod"
+import { createApp } from "../src/app.js"
+import { nodeSqlite } from "../src/node-sqlite.js"
+import { Runner } from "../src/runner.js"
+import { Store } from "../src/store.js"
 
 const base = z.url().parse(process.env.SMOKE_BASE)
 const token = z.string().min(32).parse(process.env.HEADLESS_API_TOKEN)
@@ -33,6 +38,16 @@ try {
   const status = read.turns.at(-1)?.status
   console.log(`turn: ${status ?? "none"}, answer: ${JSON.stringify(read.finalAssistantText.slice(0, 40))}`)
   if (status !== "completed" || !/pong/i.test(read.finalAssistantText)) throw new Error("the smoke turn did not complete with the expected answer")
+
+  const exported = await call(`/v1/sessions/${sessionId}/export`)
+  expect("export", exported.status, 200)
+  const store = new Store(nodeSqlite(":memory:"))
+  const model = { complete: async () => { throw new Error("the Node runner only stores here") } }
+  const node = createApp({ store, apiToken: token, runner: new Runner({ store, model, defaultModel: "unused", limits: { maxConcurrentTurns: 1, maxSteps: 1, turnTimeoutMs: 60_000, credentialRefreshMs: 60_000, contextCharBudget: 10_000 } }) })
+  expect("import into Node", (await node.request(`/v1/sessions/${sessionId}/import`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body: await exported.text() })).status, 201)
+  const moved = store.turnMessages(sessionId, "m1").some(({ message }) => message.role === "assistant" && /pong/i.test(message.text))
+  store.close()
+  if (!moved) throw new Error("the conversation reached Node without its answer")
 } finally {
   console.log(`delete: ${(await call(`/v1/sessions/${sessionId}`, { method: "DELETE" })).status}`)
 }

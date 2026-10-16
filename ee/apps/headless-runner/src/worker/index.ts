@@ -147,6 +147,8 @@ router.get("/v1/models", async (c) => {
   }
   return c.json(await catalog())
 })
+// Conversations only leave cells: they are imported into a Node runner (README: Move conversations to Node).
+router.post("/v1/sessions/:id/import", (c) => c.json({ error: "import_not_supported" }, 405))
 router.all("/v1/*", (c) => {
   const rawOwner = c.req.header(OWNER_HEADER)
   if (rawOwner !== undefined) {

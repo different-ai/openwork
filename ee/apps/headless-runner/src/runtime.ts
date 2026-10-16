@@ -1,6 +1,6 @@
 import { createApp } from "./app.js"
 import { SessionEvents } from "./events.js"
-import { diskBlobStore, s3BlobStore, vercelBlobStore } from "./blobs.js"
+import { diskBlobStore, s3BlobStore } from "./blobs.js"
 import { createErrorReporter } from "./error-reporting.js"
 import { REACTION_TOOL_NAMES } from "./reactions.js"
 import { TASK_TOOL_NAMES } from "./tasks.js"
@@ -26,14 +26,7 @@ export async function createRuntime(config: Config, store: Store) {
     throw error
   }
   const events = new SessionEvents()
-  const blobs =
-    config.files.kind === "disk"
-      ? diskBlobStore(config.files.directory)
-      : config.files.kind === "s3"
-        ? s3BlobStore(config.files)
-        : config.files.kind === "vercel"
-          ? await vercelBlobStore(config.files)
-          : null
+  const blobs = config.files.kind === "disk" ? diskBlobStore(config.files.directory) : config.files.kind === "s3" ? s3BlobStore(config.files) : null
   const files = blobs ? new SavedFiles(store, blobs, config.fileLimits) : undefined
   // Provider SDKs load only when configured, including on the Worker host.
   let computer: SessionComputer | undefined

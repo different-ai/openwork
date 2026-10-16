@@ -1032,9 +1032,6 @@ importers:
       '@openwork/workbook':
         specifier: workspace:*
         version: link:../../../packages/workbook
-      '@vercel/blob':
-        specifier: ^2.8.0
-        version: 2.8.0
       aws4fetch:
         specifier: 1.0.20
         version: 1.0.20

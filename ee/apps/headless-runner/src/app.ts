@@ -10,8 +10,8 @@ import { formatBytes } from "./tool-files.js"
 import { z } from "zod"
 import { normalizePath } from "./files.js"
 import type { Runner } from "./runner.js"
-import type { StoredMessage, Store } from "./store.js"
-import { repeatLimitsSchema, turnCredentialsSchema, type SessionComputer } from "./types.js"
+import { CONVERSATION_TABLES, sqlRow, type StoredMessage, type Store } from "./store.js"
+import { ACTIVE, repeatLimitsSchema, turnCredentialsSchema, turnStatusSchema, type SessionComputer } from "./types.js"
 
 const createSessionBody = z
   .object({
@@ -98,6 +98,20 @@ function assistantText(entries: StoredMessage[], messageId: string) {
     .flatMap((entry) => (entry.message.role === "assistant" && entry.message.text ? [entry.message.text] : []))
     .join("\n\n")
 }
+
+/** A conversation moving to another runner: every row as stored. Kept files' bytes stay in the blob store. */
+const EXPORT_FORMAT = "openwork-headless-conversation"
+const exportedConversation = z
+  .object({
+    format: z.literal(EXPORT_FORMAT),
+    version: z.literal(1),
+    session: sqlRow,
+    turns: z.array(sqlRow),
+    messages: z.array(sqlRow),
+    files: z.array(sqlRow),
+    saved_files: z.array(sqlRow),
+  })
+  .strict()
 
 export type ModelCatalog = { defaultModel: string; models: Array<{ id: string; name: string }> }
 
@@ -268,6 +282,46 @@ export function createApp(input: {
     })
   })
 
+  // Moving a conversation to a Node runner with nothing lost: its export, then its import there with the same id.
+  // Only while nothing runs in it; callers pause their traffic first.
+  app.get("/v1/sessions/:id/export", (c) => {
+    const id = sessionIdSchema.safeParse(c.req.param("id"))
+    const conversation = id.success ? store.exportConversation(id.data) : null
+    if (!id.success || !conversation) return c.json({ error: "unknown_session" }, 404)
+    if (store.activeTurn(id.data)) return c.json({ error: "session_busy" }, 409)
+    return c.json({ format: EXPORT_FORMAT, version: 1, ...conversation })
+  })
+
+  app.post("/v1/sessions/:id/import", async (c) => {
+    const id = sessionIdSchema.safeParse(c.req.param("id"))
+    if (!id.success) return c.json({ error: "invalid_session_id" }, 400)
+    if (store.getSession(id.data)) return c.json({ error: "session_exists" }, 409)
+    const parsed = exportedConversation.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: "invalid_import", issues: parsed.error.issues }, 400)
+    const { session, turns, messages, files, saved_files } = parsed.data
+    const conversation = { session, turns, messages, files, saved_files }
+    if (session.id !== id.data || CONVERSATION_TABLES.some((table) => conversation[table].some((row) => row.session_id !== id.data))) {
+      return c.json({ error: "id_mismatch" }, 400)
+    }
+    const unknown = (["sessions", ...CONVERSATION_TABLES] as const).flatMap((table) => {
+      const known = store.columns(table)
+      const rows = table === "sessions" ? [session] : conversation[table]
+      return [...new Set(rows.flatMap((row) => Object.keys(row)))].filter((name) => !known.has(name)).map((name) => `${table}.${name}`)
+    })
+    if (unknown.length) return c.json({ error: "unsupported_export", message: `This runner has no ${unknown.join(", ")}; update it first.` }, 400)
+    const running = turns.some((turn) => {
+      const status = turnStatusSchema.safeParse(turn.status)
+      return status.success && ACTIVE.has(status.data)
+    })
+    if (running) return c.json({ error: "invalid_import", message: "A turn was still running when this was exported." }, 400)
+    try {
+      store.importConversation(conversation)
+    } catch (error) {
+      return c.json({ error: "invalid_import", message: error instanceof Error ? error.message : "unknown error" }, 400)
+    }
+    return c.json({ id: id.data, rows: Object.fromEntries(CONVERSATION_TABLES.map((table) => [table, conversation[table].length])) }, 201)
+  })
+
   app.delete("/v1/sessions/:id", async (c) => {
     const id = c.req.param("id")
     if (store.activeTurn(id)) return c.json({ error: "session_busy" }, 409)
@@ -280,7 +334,7 @@ export function createApp(input: {
   })
 
   // Saved files: uploads a person sends with messages, and files the agent hands back. Bytes live in the
-  // configured blob store (disk, any S3-compatible bucket, or Vercel Blob), only for conversations created with
+  // configured blob store (disk, or any S3-compatible bucket), only for conversations created with
   // `files: true`, within a per-file and a per-conversation limit.
   app.get("/v1/files/status", (c) =>
     c.json({

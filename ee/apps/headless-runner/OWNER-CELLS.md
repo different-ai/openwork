@@ -45,9 +45,11 @@ recovery waits until those IPs change. `bucket` mode acknowledges only after the
 any node can always recover. Keep `fleet` only with persistent disks for `CELLD_WATCH` and stable node identities.
 Also consider `CELLD_TTL_MS=30000` so a short storage outage does not fence every node.
 
-**Switching starts every conversation fresh**: conversations on the Node runner stay in its SQLite file and are not
-copied. A Slack or Automation run in flight at the switch ends as `unknown_session`. Pointing the URLs back at the
-Node runner (kept with its disk until you are sure) returns to the earlier conversations.
+**Conversations only leave cells.** To move off celld, export each one and import it into a Node runner with the same
+token, bucket and computer settings ([Move conversations to Node](./README.md#move-conversations-to-node)); cells answer
+`405` to imports. Every deploy's preflight moves its smoke conversation into a Node runner, so that way stays open.
+A run in flight at the switch ends as `unknown_session`, so pause traffic while moving. Keep celld-only code in
+`src/worker/`: everything else runs on both hosts, which is what keeps the move cheap.
 
 ### Recommended production settings
 

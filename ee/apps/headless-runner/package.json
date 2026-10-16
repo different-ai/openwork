@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx watch src/server.ts",
-    "build": "pnpm --filter \"@openwork-ee/headless-runner^...\" --if-present run build && tsc -p tsconfig.json --noEmit && esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server.js --external:@hono/node-server --external:@modelcontextprotocol/client --external:hono --external:zod --external:@openwork-ee/headless-computer --external:@vercel/blob",
+    "build": "pnpm --filter \"@openwork-ee/headless-runner^...\" --if-present run build && tsc -p tsconfig.json --noEmit && esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server.js --external:@hono/node-server --external:@modelcontextprotocol/client --external:hono --external:zod --external:@openwork-ee/headless-computer",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke": "tsx scripts/smoke.ts",
@@ -20,14 +20,14 @@
     "worker:compat": "tsx scripts/compat-check.ts",
     "worker:e2e": "pnpm --filter @openwork-ee/headless-protocol build && tsx scripts/owner-cells-e2e.ts",
     "worker:e2e:celld": "pnpm --filter @openwork-ee/headless-protocol build && tsx scripts/owner-cells-e2e.ts --celld",
-    "test:conversation": "tsx --test scripts/conversation.test.ts"
+    "test:conversation": "tsx --test scripts/conversation.test.ts",
+    "test:transfer": "tsx --test scripts/transfer.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.0.12",
     "@modelcontextprotocol/client": "^2.2.0",
     "@openwork-ee/headless-computer": "workspace:*",
     "@openwork/workbook": "workspace:*",
-    "@vercel/blob": "^2.8.0",
     "aws4fetch": "1.0.20",
     "hono": "4.13.9",
     "zod": "^4.3.6"
