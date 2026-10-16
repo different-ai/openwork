@@ -11,7 +11,7 @@ import { db } from "../db.js"
 import { attributeAuditRequest, auditUserPrincipalKey } from "../audit/request-capture.js"
 import { mcpPrincipalCredentialId, verifyMcpRequest } from "../mcp/auth.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
-import { mintHeadlessRunMcpToken } from "../mcp/headless-run-token-mint.js"
+import { mintHeadlessTurnCredentials } from "../headless-runner/resume-grants.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
 import { jsonResponse, unauthorizedSchema } from "../openapi.js"
 import { getOrganizationFeatures, organizationFeatureEnabled } from "../features.js"
@@ -55,7 +55,22 @@ const sessionSchema = z.object({
   model: z.string().nullable().optional(),
 }).meta({ ref: "WorkbotSession" })
 
-const runTokenSchema = z.object({ token: z.string(), expiresAt: z.iso.datetime() }).meta({ ref: "WorkbotRunToken" })
+const runTokenSchema = z.object({
+  token: z.string(),
+  expiresAt: z.iso.datetime(),
+  /**
+   * Feature `headlessDurableTurns`, when the request names the turn (`sessionId` and `messageId`): a resume grant the
+   * headless runner can exchange for fresh tokens for this turn, so it continues on its own after a restart.
+   */
+  resumeGrant: z.string().optional(),
+}).meta({ ref: "WorkbotRunToken" })
+const runTokenRequestSchema = z.object({
+  ttlMs: z.number().int().min(60_000).max(DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS).optional(),
+  readOnly: z.boolean().optional(),
+  /** The headless runner session and message the turn is sent as; both are needed for a resume grant. */
+  sessionId: z.string().min(1).max(128).optional(),
+  messageId: z.string().min(1).max(128).optional(),
+})
 const signedOutSchema = z.object({ error: z.string(), message: z.string().optional() })
 
 /** Plenty for one person's turns (each send and resume needs one); stops a runaway client minting in a loop. */
@@ -397,7 +412,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       "x-mcp": false,
       summary: "A short-lived token for one Workbot turn",
       description:
-        "For the Workbot app only. Mints the member-scoped MCP token a Workbot turn uses to reach the person's connected apps on the headless runner, for at most an hour. Refused when Workbot is off for the workspace.",
+        "For the Workbot app only. Mints the member-scoped MCP token a Workbot turn uses to reach the person's connected apps on the headless runner, for at most an hour. With `sessionId` and `messageId`, and where turns keep going on their own for the workspace, also returns a resume grant for that turn. Refused when Workbot is off for the workspace.",
       responses: {
         200: jsonResponse("The token.", runTokenSchema),
         401: jsonResponse("The token is missing, expired or revoked, or the membership ended.", unauthorizedSchema),
@@ -406,7 +421,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       },
     }),
     tokenRoute,
-    jsonValidator(z.object({ ttlMs: z.number().int().min(60_000).max(DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS).optional(), readOnly: z.boolean().optional() })),
+    jsonValidator(runTokenRequestSchema),
     async (c) => {
       const resolved = await resolve(c.req.raw.headers)
       if (resolved instanceof Response) return resolved
@@ -423,9 +438,9 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       }
       const retryAfter = await checkRateLimit(`workbot-run-token:${principal.organizationId}:${principal.userId}`, RUN_TOKENS_PER_WINDOW, RUN_TOKEN_WINDOW_MS, Date.now())
       if (retryAfter !== null) return c.json({ error: "rate_limited" as const, retryAfter }, 429)
-      const ttlMs = c.req.valid("json").ttlMs ?? DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS
-      const { token } = await mintHeadlessRunMcpToken({ ...principal, ttlMs, readOnly })
-      return c.json({ token, expiresAt: new Date(Date.now() + ttlMs).toISOString() })
+      const { ttlMs = DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS, sessionId, messageId } = c.req.valid("json")
+      const { token, resumeGrant } = await mintHeadlessTurnCredentials({ ...principal, ttlMs, readOnly, sessionId, messageId })
+      return c.json({ token, expiresAt: new Date(Date.now() + ttlMs).toISOString(), ...(resumeGrant ? { resumeGrant } : {}) })
     },
   )
 }

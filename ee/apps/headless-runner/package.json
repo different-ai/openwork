@@ -21,7 +21,8 @@
     "worker:e2e": "pnpm --filter @openwork-ee/headless-protocol build && tsx scripts/owner-cells-e2e.ts",
     "worker:e2e:celld": "pnpm --filter @openwork-ee/headless-protocol build && tsx scripts/owner-cells-e2e.ts --celld",
     "test:conversation": "tsx --test scripts/conversation.test.ts",
-    "test:transfer": "tsx --test scripts/transfer.test.ts"
+    "test:transfer": "tsx --test scripts/transfer.test.ts",
+    "test:self-resume": "tsx --test scripts/self-resume.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.0.12",

@@ -49,19 +49,39 @@ function parseCell(name: string): Cell | null {
 }
 
 const json = (body: unknown, status: number) => Response.json(body, { status })
+/** Where a cell keeps its own name: an alarm has no request to read it from. */
+const CELL_NAME_KEY = "cell"
+/**
+ * How far ahead a cell's alarm is set while it has turns running or waiting to resume: after a crash, the node that
+ * takes the cell over wakes it within this, recovery marks its turns interrupted, and the alarm resumes them.
+ */
+const RESUME_ALARM_MS = 30_000
+
+type Runtime = Awaited<ReturnType<typeof createRuntime>>
 
 export class HeadlessCell {
-  private readonly ready: ReturnType<typeof createRuntime>
+  private readonly ready: Promise<Runtime>
+  /** This cell's name, once a request addressed it by name (and it was stored for alarms). */
+  private name: string | null = null
 
   constructor(private readonly ctx: DurableObjectState, private readonly env: CellEnv) {
     const store = new Store(durableObjectSql(ctx.storage))
     this.ready = ctx.blockConcurrencyWhile(() => createRuntime(configFor(env), store))
   }
 
+  /** The cell's name if it is this cell's: the same check a request gets, for one that names the cell. */
+  private isOwnName(name: string) {
+    return parseCell(name) !== null && this.ctx.id.equals(this.env.HEADLESS_CELL.idFromName(name))
+  }
+
   async fetch(request: Request) {
     const name = request.headers.get(CELL_HEADER) ?? ""
     const cell = parseCell(name)
-    if (!cell || !this.ctx.id.equals(this.env.HEADLESS_CELL.idFromName(name))) return json({ error: "invalid_cell" }, 400)
+    if (!cell || !this.isOwnName(name)) return json({ error: "invalid_cell" }, 400)
+    if (this.name !== name) {
+      await this.ctx.storage.put(CELL_NAME_KEY, name)
+      this.name = name
+    }
     const url = new URL(request.url)
     const sessionId = SESSION_PATH.exec(url.pathname)?.[1]
 
@@ -88,8 +108,35 @@ export class HeadlessCell {
       // The caller may stop listening after admission; keep the turn running on either host.
       this.ctx.waitUntil(runtime.runner.idle())
     }
+    // A turn admitted or resumed, or turns found interrupted when this cell woke up: keep an alarm set for them.
+    await this.armResume(runtime, false)
     // Deleting a chat removes only its rows; the owner's other chats and memory stay.
     return response
+  }
+
+  /**
+   * Resumes this cell's interrupted turns that have a resume grant, with no request: after a crash or a deploy the
+   * alarm wakes the cell (startup recovery marks its turns interrupted), and this resumes them and keeps them running.
+   */
+  async alarm() {
+    const name = await this.ctx.storage.get(CELL_NAME_KEY)
+    // A cell only arms alarms after a request named it; anything else is not this cell's to act on.
+    if (typeof name !== "string" || !this.isOwnName(name)) return
+    this.name = name
+    const runtime = await this.ready
+    if (!runtime.selfResume) return
+    await runtime.selfResume.sweep()
+    this.ctx.waitUntil(runtime.runner.idle())
+    await this.armResume(runtime, true)
+  }
+
+  /** Sets the alarm while any turn is queued, running or waiting to resume; `replace` even if one is set. */
+  private async armResume(runtime: Runtime, replace: boolean) {
+    const due = runtime.selfResume?.nextSweepAt()
+    if (due === null || due === undefined) return
+    const at = Math.max(due, Date.now() + RESUME_ALARM_MS)
+    const current = replace ? null : await this.ctx.storage.getAlarm()
+    if (current === null || current > at) await this.ctx.storage.setAlarm(at)
   }
 }
 

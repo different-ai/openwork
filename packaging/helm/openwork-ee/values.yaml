@@ -58,6 +58,7 @@ config:
     teamPageTabs: ""               # default off · Each team's page, and Everyone's, gets a Browser tab for the pages agents and the built-in browser can open, and a Models tab with the AI providers the team can use, its spend limits and its default model.
     inviteLinkVerifiesEmail: ""    # default off · Creating an account from an invitation link, emailed or shared by an admin, counts as verifying that email, so the invited person joins without entering an emailed code.
     remoteSessionSubagents: ""     # default off · A task the agent starts on the cloud or another computer shows in the chat like a sub-agent: whether it is working, needs an answer or finished, and its conversation, which people can open, follow up on and stop.
+    headlessDurableTurns: ""       # default off · Workbot, Slack and Automations answers keep going after a restart, deploy or server failure, without waiting for someone to reopen the chat.
   # END GENERATED features
   tenancy:
     mode: single_org

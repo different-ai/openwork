@@ -160,11 +160,23 @@ export function createDen(options: { apiUrl: string; publicUrl: string }) {
       if (status !== 200 || !parsed.success) throw new Error(`den_session_${status}`)
       return parsed.data
     },
-    async runToken(accessToken: string, input: { readOnly?: boolean } = {}): Promise<string> {
-      const { status, payload } = await authorized("POST", "/v1/workbot/run-token", accessToken, input)
-      const parsed = z.object({ token: z.string() }).safeParse(payload)
+    /**
+     * A token for one turn. With the turn's runner `sessionId` and `messageId`, Den also returns a resume grant where
+     * turns keep going on their own (`headlessDurableTurns`); older Dens ignore both and never return one.
+     */
+    async runToken(
+      accessToken: string,
+      input: { readOnly?: boolean; sessionId?: string; messageId?: string } = {},
+    ): Promise<{ token: string; resumeGrant?: string }> {
+      const body = {
+        ...(input.readOnly !== undefined ? { readOnly: input.readOnly } : {}),
+        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+        ...(input.messageId ? { messageId: input.messageId } : {}),
+      }
+      const { status, payload } = await authorized("POST", "/v1/workbot/run-token", accessToken, body)
+      const parsed = z.object({ token: z.string(), resumeGrant: z.string().optional() }).safeParse(payload)
       if (status !== 200 || !parsed.success) throw new Error(`den_run_token_${status}`)
-      return parsed.data.token
+      return parsed.data.resumeGrant ? { token: parsed.data.token, resumeGrant: parsed.data.resumeGrant } : { token: parsed.data.token }
     },
     /** The Gmail, Slack and Microsoft 365 connections the person's admins set up, and whether each is ready for them. */
     async connections(accessToken: string) {

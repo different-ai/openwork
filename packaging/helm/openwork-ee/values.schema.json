@@ -338,6 +338,16 @@
               ],
               "description": "Desktop: tasks on other computers as sub-agents: A task the agent starts on the cloud or another computer shows in the chat like a sub-agent: whether it is working, needs an answer or finished, and its conversation, which people can open, follow up on and stop. Renders DEN_FEATURE_REMOTE_SESSION_SUBAGENTS."
             },
+            "headlessDurableTurns": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: tasks keep going on their own: Workbot, Slack and Automations answers keep going after a restart, deploy or server failure, without waiting for someone to reopen the chat. Renders DEN_FEATURE_HEADLESS_DURABLE_TURNS."
+            },
             "gatewayDashboard": {
               "enum": [
                 "",

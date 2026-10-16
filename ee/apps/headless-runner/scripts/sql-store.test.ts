@@ -101,6 +101,7 @@ test("the original schema migrates without losing sessions or scratch files", ()
   const store = new Store(db)
   try {
     store.migrate() // Schema initialization is safe to repeat.
+    assert.ok(store.columns("turns").has("resume_grant"), "old cells gain the resume grant column in place")
     assert.equal(store.getSession("hs_legacy")?.title, "Existing chat")
     assert.equal(store.getSession("hs_legacy")?.owner, null)
     assert.equal(store.getSession("hs_legacy")?.files, false)

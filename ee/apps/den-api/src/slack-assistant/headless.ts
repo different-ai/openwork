@@ -35,14 +35,15 @@ export function slackHeadlessDeps(base: HeadlessDeps | null = defaultHeadlessRun
     ...base,
     // Loaded lazily: the minter pulls in the auth and database modules.
     mintToken: async (input) => {
-      const minted = await (await import("../mcp/headless-run-token-mint.js")).mintHeadlessRunMcpToken(input)
+      // A resume grant (feature `headlessDurableTurns`) passes through unchanged with the token.
+      const minted = await (await import("../headless-runner/resume-grants.js")).mintHeadlessTurnCredentials(input)
       try {
         const { recordSlackRunToken } = await import("./desktop-handoff.js")
         await recordSlackRunToken({ tokenId: minted.tokenId, expiresAt: minted.expiresAt, userId: input.userId, messageId: input.messageId })
       } catch {
         // The run still works; only a desktop handoff's thread report is lost.
       }
-      return minted
+      return minted.resumeGrant ? { token: minted.token, resumeGrant: minted.resumeGrant } : { token: minted.token }
     },
   }
 }

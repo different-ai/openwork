@@ -78,6 +78,8 @@ const EnvSchema = z.object({
   DEN_DIAGNOSTICS_ORIGIN: z.string().optional(),
   DEN_DIAGNOSTICS_BEARER_TOKEN: z.string().optional(),
   DEN_MAINTENANCE_TOKEN: z.string().optional(),
+  DEN_HEADLESS_RUNNER_TOKEN: z.string().optional(),
+  DEN_HEADLESS_RUNNER_CALLBACK_TOKEN: z.string().optional(),
   DEN_GATEWAY_KEY: z.string().optional(),
   DEN_GATEWAY_ORIGIN: z.string().optional(),
   DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
@@ -568,6 +570,15 @@ const maintenanceToken = optionalString(parsed.DEN_MAINTENANCE_TOKEN)
 if (maintenanceToken && maintenanceToken.length < 24) {
   throw new Error("DEN_MAINTENANCE_TOKEN must contain at least 24 characters.")
 }
+// Bearer token the headless runner presents to exchange a resume grant (POST /v1/headless/resume-token). Unset hides
+// that route (404). Must differ from DEN_HEADLESS_RUNNER_TOKEN, which Den presents to the runner.
+const headlessRunnerCallbackToken = optionalString(parsed.DEN_HEADLESS_RUNNER_CALLBACK_TOKEN)
+if (headlessRunnerCallbackToken && headlessRunnerCallbackToken.length < 32) {
+  throw new Error("DEN_HEADLESS_RUNNER_CALLBACK_TOKEN must contain at least 32 characters.")
+}
+if (headlessRunnerCallbackToken && headlessRunnerCallbackToken === optionalString(parsed.DEN_HEADLESS_RUNNER_TOKEN)) {
+  throw new Error("DEN_HEADLESS_RUNNER_CALLBACK_TOKEN must differ from DEN_HEADLESS_RUNNER_TOKEN.")
+}
 const derivedDenApiPublicUrl = configuredDenUrls && devMode && denBaseUrlIsLoopback(configuredDenUrls.web)
   ? `http://127.0.0.1:${port}`
   : configuredDenUrls?.api ?? deriveApiPublicUrlFromWebOrigin({ devMode, port, webOrigin: betterAuthPublicWebOrigin })
@@ -695,6 +706,7 @@ export const env = {
     bearerToken: diagnosticsBearerToken,
   },
   maintenanceToken,
+  headlessRunnerCallbackToken,
   gatewayKey: optionalString(parsed.DEN_GATEWAY_KEY),
   gatewayOrigin: normalizeOptionalHttpsOrigin("DEN_GATEWAY_ORIGIN", parsed.DEN_GATEWAY_ORIGIN),
   planGatingEnabled,

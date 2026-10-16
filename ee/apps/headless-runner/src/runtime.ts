@@ -1,6 +1,7 @@
 import { createApp } from "./app.js"
 import { SessionEvents } from "./events.js"
 import { diskBlobStore, s3BlobStore } from "./blobs.js"
+import { denResumeClient } from "./den-resume.js"
 import { createErrorReporter } from "./error-reporting.js"
 import { REACTION_TOOL_NAMES } from "./reactions.js"
 import { TASK_TOOL_NAMES } from "./tasks.js"
@@ -11,6 +12,8 @@ import { remoteMcpConnector } from "./mcp.js"
 import { anthropicModel, fetchGatewayModels, openAIModel, type ModelOption } from "./model.js"
 import { Runner } from "./runner.js"
 import type { Store } from "./store.js"
+import { grantVault } from "./resume-grants.js"
+import { SelfResume } from "./self-resume.js"
 import { readToolFile } from "./tool-files.js"
 import type { SessionComputer } from "./types.js"
 
@@ -40,6 +43,14 @@ export async function createRuntime(config: Config, store: Store) {
   store.onChange = (sessionId, messageId, status) => events.emit(sessionId, { type: "changed", messageId, ...(status ? { status } : {}) })
   // A native Workers fetch needs its global receiver; model adapters invoke their injected fetch as a method.
   const modelFetch: typeof fetch = (input, init) => fetch(input, init)
+  const resume = config.selfResume
+    ? new SelfResume({
+        store,
+        vault: grantVault(config.selfResume.grantKey),
+        exchange: denResumeClient({ url: config.selfResume.denApiUrl, token: config.selfResume.callbackToken }),
+        errors,
+      })
+    : undefined
   const runner = new Runner({
     store,
     model:
@@ -61,9 +72,32 @@ export async function createRuntime(config: Config, store: Store) {
     files,
     computer,
     errors,
+    resume,
   })
   const app = createApp({ store, runner, apiToken: config.apiToken, models: gatewayModelCatalog(config), events, files, computer, errors })
-  return { app, runner, recovered, blobKind: blobs?.kind ?? "off", computer }
+  return {
+    app,
+    runner,
+    recovered,
+    blobKind: blobs?.kind ?? "off",
+    computer,
+    /** Self-resume, for the host to run on its own schedule (a timer on Node, a durable alarm in a cell). */
+    selfResume: resume
+      ? {
+          /** Resumes what it can now; never throws (a failure is reported by code). */
+          sweep: () =>
+            runner.selfResume().then(
+              () => undefined,
+              (error: unknown) => {
+                console.error("[headless-runner] self-resume sweep failed", { error: error instanceof Error ? error.message : "unknown" })
+                return errors.report({ code: "resume_sweep_failed", error })
+              },
+            ),
+          /** When the next sweep is due, or null when nothing could need one. */
+          nextSweepAt: () => resume.nextSweepAt(),
+        }
+      : undefined,
+  }
 }
 
 /** The Gateway's model list, cached for five minutes; on failure only the default model is offered. */

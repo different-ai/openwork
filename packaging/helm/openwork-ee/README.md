@@ -394,6 +394,7 @@ OpenWork Cloud. Don't change it on a customer install.
 | `teamPageTabs` | `DEN_FEATURE_TEAM_PAGE_TABS` | default off | Each team's page, and Everyone's, gets a Browser tab for the pages agents and the built-in browser can open, and a Models tab with the AI providers the team can use, its spend limits and its default model. |
 | `inviteLinkVerifiesEmail` | `DEN_FEATURE_INVITE_LINK_VERIFIES_EMAIL` | default off | Creating an account from an invitation link, emailed or shared by an admin, counts as verifying that email, so the invited person joins without entering an emailed code. |
 | `remoteSessionSubagents` | `DEN_FEATURE_REMOTE_SESSION_SUBAGENTS` | default off | A task the agent starts on the cloud or another computer shows in the chat like a sub-agent: whether it is working, needs an answer or finished, and its conversation, which people can open, follow up on and stop. |
+| `headlessDurableTurns` | `DEN_FEATURE_HEADLESS_DURABLE_TURNS` | default off | Workbot, Slack and Automations answers keep going after a restart, deploy or server failure, without waiting for someone to reopen the chat. |
 <!-- END GENERATED features -->
 
 The table and the `config.features` block are generated: run `pnpm features:sync`
