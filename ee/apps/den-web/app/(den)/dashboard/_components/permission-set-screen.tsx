@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
-import { ChevronRight, History, LockKeyhole, ShieldCheck, Users } from "lucide-react";
+import { ChevronRight, History, ListChecks, LockKeyhole, ShieldCheck, Users } from "lucide-react";
 import { PERMISSION_KEYS, getPermissionDefinition, isPermissionKey, type PermissionKey } from "@openwork/types/den/permissions";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
@@ -25,6 +25,7 @@ import {
   type PermissionSetDetail,
   type PermissionStatus,
 } from "./permissions-data";
+import { PermissionSetRules } from "./permission-set-rules";
 import {
   PermissionEditor,
   PermissionRowsSkeleton,
@@ -39,7 +40,7 @@ import { TEAM_ROLE_LABELS, roleKindLabel, roleName } from "./team-roles";
 import { RoleNameField, SharedRoleTeams } from "./shared-role-teams";
 
 type ReadyAccess = Extract<PermissionsAccess, { state: "ready" }>;
-type SetTab = "teams" | "permissions" | "history";
+type SetTab = "teams" | "permissions" | "rules" | "history";
 
 function plural(count: number, one: string, many = `${one}s`) {
   return `${count} ${count === 1 ? one : many}`;
@@ -70,6 +71,8 @@ function PermissionSetContent({ ready, permissionSetId, teamRoles }: { ready: Re
   const rolesBack = { href: `${getMembersRoute(ready.orgSlug)}?tab=roles`, label: "Roles" };
   const listBack = teamRoles ? rolesBack : { href: getPermissionsRoute(ready.orgSlug), label: "Permissions" };
   const loadingTitle = teamRoles ? "Role" : "Permissions";
+  const { orgContext } = useOrgDashboard();
+  const rulesEnabled = orgFeatureEnabled(orgContext, "permissionRules");
 
   if (query.isError) {
     const notFound = query.error instanceof PermissionsRequestError && query.error.status === 404;
@@ -97,6 +100,7 @@ function PermissionSetContent({ ready, permissionSetId, teamRoles }: { ready: Re
   const tabs: readonly TabItem<SetTab>[] = [
     ...(sharedCustom && set.archivedAt === null ? [{ value: "teams" as const, label: "Teams", icon: Users }] : []),
     { value: "permissions", label: "Permissions", icon: ShieldCheck },
+    ...(rulesEnabled ? [{ value: "rules", label: "Rules", icon: ListChecks } satisfies TabItem<SetTab>] : []),
     { value: "history", label: "History", icon: History },
   ];
   const tab: SetTab = chosenTab && tabs.some((entry) => entry.value === chosenTab) ? chosenTab : tabs[0].value;
@@ -125,6 +129,10 @@ function PermissionSetContent({ ready, permissionSetId, teamRoles }: { ready: Re
           {sharedCustom && set.archivedAt === null ? <RoleNameField ready={ready} set={set} /> : null}
           {/* Remount when the saved state changes so the draft starts from it. */}
           <PermissionSetEditor key={set.permissions.map((state) => state.status).join("")} ready={ready} set={set} update={update} impact={impact} />
+        </div>
+      ) : tab === "rules" && rulesEnabled ? (
+        <div role="tabpanel" aria-label="Rules">
+          <PermissionSetRules orgId={ready.orgId} set={set} readOnlyReason={setReadOnlyReason(ready, set)} />
         </div>
       ) : (
         <div role="tabpanel" aria-label="History">
