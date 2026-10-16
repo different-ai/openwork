@@ -1,5 +1,6 @@
 import { peopleMemberCondition } from "./setup-agent-members.js"
 import { recordFreeAutoPurchase } from "./free-auto-purchases.js"
+import { FREE_AUTO_CONVERSION_WINDOW_DAYS } from "@openwork-ee/den-db"
 import Stripe from "stripe"
 import { and, eq, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
@@ -1434,6 +1435,8 @@ async function expireNonWebSubscriptionAfterPaymentFailure(
 
 /** Analytics failures never fail invoice settlement or cause another billing mutation. */
 async function recordPaidInvoiceConversion(subscription: Stripe.Subscription, row: typeof OrgSubscriptionTable.$inferSelect | null, invoiceId: string) {
+  // A subscription started before the attribution window can never convert; skip the extra Stripe read for renewals.
+  if (Date.now() - subscription.created * 1000 > FREE_AUTO_CONVERSION_WINDOW_DAYS * 86_400_000) return
   try {
     const invoice = await stripe().invoices.retrieve(invoiceId)
     if (invoice.status === "paid" && invoice.amount_paid > 0

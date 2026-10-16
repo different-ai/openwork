@@ -146,6 +146,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   // Global platform admin
   platform("GET", "/v1/admin/overview", "platform.overview.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/dashboard", "platform.dashboard.read", "platform.admin", "platform_report", null, ADMIN),
+  platform("GET", "/v1/admin/dashboard/active-users", "platform.active_users.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/metrics", "platform.metrics.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/free-auto/usage", "platform.free_auto_usage.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/free-auto/conversions", "platform.free_auto_conversions.read", "platform.admin", "platform_report", null, ADMIN),

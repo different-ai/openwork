@@ -32,13 +32,18 @@ export type AdminOrganizationUsageTotals = z.infer<typeof adminOrganizationUsage
 
 export const adminDashboardSchema = z.object({
   from: z.string(), to: z.string(), generatedAt: z.string().datetime(),
-  activeUsers: z.object({ today: count, days7: count, days30: count }),
   activeOrganizations: count,
   totals: adminOrganizationUsageTotalsSchema,
   daily: z.array(adminOrganizationUsageTotalsSchema.extend({ date: z.string() })).max(30),
   organizations: z.array(adminOrganizationUsageTotalsSchema.extend({ id: z.string(), name: z.string() })).max(8),
 }).meta({ ref: "AdminDashboard" })
 export type AdminDashboard = z.infer<typeof adminDashboardSchema>
+
+/** Read on request only: it scans 30 days of platform activity. */
+export const adminActiveUsersSchema = z.object({
+  today: count, days7: count, days30: count, generatedAt: z.string().datetime(),
+}).meta({ ref: "AdminActiveUsers" })
+export type AdminActiveUsers = z.infer<typeof adminActiveUsersSchema>
 
 const insightTotals = adminOrganizationUsageTotalsSchema.extend({
   activeMembers: count, successfulRequests: count, lastActiveDay: z.string().nullable(),

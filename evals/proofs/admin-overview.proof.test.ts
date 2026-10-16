@@ -405,6 +405,24 @@ test("an admin navigates organizations and member usage without loading every de
     await admin.screenshot();
   });
 
+  await step("after: platform active users are counted only when the admin asks", async () => {
+    await admin.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
+    await admin.see({ testId: "admin-dashboard-active-users" }, { text: /Count active users/ });
+    const before = await world.traffic("admin");
+    expect(before.dashboard).toBeGreaterThan(0);
+    expect(before.activeUsers).toBe(0);
+    await admin.click({ role: "button", label: "Count active users" });
+    const expected = await world.activeUsers();
+    await admin.see({ testId: "admin-dashboard-active-users" }, { text: new RegExp(`${expected.days7} in 7 days`) });
+    const after = await adminProbe.eventually(() => world.traffic("admin"), { within: 10_000, until: (value) => value.activeUsers === 1, label: "requested active-user count" });
+    const memberStatus = await world.activeUsersAccess();
+    const ok = before.activeUsers === 0 && after.activeUsers === 1 && expected.days30 > 0 && memberStatus === 403;
+    evidence.recordAssertionEvidence("Loading the overview no longer scans platform activity",
+      `overview loads=${before.dashboard}; active-user counts before asking=${before.activeUsers}, after=${after.activeUsers}; 30-day active users=${expected.days30}; member access=${memberStatus}`, ok);
+    expect(ok).toBe(true);
+    await admin.screenshot();
+  });
+
   await step("signed-out organization links show sign-in without fetching member or usage data", async () => {
     await anonymous.navigate(world.url(`${world.detailPath}/usage`));
     await anonymous.see({ role: "heading", label: "Sign in required" });
@@ -440,6 +458,7 @@ test("an admin navigates organizations and member usage without loading every de
     await anonymous.see({ role: "heading", label: "Sign in required" });
     const traffic = await world.traffic("anonymous");
     expect(traffic.dashboard).toBe(0);
+    expect(traffic.activeUsers).toBe(0);
     expect(traffic.metrics).toBe(0);
     await anonymous.screenshot();
   });

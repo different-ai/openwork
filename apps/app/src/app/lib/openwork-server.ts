@@ -24,6 +24,7 @@ import { desktopFreeAccessStatusSchema } from "./inference-access";
 
 const desktopFreePreferencesSchema = z.object({ enabled: z.boolean(), available: z.boolean(), canEnable: z.boolean(), refresh: z.enum(["reloaded", "deferred"]).optional() });
 export type DesktopFreePreferences = z.infer<typeof desktopFreePreferencesSchema>;
+const desktopFreeAnalyticsSchema = z.object({ enabled: z.boolean() });
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -1659,6 +1660,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     baseUrl,
     desktopFreePreferences: async () => desktopFreePreferencesSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preferences", { hostToken, timeoutMs: timeouts.config })),
     setDesktopFreeEnabled: async (enabled: boolean) => desktopFreePreferencesSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preferences", { hostToken, method: "PUT", body: { enabled }, timeoutMs: timeouts.cloudMcpReconcile })),
+    setDesktopFreeAnalytics: async (enabled: boolean) => desktopFreeAnalyticsSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/analytics", { hostToken, method: "PUT", body: { enabled }, timeoutMs: timeouts.config })),
     desktopFreeStatus: async () => desktopFreeAccessStatusSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/status", { token, timeoutMs: 15_000 })),
     desktopFreePreflight: async () => desktopFreeAccessStatusSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preflight", { token, method: "POST", timeoutMs: 15_000 })),
     token,

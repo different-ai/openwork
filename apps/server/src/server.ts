@@ -2725,6 +2725,15 @@ function createRoutes(
     const refresh = await applyManagedProviderReload(resolveEngineRuntimeWorkspace(config));
     return jsonResponse({ ...preferences, refresh });
   });
+  // The app's analytics setting. Free Auto sends its analytics journey only after the app reports it is on.
+  // Not gated on writability: turning analytics off must always take effect.
+  addRoute(routes, "PUT", "/anonymous-inference/analytics", "host-token", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.enabled !== "boolean" || Object.keys(body).some((key) => key !== "enabled")) {
+      throw new ApiError(400, "invalid_payload", "Only enabled is accepted.");
+    }
+    return privateProviderResponse(await anonymousInference.setAnalyticsEnabled(body.enabled));
+  });
   const nativeEngineForWorkspace = createNativeCloudMcpResolver(engineV2Preview);
   registerCoreRoutes({
     nativeEngineForWorkspace,

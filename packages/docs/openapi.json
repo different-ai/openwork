@@ -2205,31 +2205,6 @@
             "format": "date-time",
             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
           },
-          "activeUsers": {
-            "type": "object",
-            "properties": {
-              "today": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              },
-              "days7": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              },
-              "days30": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              }
-            },
-            "required": [
-              "today",
-              "days7",
-              "days30"
-            ]
-          },
           "activeOrganizations": {
             "type": "integer",
             "minimum": 0,
@@ -2413,11 +2388,41 @@
           "from",
           "to",
           "generatedAt",
-          "activeUsers",
           "activeOrganizations",
           "totals",
           "daily",
           "organizations"
+        ]
+      },
+      "AdminActiveUsers": {
+        "type": "object",
+        "properties": {
+          "today": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "days7": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "days30": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+          }
+        },
+        "required": [
+          "today",
+          "days7",
+          "days30",
+          "generatedAt"
         ]
       },
       "AdminFeature": {
@@ -29345,8 +29350,8 @@
         "tags": [
           "Admin"
         ],
-        "summary": "Get bounded platform activity and AI usage",
-        "description": "Returns 30 UTC calendar days of completed gateway usage across organizations, using the same raw and retained accounting as organization reports. Includes accounting coverage, 30 daily totals, at most eight organizations ranked by requests, and distinct users with sign-in or telemetry activity. Does not hydrate features, billing or members.",
+        "summary": "Get bounded platform AI usage",
+        "description": "Returns 30 UTC calendar days of completed gateway usage across organizations, using the same raw and retained accounting as organization reports. Includes accounting coverage, 30 daily totals and at most eight organizations ranked by requests. Platform active users are a separate on-demand read (GET /v1/admin/dashboard/active-users). Does not hydrate features, billing or members.",
         "responses": {
           "200": {
             "description": "Platform dashboard returned.",
@@ -29354,6 +29359,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AdminDashboard"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Platform admin access required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/dashboard/active-users": {
+      "get": {
+        "operationId": "getV1AdminDashboardActiveUsers",
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Count platform active users",
+        "description": "Counts distinct users with a sign-in or telemetry event today, in the last 7 and in the last 30 UTC calendar days, across every organization. This scans 30 days of platform activity, so clients request it explicitly rather than on every dashboard load.",
+        "responses": {
+          "200": {
+            "description": "Platform active users returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminActiveUsers"
                 }
               }
             }

@@ -187,6 +187,8 @@ import type {
   GetMcpWellKnownOauthProtectedResourceResponses,
   GetReadyErrors,
   GetReadyResponses,
+  GetV1AdminDashboardActiveUsersErrors,
+  GetV1AdminDashboardActiveUsersResponses,
   GetV1AdminDashboardErrors,
   GetV1AdminDashboardResponses,
   GetV1AdminFeaturesErrors,
@@ -1278,15 +1280,28 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Get bounded platform activity and AI usage
+   * Get bounded platform AI usage
    *
-   * Returns 30 UTC calendar days of completed gateway usage across organizations, using the same raw and retained accounting as organization reports. Includes accounting coverage, 30 daily totals, at most eight organizations ranked by requests, and distinct users with sign-in or telemetry activity. Does not hydrate features, billing or members.
+   * Returns 30 UTC calendar days of completed gateway usage across organizations, using the same raw and retained accounting as organization reports. Includes accounting coverage, 30 daily totals and at most eight organizations ranked by requests. Platform active users are a separate on-demand read (GET /v1/admin/dashboard/active-users). Does not hydrate features, billing or members.
    */
   public getV1AdminDashboard<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1AdminDashboardResponses, GetV1AdminDashboardErrors, ThrowOnError>({
       url: "/v1/admin/dashboard",
       ...options,
     });
+  }
+
+  /**
+   * Count platform active users
+   *
+   * Counts distinct users with a sign-in or telemetry event today, in the last 7 and in the last 30 UTC calendar days, across every organization. This scans 30 days of platform activity, so clients request it explicitly rather than on every dashboard load.
+   */
+  public getV1AdminDashboardActiveUsers<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1AdminDashboardActiveUsersResponses,
+      GetV1AdminDashboardActiveUsersErrors,
+      ThrowOnError
+    >({ url: "/v1/admin/dashboard/active-users", ...options });
   }
 
   /**

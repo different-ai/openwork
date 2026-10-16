@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { lazy, Suspense, useEffect, useState } from "react";
-import { adminDashboardSchema, type AdminDashboard as Dashboard, type AdminOrganizationUsageTotals } from "@openwork/types/den/admin-organization";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { adminActiveUsersSchema, adminDashboardSchema, type AdminActiveUsers, type AdminDashboard as Dashboard, type AdminOrganizationUsageTotals } from "@openwork/types/den/admin-organization";
 import { DenButton, buttonVariants } from "../../app/(den)/_components/ui/button";
 import { DenTable, type DenTableColumn } from "../../app/(den)/_components/ui/table";
 import { requestAdmin } from "./admin-request";
@@ -23,7 +23,7 @@ function Coverage({ totals }: { totals: AdminOrganizationUsageTotals }) {
   </p>;
 }
 
-function Metric({ label, value, detail, href, testId }: { label: string; value: string; detail: string; href?: string; testId: string }) {
+function Metric({ label, value, detail, href, testId }: { label: string; value: string; detail: ReactNode; href?: string; testId: string }) {
   return <div data-testid={testId} className="min-w-0 px-5 py-5 first:pl-0 sm:odd:pl-0 xl:odd:pl-5 xl:first:pl-0">
     <dt className="text-[13px] font-medium text-slate-600">{href ? <Link href={href} prefetch={false} className="hover:text-slate-950 hover:underline">{label}</Link> : label}</dt>
     <dd className="mt-2 text-3xl font-semibold tracking-tight tabular-nums text-slate-950">{value}</dd>
@@ -75,6 +75,33 @@ export function AdminDashboard({ totalOrganizations, totalUsers, refreshKey, onA
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [attempt, onAccessDenied, refreshKey]);
+  // Counting active users scans 30 days of platform activity, so it runs only when an admin asks for it.
+  const [activeUsers, setActiveUsers] = useState<AdminActiveUsers | null>(null);
+  const [activeUsersLoading, setActiveUsersLoading] = useState(false);
+  const [activeUsersError, setActiveUsersError] = useState<string | null>(null);
+  const activeUsersController = useRef<AbortController | null>(null);
+  useEffect(() => () => activeUsersController.current?.abort(), []);
+  const loadActiveUsers = useCallback(() => {
+    activeUsersController.current?.abort();
+    const controller = new AbortController();
+    activeUsersController.current = controller;
+    setActiveUsersLoading(true);
+    setActiveUsersError(null);
+    void requestAdmin("/v1/admin/dashboard/active-users", (payload) => {
+      const parsed = adminActiveUsersSchema.safeParse(payload);
+      return parsed.success ? parsed.data : null;
+    }, controller.signal).then((result) => {
+      if (controller.signal.aborted) return;
+      if (result.access === "ready") setActiveUsers(result.data);
+      else if (result.access === "forbidden" || result.access === "signed-out") onAccessDenied(result.access);
+      else setActiveUsersError(result.message);
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setActiveUsersError(error instanceof Error ? error.message : "Could not count active users.");
+    }).finally(() => { if (!controller.signal.aborted) setActiveUsersLoading(false); });
+  }, [onAccessDenied]);
+  const activeUsersDetail = activeUsers
+    ? <span>{count(activeUsers.days7)} in 7 days · {count(activeUsers.today)} today · <button type="button" onClick={loadActiveUsers} disabled={activeUsersLoading} className="font-medium underline-offset-2 hover:underline disabled:opacity-60">Recount</button></span>
+    : <span>{activeUsersError ? `${activeUsersError} ` : null}<button type="button" data-testid="admin-dashboard-active-users-load" onClick={loadActiveUsers} disabled={activeUsersLoading} className="font-medium text-slate-700 underline-offset-2 hover:underline disabled:opacity-60">{activeUsersLoading ? "Counting 30-day activity…" : activeUsersError ? "Retry" : "Count active users"}</button></span>;
   const organizations: DenTableColumn<Dashboard["organizations"][number]>[] = [
     { key: "organization", header: "Organization", render: (org) => <Link href={`/admin/organizations/${encodeURIComponent(org.id)}/insights`} prefetch={false} className="font-medium text-slate-950 hover:underline">{org.name}</Link> },
     { key: "requests", header: "Requests", align: "right", render: (org) => count(org.requests) },
@@ -88,7 +115,7 @@ export function AdminDashboard({ totalOrganizations, totalUsers, refreshKey, onA
     </div>
     <dl className="grid grid-cols-2 divide-y divide-slate-200 border-b border-slate-200 sm:divide-y-0 xl:grid-cols-4" aria-label="Platform metrics" aria-busy={loading}>
       <Metric label="Organizations" value={count(totalOrganizations)} detail={data ? `${count(data.activeOrganizations)} with AI usage in 30 days` : "All organizations"} href="/admin/organizations" testId="admin-dashboard-organizations" />
-      <Metric label="Active users" value={data ? count(data.activeUsers.days30) : "—"} detail={data ? `${count(data.activeUsers.days7)} in 7 days · ${count(data.activeUsers.today)} today` : loading ? "Loading 30-day activity…" : "Activity unavailable"} href="/admin/users" testId="admin-dashboard-active-users" />
+      <Metric label="Active users" value={activeUsers ? count(activeUsers.days30) : "—"} detail={activeUsersDetail} href="/admin/users" testId="admin-dashboard-active-users" />
       <Metric label="AI requests" value={data ? count(data.totals.requests) : "—"} detail={data ? `${count(data.totals.tokens)} reported tokens` : loading ? "Loading 30-day usage…" : "Usage unavailable"} testId="admin-dashboard-requests" />
       <Metric label="Recorded cost" value={data ? recordedCost(data.totals) : "—"} detail={data && data.totals.unpricedRequests !== 0 ? "Partial cost · USD · 30 days" : "USD · 30 days"} testId="admin-dashboard-cost" />
     </dl>
