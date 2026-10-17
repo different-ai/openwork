@@ -14,6 +14,7 @@ import { gatewayCredentialBody, promptFields, promptFieldsProblem } from "./cred
 import { Button, buttonVariants } from "@/components/ui/button"
 import { DenReauthNotice } from "@/react-app/domains/cloud/den-reauth-notice"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
+import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature"
 import { useOptionalMessageList } from "./message-list-provider"
 import { credentialPromptFromToolPart } from "./credential-prompt"
 
@@ -87,14 +88,7 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
   const signedIn = auth.isSignedIn && Boolean(token && organizationId)
   const key = prompt ? targetKey(prompt) : ""
   const local = useSyncExternalStore(subscribe, () => savedHere.has(key), () => false)
-  const enabled = useQuery({
-    queryKey: ["den", "org-features", organizationId],
-    queryFn: () => createDenClient({ baseUrl: settings.baseUrl, token }).getOrgFeatures(organizationId),
-    enabled: signedIn,
-    staleTime: 30_000,
-    retry: false,
-    select: (features: Record<string, boolean>) => features.secureSecretFields === true,
-  })
+  const enabled = useOrgFeatureState("secureSecretFields", { active: signedIn })
   // Den's own answer, so a reopened conversation shows what is true now.
   const stored = useQuery({
     queryKey: ["den", "credential-prompt", organizationId, key],

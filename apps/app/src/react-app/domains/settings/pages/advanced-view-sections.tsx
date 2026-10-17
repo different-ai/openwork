@@ -737,6 +737,7 @@ export function AdvancedWorkspaceRunModeSection() {
 
 export function AdvancedEngineV2PreviewSection(props: { client: OpenworkServerClient | null }) {
   const engine = useOpencodeEngineControls(props.client);
+  if (!isDesktopRuntime()) return null;
   const runtimeError = engine.status?.enabled ? engine.status.lastError : undefined;
   const engineNote = engine.blockedReason ?? (engine.migrating ? "Wait for chat migration to finish." : undefined);
   return (

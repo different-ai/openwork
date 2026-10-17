@@ -112,12 +112,11 @@ import { encodeConnectSkillToken } from "@/react-app/domains/session/surface/com
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
 import { CalendarPage } from "@/react-app/domains/calendar/calendar-page";
-import { useCalendarFeature } from "@/react-app/domains/calendar/use-calendar-data";
+import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature";
 import { useBackgroundShellTasksFeature } from "@/react-app/domains/session/status/use-background-shell-tasks-feature";
 import { useAppBuildProgressFeature } from "@/react-app/domains/apps/use-app-build-progress-feature";
 import { useRemoteSessionSubagentsFeature } from "@/react-app/domains/session/remote-threads/use-remote-session-subagents-feature";
 import { remoteThreadAttentionBySession, useRemoteThreadAttentionKey } from "@/react-app/domains/session/remote-threads/remote-thread-store";
-import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations";
 import { AppsPage } from "@/react-app/domains/apps/apps-page";
 import { DashboardPage } from "@/react-app/domains/dashboard/dashboard-page";
 import { useDashboardDeploymentAvailability } from "@/react-app/domains/dashboard/dashboard-availability";
@@ -435,7 +434,7 @@ export function SessionRoute() {
   const automationsSurfaceAvailable = automationsEnabled || signedOutDesktopSurfaces;
   const automationsRouteActive = automationsSurfaceAvailable && automationsRouteRequested;
   // The Calendar is an Automations view behind the automationCalendar feature.
-  const calendarFeature = useCalendarFeature(useAutomationsDenContext());
+  const calendarFeature = useOrgFeatureState("automationCalendar");
   useBackgroundShellTasksFeature();
   useAppBuildProgressFeature();
   useRemoteSessionSubagentsFeature();

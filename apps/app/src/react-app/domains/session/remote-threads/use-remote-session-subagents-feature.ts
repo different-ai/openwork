@@ -1,11 +1,7 @@
 import { useEffect } from "react"
-import { useQuery } from "@tanstack/react-query"
-
-import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations"
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature"
 import { setComputerTasksFollowedInChat } from "../surface/composer/computer-mentions"
 import { useRemoteThreadStore } from "./remote-thread-store"
-
-const FEATURE_STALE_MS = 5 * 60_000
 
 /**
  * Reads `remoteSessionSubagents` for the active organization. Tasks on other
@@ -14,19 +10,8 @@ const FEATURE_STALE_MS = 5 * 60_000
  * is followed.
  */
 export function useRemoteSessionSubagentsFeature(): void {
-  const context = useAutomationsDenContext()
   const followedInChat = useRemoteThreadStore((state) => state.enabled)
-  const organization = useQuery({
-    // Shares the cache with the other organization feature reads.
-    queryKey: ["den", "org-features", context.organizationId],
-    queryFn: (): Promise<Record<string, boolean>> => context.client && context.organizationId
-      ? context.client.getOrgFeatures(context.organizationId)
-      : Promise.resolve({}),
-    enabled: context.ready,
-    staleTime: FEATURE_STALE_MS,
-    select: (features) => features.remoteSessionSubagents === true,
-  })
-  const enabled = context.ready && organization.data === true
+  const enabled = useOrgFeature("remoteSessionSubagents")
   useEffect(() => {
     useRemoteThreadStore.getState().setEnabled(enabled)
   }, [enabled])

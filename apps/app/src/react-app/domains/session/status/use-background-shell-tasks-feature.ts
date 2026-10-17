@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query"
 import { createDenClient, readDenSettings } from "@/app/lib/den"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations"
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature"
 import { setBackgroundShellTasksEnabled } from "../sync/session-sync"
 
 const FEATURE_STALE_MS = 5 * 60_000
@@ -19,16 +20,7 @@ export function useBackgroundShellTasksFeature(): void {
   const context = useAutomationsDenContext()
   const baseUrl = readDenSettings().baseUrl
   const deploymentClient = useMemo(() => createDenClient({ baseUrl }), [baseUrl])
-  const organization = useQuery({
-    // Shares the cache with the other organization feature reads.
-    queryKey: ["den", "org-features", context.organizationId],
-    queryFn: (): Promise<Record<string, boolean>> => context.client && context.organizationId
-      ? context.client.getOrgFeatures(context.organizationId)
-      : Promise.resolve({}),
-    enabled: context.ready,
-    staleTime: FEATURE_STALE_MS,
-    select: (features) => features.backgroundShellTasks === true,
-  })
+  const organization = useOrgFeature("backgroundShellTasks")
   const deployment = useQuery({
     queryKey: ["den", "deployment-features", baseUrl],
     queryFn: () => deploymentClient.getDeploymentFeatures(),
@@ -37,7 +29,7 @@ export function useBackgroundShellTasksFeature(): void {
     retry: false,
     select: (features) => features.backgroundShellTasks === true,
   })
-  const enabled = context.ready ? organization.data === true : denAuth.status === "signed_out" && deployment.data === true
+  const enabled = context.ready ? organization : denAuth.status === "signed_out" && deployment.data === true
   useEffect(() => {
     setBackgroundShellTasksEnabled(enabled)
   }, [enabled])

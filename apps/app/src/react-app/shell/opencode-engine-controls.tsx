@@ -27,7 +27,8 @@ export function useOpencodeEngineControls(client: OpencodeEngineClient | null | 
   const switching = useEngineMigrationStore((state) => state.switching);
   const consentOpen = useEngineMigrationStore((state) => state.consent !== null);
   const trackedMigration = useEngineMigrationStore((state) => state.progress?.migration);
-  const available = isDesktopRuntime() && Boolean(client);
+  const desktop = isDesktopRuntime();
+  const available = desktop && Boolean(client);
   useEffect(() => {
     if (!client || !available || (!active && status?.migration?.state !== "running" && !(status?.enabled && !status.running))) return;
     let disposed = false;
@@ -50,7 +51,7 @@ export function useOpencodeEngineControls(client: OpencodeEngineClient | null | 
     : error ? "Reconnect to check the chat engine."
     : !status ? "Checking chat engine…" : undefined;
   // The overlay polls a migration it tracks faster than this surface does.
-  const migration = trackedMigration ?? status?.migration;
+  const migration = desktop ? trackedMigration ?? status?.migration : undefined;
   const migrating = migration?.state === "running";
   const busy = switching || consentOpen;
   const disabled = Boolean(blockedReason) || busy || migrating;
@@ -74,5 +75,5 @@ export function useOpencodeEngineControls(client: OpencodeEngineClient | null | 
     group: "actions", disabled: disabled || !status?.migration,
     detail: blockedReason ?? (!status?.migration ? "Update OpenWork to migrate chats." : undefined),
     action: openMigration });
-  return { status, selected, disabled, blockedReason, busy, migrating, error, select, items, message: engineMigrationMessage(migration), openMigration };
+  return { status, selected, disabled, blockedReason, busy, migrating, error, select, items: desktop ? items : [], message: engineMigrationMessage(migration), openMigration };
 }

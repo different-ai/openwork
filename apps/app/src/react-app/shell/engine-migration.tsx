@@ -1,6 +1,5 @@
 /** @jsxImportSource react */
 import { useEffect, useLayoutEffect, useRef, useState, type PropsWithChildren } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { create } from "zustand";
 import { ChevronRight, LoaderCircle, TriangleAlert } from "lucide-react";
 import {
@@ -29,7 +28,7 @@ import { toast } from "@/components/ui/sonner";
 import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
-import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations";
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
 import { resolveOpenworkConnection } from "./openwork-connection";
 
 /**
@@ -723,20 +722,6 @@ export function shouldOfferEngineUpgrade(
     && options.snoozedUntil <= options.now;
 }
 
-/** `engineV2Upgrade` for the active organization; signed out or unreachable means off. */
-function useEngineUpgradeFeature(): boolean {
-  const context = useAutomationsDenContext();
-  const query = useQuery({
-    // Shares the cache with other org-feature reads (e.g. the Calendar).
-    queryKey: ["den", "org-features", context.organizationId],
-    queryFn: () => context.client!.getOrgFeatures(context.organizationId!),
-    enabled: context.ready && isDesktopRuntime(),
-    staleTime: 5 * 60_000,
-    select: (features) => features.engineV2Upgrade === true,
-  });
-  return query.data === true;
-}
-
 type UpgradeCandidate = { client: EngineMigrationClient; status: EngineV2PreviewStatus };
 
 /** Reads engine status once the feature is on, and again whenever the engine changes. */
@@ -795,15 +780,18 @@ function EngineUpgradeNotice(props: { candidate: UpgradeCandidate; onLater: () =
 }
 
 export function EngineMigrationOverlay(props: { discoverRunningMigration?: boolean }) {
+  const desktop = isDesktopRuntime();
   const consent = useEngineMigrationStore((state) => state.consent);
   const progress = useEngineMigrationStore((state) => state.progress);
   const switchPrompt = useEngineMigrationStore((state) => state.switchPrompt);
-  useMigrationLifecycle(progress);
-  useRunningMigrationDiscovery(props.discoverRunningMigration !== false);
-  const upgradeFeature = useEngineUpgradeFeature();
+  useMigrationLifecycle(desktop ? progress : null);
+  useRunningMigrationDiscovery(desktop && props.discoverRunningMigration !== false);
+  const upgradeFeature = useOrgFeature("engineV2Upgrade", { desktopOnly: true });
   const candidate = useEngineUpgradeCandidate(upgradeFeature);
   const [snoozedUntil, setSnoozedUntil] = useState(readUpgradeSnooze);
-  const offerUpgrade = candidate !== null && !consent && !progress && !switchPrompt
+  // Local-engine consent and progress never apply to the web runtime, even if the store is populated.
+  if (!desktop) return null;
+  const offerUpgrade = upgradeFeature && candidate !== null && !consent && !progress && !switchPrompt
     && shouldOfferEngineUpgrade(candidate.status, { now: Date.now(), snoozedUntil });
   return (
     <>

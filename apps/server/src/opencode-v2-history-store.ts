@@ -13,9 +13,14 @@ export interface HistoryDatabase {
 }
 
 export async function openHistoryDatabase(path: string): Promise<HistoryDatabase> {
-  return typeof process.versions.bun === "string"
-    ? new (await import("bun:sqlite")).Database(path)
-    : new (await importNodeSqlite()).DatabaseSync(path);
+  if (typeof process.versions.bun === "string") {
+    const { Database, constants } = await import("bun:sqlite");
+    // Bun's Linux SQLite does not enable URI filenames by default (macOS does).
+    // Enable them explicitly so ATTACH honors mode=ro rather than treating the
+    // URI as a literal filename. The main database still receives a plain path.
+    return new Database(path, constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE | constants.SQLITE_OPEN_URI);
+  }
+  return new (await importNodeSqlite()).DatabaseSync(path);
 }
 
 export function stringField(row: unknown, key: string): string {

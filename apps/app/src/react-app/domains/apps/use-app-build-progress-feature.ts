@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query"
 import { createDenClient, readDenSettings } from "@/app/lib/den"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations"
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature"
 
 const FEATURE_STALE_MS = 5 * 60_000
 
@@ -33,16 +34,7 @@ export function useAppBuildProgressFeature(): void {
   const context = useAutomationsDenContext()
   const baseUrl = readDenSettings().baseUrl
   const deploymentClient = useMemo(() => createDenClient({ baseUrl }), [baseUrl])
-  const organization = useQuery({
-    // Shares the cache with the other organization feature reads.
-    queryKey: ["den", "org-features", context.organizationId],
-    queryFn: (): Promise<Record<string, boolean>> => context.client && context.organizationId
-      ? context.client.getOrgFeatures(context.organizationId)
-      : Promise.resolve({}),
-    enabled: context.ready,
-    staleTime: FEATURE_STALE_MS,
-    select: (features) => features.appBuildProgress === true,
-  })
+  const organization = useOrgFeature("appBuildProgress")
   const deployment = useQuery({
     queryKey: ["den", "deployment-features", baseUrl],
     queryFn: () => deploymentClient.getDeploymentFeatures(),
@@ -51,7 +43,7 @@ export function useAppBuildProgressFeature(): void {
     retry: false,
     select: (features) => features.appBuildProgress === true,
   })
-  const on = context.ready ? organization.data === true : denAuth.status === "signed_out" && deployment.data === true
+  const on = context.ready ? organization : denAuth.status === "signed_out" && deployment.data === true
   useEffect(() => {
     if (enabled === on) return
     enabled = on
