@@ -2445,7 +2445,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               cloudMcpHealth={cloudMcpHealth}
               refreshCloudMcpHealth={refreshCloudMcpHealth}
               organizationServer={denSession}
-              engineClient={openworkClient}
             />
             {platform.capabilities.localRuntimeControl ? (
               <RecoveryView
@@ -2590,7 +2589,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       )}
 
       <CommandPalette
-        engineClient={openworkClient}
         open={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
         developerMode={developerMode}

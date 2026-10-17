@@ -3427,12 +3427,14 @@ function createRoutes(
     if (body.chatRouting !== undefined && typeof body.chatRouting !== "boolean") {
       throw new ApiError(400, "invalid_payload", "chatRouting must be a boolean");
     }
+    if (body.enabled === false || body.chatRouting === false) {
+      throw new ApiError(409, "engine_v1_retired", "Switching back to OpenCode v1 is no longer supported.");
+    }
     // Check before starting the v2 process, so a refused switch changes nothing.
     if (body.chatRouting === true) await engineV2Preview.requireV1HistoryCopied();
     let status = engineV2Preview.status();
     const previouslyLiveProviderSync = status.liveProviderSync;
-    // Stop routing before stopping the v2 process; enable the process before routing to it.
-    if (body.chatRouting === false) status = await engineV2Preview.setChatRouting(false);
+    // Enable the process before routing to it. Only host-owned policy can revert.
     if (typeof body.enabled === "boolean") status = await engineV2Preview.setEnabled(body.enabled);
     if (body.chatRouting === true) status = await engineV2Preview.setChatRouting(true);
     if (shouldSyncLiveProviderOwnerTransition(previouslyLiveProviderSync, status.liveProviderSync, liveProviderSyncAvailable())) {

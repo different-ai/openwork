@@ -125,37 +125,6 @@ function parseEngineV2Migration(value: unknown): EngineV2MigrationStatus | undef
     error: "error" in value && typeof value.error === "string" ? value.error : undefined };
 }
 
-/** Work an engine switch or migration would interrupt, as counts only. */
-export interface EngineActivityCount {
-  verdict: "idle" | "busy" | "unknown";
-  busySessions: number;
-  waitingRequests: number;
-}
-
-export interface EngineActivity {
-  v1: EngineActivityCount;
-  /** Null while the v2 sidecar is not running. */
-  v2: EngineActivityCount | null;
-}
-
-function parseEngineActivityCount(value: unknown): EngineActivityCount | null {
-  if (!value || typeof value !== "object" || !("verdict" in value)) return null;
-  const verdict = value.verdict;
-  if (verdict !== "idle" && verdict !== "busy" && verdict !== "unknown") return null;
-  const count = (key: "busySessions" | "waitingRequests") => {
-    const raw: unknown = key in value ? Reflect.get(value, key) : 0;
-    return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : 0;
-  };
-  return { verdict, busySessions: count("busySessions"), waitingRequests: count("waitingRequests") };
-}
-
-function parseEngineActivity(value: unknown): EngineActivity {
-  const v1 = value && typeof value === "object" && "v1" in value ? parseEngineActivityCount(value.v1) : null;
-  if (!v1) throw new Error("Invalid engine activity response.");
-  const v2 = value && typeof value === "object" && "v2" in value ? parseEngineActivityCount(value.v2) : null;
-  return { v1, v2 };
-}
-
 export interface EngineV2PreviewStatus {
   enabled: boolean;
   running: boolean;
@@ -1742,35 +1711,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${encodeURIComponent(workspaceId)}/default-model`,
         { token, hostToken, method: "PUT", body: { model }, timeoutMs: timeouts.config },
       )),
-    switchOpencodeEngine: async (engine: "v1" | "v2"): Promise<EngineV2PreviewStatus> =>
-      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {
-        token, method: "PUT", body: { enabled: engine === "v2", chatRouting: engine === "v2" }, timeoutMs: timeouts.config,
-      })),
-    getEngineActivity: async (): Promise<EngineActivity> =>
-      parseEngineActivity(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/activity", {
-        token,
-        timeoutMs: timeouts.config,
-      })),
-    /** Rejects with `engine_migration_active_sessions` (409) while v1 tasks run, unless allowed. */
-    migrateOpencodeHistory: async (options: { allowActiveSessions?: boolean } = {}): Promise<EngineV2PreviewStatus> =>
-      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/migrate", {
-        token, hostToken, method: "POST", timeoutMs: timeouts.config,
-        body: { confirm: true, ...(options.allowActiveSessions ? { allowActiveSessions: true } : {}) },
-      })),
-    setEngineV2PreviewEnabled: async (enabled: boolean): Promise<EngineV2PreviewStatus> =>
-      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {
-        token,
-        method: "PUT",
-        body: { enabled },
-        timeoutMs: timeouts.config,
-      })),
-    setEngineV2PreviewChatRouting: async (chatRouting: boolean): Promise<EngineV2PreviewStatus> =>
-      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {
-        token,
-        method: "PUT",
-        body: { chatRouting },
-        timeoutMs: timeouts.config,
-      })),
     setConnectState: (connectEnabled: boolean) => requestJson<OpenworkConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),
     callExtensionAction: (payload: OpenworkExtensionActionCall) =>
       requestJson<OpenworkExtensionActionResult>(baseUrl, "/experimental/extensions/call", {

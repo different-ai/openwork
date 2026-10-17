@@ -757,7 +757,6 @@ export type AdminFeature = {
     | "sharedRoles"
     | "agentPermissions"
     | "engineV2ForceUpgrade"
-    | "engineV2Upgrade"
     | "remoteSessionEvents"
     | "backgroundShellTasks"
     | "orgDefaultModel"
@@ -829,7 +828,6 @@ export type AdminOrganizationsPageResponse = {
       sharedRoles: boolean;
       agentPermissions: boolean;
       engineV2ForceUpgrade: boolean;
-      engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       backgroundShellTasks: boolean;
       orgDefaultModel: boolean;
@@ -1074,15 +1072,6 @@ export type AdminOrganizationsPageResponse = {
         override: boolean | null;
         overrideApplies: boolean;
       };
-      engineV2Upgrade: {
-        enabled: boolean;
-        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
-        everyone: boolean;
-        killed: boolean;
-        lock: boolean | null;
-        override: boolean | null;
-        overrideApplies: boolean;
-      };
       remoteSessionEvents: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -1243,7 +1232,6 @@ export type AdminOverviewResponse = {
       sharedRoles: boolean;
       agentPermissions: boolean;
       engineV2ForceUpgrade: boolean;
-      engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       backgroundShellTasks: boolean;
       orgDefaultModel: boolean;
@@ -1480,15 +1468,6 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       engineV2ForceUpgrade: {
-        enabled: boolean;
-        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
-        everyone: boolean;
-        killed: boolean;
-        lock: boolean | null;
-        override: boolean | null;
-        overrideApplies: boolean;
-      };
-      engineV2Upgrade: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -7720,7 +7699,6 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       sharedRoles: boolean;
       agentPermissions: boolean;
       engineV2ForceUpgrade: boolean;
-      engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       backgroundShellTasks: boolean;
       orgDefaultModel: boolean;
@@ -7957,15 +7935,6 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       engineV2ForceUpgrade: {
-        enabled: boolean;
-        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
-        everyone: boolean;
-        killed: boolean;
-        lock: boolean | null;
-        override: boolean | null;
-        overrideApplies: boolean;
-      };
-      engineV2Upgrade: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -8122,7 +8091,6 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       sharedRoles: boolean;
       agentPermissions: boolean;
       engineV2ForceUpgrade: boolean;
-      engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       backgroundShellTasks: boolean;
       orgDefaultModel: boolean;
@@ -8359,15 +8327,6 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       engineV2ForceUpgrade: {
-        enabled: boolean;
-        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
-        everyone: boolean;
-        killed: boolean;
-        lock: boolean | null;
-        override: boolean | null;
-        overrideApplies: boolean;
-      };
-      engineV2Upgrade: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;

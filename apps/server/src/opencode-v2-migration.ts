@@ -175,9 +175,10 @@ export async function readMigrationSessions(database: string): Promise<Migration
 
 /**
  * Whether v1 has a chat created at or after `since` (ms): one that no finished
- * migration copied, so v2 cannot open it. A missing or unreadable database has none.
+ * migration copied, so v2 cannot open it. A missing or unreadable database has none,
+ * unless `strict` requires a v2-only installation to fail closed on unreadable history.
  */
-export async function hasV1ChatsSince(database: string, since: number): Promise<boolean> {
+export async function hasV1ChatsSince(database: string, since: number, strict = false): Promise<boolean> {
   try {
     await access(database);
     const db = typeof process.versions.bun === "string"
@@ -186,7 +187,8 @@ export async function hasV1ChatsSince(database: string, since: number): Promise<
     try {
       return isRecord(db.prepare("SELECT 1 AS found FROM session WHERE time_created >= ? LIMIT 1").get(since));
     } finally { db.close(); }
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     return false;
   }
 }

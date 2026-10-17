@@ -124,6 +124,8 @@ export interface ServerConfig {
   engineAutoUpgrade?: boolean;
   /** An org policy was resolved; explicit false reverts only force-upgraded instances. */
   engineForcePolicy?: boolean;
+  /** Installation contract: this hosted image contains v2 only. Enable after adoption. */
+  engineV2Only?: boolean;
 }
 
 export interface Capabilities {
