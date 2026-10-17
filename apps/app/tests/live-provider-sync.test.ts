@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  pickerFallbackModels,
   shouldRefreshProvidersForReloadEvent,
   skipsLegacyProviderRefresh,
   usesLiveProviderSync,
@@ -37,5 +38,16 @@ describe("live provider sync ownership", () => {
     expect(usesLiveProviderSync({ baseUrl: v2 })).toBe(false);
     expect(usesLiveProviderSync({ baseUrl: v2,
       status: { enabled: true, chatRouting: true } })).toBe(false);
+  });
+});
+
+describe("picker fallback models", () => {
+  const assigned = [{ providerID: "ipr_org", modelID: "gwm_turned_off" }];
+  test("live sync drops the app's own Den list once the engine has answered", () => {
+    expect(pickerFallbackModels({ liveProviderSync: true, engineListLoaded: true, assigned })).toEqual([]);
+  });
+  test("it still fills the picker until the engine answers, and always without live sync", () => {
+    expect(pickerFallbackModels({ liveProviderSync: true, engineListLoaded: false, assigned })).toEqual(assigned);
+    expect(pickerFallbackModels({ liveProviderSync: false, engineListLoaded: true, assigned })).toEqual(assigned);
   });
 });

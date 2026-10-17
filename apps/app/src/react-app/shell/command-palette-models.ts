@@ -1,5 +1,5 @@
-import type { ModelBehaviorOption, ModelOption, ModelRef } from "@/app/types";
-import { isAutoModel, modelGroups, modelSource, modelTitle, modelSubtitle, nextModelSource, nextPinnedModel, orderedModelPins, MODEL_SOURCE_LABELS } from "@/react-app/domains/models/model-catalog";
+import type { ModelOption, ModelRef } from "@/app/types";
+import { isAutoModel, modelSource, modelTitle, nextModelSource, nextPinnedModel, orderedModelPins, MODEL_SOURCE_LABELS } from "@/react-app/domains/models/model-catalog";
 
 export function commandPaletteModelTarget(workbench: { focusedPane: string; secondary: { sessionId: string } | null }, primarySessionId: string | null) {
   return workbench.focusedPane === "secondary" && workbench.secondary ? workbench.secondary.sessionId : primarySessionId;
@@ -51,69 +51,8 @@ export type CommandPaletteMode =
   | "accessible-items"
   | "agents"
   | "groups"
-  | "models"
-  | "model-behavior";
-
-export type CommandPaletteModelItem = {
-  id: string;
-  title: string;
-  detail: string;
-  meta?: string;
-  searchText: string;
-  option: ModelOption;
-};
-
-export type CommandPaletteBehaviorItem = {
-  id: string;
-  title: string;
-  detail: string;
-  meta?: string;
-  searchText: string;
-  option: ModelBehaviorOption;
-};
-
-function isSameModel(left: ModelRef | undefined, right: ModelRef) {
-  return left?.providerID === right.providerID && left.modelID === right.modelID;
-}
+  | "models";
 
 export function commandPaletteBackMode(mode: CommandPaletteMode): CommandPaletteMode | null {
-  if (mode === "root") return null;
-  if (mode === "model-behavior") return "models";
-  return "root";
-}
-
-export function buildCommandPaletteModelItems(
-  options: readonly ModelOption[],
-  current: ModelRef | undefined,
-  favorites: readonly ModelRef[] = [],
-  recent: readonly ModelRef[] = [],
-): CommandPaletteModelItem[] {
-  return modelGroups(options, favorites, recent).flatMap((group) => group.items).map((option) => {
-    const provider = option.description?.trim() || option.providerID;
-    return {
-      id: `model:${option.providerID}:${option.modelID}`,
-      title: modelTitle(option),
-      // The same line the composer picker shows: the provider, never the model id.
-      detail: modelSubtitle(option),
-      meta: isSameModel(current, option) ? "Current" : undefined,
-      searchText: `${modelTitle(option)} ${modelSubtitle(option)} ${option.title} ${provider} ${option.providerID} ${option.modelID}`,
-      option,
-    };
-  });
-}
-
-export function buildCommandPaletteBehaviorItems(
-  model: ModelOption,
-  currentModel: ModelRef | undefined,
-  currentBehaviorValue: string | null | undefined,
-): CommandPaletteBehaviorItem[] {
-  const modelIsCurrent = isSameModel(currentModel, model);
-  return (model.behaviorOptions ?? []).map((option) => ({
-    id: `model-behavior:${model.providerID}:${model.modelID}:${option.value ?? "default"}`,
-    title: option.label,
-    detail: option.description,
-    meta: modelIsCurrent && option.value === currentBehaviorValue ? "Current" : undefined,
-    searchText: `${model.behaviorTitle} ${option.label} ${option.description} ${option.value ?? "default"}`,
-    option,
-  }));
+  return mode === "root" ? null : "root";
 }

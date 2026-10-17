@@ -17,7 +17,7 @@ import { useWorkspace } from "@/react-app/shell/workspace-provider";
 import { useSetWorkspaceDefaultModel } from "@/react-app/kernel/use-workspace-model-default";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { AutoAccessFooter, openAutoProviderSettings } from "@/react-app/domains/cloud/auto-access-ui";
-import { openModelPickerEvent, openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
+import { openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
 import { openComposerModelPickerEvent } from "@/app/lib/inference-access";
 import { isAutoModel, modelTitle, nonDefaultModelSummary, type RetainedModelSelection } from "@/react-app/domains/models/model-catalog";
 import { useModelPickerCatalogStore } from "@/react-app/domains/session/models/model-collections-store";
@@ -25,7 +25,7 @@ import { useModelPickerCatalogStore } from "@/react-app/domains/session/models/m
 const chordClass = "hidden shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-sans text-[10px] leading-none text-muted-foreground sm:inline-flex";
 
 /** The picker's settings for the current model and its two ways out, under one hairline. */
-export function ModelPickerFooter({ effortButtonRef, effortLabel, effortShortcut, canChangeEffort, onOpenEffort, fast, onConnectProvider, onAllModels }: {
+export function ModelPickerFooter({ effortButtonRef, effortLabel, effortShortcut, canChangeEffort, onOpenEffort, fast, onConnectProvider }: {
   effortButtonRef?: React.Ref<HTMLButtonElement>;
   effortLabel: string;
   effortShortcut: string;
@@ -33,7 +33,6 @@ export function ModelPickerFooter({ effortButtonRef, effortLabel, effortShortcut
   onOpenEffort: () => void;
   fast?: { on: boolean; shortcut: string; disabled: boolean; onToggle: () => void };
   onConnectProvider?: () => void;
-  onAllModels: () => void;
 }) {
   return <div className="border-t border-border p-1.5" data-testid="model-behavior-rows">
     <button ref={effortButtonRef} type="button" data-testid="model-effort" disabled={!canChangeEffort} onClick={onOpenEffort}
@@ -48,10 +47,10 @@ export function ModelPickerFooter({ effortButtonRef, effortLabel, effortShortcut
       <kbd className={chordClass}>{fast.shortcut}</kbd>
       <Switch aria-label="Fast mode" size="sm" checked={fast.on} disabled={fast.disabled} onCheckedChange={fast.onToggle} />
     </div> : null}
-    <div className="flex items-center justify-between pt-0.5">
-      {onConnectProvider ? <Button variant="ghost" size="sm" className="h-8 px-2 font-normal text-muted-foreground" onClick={onConnectProvider}>Connect more providers</Button> : <span />}
-      <Button variant="ghost" size="sm" className="h-8 px-2 font-normal text-muted-foreground" onClick={onAllModels}>All models</Button>
-    </div>
+    {/* The list above already holds every model; there is no second, larger picker. */}
+    {onConnectProvider ? <div className="flex items-center pt-0.5">
+      <Button variant="ghost" size="sm" className="h-8 px-2 font-normal text-muted-foreground" onClick={onConnectProvider}>Connect more providers</Button>
+    </div> : null}
   </div>;
 }
 
@@ -102,8 +101,9 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
   const { options, catalogState, retainedSelection, restrictToCloud, autoVisible } = catalog;
   React.useEffect(() => {
     const recover = (event: Event) => {
-      if (!(event instanceof CustomEvent) || event.detail?.sessionId !== sessionId) return;
-      setQuery(""); setEffort(false); setFocusAlternative(true); onOpenChange(true);
+      // The New Task composer has no session; its requests carry none either.
+      if (!(event instanceof CustomEvent) || (event.detail?.sessionId || undefined) !== (sessionId || undefined)) return;
+      setQuery(""); setEffort(false); setFocusAlternative(event.detail?.focusAlternative !== false); onOpenChange(true);
     };
     window.addEventListener(openComposerModelPickerEvent, recover);
     return () => window.removeEventListener(openComposerModelPickerEvent, recover);
@@ -166,8 +166,7 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
         <ModelPickerFooter effortButtonRef={effortButtonRef} effortLabel={effortValueLabel} effortShortcut={effortShortcutLabel} canChangeEffort={canChangeEffort} onOpenEffort={() => setEffort(true)}
           fast={selected && onBehaviorChange && !autoSelected && controls.hasFast ? { on: controls.fast, shortcut: fastShortcutLabel, disabled: controls.toggleValue === undefined,
             onToggle: () => { if (controls.toggleValue !== undefined) onBehaviorChange(controls.toggleValue); } } : undefined}
-          onConnectProvider={!restrictToCloud ? openProvider : undefined}
-          onAllModels={() => { onOpenChange(false); window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { sessionId } })); }} />
+          onConnectProvider={!restrictToCloud ? openProvider : undefined} />
         <AutoAccessFooter available={autoVisible} syncing={autoVisible && openWorkModelsSyncing} />
       </>} />}
     </PopoverContent>

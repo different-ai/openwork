@@ -29,3 +29,13 @@ export function shouldRefreshProvidersForReloadEvent(liveProviderSync: boolean) 
 export function skipsLegacyProviderRefresh(reason: string, liveProviderSync: boolean) {
   return liveProviderSync && (reason === "model_picker_open" || reason === "new_chat" || reason === "manual");
 }
+
+/**
+ * Models the app read from Den itself, for merging into the pickers. With live
+ * sync the engine's list is authoritative and current, while this list is only
+ * refreshed at start and sign-in: once the engine has answered, merging it
+ * would keep showing a model the organization turned off.
+ */
+export function pickerFallbackModels<T>(input: { liveProviderSync: boolean; engineListLoaded: boolean; assigned: readonly T[] }): readonly T[] {
+  return input.liveProviderSync && input.engineListLoaded ? [] : input.assigned;
+}

@@ -343,5 +343,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     cloudProviderSyncReady,
     cloudProviderList: liveProviderSync ? null : currentCloudProviderSync?.providerList ?? null,
     refreshCloudProviderSync,
+    /** The engine owns the Gateway catalog and updates it live; app-side Den lists go stale. */
+    liveProviderSync,
   };
 }

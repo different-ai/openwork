@@ -213,6 +213,23 @@ export function modelGroups(options: readonly ModelOption[], personal: readonly 
   return groups;
 }
 
+/**
+ * The model to fall back to when `unavailable` stops working: the first other
+ * model in the order the picker lists them (pinned, recent, then by provider)
+ * that `usable` accepts. Null when nothing else can run.
+ */
+export function nextAvailableModel(
+  options: readonly ModelOption[],
+  personal: readonly ModelRef[],
+  recent: readonly ModelRef[],
+  unavailable: ModelRef,
+  usable: (model: ModelOption) => boolean = () => true,
+): ModelOption | null {
+  const skip = modelRefKey(unavailable);
+  return modelGroups(options, personal, recent).flatMap((group) => group.items)
+    .find((option) => modelRefKey(option) !== skip && usable(option)) ?? null;
+}
+
 export function isPinModelShortcut(event: { key: string; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; altKey: boolean }) {
   return event.key.toLowerCase() === "p" && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey;
 }

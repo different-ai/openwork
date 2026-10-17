@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { freeAutoSwitchedOff, modelForNewTask } from "@/app/lib/inference-access";
+import { freeAutoSwitchedOff, modelForNewTask, openComposerModelPickerEvent } from "@/app/lib/inference-access";
 import { useAutoAccess, useObservedAutoAccessSnapshot } from "@/react-app/domains/cloud/auto-access-ui";
 import { newSessionDraftSlot, newSessionDraftOwnerKey, openNewSessionDraft } from "@/react-app/domains/session/chat/new-session-destination";
 import { getSessionDraft, clearSessionDraft } from "@/react-app/domains/session/sync/draft-store";
@@ -178,7 +178,9 @@ import {
   resolveGatewayProviderIds,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { assignedModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
-import { withImportedModelMetadata, isAutoModel, shouldSelectInitialAuto, starterModel, openWorkModelsLunaReplacement, EXPLICIT_MODEL_CHOICE_KEY } from "@/react-app/domains/models/model-catalog";
+import { runtimeModelOptions } from "@/react-app/domains/models/catalog";
+import { pickerFallbackModels } from "@/react-app/domains/connections/provider-auth/live-provider-sync";
+import { withImportedModelMetadata, isAutoModel, modelTitle, nextAvailableModel, shouldSelectInitialAuto, starterModel, openWorkModelsLunaReplacement, EXPLICIT_MODEL_CHOICE_KEY } from "@/react-app/domains/models/model-catalog";
 import {
   filterEntitledModelOptions,
   keylessProviderIds,
@@ -1005,6 +1007,7 @@ export function SessionRoute() {
     cloudProviderSyncReady,
     cloudProviderList,
     refreshCloudProviderSync,
+    liveProviderSync,
   } = useSessionProviderAuth({
     opencodeClient: providerAuthClient,
     opencodeBaseUrl: opencodeBaseUrl || (engineRootEndpoint?.opencodeBaseUrl ?? ""),
@@ -1028,6 +1031,11 @@ export function SessionRoute() {
     () => withImportedModelMetadata(assignedModelOptions(sessionProviderAuthSnapshot.cloudOrgProviders), sessionProviderAuthSnapshot.importedCloudProviders),
     [sessionProviderAuthSnapshot.cloudOrgProviders, sessionProviderAuthSnapshot.importedCloudProviders],
   );
+  const pickerFallbackOptions = useMemo(() => pickerFallbackModels({
+    liveProviderSync,
+    engineListLoaded: Boolean(providerListQuery.data) && !providerListQuery.isPlaceholderData,
+    assigned: organizationAssignedModelOptions,
+  }), [liveProviderSync, organizationAssignedModelOptions, providerListQuery.data, providerListQuery.isPlaceholderData]);
   useEffect(() => {
     if (!denAuth.isSignedIn) {
       setActiveOrganizationRole(null);
@@ -1213,7 +1221,7 @@ export function SessionRoute() {
     baseUrl: opencodeBaseUrl,
     workspaceRoot: selectedWorkspaceRoot,
     onOpen: handleModelPickerOpen,
-    fallbackOptions: organizationAssignedModelOptions,
+    fallbackOptions: pickerFallbackOptions,
     importedProviders: sessionProviderAuthSnapshot.importedCloudProviders,
     pendingProviders: gatewayConnectProviders,
     disabledProviders: disabledProviderIds,
@@ -1340,14 +1348,8 @@ export function SessionRoute() {
   useEffect(() => {
     if (hasPendingGatewayModelSelection()) return;
     if (!selectedModelUnavailableKey || activityRouteActive) {
-      // The active composer's model is fine (or pending). If the picker was
-      // auto-opened for a previously broken composer — e.g. the New Task
-      // default — do not let that recovery modal follow the user into a
-      // conversation whose own model is valid, or into Activity where there
-      // is no composer to recover. Explicit model actions still open it.
-      if (autoOpenedUnavailableModelRef.current) {
-        modelPicker.setOpen(false);
-      }
+      // The active composer's model is fine (or pending): a later loss of it
+      // is handled again.
       autoOpenedUnavailableModelRef.current = null;
       return;
     }
@@ -1368,12 +1370,28 @@ export function SessionRoute() {
     }
 
     autoOpenedUnavailableModelRef.current = selectedModelUnavailableKey;
-    setModelPickerSessionId(activeComposerTargetsSession ? selectedSessionId : null);
-    modelPicker.setQuery("");
-    modelPicker.setRecentProviderIds(new Set());
-    modelPicker.setCompactOpen(false);
-    modelPicker.setOpen(true);
-  }, [activityRouteActive, activeComposerTargetsSession, cloudProviderSyncReady, denAuth.isSignedIn, entitledOrgDefaultModel, modelPicker.setCompactOpen, modelPicker.setOpen, modelPicker.setQuery, modelPicker.setRecentProviderIds, organizationModelsEmpty, selectedModelUnavailableKey, selectedSessionId, workspaceDefault]);
+    const targetSessionId = activeComposerTargetsSession ? selectedSessionId : null;
+    // Move on to the next model the picker lists that can run, instead of
+    // stopping the person with a dialog. Only when nothing else can run does
+    // the composer's own picker open to say so.
+    const collections = useModelCollectionsStore.getState();
+    // Named options from the same catalog the entitlement check reads, limited to what the member may use.
+    const entitled = new Set(entitledModelOptions.filter((option) => !option.disabled).map((option) => `${option.providerID}/${option.modelID}`));
+    const candidates = runtimeModelOptions(cloudProviderList ?? providerListQuery.data)
+      .filter((option) => entitled.has(`${option.providerID}/${option.modelID}`));
+    const replacement = activeComposerModel ? nextAvailableModel(candidates, collections.favorites, collections.recent, activeComposerModel,
+      (option) => resolveModelAvailability(option).status === "available") : null;
+    if (!replacement) {
+      window.dispatchEvent(new CustomEvent(openComposerModelPickerEvent, { detail: { sessionId: targetSessionId ?? undefined, focusAlternative: true } }));
+      return;
+    }
+    if (targetSessionId) useSessionModelStore.getState().setModel(targetSessionId, replacement, null);
+    else changeNewTaskModel(replacement, null);
+    toast.info(`Your model isn't available anymore. Switched to ${modelTitle(replacement)}.`, {
+      id: `model-unavailable-switch:${targetSessionId ?? "default"}`,
+      action: { label: "Change", onClick: () => window.dispatchEvent(new CustomEvent(openComposerModelPickerEvent, { detail: { sessionId: targetSessionId ?? undefined } })) },
+    });
+  }, [activityRouteActive, activeComposerModel, activeComposerTargetsSession, changeNewTaskModel, cloudProviderList, cloudProviderSyncReady, denAuth.isSignedIn, entitledModelOptions, entitledOrgDefaultModel, providerListQuery.data, organizationModelsEmpty, resolveModelAvailability, selectedModelUnavailableKey, selectedSessionId, workspaceDefault]);
 
   // Optimistic model selection: a remembered model is treated as valid until
   // the availability gate CONFIRMS it absent (selectedModelUnavailable).
@@ -2299,7 +2317,7 @@ export function SessionRoute() {
       },
       draftScope: sessionDraftScope,
       selectedModel: newTaskModel ?? { providerID: "", modelID: "" },
-      modelOptions: organizationAssignedModelOptions,
+      modelOptions: pickerFallbackOptions,
       modelUnavailable: resolveModelAvailability(newTaskModel).status === "unavailable",
       modelUnavailableMessage,
       organizationModelsEmpty,
@@ -2369,7 +2387,7 @@ export function SessionRoute() {
     opencodeClient,
     openWorkModelsEntitled,
     openWorkModelsSyncing,
-    organizationAssignedModelOptions,
+    pickerFallbackOptions,
     organizationModelsEmpty,
     refreshCloudProviderSync,
     refreshOrganizationModelAccess,

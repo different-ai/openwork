@@ -52,6 +52,8 @@ export type ModelPickerListProps = {
   onSelect: (option: ModelOption, behavior?: { variant: string | null }) => void;
   focusAlternative?: boolean;
   footer?: ReactNode;
+  /** Shown before the search field, e.g. the command palette's back button. */
+  leading?: ReactNode;
   searchInputRef?: Ref<HTMLInputElement>;
   autoFocusSearch?: boolean;
   catalogState?: ModelPickerCatalogState;
@@ -89,7 +91,7 @@ function menuChord(label: string, chord: string) {
   return <><span className="min-w-0 flex-1">{label}</span><kbd className="ml-4 font-sans text-xs text-muted-foreground">{chord}</kbd></>;
 }
 
-function ModelPickerRows({ options, current, query, onQueryChange, onSelect, focusAlternative = false, footer, searchInputRef, autoFocusSearch = true,
+function ModelPickerRows({ options, current, query, onQueryChange, onSelect, focusAlternative = false, footer, leading, searchInputRef, autoFocusSearch = true,
   catalogState, retainedSelection, onConnectProvider, onOpenProviderSettings, onSetWorkspaceDefault, currentBehaviorValue, openWorkModelsSyncing, onReloadWorkspace, onRetryAuto, autoRow,
 }: ModelPickerListProps & { autoRow?: AutoRowState }) {
   const favorites = useModelCollectionsStore((state) => state.favorites);
@@ -171,7 +173,7 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
     event.preventDefault(); event.stopPropagation(); toggle(option);
   }}>
     <Command items={groups} filter={null} value={query} onValueChange={onQueryChange}>
-      <CommandHeader><CommandInput ref={searchInputRef} autoFocus={autoFocusSearch} aria-label="Search all models" placeholder="Search models…" className="h-8 text-base sm:text-base md:text-base lg:text-sm" /></CommandHeader>
+      <CommandHeader className={leading ? "flex items-center gap-0" : undefined}>{leading}<CommandInput ref={searchInputRef} autoFocus={autoFocusSearch} aria-label="Search all models" placeholder="Search models…" className="h-8 text-base sm:text-base md:text-base lg:text-sm" /></CommandHeader>
       {/* The list sizes to its rows so placeholders after it stay in view; this panel does the scrolling. */}
       <CommandPanel className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain [scrollbar-width:thin] [&>[data-slot=scroll-area]]:h-auto">
         {retainedVisible ? <div data-testid="retained-selected-model" aria-disabled="true" aria-label={`${retainedName}, current model, ${retainedSubtitle}`} className="px-2 pt-2">
