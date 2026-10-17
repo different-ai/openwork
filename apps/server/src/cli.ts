@@ -89,20 +89,22 @@ if (args.web) {
     webTokensPath = tokens.path;
   }
   process.env.OPENWORK_MANAGE_OPENCODE = "1";
-  const engine = await ensureManagedEngine({
-    env: process.env,
-    expectedVersion: constants.opencodeVersion,
-    log: (message) => console.log(message),
-  });
-  process.env.OPENWORK_OPENCODE_BIN = engine.bin;
-  setInstalledOpencodeVersion(engine.installedVersion);
-  if (packageRoot && engine.source !== "env") {
-    const seed = await seedOpencodePluginDeps({
-      archive: opencodePluginDepsArchive(packageRoot, constants.opencodeVersion),
-      configDir: opencodeGlobalConfigDir(process.env),
+  if (process.env.OPENWORK_ENGINE_V2_ONLY !== "1") {
+    const engine = await ensureManagedEngine({
+      env: process.env,
+      expectedVersion: constants.opencodeVersion,
+      log: (message) => console.log(message),
     });
-    if (seed.seeded) console.log(`Prepared OpenCode plugin dependencies in ${seed.durationMs} ms`);
-    else if (seed.reason === "failed") console.log(`Could not prepare OpenCode plugin dependencies (${seed.error}); OpenCode will install them.`);
+    process.env.OPENWORK_OPENCODE_BIN = engine.bin;
+    setInstalledOpencodeVersion(engine.installedVersion);
+    if (packageRoot && engine.source !== "env") {
+      const seed = await seedOpencodePluginDeps({
+        archive: opencodePluginDepsArchive(packageRoot, constants.opencodeVersion),
+        configDir: opencodeGlobalConfigDir(process.env),
+      });
+      if (seed.seeded) console.log(`Prepared OpenCode plugin dependencies in ${seed.durationMs} ms`);
+      else if (seed.reason === "failed") console.log(`Could not prepare OpenCode plugin dependencies (${seed.error}); OpenCode will install them.`);
+    }
   }
 }
 
@@ -126,7 +128,7 @@ if (!config.readOnly) {
 // requested one.
 // The engine also starts with no workspace registered yet, so providers load
 // before the first workspace exists.
-const manageEngine = !config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1"
+const manageEngine = !config.engineV2Only && !config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1"
   && shouldStartManagedEngine(config.workspaces);
 const server = await startServer(config, { deferManagedEngineStartup: manageEngine });
 config.port = server.port;
@@ -255,7 +257,9 @@ if (args.web) {
   const browserUrl = `http://${browserHost}:${server.port}`;
   logger.log("info", `OpenWork web UI: ${browserUrl}`);
   logger.log("info", `Web root: ${webRoot}`);
-  logger.log("info", `Engine: ${process.env.OPENWORK_OPENCODE_BIN} (${installedOpencodeVersionLabel()})`);
+  logger.log("info", config.engineV2Only
+    ? `Engine: ${process.env.OPENWORK_OPENCODE2_BIN ?? "opencode2"} (v2 only)`
+    : `Engine: ${process.env.OPENWORK_OPENCODE_BIN} (${installedOpencodeVersionLabel()})`);
   if (webTokensPath) logger.log("info", `Tokens: ${webTokensPath}`);
   if (process.env.OPENWORK_WEB_BOOTSTRAP_TOKEN === "0") {
     logger.log("info", `Browser sign-in requires the client token: ${config.token}`);

@@ -228,13 +228,6 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
-  engineV2Upgrade: {
-    label: "Desktop: upgrade prompt to OpenCode v2",
-    description: "Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines.",
-    since: "2026-10",
-    deployments: everywhere,
-    default: false,
-  },
   remoteSessionEvents: {
     label: "Remote session events",
     description: "MCP clients can subscribe to changes in their remote session receipts and read the current state after reconnecting.",

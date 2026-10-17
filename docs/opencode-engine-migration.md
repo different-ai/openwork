@@ -1,22 +1,50 @@
-# OpenCode engine selection and history migration
+# OpenCode v1 retirement and retained history
 
-On desktop, the command palette offers **Switch to OpenCode v1**, **Switch to OpenCode v2**,
-and **Migrate chats to OpenCode v2**. Advanced settings uses the same engine
-commands. Both hand off to one app-wide owner (`shell/engine-migration.tsx`)
-for the switch check, the migration consent, and migration progress, so a
-migration stays visible after the surface that started it closes. Switching
-engines never migrates history. V1 remains the default. Desktop packages include
-both pinned native executables; v2's download fallback remains available for
-standalone servers.
+> **DRAFT — do not merge until adoption is complete.** This retirement must ship
+> after the force-upgrade rollout, never with it. Adoption includes offline
+> desktop profiles and stopped, suspended, and checkpoint-restored web instances.
+
+## Retirement contract
+
+The optional `engineV2Upgrade` prompt flag, upgrade invitation, consent dialog,
+manual migration controls, and switch-back UI are removed. The server rejects
+manual requests to disable v2 or route back to v1 with `engine_v1_retired`.
+Desktop still forwards `engineV2ForceUpgrade` policy to the host: the preceding
+rollout remains independently reversible on dual-engine installations. This
+retirement does not replace the v1-shaped SDK used by the v2 compatibility API.
+
+The Daytona web image contains only the pinned, integrity-checked `opencode2`
+executable and declares `OPENWORK_ENGINE_V2_ONLY=1`. This is an installation
+contract, not a new organization rollout switch. CLI and embedded startup skip
+v1 installation and the managed v1 launcher in this mode. Earlier dual-engine
+images retain their startup and policy behavior.
+
+V2-only startup refuses a profile with unfinished migration markers or v1
+history that is not already selected on v2. Before starting the native engine it
+also checks for chats newer than the saved migration cutoff; unreadable history
+fails closed. Restore the preceding dual-engine image to finish adoption rather
+than bypassing these checks. A missing or unhealthy v2 executable remains an
+explicit failure: it never downloads or starts v1 as a fallback.
+
+In a v2-only installation, force-off cannot restore an executable that no longer
+exists, and therefore leaves v2 selected. **Deploying this image retires the v1
+rollback promise for that installation.** Do not publish or deploy it until
+adoption and the rollback observation period are complete. Rollout (b) must
+remain deployable independently for recovery.
+
+No v1 database, backup, migration checkpoint, or archived original content is
+deleted. Host-authorized migration APIs and conversion/storage code remain for
+operator recovery on compatible dual-engine installations; they are no longer
+interactive app flows. The following sections document that retained recovery
+format and the pre-retirement flow.
 
 ## Organization-managed rollout
 
 `engineV2ForceUpgrade` is off by default on cloud and self-hosted deployments.
 When an organization's resolved flag is on, desktop and web hosts reuse the
 same backup/copy migration in the background, wait for idle, and select v2
-without consent. Desktop shows only the existing non-blocking progress banner;
-web shows no engine upgrade UI. Fresh profiles select v2 without a history copy.
-The optional desktop `engineV2Upgrade` invitation still works when force is off.
+without consent. Neither desktop nor web shows engine upgrade controls after
+retirement. Fresh profiles select v2 without a history copy.
 All app feature observers use the shared guarded `useOrgFeature` hook: cached
 organization data cannot bypass a desktop-only guard.
 
@@ -39,7 +67,12 @@ snapshots bake the pinned, integrity-checked v2 executable and set
 checkpoint policy retains three snapshots of runtime data and engine state
 as an additional safety net; there is no new restore UI.
 
-## Running tasks, switching, and migration progress
+## Pre-retirement interface (historical)
+
+These UI controls were removed by retirement. The safety checks described here
+remain relevant to host-authorized recovery APIs.
+
+### Running tasks, switching, and migration progress
 
 Before switching, the app reads `GET /experimental/engine-v2-preview/activity`
 (counts only) for the engine being left. Running v1 tasks keep running unseen

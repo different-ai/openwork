@@ -198,7 +198,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   // The engine also starts with no workspace registered yet: a member who
   // signs in before creating a workspace still needs providers to load. The
   // first workspace later inherits this connection instead of a new spawn.
-  const manageEngine = !config.opencodeBaseUrl && options.manageOpencode === true
+  const manageEngine = !config.engineV2Only && !config.opencodeBaseUrl && options.manageOpencode === true
     && shouldStartManagedEngine(config.workspaces);
   server = await duringStartup(() => startServer(config, { deferManagedEngineStartup: manageEngine }));
   config.port = server.port;

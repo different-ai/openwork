@@ -1,4 +1,3 @@
-import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import type { PlatformCapabilities } from "@/app/lib/platform-capabilities";
 import { isSettingsTabAllowed, type DesktopAppRestrictionChecker } from "@/app/cloud/desktop-app-restrictions";
 import type { SettingsTab } from "@/app/types";
@@ -82,7 +81,7 @@ export function buildCommandPaletteSettingsItems(input: {
   }));
 
   const advancedItems: PaletteItem[] = tabs.includes("advanced")
-    ? ADVANCED_SETTINGS_SECTIONS.filter((section) => section.id !== "experimental-engine" || isDesktopRuntime()).map((section) => ({
+    ? ADVANCED_SETTINGS_SECTIONS.map((section) => ({
         id: `settings:advanced/${section.id}`,
         title: section.title,
         keywords: section.keywords,
