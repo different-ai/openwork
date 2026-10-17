@@ -1033,9 +1033,21 @@ export function createEngineV2Preview(options: {
     }
   }
 
+  let startFailureJob: Promise<void> | undefined;
   function recordStartError(error: unknown): void {
     running = false;
     lastError = `${errorMessage(error)} Set OPENWORK_OPENCODE2_BIN to a working opencode2 binary to override resolution.`;
+    if (!engineForced || engineOrigin !== "fresh") return;
+    // Fresh selection is saved before startup, just like the desktop default.
+    // A failed forced start must not strand that profile on an unavailable v2.
+    chatRouting = false;
+    enabled = false;
+    engineForced = false;
+    engineChangedAt = new Date().toISOString();
+    migration = { ...migration, state: "error", error: lastError, startedAt: engineChangedAt };
+    autoUpgradeRetry = engineAutoUpgradeRetry(autoUpgradeRetry?.attempts ?? 0);
+    options.autoUpgradeError?.(lastError);
+    startFailureJob = persistState().catch(error => warn(`Automatic fresh upgrade state: ${errorMessage(error)}`));
   }
 
   async function stopRuntime(): Promise<void> {
@@ -1098,9 +1110,10 @@ export function createEngineV2Preview(options: {
   async function setChatRouting(nextChatRouting: boolean, origin: EngineOrigin = "manual", forceOwned = origin === "forced"): Promise<EngineV2PreviewStatus> {
     if (nextChatRouting) await requireV1HistoryCopied();
     else requireNoMigration();
-    const previous = { chatRouting, engineOrigin, engineChangedAt, engineForced, automaticHistoryCopy, automaticHistoryRevision, autoUpgradeRetry };
+    const previous = { enabled, chatRouting, engineOrigin, engineChangedAt, engineForced, automaticHistoryCopy, automaticHistoryRevision, autoUpgradeRetry };
     chatRouting = nextChatRouting;
     engineOrigin = origin;
+    if (origin === "reverted") enabled = false;
     engineChangedAt = new Date().toISOString();
     engineForced = forceOwned;
     if (forceOwned) {
@@ -1112,7 +1125,7 @@ export function createEngineV2Preview(options: {
     }
     try { await persistState(); }
     catch (error) {
-      ({ chatRouting, engineOrigin, engineChangedAt, engineForced, automaticHistoryCopy, automaticHistoryRevision, autoUpgradeRetry } = previous);
+      ({ enabled, chatRouting, engineOrigin, engineChangedAt, engineForced, automaticHistoryCopy, automaticHistoryRevision, autoUpgradeRetry } = previous);
       throw error;
     }
     warmActiveWorkspace();
@@ -1348,6 +1361,9 @@ export function createEngineV2Preview(options: {
           throw new Error("OpenCode v2 gained running work before the switch. Keeping v2.");
         }
         await setChatRouting(false, "reverted");
+        // Match the existing switch-to-v1 path: no inactive v2 process should
+        // accept a late prompt from a renderer that has not refreshed yet.
+        await stopRuntime().catch(error => { lastError = errorMessage(error); options.autoUpgradeError?.(lastError); });
       } });
       return true;
     } catch (error) {
@@ -1375,7 +1391,9 @@ export function createEngineV2Preview(options: {
     await autoUpgradeJob;
     await autoRevertJob;
     await migrationJob;
+    await startFailureJob;
     await stopRuntime();
+    await startFailureJob;
   }
 
   function startWhenReady(): void {

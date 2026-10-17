@@ -97,6 +97,8 @@ test("flag off only returns a forced instance to v1", async () => {
       assert.equal(engine.status().chatRouting, false);
       assert.equal(engine.status().engineOrigin, "reverted");
       assert.equal(engine.status().engineForced, false);
+      assert.equal(engine.status().enabled, false);
+      assert.equal(engine.status().running, false);
       engine.setForcePolicy({ upgrade: false });
       assert.equal(engine.status().chatRouting, false, "upgrade must not refire while the flag is off");
       const persisted = readEngineV2PreviewState(config);

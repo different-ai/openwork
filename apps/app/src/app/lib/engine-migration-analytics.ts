@@ -44,6 +44,8 @@ export function createEngineMigrationAnalyticsObserver(options: {
     if (!migration) return;
     const origin = status.forceUpgradePending ? "forced" : status.engineOrigin ?? "manual";
     const routingReceipt = origin === "fresh" || origin === "reverted";
+    // Selecting a fresh engine before boot is not a successful upgrade yet.
+    if (origin === "fresh" && migration.state === "idle" && !status.running) return;
     let event: string;
     let receipt: string;
     const properties: AnalyticsProperties = { surface: options.surface, appVersion: options.appVersion, origin };

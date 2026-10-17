@@ -48,6 +48,8 @@ test("completed receipt emits without fake start, survives reload, scopes by ins
 test("fresh and reverted routes emit zero-count receipts and route changes refresh once", () => {
   const f = fixture();
   f.observe("http://one", { ...initial, enabled: true, chatRouting: true, engineOrigin: "fresh", engineChangedAt: 1 });
+  expect(f.events).toHaveLength(0);
+  f.observe("http://one", { ...initial, enabled: true, chatRouting: true, running: true, engineOrigin: "fresh", engineChangedAt: 1 });
   const reverted = { ...initial, engineOrigin: "reverted", engineChangedAt: 2 } satisfies EngineMigrationAnalyticsStatus;
   f.observe("http://one", reverted);
   f.observe("http://one", reverted);
