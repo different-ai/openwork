@@ -10,6 +10,7 @@ export const meSchema = z.object({
   email: z.string(),
   organizationName: z.string(),
   enabled: z.boolean(),
+  computer: z.boolean().default(false),
   /** Workbot's Calendar tab (on while Workbot is on); older servers omit it. */
   calendar: z.boolean().default(false),
   documents: z.boolean().default(false),
@@ -65,6 +66,7 @@ export function createHost(me: Me): WorkbotHost {
     homeHref: me.denUrl ? `${me.denUrl}/dashboard` : "/",
     calendar: me.calendar,
     documents: me.documents,
+    computer: me.computer,
     workspaceAssistant: me.workspaceAssistant,
     canSchedule: me.canSchedule,
     connectionsHref: me.denUrl ? `${me.denUrl}/dashboard/your-connections` : null,

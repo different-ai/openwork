@@ -22,6 +22,7 @@ const createSessionBody = z
     files: z.boolean().optional(),
     /** Give this conversation a Linux computer (needs HEADLESS_COMPUTER). Off unless asked for. */
     computer: z.boolean().optional(),
+    desktop: z.boolean().optional(),
     /** Let the model react to the person's message with one emoji (the `react` tool). Off unless asked for. */
     reactions: z.boolean().optional(),
     /** Let the conversation hand longer work to background tasks (start_task) and keep talking. Off unless asked for. */
@@ -154,6 +155,26 @@ export function createApp(input: {
   })
 
   app.get("/v1/models", async (c) => c.json(input.models ? await input.models() : { defaultModel: "", models: [] }))
+
+  app.post("/v1/sessions/:id/desktop/:operation", async (c) => {
+    const session = store.getSession(c.req.param("id"))
+    if (!session?.computer || !session.desktop) return c.json({ error: "desktop_disabled" }, 403)
+    const raw: unknown = await c.req.json().catch(() => null)
+    c.header("Cache-Control", "no-store")
+    try {
+      if (c.req.param("operation") === "viewer" && input.computer?.desktopViewer) {
+        const body = z.object({ view: z.enum(["browser", "computer"]), control: z.boolean(), origin: z.string().url().max(2048) }).strict().safeParse(raw)
+        if (!body.success) return c.json({ error: "invalid_request" }, 400)
+        return c.json(await input.computer.desktopViewer(session.id, body.data))
+      }
+      if (c.req.param("operation") === "action" && input.computer?.desktopAction) {
+        const body = z.object({ action: z.enum(["continue", "pause", "resume"]) }).strict().safeParse(raw)
+        if (!body.success) return c.json({ error: "invalid_request" }, 400)
+        return c.json(await input.computer.desktopAction(session.id, body.data.action))
+      }
+      return c.json({ error: "desktop_not_configured" }, 409)
+    } catch { return c.json({ error: "desktop_unavailable" }, 409) }
+  })
 
   app.post("/v1/sessions", async (c) => {
     const body = createSessionBody.safeParse(await c.req.json().catch(() => ({})))

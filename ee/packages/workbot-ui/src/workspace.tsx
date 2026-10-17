@@ -5,11 +5,11 @@ import { Popover } from "@base-ui/react/popover";
 import { useQuery } from "@tanstack/react-query";
 import { googleDriveProvider } from "@openwork/documents";
 import { googleDriveFileId, workbotContextLabel, type WorkbotViewContext } from "@openwork/types/workbot-context";
-import { CalendarDays, FileText, House, Lock, MessageCircle, PanelLeft, X } from "lucide-react";
+import { CalendarDays, FileText, House, Lock, MessageCircle, Monitor, PanelLeft, X } from "lucide-react";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { workbotHost } from "./host";
 
-export type WorkspacePage = "home" | "calendar" | "documents";
+export type WorkspacePage = "home" | "calendar" | "documents" | "computer";
 export const WorkspaceNavigationContext = createContext<((fileId: string) => void) | null>(null);
 const control = "grid size-8 shrink-0 place-items-center rounded-lg text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
 
@@ -46,6 +46,7 @@ export function WorkspaceMenu({ page, onPage, onDocument, onChats, drafts }: { p
           <button type="button" className={row} aria-current={page === "home" ? "page" : undefined} onClick={() => navigate("home")}><House size={16} strokeWidth={1.5} aria-hidden />Home</button>
           <button type="button" className={row} disabled={!host.calendar} aria-current={page === "calendar" ? "page" : undefined} onClick={() => navigate("calendar")} title={!host.calendar ? "Calendar is off. An admin can turn it on." : undefined}><CalendarDays size={16} strokeWidth={1.5} aria-hidden />Calendar{!host.calendar && <Lock size={13} aria-label="Off for this workspace" />}</button>
           <button type="button" className={row} aria-current={page === "documents" ? "page" : undefined} onClick={() => navigate("documents")}><FileText size={16} strokeWidth={1.5} aria-hidden />Documents{!host.documents && <Lock size={13} aria-label="Off for this workspace" />}</button>
+          {host.computer && <button type="button" className={row} aria-current={page === "computer" ? "page" : undefined} onClick={() => navigate("computer")}><Monitor size={16} strokeWidth={1.5} aria-hidden />Computer</button>}
           {onChats && <button type="button" className={row} disabled={drafts} title={drafts ? "Save or close document drafts before switching chats." : undefined} onClick={() => { setOpen(false); onChats(); }}><MessageCircle size={16} strokeWidth={1.5} aria-hidden />Chats{drafts && <Lock size={13} aria-label="Save or close document drafts first" />}</button>}
           {drafts && onChats && <p className="px-3 py-1 text-[12px] text-[var(--wb-muted)]">Save or close drafts to switch chats.</p>}
         </nav>

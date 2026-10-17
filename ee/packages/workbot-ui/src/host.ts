@@ -23,6 +23,8 @@ export type WorkbotHost = {
   calendar?: boolean
   /** Documents browsing is enabled for this organization; omitted means off. */
   documents?: boolean
+  /** Shared browser and computer desktop, enabled by the organization flags. */
+  computer?: boolean
   /** Contextual chat and workspace navigation. Omitted means off. */
   workspaceAssistant?: boolean
   /** The organization runs Automations in the cloud, so the Calendar can create them. Off when unset. */

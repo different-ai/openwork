@@ -3,6 +3,8 @@ import { posix } from "node:path"
 import { ensureRunning, isSandboxError, SCOPE_LABEL, withBlocks, type RunSpec, type SandboxHandle, type SandboxProvider, type SandboxSpec } from "@openwork/sandbox"
 import { z } from "zod"
 import type { ComputerFile, ComputerFiles, FileReader, ToolResult, ToolSpec } from "./types.js"
+import { Desktop, type DesktopView } from "./desktop.js"
+import { DESKTOP_TOOL } from "./desktop-tool.js"
 
 /** One provider-neutral Linux computer per conversation. Jobs own idle policy and files; adapters own transport. */
 export type ComputerOptions = {
@@ -11,6 +13,7 @@ export type ComputerOptions = {
   scope?: string
   idlePauseMs: number
   keepDays: number
+  desktop?: boolean
 }
 
 const WORKSPACE = "/workspace"
@@ -43,6 +46,7 @@ export class Computers {
   /** Sessions whose VM this process has resolved: the handle, so later calls skip the lookup. */
   private readonly vms = new Map<string, Promise<SandboxHandle>>()
   private readonly pauseTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly pausing = new Map<string, Promise<void>>()
   /** Saved file ids already copied into each session's VM by this process. */
   private readonly copied = new Map<string, Set<string>>()
 
@@ -54,6 +58,8 @@ export class Computers {
   readonly prompt = COMPUTER_PROMPT
   readonly tools: ToolSpec[] = COMPUTER_TOOLS
   readonly toolNames: ReadonlySet<string> = COMPUTER_TOOL_NAMES
+  readonly desktopTools: ToolSpec[]
+  private readonly desktop?: Desktop
 
   /**
    * `files` is the conversation's kept files (uploads in, outputs out); without it the computer only runs commands.
@@ -65,6 +71,69 @@ export class Computers {
     this.snapshot = this.provider.currentImage()?.id ?? "configured image"
     this.files = deps.files
     this.readFile = deps.readFile
+    this.desktop = options.desktop ? new Desktop(this.provider) : undefined
+    this.desktopTools = this.desktop ? [DESKTOP_TOOL] : []
+  }
+
+  async desktopRun(sessionId: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+    const parsed = z.object({ view: z.enum(["browser", "computer"]), operation: z.string().max(64), args: z.record(z.string(), z.unknown()) }).strict().parse(input)
+    const desktop = this.desktop
+    if (!desktop) throw new Error("Desktop access is not configured.")
+    signal?.throwIfAborted()
+    const box = await this.vm(sessionId)
+    let stopping: Promise<unknown> | undefined
+    const stop = () => {
+      stopping ??= desktop.call(box, "/stop", {})
+      void stopping.catch(() => {})
+    }
+    try {
+      await desktop.start(box)
+      signal?.addEventListener("abort", stop, { once: true })
+      if (signal?.aborted) { stop(); signal.throwIfAborted() }
+      const program = parsed.operation === "computer_run"
+        ? z.object({ code: z.string().min(1).max(32_000), tabId: z.string().optional(), input: z.json().optional(), timeoutMs: z.number().int().min(1000).max(60_000).optional() }).strict().parse(parsed.args)
+        : null
+      const raw = await desktop.call(box, program ? "/computer/program" : parsed.view === "browser" ? "/browser/task" : "/computer/task", program
+        ? { ...program, sessionId, surface: parsed.view }
+        : { sessionId, ...(parsed.view === "browser" ? { operation: parsed.operation } : { name: parsed.operation }), args: parsed.args })
+      signal?.throwIfAborted()
+      const result = z.object({ ok: z.boolean().optional(), isError: z.boolean().optional(), image: z.object({ data: z.string(), mediaType: z.string().optional(), mimeType: z.string().optional() }).optional(), images: z.array(z.object({ data: z.string(), mimeType: z.string() })).optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional(), data: z.string().optional(), mimeType: z.string().optional() })).optional() }).loose().parse(raw)
+      const images = result.content?.flatMap(part => part.type === "image" && part.data ? [{ mediaType: part.mimeType ?? "image/png", data: part.data }] : []) ?? []
+      if (result.image) images.push({ mediaType: result.image.mediaType ?? result.image.mimeType ?? "image/png", data: result.image.data })
+      for (const image of result.images ?? []) images.push({ mediaType: image.mimeType, data: image.data })
+      const { image, images: programImages, content, ...text } = result
+      return { output: content ? content.filter(part => part.type === "text").map(part => part.text ?? "").join("\n") : JSON.stringify(text), isError: result.isError === true || result.ok === false, ...(images.length ? { images } : {}) }
+    } finally {
+      signal?.removeEventListener("abort", stop)
+      try { if (stopping) await stopping }
+      finally { this.release(sessionId) }
+    }
+  }
+
+  async desktopViewer(sessionId: string, input: { view: DesktopView; control: boolean; origin: string }) {
+    if (!this.desktop) throw new Error("Desktop access is not configured.")
+    const pending = this.vms.get(sessionId)
+    const existing = pending ? await this.provider.inspect(await pending) : await this.provider.find({ idempotencyKey: this.slug(sessionId), labels: this.spec(sessionId).labels })
+    if (existing?.state === "stopped" || existing?.state === "stopping") return { state: "paused" as const }
+    const box = await this.vm(sessionId)
+    try { return { state: "connected" as const, ...await this.desktop.viewer(box, input) } }
+    finally { this.release(sessionId) }
+  }
+
+  async desktopAction(sessionId: string, action: "continue" | "pause" | "resume") {
+    if (!this.desktop) throw new Error("Desktop access is not configured.")
+    const pending = this.vms.get(sessionId)
+    const existing = action === "pause" ? pending ? await this.provider.inspect(await pending) : await this.provider.find({ idempotencyKey: this.slug(sessionId), labels: this.spec(sessionId).labels }) : null
+    if (action === "pause" && (!existing || existing.state === "stopped" || existing.state === "stopping")) return { ok: true }
+    const box = existing ?? await this.vm(sessionId)
+    if (action === "pause") {
+      if (!this.provider.blocks?.pause) throw new Error("This computer does not support pause.")
+      await this.provider.blocks.pause(box, { timeoutMs: 30_000 })
+    } else if (action === "continue") {
+      await this.desktop.call(box, "/continue", {})
+    } else await this.desktop.start(box)
+    this.release(sessionId)
+    return { ok: true }
   }
 
   /** Runs one of the computer's tools (`bash` or `look`) for a conversation. */
@@ -92,24 +161,25 @@ export class Computers {
     void this.vm(sessionId)
       .then((box) => this.execute(box, { command: "true", timeoutMs: 10_000 }))
       .catch(() => undefined)
+      .finally(() => this.release(sessionId))
   }
 
   /** The conversation's VM, created from the snapshot on first use. A paused VM wakes on its next command. */
   async vm(sessionId: string): Promise<SandboxHandle> {
     this.cancelPause(sessionId)
-    let pending = this.vms.get(sessionId)
-    if (!pending) {
-      pending = this.resolve(sessionId)
-      this.vms.set(sessionId, pending)
-      pending.catch(() => this.vms.delete(sessionId))
-      return pending
-    }
-    const current = await this.provider.inspect(await pending)
-    if (current.state === "running") return current
-    if (current.state === "missing") this.copied.delete(sessionId)
-    const waking = this.resolve(sessionId)
-    this.vms.set(sessionId, waking)
-    return waking
+    await this.pausing.get(sessionId)
+    const prior = this.vms.get(sessionId)
+    // Reserve the transition before awaiting provider state. Concurrent viewer
+    // and tool requests must not both issue a start against the same paused VM.
+    const pending = prior ? prior.then(async box => {
+      const current = await this.provider.inspect(box)
+      if (current.state === "running") return current
+      if (current.state === "missing") this.copied.delete(sessionId)
+      return this.resolve(sessionId)
+    }) : this.resolve(sessionId)
+    this.vms.set(sessionId, pending)
+    pending.catch(() => { if (this.vms.get(sessionId) === pending) this.vms.delete(sessionId) })
+    return pending
   }
 
   private spec(sessionId: string): SandboxSpec {
@@ -117,9 +187,14 @@ export class Computers {
       idempotencyKey: this.slug(sessionId), image: this.provider.currentImage(),
       labels: { kind: "headless-computer", ...(this.options.scope ? { [SCOPE_LABEL]: this.options.scope } : {}) },
       env: {}, storage: [], exposePorts: [],
-      // The job's own timer checks background jobs. Keep the provider's idle
-      // backstop long enough that a quiet rendering job does not get stopped.
-      lifecycle: { autoStopMinutes: 60, autoDeleteMinutes: this.options.keepDays * 1440 },
+      // Give the local background-job probe a minute of grace before provider
+      // auto-pause. The backstop still bounds cost if the runner disappears.
+      lifecycle: {
+        ...(this.provider.id === "daytona" && this.provider.blocks?.pause
+          ? { autoPauseMinutes: Math.max(1, Math.ceil(this.options.idlePauseMs / 60_000)) + 1, autoStopMinutes: 0 }
+          : { autoStopMinutes: 60 }),
+        autoDeleteMinutes: this.options.keepDays * 1440,
+      },
     }
   }
 
@@ -135,7 +210,7 @@ export class Computers {
   private async exec(sessionId: string, command: string, timeoutSeconds: number) {
     const box = await this.vm(sessionId)
     return this.execute(box, {
-      command: `cd ${WORKSPACE} 2>/dev/null || cd ~; exec bash -c "$WORKBOT_COMMAND"`,
+      command: `${this.desktop ? "umask 077; " : ""}cd ${WORKSPACE} 2>/dev/null || cd ~; exec bash -c "$WORKBOT_COMMAND"`,
       env: { WORKBOT_COMMAND: command, PATH: GUEST_PATH, HOME: "/home/ubuntu", LANG: "C.UTF-8" },
       timeoutMs: timeoutSeconds * 1000,
     })
@@ -150,13 +225,21 @@ export class Computers {
     this.pauseTimers.set(sessionId, timer)
   }
 
-  private async pauseIfIdle(sessionId: string) {
+  private pauseIfIdle(sessionId: string): Promise<void> {
+    const current = this.pausing.get(sessionId)
+    if (current) return current
+    const pending = this.checkIdle(sessionId).finally(() => this.pausing.delete(sessionId))
+    this.pausing.set(sessionId, pending)
+    return pending
+  }
+
+  private async checkIdle(sessionId: string) {
     this.pauseTimers.delete(sessionId)
     const pending = this.vms.get(sessionId)
     if (!pending) return
     try {
       const vm = await pending
-      const jobs = await this.execute(vm, { command: `ls ${WORKSPACE}/.jobs/*.running 2>/dev/null | wc -l`, timeoutMs: 10_000 })
+      const jobs = await this.execute(vm, { command: `ls ${WORKSPACE}/.jobs/*.running 2>/dev/null | wc -l`, activity: "maintenance", timeoutMs: 10_000 })
       if (Number(jobs.stdout?.trim() ?? "0") > 0) return this.release(sessionId)
       await (this.provider.blocks?.pause ? this.provider.blocks.pause(vm, { timeoutMs: 30_000 }) : this.provider.stop(vm, { timeoutMs: 30_000 }))
     } catch {
@@ -201,7 +284,7 @@ export class Computers {
         done.add(file.id)
         continue
       }
-      await this.blocks.files.write(vm, path.path, found.bytes, { timeoutMs: 30_000 })
+      await this.blocks.files.write(vm, path.path, found.bytes, { timeoutMs: 30_000, ...(this.desktop ? { mode: 0o660 } : {}) })
       done.add(file.id)
       copied.push(path.path)
     }

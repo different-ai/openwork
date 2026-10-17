@@ -411,8 +411,9 @@ async function prepareSharedElectronResources(repoRoot: string, log: (message: s
     prepareSharedResourcesPromise = (async () => {
       const desktopRoot = join(repoRoot, "apps", "desktop");
       const scriptsRoot = join(desktopRoot, "scripts");
-      log("Preparing shared Electron sidecars once for local eval surfaces...");
+      log("Preparing shared Electron sidecars/helpers once for local eval surfaces...");
       await runPrepareScript(join(scriptsRoot, "prepare-sidecar.mjs"), join(desktopRoot, "resources", "sidecars"), desktopRoot);
+      await runPrepareScript(join(scriptsRoot, "prepare-computer-use-helper.mjs"), join(desktopRoot, "resources", "helpers"), desktopRoot);
     })();
   }
   await prepareSharedResourcesPromise;

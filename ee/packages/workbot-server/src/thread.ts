@@ -226,7 +226,7 @@ function appOf(name: string, input: Record<string, unknown>): string | null {
 /** The conversation's kept files, so the ones Workbot made show under the answer that made them. */
 export type FileNames = ReadonlyMap<string, { name: string; createdAt: number; updatedAt?: number; mediaType?: string; size?: number; source?: "user" | "agent" }>
 
-const COMPUTER_TOOLS: ReadonlySet<string> = new Set(["bash", "look"])
+const COMPUTER_TOOLS: ReadonlySet<string> = new Set(["bash", "look", "desktop"])
 
 /**
  * Work on Workbot's computer reads as one step, however many commands it took: the person sees that it is using

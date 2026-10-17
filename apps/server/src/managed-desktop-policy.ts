@@ -304,6 +304,22 @@ class ManagedDesktopPolicy {
     const denial = agentPermissionDenial(rules, action, [name]);
     if (denial) throw new ApiError(403, "organization_policy_denied", denial);
   }
+  /** Remote computers require the signed-in organization's verified rollout. */
+  async remoteComputersEnabled(): Promise<boolean> {
+    const session = this.session;
+    const generation = this.generation;
+    if (!session) return false;
+    try {
+      const payload = await this.readDenJson(session, "/v1/org", generation);
+      this.identityChanged(generation);
+      const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
+      return features.computerUse === true && features.remoteComputers === true;
+    } catch {
+      // Missing, unreachable, signed-out or changed identity never grants access.
+      return false;
+    }
+  }
+
   /**
    * The member's website rules for the built-in browser, read by the desktop
    * process itself rather than taken from the app window. Den is asked first

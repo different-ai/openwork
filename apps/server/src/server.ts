@@ -1,3 +1,4 @@
+import { cloudComputerCall, cloudComputerFor, cloudComputerJson, startCloudComputerBridge } from "./cloud-computer.js";
 import { createV2SessionHomes, nativeSession, nativeSessionDirectory } from "./opencode-v2-session-home.js";
 import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./cloud-mcp-v2.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
@@ -857,6 +858,7 @@ export async function startServer(
     // workspace has no engine to reload.
     if (config.workspaces.length > 0 || enginePoolForConfig(config)) cloudProviderSync.markReloadPending();
   };
+  const stopCloudComputer = await startCloudComputerBridge(config);
   const routes = createRoutes(
     config,
     approvals,
@@ -1191,6 +1193,7 @@ export async function startServer(
     anonymousInference.stop();
     cloudProviderSync.stop();
     await engineV2Preview.stop().catch(() => undefined);
+    await stopCloudComputer();
     engineInstanceReaper.close();
     clearEngineInstanceReaperForConfig(config);
     invalidateEngineMcpServerState(config, engineMcpServerState);
@@ -1312,6 +1315,7 @@ export async function startServer(
       invalidateEngineMcpServerState(config, engineMcpServerState);
       watcherHandle.close();
       reloadBaselineRefreshers.delete(config);
+      await stopCloudComputer();
       await server.stop();
       if (recoveryError) throw recoveryError;
     },
@@ -2490,6 +2494,7 @@ function resolveDevLogPath(): string | null {
 
 function resolveBrowserProvider(): Capabilities["toolProviders"]["browser"] {
   const raw = (process.env.OPENWORK_BROWSER_PROVIDER ?? "").trim().toLowerCase();
+  if (raw === "sandbox-interactive") return { enabled: true, placement: "in-sandbox", mode: "interactive" };
   if (raw === "sandbox-headless") {
     return { enabled: true, placement: "in-sandbox", mode: "headless" };
   }
@@ -3305,6 +3310,24 @@ function createRoutes(
 
   addRoute(routes, "GET", "/managed-policy", "client", async () =>
     jsonResponse({ policy: await managedDesktopPolicy(config).current() }));
+  addRoute(routes, "GET", "/cloud-computer/status", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    return cloudComputerJson(await cloudComputerCall(() => cloudComputerFor(config).snapshot()));
+  });
+  addRoute(routes, "GET", "/cloud-computer/frame", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    return cloudComputerJson(await cloudComputerCall(() => cloudComputerFor(config).frame()));
+  });
+  addRoute(routes, "POST", "/cloud-computer/interact", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    ensureWritable(config);
+    if (ctx.request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") throw new ApiError(415, "invalid_content_type", "A JSON request is required");
+    const body = await readJsonBody(ctx.request);
+    return cloudComputerJson(await cloudComputerCall(() => cloudComputerFor(config).interact(body)));
+  });
+  // Electron verifies remote rollout authority here, independent of renderer state.
+  addRoute(routes, "GET", "/managed-policy/remote-computers", "client", async () =>
+    jsonResponse({ enabled: await managedDesktopPolicy(config).remoteComputersEnabled() }));
   // The desktop process reads the built-in browser's website rules here itself.
   addRoute(routes, "GET", "/managed-policy/website-rules", "client", async () =>
     jsonResponse({ rules: await managedDesktopPolicy(config).websiteRules() }));

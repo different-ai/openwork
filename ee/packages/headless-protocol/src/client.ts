@@ -178,12 +178,12 @@ export type RunnerResult<T> = { ok: true; value: T } | { ok: false; status: numb
 
 const REQUEST_TIMEOUT_MS = 15_000
 
-async function request(deps: HeadlessRunnerDeps, method: string, path: string, body?: unknown) {
+async function request(deps: HeadlessRunnerDeps, method: string, path: string, body?: unknown, timeoutMs = REQUEST_TIMEOUT_MS) {
   const response = await deps.fetch(`${deps.config.url}${path}`, {
     method,
     headers: runnerHeaders(deps.config, { "content-type": "application/json" }),
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   })
   const payload: unknown = await response.json().catch(() => ({}))
   return { status: response.status, payload }
@@ -209,7 +209,7 @@ export type RunnerRepeatLimits = { maxWaitingMs?: number; maxIdenticalFailures?:
  * the computer must be configured on the runner too), so a caller that never asks (Automations) never gets any of
  * them. Slack asks for reactions and tasks where `slackWorkbotReplies` is on.
  */
-export type RunnerCapabilities = { files?: boolean; computer?: boolean; reactions?: boolean; tasks?: boolean }
+export type RunnerCapabilities = { files?: boolean; computer?: boolean; desktop?: boolean; reactions?: boolean; tasks?: boolean }
 
 /**
  * Who a conversation belongs to and how it is shown to the model: `owner` (the caller's key for one person) and `ref`
@@ -221,6 +221,7 @@ export type RunnerSessionSettings = { owner?: string; ref?: string; timeZone?: s
 const capabilityFields = (input: RunnerCapabilities & RunnerSessionSettings) => ({
   ...(input.files !== undefined ? { files: input.files } : {}),
   ...(input.computer !== undefined ? { computer: input.computer } : {}),
+  ...(input.desktop !== undefined ? { desktop: input.desktop } : {}),
   ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
   ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
   ...(input.owner ? { owner: input.owner } : {}),
@@ -235,6 +236,16 @@ const unknownSetting = (status: number, payload: unknown) => status === 400 && e
 
 export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
   return {
+    async desktopViewer(sessionId: string, input: { view: "browser" | "computer"; control: boolean; origin: string }) {
+      const { status, payload } = await request(deps, "POST", `${sessionPath(sessionId)}/desktop/viewer`, input, 180_000)
+      const parsed = z.union([z.object({ state: z.literal("paused") }), z.object({ state: z.literal("connected"), url: z.string().url(), expiresAt: z.number(), paused: z.boolean() })]).safeParse(payload)
+      if (status !== 200 || !parsed.success) return { ok: false as const, status, error: errorCode(payload, "desktop_unavailable") }
+      return { ok: true as const, value: parsed.data }
+    },
+    async desktopAction(sessionId: string, action: "continue" | "pause" | "resume") {
+      const { status, payload } = await request(deps, "POST", `${sessionPath(sessionId)}/desktop/action`, { action }, 180_000)
+      return { ok: status === 200, error: errorCode(payload, "desktop_unavailable") }
+    },
     async createSession(
       input: { title?: string; instructions?: string; repeats?: RunnerRepeatLimits } & RunnerCapabilities = {},
     ): Promise<RunnerResult<{ id: string }>> {
@@ -272,6 +283,11 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       }
       const extras = { ...(input.repeats ? { repeats: input.repeats } : {}), ...capabilityFields(input) }
       let { status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...extras })
+      // An older runner has no desktop setting. Omitting an explicit off value preserves side-chat settings.
+      if (unknownSetting(status, payload) && input.desktop === false) {
+        const { desktop, ...compatible } = extras
+        ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
+      }
       // A runner older than per-session capabilities or settings rejects them: keep the conversation, without them.
       if (unknownSetting(status, payload) && Object.keys(extras).length && !input.strict) ({ status, payload } = await request(deps, "PUT", sessionPath(id), base))
       const saved = z.object({ id: z.string() }).safeParse(payload)

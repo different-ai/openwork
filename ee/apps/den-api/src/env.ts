@@ -172,12 +172,14 @@ const EnvSchema = z.object({
   DAYTONA_API_KEY: z.string().optional(),
   DAYTONA_TARGET: z.string().optional(),
   DAYTONA_SNAPSHOT: z.string().optional(),
+  DAYTONA_SANDBOX_CLASS: z.enum(["container", "linux-vm"]).default("container"),
   DAYTONA_SANDBOX_IMAGE: z.string().optional(),
   DAYTONA_SANDBOX_CPU: z.string().optional(),
   DAYTONA_SANDBOX_MEMORY: z.string().optional(),
   DAYTONA_SANDBOX_DISK: z.string().optional(),
   DAYTONA_SANDBOX_PUBLIC: z.string().optional(),
   DAYTONA_SANDBOX_AUTO_STOP_INTERVAL: z.string().optional(),
+  DAYTONA_SANDBOX_AUTO_PAUSE_INTERVAL: z.coerce.number().int().min(1).max(1440).default(5),
   DAYTONA_SANDBOX_AUTO_ARCHIVE_INTERVAL: z.string().optional(),
   DAYTONA_SANDBOX_AUTO_DELETE_INTERVAL: z.string().optional(),
   DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS: z.string().optional(),
@@ -239,6 +241,7 @@ const EnvSchema = z.object({
   }
 
   if ((value.CLOUD_RUNTIME_PROVIDER ?? value.PROVISIONER_MODE) === "daytona") {
+    if (value.DAYTONA_SANDBOX_CLASS === "linux-vm" && !value.DAYTONA_SNAPSHOT) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Daytona microVMs require a prepared Linux VM DAYTONA_SNAPSHOT", path: ["DAYTONA_SNAPSHOT"] })
     for (const key of ["DAYTONA_API_KEY"] as const) {
       if (!value[key]) {
         ctx.addIssue({
@@ -908,6 +911,7 @@ export const env = {
     apiKey: optionalString(parsed.DAYTONA_API_KEY),
     target: optionalString(parsed.DAYTONA_TARGET),
     snapshot: optionalString(parsed.DAYTONA_SNAPSHOT),
+    sandboxClass: parsed.DAYTONA_SANDBOX_CLASS,
     image: optionalString(parsed.DAYTONA_SANDBOX_IMAGE) ?? "node:20-bookworm",
     resources: {
       cpu: Number(parsed.DAYTONA_SANDBOX_CPU ?? "2"),
@@ -916,6 +920,7 @@ export const env = {
     },
     public: daytonaSandboxPublic,
     autoStopInterval: Number(parsed.DAYTONA_SANDBOX_AUTO_STOP_INTERVAL ?? "0"),
+    autoPauseInterval: parsed.DAYTONA_SANDBOX_AUTO_PAUSE_INTERVAL,
     autoArchiveInterval: Number(
       parsed.DAYTONA_SANDBOX_AUTO_ARCHIVE_INTERVAL ?? "10080",
     ),

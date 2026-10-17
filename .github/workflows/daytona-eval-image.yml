@@ -13,6 +13,14 @@ on:
       - pnpm-lock.yaml
       - package.json
   workflow_dispatch:
+    inputs:
+      target:
+        description: Image to publish (desktop uses an immutable tag; eval-vnc keeps its existing tags)
+        type: choice
+        default: eval-vnc
+        options:
+          - eval-vnc
+          - computer-desktop
 
 permissions:
   contents: read
@@ -46,22 +54,51 @@ jobs:
       - name: Normalize image name
         id: image
         shell: bash
+        env:
+          TARGET: ${{ inputs.target || 'eval-vnc' }}
         run: |
           set -euo pipefail
           image="${IMAGE_NAME,,}"
           echo "name=$image" >> "$GITHUB_OUTPUT"
+          case "$TARGET" in
+            computer-desktop)
+              echo "context=." >> "$GITHUB_OUTPUT"
+              echo "file=ee/packages/headless-computer/Dockerfile.desktop" >> "$GITHUB_OUTPUT"
+              echo "platforms=linux/amd64" >> "$GITHUB_OUTPUT"
+              echo "tags=$image:computer-desktop-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+              # Official Node 24 Bookworm AMD64 manifest; pin the build input.
+              echo "build_args=OPENWORK_COMPUTER_BASE_IMAGE=node:24-bookworm-slim@sha256:ec857ea6bb60cb3d0fa4d97495590c5fe7d51be8572c307b55957eeb06569cf7" >> "$GITHUB_OUTPUT"
+              ;;
+            eval-vnc)
+              echo "context=.devcontainer" >> "$GITHUB_OUTPUT"
+              echo "file=.devcontainer/Dockerfile.daytona-vnc" >> "$GITHUB_OUTPUT"
+              echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
+              echo "tags<<TAGS" >> "$GITHUB_OUTPUT"
+              echo "$image:dev" >> "$GITHUB_OUTPUT"
+              echo "$image:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+              echo "TAGS" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo "Unsupported image target" >&2; exit 1 ;;
+          esac
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
-          context: .devcontainer
-          file: .devcontainer/Dockerfile.daytona-vnc
+          context: ${{ steps.image.outputs.context }}
+          file: ${{ steps.image.outputs.file }}
           # Daytona's `us` target pulls linux/amd64; keep arm64 for existing ARM runners.
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ steps.image.outputs.platforms }}
+          build-args: ${{ steps.image.outputs.build_args }}
           push: true
-          tags: |
-            ${{ steps.image.outputs.name }}:dev
-            ${{ steps.image.outputs.name }}:${{ github.sha }}
+          tags: ${{ steps.image.outputs.tags }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Record immutable image
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          printf 'Published image: %s@%s\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"

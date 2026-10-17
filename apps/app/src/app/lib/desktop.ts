@@ -52,7 +52,19 @@ import type {
   BrowserStatePayload,
   OpenBrowserUrlResult,
 } from "@openwork/browser-tabs";
+import type { ComputerRequest } from "@openwork/types/desktop-ipc";
 export type { BrowserStatePayload } from "@openwork/browser-tabs";
+
+export type BrowserPresentationMode = "hidden" | "floating" | "side" | "fullscreen";
+
+export type BrowserThumbnail = {
+  tabId: string;
+  url: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+  capturedAt: number;
+};
 
 export type BrowserProxyState = {
   proxy: { rules: string; authenticated: boolean } | null;
@@ -86,6 +98,9 @@ declare global {
         command: C,
         ...args: DesktopCommandArgs<C>
       ) => Promise<DesktopCommandResult<C>>;
+      computer?: {
+        onRequest?: (callback: (payload: { sessionId: string; request: ComputerRequest | null }) => void) => () => void;
+      };
       automationRunner?: {
         onCredentialRejected?: (callback: () => void) => () => void;
       };
@@ -183,6 +198,10 @@ declare global {
           options?: { sessionId?: string | null },
         ) => Promise<OpenBrowserUrlResult>;
         setVisibleSession?: (sessionId: string | null) => Promise<string | null>;
+        /** Tells the host how the visible conversation shows its browser, so Escape inside a full-screen page can leave full screen. */
+        setPresentation?: (sessionId: string | null, mode: BrowserPresentationMode) => Promise<boolean>;
+        /** A small JPEG preview of the visible conversation's on-screen tab, or null when none may be captured. */
+        thumbnail?: (tabId: string) => Promise<BrowserThumbnail | null>;
         navigate?: (url: string) => Promise<void>;
         back?: () => Promise<void>;
         forward?: () => Promise<void>;
@@ -212,6 +231,8 @@ declare global {
         onStateChange?: (callback: (state: BrowserStatePayload) => void) => () => void;
         onPanelOpened?: (callback: (payload?: BrowserPanelOwnerPayload) => void) => () => void;
         onPanelClosed?: (callback: (payload?: BrowserPanelOwnerPayload) => void) => () => void;
+        /** Escape was pressed inside the page of a conversation shown full screen. */
+        onPresentationExit?: (callback: (payload: { sessionId: string | null; tabId: string }) => void) => () => void;
       };
       terminal?: {
         create?: (options: { cwd: string; cols: number; rows: number }) => Promise<{ terminalId: string }>;

@@ -1,0 +1,14 @@
+[Unit]
+Description=Restore desktop privilege helpers after Daytona image import
+DefaultDependencies=no
+After=local-fs.target
+Before=daytona.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/bin/chmod 4755 /usr/bin/sudo /usr/lib/chromium/chrome-sandbox
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

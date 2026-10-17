@@ -31,6 +31,7 @@ import { PreviewPanel } from "./preview";
 import { Welcome } from "./welcome";
 import { WorkbotCalendar } from "./calendar";
 import { WorkbotDocuments } from "./documents";
+import { WorkbotComputer } from "./computer";
 import { workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import type { DocumentOpenRequest } from "@openwork/documents";
 import { SentContext, WorkspaceAssistant, WorkspaceMenu, WorkspaceNavigationContext } from "./workspace";
@@ -297,6 +298,7 @@ function ChatScreen({ host, navigation, onDraftsChange }: { host: WorkbotHost; n
           <div className="flex min-h-0 min-w-0 flex-1 border-t border-[var(--wb-hairline)]" style={{ display: tab === "calendar" ? undefined : "none" }} hidden={tab !== "calendar"}>
             {host.calendar && (calendarVisited || tab === "calendar") && <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={name} onContextChange={setCalendarContext} />}
           </div>
+          {tab === "computer" && host.computer && <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} />}
           </div>
           {previewFile && <PreviewPanel file={previewFile} onClose={() => setPreview(null)} />}
           </div>
@@ -307,7 +309,7 @@ function ChatScreen({ host, navigation, onDraftsChange }: { host: WorkbotHost; n
       </WorkspaceNavigationContext.Provider>
     </OpenFileContext.Provider>;
   }
-  if ((tab === "calendar" && host.calendar) || tab === "documents") {
+  if ((tab === "calendar" && host.calendar) || tab === "documents" || (tab === "computer" && host.computer)) {
     return (
       <div className="workbot flex h-dvh flex-col bg-[var(--wb-bg)] antialiased">
         <WorkbotHeader
@@ -319,7 +321,7 @@ function ChatScreen({ host, navigation, onDraftsChange }: { host: WorkbotHost; n
         />
         {leavingDocuments && <div className="border-t border-[var(--wb-hairline)] px-4 py-2 text-[13px]" role="status">You have unsaved document edits. <button type="button" className="ml-3 underline" onClick={() => setLeavingDocuments(null)}>Keep editing</button><button type="button" className="ml-3 underline" onClick={() => { const next = leavingDocuments; setLeavingDocuments(null); setDocumentsDirty(false); setTab(next, true); }}>Discard edits and leave Documents</button></div>}
         <div className="flex min-h-0 flex-1 border-t border-[#01162712]">
-          {tab === "documents" ? <WorkbotDocuments onDirtyChange={setDocumentsDirty} /> : <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={data?.name ?? "Workbot"} />}
+          {tab === "computer" ? <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} /> : tab === "documents" ? <WorkbotDocuments onDirtyChange={setDocumentsDirty} /> : <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={data?.name ?? "Workbot"} />}
         </div>
       </div>
     );
@@ -546,11 +548,11 @@ function useConnectedApps() {
   return workbotHost().useConnectedApps();
 }
 
-type WorkbotTab = "home" | "calendar" | "documents";
+type WorkbotTab = "home" | "calendar" | "documents" | "computer";
 
 function tabFromLocation(): WorkbotTab {
   const path = typeof window !== "undefined" ? window.location.pathname.replace(/\/+$/, "") : "";
-  return path === "/documents" ? "documents" : path === "/calendar" ? "calendar" : "home";
+  return path === "/computer" ? "computer" : path === "/documents" ? "documents" : path === "/calendar" ? "calendar" : "home";
 }
 
 /** Home (the conversation) and Calendar, as paths so a reload or a shared link opens the same tab. */
@@ -558,6 +560,10 @@ function useWorkbotTab(beforeLeave?: (next: WorkbotTab) => boolean, preserveSear
   const beforeLeaveRef = useRef(beforeLeave);
   beforeLeaveRef.current = beforeLeave;
   const [tab, setTabState] = useState<WorkbotTab>(tabFromLocation);
+  const computerEnabled = workbotHost().computer === true;
+  useEffect(() => {
+    if (!computerEnabled && tab === "computer") { window.history.replaceState(null, "", `/${preserveSearch ? window.location.search : ""}`); setTabState("home"); }
+  }, [computerEnabled, tab, preserveSearch]);
   useEffect(() => {
     const sync = () => {
       const next = tabFromLocation();
@@ -580,7 +586,7 @@ function useWorkbotTab(beforeLeave?: (next: WorkbotTab) => boolean, preserveSear
 function WorkbotNav({ tab, onTab }: { tab: WorkbotTab; onTab: (tab: WorkbotTab) => void }) {
   return (
     <nav className="ml-4 flex items-center gap-0.5" aria-label="Workbot">
-      {(["home", ...(workbotHost().calendar ? ["calendar" as const] : []), "documents"] as const).map((entry) => (
+      {(["home", ...(workbotHost().calendar ? ["calendar" as const] : []), "documents", ...(workbotHost().computer ? ["computer" as const] : [])] as const).map((entry) => (
         <button
           key={entry}
           type="button"
@@ -588,7 +594,7 @@ function WorkbotNav({ tab, onTab }: { tab: WorkbotTab; onTab: (tab: WorkbotTab) 
           onClick={() => onTab(entry)}
           className={`flex h-8 items-center rounded-lg px-3 text-[13px] leading-4 transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${tab === entry ? "bg-[#EDF0F2] font-semibold text-[#11181C]" : "font-medium text-[#687076] hover:text-[#11181C]"}`}
         >
-          {entry === "home" ? "Home" : entry === "calendar" ? "Calendar" : "Documents"}{entry === "documents" && !workbotHost().documents ? <Lock size={12} className="ml-1.5" aria-label="Unavailable" /> : null}
+          {entry === "home" ? "Home" : entry === "calendar" ? "Calendar" : entry === "documents" ? "Documents" : "Computer"}{entry === "documents" && !workbotHost().documents ? <Lock size={12} className="ml-1.5" aria-label="Unavailable" /> : null}
         </button>
       ))}
     </nav>

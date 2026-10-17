@@ -336,6 +336,9 @@ importers:
       '@openwork/browser-tabs':
         specifier: workspace:*
         version: link:../../packages/browser-tabs
+      '@openwork/computer-use':
+        specifier: workspace:*
+        version: link:../../packages/computer-use
       '@openwork/enterprise-mcp-client':
         specifier: workspace:*
         version: link:../../packages/enterprise-mcp-client
@@ -351,6 +354,15 @@ importers:
       '@openwork/remote-sessions':
         specifier: workspace:*
         version: link:../../packages/remote-sessions
+      '@openwork/sandbox':
+        specifier: workspace:*
+        version: link:../../packages/sandbox
+      '@openwork/sandbox-daytona':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-daytona
+      '@openwork/sandbox-freestyle':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-freestyle
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -458,6 +470,9 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.18.15
         version: 1.18.18
+      '@openwork/computer-use':
+        specifier: workspace:*
+        version: link:../../packages/computer-use
       '@openwork/enterprise-mcp-client':
         specifier: workspace:*
         version: link:../../packages/enterprise-mcp-client
@@ -1250,6 +1265,9 @@ importers:
 
   ee/packages/headless-computer:
     dependencies:
+      '@openwork/computer-use':
+        specifier: workspace:*
+        version: link:../../../packages/computer-use
       '@openwork/sandbox':
         specifier: workspace:*
         version: link:../../../packages/sandbox
@@ -1262,6 +1280,9 @@ importers:
       freestyle:
         specifier: 0.2.13
         version: 0.2.13
+      ws:
+        specifier: 8.21.0
+        version: 8.21.0
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -1272,6 +1293,9 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
       esbuild:
         specifier: 0.25.12
         version: 0.25.12
@@ -1385,6 +1409,9 @@ importers:
       '@base-ui/react':
         specifier: ^1.4.1
         version: 1.4.1(@types/react@19.2.14)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@novnc/novnc':
+        specifier: 1.7.0
+        version: 1.7.0
       '@openwork/calendar':
         specifier: workspace:*
         version: link:../../../packages/calendar
@@ -1488,6 +1515,25 @@ importers:
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
+
+  packages/computer-use:
+    dependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+    devDependencies:
+      '@openwork/codemode':
+        specifier: workspace:*
+        version: link:../codemode
+      effect:
+        specifier: 4.0.0-beta.83
+        version: 4.0.0-beta.83
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
 
   packages/connect-link:
     dependencies:
@@ -3640,6 +3686,9 @@ packages:
   '@nodelib/fs.walk@1.2.8':
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
+
+  '@novnc/novnc@1.7.0':
+    resolution: {integrity: sha512-ucEJOx4T2avIRCleodk7YobZj5O2Ga2AeLfQ69A/yjG9HHba2+PDgwSkN3FttrmG+70ZGx21sElNFouK13RzyA==}
 
   '@open-draft/deferred-promise@2.2.0':
     resolution: {integrity: sha512-CecwLWx3rhxVQF6V4bAgPS5t+So2sTbPgAzafKkVizyi7tlwpcFpdFqq+wqF2OwNBmqFuu6tOyouTuxgpMfzmA==}
@@ -12827,6 +12876,8 @@ snapshots:
     dependencies:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
+
+  '@novnc/novnc@1.7.0': {}
 
   '@open-draft/deferred-promise@2.2.0': {}
 

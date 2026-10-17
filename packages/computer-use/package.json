@@ -1,0 +1,38 @@
+{
+  "name": "@openwork/computer-use",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared computer and browser control with shortcuts and bounded UI programs",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build:native": "swift build --package-path native -c release --product ComputerUse",
+    "check": "swift test --package-path native",
+    "build": "pnpm --filter @openwork/codemode build && tsup && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "exports": {
+    "./computer-control": "./computer-control.mjs",
+    "./computer-remote": "./computer-remote.mjs",
+    "./computer-x11-driver": "./computer-x11-driver.mjs",
+    "./browser-task": "./browser-task.mjs",
+    "./cloud": {
+      "types": "./cloud.d.mts",
+      "default": "./cloud.mjs"
+    },
+    "./runtime": {
+      "types": "./dist/types/src/runtime.d.ts",
+      "development": "./src/runtime.ts",
+      "default": "./dist/runtime.js"
+    }
+  },
+  "dependencies": {
+    "typescript": "5.9.3"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "@openwork/codemode": "workspace:*",
+    "effect": "4.0.0-beta.83",
+    "zod": "^4.3.6"
+  }
+}

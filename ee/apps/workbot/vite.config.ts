@@ -9,6 +9,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: { conditions: ["development"] },
   build: {
+    target: "es2022",
     outDir: fileURLToPath(new URL("./dist/client", import.meta.url)),
     emptyOutDir: true,
   },

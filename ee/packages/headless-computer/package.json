@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "pnpm --filter \"@openwork-ee/headless-computer^...\" --if-present run build && esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/index.js --external:@openwork/sandbox --external:@openwork/sandbox-freestyle --external:@openwork/sandbox-daytona --external:zod",
+    "build": "pnpm --filter \"@openwork-ee/headless-computer^...\" --if-present run build && esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/index.js --external:@openwork/sandbox --external:@openwork/sandbox-freestyle --external:@openwork/sandbox-daytona --external:zod && node scripts/build-desktop.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "snapshot:build": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/build-snapshot.ts",
     "test": "tsx --test src/*.test.ts",
@@ -20,17 +20,20 @@
     "proof:live": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/prove-computer.ts"
   },
   "dependencies": {
-    "freestyle": "0.2.13",
-    "zod": "^4.3.6",
     "@openwork/sandbox": "workspace:*",
+    "@openwork/sandbox-daytona": "workspace:*",
     "@openwork/sandbox-freestyle": "workspace:*",
-    "@openwork/sandbox-daytona": "workspace:*"
+    "freestyle": "0.2.13",
+    "ws": "8.18.3",
+    "zod": "^4.3.6",
+    "@openwork/computer-use": "workspace:*"
   },
   "devDependencies": {
+    "@daytonaio/sdk": "^0.201.0",
     "@types/node": "^24.0.0",
+    "@types/ws": "8.18.1",
     "esbuild": "0.25.12",
     "tsx": "^4.23.1",
-    "typescript": "^5.5.4",
-    "@daytonaio/sdk": "^0.201.0"
+    "typescript": "^5.5.4"
   }
 }

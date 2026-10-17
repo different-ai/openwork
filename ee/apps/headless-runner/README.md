@@ -254,6 +254,13 @@ is unavailable. Disk survives; do not depend on in-memory background processes
 surviving a stop. The job checks for background work before stopping an idle
 computer. An unknown command timeout is reported honestly and never retried.
 
+For the visible Workbot desktop, use `HEADLESS_COMPUTER_CLASS=linux-vm` and
+`HEADLESS_COMPUTER_DESKTOP=true` with a prepared desktop snapshot. That class
+preserves memory, receives provider auto-pause, and renews a retention deadline
+from `HEADLESS_COMPUTER_KEEP_DAYS` so paused disks can expire too. Desktop mode
+rejects container snapshots. See [Workbot's Computer tab](../../../docs/computer-use/workbot.md)
+for image preparation, shared applications and the live microVM lifecycle check.
+
 Opt-in verification, creating and cleaning one real computer:
 
 ```sh

@@ -30,6 +30,30 @@ Ordinary popup windows stay in
 owned built-in tabs, using the same profile and opener. Non-HTTP(S) popups are
 refused. A closed tab is an explicit error, never silently replaced.
 
+## Presentation modes
+
+Behind the `browserFloatingView` desktop feature (off by default), each
+conversation shows its browser in one of four modes, kept in memory by the
+renderer (`panel/browser-presentation-store.ts`):
+
+- **Hidden**: no browser surface; the header Browser button is unpressed.
+- **Floating**: a small card on the right of the chat pane, above the composer.
+  It snaps to top, middle or bottom (drag, Up/Down/Home/End or its menu) and
+  shows a preview of the on-screen tab, its site and its state. "Needs you" in
+  amber means the browser needs attention or a handoff waits. Clicking the card opens the
+  browser beside the chat. The native page is not shown while floating.
+- **Side**: today's docked side panel, with its remembered width.
+- **Full screen**: the browser over the whole window. Escape, in OpenWork or
+  inside the page, and Exit full screen return to the last floating or side
+  choice. Full screen never survives a conversation switch or its page closing.
+
+The header Browser button toggles between hidden and the last floating or side
+choice. A page the agent opens comes up beside the chat (or stays full screen),
+because the agent acts only on a page the person can see; the person can float
+it from there. Reading and navigating keep working while floating. A browser
+handoff, or an action that needs the page on screen (`needs_attention`), moves
+a floating or hidden browser beside the chat, where the prompt is.
+
 ## Execution contract
 
 The existing Browser extension's installed identity now resolves to the desktop

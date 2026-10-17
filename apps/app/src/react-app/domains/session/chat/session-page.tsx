@@ -90,6 +90,13 @@ import type { OpenTargetOptions } from "@/lib/target-provider";
 import { SidePanel } from "../panel/side-panel";
 import { getSidePanelSessionKey } from "../panel/side-panel-session";
 import { useCreateTab, useOpenBrowserRailPane } from "../panel/use-side-panel-tabs";
+import { useBrowserPresentationController } from "../panel/use-browser-presentation";
+import { BrowserHeaderButton, BrowserPresentationSurfaces } from "../panel/browser-presentation";
+import { FloatingSlotProvider, SessionFloatingLayer } from "../panel/floating-slot";
+import { useDesktopFeature } from "../status/use-desktop-feature";
+import { CloudComputerControl } from "../computer/cloud-computer-control";
+import { ComputerControl } from "../computer/computer-control";
+import { useComputerBridge } from "../computer/computer-store";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
@@ -606,6 +613,26 @@ export function SessionPage(props: SessionPageProps) {
     void (window as Window).__OPENWORK_ELECTRON__?.browser?.setVisibleSession?.(props.selectedSessionId ?? null);
   }, [props.selectedSessionId]);
 
+  // Floating / side / full-screen browser, behind its feature flag. Off, every
+  // action below reports "not handled" and the docked browser is unchanged.
+  // Declared after setVisibleSession so the host hears the session first.
+  const browserFloatingView = useDesktopFeature("browserFloatingView");
+  const browserPresentation = useBrowserPresentationController({
+    enabled: browserFloatingView && isElectronRuntime(),
+    sessionKey: sidePanelSessionKey,
+    visibleSessionId: props.selectedSessionId ?? null,
+    sidePanel: activeSidePanel,
+    setSidePanel: setCurrentSidePanel,
+  });
+  const { placeOpenedBrowser, handlePanelClosed: handleBrowserPanelClosed } = browserPresentation;
+  // Computer use on this Mac, behind its feature flag: the header Computer
+  // button, its floating view, in-chat requests and the hand-back at turn end.
+  const computerUseFeature = useDesktopFeature("computerUse");
+  const remoteComputersFeature = useDesktopFeature("remoteComputers");
+  // The button hides itself when this computer can't run it and no VM is connected.
+  const computerUse = computerUseFeature && isElectronRuntime();
+  useComputerBridge(props.sidebar.sessionStatusById, computerUse, remoteComputersFeature);
+
   // Open the side panel of the conversation that owns a browser event. For the
   // conversation on screen that is the visible panel; for a background
   // conversation only its own panel state is marked open, so its tabs are
@@ -634,10 +661,12 @@ export function SessionPage(props: SessionPageProps) {
         // active. Passive title/loading updates still preserve that artifact.
         openTab(ownerSessionId, payload.tab);
       }
+      if (placeOpenedBrowser(payload?.ownerSessionId)) return;
       openOwnerSidePanel(payload?.ownerSessionId);
     });
     const unsubClose = browser.onPanelClosed?.((payload) => {
       const ownerSessionId = payload?.ownerSessionId ?? null;
+      handleBrowserPanelClosed(ownerSessionId);
       const ownerKey = getSidePanelSessionKey(ownerSessionId);
       if (ownerSessionId === null || ownerKey === sidePanelSessionKey) {
         setCurrentSidePanel(null);
@@ -646,7 +675,7 @@ export function SessionPage(props: SessionPageProps) {
       setSidePanelState(ownerKey, null);
     });
     return () => { unsubOpen?.(); unsubClose?.(); };
-  }, [openOwnerSidePanel, openTab, props.selectedSessionId, setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
+  }, [handleBrowserPanelClosed, openOwnerSidePanel, openTab, placeOpenedBrowser, props.selectedSessionId, setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
   const {
     leftSidebarResizing,
     leftSidebarWidth,
@@ -817,10 +846,10 @@ export function SessionPage(props: SessionPageProps) {
       // is a background conversation the page loads silently there; the
       // conversation on screen is never interrupted.
       const ownerSessionId = helpers.origin?.sessionId ?? props.selectedSessionId ?? null;
-      openOwnerSidePanel(ownerSessionId);
+      if (!placeOpenedBrowser(ownerSessionId)) openOwnerSidePanel(ownerSessionId);
       return window.__OPENWORK_ELECTRON__?.browser?.openUrl?.(url, provider, { sessionId: ownerSessionId });
     },
-  }), [openOwnerSidePanel, props.selectedSessionId]);
+  }), [openOwnerSidePanel, placeOpenedBrowser, props.selectedSessionId]);
   useControlAction(openBrowserUrlControlAction);
   const restoreBrowserTabControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "browser.restore_tab",
@@ -1341,6 +1370,8 @@ export function SessionPage(props: SessionPageProps) {
       workspaceRoot={props.selectedWorkspaceRoot}
       onClose={closeRightPane}
       onOpenExtensions={props.settingsSlot ? () => setCurrentSidePanel("extensions") : undefined}
+      browserPresentation={browserPresentation.enabled ? { onPresent: browserPresentation.present } : undefined}
+      browserShownElsewhere={browserPresentation.mode === "fullscreen"}
     />
   ) : null;
 
@@ -1443,6 +1474,7 @@ export function SessionPage(props: SessionPageProps) {
         <SidebarInset
           className="min-h-0 min-w-0 overflow-hidden bg-sidebar mac:bg-transparent"
         >
+          <FloatingSlotProvider>
           {sidebarOnlyChrome ? <MobileChatNavigation /> : <header
             data-session-header
             data-sidebar-hidden={!shellConfig.sidebar || !sidebarOpen || isMobile}
@@ -1594,6 +1626,9 @@ export function SessionPage(props: SessionPageProps) {
                   Reset notifications
                 </Button>
               ) : null}
+              {!isElectronRuntime() && computerUseFeature && remoteComputersFeature && props.openworkServerClient ? <CloudComputerControl client={props.openworkServerClient} /> : null}
+              {computerUse && props.selectedSessionId ? <ComputerControl key={props.selectedSessionId} sessionId={props.selectedSessionId} /> : null}
+              {browserPresentation.enabled ? <BrowserHeaderButton controller={browserPresentation} /> : null}
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -1671,6 +1706,7 @@ export function SessionPage(props: SessionPageProps) {
           >
             <ResizablePanel minSize="180px" className="min-h-0">
             <div className="relative h-full min-w-0 overflow-hidden bg-dls-surface mac:bg-dls-surface/85">
+              <SessionFloatingLayer />
               {props.primarySlot ? (
                 <div className="h-full overflow-y-auto" data-workspace-primary-slot>
                   {props.primarySlot}
@@ -1967,7 +2003,7 @@ export function SessionPage(props: SessionPageProps) {
                   "rounded-xl transition-colors hover:bg-muted hover:text-foreground",
                   browserRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
                 )}
-                onClick={openBrowserRailPane}
+                onClick={browserPresentation.enabled ? () => browserPresentation.present(browserRailActive ? "hidden" : "side") : openBrowserRailPane}
                 title="Browser"
                 aria-label="Browser"
                 aria-pressed={browserRailActive}
@@ -1996,6 +2032,8 @@ export function SessionPage(props: SessionPageProps) {
             </Button>
           </aside>
           </div>
+          <BrowserPresentationSurfaces sessionId={sidePanelSessionKey} controller={browserPresentation} />
+          </FloatingSlotProvider>
         </SidebarInset>
       </SidebarProvider>
 

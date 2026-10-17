@@ -263,6 +263,30 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  computerUse: {
+    label: "Computer use",
+    description: "Let agents use Mac apps or a managed cloud desktop directly, with a live view and Take over and Stop controls. Enabling this rollout provides access without chat or window consent prompts. GUI access is experimental and is not sandboxed by structured-tool permission rules.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+
+  browserFloatingView: {
+    label: "Desktop: floating and full-screen browser",
+    description: "The built-in browser can float as a small live card over the chat, sit beside it, or fill the window, with a Browser button in the chat header that shows when it needs the person.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+
+  remoteComputers: {
+    label: "Desktop: computer use on remote computers",
+    description: "Use a Linux cloud computer with its browser and desktop in OpenWork Web, or connect a VM from Desktop. Access starts directly when the rollout is enabled; Take over and Stop stay available.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+
   inviteLinkVerifiesEmail: {
     label: "Invite links verify the invited email",
     description: "Creating an account from an invitation link, emailed or shared by an admin, counts as verifying that email, so the invited person joins without entering an emailed code.",

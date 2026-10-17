@@ -8,6 +8,8 @@ import {
   Globe,
   Loader2,
   MessagesSquare,
+  Maximize2,
+  PictureInPicture2,
   ShieldOff,
   Plus,
   RotateCw,
@@ -48,6 +50,13 @@ import {
   hasNativeBrowserOccluder,
 } from "./utils";
 import { computeBrowserBounds, createBrowserBoundsSync } from "./browser-bounds-sync";
+import { browserOperationLabels } from "./browser-status";
+import type { BrowserPresentationMode } from "./browser-presentation-store";
+
+/** Floating browser presentation controls, present only while that feature is on. */
+export type BrowserPresentationControls = {
+  onPresent: (mode: BrowserPresentationMode) => void;
+};
 
 type SidePanelProps = {
   sessionId: string;
@@ -56,6 +65,10 @@ type SidePanelProps = {
   workspaceRoot: string;
   onClose: () => void;
   onOpenExtensions?: () => void;
+  /** Floating browser presentation; undefined keeps the docked-only browser. */
+  browserPresentation?: BrowserPresentationControls;
+  /** The browser is shown full screen: keep its tab but not a second native view here. */
+  browserShownElsewhere?: boolean;
 };
 
 // HMR can remount this module without unmounting BrowserPanelContent, leaving
@@ -167,12 +180,15 @@ type BrowserPanelContentProps = {
   sessionId: string;
   tab: BrowserPanelTab;
   onClose: () => void;
+  /** Where this content is shown and how to move it, with the floating browser feature on. */
+  presentation?: BrowserPresentationControls & { mode: "side" | "fullscreen" };
 };
 
-function BrowserPanelContent({
+export function BrowserPanelContent({
   sessionId,
   tab,
   onClose,
+  presentation,
 }: BrowserPanelContentProps) {
   const isAvailable = Boolean(getElectronBrowser());
   const suspended = tab.status === "suspended";
@@ -200,6 +216,7 @@ function BrowserPanelContent({
       reportFailure("Could not open this page. Check the address and try again.", error);
     });
   }, [urlInput, reportFailure]);
+  const extendedOccluders = presentation !== undefined;
 
   const back = React.useCallback(() => {
     void getElectronBrowser()?.back?.().catch((error: unknown) => {
@@ -264,7 +281,11 @@ function BrowserPanelContent({
 
     const syncBounds = () => {
       if (!ready || disposed) return;
-      boundsSync.sync(computeBrowserBounds(content), window.devicePixelRatio, hasNativeBrowserOccluder());
+      const bounds = computeBrowserBounds(content);
+      const occluded = extendedOccluders
+        ? hasNativeBrowserOccluder({ bounds, exclude: content.closest("[data-browser-fullscreen-dialog]") })
+        : hasNativeBrowserOccluder();
+      boundsSync.sync(bounds, window.devicePixelRatio, occluded);
     };
 
     const invalidateBounds = () => {
@@ -299,7 +320,7 @@ function BrowserPanelContent({
 
       boundsSync.dispose();
     };
-  }, [isAvailable, sessionId, reportFailure]);
+  }, [isAvailable, sessionId, reportFailure, extendedOccluders]);
 
   return (
     <>
@@ -451,15 +472,41 @@ function BrowserPanelContent({
             Browser panel is only available in the desktop app.
           </p>
         )}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onClose}
-          title="Close panel"
-          aria-label="Close panel"
-        >
-          <X />
-        </Button>
+        {isAvailable && presentation?.mode === "side" ? (
+          <>
+            <Tooltip>
+              <TooltipTrigger
+                render={(
+                  <Button variant="ghost" size="icon-sm" aria-label="Float browser" data-testid="browser-mode-float" onClick={() => presentation.onPresent("floating")}>
+                    <PictureInPicture2 />
+                  </Button>
+                )}
+              />
+              <TooltipContent>Float over chat</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={(
+                  <Button variant="ghost" size="icon-sm" aria-label="Full screen" data-testid="browser-mode-fullscreen" onClick={() => presentation.onPresent("fullscreen")}>
+                    <Maximize2 />
+                  </Button>
+                )}
+              />
+              <TooltipContent>Full screen</TooltipContent>
+            </Tooltip>
+          </>
+        ) : null}
+        {presentation?.mode === "fullscreen" ? null : (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onClose}
+            title="Close panel"
+            aria-label="Close panel"
+          >
+            <X />
+          </Button>
+        )}
       </div>
       {tab.loadError && !pageFailure && !blockedSite ? (
         <div data-browser-shortcut-tab={tab.id} role="alert" className="shrink-0 border-b border-border bg-muted px-3 py-2 text-xs">
@@ -494,13 +541,6 @@ function BrowserPanelContent({
   );
 }
 
-const browserOperationLabels: Record<string, string> = {
-  observe: "Reading this page", site_tools: "Finding website tools", site_tool: "Using a website tool",
-  navigate: "Opening a page", click: "Clicking a control", fill: "Entering text", key: "Using the keyboard", scroll: "Scrolling",
-  website_blocked: "This website is blocked", browser_disabled: "Browser control is disabled",
-  stale_observation: "A fresh page view is needed", stale_tool: "Website tools have changed",
-  needs_attention: "Review this page", sign_in_required: "Sign in directly in this browser",
-};
 
 export function SidePanel({
   sessionId,
@@ -509,6 +549,8 @@ export function SidePanel({
   workspaceRoot,
   onClose,
   onOpenExtensions,
+  browserPresentation,
+  browserShownElsewhere = false,
 }: SidePanelProps) {
   const { tabs } = useSessionPanelState(sessionId);
   const activeTab = useActivePanelTab(sessionId);
@@ -757,7 +799,14 @@ export function SidePanel({
           />
         ) : null}
         {activeTab?.type === "browser" ? (
-          <BrowserPanelContent sessionId={sessionId} tab={activeTab} onClose={onClose} />
+          browserShownElsewhere ? null : (
+            <BrowserPanelContent
+              sessionId={sessionId}
+              tab={activeTab}
+              onClose={onClose}
+              presentation={browserPresentation ? { ...browserPresentation, mode: "side" } : undefined}
+            />
+          )
         ) : activeTab?.type === "mcp-app" ? (
           <BuiltMcpAppPanel key={activeTab.id} tab={activeTab} onClose={onClose} />
         ) : activeTab?.type === "remote-thread" ? (

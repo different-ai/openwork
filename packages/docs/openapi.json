@@ -2460,6 +2460,9 @@
               "gatewayProviderUsageLimits",
               "teamAccessRows",
               "teamPageTabs",
+              "computerUse",
+              "browserFloatingView",
+              "remoteComputers",
               "inviteLinkVerifiesEmail",
               "remoteSessionSubagents"
             ]
@@ -2726,6 +2729,15 @@
                     "teamPageTabs": {
                       "type": "boolean"
                     },
+                    "computerUse": {
+                      "type": "boolean"
+                    },
+                    "browserFloatingView": {
+                      "type": "boolean"
+                    },
+                    "remoteComputers": {
+                      "type": "boolean"
+                    },
                     "inviteLinkVerifiesEmail": {
                       "type": "boolean"
                     },
@@ -2770,6 +2782,9 @@
                     "gatewayProviderUsageLimits",
                     "teamAccessRows",
                     "teamPageTabs",
+                    "computerUse",
+                    "browserFloatingView",
+                    "remoteComputers",
                     "inviteLinkVerifiesEmail",
                     "remoteSessionSubagents",
                     "gatewayDashboard"
@@ -4458,6 +4473,174 @@
                         "overrideApplies"
                       ]
                     },
+                    "computerUse": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
+                    "browserFloatingView": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
+                    "remoteComputers": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "inviteLinkVerifiesEmail": {
                       "type": "object",
                       "properties": {
@@ -4602,6 +4785,9 @@
                     "gatewayProviderUsageLimits",
                     "teamAccessRows",
                     "teamPageTabs",
+                    "computerUse",
+                    "browserFloatingView",
+                    "remoteComputers",
                     "inviteLinkVerifiesEmail",
                     "remoteSessionSubagents"
                   ],
@@ -5063,6 +5249,15 @@
                     "teamPageTabs": {
                       "type": "boolean"
                     },
+                    "computerUse": {
+                      "type": "boolean"
+                    },
+                    "browserFloatingView": {
+                      "type": "boolean"
+                    },
+                    "remoteComputers": {
+                      "type": "boolean"
+                    },
                     "inviteLinkVerifiesEmail": {
                       "type": "boolean"
                     },
@@ -5107,6 +5302,9 @@
                     "gatewayProviderUsageLimits",
                     "teamAccessRows",
                     "teamPageTabs",
+                    "computerUse",
+                    "browserFloatingView",
+                    "remoteComputers",
                     "inviteLinkVerifiesEmail",
                     "remoteSessionSubagents",
                     "gatewayDashboard"
@@ -6795,6 +6993,174 @@
                         "overrideApplies"
                       ]
                     },
+                    "computerUse": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
+                    "browserFloatingView": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
+                    "remoteComputers": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "inviteLinkVerifiesEmail": {
                       "type": "object",
                       "properties": {
@@ -6939,6 +7305,9 @@
                     "gatewayProviderUsageLimits",
                     "teamAccessRows",
                     "teamPageTabs",
+                    "computerUse",
+                    "browserFloatingView",
+                    "remoteComputers",
                     "inviteLinkVerifiesEmail",
                     "remoteSessionSubagents"
                   ],
@@ -28419,6 +28788,9 @@
           "canSchedule": {
             "type": "boolean"
           },
+          "computer": {
+            "type": "boolean"
+          },
           "calendar": {
             "type": "boolean"
           },
@@ -30998,6 +31370,15 @@
                         "teamPageTabs": {
                           "type": "boolean"
                         },
+                        "computerUse": {
+                          "type": "boolean"
+                        },
+                        "browserFloatingView": {
+                          "type": "boolean"
+                        },
+                        "remoteComputers": {
+                          "type": "boolean"
+                        },
                         "inviteLinkVerifiesEmail": {
                           "type": "boolean"
                         },
@@ -31042,6 +31423,9 @@
                         "gatewayProviderUsageLimits",
                         "teamAccessRows",
                         "teamPageTabs",
+                        "computerUse",
+                        "browserFloatingView",
+                        "remoteComputers",
                         "inviteLinkVerifiesEmail",
                         "remoteSessionSubagents",
                         "gatewayDashboard"
@@ -32730,6 +33114,174 @@
                             "overrideApplies"
                           ]
                         },
+                        "computerUse": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
+                        "browserFloatingView": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
+                        "remoteComputers": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "inviteLinkVerifiesEmail": {
                           "type": "object",
                           "properties": {
@@ -32874,6 +33426,9 @@
                         "gatewayProviderUsageLimits",
                         "teamAccessRows",
                         "teamPageTabs",
+                        "computerUse",
+                        "browserFloatingView",
+                        "remoteComputers",
                         "inviteLinkVerifiesEmail",
                         "remoteSessionSubagents"
                       ],
@@ -33084,6 +33639,15 @@
                         "teamPageTabs": {
                           "type": "boolean"
                         },
+                        "computerUse": {
+                          "type": "boolean"
+                        },
+                        "browserFloatingView": {
+                          "type": "boolean"
+                        },
+                        "remoteComputers": {
+                          "type": "boolean"
+                        },
                         "inviteLinkVerifiesEmail": {
                           "type": "boolean"
                         },
@@ -33128,6 +33692,9 @@
                         "gatewayProviderUsageLimits",
                         "teamAccessRows",
                         "teamPageTabs",
+                        "computerUse",
+                        "browserFloatingView",
+                        "remoteComputers",
                         "inviteLinkVerifiesEmail",
                         "remoteSessionSubagents",
                         "gatewayDashboard"
@@ -34816,6 +35383,174 @@
                             "overrideApplies"
                           ]
                         },
+                        "computerUse": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
+                        "browserFloatingView": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
+                        "remoteComputers": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "inviteLinkVerifiesEmail": {
                           "type": "object",
                           "properties": {
@@ -34960,6 +35695,9 @@
                         "gatewayProviderUsageLimits",
                         "teamAccessRows",
                         "teamPageTabs",
+                        "computerUse",
+                        "browserFloatingView",
+                        "remoteComputers",
                         "inviteLinkVerifiesEmail",
                         "remoteSessionSubagents"
                       ],

@@ -43,6 +43,7 @@ import {
   mcpMock,
   server,
   requestBrowserTask,
+  requestComputerProgram,
   readBrowserFixtureState,
   setBrowserFixtureDiscovery,
   requireWorldResource,
@@ -1005,6 +1006,12 @@ export class AgentChannel implements Agent {
 
   on(surface: Surface): Agent {
     return new AgentChannel(this.#runtime, surface);
+  }
+
+  computerProgram(input: { sessionId: string; surface: "computer" | "browser"; code: string; tabId?: string; timeoutMs?: number }) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("agent", "computerProgram", `computerProgram(${input.surface}, session=${input.sessionId})`, surface,
+      () => requestComputerProgram(surface, input));
   }
 
   browserTask(input: import("@openwork/behaviors").BrowserTaskInput) {

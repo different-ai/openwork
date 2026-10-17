@@ -36,6 +36,8 @@ const providers: Record<string, {
       apiUrl: env.daytona.apiUrl,
       target: env.daytona.target,
       snapshot: env.daytona.snapshot ?? null,
+      ...(env.daytona.sandboxClass === "linux-vm" ? { platform: { os: "linux", isolation: "microvm" }, supportsPause: true } : {}),
+      ...(env.daytona.sandboxClass === "linux-vm" && env.daytona.autoDeleteInterval > 0 ? { idleRetentionMinutes: env.daytona.autoDeleteInterval } : {}),
       image: env.daytona.image,
       resources: {
         cpu: env.daytona.resources.cpu,
@@ -94,8 +96,9 @@ export function cloudRuntimeOrchestratorConfig(): CloudRuntimeOrchestratorConfig
     port: runtime.openworkPort,
     publicEndpoint: runtime.public,
     lifecycle: {
-      autoStopMinutes: runtime.autoStopInterval,
-      autoArchiveMinutes: runtime.autoArchiveInterval,
+      ...(runtime.sandboxClass === "linux-vm"
+        ? { autoStopMinutes: 0, autoPauseMinutes: runtime.autoPauseInterval }
+        : { autoStopMinutes: runtime.autoStopInterval, autoArchiveMinutes: runtime.autoArchiveInterval }),
       autoDeleteMinutes: runtime.autoDeleteInterval,
     },
     resources: {
@@ -112,6 +115,7 @@ export function cloudRuntimeOrchestratorConfig(): CloudRuntimeOrchestratorConfig
     pollIntervalMs: runtime.pollIntervalMs,
     activityHeartbeatUrl: workerActivityHeartbeatUrl,
     bootstrap: {
+      ...(runtime.sandboxClass === "linux-vm" ? { cloudComputerDisplay: ":99" } : {}),
       imageDescription: "Daytona runtime image",
       rebuildHint: "rebuild and republish the Daytona snapshot",
     },

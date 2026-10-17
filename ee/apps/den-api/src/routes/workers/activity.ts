@@ -6,6 +6,8 @@ import { z } from "zod"
 import { attributeAuditRequest, auditServiceAttribution } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { jsonValidator, paramValidator, tokenRoute } from "../../middleware/index.js"
+import { cloudRuntimeAvailable, getCloudRuntime } from "../../workers/cloud-runtime.js"
+import { appLogger } from "../../observability/logger.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import {
   activityHeartbeatSchema,
@@ -113,6 +115,13 @@ export function registerWorkerActivityRoutes<T extends { Variables: WorkerRouteV
         last_active_at: nextActiveAt,
       })
       .where(eq(WorkerTable.id, workerId))
+
+    const now = Date.now()
+    if (body.isActiveRecently && activityAt && now - activityAt.getTime() <= 120_000 && activityAt.getTime() <= now + 30_000 && cloudRuntimeAvailable()) {
+      await getCloudRuntime().recordActivity(workerId).catch(() => {
+        appLogger.warn("Could not refresh active computer idle timer", { worker_id: workerId })
+      })
+    }
 
     return c.json({
       ok: true,

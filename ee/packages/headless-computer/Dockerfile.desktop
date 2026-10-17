@@ -1,0 +1,34 @@
+# Build and push this image first; create a linux-vm Daytona snapshot from its registry digest.
+# The base is a pinned node:24-bookworm-slim digest, supplied by the operator.
+ARG OPENWORK_COMPUTER_BASE_IMAGE
+FROM ${OPENWORK_COMPUTER_BASE_IMAGE} AS desktop-vnc-builder
+USER root
+COPY ee/packages/headless-computer/scripts/build-desktop-vnc.sh /tmp/build-desktop-vnc.sh
+RUN bash /tmp/build-desktop-vnc.sh
+
+FROM ${OPENWORK_COMPUTER_BASE_IMAGE}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash sudo python3 python3-pip ca-certificates curl chromium chromium-sandbox xvfb xauth x11-utils \
+    openbox xdotool x11vnc util-linux dbus-x11 \
+    && usermod -l ubuntu -d /home/ubuntu -m node && groupmod -n ubuntu node \
+    && useradd --create-home --shell /bin/sh openwork-browser \
+    && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/ubuntu
+COPY ee/packages/headless-computer/src/image.ts /tmp/openwork-computer-image.ts
+RUN node --input-type=module -e "import { DESKTOP_COMPUTER_INSTALL_SCRIPT } from '/tmp/openwork-computer-image.ts'; import { writeFileSync } from 'node:fs'; writeFileSync('/tmp/install-computer.sh', DESKTOP_COMPUTER_INSTALL_SCRIPT)" \
+    && bash /tmp/install-computer.sh && rm /tmp/install-computer.sh /tmp/openwork-computer-image.ts
+COPY ee/packages/headless-computer/src/desktop-apps.mjs /usr/local/share/openwork-desktop/apps.mjs
+COPY ee/packages/headless-computer/scripts/configure-desktop-files.sh /usr/local/share/openwork-desktop/configure-files.sh
+COPY ee/packages/headless-computer/scripts/install-desktop-apps.sh /tmp/install-desktop-apps.sh
+RUN bash /tmp/install-desktop-apps.sh && rm /tmp/install-desktop-apps.sh
+# Daytona's OCI-to-microVM import clears setuid bits. Restore only the two
+# packaged helpers as root before its unprivileged command daemon starts.
+COPY ee/packages/headless-computer/scripts/daytona-desktop-permissions.service /etc/systemd/system/daytona-desktop-permissions.service
+COPY ee/packages/headless-computer/scripts/daytona-desktop-permissions.conf /etc/systemd/system/daytona.service.d/desktop-permissions.conf
+RUN mkdir -p /etc/systemd/system/multi-user.target.wants \
+    && ln -s ../daytona-desktop-permissions.service /etc/systemd/system/multi-user.target.wants/daytona-desktop-permissions.service
+COPY --from=desktop-vnc-builder /usr/local/bin/x11vnc /usr/local/bin/x11vnc
+COPY --from=desktop-vnc-builder /usr/local/share/doc/openwork-x11vnc /usr/local/share/doc/openwork-x11vnc
+RUN ldd /usr/local/bin/x11vnc | grep -q libXcomposite
+USER ubuntu
+WORKDIR /workspace

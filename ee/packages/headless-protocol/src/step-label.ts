@@ -22,6 +22,8 @@ export function stepLabel(name: string, input: Record<string, unknown> = {}) {
       return path ? `Reading ${path}` : "Reading notes"
     case "bash":
       return typeof input.description === "string" && input.description.trim() ? input.description.trim().slice(0, 80) : "Using my computer"
+    case "desktop":
+      return input.view === "browser" ? "Working in the browser" : "Using my computer"
     case "look":
       return "Looking at the results"
     case "browser_open":

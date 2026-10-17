@@ -26,6 +26,6 @@ export function toWorkbotPageEvent(raw: unknown): WorkbotPageEvent | null {
   // A background task works out of sight: the page only re-reads when one starts, pauses or ends.
   if (TASK_ID.test(event.messageId) && !(event.type === "changed" && event.status)) return null
   const messageId = event.messageId.slice(WORKBOT_MESSAGE_PREFIX.length)
-  if (event.type === "tool") return { type: "working", messageId, step: event.step, on: event.tool === "bash" || event.tool === "look" ? "computer" : "other" }
+  if (event.type === "tool") return { type: "working", messageId, step: event.step, on: event.tool === "bash" || event.tool === "look" || event.tool === "desktop" ? "computer" : "other" }
   return { ...event, messageId }
 }

@@ -24,6 +24,7 @@ export type OpenWorkCheckpointConfig = {
 }
 
 export type OpenWorkBootstrapConfig = OpenWorkCheckpointConfig & {
+  cloudComputerDisplay?: string
   /** Persistent mount exposed to the agent as the workspace volume. */
   workspaceMountPath: string
   port: number
@@ -160,7 +161,15 @@ export function renderOpenWorkBootstrapScript(config: OpenWorkBootstrapConfig) {
     `if ! command -v openwork-server >/dev/null 2>&1; then echo 'openwork-server binary missing from ${config.imageDescription}; ${config.rebuildHint}' >&2; exit 1; fi`,
     `if ! command -v opencode >/dev/null 2>&1; then echo 'opencode binary missing from ${config.imageDescription}; ${config.rebuildHint}' >&2; exit 1; fi`,
   ].join("; ")
+  const desktopEnvironment = config.cloudComputerDisplay ? [
+    `DISPLAY=${shellQuote(config.cloudComputerDisplay)} `,
+    `XAUTHORITY=${shellQuote(`${config.runtimeDataPath}/cloud-desktop/.Xauthority`)} `,
+    `OPENWORK_CLOUD_COMPUTER_DISPLAY=${shellQuote(config.cloudComputerDisplay)} `,
+    "OPENWORK_BROWSER_PROVIDER=sandbox-interactive ",
+    `OPENWORK_UI_CONTROL_DISCOVERY=${shellQuote(`${config.sidecarDir}/cloud-ui-control.json`)} `,
+  ].join("") : ""
   const openworkServe = [
+    desktopEnvironment,
     "OPENWORK_DATA_DIR=",
     shellQuote(config.runtimeDataPath),
     " OPENWORK_SERVER_CONFIG=",
@@ -195,7 +204,10 @@ export function renderOpenWorkBootstrapScript(config: OpenWorkBootstrapConfig) {
     shellQuote(config.activityHeartbeat.url),
     " DEN_ACTIVITY_HEARTBEAT_TOKEN=",
     shellQuote(config.activityHeartbeat.token),
-    " openwork-server",
+    // VM auto-pause can be as short as one minute. The five-minute legacy
+    // heartbeat cannot keep an active preview awake before that deadline.
+    ...(config.cloudComputerDisplay ? [" DEN_ACTIVITY_HEARTBEAT_INTERVAL_SECONDS=30 DEN_ACTIVITY_WINDOW_SECONDS=120"] : []),
+    ...(config.cloudComputerDisplay ? [` sh -c ${shellQuote(`openwork-cloud-desktop ${shellQuote(config.runtimeDataPath)} ${shellQuote(config.cloudComputerDisplay)} && exec openwork-server "$@"`)} --`] : [" openwork-server"]),
     ` --workspace ${shellQuote(config.runtimeWorkspacePath)}`,
     ` --host 0.0.0.0`,
     ` --port ${shellQuote(String(config.port))}`,

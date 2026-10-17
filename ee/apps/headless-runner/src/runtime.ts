@@ -52,7 +52,7 @@ export async function createRuntime(config: Config, store: Store) {
       ? remoteMcpConnector({
           url: config.mcp.url,
           allowlist: config.mcp.toolAllowlist,
-          reservedNames: new Set([...FILE_TOOL_NAMES, ...SAVED_FILE_TOOL_NAMES, ...REACTION_TOOL_NAMES, ...TASK_TOOL_NAMES, ...(computer?.toolNames ?? [])]),
+          reservedNames: new Set([...FILE_TOOL_NAMES, ...SAVED_FILE_TOOL_NAMES, ...REACTION_TOOL_NAMES, ...TASK_TOOL_NAMES, ...(computer?.toolNames ?? []), ...(computer?.desktopTools?.map(tool => tool.name) ?? [])]),
         })
       : undefined,
     limits: config.limits,

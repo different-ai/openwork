@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { registerCloudSkillDiscovery, type CloudSkillContext } from "./openwork-cloud-skills-v2.js";
 import { server as browserTools } from "./openwork-chrome-devtools.js";
+import { server as computerTools } from "./openwork-computer-use.js";
 
 const browserResult = z.object({
   content: z.array(z.union([z.object({ type: z.literal("text"), text: z.string() }),
@@ -21,12 +22,12 @@ type Context = CloudSkillContext & {
 };
 
 // Separate credentials authorize app reads and conversation-scoped browser
-// operations. Neither grants arbitrary host APIs or OpenWork app commands.
+// and computer operations. Neither grants arbitrary host APIs or OpenWork app commands.
 export default {
   id: "openwork.context",
   async setup(context: Context) {
     const browser = context.options.browser;
-    const browserDefinitions = browser ? await browserTools() : undefined;
+    const browserDefinitions = browser ? { tool: { ...(await browserTools()).tool, ...(await computerTools()).tool } } : undefined;
     const registration = await context.tool.transform(editor => {
       for (const name of ["openwork_context", "openwork_query"]) {
         editor.add({
@@ -61,7 +62,7 @@ export default {
               headers: { Authorization: `Bearer ${browser.token}`, "Content-Type": "application/json" },
               body: JSON.stringify({ name, input, sessionId: call.sessionID }),
             });
-            if (!response.ok) throw new Error(`Browser request failed (${response.status})`);
+            if (!response.ok) throw new Error(`${name.startsWith("computer_") ? "Computer" : "Browser"} request failed (${response.status})`);
             return browserResult.parse(await response.json());
           },
         });

@@ -1,3 +1,4 @@
+import { cloudComputerActivityAt } from "./cloud-computer-activity.js";
 import { externalFetch } from "./server-fetch.js";
 import { createWorkspaceOpencodeClient } from "./server.js";
 import type { ServerConfig } from "./types.js";
@@ -100,7 +101,7 @@ export function buildWorkerActivityHeartbeatPayload(
   now: number,
   activeWindowMs: number,
 ): WorkerActivityHeartbeatPayload {
-  let latestActivityAt = 0;
+  let latestActivityAt = cloudComputerActivityAt();
   for (const session of sessions) {
     const activityAt = parseSessionActivityAt(session);
     if (activityAt && activityAt > latestActivityAt) latestActivityAt = activityAt;

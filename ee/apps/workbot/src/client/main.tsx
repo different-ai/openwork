@@ -13,7 +13,7 @@ function Signed({ me }: { me: Me }) {
 }
 
 function App() {
-  const me = useQuery({ queryKey: ["workbot", "me"], queryFn: fetchMe, staleTime: 60_000 })
+  const me = useQuery({ queryKey: ["workbot", "me"], queryFn: fetchMe, staleTime: 30_000, refetchInterval: 30_000 })
   const signedOut = me.isSuccess && me.data === null
   useEffect(() => {
     if (signedOut) signIn()

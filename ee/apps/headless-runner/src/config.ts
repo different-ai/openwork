@@ -75,6 +75,8 @@ const configSchema = z.object({
   DAYTONA_API_KEY: z.string().min(1).optional(),
   DAYTONA_API_URL: safeUrl.default("https://app.daytona.io/api"),
   DAYTONA_TARGET: z.string().min(1).optional(),
+  HEADLESS_COMPUTER_CLASS: z.enum(["container", "linux-vm"]).default("container"),
+  HEADLESS_COMPUTER_DESKTOP: z.enum(["true", "false"]).default("false"),
   HEADLESS_COMPUTER_SCOPE: z.string().min(1).optional(),
   FREESTYLE_API_KEY: z
     .string()
@@ -177,11 +179,14 @@ function computerConfig(value: z.infer<typeof configSchema>): Config["computer"]
   const apiKey = value.HEADLESS_COMPUTER === "daytona" ? value.DAYTONA_API_KEY : value.FREESTYLE_API_KEY
   if (!apiKey) throw new Error(`Invalid headless-runner configuration: HEADLESS_COMPUTER=${value.HEADLESS_COMPUTER} needs ${value.HEADLESS_COMPUTER === "daytona" ? "DAYTONA_API_KEY" : "FREESTYLE_API_KEY"}`)
   if (value.HEADLESS_COMPUTER === "daytona" && !value.HEADLESS_COMPUTER_SNAPSHOT) throw new Error("Daytona computers need HEADLESS_COMPUTER_SNAPSHOT (snapshot:build:daytona)")
+  if (value.HEADLESS_COMPUTER === "daytona" && value.HEADLESS_COMPUTER_DESKTOP === "true" && value.HEADLESS_COMPUTER_CLASS !== "linux-vm") throw new Error("Daytona desktop computers require HEADLESS_COMPUTER_CLASS=linux-vm for memory-preserving pause and snapshots")
   return {
     kind: value.HEADLESS_COMPUTER,
     apiKey,
     apiUrl: value.DAYTONA_API_URL,
     target: value.DAYTONA_TARGET,
+    sandboxClass: value.HEADLESS_COMPUTER_CLASS,
+    desktop: value.HEADLESS_COMPUTER_DESKTOP === "true",
     scope: value.HEADLESS_COMPUTER_SCOPE,
     snapshot: value.HEADLESS_COMPUTER_SNAPSHOT,
     idlePauseMs: value.HEADLESS_COMPUTER_PAUSE_SECONDS * 1000,
