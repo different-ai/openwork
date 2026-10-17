@@ -27,6 +27,7 @@ import {
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { codemodeCodeDigest, parseCodemodeToolCalls } from "./workflow-runs.js"
 import { db } from "./db.js"
+import { snapshotReadAccess, workflowSnapshotStateRows } from "./workflow-snapshot-state.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "./list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js"
 import { parseCodemodeScriptPayload, validateCodemodeScriptInput } from "./mcp/codemode-script-object.js"
@@ -249,14 +250,6 @@ async function workflowVersions(
   })
 }
 
-function snapshotReadAccess(memberId: DenTypeId<"member">) {
-  if (!memberId) throw new Error("workflow_receipt_member_required")
-  return or(
-    eq(WorkflowRunTable.org_membership_id, memberId),
-    eq(WorkflowRunTable.source, sql`concat('plugin:', ${WorkflowRunTable.plugin_id}, ':', ${WorkflowRunTable.config_object_id})`),
-  )
-}
-
 async function snapshotRows(
   organizationId: DenTypeId<"organization">,
   configObjectId: ConfigObjectId,
@@ -401,31 +394,6 @@ export async function getWorkflowDetail(input: {
   }
 }
 
-/** The fields of snapshotRows a freshness check reads, without results, source or tool calls. */
-function snapshotStateRows(
-  organizationId: DenTypeId<"organization">,
-  configObjectId: ConfigObjectId,
-  memberId: DenTypeId<"member">,
-) {
-  return db.select({
-    receiptId: WorkflowRunTable.id,
-    pluginId: WorkflowRunTable.plugin_id,
-    status: WorkflowRunTable.status,
-    errorMessage: WorkflowRunTable.error_message,
-    finishedAt: WorkflowRunTable.finished_at,
-    contentDeletedAt: WorkflowRunTable.artifact_content_deleted_at,
-    hasMarkdown: sql<number>`${WorkflowRunTable.result_markdown} is not null`.mapWith(Number),
-  })
-    .from(WorkflowRunTable)
-    .where(and(
-      eq(WorkflowRunTable.organization_id, organizationId),
-      snapshotReadAccess(memberId),
-      eq(WorkflowRunTable.config_object_id, configObjectId),
-      isNotNull(WorkflowRunTable.config_object_version_id),
-    ))
-    .orderBy(desc(WorkflowRunTable.finished_at), desc(WorkflowRunTable.id)).limit(100)
-}
-
 export type WorkflowCardFacts = {
   requiredCapabilities: WorkflowVersion["requiredCapabilities"]
   automationCount: number
@@ -455,7 +423,7 @@ export async function listWorkflowCardFacts(context: PluginArchActorContext, con
       eq(ConfigObjectVersionTable.isDeletedVersion, false),
     )).orderBy(desc(ConfigObjectVersionTable.createdAt), desc(ConfigObjectVersionTable.id)),
     savedScriptAutomations(context),
-    Promise.all(configObjectIds.map((configObjectId) => snapshotStateRows(organizationId, configObjectId, memberId))),
+    workflowSnapshotStateRows(organizationId, configObjectIds, memberId),
   ])
   const versionsByWorkflow = new Map<string, Array<{ id: string; requiredCapabilities: WorkflowCardFacts["requiredCapabilities"] }>>()
   for (const row of versionRows) {
@@ -465,7 +433,7 @@ export async function listWorkflowCardFacts(context: PluginArchActorContext, con
     versions.push({ id: row.id, requiredCapabilities: parsed.payload.requiredCapabilities })
     versionsByWorkflow.set(row.configObjectId, versions)
   }
-  configObjectIds.forEach((configObjectId, index) => {
+  configObjectIds.forEach((configObjectId) => {
     const versions = versionsByWorkflow.get(configObjectId) ?? []
     const currentVersion = versions[0]
     if (!currentVersion) return
@@ -474,7 +442,7 @@ export async function listWorkflowCardFacts(context: PluginArchActorContext, con
       automation.configObjectId === configObjectId && versionIds.has(automation.reference.configObjectVersionId)
         ? [automation.reference.id]
         : []))
-    const snapshots = (snapshotsByWorkflow[index] ?? []).filter((row) => row.pluginId !== null)
+    const snapshots = (snapshotsByWorkflow.get(configObjectId) ?? []).filter((row) => row.pluginId !== null)
     const { latestSuccessfulSnapshot, freshness } = workflowSnapshotState(
       snapshots,
       (snapshot) => snapshot.hasMarkdown === 1 && snapshot.contentDeletedAt === null,
