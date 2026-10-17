@@ -157,11 +157,13 @@ if (manageEngine) {
     OPENCODE_CONFIG: runtimeConfigPath,
     OPENCODE_MODELS_URL: opencodeModelsUrl,
   };
+  const engineStateDir = join(runtimeStorageDir(config), "opencode", "state");
   const engineSpawnTemplate: EngineSpawnTemplate = {
     bin: process.env.OPENWORK_OPENCODE_BIN,
     cwd: managedOpencodeCwd,
     runtimeConfigPath,
     env: engineEnv,
+    stateDir: engineStateDir,
     reservedPorts: () => {
       const poolPorts = enginePool?.connections().map((connection) => Number(new URL(connection.baseUrl).port) || 0) ?? [];
       return [...new Set([config.port, ...poolPorts].filter((port) => port > 0))];
@@ -171,6 +173,7 @@ if (manageEngine) {
     bin: process.env.OPENWORK_OPENCODE_BIN,
     cwd: managedOpencodeCwd,
     excludedPorts: [config.port],
+    stateDir: engineStateDir,
     env: engineEnv,
   });
   if (!readInstalledOpencodeVersion()) {
