@@ -268,6 +268,43 @@ export function reasoningVariants(pkg: string, config: JsonRecord, upstreamModel
   }
 }
 
+/** Variant ids the desktop reads as Fast mode (packages/types/src/cloud-model-fast.ts). */
+const FAST_VARIANT_PREFIX = "__openwork_fast_v1/"
+export const FAST_DEFAULT_VARIANT = `${FAST_VARIANT_PREFIX}default`
+function fastVariantId(effort: string): string {
+  return `${FAST_VARIANT_PREFIX}variant/${encodeURIComponent(effort)}`
+}
+
+/** True only for the exact catalog shape the desktop's own materializer accepts. */
+function catalogOffersFast(providerNpm: string | null, config: JsonRecord): boolean {
+  const modelProvider = isRecord(config.provider) ? config.provider : {}
+  if (providerNpm !== "@ai-sdk/openai") return false
+  if (modelProvider.npm !== undefined && modelProvider.npm !== providerNpm) return false
+  const variants = isRecord(config.variants) ? config.variants : {}
+  if (Object.keys(variants).some((id) => id.startsWith(FAST_VARIANT_PREFIX))) return false
+  const experimental = isRecord(config.experimental) ? config.experimental : {}
+  const modes = isRecord(experimental.modes) ? experimental.modes : {}
+  const fast = isRecord(modes.fast) ? modes.fast : null
+  if (!fast || Object.keys(fast).some((key) => key !== "provider" && key !== "cost")) return false
+  const provider = isRecord(fast.provider) ? fast.provider : null
+  const body = provider && isRecord(provider.body) ? provider.body : null
+  return Boolean(provider && Object.keys(provider).length === 1 && body
+    && Object.keys(body).length === 1 && body.service_tier === "priority")
+}
+
+/**
+ * Fast mode for OpenAI catalog models that declare priority processing: one
+ * default Fast variant plus a Fast copy of each effort, the ids and settings
+ * the managed engine materializer writes for the same catalog entry.
+ */
+export function fastVariants(providerNpm: string | null, pkg: string, config: JsonRecord, efforts: readonly ModelVariant[]): ModelVariant[] {
+  if (pkg !== "@opencode/ai/providers/openai" || !catalogOffersFast(providerNpm, config)) return []
+  return [
+    { id: FAST_DEFAULT_VARIANT, settings: { serviceTier: "priority" } },
+    ...efforts.map((variant) => ({ id: fastVariantId(variant.id), settings: { ...variant.settings, serviceTier: "priority" } })),
+  ]
+}
+
 /** Older Den responses append "(group / credential set)" to model names; the picker shows the plain name. */
 function displayName(model: GatewayModel): string {
   const selection = model.modelGroupName && model.credentialSetName
@@ -288,6 +325,8 @@ export function toModelInfo(provider: GatewayProvider, model: GatewayModel, prov
   const status = readString(config.status)
   const released = Date.parse(readString(config.release_date) ?? "")
   const settings = isRecord(config.options) ? { ...config.options } : undefined
+  const efforts = reasoningVariants(pkg, config, model.upstreamModelId)
+  const providerNpm = readString(provider.providerConfig.npm)
   return {
     id: model.id,
     // Den sets config.id to the gwm alias; the gateway routes on it.
@@ -303,7 +342,7 @@ export function toModelInfo(provider: GatewayProvider, model: GatewayModel, prov
       input: stringList(modalities.input, ["text", "image"]),
       output: stringList(modalities.output, ["text"]),
     },
-    variants: reasoningVariants(pkg, config, model.upstreamModelId),
+    variants: [...efforts, ...fastVariants(providerNpm, pkg, config, efforts)],
     time: { released: Number.isFinite(released) ? released : 0 },
     cost: costs(config.cost),
     status: status && STATUSES.has(status) ? (status as ModelInfo["status"]) : "active",

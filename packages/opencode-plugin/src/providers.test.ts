@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { fetchGatewayInventory, providerPackage, reasoningVariants, toProviderRecord } from "./providers.ts"
+import { FAST_DEFAULT_VARIANT, fetchGatewayInventory, providerPackage, reasoningVariants, toProviderRecord } from "./providers.ts"
 import { API, createFakeDen, GATEWAY_KEY, MODEL_ID, PROVIDER_ID, SESSION_TOKEN } from "./test-den.ts"
 
 const session = { apiBaseUrl: API, token: SESSION_TOKEN, orgId: "org_01m2" }
@@ -133,4 +133,30 @@ test("skips providers without usable models and reports why", async () => {
   const inventory = await fetchGatewayInventory(fetcher, session)
   assert.deepEqual(inventory.providers, [])
   assert.deepEqual(inventory.skipped, [{ id: "ipr_y", name: "OpenAI", reason: "member_auth_required" }])
+})
+
+test("OpenAI catalog models with priority processing keep Fast mode, like the managed engine config", () => {
+  const fastConfig = {
+    reasoning_options: [{ type: "effort", values: ["low", "high"] }],
+    experimental: { modes: { fast: { provider: { body: { service_tier: "priority" } } } } },
+  }
+  const provider = (npm: string, config: Record<string, unknown>) => ({
+    id: "ipr_fast", providerId: "openai", name: "OpenAI", credentialStatus: "ready",
+    providerConfig: { npm, api: "https://gw/api/v1/providers/ipr_fast" },
+    models: [{ id: "gwm_fast", name: "GPT Fast", config, upstreamModelId: "gpt-6", modelGroupName: null, credentialSetName: null }],
+  })
+  const ids = (npm: string, config: Record<string, unknown>) =>
+    toProviderRecord(provider(npm, config), GATEWAY_KEY).models[0]?.variants.map((variant) => variant.id)
+
+  assert.deepEqual(ids("@ai-sdk/openai", fastConfig), [
+    "low", "high", FAST_DEFAULT_VARIANT, "__openwork_fast_v1/variant/low", "__openwork_fast_v1/variant/high",
+  ])
+  const fastHigh = toProviderRecord(provider("@ai-sdk/openai", fastConfig), GATEWAY_KEY).models[0]?.variants
+    .find((variant) => variant.id === "__openwork_fast_v1/variant/high")
+  assert.equal(fastHigh?.settings?.serviceTier, "priority")
+  assert.equal(fastHigh?.settings?.reasoningEffort, "high")
+
+  assert.deepEqual(ids("@ai-sdk/openai", { reasoning_options: fastConfig.reasoning_options }), ["low", "high"], "no Fast without the catalog's priority mode")
+  assert.deepEqual(ids("@ai-sdk/openai-compatible", fastConfig), ["low", "high"], "Fast is OpenAI-only")
+  assert.deepEqual(ids("@ai-sdk/openai", { ...fastConfig, experimental: { modes: { fast: { provider: { body: { service_tier: "flex" } } } } } }), ["low", "high"])
 })
