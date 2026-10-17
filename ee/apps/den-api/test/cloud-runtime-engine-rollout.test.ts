@@ -52,6 +52,11 @@ for (const policy of [
     assertRollout(script, policy)
     assert.match(script, /OPENWORK_OPENCODE2_BIN='\/usr\/local\/bin\/opencode2'/)
     assert.match(script, /OPENWORK_RUNTIME_SURFACE='web'/)
+    // Existing dual-engine images still honor rollout rollback. Only the image
+    // contract retires v1, and the bootstrap must accept its v2-only contents.
+    assert.match(script, /OPENWORK_ENGINE_V2_ONLY:-0/)
+    assert.match(script, /then engine_bin=opencode2; else engine_bin=opencode; fi/)
+    assert.doesNotMatch(script, /OPENWORK_OPENCODE_BIN=/)
     assert.ok(script.indexOf("hydrate_checkpoint\nattempt=0") < script.indexOf("OPENWORK_ENGINE_AUTO_UPGRADE="))
     // Policy delivery never directly removes or rewrites restored engine state.
     assert.doesNotMatch(script, /engine-v2-preview\.json|engine\.json/)

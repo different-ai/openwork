@@ -160,7 +160,9 @@ export function renderRestoreMarkerExistsCommand(config: Pick<OpenWorkCheckpoint
 export function renderOpenWorkBootstrapScript(config: OpenWorkBootstrapConfig) {
   const verifyRuntimeStep = [
     `if ! command -v openwork-server >/dev/null 2>&1; then echo 'openwork-server binary missing from ${config.imageDescription}; ${config.rebuildHint}' >&2; exit 1; fi`,
-    `if ! command -v opencode >/dev/null 2>&1; then echo 'opencode binary missing from ${config.imageDescription}; ${config.rebuildHint}' >&2; exit 1; fi`,
+    // The image, not an organization flag, declares which executables exist.
+    `if [ "\${OPENWORK_ENGINE_V2_ONLY:-0}" = "1" ]; then engine_bin=opencode2; else engine_bin=opencode; fi`,
+    `if ! command -v "$engine_bin" >/dev/null 2>&1; then echo "$engine_bin" ${shellQuote(`binary missing from ${config.imageDescription}; ${config.rebuildHint}`)} >&2; exit 1; fi`,
   ].join("; ")
   const openworkServe = [
     "OPENWORK_DATA_DIR=",
@@ -173,8 +175,6 @@ export function renderOpenWorkBootstrapScript(config: OpenWorkBootstrapConfig) {
     shellQuote(config.hostToken),
     " OPENWORK_MANAGE_OPENCODE=",
     shellQuote("1"),
-    " OPENWORK_OPENCODE_BIN=",
-    shellQuote("/usr/local/bin/opencode"),
     // Pin this on wake too: older snapshots must not fall back to downloading
     // an engine at runtime when the rollout is enabled for their organization.
     " OPENWORK_OPENCODE2_BIN=",

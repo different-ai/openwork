@@ -318,6 +318,13 @@ function exec(file: string, args: string[], options: { cwd?: string; timeout?: n
 
 async function resolveBinary(config: ServerConfig): Promise<ResolvedBinary> {
   const override = process.env.OPENWORK_OPENCODE2_BIN?.trim();
+  if (config.engineV2Only) {
+    // An immutable image must contain its executable. Fail before launching a
+    // managed child; do not download a replacement or fall back to v1.
+    const bin = override || "opencode2";
+    await exec(bin, ["--version"], { timeout: 5_000 });
+    return { bin, source: override ? "env" : "path" };
+  }
   if (override) return { bin: override, source: "env" };
 
   let pathError = "not found";
@@ -568,7 +575,14 @@ export function createEngineV2Preview(options: {
   const rootDir = join(runtimeStorageDir(config), "opencode-v2", "state");
   const workspaceDir = join(rootDir, "workspace");
   seedFreshInstallEngineState(config);
-  const initialState = resolveInitialEngineV2PreviewState(process.env, readEngineV2PreviewState(config));
+  const savedState = readEngineV2PreviewState(config);
+  if (config.engineV2Only && (savedState.automaticHistoryCopy || savedState.v1HistoryCopyStartedAt !== undefined
+    || (v1HistoryExists(process.env) && (!savedState.enabled || !savedState.chatRouting)))) {
+    throw new Error("OpenCode v2-only runtime requires completed adoption. Restore the dual-engine image to finish migrating this profile; its history has not been changed.");
+  }
+  const initialState = config.engineV2Only
+    ? { ...savedState, enabled: true, chatRouting: true }
+    : resolveInitialEngineV2PreviewState(process.env, savedState);
   // A migration OpenWork closed mid-copy resumes at start; report it from the
   // first status read, since the server answers before it starts the engine.
   const resumeMigration = initialState.v1HistoryCopyStartedAt !== undefined && !initialState.automaticHistoryCopy;
@@ -939,6 +953,10 @@ export function createEngineV2Preview(options: {
   }
 
   async function startSidecar(): Promise<void> {
+    if (config.engineV2Only && v1HistoryExists(process.env)
+      && await hasV1ChatsSince(opencodeV1DatabasePath(), v1HistoryCopiedAt ?? 0, true)) {
+      throw new Error("OpenCode v2-only runtime found uncopied v1 chats. Restore the dual-engine image to finish adoption; retained history has not been changed.");
+    }
     const resolved = await resolveBinary(config);
     binSource = resolved.source;
     if (!enabled || !allowRunning) return;
@@ -1067,16 +1085,13 @@ export function createEngineV2Preview(options: {
   }
 
   async function setEnabled(nextEnabled: boolean): Promise<EngineV2PreviewStatus> {
+    if (!nextEnabled) throw new ApiError(409, "engine_v1_retired", "Switching back to OpenCode v1 is no longer supported.");
     requireNoMigration();
     if (nextEnabled && enabled && running) return status();
     enabled = nextEnabled;
     engineOrigin = "manual";
     engineForced = false;
     await persistState();
-    if (!enabled) {
-      await stopRuntime();
-      return status();
-    }
     allowRunning = true;
     lastError = undefined;
     // Fire and forget: binary resolution can install from npm and boot can take
@@ -1104,10 +1119,13 @@ export function createEngineV2Preview(options: {
     if (!await hasV1Chat(source, sessionId)) return null;
     return migration.state === "running"
       ? "This chat is being copied to OpenCode v2. It opens here once copying finishes."
-      : "This chat is still in OpenCode v1 and hasn't been copied to v2. Migrate your chats to OpenCode v2, or switch back to v1 to open it.";
+      : "This chat is still in OpenCode v1 and hasn't been copied to v2. Contact your administrator to recover this chat from its retained backup.";
   }
 
   async function setChatRouting(nextChatRouting: boolean, origin: EngineOrigin = "manual", forceOwned = origin === "forced"): Promise<EngineV2PreviewStatus> {
+    if (!nextChatRouting && (config.engineV2Only || origin === "manual")) {
+      throw new ApiError(409, "engine_v1_retired", "Switching back to OpenCode v1 is no longer supported.");
+    }
     if (nextChatRouting) await requireV1HistoryCopied();
     else requireNoMigration();
     const previous = { enabled, chatRouting, engineOrigin, engineChangedAt, engineForced, automaticHistoryCopy, automaticHistoryRevision, autoUpgradeRetry };
@@ -1188,6 +1206,7 @@ export function createEngineV2Preview(options: {
   }
 
   function migrateHistory(): EngineV2PreviewStatus {
+    if (config.engineV2Only) throw new ApiError(409, "engine_v1_retired", "Restore the dual-engine image to recover v1 history.");
     return migration.state === "running" ? status() : runMigration(false);
   }
 
@@ -1376,6 +1395,9 @@ export function createEngineV2Preview(options: {
   }
 
   function setForcePolicy(policy: { upgrade: boolean }): EngineV2PreviewStatus {
+    // The installation has retired v1, so organization policy cannot route to
+    // an absent executable. Dual-engine desktop/standalone rollback is unchanged.
+    if (config.engineV2Only) return status();
     forceUpgrade = policy.upgrade;
     forceRevert = !policy.upgrade;
     // A policy change never cancels a copy or a running task. The current
@@ -1399,6 +1421,7 @@ export function createEngineV2Preview(options: {
 
   function startWhenReady(): void {
     if (stopping) return;
+    if (config.engineV2Only) { void start().catch(recordStartError); return; }
     if (resumeMigration && !migrationJob) { runMigration(true); return; }
     if (migration.state === "running") return;
     // Boot returns immediately. A resolved hosted rollout starts at most one
