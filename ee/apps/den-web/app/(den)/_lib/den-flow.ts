@@ -423,7 +423,7 @@ export function getWorkflowRuns(payload: unknown): WorkflowRun[] {
   });
 }
 
-export async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 30000) {
+export async function requestDenResponse(path: string, init: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
 
@@ -441,8 +441,13 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
     headers.set(ORG_SCOPE_HEADER, orgScope);
   }
 
-  const shouldAttachTimeout = !init.signal && timeoutMs > 0;
+  const shouldAttachTimeout = timeoutMs > 0;
   const timeoutController = shouldAttachTimeout ? new AbortController() : null;
+  const abortFromCaller = () => timeoutController?.abort(init.signal?.reason);
+  if (init.signal && timeoutController) {
+    if (init.signal.aborted) abortFromCaller();
+    else init.signal.addEventListener("abort", abortFromCaller, { once: true });
+  }
   let didReachDashboardDeadline = false;
   const timeoutHandle = timeoutController
     ? setTimeout(() => {
@@ -461,7 +466,7 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
       ...init,
       headers,
       credentials: init.credentials ?? denApiCredentials(endpoint, path),
-      signal: init.signal ?? timeoutController?.signal
+      signal: timeoutController?.signal ?? init.signal
     });
     if (path === "/v1/me" && response.status === 401 && typeof window !== "undefined") {
       await fetch("/api/auth/clear-session-cookie", {
@@ -483,8 +488,14 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
     if (timeoutHandle) {
       clearTimeout(timeoutHandle);
     }
+    init.signal?.removeEventListener("abort", abortFromCaller);
   }
 
+  return response;
+}
+
+export async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 30000) {
+  const response = await requestDenResponse(path, init, init.signal ? 0 : timeoutMs);
   const text = await response.text();
   let payload: unknown = null;
 

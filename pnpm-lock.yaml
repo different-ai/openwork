@@ -176,6 +176,9 @@ importers:
       '@openwork/install-config':
         specifier: workspace:*
         version: link:../../packages/install-config
+      '@openwork/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -848,6 +851,9 @@ importers:
       '@openwork/features':
         specifier: workspace:*
         version: link:../../../packages/features
+      '@openwork/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
       '@openwork/types':
         specifier: workspace:*
         version: link:../../../packages/types

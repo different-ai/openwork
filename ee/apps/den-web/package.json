@@ -5,12 +5,14 @@
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= next dev --hostname 0.0.0.0 --port 3005",
     "dev:local": "OPENWORK_DEV_MODE=1 NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= next dev --hostname ${DEN_WEB_HOST:-0.0.0.0} --port ${DEN_WEB_PORT:-3005}",
-    "prebuild": "pnpm --filter @openwork/types build && pnpm --dir ../../../packages/ui build && pnpm --dir ../../packages/utils build",
+    "prebuild": "pnpm --filter @openwork/sdk build && pnpm --filter @openwork/types build && pnpm --dir ../../../packages/ui build && pnpm --dir ../../packages/utils build",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0 --port 3005",
     "lint": "eslint app components --no-inline-config --max-warnings=0",
     "typecheck": "tsc --noEmit --pretty false",
-    "typecheck:gateway-usage-limits": "tsc --noEmit --pretty false -p tsconfig.usage-limits.json"
+    "typecheck:gateway-usage-limits": "tsc --noEmit --pretty false -p tsconfig.usage-limits.json",
+    "predev": "pnpm --filter @openwork/sdk build",
+    "predev:local": "pnpm --filter @openwork/sdk build"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -40,7 +42,8 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "recharts": "3.10.1",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "@openwork/sdk": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",

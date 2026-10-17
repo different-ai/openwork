@@ -6,17 +6,32 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": {
+        "openwork-build": "./dist/index.d.ts",
+        "default": "./src/index.ts"
+      },
       "development": "./src/index.ts",
+      "bun": "./src/index.ts",
       "default": "./dist/index.js"
     },
     "./client": {
-      "types": "./dist/client.d.ts",
+      "types": {
+        "openwork-build": "./dist/client.d.ts",
+        "default": "./src/client.ts"
+      },
       "development": "./src/client.ts",
+      "bun": "./src/client.ts",
       "default": "./dist/client.js"
+    },
+    "./browser": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "generate": "node script/generate.mjs",
     "generate:check": "node script/generate.mjs --check",
