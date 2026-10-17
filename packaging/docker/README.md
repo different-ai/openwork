@@ -6,9 +6,9 @@ Run Den API, Den web, and MySQL from published images without cloning or buildin
 
 ```bash
 curl -fsSLo docker-compose.eval.yml \
-  https://raw.githubusercontent.com/different-ai/openwork/79636623bfbed3e2e5daff48b8550cb2ba220d77/packaging/docker/docker-compose.eval.yml
+  https://raw.githubusercontent.com/different-ai/openwork/650f03f227ef29a8941ce503ac68543d530dd47b/packaging/docker/docker-compose.eval.yml
 printf '%s  %s\n' \
-  '7b94efe1ac4be68d56b8ecb91206e9c005360b0f7954ba36c6f6ae7bd87a9430' \
+  '1fa4394235f6745cc964d44de64f9ee29d5557bda2cc7202d6995d55644ce50a' \
   'docker-compose.eval.yml' | shasum -a 256 --check
 umask 077
 printf 'OPENWORK_AUTH_SECRET=%s\nOPENWORK_DB_ENCRYPTION_KEY=%s\n' \

@@ -51,7 +51,7 @@ services:
     # intentionally no host port: MySQL stays internal to the compose network
 
   den-migrate:
-    image: ghcr.io/different-ai/openwork-den-api:0.18.46@sha256:e254a3842e7ecb6d0c7128b5f17201e92ac4ee566ad82c70c468938a3faa6407
+    image: ghcr.io/different-ai/openwork-den-api:0.18.48@sha256:8f2977788063c47d06f3cd2b2c60b43da5137d42c807b577e2f30ad968e86204
     depends_on:
       mysql:
         condition: service_healthy
@@ -63,7 +63,7 @@ services:
       DEN_DB_ENCRYPTION_KEY: ${OPENWORK_DB_ENCRYPTION_KEY:?Set OPENWORK_DB_ENCRYPTION_KEY to at least 32 random characters}
 
   den:
-    image: ghcr.io/different-ai/openwork-den-api:0.18.46@sha256:e254a3842e7ecb6d0c7128b5f17201e92ac4ee566ad82c70c468938a3faa6407
+    image: ghcr.io/different-ai/openwork-den-api:0.18.48@sha256:8f2977788063c47d06f3cd2b2c60b43da5137d42c807b577e2f30ad968e86204
     restart: unless-stopped
     depends_on:
       mysql:
@@ -100,7 +100,7 @@ services:
       WORKER_URL_TEMPLATE: https://workers.local/{workerId}
 
   web:
-    image: ghcr.io/different-ai/openwork-den-web:0.18.46@sha256:82affe9e09523852dbdb8ffd8c9ac36763a4f7d5d4e4c94d5e2b513e37e04a7b
+    image: ghcr.io/different-ai/openwork-den-web:0.18.48@sha256:fe856630e05b1ff96accfb2a8a108b416a1fdc1a842ea0af492b3a8472f594a5
     restart: unless-stopped
     depends_on:
       den:
