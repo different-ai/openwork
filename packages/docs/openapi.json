@@ -2454,6 +2454,7 @@
               "teamRoles",
               "sharedRoles",
               "agentPermissions",
+              "engineV2ForceUpgrade",
               "engineV2Upgrade",
               "remoteSessionEvents",
               "backgroundShellTasks",
@@ -2709,6 +2710,9 @@
                     "agentPermissions": {
                       "type": "boolean"
                     },
+                    "engineV2ForceUpgrade": {
+                      "type": "boolean"
+                    },
                     "engineV2Upgrade": {
                       "type": "boolean"
                     },
@@ -2768,6 +2772,7 @@
                     "teamRoles",
                     "sharedRoles",
                     "agentPermissions",
+                    "engineV2ForceUpgrade",
                     "engineV2Upgrade",
                     "remoteSessionEvents",
                     "backgroundShellTasks",
@@ -4127,6 +4132,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "engineV2ForceUpgrade": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "engineV2Upgrade": {
                       "type": "object",
                       "properties": {
@@ -4657,6 +4718,7 @@
                     "teamRoles",
                     "sharedRoles",
                     "agentPermissions",
+                    "engineV2ForceUpgrade",
                     "engineV2Upgrade",
                     "remoteSessionEvents",
                     "backgroundShellTasks",
@@ -5107,6 +5169,9 @@
                     "agentPermissions": {
                       "type": "boolean"
                     },
+                    "engineV2ForceUpgrade": {
+                      "type": "boolean"
+                    },
                     "engineV2Upgrade": {
                       "type": "boolean"
                     },
@@ -5166,6 +5231,7 @@
                     "teamRoles",
                     "sharedRoles",
                     "agentPermissions",
+                    "engineV2ForceUpgrade",
                     "engineV2Upgrade",
                     "remoteSessionEvents",
                     "backgroundShellTasks",
@@ -6525,6 +6591,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "engineV2ForceUpgrade": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "engineV2Upgrade": {
                       "type": "object",
                       "properties": {
@@ -7055,6 +7177,7 @@
                     "teamRoles",
                     "sharedRoles",
                     "agentPermissions",
+                    "engineV2ForceUpgrade",
                     "engineV2Upgrade",
                     "remoteSessionEvents",
                     "backgroundShellTasks",
@@ -28768,6 +28891,17 @@
                 "type": "null"
               }
             ]
+          },
+          "enginePolicy": {
+            "type": "object",
+            "properties": {
+              "upgrade": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "upgrade"
+            ]
           }
         },
         "required": [
@@ -28776,7 +28910,8 @@
           "isActiveRecently",
           "openSessionCount",
           "lastHeartbeatAt",
-          "lastActiveAt"
+          "lastActiveAt",
+          "enginePolicy"
         ]
       },
       "WorkerInstance": {
@@ -31106,6 +31241,9 @@
                         "agentPermissions": {
                           "type": "boolean"
                         },
+                        "engineV2ForceUpgrade": {
+                          "type": "boolean"
+                        },
                         "engineV2Upgrade": {
                           "type": "boolean"
                         },
@@ -31165,6 +31303,7 @@
                         "teamRoles",
                         "sharedRoles",
                         "agentPermissions",
+                        "engineV2ForceUpgrade",
                         "engineV2Upgrade",
                         "remoteSessionEvents",
                         "backgroundShellTasks",
@@ -32524,6 +32663,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "engineV2ForceUpgrade": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "engineV2Upgrade": {
                           "type": "object",
                           "properties": {
@@ -33054,6 +33249,7 @@
                         "teamRoles",
                         "sharedRoles",
                         "agentPermissions",
+                        "engineV2ForceUpgrade",
                         "engineV2Upgrade",
                         "remoteSessionEvents",
                         "backgroundShellTasks",
@@ -33253,6 +33449,9 @@
                         "agentPermissions": {
                           "type": "boolean"
                         },
+                        "engineV2ForceUpgrade": {
+                          "type": "boolean"
+                        },
                         "engineV2Upgrade": {
                           "type": "boolean"
                         },
@@ -33312,6 +33511,7 @@
                         "teamRoles",
                         "sharedRoles",
                         "agentPermissions",
+                        "engineV2ForceUpgrade",
                         "engineV2Upgrade",
                         "remoteSessionEvents",
                         "backgroundShellTasks",
@@ -34671,6 +34871,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "engineV2ForceUpgrade": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "engineV2Upgrade": {
                           "type": "object",
                           "properties": {
@@ -35201,6 +35457,7 @@
                         "teamRoles",
                         "sharedRoles",
                         "agentPermissions",
+                        "engineV2ForceUpgrade",
                         "engineV2Upgrade",
                         "remoteSessionEvents",
                         "backgroundShellTasks",

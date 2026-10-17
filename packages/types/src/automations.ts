@@ -323,9 +323,12 @@ export const automationRunnerWorkItemSchema = z.union([
 ])
 /** Runs a desktop may claim per work poll; a runner skips the ones pinned elsewhere. */
 export const AUTOMATION_RUNNER_WORK_RUN_LIMIT = 20
+export const runnerEnginePolicySchema = z.object({ upgrade: z.boolean() })
 export const automationRunnerWorkResponseSchema = z.object({
   // Up to the run limit plus five remote-session commands and five remote-session requests.
   items: z.array(automationRunnerWorkItemSchema).max(AUTOMATION_RUNNER_WORK_RUN_LIMIT + 10),
+  /** Live org policy is returned even when inventory has not changed. */
+  enginePolicy: runnerEnginePolicySchema.optional(),
 })
 export type AutomationRunnerWorkResponse = z.infer<typeof automationRunnerWorkResponseSchema>
 
@@ -374,6 +377,8 @@ export type DesktopRunnerInventory = z.infer<typeof desktopRunnerInventorySchema
 export const desktopRunnerInventoryResponseSchema = z.object({
   ok: z.literal(true),
   updatedAt: timestampSchema,
+  /** Effective live policy; old clients ignore this additive response field. */
+  enginePolicy: runnerEnginePolicySchema.optional(),
 })
 
 export const remoteSessionCommandAssignmentSchema = z.object({

@@ -3,6 +3,8 @@ import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { runnerEnginePolicySchema } from "@openwork/types/automations"
+import { readOrganizationEnginePolicy } from "../engine-policy.js"
 import { attributeAuditRequest, auditServiceAttribution } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { jsonValidator, paramValidator, tokenRoute } from "../../middleware/index.js"
@@ -24,6 +26,7 @@ const workerHeartbeatResponseSchema = z.object({
   openSessionCount: z.number().int().nullable(),
   lastHeartbeatAt: z.string().datetime(),
   lastActiveAt: z.string().datetime().nullable(),
+  enginePolicy: runnerEnginePolicySchema,
 }).meta({ ref: "WorkerHeartbeatResponse" })
 
 export function registerWorkerActivityRoutes<T extends { Variables: WorkerRouteVariables }>(app: Hono<T>) {
@@ -114,8 +117,11 @@ export function registerWorkerActivityRoutes<T extends { Variables: WorkerRouteV
       })
       .where(eq(WorkerTable.id, workerId))
 
+    const enginePolicy = await readOrganizationEnginePolicy(worker.org_id)
+    c.header("Cache-Control", "no-store")
     return c.json({
       ok: true,
+      enginePolicy,
       workerId,
       isActiveRecently: body.isActiveRecently,
       openSessionCount: body.openSessionCount ?? null,
