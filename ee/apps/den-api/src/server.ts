@@ -13,6 +13,8 @@ import { startGithubSyncWorker } from "./workers/github-sync.js"
 import { externalMcpClientRuntimeName } from "./capability-sources/external-mcp-client-runtime.js"
 import { startAutomationSchedulerLoop } from "./automations/scheduler-loop.js"
 import { startModelsAnalyticsExportLoop } from "./models-analytics-export.js"
+import { externalToolCatalogCacheUsage } from "./mcp/external-tool-catalog-cache.js"
+import { externalToolsSearchCacheUsage } from "./mcp/external-tools-search-cache.js"
 
 const stopSlackAssistantWorker = startSlackAssistantWorker()
 const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()
@@ -23,6 +25,21 @@ const stopWorkerProvisioningReconcileLoop = startWorkerProvisioningReconcileLoop
 const stopGithubSyncWorker = startGithubSyncWorker()
 const stopModelsAnalyticsExportLoop = startModelsAnalyticsExportLoop()
 const automationScheduler = startAutomationSchedulerLoop({ enabled: env.automations.runtimeEnabled })
+// Maintenance frees expired entries even when the original member never returns.
+// Only aggregate sizes and counters are logged; no keys, identities or tool content.
+const toolCacheMaintenance = setInterval(() => {
+  const memory = process.memoryUsage()
+  appLogger.info("external MCP tool cache usage", {
+    component: "mcp_tool_cache",
+    catalog: externalToolCatalogCacheUsage(),
+    search: externalToolsSearchCacheUsage(),
+    rss_bytes: memory.rss,
+    heap_used_bytes: memory.heapUsed,
+    heap_total_bytes: memory.heapTotal,
+    external_bytes: memory.external,
+  })
+}, 60_000)
+toolCacheMaintenance.unref()
 
 appLogger.info("external mcp implementation selected", { component: "server", runtime: externalMcpClientRuntimeName })
 
@@ -80,6 +97,7 @@ async function closeServer() {
 }
 
 async function stopBackgroundLoops() {
+  clearInterval(toolCacheMaintenance)
   stopModelsAnalyticsExportLoop()
   const results = await Promise.allSettled([
     stopScimMaintenanceLoop(),
