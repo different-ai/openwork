@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { test } from "node:test";
-import { WORKSHOP_LIMITS, WORKSHOP_SCENES, WORKSHOP_MODEL_ORDER, WORKSHOP_INITIAL_INSTANT, seedSemanticHash, verifyWorkshopScene, verifyWorkshopMatrix } from "./workshop-narrative-contract.ts";
+import { fileURLToPath } from "node:url";
+import { WORKSHOP_LIMITS, WORKSHOP_SCENES, WORKSHOP_TOOL_PERMISSIONS, WORKSHOP_MODEL_ORDER, WORKSHOP_INITIAL_INSTANT, seedSemanticHash, verifyWorkshopScene, verifyWorkshopMatrix } from "./workshop-narrative-contract.ts";
 import type { SceneEvidence, SceneId, SceneVerdict, ObserverSnapshot, JsonRecord } from "./workshop-narrative-contract.ts";
 
 const pageA = { id: "product-a", title: "Atlas 2 – datasheet", body: "<h1>Atlas 2</h1><p>300 kg payload, 10 h runtime.</p>" };
@@ -11,11 +14,12 @@ function tool(name: string, output: unknown, input: unknown = {}): JsonRecord { 
 function assistant(parts: unknown[]) { return { info: { role: "assistant", providerID: "provider", modelID: "model", agent: "openwork", sessionID: "session", finish: "stop", time: { completed: 1 } }, parts }; }
 function evidence(id: SceneId, parts: unknown[] = []): SceneEvidence { return { id, before: snapshot(), after: { ...snapshot(), messages: [assistant(parts)] }, expected: { providerID: "provider", modelID: "model", sessionId: "session" }, elapsedMs: 1000, costUsd: 0.01 }; }
 function productCalls() { return [pageA, pageB].map((p) => tool("confluence_get_page", { metadata: { id: p.id, content: { value: p.body, format: "storage" } } })); }
-function comparison(): SceneEvidence {
-  const file = { id: "comparison-file", name: "comparison.txt", webUrl: "https://owned.test/onedrive/comparison-file", preview: { text: "Atlas 2 vs Atlas Lift. Sources: product-a and product-b." } };
-  const draft = { id: "reply-draft", isDraft: true, parentFolderId: "drafts", conversationId: source.conversationId, body: { content: file.webUrl } };
-  const e = evidence("T01", [...productCalls(), tool("mail_search", { value: [source] }), tool("file_write", file), tool("file_read", file), tool("mail_create_reply_draft", draft), tool("mail_read", draft)]);
-  e.after.microsoft = { files: [file], messages: [source, draft] };
+function comparison(request = source, requirements = "", options: { fileReadText?: string; draftConversationId?: string } = {}): SceneEvidence {
+  const file = { id: "comparison-file", name: "comparison.txt", webUrl: "https://owned.test/onedrive/comparison-file", preview: { text: "| Spec | Atlas 2 | Atlas Lift |\n|---|---|---|\n| Payload | 300 kg | 1,200 kg |\n| Top speed | 2.0 m/s | 1.5 m/s |\n| Runtime | 10 h | 8 h |\nAtlas 2 supports warehouse picking; Atlas Lift supports pallet moves. Sources: product-a and product-b." + requirements } };
+  const draft = { id: "reply-draft", isDraft: true, parentFolderId: "drafts", conversationId: options.draftConversationId ?? request.conversationId, body: { content: file.webUrl } };
+  const e = evidence("T01", [...productCalls(), tool("mail_search", { value: [request] }), tool("file_write", file), tool("file_read", options.fileReadText === undefined ? file : { id: file.id, text: options.fileReadText }), tool("mail_create_reply_draft", draft), tool("mail_read", draft)]);
+  e.before.microsoft = { files: [], messages: [request] };
+  e.after.microsoft = { files: [file], messages: [request, draft] };
   return e;
 }
 function replaceParts(e: SceneEvidence, parts: unknown[]) { e.after.messages = [assistant(parts)]; }
@@ -36,14 +40,94 @@ function accountPresentation(): SceneEvidence {
 test("scene order, deterministic clock and model-independent bounded prompts", () => {
   assert.deepEqual(WORKSHOP_SCENES.map((s) => s.id), ["T10", "T01", "T02", "T03", "T04", "T05", "T06", "T07", "T09", "T08", "T11", "T12"]);
   assert.deepEqual(WORKSHOP_MODEL_ORDER, ["gpt-sol-fast", "qwen-27b"]);
+  assert.deepEqual(WORKSHOP_TOOL_PERMISSIONS, { skill: "allow", webfetch: "deny", websearch: "deny", "browser_*": "deny" });
+  assert.ok(WORKSHOP_SCENES.find((scene) => scene.id === "T07")?.prompt.includes("Use connected APIs only"));
   assert.equal(WORKSHOP_INITIAL_INSTANT, "2026-10-16T15:55:00.000Z");
   assert.ok(WORKSHOP_SCENES.every((s) => s.prompt.includes("workshop starts") && s.prompt.includes("current time thereafter") && !s.prompt.includes("It is Friday")));
   assert.ok(WORKSHOP_SCENES.find((s) => s.id === "T08")?.prompt.includes("negative feedback"));
+  assert.ok(WORKSHOP_SCENES.find((s) => s.id === "T02")?.prompt.includes("Every Workflow output must assess both Atlas 2 and Atlas Lift"));
+  assert.ok(WORKSHOP_SCENES.find((s) => s.id === "T05")?.prompt.includes("omit content entirely"));
+  assert.ok(WORKSHOP_SCENES.find((s) => s.id === "T05")?.prompt.includes("presentationml.presentation.main+xml"));
   assert.ok(WORKSHOP_SCENES.every((s) => s.limitMs === WORKSHOP_LIMITS.sceneMs && !/cob_|plg_|cov_|163840|localhost|127\.0\.0\.1|providerID|modelID/.test(s.prompt)));
 });
 
 test("complete-body mail_search is a valid source read, not restricted to mail_read", () => {
   assert.equal(verifyWorkshopScene(comparison()).status, "PASS");
+});
+
+const comparisonArtifactReason = "Comparison must be created and fully read back in OneDrive with product citations";
+const comparisonDraftReason = "Create and read back an unsent threaded reply linking the document";
+
+test("T01 full source reads and a chat-only comparison still fail both artifact requirements", () => {
+  const e = evidence("T01", [...productCalls(), tool("mail_read", source), { type: "text", text: "I read the sources, but found only internal customer-related correspondence. Atlas 2: 300 kg, 2.0 m/s, 10 h. Atlas Lift: 1,200 kg, 1.5 m/s, 8 h. Sources: product-a and product-b." }]);
+  const verdict = verifyWorkshopScene(e);
+  assert.equal(verdict.status, "FAIL");
+  assert.deepEqual(verdict.reasons, [comparisonArtifactReason, comparisonDraftReason]);
+});
+
+test("T01 complete file and threaded unsent draft readbacks satisfy both artifact requirements", () => {
+  const verdict = verifyWorkshopScene(comparison());
+  assert.equal(verdict.status, "PASS");
+  assert.deepEqual(verdict.reasons, []);
+});
+
+test("T01 partial file readback fails even when the file write and threaded draft are valid", () => {
+  const e = comparison(source, "", { fileReadText: "Atlas 2 and Atlas Lift: product-a and product-b" });
+  const verdict = verifyWorkshopScene(e);
+  assert.equal(verdict.status, "FAIL");
+  assert.deepEqual(verdict.reasons, [comparisonArtifactReason]);
+});
+
+test("T01 a read-back unsent draft in another thread fails despite a verified comparison", () => {
+  const e = comparison(source, "", { draftConversationId: "unrelated-thread" });
+  const verdict = verifyWorkshopScene(e);
+  assert.equal(verdict.status, "FAIL");
+  assert.deepEqual(verdict.reasons, [comparisonDraftReason]);
+});
+
+test("T01 and T12 source prompts align with the actual newest internal customer-related Inbox fixture", { timeout: 10_000 }, async (t) => {
+  // Read the real, unchanged synthetic seed; no MCP mutations, native world or inference.
+  const child = spawn(process.execPath, [fileURLToPath(new URL("../packages/labs/src/demo-microsoft365.mjs", import.meta.url))], { env: { PATH: process.env.PATH, HOST: "127.0.0.1", PORT: "0", DEMO_NOW: WORKSHOP_INITIAL_INSTANT }, stdio: ["ignore", "pipe", "ignore"] });
+  t.after(async () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    const exited = once(child, "exit");
+    child.kill();
+    await exited;
+  });
+  assert.ok(child.stdout);
+  const ready = once(child.stdout, "data", { signal: AbortSignal.timeout(5_000) });
+  await once(child, "spawn");
+  const [output] = await ready;
+  const origin = /http:\/\/127\.0\.0\.1:\d+/.exec(String(output))?.[0];
+  assert.ok(origin, "Synthetic fixture must announce its loopback listener");
+  const response = await fetch(`${origin}/state`, { signal: AbortSignal.timeout(5_000) });
+  assert.equal(response.status, 200);
+  const state: unknown = await response.json();
+  const record = (value: unknown): value is JsonRecord => value !== null && typeof value === "object" && !Array.isArray(value);
+  assert.ok(record(state) && Array.isArray(state.messages));
+  const inbox = state.messages.filter(record).filter((mail) => mail.parentFolderId === "inbox").sort((a, b) => String(b.receivedDateTime).localeCompare(String(a.receivedDateTime)));
+  const latest = inbox[0];
+  assert.ok(latest);
+  assert.equal(latest.id, "mail-blueharbor-2");
+  assert.equal(latest.conversationId, "thread-blueharbor");
+  assert.equal(latest.receivedDateTime, "2026-10-16T13:55:00.000Z");
+  assert.match(String(latest.subject), /Blue Harbor.*safety review and customer meeting/);
+  assert.ok(record(latest.from) && record(latest.from.emailAddress));
+  assert.equal(latest.from.emailAddress.address, "nora@acme.test");
+  assert.ok(record(latest.body) && typeof latest.body.content === "string");
+  assert.match(latest.body.content, /customer sign-off/);
+  for (const id of ["T01", "T12"]) {
+    const prompt = WORKSHOP_SCENES.find((scene) => scene.id === id)?.prompt;
+    assert.ok(prompt);
+    assert.match(prompt, /latest customer-related Inbox message in Outlook, including internal staff correspondence about the customer/);
+  }
+  assert.ok(typeof latest.id === "string");
+  assert.ok(typeof latest.conversationId === "string");
+  assert.ok(typeof latest.receivedDateTime === "string");
+  const request = { id: latest.id, conversationId: latest.conversationId, receivedDateTime: latest.receivedDateTime, parentFolderId: "inbox", body: { content: latest.body.content } };
+  const verdict = verifyWorkshopScene(comparison(request, "\nCustomer sign-off remains unconfirmed for approved level-floor routes. Operator training is two sessions per shift; supervised operation only, no unattended operation. Charging bay dimensions remain unconfirmed."));
+  assert.equal(verdict.status, "PASS");
+  assert.deepEqual(verdict.reasons, []);
 });
 
 test("actual MCP metadata markdownify setext headings match full HTML bodies", () => {
@@ -109,7 +193,8 @@ test("pre-existing business writes and unsent-draft prose are not a new comparis
 test("UI feedback requires real persistence, not model prose", () => {
   const e = evidence("T08", [{ type: "text", text: "Feedback saved!" }]);
   assert.equal(verifyWorkshopScene(e).status, "BLOCKED");
-  e.feedback = { feedbackId: "feedback", sessionId: "session", messageId: "answer", text: "Not helpful: the missing-policy uncertainty and next step were not clear enough.", persisted: true, source: "product-ui", observedViaReadback: true };
+  e.before.messages = [{ info: { id: "answer", role: "assistant" }, parts: [{ type: "text", text: "No dog policy found; ask People Ops." }] }];
+  e.feedback = { feedbackId: "feedback", sessionId: "session", messageId: "answer", text: "Not helpful: the missing-policy uncertainty and next step were not clear enough.", submittedText: "Not helpful: the missing-policy uncertainty and next step were not clear enough. Reference session session, response answer.", persisted: true, source: "product-ui", observedViaReadback: true, providerOperation: "createThread", openedFromApp: true };
   assert.equal(verifyWorkshopScene(e).status, "PASS");
   e.feedback.text = "Helpful: clearly distinguished missing policy from permission.";
   assert.equal(verifyWorkshopScene(e).status, "FAIL", "Positive feedback is not the requested negative feedback");
@@ -159,6 +244,41 @@ test("T05 cannot substitute a file-list snippet for reading the preceding full a
   assert.equal(verifyWorkshopScene(e).status, "FAIL");
 });
 
+function scheduledDigest(registration: JsonRecord): SceneEvidence {
+  const articles = ["France", "United States", "Germany", "Japan"].map((country, index) => ({ id: `article-${index}`, country, title: `${country} report`, outlet: "Owned fictional news", url: `https://owned.test/article-${index}`, summary: "Measured fictional outcomes remain explicitly uncertain" }));
+  const folder = { id: "morning-folder", name: "Morning news", folder: {} };
+  const digest = { id: "digest", name: "digest.md", webUrl: "https://owned.test/digest", parentReference: { id: folder.id }, preview: { text: articles.map((article) => `${article.country}: ${article.title}; ${article.outlet}; ${article.url}; ${article.summary}`).join("\n") } };
+  const draft = { id: "digest-draft", isDraft: true, parentFolderId: "drafts", body: { content: digest.webUrl } };
+  const e = evidence("T10", [registration, ...articles.map((article) => tool("news_read", article)), tool("file_write", digest), tool("mail_create_draft", draft)]);
+  e.before.news = { now: WORKSHOP_INITIAL_INSTANT, articles, jobs: [], events: [] };
+  e.scheduleRegistration = structuredClone(e.before);
+  e.after.news = { now: "2026-10-16T16:00:00.000Z", articles, jobs: [{ id: "job-1" }], events: [{ id: "event-1", jobId: "job-1" }] };
+  e.after.microsoft = { files: [folder, digest], messages: [source, draft] };
+  e.schedule = { jobId: "job-1", dueEventId: "event-1", dueAt: "2026-10-16T16:00:00.000Z", timeZone: "America/Los_Angeles", clockBefore: WORKSHOP_INITIAL_INSTANT, clockAfter: "2026-10-16T16:00:00.000Z", inferenceExecuted: true, deliveryExecuted: true, digestFileId: digest.id, draftId: draft.id, runnerSessionId: "session" };
+  return e;
+}
+
+test("direct scheduling tool business name cannot replace its actual operation identity", () => {
+  const e = scheduledDigest(tool("connected_news_schedule_create", { content: [{ type: "text", text: JSON.stringify({ id: "job-1" }) }], isError: false }, { name: "Acme Morning News — isolated simulated schedule", hour: 9 }));
+  const verdict = verifyWorkshopScene(e);
+  assert.equal(verdict.status, "PASS", verdict.reasons.join("; "));
+});
+
+test("registration still requires the exact returned job ID and a completed model call", () => {
+  const wrong = scheduledDigest(tool("connected_news_schedule_create", { id: "other-job" }, { name: "Morning news" }));
+  assert.ok(verifyWorkshopScene(wrong).reasons.includes("Model must actually register the observed schedule"));
+  const failed = tool("connected_news_schedule_create", { id: "job-1" }, { name: "Morning news" });
+  failed.state = { ...Object.fromEntries(Object.entries(failed.state ?? {})), status: "error" };
+  assert.ok(verifyWorkshopScene(scheduledDigest(failed)).reasons.includes("Model must actually register the observed schedule"));
+});
+
+test("generic execute_capability uses its operation name but unrelated tool name inputs cannot forge registration", () => {
+  const generic = scheduledDigest(tool("openwork-cloud_execute_capability", { id: "job-1" }, { name: "news_schedule_create", body: { name: "Morning news" } }));
+  assert.equal(verifyWorkshopScene(generic).status, "PASS");
+  const forged = scheduledDigest(tool("unrelated_read", { id: "job-1" }, { name: "news_schedule_create" }));
+  assert.ok(verifyWorkshopScene(forged).reasons.includes("Model must actually register the observed schedule"));
+});
+
 test("a simulated due event without inference/delivery remains blocked", () => {
   const e = evidence("T10", [tool("news_search", []), tool("news_read", { id: "news" }), tool("fixture_schedule_create", { id: "job" })]);
   e.after.news = { jobs: [{ id: "job" }], events: [{ id: "due", jobId: "job" }] };
@@ -174,12 +294,18 @@ test("missing news source calls fails even with digest text and schedule claim",
 test("Windows in description does not satisfy required ITSD Application field", () => {
   const issue = { id: "it", key: "ITSD-999", project: "ITSD", requestType: "reset", description: "Windows login" };
   const guidance = { id: "guidance", title: "IT and security", body: "Never share a password" };
-  const e = evidence("T07", [tool("confluence_get_page", guidance), tool("jira_get_request_types", [{ id: "reset", name: "Reset a password" }]), tool("jira_get_request_type_fields", { fields: [{ field_id: "customfield_10500", name: "Application", required: true, valid_values: [{ value: "10600", label: "Windows login" }] }] }), tool("jira_create_customer_request", { request_key: issue.key }), tool("jira_get_issue", issue)]);
+  const parts = [tool("confluence_get_page", guidance), tool("jira_get_request_types", [{ id: "reset", name: "Reset a password" }]), tool("jira_get_request_type_fields", { fields: [{ field_id: "customfield_10500", name: "Application", required: true, valid_values: [{ value: "10600", label: "Windows login" }] }] }), tool("jira_create_customer_request", { request_key: issue.key }), tool("jira_get_issue", issue)];
+  const e = evidence("T07", parts);
   e.before.atlassian = { confluence: { pages: [guidance] }, jira: { issues: [] } };
   e.after.atlassian = { confluence: { pages: [guidance] }, jira: { issues: [issue] } };
   assert.equal(verifyWorkshopScene(e).status, "FAIL");
   Object.assign(issue, { application: "Windows login" });
   assert.equal(verifyWorkshopScene(e).status, "PASS");
+  for (const name of ["webfetch", "browser_tabs", "websearch"]) {
+    replaceParts(e, [...parts, tool(name, { denied: true })]);
+    assert.equal(verifyWorkshopScene(e).status, "FAIL", `${name} is not needed after the connected API readback`);
+    assert.ok(verifyWorkshopScene(e).reasons.includes("T07 must finish through connected APIs without browsing or external fetch/search attempts"));
+  }
 });
 
 test("DOC ticket must persist nora assignee, not just mention Nora", () => {
@@ -232,6 +358,23 @@ test("calendar_read is accepted for the actual exact rescheduled Graph meeting",
 test("calendar creation without real update and exact final state cannot pass", () => {
   const e = evidence("T11", [tool("calendar_list", []), tool("calendar_create", { id: "event" })]);
   e.after.microsoft = { events: [{ id: "event", subject: "Acme Atlas review", start: { dateTime: "2026-10-20T11:00:00", timeZone: "UTC" } }] };
+  assert.equal(verifyWorkshopScene(e).status, "FAIL");
+});
+
+test("numeric-string Confluence IDs correlate with actual update/comment and readback results", () => {
+  const addition = "Workshop review: office guidance checked on 2026-10-16; dog-policy confirmation remains with People Ops.";
+  const review = "Workshop review complete; please confirm the dog-policy gap with People Ops.";
+  const old = { id: "163840002", title: "Working at the office", body: "<h1>Working at the office</h1><p>Badge in at reception.</p>", version: 6, comments: [] };
+  const comment = { id: "163840027", body: `<p>${review}</p>` };
+  const updated = { ...old, body: old.body + `<p>${addition}</p>`, version: 7, comments: [comment] };
+  const link = "http://owned.test/confluence/pages/viewpage.action?pageId=163840002";
+  const draft = { id: "reply-draft", isDraft: true, parentFolderId: "drafts", conversationId: source.conversationId, body: { content: `Reviewed ${link}, version 7. ${review}` } };
+  const e = evidence("T12", [tool("confluence_get_page", { metadata: { id: old.id, content: { value: old.body }, url: link } }), tool("confluence_update_page", { message: "Page updated successfully", page: { id: updated.id } }), tool("confluence_get_page", { metadata: { id: updated.id, content: { value: updated.body }, url: link } }), tool("confluence_add_comment", { success: true, comment: { id: comment.id, body: review } }), tool("confluence_get_comments", [{ id: comment.id, body: review }]), tool("mail_search", { value: [source] }), tool("mail_create_reply_draft", draft), tool("mail_read", draft)]);
+  e.before.atlassian = { confluence: { pages: [old] } };
+  e.after.atlassian = { confluence: { pages: [updated] } };
+  e.after.microsoft = { files: [], messages: [source, draft] };
+  assert.equal(verifyWorkshopScene(e).status, "PASS");
+  updated.body = "<p>Only the new note, original content removed.</p>";
   assert.equal(verifyWorkshopScene(e).status, "FAIL");
 });
 

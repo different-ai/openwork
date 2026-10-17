@@ -1,24 +1,18 @@
 #!/usr/bin/env node
 // Explicit opt-in, local-only paid comparison. This launches the native proof, never performs the workplace tasks.
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { WORKSHOP_MODEL_ORDER, WORKSHOP_SCENES, WORKSHOP_LIMITS } from "../worlds/workshop-narrative-contract.ts";
+import { WORKSHOP_MODEL_ORDER, WORKSHOP_SCENES, WORKSHOP_LIMITS, verifyWorkshopMatrix } from "../worlds/workshop-narrative-contract.ts";
+import { workshopRunIdentity } from "../worlds/workshop-run-identity.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const directory = join(root, "evals/results/workshop-narrative", stamp);
 await mkdir(directory, { recursive: true });
-const evidenceFiles = ["evals/proofs/workshop-narrative.proof.test.ts", "evals/worlds/workshop-narrative.ts", "evals/worlds/workshop-narrative-inference.ts", "evals/worlds/workshop-narrative-contract.ts", "evals/worlds/workshop-narrative-witnesses.ts", "worlds/lib/workshop-inference.ts", "evals/packages/labs/src/demo-atlassian.mjs", "evals/packages/labs/src/demo-microsoft365.mjs", "evals/packages/labs/src/demo-workshop-news.mjs", "evals/packages/labs/src/demo-workplace-ui.mjs"];
-async function sourceDigest() {
-  const hash = createHash("sha256");
-  for (const path of evidenceFiles) hash.update(path).update(await readFile(join(root, path)));
-  return hash.digest("hex");
-}
-const hash = await sourceDigest();
-const promptDigest = createHash("sha256").update(JSON.stringify({ scenes: WORKSHOP_SCENES, limits: WORKSHOP_LIMITS })).digest("hex");
+async function sourceDigest() { return (await workshopRunIdentity()).sourceDigest; }
+const { sourceDigest: hash, promptDigest } = await workshopRunIdentity();
 const phases: Record<string, unknown>[] = [];
 let cleanupRequested = false;
 let active: ReturnType<typeof spawn> | undefined;
@@ -46,8 +40,14 @@ for (const [index, profile] of WORKSHOP_MODEL_ORDER.entries()) {
 const rowArray = (value: unknown): Record<string, unknown>[] => Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => item !== null && typeof item === "object" && !Array.isArray(item)) : [];
 const seedDigests = phases.map((phase) => phase.seedDigest).filter((value): value is string => typeof value === "string");
 const sameSeed = seedDigests.length === 2 && seedDigests[0] === seedDigests[1];
-const complete = phases.length === 2 && sameSeed && phases.every((phase) => rowArray(phase.rows).length === WORKSHOP_SCENES.length && rowArray(phase.rows).every((row) => row.status === "PASS"));
-const comparison = { verdict: complete ? "PASS" : "INCOMPLETE", modelOrder: WORKSHOP_MODEL_ORDER, promptDigest, sourceDigest: hash, identicalInitialBusinessState: sameSeed, limits: WORKSHOP_LIMITS, phases };
+const aggregate = verifyWorkshopMatrix(phases.map((phase) => ({ model: String(phase.profile), elapsedMs: Number(phase.wallMs), scenes: rowArray(phase.rows).map((row) => {
+  const scene = WORKSHOP_SCENES.find((scene) => scene.id === row.id);
+  if (!scene) throw new Error("Native matrix returned an unknown scene");
+  const facts = row.evidence !== null && typeof row.evidence === "object" ? Object.fromEntries(Object.entries(row.evidence)) : {};
+  return { id: scene.id, status: row.status === "PASS" ? "PASS" : row.status === "FAIL" ? "FAIL" : "BLOCKED", reasons: [String(row.reason)], usage: { costUsd: typeof facts.estimatedUsd === "number" ? facts.estimatedUsd : null, costKind: "estimate", tokens: typeof facts.inputTokens === "number" && typeof facts.outputTokens === "number" ? facts.inputTokens + facts.outputTokens : null } };
+}) })));
+const complete = sameSeed && aggregate.status === "PASS" && phases.every((phase) => phase.nativeExitCode === 0);
+const comparison = { verdict: complete ? "PASS" : "INCOMPLETE", aggregate, modelOrder: WORKSHOP_MODEL_ORDER, promptDigest, sourceDigest: hash, identicalInitialBusinessState: sameSeed, limits: WORKSHOP_LIMITS, phases };
 await writeFile(join(directory, "comparison.json"), JSON.stringify(comparison, null, 2) + "\n");
 const clean = (value: unknown) => String(value ?? "unavailable").replace(/Bearer\s+\S+/gi, "Bearer [redacted]").replace(/sk-[A-Za-z0-9_-]+/g, "[credential-redacted]").replace(/\/(?:Users|private\/var|var\/folders)\/[^\s;,)]+/g, "[local-path]").replace(/\|/g, "\\|").replace(/\s+/g, " ");
 const table = WORKSHOP_SCENES.map((scene) => {

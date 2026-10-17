@@ -1,4 +1,6 @@
-import type { ObserverSnapshot, ObservedServiceCall, WorkflowWitness, SharingWitness, JsonRecord } from "./workshop-narrative-contract.ts";
+import type { ObserverSnapshot, ObservedServiceCall, JsonRecord } from "./workshop-narrative-contract.ts";
+export { workflowWitness, sharingWitness, observedNativeWorkflowCalls } from "./workshop-workflow-witness.ts";
+export type { NativeWorkflowObservation, NativeWorkflowRead, WorkflowWitnessContext, WorkflowActorEvidence, VerifiedWorkflowWitness, VerifiedSharingWitness } from "./workshop-workflow-witness.ts";
 const obj = (value: unknown): JsonRecord => value !== null && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : {};
 const arr = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
 const str = (value: unknown) => typeof value === "string" ? value : "";
@@ -20,33 +22,4 @@ export function observedServiceCalls(before: ObserverSnapshot, after: ObserverSn
     }
   }
   return result;
-}
-
-export interface NativeWorkflowObservation {
-  list: unknown; details: unknown; grants: unknown; snapshots: unknown; runs: JsonRecord[];
-  ownerMemberId: string; recipientMemberId: string;
-}
-const records = (value: unknown): JsonRecord[] => Array.isArray(value) ? value.flatMap(records) : value !== null && typeof value === "object" ? [obj(value), ...Object.values(obj(value)).flatMap(records)] : [];
-
-/** Workflow snapshots are read through Den, with caller/input digests independently corroborated in the owned DB. */
-export function workflowWitness(before: NativeWorkflowObservation, after: NativeWorkflowObservation): WorkflowWitness | undefined {
-  const item = records(after.list).find((row) => row.title === "Acme product comparison" && typeof row.configObjectId === "string");
-  if (!item) return undefined;
-  const workflowId = str(item.configObjectId), versionId = str(item.configObjectVersionId);
-  const version = records(after.details).find((row) => row.id === versionId && typeof row.codeDigest === "string");
-  const fresh = after.runs.filter((row) => !before.runs.some((old) => old.id === row.id));
-  const test = fresh.find((row) => row.status === "succeeded" && !row.config_object_id && row.code_digest === version?.codeDigest && row.org_membership_id === after.ownerMemberId);
-  const rerun = fresh.find((row) => row.status === "succeeded" && row.config_object_id === workflowId && row.config_object_version_id === versionId && row.org_membership_id === after.ownerMemberId && records(after.snapshots).some((snapshot) => snapshot.receiptId === row.id));
-  if (!test || !rerun || !versionId) return undefined;
-  return { workflowId, versionId, savedNativeWorkflow: true, observedViaDenGet: true,
-    test: { receiptId: str(test.id), workflowId, versionId, status: str(test.status), input: { actualInputDigest: test.script_input_digest } },
-    rerun: { receiptId: str(rerun.id), workflowId, versionId, status: str(rerun.status), input: { actualInputDigest: rerun.script_input_digest } } };
-}
-export function sharingWitness(before: NativeWorkflowObservation, after: NativeWorkflowObservation): SharingWitness | undefined {
-  const item = records(after.list).find((row) => row.title === "Acme product comparison" && typeof row.configObjectId === "string");
-  if (!item) return undefined;
-  const grant = records(after.grants).find((row) => row.orgMembershipId === after.recipientMemberId && row.role === "viewer" && !records(before.grants).some((old) => old.id && old.id === row.id));
-  const execution = after.runs.find((row) => !before.runs.some((old) => old.id === row.id) && row.config_object_id === item.configObjectId && row.config_object_version_id === item.configObjectVersionId && row.org_membership_id === after.recipientMemberId && row.status === "succeeded" && records(after.snapshots).some((snapshot) => snapshot.receiptId === row.id));
-  if (!grant || !execution || !str(grant.id)) return undefined;
-  return { workflowId: str(item.configObjectId), versionId: str(item.configObjectVersionId), grantId: str(grant.id), role: "viewer", recipientEmail: "nora@acme.test", ownerMemberId: after.ownerMemberId, recipientMemberId: after.recipientMemberId, executionMemberId: str(execution.org_membership_id), receiptId: str(execution.id), status: "succeeded", observedViaDenGet: true };
 }

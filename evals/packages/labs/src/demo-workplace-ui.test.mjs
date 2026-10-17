@@ -8,6 +8,7 @@ import { mkdtemp, rm, access, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
+import { locate } from "../../cdp/src/input.ts";
 import { setTimeout as delay } from "node:timers/promises";
 
 async function port() {
@@ -134,6 +135,12 @@ test("workplace UI shares demo REST state and supports real browser workflows", 
     await waitFor(() => evaluate("document.getElementById('issue-title')?.textContent === 'Browser-created issue <safe>'"), "Create issue did not navigate to the created issue");
     await screenshot("jira-created-issue");
     const browserKey = await evaluate("location.pathname.split('/').at(-1)");
+    // Use the same native target locator as workshop scene assertions, not an ID-only DOM lookup.
+    const surface = { handle: { name: "workplace-regression", kind: "chrome", hostKind: "local", cdpUrl: debugOrigin }, client: { send: cdp, close() {} } };
+    const assignee = await locate(surface, { label: "Assignee" });
+    assert.equal(assignee.name, "Assignee");
+    assert.equal(assignee.value, "");
+    assert.equal(assignee.visible, true);
     await click("edit-issue");
     await change("edit-issue-summary", "Browser-edited issue");
     const richDescription = "Description edited in the issue dialog\n\n*Atlas 2*\n* Payload: 300 kg\n* Top speed: {{2.0 m/s}}\n\n<img src=x onerror=window.bad=true>";
@@ -155,6 +162,10 @@ test("workplace UI shares demo REST state and supports real browser workflows", 
     await waitFor(async () => (await proxy(`/jira/rest/api/2/issue/${browserKey}`)).fields.priority.name === "High", "Priority not persisted");
     await change("issue-assignee", "priya.shah", "change");
     await waitFor(async () => (await proxy(`/jira/rest/api/2/issue/${browserKey}`)).fields.assignee?.displayName === "Priya Shah", "Assignee not persisted");
+    assert.equal((await locate(surface, { label: "Assignee" })).value, "priya.shah");
+    assert.equal((await locate(surface, { label: "Priority" })).value, "High");
+    await proxy(`/jira/rest/api/2/issue/${browserKey}`, "PUT", { fields: { assignee: { name: "nora.patel" } } });
+    await waitFor(async () => (await locate(surface, { label: "Assignee" })).value === "nora.patel", "Native Assignee target did not reflect the agent-assigned teammate");
     await change("issue-status", "21", "change");
     await waitFor(async () => (await proxy(`/jira/rest/api/2/issue/${browserKey}`)).fields.status.name === "In Progress", "Transition not persisted");
     await waitFor(() => evaluate("document.querySelector('#issue-status option:checked').textContent === 'In Progress'"), "Transition not rendered");
@@ -173,6 +184,24 @@ test("workplace UI shares demo REST state and supports real browser workflows", 
     await navigate("/confluence/pages/163840005", "document.getElementById('page-title')?.textContent === 'IT and security'");
     assert.equal(await evaluate("document.querySelectorAll('#page-outline a').length"), 2);
     await screenshot("confluence-it-policy");
+    await navigate("/confluence/pages/163840002", "document.getElementById('page-title')?.textContent === 'Working at the office'");
+    const officeBefore = await evaluate("document.getElementById('document').innerHTML");
+    const officeHeadings = await evaluate("[...document.querySelectorAll('#document h1,#document h2')].map(node=>node.textContent)");
+    const mcpTool = async (name, args) => {
+      const rpc = await (await fetch(backend + "/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) })).json();
+      assert.equal(rpc.result.isError, false, rpc.result.content[0].text);
+      return JSON.parse(rpc.result.content[0].text);
+    };
+    const { metadata: office } = await mcpTool("confluence_get_page", { page_id: "163840002" });
+    const review = "Workshop review: office guidance checked on 2026-10-16; dog-policy confirmation remains with People Ops.";
+    await mcpTool("confluence_update_page", { page_id: office.id, title: office.title, content: office.content.value + "\n\n" + review });
+    const { metadata: reviewedOffice } = await mcpTool("confluence_get_page", { page_id: office.id });
+    assert.equal(reviewedOffice.version, office.version + 1);
+    await waitFor(() => evaluate(`document.getElementById('document').textContent.includes(${JSON.stringify(review)}) && document.getElementById('page-meta').textContent.includes('Version ${reviewedOffice.version}')`), "MCP office update did not render with the actual incremented version");
+    assert.deepEqual(await evaluate("[...document.querySelectorAll('#document h1,#document h2')].map(node=>node.textContent)"), officeHeadings);
+    // Outline IDs are assigned by the UI; all original rendered content must remain byte-for-byte intact.
+    assert.equal(await evaluate("document.getElementById('document').innerHTML"), officeBefore + `<p>${review}</p>`);
+    await screenshot("confluence-office-mcp-review");
     await navigate("/confluence/pages/163840001", "document.getElementById('page-title')?.textContent === 'Employee Handbook'");
     await screenshot("confluence-handbook");
     assert.equal(await evaluate("document.querySelectorAll('#space-tree > details[data-space]').length"), 4);

@@ -341,5 +341,8 @@ export async function getWorkflowLibraryDetail(input: {
     connections,
   })
   if (!workflow) throw new Error("workflow_not_found")
-  return { workflow, script, views }
+  // A readable Workflow already permits manual REST/MCP execution using the
+  // caller's live tools. Do not project the stricter scheduling permission onto
+  // this library action; scheduling and manager-only editing keep their checks.
+  return { workflow, script: { ...script, canRun: true }, views }
 }

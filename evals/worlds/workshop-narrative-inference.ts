@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
 import { workshopModelProfile, startWorkshopInferenceProxy } from "../../worlds/lib/workshop-inference.ts";
 const run = promisify(execFile);
 function record(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value); }
@@ -37,5 +38,7 @@ export async function startNarrativeInference(name: string, stack: AsyncDisposab
   }
   const verified = { ...metadata, httpStatus: status, toolCall, preflightElapsedMs: Date.now() - started, preflightWitnesses: structuredClone(proxy.witnesses), limits: proxy.limits };
   if (status !== 200 || !toolCall) return { ready: false as const, reason: "Exact-model real tool-call preflight was not verified; no fallback", metadata: verified };
-  return { ready: true as const, providerId: proxy.providerId, provider: proxy.provider, modelId: proxy.modelId, variant: proxy.variant ?? null, metadata: verified, observations: () => structuredClone(proxy.witnesses) };
+  return { ready: true as const, providerId: proxy.providerId, provider: proxy.provider, modelId: proxy.modelId, variant: proxy.variant ?? null, metadata: verified, observations: () => structuredClone(proxy.witnesses), abortAfter: proxy.abortAfter,
+    async settle(timeoutMs = 10000) { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline && proxy.witnesses.some((entry) => entry.status === "started")) await delay(25); if (proxy.witnesses.some((entry) => entry.status === "started")) throw new Error("Owned inference did not settle after the product turn"); },
+  };
 }

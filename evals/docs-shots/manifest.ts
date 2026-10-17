@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { extname, join, relative, sep } from "node:path";
-import { shots } from "./shots/index.ts";
+import { documentationShots as shots } from "./shots/index.ts";
 import { REPO_ROOT } from "./surfaces.ts";
 
 const DOCS_ROOT = join(REPO_ROOT, "packages/docs");

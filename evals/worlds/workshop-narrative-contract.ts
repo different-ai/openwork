@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { comparisonRequirements } from "./workshop-comparison-semantics.ts";
 
 /** Pure observer contract. This module never starts a world, calls a service, or writes business state. */
 export const WORKSHOP_INITIAL_LOCAL = "2026-10-16T08:55:00";
@@ -6,6 +7,7 @@ export const WORKSHOP_TIME_ZONE = "America/Los_Angeles";
 export const WORKSHOP_INITIAL_INSTANT = "2026-10-16T15:55:00.000Z";
 export const WORKSHOP_MODEL_ORDER = ["gpt-sol-fast", "qwen-27b"];
 export const WORKSHOP_LIMITS = Object.freeze({ sceneMs: 180_000, matrixMs: 1_800_000, sceneToolCalls: 120, sceneAssistantTurns: 60, sceneCostUsd: 8, matrixCostUsd: 60, sceneTokens: 2_000_000, matrixTokens: 16_000_000 });
+export const WORKSHOP_TOOL_PERMISSIONS = Object.freeze({ skill: "allow", webfetch: "deny", websearch: "deny", "browser_*": "deny" });
 export type SceneId = "T10" | "T01" | "T02" | "T03" | "T04" | "T05" | "T06" | "T07" | "T09" | "T08" | "T11" | "T12";
 export interface WorkshopScene { id: SceneId; title: string; prompt: string; limitMs: number }
 const preamble = "This is an authorized fictional Acme Robotics workshop. The workshop starts Friday October 16, 2026, 08:55 America/Los_Angeles; the observer may advance the simulated clock, so use its current time thereafter. Use discovered connected services and their actual source content, not invented results or literal-return scripts. Cite sources. Do not send mail. If a required capability is unavailable, explain the blocker rather than claiming success. ";
@@ -13,17 +15,17 @@ const scene = (id: SceneId, title: string, prompt: string): WorkshopScene => Obj
 /** Shared verbatim across both models; scene failures do not prevent later scenes. */
 export const WORKSHOP_SCENES: readonly WorkshopScene[] = Object.freeze([
   scene("T10", "09:00 news digest", "Register a daily 09:00 America/Los_Angeles job using the connected isolated news scheduler. Its model-authored saved instructions must produce a digest from the fictional news corpus covering France, United States, Germany and Japan, with titles, summaries, outlet, country and links. The job must save the digest into a OneDrive Morning news folder and create an unsent Outlook draft. Do NOT generate or deliver the digest before 09:00. The operator will advance the isolated clock and dispatch your saved job instructions to this real paid agent when due. Label this an isolated simulated schedule, not a production Automation. Verify the registered job; never use external news services."),
-  scene("T01", "Grounded customer comparison", "Find and read the complete latest customer request in Outlook. Search Confluence for the Atlas 2 and Atlas Lift datasheets, then read both full pages, not search excerpts. Compare the products against the customer's requirements with page citations. Save a comparison in OneDrive and create an unsent threaded Outlook reply linking it. Verify the saved document and draft."),
-  scene("T02", "Save and rerun a native Workflow", "Turn the customer comparison into a saved native OpenWork Workflow named Acme product comparison with a customerRequest input. Test it using 'Compare Atlas 2 and Atlas Lift for warehouse picking', retain the successful test receipt, and save its version. Rerun that same saved version with the different input 'Compare Atlas Lift for cold-storage pallet moves'. Verify the persisted Workflow, both execution receipts and the different inputs. A chat answer, local script or skill is not a saved native Workflow."),
+  scene("T01", "Grounded customer comparison", "Find and read the complete latest customer-related Inbox message in Outlook, including internal staff correspondence about the customer; do not require a customer-authored sender. Search Confluence for the Atlas 2 and Atlas Lift datasheets, then read both full pages, not search excerpts. Compare the products against every material requirement in that customer-related message with page citations. Include a compact table with separate Atlas 2 and Atlas Lift columns and payload, top speed and runtime rows; distinguish verified product facts from the customer's unconfirmed safety and site requirements. Save a comparison in OneDrive and create an unsent threaded Outlook reply linking it. Verify the saved document and draft."),
+  scene("T02", "Save and rerun a native Workflow", "Turn the customer comparison into a saved native OpenWork Workflow named Acme product comparison with a customerRequest input. Every Workflow output must assess both Atlas 2 and Atlas Lift, with each product's verified payload and source citation, even when customerRequest names only one product; explain which product is a documented match and which is not. The Workflow must evaluate customerRequest against documented use cases and limits, not just echo it or copy raw datasheets. Support different documented use cases beyond the two test inputs; matching must handle case, punctuation and hyphenation, and distinguish a documented use-case match from still-unconfirmed site requirements. Test it using 'Compare Atlas 2 and Atlas Lift for warehouse picking', retain the successful test receipt, and save its version. Rerun that same saved version with the different input 'Compare Atlas Lift for cold-storage pallet moves'. Verify the persisted Workflow, both execution receipts and the different inputs. Leave and verify the cold-storage rerun as the Workflow's latest saved result, rather than executing the warehouse-picking example again afterward. A chat answer, local script or skill is not a saved native Workflow."),
   scene("T03", "Recipient execution of a shared Workflow", "Share the saved Acme product comparison Workflow with the fictional Acme teammate Nora Patel (nora@acme.test) as a viewer allowed to execute, not an owner. Have that recipient execute the saved version with 'Compare Atlas 2 for line-side replenishment'. Verify the actual grant and recipient execution provenance. Do not substitute an owner run; if recipient execution is unavailable report that blocker."),
   scene("T04", "Account intelligence", "Read the full existing Confluence account plans for Northwind Logistics and Blue Harbor Foods. Compare annual recurring revenue, number and value of orders in the last 12 months, relationship strength, growth potential and churn risk. Preserve exact financial values and distinguish ARR from order revenue. Cite each account plan and ground the relationship, growth and churn assessment in the pages. Save this grounded report as 'Acme account analysis.md' in OneDrive and read it back to verify its actual content."),
-  scene("T05", "Generate a real account-analysis PowerPoint", "Read the preceding report 'Acme account analysis.md' from OneDrive and both full original Confluence account plans for Northwind Logistics and Blue Harbor Foods. Turn that report into an actual PowerPoint with at least three slides preserving the exact ARR, order counts and values, relationship, growth potential, churn risk and account-plan citations. Save the generated PPTX bytes as 'Acme account analysis.pptx' in OneDrive and report its file ID or path. A product-only comparison, renamed text file, slide outline or seed deck is not enough. The observer will independently open the actual downloaded bytes with python-pptx and inspect the ZIP and slide content; this is not an Office UI rendering claim."),
+  scene("T05", "Generate a real account-analysis PowerPoint", "Read the preceding report 'Acme account analysis.md' from OneDrive and both full original Confluence account plans for Northwind Logistics and Blue Harbor Foods. Turn that report into an actual PowerPoint with at least three slides preserving the exact ARR, order counts and values, relationship, growth potential, churn risk and account-plan citations. Save the generated PPTX bytes as 'Acme account analysis.pptx' in OneDrive and report its file ID or path. Generate the binary and invoke the connected upload programmatically within existing code/script execution; do not hand-emit or transcribe long base64 through a model tool-call argument. For a binary file_write, pass content_base64 and omit content entirely—never provide both or a placeholder content value. If constructing OOXML yourself, /ppt/presentation.xml must use the standard main content type application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml; a ZIP with presentationml.presentation+xml is not a valid PowerPoint package. Check the package structure before uploading. A product-only comparison, renamed text file, slide outline or seed deck is not enough. The observer will independently open the actual downloaded bytes with python-pptx and inspect the ZIP and slide content; this is not an Office UI rendering claim."),
   scene("T06", "Assigned documentation ticket", "Create a Jira Task in the DOC project titled 'Update documentation for Project XYZ', assigned to the fictional Acme teammate Nora Patel. Discover and resolve the actual assignee, create the ticket, then read it back to verify project, summary and assignee."),
-  scene("T07", "Windows password reset", "I am locked out of my Windows login. Read the internal IT guidance, inspect the IT Service Desk request types and the required fields and valid Application options for Reset a password. Create the ITSD password-reset request with the actual required Windows login Application option, not merely Windows in the description. Verify its request type and custom field. Never request or include a password."),
+  scene("T07", "Windows password reset", "I am locked out of my Windows login. Read the internal IT guidance, inspect the IT Service Desk request types and the required fields and valid Application options for Reset a password. Create the ITSD password-reset request with the actual required Windows login Application option, not merely Windows in the description. Verify its request type and custom field through the connected Jira APIs, then finish with the issue key, request type and verified Application value. Use connected APIs only; do not open a browser, list browser tabs, fetch a linked portal page, or invoke webfetch/web search. Never request or include a password."),
   scene("T09", "Honest missing-policy answer", "Can I bring my dog to the Acme office? Search the internal Confluence handbook and office policy and read relevant full pages. If no dog policy exists, say that you could not find one and ask People Ops rather than inventing permission or a prohibition. You do not have approval to invoke any external search, browsing or other external tool."),
   scene("T08", "Persist real UI feedback", "Use the product's actual feedback UI to record this negative feedback on the preceding dog-policy answer: 'Not helpful: the missing-policy uncertainty and next step were not clear enough.' Do not claim it was saved unless the real UI persisted it; a chat response, local file or Jira ticket is not product feedback. If the UI is inaccessible, explain that blocker."),
   scene("T11", "Create and reschedule a meeting", "Inspect my Outlook calendar. Create 'Acme Atlas review' for October 19, 2026, 10:00–10:30 America/Los_Angeles, with Nora Patel (nora@acme.test) and Priya Shah (priya@acme.test) as required attendees, location 'Acme lab B', body 'Review Atlas 2 and Atlas Lift comparison.' Then reschedule that same meeting to October 20, 2026, 11:00–11:45 America/Los_Angeles, keeping both attendees, location and body. Verify the final calendar state. Do not create a second meeting to simulate rescheduling."),
-  scene("T12", "Update Confluence and draft a reply", "Read the full Confluence 'Working at the office' page and its actual version. Preserve the current content and append 'Workshop review: office guidance checked on 2026-10-16; dog-policy confirmation remains with People Ops.' Save a real incremented page version and add the comment 'Workshop review complete; please confirm the dog-policy gap with People Ops.' Find and read the latest customer request in Outlook and create an unsent threaded reply draft referencing the updated page link, new version and review comment. Read back the page, comment and draft. Do not send mail or invent a dog policy."),
+  scene("T12", "Update Confluence and draft a reply", "Read the full Confluence 'Working at the office' page and its actual version. Preserve the current content and append 'Workshop review: office guidance checked on 2026-10-16; dog-policy confirmation remains with People Ops.' Save a real incremented page version and add the comment 'Workshop review complete; please confirm the dog-policy gap with People Ops.' Find and read the latest customer-related Inbox message in Outlook, including internal staff correspondence about the customer, and create an unsent threaded reply draft referencing the updated page link, new version and review comment. Read back the page, comment and draft. Do not send mail or invent a dog policy."),
 ]);
 
 export type JsonRecord = { [key: string]: unknown };
@@ -66,6 +68,9 @@ export interface ScheduleWitness {
 export interface FeedbackWitness {
   feedbackId: string; sessionId: string; messageId: string; text: string;
   persisted: boolean; source: "product-ui"; observedViaReadback: boolean;
+  submittedText?: string;
+  providerOperation?: "createThread";
+  openedFromApp?: boolean;
 }
 export interface ArtifactWitness {
   fileId: string; sha256: string; validZip: boolean; validPresentation: boolean;
@@ -85,6 +90,7 @@ export interface SceneEvidence {
   serviceCalls?: readonly ObservedServiceCall[];
   workflow?: WorkflowWitness; sharing?: SharingWitness; schedule?: ScheduleWitness;
   feedback?: FeedbackWitness; artifact?: ArtifactWitness;
+  scheduleRegistration?: ObserverSnapshot;
 }
 export interface SceneVerdict {
   id: SceneId; status: "PASS" | "FAIL" | "BLOCKED"; reasons: string[];
@@ -96,14 +102,18 @@ function messages(snapshot: ObserverSnapshot) { return arr(snapshot.messages).ma
 function assistants(snapshot: ObserverSnapshot) { return messages(snapshot).filter((m) => obj(m.info).role === "assistant"); }
 function toolParts(snapshot: ObserverSnapshot) { return assistants(snapshot).flatMap((m) => arr(m.parts).map(obj).filter((p) => p.type === "tool")); }
 const forbiddenSource = /(?:execute_capability_script|\bexecute_script\b|(?:^|[._-])(?:execute|shell|bash|python|javascript|eval)$)/i;
-function observedCalls(evidence: SceneEvidence): Call[] {
+export function observedWorkshopCalls(evidence: SceneEvidence): Call[] {
   const completed = toolParts(evidence.after).filter((p) => obj(p.state).status === "completed");
   const direct = completed.flatMap((p): Call[] => {
     const state = obj(p.state); const input = obj(state.input);
     // Code strings and their stdout are never evidence of a downstream source read.
-    const name = typeof input.name === "string" ? input.name : str(p.tool);
+    // Only the generic dispatcher stores operation identity in input.name.
+    // Direct provider tools may use name for an ordinary business field (e.g.
+    // the schedule title); that must neither hide nor forge a tool operation.
+    const dispatched = /(?:^|[_:.])execute_capability$/.test(str(p.tool));
+    const name = dispatched && typeof input.name === "string" ? input.name : str(p.tool);
     if (forbiddenSource.test(name) || typeof input.code === "string" || /search_capabilities/.test(name)) return [];
-    return [{ callId: str(p.callID), name, input: input.body ?? input.arguments ?? input, output: state.output }];
+    return [{ callId: str(p.callID), name, input: dispatched ? input.body ?? input.arguments ?? input : input, output: state.output }];
   });
   const witnessed = (evidence.serviceCalls ?? []).filter((c) => c.status === "completed" && c.callId.length > 0 && completed.some((p) => p.callID === c.callId));
   return [...direct, ...witnessed];
@@ -112,8 +122,11 @@ function matches(call: Call, operation: string) { return call.name === operation
 function callsFor(calls: Call[], operation: string) { return calls.filter((c) => matches(c, operation)); }
 function containsId(value: unknown, id: string): boolean {
   if (!id) return false;
+  // Confluence IDs are numeric strings. Compare the real scalar before JSON
+  // parsing: parsing "163840002" turns it into a number and used to lose it.
+  if ((typeof value === "string" || typeof value === "number") && String(value) === id) return true;
   const parsed = parse(value);
-  if (typeof parsed === "string") return parsed === id;
+  if (typeof parsed === "string" || typeof parsed === "number") return String(parsed) === id;
   if (Array.isArray(parsed)) return parsed.some((v) => containsId(v, id));
   return Object.entries(obj(parsed)).some(([key, value]) => key !== "code" && containsId(value, id));
 }
@@ -194,18 +207,28 @@ function completeFileRead(calls: Call[], file: JsonRecord): boolean {
 
 /** Snapshot deltas + successful call provenance are mandatory; model claims never satisfy a write. */
 export function verifyWorkshopScene(evidence: SceneEvidence): SceneVerdict {
+  // Feedback is a human UI action, not another model turn. It must be read back
+  // from the real form's provider transport and name the actual preceding answer.
+  if (evidence.id === "T08") {
+    const feedback = evidence.feedback;
+    const base = "Not helpful: the missing-policy uncertainty and next step were not clear enough.";
+    if (evidence.elapsedMs > WORKSHOP_LIMITS.sceneMs || (evidence.costUsd != null && evidence.costUsd > WORKSHOP_LIMITS.sceneCostUsd) || (evidence.tokens != null && evidence.tokens > WORKSHOP_LIMITS.sceneTokens)) return { id: evidence.id, status: "FAIL", reasons: ["Feedback scene time, token or observed cost budget exceeded"] };
+    if (!feedback?.persisted || !feedback.observedViaReadback || feedback.source !== "product-ui" || !feedback.feedbackId || !feedback.openedFromApp || feedback.providerOperation !== "createThread") return { id: evidence.id, status: "BLOCKED", reasons: ["Actual app-opened feedback form and provider/disk persistence were not verified"] };
+    const valid = feedback.sessionId === evidence.expected.sessionId && feedback.messageId.length > 0 && feedback.text === base && feedback.submittedText?.startsWith(base) && feedback.submittedText.includes(feedback.sessionId) && feedback.submittedText.includes(feedback.messageId) && messages(evidence.before).some((message) => obj(message.info).id === feedback.messageId && obj(message.info).role === "assistant");
+    return { id: evidence.id, status: valid ? "PASS" : "FAIL", reasons: valid ? [] : ["Feedback must contain the requested negative note and reference the actual preceding session/message"] };
+  }
   // A reused session must not reuse earlier source calls to satisfy a later scene.
   const previousMessageIds = new Set(messages(evidence.before).map((m) => str(obj(m.info).id)).filter(Boolean));
   evidence = { ...evidence, after: { ...evidence.after, messages: messages(evidence.after).filter((m) => !previousMessageIds.has(str(obj(m.info).id))) } };
   const failures: string[] = []; const blockers: string[] = [];
   const need = (condition: unknown, reason: string) => { if (!condition) failures.push(reason); };
   const block = (condition: unknown, reason: string) => { if (!condition) blockers.push(reason); };
-  const before = evidence.before; const after = evidence.after; const calls = observedCalls(evidence);
+  const before = evidence.before; const after = evidence.after; const calls = observedWorkshopCalls(evidence);
   const assistant = assistants(after); const last = assistant.at(-1); const info = obj(last?.info);
   need(assistant.length > 0 && assistant.every((m) => {
     const i = obj(m.info);
     return !i.error && i.providerID === evidence.expected.providerID && i.modelID === evidence.expected.modelID && i.agent === (evidence.expected.agent ?? "openwork") && i.sessionID === evidence.expected.sessionId;
-  }), "Assistant role, backend model/provider, agent and session provenance must match on every assistant message");
+  }), "Every assistant message must have matching role/model/provider/agent/session provenance and be error-free");
   need(info.finish === "stop" && typeof obj(info.time).completed === "number", "Assistant must finish normally");
   need(!toolParts(after).some((p) => ["pending", "running"].includes(str(obj(p.state).status))), "Unfinished tool or approval");
   need(evidence.elapsedMs >= 0 && evidence.elapsedMs <= WORKSHOP_LIMITS.sceneMs, "Scene time budget exceeded");
@@ -230,7 +253,8 @@ export function verifyWorkshopScene(evidence: SceneEvidence): SceneVerdict {
       requireProducts();
       const source = latestInbox(before); need(source && completeMailRead(calls, source), "Read the complete latest Inbox request (full-body mail_search is valid)");
       const document = newItems(files(before), files(after)).find((f) => /Atlas\s*2/i.test(fileText(f)) && /Atlas\s*Lift/i.test(fileText(f)) && productPages.every((p) => fileText(f).includes(str(p.id))));
-      need(document && wrote(calls, "file_write", document) && readBack(calls, "file_read", document), "Comparison must be created and read back in OneDrive with product citations");
+      need(document && wrote(calls, "file_write", document) && completeFileRead(calls, document), "Comparison must be created and fully read back in OneDrive with product citations");
+      if (document && source) for (const reason of comparisonRequirements(fileText(document), bodyContent(source))) failures.push(reason);
       const draft = newItems(mails(before), mails(after)).find((m) => m.isDraft === true && m.parentFolderId === "drafts" && m.conversationId === source?.conversationId && document && (bodyContent(m).includes(str(document.webUrl)) || bodyContent(m).includes(str(document.id))));
       need(draft && wrote(calls, "mail_create_reply_draft", draft) && readBack(calls, "mail_read", draft), "Create and read back an unsent threaded reply linking the document");
       break;
@@ -290,6 +314,7 @@ export function verifyWorkshopScene(evidence: SceneEvidence): SceneVerdict {
       break;
     }
     case "T07": {
+      need(!toolParts(after).some((part) => /web.?fetch|web.?search|browser_|exa|bing|google_search|playwright/i.test(str(part.tool)) || /execute_capability$/.test(str(part.tool)) && /web.?fetch|web.?search|browser_|exa|bing|google_search|playwright/i.test(str(obj(obj(part.state).input).name))), "T07 must finish through connected APIs without browsing or external fetch/search attempts");
       const guidance = pages(before).find((p) => p.title === "IT and security");
       need(guidance && fullPageRead(calls, guidance), "Read complete internal IT guidance");
       const typeCalls = calls.filter((c) => /request.?types?|request.?fields?|request_type_fields/.test(c.name));
@@ -315,15 +340,19 @@ export function verifyWorkshopScene(evidence: SceneEvidence): SceneVerdict {
       need(!toolParts(after).some((p) => /web.?search|web.?fetch|browse|exa|google_search|bing|playwright/i.test(str(p.tool)) || /web.?search|web.?fetch|browse|exa|google_search|bing|playwright/i.test(str(obj(obj(p.state).input).name))), "External tool invocation/attempt is not approved");
       break;
     }
-    case "T08": {
-      const f = evidence.feedback;
-      block(f?.persisted && f.observedViaReadback && f.source === "product-ui" && f.feedbackId, "Real persisted product UI feedback witness unavailable; model claim is insufficient");
-      if (f) need(f.sessionId === evidence.expected.sessionId && f.messageId.length > 0 && f.text === "Not helpful: the missing-policy uncertainty and next step were not clear enough.", "Feedback must target the actual session/message with the requested text");
-      break;
-    }
     case "T10": {
       block(evidence.schedule, "09:00 simulated scheduling plus actual inference/delivery witness unavailable");
       const s = evidence.schedule;
+      if (s?.inferenceExecuted && s.deliveryExecuted) {
+        const registered = evidence.scheduleRegistration;
+        block(registered, "A pre-09:00 business-state observation is required to rule out premature delivery");
+        if (registered) {
+          need(!newItems(files(before), files(registered)).some((file) => !file.folder), "No digest file may be generated or delivered before 09:00");
+          need(!mails(registered).some((mail) => !mails(before).some((old) => old.id === mail.id && bodyContent(old) === bodyContent(mail) && old.parentFolderId === mail.parentFolderId)), "No new or modified mail may be delivered before 09:00");
+          const previousAudit = arr(obj(before.microsoft).audit).map(obj);
+          need(!arr(obj(registered.microsoft).audit).map(obj).some((call) => call.status === "completed" && !previousAudit.some((old) => old.sequence === call.sequence) && /^(?:file_write|mail_create_draft|mail_create_reply_draft|mail_send)$/.test(str(call.name))), "No transient pre-clock delivery write may be hidden by deleting its object");
+        }
+      }
       if (s) {
         block(s.inferenceExecuted && s.deliveryExecuted && s.runnerSessionId, "Scheduler due event alone is not execution or delivery");
         need(s.timeZone === WORKSHOP_TIME_ZONE && s.dueAt === "2026-10-16T16:00:00.000Z" && Date.parse(s.clockBefore) < Date.parse(s.dueAt) && Date.parse(s.clockAfter) >= Date.parse(s.dueAt), "Witness the simulated 09:00 Los Angeles boundary exactly");
@@ -339,6 +368,7 @@ export function verifyWorkshopScene(evidence: SceneEvidence): SceneVerdict {
           const usedArticles = arr(news.articles).map(obj).filter((article) => fileText(digest).includes(str(article.url)) && fileText(digest).includes(str(article.title)) && fileText(digest).includes(str(article.outlet)));
           need(["France", "United States", "Germany", "Japan"].every((country) => usedArticles.some((article) => article.country === country && sourceCalls.some((call) => containsId(call.output, str(article.id))))), "Every country needs a real source title, outlet, country and link in the delivered digest");
           need(usedArticles.every((article) => str(article.summary).toLowerCase().split(/\W+/).filter((word) => word.length > 4).filter((word) => fileText(digest).toLowerCase().includes(word)).length >= 4), "Delivered news summaries must retain source content, not only titles and links");
+          need(Boolean(str(digest.webUrl) && bodyContent(draft).includes(str(digest.webUrl))) || (usedArticles.length > 0 && usedArticles.every((article) => bodyContent(draft).includes(str(article.url)))), "The actual unsent draft must link the delivered digest or contain all selected source links, not just a placeholder");
           const folder = files(after).find((file) => file.folder && str(file.name).toLowerCase() === "morning news");
           need(folder && obj(digest.parentReference).id === folder.id, "Digest must actually be saved inside the requested OneDrive folder");
           if (s.inferenceExecuted && s.deliveryExecuted) need(wrote(calls, "file_write", digest) && (wrote(calls, "mail_create_draft", draft) || wrote(calls, "mail_create_reply_draft", draft)), "Correlate due-run digest and draft with actual successful service writes");

@@ -370,6 +370,12 @@ function markdownToStorage(markdown) {
       out.push(`<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[${code.join("\n")}]]></ac:plain-text-body></ac:structured-macro>`);
       continue;
     }
+    // get_page uses Markdownify's setext headings; updates must accept the format we return.
+    const setext = /^\s*(=+|-+)\s*$/.exec(lines[i + 1] ?? "");
+    if (setext && line.trim()) {
+      const level = setext[1][0] === "=" ? 1 : 2;
+      out.push(`<h${level}>${inlineMarkdownToHtml(line.trim())}</h${level}>`); i += 2; continue;
+    }
     if (/^\|/.test(line)) {
       const rows = [];
       while (i < lines.length && /^\|/.test(lines[i])) { rows.push(lines[i]); i += 1; }
@@ -397,7 +403,7 @@ function markdownToStorage(markdown) {
       continue;
     }
     const paragraph = [];
-    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|```|\||>|\s*([-*+]|\d+\.)\s)/.test(lines[i])) { paragraph.push(lines[i]); i += 1; }
+    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|```|\||>|\s*([-*+]|\d+\.)\s)/.test(lines[i]) && !/^\s*(=+|-+)\s*$/.test(lines[i + 1] ?? "")) { paragraph.push(lines[i]); i += 1; }
     out.push(`<p>${paragraph.map(inlineMarkdownToHtml).join("<br />")}</p>`);
   }
   return out.join("");
@@ -862,7 +868,7 @@ function contentView(page, ctx = {}, expand = "") {
   if (want("space")) view.space = spaceView(space, ctx);
   if (want("history")) view.history = { latest: true, createdBy: confluenceUser(page.creator, ctx), createdDate: confluenceTime(page.created),
     lastUpdated: { by: confluenceUser(page.lastModifier, ctx), when: confluenceTime(page.lastModified), number: page.version } };
-  if (want("version")) view.version = { by: confluenceUser(page.lastModifier, ctx), when: confluenceTime(page.lastModified), message: "", number: page.version, minorEdit: false, hidden: false };
+  if (want("version")) view.version = { by: confluenceUser(page.lastModifier, ctx), when: confluenceTime(page.lastModified), message: page.versionMessage ?? "", number: page.version, minorEdit: page.minorEdit ?? false, hidden: false };
   if (want("ancestors")) view.ancestors = ancestorsOf(page).map((a) => ({ id: a.id, type: "page", status: "current", title: a.title, _links: { webui: `/pages/viewpage.action?pageId=${a.id}` } }));
   if (want("body")) {
     view.body = { storage: { value: page.body, representation: "storage", _expandable: { content: `/rest/api/content/${page.id}` } } };
@@ -923,19 +929,21 @@ function excerptOf(page, cql) {
   const index = term ? text.toLowerCase().indexOf(term) : -1; const start = Math.max(0, index - 60);
   return `${start > 0 ? "…" : ""}${text.slice(start, start + 220)}${text.length > start + 220 ? "…" : ""}`;
 }
-function savePage(page, { title, body, parentId, versionNumber, message }) {
+function savePage(page, { title, body, parentId, versionNumber, message, minorEdit }) {
   if (versionNumber !== undefined && Number(versionNumber) !== page.version + 1) {
     throw new ApiError(409, `Version must be incremented on update. Current version is: ${page.version}`, { statusCode: 409, message: `com.atlassian.confluence.api.service.exceptions.ConflictException: Version must be incremented on update. Current version is: ${page.version}` });
   }
-  page.versions.push({ number: page.version, title: page.title, body: page.body, by: page.lastModifier, when: page.lastModified, message: "" });
   if (title !== undefined) {
     const clash = state.confluence.pages.find((p) => p !== page && p.spaceKey === page.spaceKey && p.title.toLowerCase() === String(title).toLowerCase() && p.status === "current" && p.type === "page");
     if (clash) throw new ApiError(400, `A page with this title already exists: A page already exists with the title ${title} in the space with key ${page.spaceKey}`, { statusCode: 400 });
-    page.title = String(title);
   }
+  // Validate before mutating either the current page or its immutable version snapshots.
+  const nextParent = parentId !== undefined && parentId !== null ? findPage(parentId).id : page.parentId;
+  page.versions.push({ number: page.version, title: page.title, body: page.body, by: page.lastModifier, when: page.lastModified, message: page.versionMessage ?? "", minorEdit: page.minorEdit ?? false });
+  if (title !== undefined) page.title = String(title);
   if (body !== undefined) page.body = body;
-  if (parentId !== undefined && parentId !== null) page.parentId = findPage(parentId).id;
-  page.version += 1; page.lastModifier = ME.handle; page.lastModified = clockNow(); page.versionMessage = message ?? "";
+  page.parentId = nextParent;
+  page.version += 1; page.lastModifier = ME.handle; page.lastModified = clockNow(); page.versionMessage = message ?? ""; page.minorEdit = minorEdit ?? false;
   touched = true;
 }
 function createPage({ spaceKey, title, body, parentId, type = "page" }) {
@@ -1167,12 +1175,12 @@ async function confluenceRest(method, path, query, body, ctx) {
     const page = findPage(m[1]);
     if (method === "GET") {
       const wantedVersion = query.get("version");
-      if (wantedVersion && Number(wantedVersion) !== page.version) { const old = page.versions.find((v) => v.number === Number(wantedVersion)); if (!old) throw notFound(`No content found with id ${page.id} and version ${wantedVersion}`); return contentView({ ...page, title: old.title, body: old.body, version: old.number, lastModifier: old.by, lastModified: old.when }, ctx, expand); }
+      if (wantedVersion && Number(wantedVersion) !== page.version) { const old = page.versions.find((v) => v.number === Number(wantedVersion)); if (!old) throw notFound(`No content found with id ${page.id} and version ${wantedVersion}`); return contentView({ ...page, title: old.title, body: old.body, version: old.number, lastModifier: old.by, lastModified: old.when, versionMessage: old.message, minorEdit: old.minorEdit }, ctx, expand); }
       return contentView(page, ctx, expand);
     }
     if (method === "PUT") {
       const storage = body?.body?.storage?.value ?? body?.body?.editor?.value;
-      savePage(page, { title: body?.title, body: storage, parentId: body?.ancestors?.[0]?.id, versionNumber: body?.version?.number, message: body?.version?.message });
+      savePage(page, { title: body?.title, body: storage, parentId: body?.ancestors?.[0]?.id, versionNumber: body?.version?.number, message: body?.version?.message, minorEdit: body?.version?.minorEdit });
       return contentView(page, ctx, "body.storage,version,space,ancestors");
     }
     if (method === "DELETE") { page.status = "trashed"; touched = true; return { status: 204 }; }
@@ -1204,8 +1212,8 @@ async function confluenceRest(method, path, query, body, ctx) {
   if ((m = /^\/rest\/api\/content\/([^/]+)\/history$/.exec(path))) { const page = findPage(m[1]); return contentView(page, ctx, "history").history; }
   if ((m = /^\/rest\/api\/content\/([^/]+)\/version$/.exec(path))) {
     const page = findPage(m[1]);
-    const all = [{ number: page.version, by: page.lastModifier, when: page.lastModified, message: page.versionMessage ?? "" }, ...[...page.versions].reverse().map((v) => ({ number: v.number, by: v.by, when: v.when, message: v.message }))];
-    return { results: all.map((v) => ({ by: confluenceUser(v.by, ctx), when: confluenceTime(v.when), message: v.message, number: v.number, minorEdit: false, hidden: false })), start: 0, limit: 200, size: all.length };
+    const all = [{ number: page.version, by: page.lastModifier, when: page.lastModified, message: page.versionMessage ?? "", minorEdit: page.minorEdit ?? false }, ...[...page.versions].reverse()];
+    return { results: all.map((v) => ({ by: confluenceUser(v.by, ctx), when: confluenceTime(v.when), message: v.message, number: v.number, minorEdit: v.minorEdit ?? false, hidden: false })), start: 0, limit: 200, size: all.length };
   }
   if ((m = /^\/rest\/api\/content\/([^/]+)\/property$/.exec(path))) { findPage(m[1]); return { results: [], start: 0, limit: 10, size: 0 }; }
   if ((m = /^\/rest\/api\/analytics\/content\/([^/]+)\/views$/.exec(path))) { const page = findPage(m[1]); return { id: Number(page.id), count: page.views }; }
