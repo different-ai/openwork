@@ -1272,6 +1272,7 @@ export function createEngineV2Preview(options: {
           if (!forceUpgrade || !await options.autoUpgradeIdle?.() || (existsSync(source) && (await readMigrationSessions(source)).length > 0)) {
             throw new Error("OpenCode v1 gained history or running work while v2 started. Keeping v1 until a later boot.");
           }
+          migration = { state: "idle", imported: 0, skipped: 0, total: 0 };
           await setChatRouting(true, "fresh", true);
         } });
         return true;

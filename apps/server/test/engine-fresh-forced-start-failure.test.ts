@@ -3,12 +3,20 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createEngineV2Preview, readEngineV2PreviewState, seedFreshInstallEngineState } from "../src/engine-v2-preview.js";
+import { createEngineV2Preview, readEngineV2PreviewState, seedFreshInstallEngineState, writeEngineV2PreviewState } from "../src/engine-v2-preview.js";
 import type { ServerConfig } from "../src/types.js";
+
+const nativeBinary = process.env.OPENWORK_OPENCODE2_BIN;
 
 async function profile(run: (config: ServerConfig) => Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), "openwork-fresh-forced-failure-"));
   const overrides = {
+    HOME: directory,
+    USERPROFILE: directory,
+    XDG_DATA_HOME: join(directory, "data"),
+    XDG_CONFIG_HOME: join(directory, "config"),
+    XDG_CACHE_HOME: join(directory, "cache"),
+    OPENCODE_DISABLE_MODELS_FETCH: "1",
     OPENWORK_RUNTIME_DB: join(directory, "runtime.sqlite"),
     OPENCODE_DB: join(directory, "v1.db"),
     OPENWORK_OPENCODE2_BIN: join(directory, "nonexistent-opencode2"),
@@ -62,6 +70,40 @@ for (const preseeded of [false, true]) test(`forced fresh start failure falls ba
       assert.match(later.status().migration.error ?? "", /nonexistent-opencode2/);
       assert.deepEqual(readEngineV2PreviewState(config).autoUpgradeRetry, saved.autoUpgradeRetry);
     } finally { await later.stop(); }
+  });
+});
+
+test("a later healthy fresh retry clears the error receipt and keeps forced ownership", { skip: !nativeBinary, timeout: 90_000 }, async () => {
+  if (!nativeBinary) return;
+  await profile(async config => {
+    const first = createEngineV2Preview({ config });
+    try {
+      const deadline = Date.now() + 10_000;
+      while (!readEngineV2PreviewState(config).autoUpgradeRetry && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+      assert.equal(first.status().chatRouting, false);
+      assert.equal(first.status().migration.state, "error");
+    } finally { await first.stop(); }
+    const failed = readEngineV2PreviewState(config);
+    assert.ok(failed.autoUpgradeRetry);
+    // Arrange an expired durable cooldown, as on a later boot; production
+    // still owns all binary startup, readiness and engine switching behavior.
+    await writeEngineV2PreviewState(config, { ...failed, autoUpgradeRetry: { attempts: 1, retryAt: 0 } });
+    process.env.OPENWORK_OPENCODE2_BIN = nativeBinary;
+    const retried = createEngineV2Preview({ config, autoUpgradeIdle: async () => true });
+    try {
+      const deadline = Date.now() + 60_000;
+      while ((!retried.status().engineForced || readEngineV2PreviewState(config).autoUpgradeRetry !== undefined) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      const status = retried.status();
+      assert.equal(status.running, true, JSON.stringify(status));
+      assert.equal(status.chatRouting, true);
+      assert.equal(status.engineOrigin, "fresh");
+      assert.equal(status.engineForced, true);
+      assert.equal(status.migration.state, "idle", "a recovered fresh profile must not keep its old error");
+      assert.equal(readEngineV2PreviewState(config).historyCopyResult, undefined);
+      assert.equal(readEngineV2PreviewState(config).autoUpgradeRetry, undefined);
+    } finally { await retried.stop(); }
   });
 });
 
