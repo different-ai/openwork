@@ -3,6 +3,7 @@ import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { openworkEnvStorePath } from "@openwork/paths";
 
+import type { ServerConfig } from "./types.js";
 import { ensureDir, exists } from "./utils.js";
 
 // User-level environment variables, persisted so the desktop shell can inject
@@ -51,7 +52,14 @@ function isInternalEnvKey(key: string): boolean {
   return RESERVED_PREFIXES.some((prefix) => key.startsWith(prefix));
 }
 
-export function resolveDefaultEnvStorePath(): string {
+// Sits beside the active server config, matching resolveTokenStorePath and
+// runtimeDbPath. Without this a --config or OPENWORK_SERVER_CONFIG run keeps
+// reading the default store while its tokens and runtime DB have moved.
+export function resolveDefaultEnvStorePath(config?: ServerConfig): string {
+  const configPath = config?.configPath?.trim();
+  if (configPath && !(process.env.OPENWORK_ENV_STORE ?? "").trim()) {
+    return join(dirname(configPath), "env.json");
+  }
   return openworkEnvStorePath();
 }
 
@@ -166,8 +174,8 @@ export class EnvService {
     return () => { this.changeListeners.delete(listener); };
   }
 
-  constructor(options?: { path?: string }) {
-    this.path = options?.path ? resolve(options.path) : resolveDefaultEnvStorePath();
+  constructor(options?: { path?: string; config?: ServerConfig }) {
+    this.path = options?.path ? resolve(options.path) : resolveDefaultEnvStorePath(options?.config);
   }
 
   private async ensureLoaded(): Promise<void> {
