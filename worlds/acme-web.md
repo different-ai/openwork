@@ -39,6 +39,24 @@ Send a message and expect the fixed reply. Reload or switch workspaces to
 inspect the composer model title; the `gwm_*` routing alias must not flash as
 the label. Gateway access can be managed in Den's AI Gateway screen.
 
+## Jira and Confluence (opt-in)
+
+`-- --atlassian` adds one more demo connection, **Atlassian (Jira & Confluence)**:
+an in-memory Jira Data Center (projects FLEET, DOC and the ITSD IT service desk)
+and Confluence Data Center (spaces HB, SALES, PROD, ENG) for the same Acme team.
+Its MCP tools are `mcp-atlassian` 3.4.9's, verbatim, and answer the way that
+server does against a real Data Center; the REST API under `/jira/rest/...` and
+`/confluence/rest/...` also works with the real `mcp-atlassian`. Outputs include
+`atlassianState` (live data; `POST /reset` restores the seed). Off by default so
+other demos keep their tool lists.
+
+```sh
+pnpm world up acme-web --stage atlassian -- --atlassian
+```
+
+`DEMO_ATLASSIAN_PARITY=1` with `uvx` installed makes
+`evals/packages/labs/src/demo-atlassian.test.ts` compare it with the real server.
+
 ## Automated regression
 
 ```sh

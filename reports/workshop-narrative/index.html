@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Workshop proof — incomplete</title><style>
+:root{--bg:#fcfcfd;--ink:#1c2024;--muted:#60646c;--line:#dfe3e6;--link:#185abc;--warning:#8a5a00}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1280px;margin:auto;padding:28px 24px}h1{font-size:24px;margin:0 0 12px;letter-spacing:-.5px}h2{font-size:18px;margin-top:28px}a{color:var(--link)}.state{color:var(--warning);font-weight:600}.muted{color:var(--muted)}table{width:100%;border-collapse:collapse;margin:16px 0}th,td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--line)}th{font-weight:600}summary{cursor:pointer;padding:12px 0;font-weight:600}details{border-top:1px solid var(--line)}figure{margin:12px 0 24px}img{display:block;max-width:100%;height:auto}figcaption{padding:8px 0;color:var(--muted)}:focus-visible{outline:2px solid var(--link);outline-offset:3px}code{font-size:12px}#error{color:#b42318}
+</style></head><body><main>
+<h1>Full workshop proof <span class="state">INCOMPLETE</span></h1>
+<p>Real paid model runs on the Mac, in Sol FAST → Qwen order. Fresh owned worlds and identical initial business-state hashes. No full workshop pass is claimed.</p>
+<p><a href="README.md">Read detailed results and caveats</a> · <a href="summary.json">Download sanitized metrics</a> · <a href="gallery.md">Open the Markdown gallery</a> · <a href="https://github.com/different-ai/openwork/pull/6109">Draft PR #6109</a></p>
+<p>Frozen native counts: <strong>Sol: 8 PASS / 2 FAIL / 2 BLOCKED</strong>; <strong>Qwen: 5 PASS / 5 FAIL / 2 BLOCKED</strong>. The acceptance review withholds additional passes where semantic assertions are incomplete. All rows below show <em>acceptance</em> status; raw outcomes remain visible.</p>
+<p class="muted">Tested implementation <code>be0acb54e9</code>. Native tests: 0 passed, 2 failed, 0 skipped. Combined wall time 34m 22s also exceeds the declared 30m aggregate threshold. Raw receipts, auth state and transcripts are not served here.</p>
+<div id="error" role="alert"></div><table><thead><tr><th>Scene</th><th>Sol contract / acceptance</th><th>Qwen contract / acceptance</th><th>Reason</th></tr></thead><tbody id="rows"></tbody></table>
+<h2>Timing and cost</h2>
+<p>Sol: 13m 28s, 6,029,715 input / 34,551 output tokens; $24.81 in available-request estimates, billing unavailable. Qwen: 20m 54s, 4,752,788 input / 103,406 output tokens; $1.37 estimated versus $0.36317 reported by upstream usage. Estimates are not invoices; cache discounts and cancellation complicate direct cost comparison.</p>
+<h2>Reviewed actual screenshots</h2>
+<p>Only fictional Acme views. Images are unaltered captures. A screenshot alone is not task proof. Feedback-menu screenshots show a blocker, not submitted feedback; Office previews are not rendered PowerPoint slides.</p>
+<section id="images"></section>
+<p class="muted">Both model worlds were cleaned up. This is a read-only evidence preview, not a live business-service demo or MCP App.</p>
+</main><script>
+fetch('summary.json').then(r=>{if(!r.ok)throw Error('Metrics unavailable');return r.json()}).then(data=>{for(const row of data.scenes){const tr=document.createElement('tr');for(const text of [row.id+' '+row.title,row.contract['gpt-sol-fast']+' / '+row.acceptance['gpt-sol-fast'],row.contract['qwen-27b']+' / '+row.acceptance['qwen-27b'],row.reason]){const td=document.createElement('td');td.textContent=text;tr.append(td)}document.getElementById('rows').append(tr)}}).catch(()=>{document.getElementById('error').textContent='Open this folder through a local HTTP server to load the metric table, or read README.md.'});
+const captures=[
+['gpt-sol-fast/T10-registration.png','Sol T10 — isolated schedule registration only; not delivery proof'],
+['gpt-sol-fast/T10-digest.png','Sol T10 — actual saved digest preview and folder; draft-content/early-delivery acceptance gaps remain'],
+['gpt-sol-fast/T03-recipient-attempt.png','Sol T03 — recipient attempt with visible resource-resolution limitation; BLOCKED'],
+['gpt-sol-fast/T04-account-report.png','Sol T04 — actual account report and source citations'],
+['gpt-sol-fast/T05-pptx-extracted-text.png','Sol T05 — saved generated PPTX and extracted text, not rendered Office slides'],
+['gpt-sol-fast/T07-windows-request.png','Sol T07 — created request waiting for support, not an actual password reset'],
+['gpt-sol-fast/T09-no-policy-chat.png','Sol T09 — honest missing-policy response in real OpenWork chat'],
+['gpt-sol-fast/T08-menu-only-blocked.png','Sol T08 — menu only; no negative feedback was submitted'],
+['gpt-sol-fast/T11-calendar-final.png','Sol T11 — final meeting state; mutation history is a separate machine check'],
+['qwen-27b/T01-partial-timeout.png','Qwen T01 — partial/source-search state; no completed comparison is claimed'],
+['qwen-27b/T04-account-report.png','Qwen T04 — actual account report and citations'],
+['qwen-27b/T05-discovery-timeout.png','Qwen T05 — source-discovery/progress only; no generated PPTX is shown'],
+['qwen-27b/T07-windows-request.png','Qwen T07 — created request waiting for support, not an actual reset'],
+['qwen-27b/T09-policy-search-progress.png','Qwen T09 — policy-search progress, not the final answer'],
+['qwen-27b/T08-menu-only-blocked.png','Qwen T08 — menu only; no actual feedback persistence'],
+['qwen-27b/T11-calendar-final.png','Qwen T11 — final meeting state, not Outlook parity']];
+for(const [file,caption]of captures){const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent=caption;details.append(summary);const figure=document.createElement('figure');const link=document.createElement('a');link.href='evidence/'+file;const image=document.createElement('img');image.src=link.href;image.alt=caption;image.loading='lazy';link.append(image);figure.append(link);const figcaption=document.createElement('figcaption');figcaption.textContent=caption;figure.append(figcaption);details.append(figure);document.getElementById('images').append(details)}
+</script></body></html>

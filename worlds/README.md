@@ -23,6 +23,7 @@ dev, or demo work. Names follow `<lifecycle>-<surface>`:
 | `preview-full` | Den plus a desktop wired to it, seeded with `fresh`, `team`, `restricted`, or `workspace`. |
 | `preview-app-web` | The web app plus the server it needs (local, private Daytona URL, Freestyle). |
 | `acme-web` | The seeded Acme demo stack: Den, AI Gateway, and the web app. |
+| `enterprise-workshop` | Local fictional workday with live OpenAI inference and stateful Jira, Confluence, Outlook and OneDrive demo services. See `enterprise-workshop.md`. |
 | `preview-workbot` | Workbot with Den sign-in and the headless runner: the seeded Acme org, Workbot turned on. `-- --calendar` adds the owner's seeded Automations, the calendar mock and a desktop on the Calendar. |
 | `dev-app-web` | Your working tree as the local server plus web app (`pnpm dev:headless-web`). |
 | `live-desktop`, `live-app-web` | Source desktop or web app on your installed production state. |

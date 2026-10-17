@@ -2,8 +2,7 @@ export const summary = "The seeded Acme demo stack: Den, AI Gateway, and the web
 export const supportedTargets = ["local/host", "daytona/linux", "freestyle/linux"];
 
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { acmeRuntimeFixture, connectAcmeRuntime, assertAcmeConnections, acmeProcessEnvironment } from "./lib/acme-runtime.ts";
 import { fileURLToPath } from "node:url";
 import { allocateFreePort } from "../evals/packages/cdp/src/index.ts";
 import { launchHeadlessWeb } from "../packages/world/src/headless-web.ts";
@@ -17,7 +16,7 @@ import { receiptName, resolveStage } from "../packages/world/src/stage.ts";
 import { ACME_REPLY, gatewayEnvironment, seedAcmeGateway, startAcmeGateway, startAcmeUpstream } from "./lib/acme-gateway.ts";
 import type { AcmeStreamCheckpoint } from "./lib/acme-gateway.ts";
 import { probeAcmeGateway } from "./lib/acme-gateway-probe.ts";
-import { bootDemoWorkspace, connectDemoWorkspace, DEMO_WORKSPACE_SERVICES } from "./lib/demo-workspace.ts";
+import { addDemoAtlassian, bootDemoWorkspace, connectDemoWorkspace, DEMO_ATLASSIAN_SERVICE, DEMO_WORKSPACE_SERVICES } from "./lib/demo-workspace.ts";
 import type { DemoWorkspace } from "./lib/demo-workspace.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -35,14 +34,23 @@ export interface AcmeWebWorld {
   upstream: Awaited<ReturnType<typeof startAcmeUpstream>>;
   /** In-memory demo Slack, Notion, Linear, Google Calendar and Gmail, added to the Acme org. */
   demo: DemoWorkspace;
+  /** In-memory Jira (with an IT service desk) and Confluence behind the mcp-atlassian tools, when asked for. */
+  atlassian: DemoWorkspace | null;
 }
 
 /** Seeded Acme Den + real AI Gateway + isolated web runtime; only the upstream model is fake. */
-export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: string; den: string; api: string }, checkpoint?: AcmeStreamCheckpoint): Promise<AcmeWebWorld> {
+export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: string; den: string; api: string }, checkpoint?: AcmeStreamCheckpoint, options: { atlassian?: boolean; atlassianBrowserUrl?: string; beforeRuntime?: (den: Den, model: Awaited<ReturnType<typeof seedAcmeGateway>>) => Promise<void> } = {}): Promise<AcmeWebWorld> {
+  if (["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DAYTONA_DEN_SANDBOX", "OPENWORK_EVAL_DAYTONA_SANDBOX"].some((key) => process.env[key]?.trim())) {
+    throw new Error("Acme worlds require owned infrastructure; remove Den/sandbox reuse overrides.");
+  }
   const place = resolvePlace();
   if (place.kind !== "local") {
     throw new Error("Run acme-web co-located with MySQL (--place local), including inside a prepared Daytona sandbox.");
   }
+  const fixture = await acmeRuntimeFixture(stack);
+  const isolated = acmeProcessEnvironment(process.env, fixture.env);
+  for (const key of Object.keys(process.env)) delete process.env[key];
+  Object.assign(process.env, isolated);
   const upstream = await startAcmeUpstream(stack, checkpoint);
   const gateway = await gatewayEnvironment(upstream.baseUrl);
   const webPort = await allocateFreePort();
@@ -64,9 +72,11 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: 
   // Same demo apps as preview-full; Alex Chen is both the seeded owner and the demo apps' signed-in person.
   const demo = await bootDemoWorkspace(stack, den);
   await connectDemoWorkspace(den, demo);
+  const atlassian = options.atlassian ? await addDemoAtlassian(stack, den, options.atlassianBrowserUrl) : null;
+  await options.beforeRuntime?.(den, model);
+  await assertAcmeConnections(den, [demo.baseUrl, ...(atlassian ? [atlassian.baseUrl] : [])]);
   const name = `${receiptName(ACME_WEB_NAME, resolveStage(process.env))}-${randomUUID().slice(0, 8)}`;
-  const workspace = join(REPO_ROOT, "tmp", "worlds", name, "workspace");
-  await mkdir(workspace, { recursive: true });
+  const workspace = fixture.workspace;
   const web = await launchHeadlessWeb({
     repoRoot: REPO_ROOT,
     name,
@@ -74,7 +84,7 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: 
     state: "isolated",
     browserHostSuffix: preview ? `.${new URL(preview.app).hostname.split(".").slice(1).join(".")}` : undefined,
     env: {
-      ...process.env,
+      ...fixture.env,
       OPENWORK_WEB_PORT: String(webPort),
       OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY: "1",
       OPENWORK_DEV_DEN_PROXY_TARGET: den.ref.webUrl,
@@ -90,7 +100,8 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: 
     signal: AbortSignal.timeout(30_000),
   });
   if (!synced.ok) throw new Error(`Acme runtime sign-in failed: HTTP ${synced.status}`);
-  return { den, web, model, upstream, demo, gatewayUrl: gateway.baseUrl };
+  await connectAcmeRuntime(den, web, model.orgId);
+  return { den, web, model, upstream, demo, atlassian, gatewayUrl: gateway.baseUrl };
 }
 
 export function acmeWebOutputs(world: AcmeWebWorld) {
@@ -115,8 +126,9 @@ export function acmeWebOutputs(world: AcmeWebWorld) {
       upstreamKey: secret(world.upstream.key, { group: "AI Gateway", note: "Synthetic upstream; no paid credentials" }),
       alexPassword: secret(den.admin.password, { group: "Accounts" }),
       dashboards: output("enabled", { group: "Org", note: "DEN_DASHBOARDS_ENABLED=true" }),
-      demoApps: output(DEMO_WORKSPACE_SERVICES.map((service) => service.name).join(", "), { group: "Demo apps",
+      demoApps: output([...DEMO_WORKSPACE_SERVICES, ...(world.atlassian ? [DEMO_ATLASSIAN_SERVICE] : [])].map((service) => service.name).join(", "), { group: "Demo apps",
         note: "Acme Robotics demo data (you are Alex Chen); reads and writes stay in memory until the world stops" }),
+      ...(world.atlassian?.stateUrl ? { atlassianState: output(world.atlassian.stateUrl, { group: "Demo apps", note: "Live Jira and Confluence data; POST /reset restores the seed" }) } : {}),
     };
 }
 
@@ -142,7 +154,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     await hold({ name: ACME_WEB_NAME, outputs: await bootAcmeWebOnDaytona(stack, place) });
     return;
   }
-  const world = await bootAcmeWeb(stack);
+  const world = await bootAcmeWeb(stack, undefined, undefined, { atlassian: argv.includes("--atlassian") });
   await probeAcmeGateway(world);
   await hold({
     name: ACME_WEB_NAME,
