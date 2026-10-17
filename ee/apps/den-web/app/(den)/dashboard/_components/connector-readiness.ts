@@ -1,11 +1,16 @@
+import { deriveConnectionState, type ConnectionReadinessState } from "@openwork/types/den/connection-state";
 import type { ExternalMcpConnection } from "./mcp-connections-data";
 
+const readinessLabels = {
+  needs_admin_setup: "Set up",
+  needs_signin: "Sign in",
+  ready: "Ready",
+  could_not_verify: "Couldn't verify",
+} as const satisfies Record<ConnectionReadinessState, string>;
+
 export function connectorReadinessState(connection: ExternalMcpConnection) {
-  if (connection.readiness === undefined) return null;
-  if (connection.setupRequired || connection.authTypeMismatch || connection.issuerReviewRequired
-    || (connection.credentialMode === "shared" && !connection.connected)) return "Set up";
-  if (connection.needsReconnect || (connection.credentialMode === "per_member" && !connection.connectedForMe)) return "Sign in";
-  return connection.readiness?.status === "ready" ? "Ready" : "Couldn't verify";
+  const readiness = deriveConnectionState(connection).readiness;
+  return readiness === null ? null : readinessLabels[readiness];
 }
 
 export function connectorReadinessNote(connection: ExternalMcpConnection) {
