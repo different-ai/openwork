@@ -1055,7 +1055,7 @@ export function createEngineV2Preview(options: {
   function recordStartError(error: unknown): void {
     running = false;
     lastError = `${errorMessage(error)} Set OPENWORK_OPENCODE2_BIN to a working opencode2 binary to override resolution.`;
-    if (!engineForced || engineOrigin !== "fresh") return;
+    if (config.engineV2Only || !engineForced || engineOrigin !== "fresh") return;
     // Fresh selection is saved before startup, just like the desktop default.
     // A failed forced start must not strand that profile on an unavailable v2.
     chatRouting = false;

@@ -89,6 +89,8 @@ test("palette and Advanced settings no longer register legacy engine actions", (
   const advanced = readFileSync(new URL("../src/react-app/domains/settings/pages/advanced-view-sections.tsx", import.meta.url), "utf8");
   expect(palette).not.toMatch(/useOpencodeEngineControls|opencode\.switch-v1|opencode\.migrate-v2/);
   expect(advanced).not.toMatch(/AdvancedEngineV2PreviewSection|data-engine="v1"|Migrate chats to OpenCode v2/);
+  const sections = readFileSync(new URL("../src/react-app/domains/settings/advanced-sections.ts", import.meta.url), "utf8");
+  expect(sections).not.toContain("experimental-engine");
 });
 
 test("web never resolves a local engine or forwards cached desktop policy", async () => {
