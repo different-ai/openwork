@@ -533,7 +533,11 @@ export async function createManagedOpencodeV2Server(
   async function close(): Promise<void> {
     lines.stop();
     if (child.connected) child.disconnect();
-    if (child.exitCode !== null || child.signalCode !== null) { await historyLease.release(); return; }
+    if (closed || child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
+      // Failed spawns have no process and may never emit `exit` (only `close`).
+      await historyLease.release();
+      return;
+    }
     const exit = new Promise<void>((resolve) => child.once("exit", () => resolve()));
     child.kill("SIGTERM");
     const exited = await Promise.race([

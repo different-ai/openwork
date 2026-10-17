@@ -1,6 +1,6 @@
 # OpenCode engine selection and history migration
 
-The command palette offers **Switch to OpenCode v1**, **Switch to OpenCode v2**,
+On desktop, the command palette offers **Switch to OpenCode v1**, **Switch to OpenCode v2**,
 and **Migrate chats to OpenCode v2**. Advanced settings uses the same engine
 commands. Both hand off to one app-wide owner (`shell/engine-migration.tsx`)
 for the switch check, the migration consent, and migration progress, so a
@@ -8,6 +8,36 @@ migration stays visible after the surface that started it closes. Switching
 engines never migrates history. V1 remains the default. Desktop packages include
 both pinned native executables; v2's download fallback remains available for
 standalone servers.
+
+## Organization-managed rollout
+
+`engineV2ForceUpgrade` is off by default on cloud and self-hosted deployments.
+When an organization's resolved flag is on, desktop and web hosts reuse the
+same backup/copy migration in the background, wait for idle, and select v2
+without consent. Desktop shows only the existing non-blocking progress banner;
+web shows no engine upgrade UI. Fresh profiles select v2 without a history copy.
+The optional desktop `engineV2Upgrade` invitation still works when force is off.
+All app feature observers use the shared guarded `useOrgFeature` hook: cached
+organization data cannot bypass a desktop-only guard.
+
+Turning the flag off switches only force-owned instances back to v1, once idle.
+An explicit manual engine choice clears that ownership, so it is not reverted.
+Neither direction deletes history: v1 originals remain in place and new v2
+chats remain in v2 storage for a later switch back. Policy updates do not abort
+a copy or a running task. Failures keep v1 selected, retain a durable error and
+backup receipt, and retry only on a later boot with a one-minute-to-one-day
+bounded exponential backoff. Source chat changes during copying or v2 startup
+prevent the switch; a later attempt restores the pre-copy v2 baseline under
+the existing migration ownership lock before copying a fresh v1 snapshot.
+
+Hosted bootstrap sets `OPENWORK_ENGINE_FORCE_POLICY=1` and an explicit
+`OPENWORK_ENGINE_AUTO_UPGRADE=1` or `0`; registered runner inventory and worker
+activity responses refresh the same resolved policy. An absent policy on a
+standalone server does not mean an organization requested a revert. Web
+snapshots bake the pinned, integrity-checked v2 executable and set
+`OPENWORK_OPENCODE2_BIN`, so boot never downloads it. The sandbox's existing
+checkpoint policy retains three snapshots of runtime data and engine state
+as an additional safety net; there is no new restore UI.
 
 ## Running tasks, switching, and migration progress
 

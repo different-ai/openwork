@@ -78,6 +78,10 @@ export type CloudRuntimeOrchestratorConfig = {
   bootstrap: {
     imageDescription: string
     rebuildHint: string
+    /** Resolve afresh for every process start, including wakes and checkpoint restores. */
+    enginePolicy?: (workerId: string) => Promise<{
+      engineV2ForceUpgrade: boolean
+    }>
   }
 }
 
@@ -171,7 +175,7 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
     }
   }
 
-  function bootstrapConfig(input: ProvisionInput): OpenWorkBootstrapConfig {
+  async function bootstrapConfig(input: ProvisionInput): Promise<OpenWorkBootstrapConfig> {
     return {
       ...checkpointConfig(),
       workspaceMountPath: config.workspaceMountPath,
@@ -186,6 +190,7 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
       runtimeProvider: provider.id,
       imageDescription: config.bootstrap.imageDescription,
       rebuildHint: config.bootstrap.rebuildHint,
+      ...await config.bootstrap.enginePolicy?.(input.workerId),
     }
   }
 
@@ -336,7 +341,7 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
 
   async function startProcess(input: ProvisionInput, handle: SandboxHandle, sessionId: string): Promise<StartedProcess> {
     const exec = await provider.exec(handle, {
-      script: renderOpenWorkBootstrapScript(bootstrapConfig(input)),
+      script: renderOpenWorkBootstrapScript(await bootstrapConfig(input)),
       detach: true,
       timeoutMs: config.createTimeoutMs,
       sessionId,

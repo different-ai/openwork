@@ -6,7 +6,12 @@ import {
 } from "@openwork-ee/cloud-runtime/orchestrator"
 import type { ProviderEndpointKind, SandboxProvider } from "@openwork/sandbox"
 import { createDaytonaProvider, DAYTONA_PROVIDER_ID } from "@openwork/sandbox-daytona"
+import { eq } from "@openwork-ee/den-db/drizzle"
+import { WorkerTable } from "@openwork-ee/den-db/schema"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { db } from "../db.js"
 import { env } from "../env.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { appLogger } from "../observability/logger.js"
 import { createDatabaseRuntimeInstanceStore } from "./cloud-runtime-store.js"
 
@@ -79,6 +84,18 @@ function workerActivityHeartbeatUrl(workerId: string) {
   return `${base}/v1/workers/${encodeURIComponent(workerId)}/activity-heartbeat`
 }
 
+/** Resolve the org policy on every launch, never from the cached orchestrator. */
+async function workerEnginePolicy(workerId: string) {
+  const [worker] = await db
+    .select({ orgId: WorkerTable.org_id })
+    .from(WorkerTable)
+    .where(eq(WorkerTable.id, normalizeDenTypeId("worker", workerId)))
+    .limit(1)
+  return {
+    engineV2ForceUpgrade: worker ? await organizationFeatureEnabled(worker.orgId, "engineV2ForceUpgrade") : false,
+  }
+}
+
 export function cloudRuntimeOrchestratorConfig(): CloudRuntimeOrchestratorConfig {
   const runtime = env.daytona
   return {
@@ -114,6 +131,7 @@ export function cloudRuntimeOrchestratorConfig(): CloudRuntimeOrchestratorConfig
     bootstrap: {
       imageDescription: "Daytona runtime image",
       rebuildHint: "rebuild and republish the Daytona snapshot",
+      enginePolicy: workerEnginePolicy,
     },
   }
 }

@@ -40,6 +40,7 @@ import {
   nextRunnerNotificationPollDelay,
 } from "../../automations/runner-notification-poll.js"
 import { appLogger } from "../../observability/logger.js"
+import { readOrganizationEnginePolicy } from "../engine-policy.js"
 
 const idParamsSchema = z.object({ id: z.string().min(1).max(160) })
 
@@ -50,6 +51,7 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
     automationService?: Pick<AutomationService, "discoverDesktopRunnerWork" | "runnerNotifications">
     commandStore?: RemoteSessionCommandStore
     requestStore?: RemoteSessionRequestStore
+    readEnginePolicy?: typeof readOrganizationEnginePolicy
   } = {},
 ) {
   const service = options.service ?? sessionRunnerService
@@ -203,7 +205,9 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
           items.push({ kind: "remote_session_create", commandId: command.id })
         }
       }
-      return c.json(automationRunnerWorkResponseSchema.parse({ items }))
+      const enginePolicy = await (options.readEnginePolicy ?? readOrganizationEnginePolicy)(identity.organizationId)
+      c.header("Cache-Control", "no-store")
+      return c.json(automationRunnerWorkResponseSchema.parse({ items, enginePolicy }))
     },
   )
   registerWorkRoute("/v1/session-runners/work", false)
@@ -228,7 +232,9 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
       if (!audited.ok) return audited.response
       const stored = await service.saveDesktopRunnerInventory(identity, c.req.valid("json"))
       if (!stored) return c.json({ error: "runner_not_registered" }, 404)
-      return c.json(desktopRunnerInventoryResponseSchema.parse({ ok: true, updatedAt: Date.now() }))
+      const enginePolicy = await (options.readEnginePolicy ?? readOrganizationEnginePolicy)(identity.organizationId)
+      c.header("Cache-Control", "no-store")
+      return c.json(desktopRunnerInventoryResponseSchema.parse({ ok: true, updatedAt: Date.now(), enginePolicy }))
     },
   )
   registerInventoryRoute("/v1/session-runners/inventory")

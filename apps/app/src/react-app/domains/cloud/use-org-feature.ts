@@ -31,6 +31,7 @@ export function useOrgFeatureState(name: string, options: OrgFeatureOptions = {}
     enabled: data === true,
     data,
     ready: !allowed || !query.isPending,
+    resolved: allowed && query.data !== undefined && !query.isError,
     isLoading: allowed && query.isLoading,
     isError: allowed && query.isError,
   }

@@ -357,5 +357,8 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     hostTokenSource,
     logFormat,
     logRequests,
+    ...(process.env.OPENWORK_FRESH_INSTALL_ENGINE === "v2" ? { freshInstallEngine: "v2" } : {}),
+    engineAutoUpgrade: process.env.OPENWORK_ENGINE_AUTO_UPGRADE === "1",
+    engineForcePolicy: process.env.OPENWORK_ENGINE_FORCE_POLICY === "1" || process.env.OPENWORK_ENGINE_AUTO_UPGRADE !== undefined,
   };
 }
