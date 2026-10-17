@@ -1,17 +1,20 @@
 // In-process stand-in for the OpenWork Cloud `/mcp/agent` endpoint, scoped to
 // what the desktop host needs for just-in-time Cloud skills: a Streamable HTTP
-// MCP server that serves `skill://index.json` and each `skill://<name>/SKILL.md`
-// per bearer identity, advertises the two Connect routing tools, and records
+// MCP server that declares the MCP Skills extension (`skills/list`,
+// `skills/get`), serves each `skill://<name>/SKILL.md` and the legacy
+// `skill://index.json` per bearer identity, advertises the two Connect routing tools, and records
 // every request with a SAFE identity label. Credentials never enter the log.
 //
-// It mirrors ee/apps/den-api/src/mcp/agent.ts (index shape, standard SKILL.md
-// framing, SSE-by-default transport) without importing product source.
+// It mirrors ee/apps/den-api/src/mcp/agent.ts and skills-extension.ts (entry
+// shape, standard SKILL.md framing, SSE-by-default transport) without
+// importing product source.
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import type { MockAgentRequest, MockAuthorizeRequest, MockMcpHandle, MockToolCall } from "./mock-mcp.ts";
 
 export const MOCK_CLOUD_SKILL_INDEX_URI = "skill://index.json";
+export const MOCK_CLOUD_SKILLS_EXTENSION_ID = "io.modelcontextprotocol/skills";
 export const MOCK_CLOUD_SKILL_INDEX_SCHEMA = "https://schemas.agentskills.io/discovery/0.2.0/schema.json";
 const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26"];
 const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
@@ -88,8 +91,10 @@ export interface MockCloudSkillsHandle extends MockMcpHandle {
   /** Names of every `tools/call` served, in order. Empty proves the host never routed skills through Connect tools. */
   toolCallNames(query?: MockCloudSkillsLogQuery): string[];
   resourceReads(query?: MockCloudSkillsLogQuery): MockCloudSkillsRequest[];
+  /** Every `skills/list` request, the catalog read the desktop host makes. */
+  skillListings(query?: MockCloudSkillsLogQuery): MockCloudSkillsRequest[];
   clearLog(): void;
-  /** Hold only catalog reads; tools and prompt admission remain live. */
+  /** Hold only catalog reads (`skills/list` and the legacy index); tools and prompt admission remain live. */
   holdSkillIndex(): () => void;
 }
 
@@ -150,6 +155,17 @@ export function mockCloudSkillIndex(skills: readonly MockCloudSkill[]) {
       url: mockCloudSkillUri(skill.name),
       capability: skill.capability ?? `plugin:plg_mock_cloud_skills:cob_${skill.name.replaceAll("-", "_")}`,
     })),
+  };
+}
+
+/** SEP-2640 entry, OpenWork routing facts in `_meta["openwork/skill"]`, like Den's skillEntry. */
+export function mockCloudSkillEntry(skill: MockCloudSkill) {
+  const [descriptor] = mockCloudSkillIndex([skill]).skills;
+  return {
+    uri: descriptor.url,
+    frontmatter: { name: skill.name, description: skill.description },
+    resources: "dynamic" as const,
+    _meta: { "openwork/skill": { capability: descriptor.capability, title: descriptor.title, modelDiscovery: descriptor.modelDiscovery } },
   };
 }
 
@@ -229,7 +245,7 @@ export async function startMockCloudSkills(options: StartMockCloudSkillsOptions 
         const requested = typeof params.protocolVersion === "string" ? params.protocolVersion : "";
         return { result: {
           protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.includes(requested) ? requested : DEFAULT_PROTOCOL_VERSION,
-          capabilities: { tools: { listChanged: true }, resources: { listChanged: true } },
+          capabilities: { tools: { listChanged: true }, resources: { listChanged: true }, extensions: { [MOCK_CLOUD_SKILLS_EXTENSION_ID]: {} } },
           serverInfo: { name: "mock-openwork-cloud-skills", version: "1.0.0" },
         } };
       }
@@ -272,6 +288,14 @@ export async function startMockCloudSkills(options: StartMockCloudSkillsOptions 
           { uri: MOCK_CLOUD_SKILL_INDEX_URI, name: "agent-skills-index", title: "Available Agent Skills", mimeType: "application/json" },
           ...skills.map((skill) => ({ uri: mockCloudSkillUri(skill.name), name: skill.name, title: skill.title ?? skill.name, description: skill.description, mimeType: "text/markdown" })),
         ] } };
+      }
+      case "skills/list":
+        return { result: { resultType: "complete", skills: [...requireIdentity(identity).values()].map(mockCloudSkillEntry) } };
+      case "skills/get": {
+        const uri = typeof params.uri === "string" ? params.uri : "";
+        const skill = [...requireIdentity(identity).values()].find((candidate) => mockCloudSkillUri(candidate.name) === uri);
+        if (!skill) return { error: { code: -32602, message: `Unknown skill: ${uri}` } };
+        return { result: { resultType: "complete", skill: mockCloudSkillEntry(skill) } };
       }
       case "resources/templates/list":
         return { result: { resourceTemplates: [] } };
@@ -350,7 +374,7 @@ export async function startMockCloudSkills(options: StartMockCloudSkillsOptions 
         if (message.method === "resources/read" && typeof params.uri === "string") entry.uri = params.uri;
         if (message.method === "tools/call" && typeof params.name === "string") entry.toolName = params.name;
       }
-      if (entry.uri === MOCK_CLOUD_SKILL_INDEX_URI && indexGate) await indexGate;
+      if ((entry.rpcMethod === "skills/list" || entry.uri === MOCK_CLOUD_SKILL_INDEX_URI) && indexGate) await indexGate;
       const responses = messages.flatMap((message) => {
         const id = rpcId(message);
         if (id === null) return [];
@@ -445,6 +469,7 @@ export async function startMockCloudSkills(options: StartMockCloudSkillsOptions 
     log: (query) => filterLog(query).map((entry) => ({ ...entry })),
     toolCallNames: (query) => filterLog(query).flatMap((entry) => entry.toolName ? [entry.toolName] : []),
     resourceReads: (query) => filterLog({ ...query, rpcMethod: "resources/read" }).map((entry) => ({ ...entry })),
+    skillListings: (query) => filterLog({ ...query, rpcMethod: "skills/list" }).map((entry) => ({ ...entry })),
     clearLog() { log.length = 0; },
     holdSkillIndex() {
       if (indexGate) throw new Error("Skill index is already held");

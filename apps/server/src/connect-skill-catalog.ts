@@ -3,8 +3,10 @@ import { z } from "zod";
 
 import {
   escapeXml,
-  readMcpResourceText,
+  isRecord,
+  openMcpResourceReader,
   type McpFetch,
+  type McpResourceReader,
 } from "./connect-mcp-transport.js";
 import { readConnectCloudMcp, writeConnectCloudMcp } from "./connect-state.js";
 import { readGlobalRuntimeMcpConfig, readRuntimeMcpConfig } from "./runtime-opencode-config-store.js";
@@ -12,6 +14,10 @@ import { externalFetch } from "./server-fetch.js";
 import type { ServerConfig } from "./types.js";
 
 const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
+const SKILLS_EXTENSION_ID = "io.modelcontextprotocol/skills";
+const SKILL_ENTRY_META_KEY = "openwork/skill";
+const MAX_SKILL_LIST_PAGES = 20;
+// Legacy index, read only from Dens that predate the MCP Skills extension.
 const SKILL_INDEX_URI = "skill://index.json";
 const SKILL_INDEX_SCHEMA = "https://schemas.agentskills.io/discovery/0.2.0/schema.json";
 const CATALOG_CACHE_TTL_MS = 30_000;
@@ -33,21 +39,73 @@ const skillIndexSchema = z.object({
 }).passthrough();
 
 export type OpenWorkConnectSkill = z.infer<typeof skillIndexSchema>["skills"][number];
+
+// SEP-2640 entry; OpenWork's routing facts ride in `_meta["openwork/skill"]`.
+const skillEntrySchema = z.object({
+  uri: z.string().startsWith("skill://"),
+  frontmatter: z.object({ name: z.string(), description: z.string() }).passthrough(),
+  _meta: z.object({
+    [SKILL_ENTRY_META_KEY]: z.object({
+      capability: z.string(),
+      title: z.string().optional(),
+      marketplaceName: z.string().optional(),
+      pluginName: z.string().optional(),
+      modelDiscovery: z.boolean().optional(),
+    }).passthrough(),
+  }).passthrough(),
+}).passthrough();
+const skillListSchema = z.object({
+  skills: z.array(z.unknown()),
+  nextCursor: z.string().optional(),
+}).passthrough();
+const skillSchema = skillIndexSchema.shape.skills.element;
 const catalogCache = new Map<string, { expiresAt: number; value: Promise<OpenWorkConnectSkill[] | null> }>();
 
+/** Page through `skills/list`; entries without OpenWork routing facts are not Connect skills and are skipped. */
+async function listExtensionSkills(reader: McpResourceReader): Promise<OpenWorkConnectSkill[] | null> {
+  const skills: OpenWorkConnectSkill[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_SKILL_LIST_PAGES; page += 1) {
+    const result = await reader.request("skills/list", cursor ? { cursor } : {});
+    if (!result) return null;
+    const listing = skillListSchema.parse(result);
+    for (const value of listing.skills) {
+      const entry = skillEntrySchema.safeParse(value);
+      if (!entry.success) continue;
+      const meta = entry.data._meta[SKILL_ENTRY_META_KEY];
+      const skill = skillSchema.safeParse({
+        name: entry.data.frontmatter.name,
+        type: "skill-md",
+        title: meta.title,
+        description: entry.data.frontmatter.description,
+        modelDiscovery: meta.modelDiscovery,
+        marketplaceName: meta.marketplaceName,
+        pluginName: meta.pluginName,
+        url: entry.data.uri,
+        capability: meta.capability,
+      });
+      if (skill.success) skills.push(skill.data);
+    }
+    cursor = listing.nextCursor;
+    if (!cursor) break;
+  }
+  return skills;
+}
+
 /**
- * Read the standards-shaped skill index through one openwork-cloud config.
- * Returns the skill list on success (possibly empty), or null when the config
- * is unusable (invalid URL, disabled, auth rejected, transport/protocol error)
- * so callers can fall back to another candidate config.
+ * Read the Connect skill catalog through one openwork-cloud config: the MCP
+ * Skills extension's `skills/list` when the server declares it, else the
+ * legacy `skill://index.json`. Returns the skill list on success (possibly
+ * empty), or null when the config is unusable (invalid URL, disabled, auth
+ * rejected, transport/protocol error) so callers can fall back to another
+ * candidate config.
  */
 export async function readMcpSkillIndex(config: Record<string, unknown>, fetcher: McpFetch): Promise<OpenWorkConnectSkill[] | null> {
-  const text = await readMcpResourceText({
-    config,
-    fetcher,
-    uri: SKILL_INDEX_URI,
-    clientName: "openwork-server-skill-catalog",
-  });
+  const reader = await openMcpResourceReader({ config, fetcher, clientName: "openwork-server-skill-catalog" });
+  if (!reader) return null;
+  const extensions = isRecord(reader.capabilities.extensions) ? reader.capabilities.extensions : {};
+  if (SKILLS_EXTENSION_ID in extensions) return await listExtensionSkills(reader);
+  const text = await reader.read(SKILL_INDEX_URI);
   if (typeof text !== "string") return null;
   return skillIndexSchema.parse(JSON.parse(text)).skills;
 }
