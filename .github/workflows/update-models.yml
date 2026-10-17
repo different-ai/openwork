@@ -181,7 +181,7 @@ jobs:
           git config --local user.signingkey "$signing_key"
           git switch -c "$BRANCH_NAME"
           git add "$MODELS_PATH"
-          git commit -S -m "chore: update models snapshot"
+          git commit -S -s -m "chore: update models snapshot"
 
       # Opened by the automation App once it is configured (AUTOMATION_APP_ID
       # and AUTOMATION_PRIVATE_KEY in the warden-clearance environment), so the
