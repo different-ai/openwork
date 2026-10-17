@@ -131,7 +131,9 @@ const manageEngine = !config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPEN
 const server = await startServer(config, { deferManagedEngineStartup: manageEngine });
 config.port = server.port;
 const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`;
-const workerActivityHeartbeat = startWorkerActivityHeartbeat(config, logger);
+const workerActivityHeartbeat = startWorkerActivityHeartbeat(config, logger, {
+  onEnginePolicy: (policy) => { server.setEngineForcePolicy(policy); },
+});
 
 if (manageEngine) {
   // Reap engines recorded by servers that died without cleanup. Best

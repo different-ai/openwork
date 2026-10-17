@@ -39,6 +39,7 @@ import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
 import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
 import { CloudWorkspaceOverlay, CloudWorkspaceStatusProvider } from "./cloud-workspace-overlay";
 import { EngineMigrationOverlay } from "./engine-migration";
+import { useEngineMigrationAnalytics } from "./use-engine-migration-analytics";
 import { MemberApiKeyDialog } from "../domains/connections/member-api-key-dialog";
 import { AppMenuProvider } from "./app-menu";
 import {
@@ -409,6 +410,7 @@ export function AppRoot() {
   useVisualViewportInset();
   const egressAllowed = useOutboundEgressAllowed();
   useMemberActivitySync(egressAllowed);
+  useEngineMigrationAnalytics(egressAllowed);
 
   // Module-level dedupe keeps StrictMode double-mounts from double-counting.
   useEffect(() => {

@@ -258,6 +258,16 @@
               ],
               "description": "Agent permissions: Organization admins choose what agents can do on members' computers: run commands, edit files, open websites and use local skills and MCP servers, for everyone or per team. Renders DEN_FEATURE_AGENT_PERMISSIONS."
             },
+            "engineV2ForceUpgrade": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Upgrade everyone to OpenCode v2: Desktop and web instances copy chats with a backup and switch to OpenCode v2 automatically when idle, without asking for consent. Renders DEN_FEATURE_ENGINE_V2_FORCE_UPGRADE."
+            },
             "engineV2Upgrade": {
               "enum": [
                 "",

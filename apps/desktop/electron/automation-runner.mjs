@@ -1,4 +1,5 @@
 import { createHeadlessThreadClient, isHeadlessModelAccessError } from "@openwork/headless-threads"
+import { desktopEngineForcePolicy } from "./engine-force-policy.mjs"
 
 const EMPTY_USAGE = { inputTokens: null, outputTokens: null, costMicros: null }
 const RUNNER_WORK_POLL_MS = 60_000
@@ -1205,6 +1206,10 @@ export function createDesktopAutomationRunner(options) {
       // Decoding claims is not signature verification. Require a successful
       // authenticated Den call before replaying any journalled native effects.
       state.credentialValidated = true
+      if (isCurrent(state)) {
+        const policy = desktopEngineForcePolicy(payload)
+        if (policy) await options.onEnginePolicy?.(policy)
+      }
       return payload
     } catch (error) {
       if ([401, 403].includes(error?.status)) rejectCredential(state, error.status)

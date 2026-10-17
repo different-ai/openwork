@@ -756,6 +756,7 @@ export type AdminFeature = {
     | "teamRoles"
     | "sharedRoles"
     | "agentPermissions"
+    | "engineV2ForceUpgrade"
     | "engineV2Upgrade"
     | "remoteSessionEvents"
     | "backgroundShellTasks"
@@ -827,6 +828,7 @@ export type AdminOrganizationsPageResponse = {
       teamRoles: boolean;
       sharedRoles: boolean;
       agentPermissions: boolean;
+      engineV2ForceUpgrade: boolean;
       engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       backgroundShellTasks: boolean;
@@ -1063,6 +1065,15 @@ export type AdminOrganizationsPageResponse = {
         override: boolean | null;
         overrideApplies: boolean;
       };
+      engineV2ForceUpgrade: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       engineV2Upgrade: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -1231,6 +1242,7 @@ export type AdminOverviewResponse = {
       teamRoles: boolean;
       sharedRoles: boolean;
       agentPermissions: boolean;
+      engineV2ForceUpgrade: boolean;
       engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       backgroundShellTasks: boolean;
@@ -1459,6 +1471,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       agentPermissions: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      engineV2ForceUpgrade: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6766,6 +6787,9 @@ export type WorkerHeartbeatResponse = {
   openSessionCount: number | null;
   lastHeartbeatAt: string;
   lastActiveAt: string | null;
+  enginePolicy: {
+    upgrade: boolean;
+  };
 };
 
 export type WorkerInstance = {
@@ -7695,6 +7719,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       teamRoles: boolean;
       sharedRoles: boolean;
       agentPermissions: boolean;
+      engineV2ForceUpgrade: boolean;
       engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       backgroundShellTasks: boolean;
@@ -7923,6 +7948,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       agentPermissions: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      engineV2ForceUpgrade: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -8087,6 +8121,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       teamRoles: boolean;
       sharedRoles: boolean;
       agentPermissions: boolean;
+      engineV2ForceUpgrade: boolean;
       engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       backgroundShellTasks: boolean;
@@ -8315,6 +8350,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       agentPermissions: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      engineV2ForceUpgrade: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;

@@ -221,6 +221,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  engineV2ForceUpgrade: {
+    label: "Upgrade everyone to OpenCode v2",
+    description: "Desktop and web instances copy chats with a backup and switch to OpenCode v2 automatically when idle, without asking for consent.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   engineV2Upgrade: {
     label: "Desktop: upgrade prompt to OpenCode v2",
     description: "Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines.",

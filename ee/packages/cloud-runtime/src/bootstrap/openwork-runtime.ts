@@ -40,6 +40,8 @@ export type OpenWorkBootstrapConfig = OpenWorkCheckpointConfig & {
   imageDescription: string
   /** Operator hint appended to start failures, e.g. "rebuild and republish the Daytona snapshot". */
   rebuildHint: string
+  /** Org force policy: on upgrades; off reverts only profiles marked as force-upgraded. */
+  engineV2ForceUpgrade?: boolean
 }
 
 export function checkpointDirectory(config: Pick<OpenWorkCheckpointConfig, "dataMountPath">) {
@@ -173,6 +175,22 @@ export function renderOpenWorkBootstrapScript(config: OpenWorkBootstrapConfig) {
     shellQuote("1"),
     " OPENWORK_OPENCODE_BIN=",
     shellQuote("/usr/local/bin/opencode"),
+    // Pin this on wake too: older snapshots must not fall back to downloading
+    // an engine at runtime when the rollout is enabled for their organization.
+    " OPENWORK_OPENCODE2_BIN=",
+    shellQuote("/usr/local/bin/opencode2"),
+    // Explicit OFF is still an org policy, unlike an unconfigured server.
+    // The server reverts only profiles marked as upgraded by this policy.
+    " OPENWORK_ENGINE_FORCE_POLICY=",
+    shellQuote("1"),
+    " OPENWORK_ENGINE_AUTO_UPGRADE=",
+    shellQuote(config.engineV2ForceUpgrade ? "1" : "0"),
+    " OPENWORK_RUNTIME_SURFACE=",
+    shellQuote("web"),
+    ...(config.engineV2ForceUpgrade ? [
+      " OPENWORK_FRESH_INSTALL_ENGINE=",
+      shellQuote("v2"),
+    ] : []),
     " OPENWORK_WEB_ROOT=",
     shellQuote("/opt/openwork/web"),
     // The instance still serves its own SPA copy for direct/debug access, but
