@@ -47,7 +47,7 @@ export function ModelRecoveryNote(props: {
     || recovery.replacement.modelID !== props.selectedModel.modelID) return null;
   return (
     <div data-testid="model-recovery-note" role="status" className="mt-2 flex flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
-      <span>{modelTitle(recovery.previous)} {recovery.returned ? "is available again" : "was removed by your organization"} · Using {modelTitle(recovery.replacement)} ·</span>
+      <span>{modelTitle(recovery.previous)} {recovery.returned ? "is available again" : "was removed by your organization"} · Using {modelTitle(recovery.replacement)} {props.sessionId ? "for this chat" : "for now · Saved default unchanged"} ·</span>
       <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={props.onChange}>Change</Button>
       {recovery.returned ? <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => {
         props.onSwitchBack(recovery.previous);

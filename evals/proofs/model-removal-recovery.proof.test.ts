@@ -89,7 +89,7 @@ test("a member keeps their model during a catalog gap and recovers to the closes
     expect(legacy.every(read => !read.oldPresent)).toBe(true);
     expect(await selected()).toContain(world.replacement.name);
     expect(await selected()).not.toContain("Luna");
-    expect(await note()).toContain(`${world.old.name} was removed by your organization · Using ${world.replacement.name} ·`);
+    expect(await note()).toContain(`${world.old.name} was removed by your organization · Using ${world.replacement.name} for this chat ·`);
     await user.see({ role: "button", label: /^Change$/ });
     await user.notSee({ testId: "composer-model-picker" });
     evidence.recordAssertionEvidence("Two complete Den inventories and an intervening native refetch justify the same-family replacement", `legacy absent reads=${legacy.length}; usable gateway reads=${gateways.length}; separation=${elapsed}ms; intervening engine refetch=${refetch}; inline=${await note()}`, elapsed >= 1200 && Boolean(refetch) && (await selected()).includes(world.replacement.name));

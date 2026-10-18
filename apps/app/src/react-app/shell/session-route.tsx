@@ -130,7 +130,7 @@ import {
   type NewTaskComposerHandoff,
 } from "@/react-app/domains/session/chat/new-task-composer";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
-import { useCheckDesktopRestriction, useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider";
+import { useCheckDesktopRestriction, useDesktopConfig, useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider";
 import { newChatDefaultModel, orgDefaultModelForEngine } from "@/react-app/domains/models/org-default-model";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sync";
@@ -150,7 +150,7 @@ import { getModelBehaviorSummary, nextModelBehaviorValue, previousModelBehaviorV
 import { computeModelAvailability, createUnavailableConfirmationGate, type ModelAvailability } from "@/react-app/domains/session/surface/model-availability";
 import { useModelRemovalConfirmation } from "@/react-app/domains/session/surface/use-model-removal-confirmation";
 import { closestAvailableModel } from "@/react-app/domains/session/surface/model-removal";
-import { modelRecoveryChatKey, useModelRecoveryStore } from "@/react-app/domains/session/surface/model-recovery-store";
+import { modelRecoveryChatKey, temporaryRecoveredDefault, useDefaultModelRecovery, useModelRecoveryStore } from "@/react-app/domains/session/surface/model-recovery-store";
 import { readModelDisplayMemory, rememberModelDisplayNames } from "@/react-app/domains/session/surface/model-display-memory";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
@@ -514,6 +514,7 @@ export function SessionRoute() {
   const checkDesktopRestriction = useCheckDesktopRestriction();
   // The organization's (or team's) default model for new chats; only the v2 engine applies it.
   const orgConfiguredDefaultModel = useOrgRestrictions().defaultModel;
+  const { freshConfigStatus } = useDesktopConfig();
   const restrictionNotice = useRestrictionNotice();
   const [activeOrganizationRole, setActiveOrganizationRole] = useState<DenOrgRole | null>(null);
   const [openworkServerHostInfoState, setOpenworkServerHostInfoState] = useState<OpenworkServerInfo | null>(null);
@@ -583,15 +584,17 @@ export function SessionRoute() {
   const workspaceDefaultScope = workspaceModelScope({ profileId: modelProfileId,
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId, opencodeBaseUrl, localRuntime: isDesktopRuntime() });
   const workspaceDefault = useWorkspaceDefaultModel(workspaceDefaultScope);
-  // An organization model this desktop confirms it cannot use falls back to the app's own default.
-  const [unusableOrgDefaultKey, setUnusableOrgDefaultKey] = useState<string | null>(null);
-  const orgNewTaskModel = useMemo(() => {
-    const model = orgDefaultModelForEngine(orgConfiguredDefaultModel, opencodeBaseUrl);
-    return model && `${model.providerID}/${model.modelID}` !== unusableOrgDefaultKey ? model : null;
-  }, [orgConfiguredDefaultModel, opencodeBaseUrl, unusableOrgDefaultKey]);
+  const orgNewTaskModel = useMemo(() => orgDefaultModelForEngine(orgConfiguredDefaultModel, opencodeBaseUrl),
+    [orgConfiguredDefaultModel, opencodeBaseUrl]);
+  const modelRecoveryScope = JSON.stringify([sessionDraftScope, opencodeBaseUrl, selectedWorkspaceId]);
+  const newTaskRecoveryChatKey = modelRecoveryChatKey(modelRecoveryScope);
   const newChatDefault = newChatDefaultModel({ workspaceDefault, orgDefault: orgNewTaskModel,
     appDefault: { model: local.prefs.defaultModel, variant: local.prefs.modelVariant ?? null } });
-  const configuredNewTaskModel = newChatDefault.model;
+  const defaultSelectionKey = JSON.stringify([workspaceDefaultScope, workspaceDefault, orgNewTaskModel, newChatDefault]);
+  const newTaskRecovery = useDefaultModelRecovery(newTaskRecoveryChatKey, defaultSelectionKey,
+    Boolean(workspaceDefaultScope) && freshConfigStatus === "ready");
+  const effectiveNewChatDefault = temporaryRecoveredDefault(newChatDefault, newTaskRecovery, defaultSelectionKey);
+  const configuredNewTaskModel = effectiveNewChatDefault.model;
   // This route creates the provider below; use its same scope when choosing a new-task default.
   const autoAccessWorkspace = { openworkServerClient: selectedWorkspaceEndpoint?.client ?? null,
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? "" };
@@ -599,11 +602,12 @@ export function SessionRoute() {
   const observedAutoStatus = observedAutoSnapshot?.status === "success" ? observedAutoSnapshot.data : undefined;
   const autoChecking = isDesktopRuntime() && observedAutoSnapshot?.status !== "error" && !observedAutoStatus;
   const newTaskModel = modelForNewTask(configuredNewTaskModel, observedAutoStatus, autoChecking);
-  const newTaskVariant = newChatDefault.variant;
+  const newTaskVariant = effectiveNewChatDefault.variant;
   // Background callers (automations, remote sessions) read this from the workspace's server.
   useWorkspaceDefaultModelSync({ endpoint: selectedWorkspaceEndpoint, connected: !selectedWorkspaceError,
     model: newTaskModel, variant: newTaskVariant, pending: autoChecking });
   const changeNewTaskModel = useCallback((model: ModelRef, variant: string | null = null) => {
+    useModelRecoveryStore.getState().clear(newTaskRecoveryChatKey);
     const scope = workspaceModelScope({ profileId: modelProfileId,
       workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId, opencodeBaseUrl, localRuntime: isDesktopRuntime() });
     if (scope) {
@@ -611,7 +615,7 @@ export function SessionRoute() {
     } else if (!selectedWorkspaceId) {
       local.setPrefs((previous) => ({ ...previous, defaultModel: model, modelVariant: variant }));
     }
-  }, [modelProfileId, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceId, opencodeBaseUrl, local]);
+  }, [modelProfileId, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceId, opencodeBaseUrl, local, newTaskRecoveryChatKey]);
   const routeNavigationRef = useRef({ locationKey: location.key, generation: 0 });
   if (routeNavigationRef.current.locationKey !== location.key) {
     routeNavigationRef.current = {
@@ -1293,7 +1297,6 @@ export function SessionRoute() {
   // organization model's removal: two complete member inventory reads, with an
   // engine refetch between them, must independently establish lost assignment.
   const modelRemovalRecovery = useOrgFeatureState("modelRemovalRecovery").enabled;
-  const modelRecoveryScope = JSON.stringify([sessionDraftScope, opencodeBaseUrl, selectedWorkspaceId]);
   const selectedSessionModelSelection = useSessionModelStore((state) =>
     (selectedSessionId ? state.bySessionId[selectedSessionId] ?? null : null),
   );
@@ -1384,11 +1387,6 @@ export function SessionRoute() {
     && (!activeComposerModel || !isCloudManagedProviderKey(activeComposerModel.providerID) || organizationRemovalConfirmed);
   const selectedModelUnavailable =
     resolveModelAvailability(newTaskModel).status === "unavailable";
-  const orgNewTaskModelUnavailable = Boolean(orgNewTaskModel && !workspaceDefault
-    && resolveModelAvailability(orgNewTaskModel).status === "unavailable");
-  useEffect(() => {
-    if (orgNewTaskModelUnavailable && orgNewTaskModel) setUnusableOrgDefaultKey(`${orgNewTaskModel.providerID}/${orgNewTaskModel.modelID}`);
-  }, [orgNewTaskModel, orgNewTaskModelUnavailable]);
   // The composer the user is looking at: the selected conversation's
   // remembered model when it has one, otherwise the global default.
   const activeComposerAvailability = resolveModelAvailability(activeComposerModel);
@@ -1451,16 +1449,17 @@ export function SessionRoute() {
       return;
     }
     if (targetSessionId) useSessionModelStore.getState().setModel(targetSessionId, replacement, null);
-    else changeNewTaskModel(replacement, null);
-    if (modelRemovalRecovery && previous) {
-      useModelRecoveryStore.getState().record(recoveryChatKey, { previous, replacement });
-    } else {
-      toast.info(`Your model isn't available anymore. Switched to ${modelTitle(replacement)}.`, {
+    if (previous && (!targetSessionId || modelRemovalRecovery)) {
+      useModelRecoveryStore.getState().record(recoveryChatKey, { previous, replacement,
+        ...(!targetSessionId ? { defaultSelectionKey } : {}) });
+    }
+    if (!modelRemovalRecovery) {
+      toast.info(`Your model isn't available anymore. Using ${modelTitle(replacement)} ${targetSessionId ? "for this chat" : "for now; your saved default is unchanged"}.`, {
         id: `model-unavailable-switch:${targetSessionId ?? "default"}`,
         action: { label: "Change", onClick: () => window.dispatchEvent(new CustomEvent(openComposerModelPickerEvent, { detail: { sessionId: targetSessionId ?? undefined } })) },
       });
     }
-  }, [activityRouteActive, activeComposerModel, activeComposerTargetsSession, changeNewTaskModel, cloudProviderList, cloudProviderSyncReady, denAuth.isSignedIn, entitledModelOptions, entitledOrgDefaultModel, providerListQuery.data, organizationModelsEmpty, resolveModelAvailability, selectedModelUnavailableKey, selectedSessionId, workspaceDefault, organizationRemovalConfirmed, modelRemovalRecovery, recoveryChatKey, modelPicker.actionOptions, rememberedModelTitles, modelRemovalConfirmation.assignedModels]);
+  }, [activityRouteActive, activeComposerModel, activeComposerTargetsSession, defaultSelectionKey, cloudProviderList, cloudProviderSyncReady, denAuth.isSignedIn, entitledModelOptions, entitledOrgDefaultModel, providerListQuery.data, organizationModelsEmpty, resolveModelAvailability, selectedModelUnavailableKey, selectedSessionId, workspaceDefault, organizationRemovalConfirmed, modelRemovalRecovery, recoveryChatKey, modelPicker.actionOptions, rememberedModelTitles, modelRemovalConfirmation.assignedModels]);
 
   // Optimistic model selection: a remembered model is treated as valid until
   // the availability gate CONFIRMS it absent (selectedModelUnavailable).

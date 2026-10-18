@@ -6,7 +6,7 @@ import { createRoot } from "react-dom/client";
 import * as features from "../src/react-app/domains/cloud/use-org-feature";
 import * as den from "../src/app/lib/den";
 import { ModelRecoveryNote } from "../src/react-app/domains/session/surface/composer/model-recovery-note";
-import { modelRecoveryChatKey, useModelRecoveryStore } from "../src/react-app/domains/session/surface/model-recovery-store";
+import { modelRecoveryChatKey, useDefaultModelRecovery, useModelRecoveryStore } from "../src/react-app/domains/session/surface/model-recovery-store";
 
 const ownedDom = typeof window === "undefined";
 if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
@@ -46,10 +46,34 @@ async function mount(options: { enabled?: boolean; sessionId?: string; model?: t
 
 function record() { useModelRecoveryStore.getState().record(key, { previous, replacement }); }
 
+function DefaultRecoveryPresenter(props: { configuredKey: string; verified: boolean }) {
+  useDefaultModelRecovery(modelRecoveryChatKey("member/workspace"), props.configuredKey, props.verified);
+  return <ModelRecoveryNote scope="member/workspace" selectedModel={replacement} onChange={() => {}} onSwitchBack={() => {}} />;
+}
+
+test("a verified default adopting the same replacement retires its temporary note and obsolete Switch back while mounted", async () => {
+  spyOn(features, "useOrgFeature").mockReturnValue(true);
+  const chat = modelRecoveryChatKey("member/workspace");
+  useModelRecoveryStore.getState().record(chat, { previous, replacement, defaultSelectionKey: "configured-A" });
+  useModelRecoveryStore.getState().markReturned(chat, true);
+  const host = document.createElement("div"); document.body.append(host);
+  const root = createRoot(host);
+  cleanups.push(async () => { await act(async () => root.unmount()); host.remove(); });
+  await act(async () => root.render(<DefaultRecoveryPresenter configuredKey="configured-A" verified />));
+  expect(host.textContent).toContain("for now");
+  expect(host.textContent).toContain("Switch back");
+  // An unresolved read must never destroy the last known recovery record.
+  await act(async () => root.render(<DefaultRecoveryPresenter configuredKey="configured-B" verified={false} />));
+  expect(useModelRecoveryStore.getState().byChat[chat]).toBeDefined();
+  await act(async () => root.render(<DefaultRecoveryPresenter configuredKey="configured-B" verified />));
+  expect(useModelRecoveryStore.getState().byChat[chat]).toBeUndefined();
+  expect(host.textContent).toBe("");
+});
+
 test("confirmed removal names both models and Change opens the composer picker", async () => {
   record();
   const view = await mount();
-  expect(view.host.textContent).toContain("Claude Opus 4.5 was removed by your organization · Using Claude Sonnet 4.5 ·");
+  expect(view.host.textContent).toContain("Claude Opus 4.5 was removed by your organization · Using Claude Sonnet 4.5 for this chat ·");
   expect(view.host.textContent).not.toMatch(/ipr_|gwm_/);
   expect(view.host.querySelector('[role="status"]')).not.toBeNull();
   await view.click("Change");

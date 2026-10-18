@@ -13,10 +13,11 @@ type Scenario = "available" | "catalog-gap" | "removed" | "returned";
 /** Real Den login, real native sessions, real app UI. Only the two independent
  * inventory HTTP responses and the native engine catalog HTTP responses are
  * deterministic faults. No renderer state, events, stores or test APIs are set. */
-export async function modelRemovalRecovery(seed: Seed) {
+async function createModelRemovalRecovery(seed: Seed, options?: { newChatDefault?: boolean }) {
   await using setup = new AsyncDisposableStack();
   const { den, webPort } = await denForAppWeb(seed);
-  const organizationId = await enableOrganizationCapabilities(seed, den.admin, { modelRemovalRecovery: true });
+  const organizationId = await enableOrganizationCapabilities(seed, den.admin, { modelRemovalRecovery: true,
+    ...(options?.newChatDefault ? { orgDefaultModel: true } : {}) });
   const models = [
     { id: "openai/gpt-6-luna", name: "GPT-6 Luna" },
     { id: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
@@ -39,6 +40,14 @@ export async function modelRemovalRecovery(seed: Seed) {
   const provider = isRecord(created.body) && isRecord(created.body.llmProvider) ? created.body.llmProvider : null;
   if (!created.response.ok || !provider || typeof provider.id !== "string") throw new Error(`Creating the organization models failed: ${created.response.status} ${created.text}`);
   const providerID = provider.id;
+  async function setOrganizationDefault(modelId: string) {
+    const saved = await seed.api(den.admin, "/v1/org/default-model/everyone", {
+      method: "PUT", body: JSON.stringify({ model: { providerId: providerID, modelId } }),
+    });
+    if (!saved.response.ok) throw new Error(`Saving the organization default failed: ${saved.response.status} ${saved.text}`);
+    return saved.response.status;
+  }
+  if (options?.newChatDefault) await setOrganizationDefault(old.id);
   const token = "model-removal-local-owner";
   const hostToken = "model-removal-local-host";
   const { app, workspace } = await signedInAppWeb(seed, {
@@ -94,7 +103,8 @@ export async function modelRemovalRecovery(seed: Seed) {
   }));
   const resources = setup.move();
   return {
-    app, den, first, second, old, replacement, providerID, organizationId,
+    app, den, first, second, old, replacement, providerID, organizationId, setOrganizationDefault,
+    nextDefault: models[1]!, otherDefault: models[0]!,
     scenario(next: Scenario) { fixture.check(); scenario = next; },
     reads() { fixture.check(); return [...reads]; },
     async setRollout(enabled: boolean) {
@@ -106,3 +116,6 @@ export async function modelRemovalRecovery(seed: Seed) {
     [Symbol.asyncDispose]: () => resources.disposeAsync(),
   };
 }
+
+export function modelRemovalRecovery(seed: Seed) { return createModelRemovalRecovery(seed); }
+export function newChatModelRecovery(seed: Seed) { return createModelRemovalRecovery(seed, { newChatDefault: true }); }
