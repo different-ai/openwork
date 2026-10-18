@@ -135,6 +135,8 @@ import type {
   DescribeHostGoogleDriveDownloadResponses,
   DownloadGoogleDriveFileByLinkErrors,
   DownloadGoogleDriveFileByLinkResponses,
+  DownloadGoogleDriveOfficeSnapshotErrors,
+  DownloadGoogleDriveOfficeSnapshotResponses,
   DownloadHostGoogleDriveFileErrors,
   DownloadHostGoogleDriveFileResponses,
   ExternalMcpConnectionAccessInput,
@@ -9815,6 +9817,40 @@ export class DenClient extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    });
+  }
+
+  /**
+   * Download the last received Office snapshot
+   *
+   * Exact bytes already received by the service, not a live engine export. Requires the session owner's current membership, feature, connector and file authorization. Available for fifteen minutes after editing expiry; never renews WOPI or writes Drive.
+   */
+  public downloadGoogleDriveOfficeSnapshot<ThrowOnError extends boolean = false>(
+    parameters: {
+      fileId: string;
+      sessionId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "fileId" },
+            { in: "path", key: "sessionId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      DownloadGoogleDriveOfficeSnapshotResponses,
+      DownloadGoogleDriveOfficeSnapshotErrors,
+      ThrowOnError
+    >({
+      url: "/v1/documents/google-drive/files/{fileId}/office/{sessionId}/download",
+      ...options,
+      ...params,
     });
   }
 

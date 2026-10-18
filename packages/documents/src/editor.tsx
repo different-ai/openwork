@@ -17,7 +17,7 @@ export function DocumentEditorTab(props: Parameters<typeof BasicDocumentEditorTa
   return <BasicDocumentEditorTab {...props} />
 }
 
-function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, active, scope, connectionsHref, onDirtyChange, onSavingChange, onControlsChange, onClose }: { toolbarHost?: HTMLElement | null; item: DocumentItem; editor: DocumentsEditor; enabled: boolean; active: boolean; scope: readonly string[]; connectionsHref?: string | null; onDirtyChange?(id: string, dirty: boolean): void; onSavingChange?(id: string, saving: boolean): void; onResourceChange?(tabId: string, resource: DocumentItem): void; onControlsChange?: DocumentTabControlsChange; onClose(): void }) {
+function BasicDocumentEditorTab({ toolbarHost, item, tabId = item.id, editor, enabled, active, scope, connectionsHref, onDirtyChange, onSavingChange, onControlsChange, onClose }: { toolbarHost?: HTMLElement | null; item: DocumentItem; tabId?: string; editor: DocumentsEditor; enabled: boolean; active: boolean; scope: readonly string[]; connectionsHref?: string | null; onDirtyChange?(id: string, dirty: boolean): void; onSavingChange?(id: string, saving: boolean): void; onResourceChange?(tabId: string, resource: DocumentItem): void; onControlsChange?: DocumentTabControlsChange; onClose(): void }) {
   const [sheetId, setSheetId] = useState<string>()
   const [startRow, setStartRow] = useState(1)
   const [connectionId, setConnectionId] = useState<string>()
@@ -32,13 +32,13 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, active, sc
   const closeAction = useRef<() => void>(() => {})
   closeAction.current = () => { if (!saving) { if (dirty) setClosing(true); else onClose() } }
   useEffect(() => {
-    onControlsChange?.(item.id, { requestClose: () => closeAction.current() })
-    return () => onControlsChange?.(item.id, null)
-  }, [item.id, onControlsChange])
-  useEffect(() => { onSavingChange?.(item.id, saving); return () => onSavingChange?.(item.id, false) }, [item.id, saving, onSavingChange])
-  useEffect(() => { onDirtyChange?.(item.id, dirty); return () => onDirtyChange?.(item.id, false) }, [dirty, item.id, onDirtyChange])
+    onControlsChange?.(tabId, { requestClose: () => closeAction.current() })
+    return () => onControlsChange?.(tabId, null)
+  }, [tabId, onControlsChange])
+  useEffect(() => { onSavingChange?.(tabId, saving); return () => onSavingChange?.(tabId, false) }, [tabId, saving, onSavingChange])
+  useEffect(() => { onDirtyChange?.(tabId, dirty); return () => onDirtyChange?.(tabId, false) }, [dirty, tabId, onDirtyChange])
   const query = useQuery({
-    queryKey: ["documents", ...scope, "editor", item.id, sheetId, startRow, connectionId],
+    queryKey: ["documents", ...scope, "editor", tabId, item.id, sheetId, startRow, connectionId],
     queryFn: ({ signal }) => editor.open(item.id, { sheetId, startRow, connectionId }, signal),
     enabled: enabled && active,
     retry: false, gcTime: 0, staleTime: Infinity, refetchOnWindowFocus: false,

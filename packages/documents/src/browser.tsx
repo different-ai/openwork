@@ -60,13 +60,15 @@ export function DocumentsBrowser({ provider, editor, scope, enabled, connections
   const closeControls = useRef(new Map<string, DocumentTabControls>())
   const registerControls = useCallback<DocumentTabControlsChange>((id, controls) => { if (controls) closeControls.current.set(id, controls); else closeControls.current.delete(id) }, [])
   const [view, setView] = useState<"recent" | "folder">("recent")
-  const [opened, setOpened] = useState<DocumentItem[]>([])
+  // A tab's identity must survive a native Google source becoming a distinct Office copy.
+  // item.id is the source used to create its editor session; resources holds its current file.
+  const [opened, setOpened] = useState<{ id: string; item: DocumentItem }[]>([])
   // Reordering editor DOM nodes can reload an iframe. Only reorder navigation.
   const [tabOrder, setTabOrder] = useState<string[]>([])
   const tabOrderRef = useRef(tabOrder)
   tabOrderRef.current = tabOrder
   const tabsRow = useRef<HTMLDivElement>(null)
-  const orderedTabs = tabOrder.flatMap(id => { const item = opened.find(file => file.id === id); return item ? [item] : [] })
+  const orderedTabs = tabOrder.flatMap(id => { const item = opened.find(file => file.id === id); return item ? [{ ...(resources.get(id) ?? item.item), id }] : [] })
   const [activeTab, setActiveTab] = useState("files")
   const activeTabRef = useRef(activeTab)
   activeTabRef.current = activeTab
@@ -112,9 +114,10 @@ export function DocumentsBrowser({ provider, editor, scope, enabled, connections
   const open = (item: DocumentItem) => {
     if (item.kind === "folder") { setView("folder"); setActiveTab("files"); setOrder("name"); setFolders(current => [...(view === "recent" ? [{ id: "root", name: provider.rootLabel }] : current), { id: item.id, name: item.name }]); setSearch(""); setDraft(""); setSelected(null) }
     else if (editor) {
-      const existing = opened.find(file => (resources.get(file.id) ?? file).id === item.id)
+      const existing = opened.find(tab => (resources.get(tab.id) ?? tab.item).id === item.id)
       if (existing) { setActiveTab(existing.id); return }
-      setOpened(current => current.some(file => file.id === item.id) ? current : [...current, item]); setTabOrder(current => current.includes(item.id) ? current : [...current, item.id]); setActiveTab(item.id) }
+      const id = crypto.randomUUID()
+      setOpened(current => [...current, { id, item }]); setTabOrder(current => [...current, id]); setActiveTab(id) }
     else setSelected(item)
   }
   const requested = useQuery({
@@ -133,7 +136,7 @@ export function DocumentsBrowser({ provider, editor, scope, enabled, connections
     open(requested.data)
   })
   const activeItem = opened.find(item => item.id === activeTab)
-  const activeFile = activeItem ? resources.get(activeTab) ?? activeItem : undefined
+  const activeFile = activeItem ? resources.get(activeTab) ?? activeItem.item : undefined
   const activeDirty = dirtyIds.has(activeTab)
   useEffect(() => {
     onContextChange?.(!enabled || query.isError || recent.error instanceof DocumentsError && [401, 403, 409].includes(recent.error.status) ? null : activeFile
@@ -207,7 +210,7 @@ export function DocumentsBrowser({ provider, editor, scope, enabled, connections
           {visible && selected && <aside className="ow-documents-detail" aria-label="Document details"><div className="ow-documents-detail-heading"><Info size={16} aria-hidden /><span>Details</span><button type="button" aria-label="Close document details" onClick={() => setSelected(null)}><X size={16} /></button></div><ItemIcon item={selected} /><h2>{selected.name}</h2><dl><dt>Type</dt><dd>{documentType(selected)}</dd><dt>Last modified</dt><dd>{date(selected.modifiedTime)}</dd><dt>Size</dt><dd>{size(selected.size)}</dd></dl>{selected.openUrl ? <a className="ow-documents-open" href={selected.openUrl} target="_blank" rel="noopener noreferrer">Open in {provider.label}<ExternalLink size={14} aria-hidden /></a> : <p>This file has no available link.</p>}</aside>}
         </div></>}
     </div>
-    {editor && !accessLost && opened.map(item => <DocumentEditorTab toolbarHost={actionsHost} key={item.id} item={item} editor={editor} enabled={enabled} active={enabled && !query.isError && !recent.isError && activeTab === item.id} scope={scope} connectionsHref={connectionsHref} onDirtyChange={updateDirty} onSavingChange={updateSaving} onResourceChange={onContextChange ? resourceChanged : undefined} onControlsChange={registerControls} onClose={() => close(item.id)} />)}
+    {editor && !accessLost && opened.map(tab => <DocumentEditorTab toolbarHost={actionsHost} key={tab.id} tabId={tab.id} item={tab.item} editor={editor} enabled={enabled} active={enabled && !query.isError && !recent.isError && activeTab === tab.id} scope={scope} connectionsHref={connectionsHref} onDirtyChange={updateDirty} onSavingChange={updateSaving} onResourceChange={resourceChanged} onControlsChange={registerControls} onClose={() => close(tab.id)} />)}
     </div>
   </section>
 }

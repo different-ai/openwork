@@ -367,9 +367,9 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       if (auditBlocked) return auditBlocked
       const inner = c.req.path.slice("/v1/workbot/documents".length)
       const editor = /^\/v1\/documents\/google-drive\/files\/[A-Za-z0-9_-]{1,512}\/(editor|content|metadata)$/.exec(inner)
-      const office = /^\/v1\/documents\/google-drive\/files\/[A-Za-z0-9_-]{1,512}\/office(?:\/[0-9a-f-]{36}(?:\/(save|close))?)?$/.exec(inner)
+      const office = /^\/v1\/documents\/google-drive\/files\/[A-Za-z0-9_-]{1,512}\/office(?:\/[0-9a-f-]{36}(?:\/(save|close|download))?)?$/.exec(inner)
       const read = c.req.method === "GET"
-      if (!(read && inner === "/v1/capabilities/google-workspace/drive-files") && !(editor && (read || editor[1] === "editor")) && !(office && (read ? !office[1] && /\/[0-9a-f-]{36}$/.test(inner) : inner.endsWith("/office") || !!office[1]))) return c.json({ error: "not_found" }, 404)
+      if (!(read && inner === "/v1/capabilities/google-workspace/drive-files") && !(editor && (read || editor[1] === "editor")) && !(office && (read ? office[1] === "download" || !office[1] && /\/[0-9a-f-]{36}$/.test(inner) : inner.endsWith("/office") || office[1] === "save" || office[1] === "close"))) return c.json({ error: "not_found" }, 404)
       const features = await getOrganizationFeatures(resolved.organization.id)
       if (editor?.[1] === "metadata" && !features.workbotWorkspaceAssistant) return c.json({ error: "feature_disabled", message: "Opening document links is off for this workspace." }, 403)
       if (!features.workbot || !features.workbotDocuments) return c.json({ error: "workbot_documents_not_enabled", message: "Documents is off for this workspace." }, 403)
@@ -385,7 +385,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         headers.set("content-type", "application/json")
       }
       const response = await app.fetch(new Request(new URL(`${inner}${url.search}`, "http://den-api.local"), { method: c.req.method, headers, body }))
-      return new Response(response.body, { status: response.status, headers: { "content-type": response.headers.get("content-type") ?? "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff", ...(editor?.[1] === "content" ? { "content-security-policy": "default-src 'none'; sandbox" } : {}) } })
+      return new Response(response.body, { status: response.status, headers: { "content-type": response.headers.get("content-type") ?? "application/json", ...(response.headers.has("content-disposition") ? { "content-disposition": response.headers.get("content-disposition")! } : {}), "cache-control": "no-store", "x-content-type-options": "nosniff", ...(editor?.[1] === "content" || office?.[1] === "download" ? { "content-security-policy": "default-src 'none'; sandbox" } : {}) } })
     },
   )
 

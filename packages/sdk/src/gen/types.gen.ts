@@ -24733,6 +24733,7 @@ export type OpenGoogleDriveOfficeEditorResponses = {
     saveAsCopy: boolean;
     canEdit: boolean;
     fileType: "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp";
+    recoveryExpiresAt: string;
   };
 };
 
@@ -24775,9 +24776,11 @@ export type GetGoogleDriveOfficeEditorStatusResponses = {
    */
   200: {
     expiresAt: string;
+    recoveryExpiresAt: string;
     draftVersion: number;
     saveRequestId?: string;
     savedFileId?: string;
+    uncertain: boolean;
   };
 };
 
@@ -24827,6 +24830,39 @@ export type SaveGoogleDriveOfficeEditorResponses = {
 
 export type SaveGoogleDriveOfficeEditorResponse =
   SaveGoogleDriveOfficeEditorResponses[keyof SaveGoogleDriveOfficeEditorResponses];
+
+export type DownloadGoogleDriveOfficeSnapshotData = {
+  body?: never;
+  path: {
+    fileId: string;
+    sessionId: string;
+  };
+  query?: never;
+  url: "/v1/documents/google-drive/files/{fileId}/office/{sessionId}/download";
+};
+
+export type DownloadGoogleDriveOfficeSnapshotErrors = {
+  /**
+   * Recovery is unavailable or expired.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+};
+
+export type DownloadGoogleDriveOfficeSnapshotError =
+  DownloadGoogleDriveOfficeSnapshotErrors[keyof DownloadGoogleDriveOfficeSnapshotErrors];
+
+export type DownloadGoogleDriveOfficeSnapshotResponses = {
+  /**
+   * Last received Office snapshot.
+   */
+  200: Blob | File;
+};
+
+export type DownloadGoogleDriveOfficeSnapshotResponse =
+  DownloadGoogleDriveOfficeSnapshotResponses[keyof DownloadGoogleDriveOfficeSnapshotResponses];
 
 export type CloseGoogleDriveOfficeEditorData = {
   body?: never;

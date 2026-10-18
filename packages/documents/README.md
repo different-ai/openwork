@@ -15,7 +15,10 @@ provider/editor contracts without embedding Workbot.
   Page unload uses the browser's unsaved-changes protection.
 - Missing/expired Drive access shows Connect/Reconnect through Den's existing
   connections page. Returning to the page rechecks the listing.
-- Explicit Save to Drive writes to the original file; no background writes.
+- A tab's identity is separate from its editing session's source and current
+  saved resource. Confirmed Office copies are named and linked as copies; the
+  Google original and its saved copy can be opened independently.
+- Explicit Save to Drive writes to the current resource; no background Drive writes.
 
 | File | Inline experience | Save path |
 | --- | --- | --- |
@@ -168,12 +171,29 @@ sandboxing or enable all WOPI hosts in production. No production deployment or
 feature rollout is included here. Missing service/shared Redis configuration
 shows an explicit unavailable state with Open in Drive.
 
-Drafts are AES-GCM encrypted in shared Redis for at most four hours, limited to
-five concurrent sessions per member. Closing a tab removes its temporary Den
-session; abandoned sessions expire. Collabora storage has its own retention
-policy, which operators must also configure. Save or download before refreshing:
-a page refresh does not restore the temporary editing session. The component
-warns on expiry and allows recovery downloads from the open editor.
+Editing capabilities expire after four hours. Drafts remain AES-GCM encrypted
+in shared Redis for at most four hours and fifteen minutes, limited to five
+concurrent editing/recovery sessions per member. The extra fifteen minutes
+permit only an authenticated **Download last received copy**: current membership,
+feature, pinned connection and file read authorization are still required.
+Revocation masks recovery too. It does not require write permission, renew WOPI,
+or admit a Drive save after editing expires, including across a slow metadata
+read. Closing a tab removes its temporary Den session; abandoned sessions expire.
+Collabora storage has its own retention policy, which operators must configure.
+A page refresh does not restore the temporary editing session.
+
+Recovery is deliberately smaller than a live engine export. It returns the exact
+snapshot bytes already received by Den (or the original if none arrived), not
+edits still buffered in the engine. The UI names this limitation before download;
+no latest-changes or engine-fidelity guarantee is made. The recovery API tests
+exercise real Den/Redis authorization, exact ZIP byte preservation and expiry;
+the headless UI proof uses a synthetic postMessage peer. A representative engine
+round trip with unsent edits before/during expiry remains unproven by these tests.
+
+A Drive write with an unconfirmed result is terminal for that editing session.
+Status exposes the uncertainty; the client shows **Save not confirmed**, disables
+another save, and offers Check Drive and last-received recovery. It never
+replays that write or treats a retry as a way to reconcile its outcome.
 
 ## Package boundary
 

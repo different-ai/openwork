@@ -14,7 +14,8 @@
     "test:auth": "tsx --test scripts/auth.test.ts",
     "test:error-reporting": "tsx --test scripts/error-reporting.test.ts",
     "test:model": "tsx --conditions=development --test scripts/model.test.ts",
-    "test:context": "tsx --conditions=development --test scripts/context.test.ts"
+    "test:context": "tsx --conditions=development --test scripts/context.test.ts",
+    "test:documents": "tsx --conditions=development --test scripts/document-download.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.0.12",

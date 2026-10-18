@@ -6,6 +6,10 @@ import { officeFileTypeSchema, officeFormats, type OfficeFileType, type OfficeSe
 
 export const OFFICE_MAX_BYTES = 12 * 1024 * 1024
 export const OFFICE_TTL_SECONDS = 4 * 60 * 60
+export const OFFICE_RECOVERY_SECONDS = 15 * 60
+/** Recovery never extends the WOPI editing capability or permits another Drive write. */
+export const officeRecoveryUntil = (draft: Pick<OfficeDraft, "expiresAt">) => draft.expiresAt + OFFICE_RECOVERY_SECONDS * 1000
+export const officeSessionActive = (draft: Pick<OfficeDraft, "expiresAt">, now = Date.now()) => draft.expiresAt > now
 export async function validateOfficePackage(bytes: Uint8Array, fileType: OfficeFileType) {
   const entries = listZipEntries(bytes)
   if (entries.some(entry => /vbaproject|_xmlsignatures|encryptedpackage|(?:^|\/)(?:Basic|Scripts)\/|META-INF\/(?:document|macro|package)signatures\.xml/i.test(entry.name))) throw new Error("Macro-enabled, encrypted and signed document packages cannot be edited here.")
@@ -102,7 +106,7 @@ export function createCollaboraService(options: CollaboraOptions) {
       url.searchParams.set("lang", "en-US")
       url.searchParams.set("closebutton", "0")
       url.searchParams.set("ui_defaults", "UIMode=notebookbar;")
-      return { id: draft.id, serverUrl: server.origin, editorUrl: url.toString(), accessToken: draft.ticket, expiresAt: new Date(draft.expiresAt).toISOString(), canEdit: draft.canEdit, saveAsCopy: draft.saveAsCopy, fileType: draft.fileType }
+      return { id: draft.id, serverUrl: server.origin, editorUrl: url.toString(), accessToken: draft.ticket, expiresAt: new Date(draft.expiresAt).toISOString(), recoveryExpiresAt: new Date(officeRecoveryUntil(draft)).toISOString(), canEdit: draft.canEdit, saveAsCopy: draft.saveAsCopy, fileType: draft.fileType }
     },
     fileInfo(draft: OfficeDraft, size: number) {
       return {

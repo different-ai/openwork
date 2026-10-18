@@ -170,12 +170,12 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     const path = url.pathname.slice("/v1/workbot/documents".length)
     const editor = /^\/v1\/documents\/google-drive\/files\/[A-Za-z0-9_-]{1,512}\/(editor|content|metadata)$/.exec(path)
     if (editor?.[1] === "metadata" && !member.den.workspaceAssistant) return c.json({ error: "feature_disabled" }, 403)
-    const office = /^\/v1\/documents\/google-drive\/files\/[A-Za-z0-9_-]{1,512}\/office(?:\/[0-9a-f-]{36}(?:\/(save|close))?)?$/.exec(path)
+    const office = /^\/v1\/documents\/google-drive\/files\/[A-Za-z0-9_-]{1,512}\/office(?:\/[0-9a-f-]{36}(?:\/(save|close|download))?)?$/.exec(path)
     const method = c.req.method === "POST" ? "POST" : "GET"
-    if (!(method === "GET" && path === "/v1/capabilities/google-workspace/drive-files") && !(editor && (method === "GET" || editor[1] === "editor")) && !(office && (method === "GET" ? !office[1] && /\/[0-9a-f-]{36}$/.test(path) : path.endsWith("/office") || !!office[1]))) return c.json({ error: "not_found" }, 404)
-    if (editor?.[1] === "content") {
+    if (!(method === "GET" && path === "/v1/capabilities/google-workspace/drive-files") && !(editor && (method === "GET" || editor[1] === "editor")) && !(office && (method === "GET" ? office[1] === "download" || !office[1] && /\/[0-9a-f-]{36}$/.test(path) : path.endsWith("/office") || office[1] === "save" || office[1] === "close"))) return c.json({ error: "not_found" }, 404)
+    if (editor?.[1] === "content" || office?.[1] === "download") {
       const response = await den.documentContent(member.accessToken, `${path}${url.search}`)
-      return new Response(response.body, { status: response.status, headers: { "content-type": response.headers.get("content-type") ?? "application/octet-stream", "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox" } })
+      return new Response(response.body, { status: response.status, headers: { "content-type": response.headers.get("content-type") ?? "application/octet-stream", ...(response.headers.has("content-disposition") ? { "content-disposition": response.headers.get("content-disposition")! } : {}), "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox" } })
     }
     const body: unknown = method === "POST" ? await c.req.json().catch(() => null) : undefined
     const { status, payload } = await den.documents(member.accessToken, `${path}${url.search}`, method, body)

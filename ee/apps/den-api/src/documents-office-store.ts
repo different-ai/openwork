@@ -1,11 +1,16 @@
 import { createCipheriv, createDecipheriv, createHash, createSecretKey, randomBytes, randomUUID } from "node:crypto"
 import Redis from "ioredis"
-import { officeDraftSchema, type OfficeStore } from "@openwork/documents/office-server"
+import { officeDraftSchema, officeRecoveryUntil, OFFICE_TTL_SECONDS, OFFICE_RECOVERY_SECONDS, type OfficeStore } from "@openwork/documents/office-server"
 import { env } from "./env.js"
 
 /** Fail closed without shared storage; Office drafts must survive routing between API replicas. */
 export function configuredOfficeStore(): OfficeStore | null {
   return store
+}
+/** Release this host's connection without deleting another tab's recovery. */
+export async function closeOfficeStore(): Promise<void> {
+  try { await redis?.quit() }
+  finally { redis?.disconnect() }
 }
 const redis = env.databaseRedisUrl ? new Redis(env.databaseRedisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 2_000, commandTimeout: 5_000 }) : null
 redis?.on("error", () => {}) // Route reports unavailable without logging document/capability data.
@@ -23,17 +28,17 @@ const store: OfficeStore | null = redis ? {
     const value = await redis.get(`documents:office:${id}`)
     if (!value) return null
     const draft = officeDraftSchema.parse(JSON.parse(decrypt(value)))
-    return draft.expiresAt > Date.now() ? draft : null
+    return officeRecoveryUntil(draft) > Date.now() ? draft : null
   },
   async put(draft) {
-    const ttl = Math.floor((draft.expiresAt - Date.now()) / 1000)
+    const ttl = Math.floor((officeRecoveryUntil(draft) - Date.now()) / 1000)
     if (ttl <= 0) throw new Error("The editing session expired. Reopen the file before editing again.")
     if (!await redis.exists(`documents:office:${draft.id}`)) {
       const quota = `documents:office:quota:${createHash("sha256").update(`${draft.organizationId}:${draft.memberId}`).digest("hex")}`
       await redis.zremrangebyscore(quota, "-inf", Date.now())
-      if (await redis.zcard(quota) >= 5) throw new Error("Five editing sessions are already open. Sessions expire after four hours; use an existing tab or open the file in Drive.")
-      await redis.zadd(quota, draft.expiresAt, draft.id)
-      await redis.expire(quota, 4 * 60 * 60)
+      if (await redis.zcard(quota) >= 5) throw new Error("Five editing or recovery sessions are already open. Close an existing tab or open the file in Drive. Editing expires after four hours, followed by 15 minutes of recovery.")
+      await redis.zadd(quota, officeRecoveryUntil(draft), draft.id)
+      await redis.expire(quota, OFFICE_TTL_SECONDS + OFFICE_RECOVERY_SECONDS)
     }
     await redis.set(`documents:office:${draft.id}`, encrypt(JSON.stringify(draft)), "EX", ttl)
   },

@@ -83944,6 +83944,11 @@
                         "ods",
                         "odp"
                       ]
+                    },
+                    "recoveryExpiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
                     }
                   },
                   "required": [
@@ -83954,7 +83959,8 @@
                     "expiresAt",
                     "saveAsCopy",
                     "canEdit",
-                    "fileType"
+                    "fileType",
+                    "recoveryExpiresAt"
                   ]
                 }
               }
@@ -84050,6 +84056,11 @@
                       "format": "date-time",
                       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
                     },
+                    "recoveryExpiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                    },
                     "draftVersion": {
                       "type": "integer",
                       "minimum": -9007199254740991,
@@ -84062,11 +84073,16 @@
                     },
                     "savedFileId": {
                       "type": "string"
+                    },
+                    "uncertain": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
                     "expiresAt",
-                    "draftVersion"
+                    "recoveryExpiresAt",
+                    "draftVersion",
+                    "uncertain"
                   ]
                 }
               }
@@ -84270,6 +84286,83 @@
             }
           }
         },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/documents/google-drive/files/{fileId}/office/{sessionId}/download": {
+      "get": {
+        "operationId": "downloadGoogleDriveOfficeSnapshot",
+        "summary": "Download the last received Office snapshot",
+        "description": "Exact bytes already received by the service, not a live engine export. Requires the session owner's current membership, feature, connector and file authorization. Available for fifteen minutes after editing expiry; never renews WOPI or writes Drive.",
+        "tags": [
+          "Documents"
+        ],
+        "x-mcp": false,
+        "responses": {
+          "200": {
+            "description": "Last received Office snapshot.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Recovery is unavailable or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fileId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "required": true
+          },
+          {
+            "in": "path",
+            "name": "sessionId",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "required": true
+          }
+        ],
         "security": [
           {
             "denApiKey": []

@@ -5,7 +5,7 @@ import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { nativeOfficeFormats, officeFileTypeSchema, officeFormats, officeSessionSchema, officeStatusSchema } from "@openwork/documents/office-engine"
-import { createCollaboraService, officeTicketMatches, validateOfficePackage, officeBytes, OFFICE_TTL_SECONDS, type OfficeDraft } from "@openwork/documents/office-server"
+import { createCollaboraService, officeTicketMatches, validateOfficePackage, officeBytes, OFFICE_TTL_SECONDS, officeRecoveryUntil, officeSessionActive, type OfficeDraft } from "@openwork/documents/office-server"
 import { documentIdSchema } from "@openwork/documents/model"
 import { configuredOfficeStore } from "../../documents-office-store.js"
 import { env } from "../../env.js"
@@ -73,7 +73,7 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
   }
   const owned = async (c: GoogleContext, id: string, fileId: string) => {
     const draft = await store?.get(id); const context = c.get("organizationContext")
-    if (!draft || !context || draft.organizationId !== context.organization.id || draft.memberId !== context.currentMember.id || draft.fileId !== fileId) throw new Error("This editing session expired or belongs to another person. Reopen the file.")
+    if (!draft || officeRecoveryUntil(draft) <= Date.now() || !context || draft.organizationId !== context.organization.id || draft.memberId !== context.currentMember.id || draft.fileId !== fileId) throw new Error("This editing session expired or belongs to another person. Reopen the file.")
     return draft
   }
   const serviceAuthorized = async (c: Parameters<MiddlewareHandler<{ Variables: OrgRouteVariables }>>[0], draft: OfficeDraft) => {
@@ -116,7 +116,7 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
       const input = c.req.valid("param"); const draft = await owned(c, input.sessionId, input.fileId)
       const auth = await selected(c, draft.connectionId); if (!auth.ok) return auth.reply
       const check = await metadata(c, auth.deps, draft.savedFileId ?? draft.fileId); if (!check.ok) return check.reply
-      return c.json({ expiresAt: new Date(draft.expiresAt).toISOString(), draftVersion: draft.draftVersion, saveRequestId: draft.saveRequestId, savedFileId: draft.savedFileId })
+      return c.json({ expiresAt: new Date(draft.expiresAt).toISOString(), recoveryExpiresAt: new Date(officeRecoveryUntil(draft)).toISOString(), draftVersion: draft.draftVersion, saveRequestId: draft.saveRequestId, savedFileId: draft.savedFileId, uncertain: draft.uncertain === true })
     } catch (error) { return failure(c, error instanceof Error ? error.message : "Couldn't check the save.") }
   })
 
@@ -127,6 +127,7 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
       const input = c.req.valid("param"); const initial = await owned(c, input.sessionId, input.fileId)
       return await store.lock(`file:${initial.organizationId}:${initial.connectionId}:${initial.savedFileId ?? initial.fileId}`, () => store.lock(initial.id, async () => {
         const draft = await owned(c, initial.id, input.fileId)
+        if (!officeSessionActive(draft)) return failure(c, "This editing session expired. Download the last received copy before recovery expires.")
         if (!draft.canEdit || draft.draftVersion !== expected || draft.uncertain) return failure(c, "Prepare your latest changes before saving. An unconfirmed save must be checked in Drive.")
         const auth = await selected(c, draft.connectionId); if (!auth.ok) return auth.reply
         const target = draft.savedFileId ?? draft.fileId
@@ -142,8 +143,12 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
           body = new Blob([`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name: draft.name, mimeType: draft.mimeType })}\r\n--${boundary}\r\nContent-Type: ${draft.mimeType}\r\n\r\n`, bytes.buffer, `\r\n--${boundary}--\r\n`])
         }
         const binaryDeps = { ...auth.deps, fetch: (request: Parameters<typeof fetch>[0], init?: RequestInit) => { const headers = new Headers(init?.headers); headers.set("content-type", contentType); return auth.deps.fetch(request, { ...init, headers, signal: AbortSignal.timeout(20_000) }) } }
+        // Retaining recovery bytes must not extend admission of a Drive write,
+        // including when metadata reads or shared storage were slow at expiry.
+        if (!officeSessionActive(draft)) return failure(c, "This editing session expired. Download the last received copy before recovery expires.")
         // Persist uncertainty before writing: a lost response must never trigger an automatic duplicate/overwrite.
         draft.uncertain = true; await store.put(draft)
+        if (!officeSessionActive(draft)) return failure(c, "This editing session expired before Drive was contacted. Download the last received copy.")
         const result = await requestGoogleAction(c, binaryDeps, [scope], url, { method: copy ? "POST" : "PATCH", body, ...(meta.etag && !copy ? { headers: { "if-match": meta.etag } } : {}) })
         if (!result.ok) return result.reply
         const saved = z.object({ id: documentIdSchema, version: z.string() }).parse(await readGoogleActionJson(result.response))
@@ -153,6 +158,19 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
         return c.json({ fileId: saved.id })
       }))
     } catch (error) { return failure(c, error instanceof Error ? error.message : "The save was not confirmed. Check Drive before trying again.") }
+  })
+
+  // Deliberately smaller than an engine export: exact bytes of the last received
+  // snapshot, with fresh identity, membership, connector and file authorization.
+  const downloadDescription: DescribeRouteOptions & { "x-mcp": false } = { operationId: "downloadGoogleDriveOfficeSnapshot", summary: "Download the last received Office snapshot", description: "Exact bytes already received by the service, not a live engine export. Requires the session owner's current membership, feature, connector and file authorization. Available for fifteen minutes after editing expiry; never renews WOPI or writes Drive.", tags: ["Documents"], "x-mcp": false, responses: { 200: { description: "Last received Office snapshot.", content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } }, 409: jsonResponse("Recovery is unavailable or expired.", failureSchema) } }
+  app.get(`${ROOT}/:sessionId/download`, describeRoute(downloadDescription), orgMemberRoute(), guard, paramValidator(sessionParams), async c => {
+    try {
+      const input = c.req.valid("param"); const draft = await owned(c, input.sessionId, input.fileId)
+      const auth = await selected(c, draft.connectionId); if (!auth.ok) return auth.reply
+      const check = await metadata(c, auth.deps, draft.savedFileId ?? draft.fileId); if (!check.ok) return check.reply
+      const bytes = new Uint8Array(Buffer.from(draft.draft ?? draft.source, "base64"))
+      return new Response(bytes.buffer, { headers: { "content-type": draft.mimeType, "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(draft.name)}`, "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox", "x-document-draft-version": String(draft.draftVersion) } })
+    } catch { return failure(c, "This recovery copy is unavailable or expired. Check the saved file in Drive.") }
   })
 
   app.post(`${ROOT}/:sessionId/close`, description("closeGoogleDriveOfficeEditor", "Discard the temporary Office session without changing Drive", z.object({ ok: z.literal(true) })), orgMemberRoute(), guard, paramValidator(sessionParams), async c => {
@@ -167,7 +185,7 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
   const wopiDraft = async (c: Parameters<MiddlewareHandler<{ Variables: OrgRouteVariables }>>[0], write = false) => {
     const id = z.string().uuid().parse(c.req.param("sessionId")); const draft = await store?.get(id)
     const bearer = c.req.header("authorization")?.replace(/^Bearer /i, "")
-    if (!draft || !service || !officeTicketMatches(draft, c.req.query("access_token") ?? bearer) || !await serviceAuthorized(c, draft)) return null
+    if (!draft || !officeSessionActive(draft) || !service || !officeTicketMatches(draft, c.req.query("access_token") ?? bearer) || !await serviceAuthorized(c, draft)) return null
     if (write) {
       const auth = await selected(c, draft.connectionId)
       if (!draft.canEdit || !auth.ok || !canWriteDriveDocument(auth.token.account.scopes, auth.token.enabledScopes)) return null
@@ -206,7 +224,7 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
       try { await validateOfficePackage(bytes, draft.fileType) }
       catch { return c.json({ error: "invalid_document_package" }, 400) }
       return await store.lock(draft.id, async () => {
-        const current = await store.get(draft.id); if (!current) return c.json({ error: "expired" }, 403)
+        const current = await store.get(draft.id); if (!current || !officeSessionActive(current)) return c.json({ error: "expired" }, 403)
         const lock = current.wopiLock && current.wopiLock.expiresAt > Date.now() ? current.wopiLock.value : ""
         if (lock && lock !== c.req.header("x-wopi-lock")) return lockConflict(c, lock)
         current.draft = Buffer.from(bytes).toString("base64"); current.draftVersion++
@@ -225,7 +243,7 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
       const action = c.req.header("x-wopi-override"); const requested = c.req.header("x-wopi-lock") ?? ""
       if (!["LOCK", "UNLOCK", "REFRESH_LOCK", "GET_LOCK"].includes(action ?? "") || requested.length > 1024) return c.json({ error: "unsupported_operation" }, 400)
       return await store.lock(draft.id, async () => {
-        const current = await store.get(draft.id); if (!current) return c.json({ error: "expired" }, 403)
+        const current = await store.get(draft.id); if (!current || !officeSessionActive(current)) return c.json({ error: "expired" }, 403)
         const lock = current.wopiLock && current.wopiLock.expiresAt > Date.now() ? current.wopiLock.value : ""
         if (action === "GET_LOCK") return c.json({ ok: true }, 200, { "X-WOPI-Lock": lock })
         const previous = c.req.header("x-wopi-oldlock") ?? requested
