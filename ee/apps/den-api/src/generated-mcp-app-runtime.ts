@@ -38,9 +38,10 @@ export const GENERATED_MCP_APP_ENTRY = `
   // A render that failed before launch data arrived recovers once toolinput or
   // toolresult is delivered; healthy trees keep their state across updates.
   let renderRevision = 0;
-  const reportRuntimeError = (stage) => {
-    if (initialized && !disposed) {
-      void app.sendLog({ level: "error", logger: "generated-mcp-app", data: stage }).catch(() => {});
+  const reportRuntimeError = (stage, revision, hasLaunchResult) => {
+    if (initialized && !disposed && revision === renderRevision) {
+      void app.sendLog({ level: "error", logger: "generated-mcp-app",
+        data: { stage, renderRevision: revision, hasLaunchResult } }).catch(() => {});
     }
   };
   const renderFailure = () => React.createElement("p", { role: "alert" }, "This App could not render. Reopen it to try again.");
@@ -52,7 +53,7 @@ export const GENERATED_MCP_APP_ENTRY = `
         ? { failed: false, revision: props.revision }
         : state.revision === props.revision ? null : { revision: props.revision };
     }
-    componentDidCatch() { reportRuntimeError("react-render"); }
+    componentDidCatch() { reportRuntimeError("react-render", this.props.revision, this.props.hasLaunchResult); }
     render() { return this.state.failed ? renderFailure() : this.props.children; }
   }
   const render = () => {
@@ -62,11 +63,11 @@ export const GENERATED_MCP_APP_ENTRY = `
       applyTheme(hostContext);
       if (!mount) throw new Error("The generated App mount element is missing.");
       root ||= createRoot(mount);
-      root.render(React.createElement(GeneratedAppErrorBoundary, { revision: renderRevision },
+      root.render(React.createElement(GeneratedAppErrorBoundary, { revision: renderRevision, hasLaunchResult: result !== undefined },
         React.createElement(React.Suspense, { fallback: null },
           React.createElement(GeneratedApp, { app, input, result, hostContext }))));
     } catch {
-      reportRuntimeError("react-mount");
+      reportRuntimeError("react-mount", renderRevision, result !== undefined);
       if (mount) mount.textContent = "This App could not render. Reopen it to try again.";
     }
   };

@@ -3495,6 +3495,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       uiStateOwner={props.draftScope ? sessionOwner : null}
                       client={props.client}
                       mcpAppEngine={isOpencodeV2BaseUrl(props.opencodeBaseUrl) ? "v2" : "v1"}
+                      mcpAppPrincipalScope={props.draftScope ?? undefined}
                       readOnly={archived || !archiveStateKnown || archiveHeld}
                       workspaceId={props.workspaceId}
                       sessionId={props.sessionId}

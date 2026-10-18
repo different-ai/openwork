@@ -41,7 +41,7 @@ export function createMcpAppDiscoveryScheduler(now = Date.now) {
     if (!scopes) { scopes = new Map(); clients.set(origin.client, scopes) }
     // Client objects capture endpoint/auth at construction. Never merge clients by URL.
     // Cloud credentials can be replaced behind the same local-server client.
-    const key = mcpAppDiscoverySignature([origin.workspaceId, origin.sessionId, origin.engine, origin.readOnly, toolName, launch, credentialRevision])
+    const key = mcpAppDiscoverySignature([origin.workspaceId, origin.sessionId, origin.engine, origin.readOnly, toolName, launch, credentialRevision, origin.principalScope])
     const queuedScopes = new Set([...queue].map(job => job.scope))
     for (const [key, scope] of scopes) {
       if (!scope.busy && !queuedScopes.has(scope)

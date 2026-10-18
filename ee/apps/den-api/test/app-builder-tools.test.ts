@@ -7,7 +7,7 @@ import { createMcpAppInputSchema, prepareMcpAppInputSchema, readMcpAppInputSchem
 import { z } from "zod"
 import { BUILD_AN_APP_SKILL_SOURCE } from "../src/mcp/build-an-app-skill.js"
 
-import { registerAppBuilderTools } from "../src/mcp/app-builder-tools.js"
+import { mcpAppLaunchResult, MCP_APP_SHOWN_NOTE, registerAppBuilderTools } from "../src/mcp/app-builder-tools.js"
 import { buildMarketplaceCapabilityName } from "../src/mcp/marketplace-capability-name.js"
 
 const jsonSchema = z.object({
@@ -29,6 +29,20 @@ function assertDescriptions(value: unknown, path: string) {
 test("Marketplace capability names retain their wire format", () => {
   assert.equal(buildMarketplaceCapabilityName("plugin-id", "object-id"), "plugin:plugin-id:object-id")
 })
+
+test("publication and launch notes do not attest to a rendered or live preview", () => {
+  const result = mcpAppLaunchResult({ publicOrigin: "https://example.com", message: "Published", built: true,
+    app: { appId: "cob_00000000000000000000000000", revisionId: "cov_00000000000000000000000000", pluginId: "plg_00000000000000000000000000",
+      title: "Project checklist", description: null, textFallback: "Review project items.", tools: [], toolName: "open_app",
+      resourceUri: "ui://openwork/apps/cob_00000000000000000000000000/revisions/cov_00000000000000000000000000/index.html", serverPath: "/mcp/checklist" } });
+  assert.match(result.content[0].text, /person can choose Open/);
+  assert.match(result.content[0].text, /does not confirm that the preview rendered or live data loaded/);
+  assert.match(result.content[0].text, /useful answer even if the host cannot render/);
+  assert.doesNotMatch(result.content[0].text, /opens in a tab|person now sees/);
+  assert.match(MCP_APP_SHOWN_NOTE, /not confirmed rendered/);
+  assert.match(BUILD_AN_APP_SKILL_SOURCE, /publication does not prove that a host rendered it/);
+  assert.match(BUILD_AN_APP_SKILL_SOURCE, /saved description, not fresh provider data/);
+});
 
 test("App builder metadata describes all inputs and keeps create_app concise", async (t) => {
   const server = new McpServer({ name: "app-builder-metadata-test", version: "1.0.0" })

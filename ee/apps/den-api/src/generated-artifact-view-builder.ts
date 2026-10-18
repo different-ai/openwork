@@ -24,7 +24,7 @@ const reactDomPackageRoot = require.resolve("react-dom/package.json").replace(/\
 export const GENERATED_ARTIFACT_VIEW_COMPILER = "openwork-react-view"
 export const GENERATED_ARTIFACT_VIEW_COMPILER_VERSION = "3"
 export const GENERATED_MCP_APP_COMPILER = "openwork-react-mcp-app"
-export const GENERATED_MCP_APP_COMPILER_VERSION = "2"
+export const GENERATED_MCP_APP_COMPILER_VERSION = "3"
 export const GENERATED_ARTIFACT_VIEW_CSP: GeneratedArtifactViewCsp = {
   connectDomains: [],
   resourceDomains: [],

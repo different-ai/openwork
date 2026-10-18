@@ -8,6 +8,8 @@ export type McpAppOrigin = {
   sessionId: string | null;
   engine?: "v1" | "v2";
   readOnly: boolean;
+  /** Verified account/organization scope, shared with chat drafts; never a credential. */
+  principalScope?: string;
 };
 
 export function snapshotMcpAppArguments(args?: Record<string, unknown>) {

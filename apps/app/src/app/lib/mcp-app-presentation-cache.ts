@@ -5,6 +5,9 @@ import type { OpenworkMcpAppLaunchReference, OpenworkMcpAppResource } from "./op
 import type { McpAppOrigin } from "../../components/chat/mcp-app-origin";
 import { createPresentationCacheStore } from "../../react-app/domains/dashboard/dashboard-tile-cache";
 import { DASHBOARD_TILE_CACHE_STORAGE_PREFIX } from "./dashboard-cache-storage";
+import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { z } from "zod";
 
 async function digest(value: string) {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -20,6 +23,59 @@ const CHAT_PRESENTATION_STORAGE_KEY = `${DASHBOARD_TILE_CACHE_STORAGE_PREFIX}.ch
 const CHAT_PRESENTATION_MAX_BYTES = 1_500_000;
 const chatPresentationStore = createPresentationCacheStore(CHAT_PRESENTATION_MAX_BYTES);
 const entryId = (scope: Scope, resourceUri: string) => `${scope.key}\n${resourceUri}`;
+
+// Permission tombstones are not expiring presentation data. A remount, revision,
+// cache eviction or credential refresh must not grant access again. Keep only
+// scoped identities and denial versions, never fallback text or credentials.
+const accessStateSchema = z.object({ denied: z.record(z.string(), z.number().int().positive()), serial: z.number().int().nonnegative() });
+type AccessState = z.infer<typeof accessStateSchema>;
+const accessState = create<AccessState>()(persist(() => ({ denied: {}, serial: 0 }), {
+  name: "openwork.mcp-app-access-denials.v1",
+  storage: createJSONStorage(() => localStorage),
+  merge: (stored, current) => {
+    const parsed = accessStateSchema.safeParse(stored);
+    return parsed.success ? parsed.data : current;
+  },
+}));
+
+/** Same canonical principal scope as drafts; App identity deliberately drops revision and session. */
+export function mcpAppAccessKey(origin: McpAppOrigin | null, resourceUri: string): string | null {
+  const app = parseMcpAppResourceUri(resourceUri);
+  if (!origin || !app) return null;
+  const settings = readDenSettings();
+  const principal = origin.principalScope ?? (settings.authToken ? null : "local");
+  // A cloud credential without a verified principal cannot expose saved copy.
+  return principal ? JSON.stringify([settings.baseUrl, settings.apiBaseUrl, principal,
+    origin.client.baseUrl, origin.workspaceId, app.appId]) : null;
+}
+
+export function useMcpAppAccessDenied(key: string | null): boolean {
+  return accessState(state => key === null || Boolean(state.denied[key]));
+}
+export function mcpAppAccessVersion(key: string | null): number {
+  return key === null ? 0 : accessState.getState().denied[key] ?? 0;
+}
+export function denyMcpAppAccess(key: string | null): void {
+  if (key === null) return;
+  try {
+    accessState.setState(state => {
+      const serial = state.serial + 1;
+      return { serial, denied: { ...state.denied, [key]: serial } };
+    });
+  } catch { /* Storage failure still leaves the in-memory denial intact. */ }
+}
+export function authorizeMcpAppAccess(key: string | null, observedVersion: number): void {
+  if (key === null) return;
+  try {
+    accessState.setState(state => {
+      // A response dispatched before a newer denial cannot clear that denial.
+      if (!state.denied[key] || state.denied[key] !== observedVersion) return state;
+      const denied = { ...state.denied };
+      delete denied[key];
+      return { ...state, denied };
+    });
+  } catch { /* A stored denial may stay conservative until the next fresh read. */ }
+}
 
 /** The account credential is hashed in memory; neither its value nor a lease goes into storage. */
 export async function mcpAppPresentationScope(origin: McpAppOrigin): Promise<Scope | null> {

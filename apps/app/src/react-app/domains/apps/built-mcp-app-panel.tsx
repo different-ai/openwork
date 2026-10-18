@@ -1,4 +1,5 @@
-import { McpAppFrame } from "@/components/chat/mcp-app-frame";
+import { useState } from "react";
+import { McpAppFrame, type McpAppRendererState } from "@/components/chat/mcp-app-frame";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,9 @@ export function BuiltMcpAppPanel({
   onClose: () => void;
 }) {
   const summary = builtAppSummary(tab.part);
+  const [renderer, setRenderer] = useState<{ resourceUri?: string; state: McpAppRendererState }>({ state: "loading" });
+  const state = renderer.resourceUri === summary?.resourceUri ? renderer.state : "loading";
+  const label = state === "connected" ? "Connected" : state === "unavailable" ? "Unavailable" : "Opening";
   return (
     <section
       className="min-h-0 flex-1 overflow-y-auto"
@@ -23,8 +27,8 @@ export function BuiltMcpAppPanel({
       <header className="flex h-10 items-center justify-between border-b px-3">
         <div className="flex min-w-0 items-center gap-2">
           <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="" className="size-4 dark:invert" />
-          <span className="truncate text-sm font-medium">{tab.label}</span>
-          <span role="status" className={`shrink-0 text-xs ${tab.updating ? "text-muted-foreground" : "text-emerald-700 dark:text-emerald-400"}`}>{tab.updating ? "Updating" : "Ready"}</span>
+          <span className="truncate text-sm font-medium" title={tab.label}>{tab.label}</span>
+          <span role="status" className="shrink-0 text-xs text-muted-foreground" data-app-renderer-state={state}>{tab.updating ? `Updating · ${label}` : label}</span>
         </div>
         <div className="flex items-center gap-1">
           {!tab.origin.readOnly && summary ? (
@@ -48,7 +52,10 @@ export function BuiltMcpAppPanel({
         </div>
       </header>
       <div className={`p-3 ${tab.updating ? "opacity-60" : ""}`} aria-busy={tab.updating || undefined}>
-        <McpAppFrame part={tab.part} origin={tab.origin} />
+        <McpAppFrame part={tab.part} origin={tab.origin} onStateChange={(next) => {
+          setRenderer(current => current.resourceUri === summary?.resourceUri && current.state === next
+            ? current : { resourceUri: summary?.resourceUri, state: next });
+        }} />
       </div>
     </section>
   );

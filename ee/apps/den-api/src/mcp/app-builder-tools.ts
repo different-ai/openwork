@@ -28,7 +28,7 @@ import { scoreText, tokenize, type CapabilityMatch } from "./search.js"
  * view. Other clients cannot be told apart here, so the note is conditional and
  * never hides the App's MCP URL, which is how those clients use the App.
  */
-export const MCP_APP_SHOWN_NOTE = "If you are in OpenWork, the person now sees this App right above your reply: answer in one or two sentences and do not repeat what it shows."
+export const MCP_APP_SHOWN_NOTE = "An interactive preview was requested, not confirmed rendered. Answer concisely and keep the answer useful if no preview appears; the saved fallback is not fresh provider data."
 
 // Add gateway documentation without changing the shared validators. Cloning
 // the array definition retains its size limit and unique-name refinement.
@@ -118,7 +118,7 @@ export function mcpAppLaunchResult(input: { app: McpAppSummary; publicOrigin: st
     }
   }
   return {
-    content: [{ type: "text" as const, text: `${input.message} ${input.built ? "If you are in OpenWork, the App opens in a tab in the right sidebar. Answer briefly and do not repeat what it shows." : MCP_APP_SHOWN_NOTE}\n\n${input.app.textFallback}` }],
+    content: [{ type: "text" as const, text: `${input.message} ${input.built ? "Publication completed. The person can choose Open to preview the App. This does not confirm that the preview rendered or live data loaded. Give a concise useful answer even if the host cannot render the App." : MCP_APP_SHOWN_NOTE}\n\n${input.app.textFallback}` }],
     structuredContent,
     _meta: {
       "openwork/mcpApp": {

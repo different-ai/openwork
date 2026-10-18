@@ -1,11 +1,12 @@
-import { afterAll, describe, expect, jest, spyOn, test } from "bun:test"
+import { afterAll, describe, expect, jest, mock, spyOn, test } from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
 import { createRoot } from "react-dom/client"
 import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js"
-import type { DynamicToolUIPart } from "ai"
+import type { DynamicToolUIPart, UIMessage } from "ai"
+import { mcpAppResourceUri } from "@openwork/types/mcp-app"
 
 import {
   createOpenworkServerClient,
@@ -20,6 +21,10 @@ import * as mcpAppOrigin from "../src/components/chat/mcp-app-origin"
 import { markCloudCredentialRefreshed } from "../src/react-app/domains/connections/cloud-credential-revision"
 
 GlobalRegistrator.register({ url: "https://web.example/" })
+// happy-dom does not deliver intersection observations. These scheduler tests
+// model visible frames; browser proofs exercise the real visibility gate.
+Reflect.deleteProperty(globalThis, "IntersectionObserver")
+mock.module("../src/react-app/domains/session/status/use-offline-recovery-feature", () => ({ useOfflineRecoveryFeature: () => false }))
 afterAll(() => GlobalRegistrator.unregister())
 const { MessageListProvider } = await import("../src/components/chat/message-list-provider")
 const { WorkspaceProvider } = await import("../src/react-app/shell/workspace-provider")
@@ -27,8 +32,12 @@ const { useUiStateStore } = await import("../src/react-app/shell/ui-state-store"
 const { usePanelTabStore } = await import("../src/react-app/domains/session/panel/panel-tab-store")
 const { useSessionActivityStore } = await import("../src/react-app/domains/session/status/session-activity-store")
 const { McpAppTile } = await import("../src/react-app/domains/dashboard/mcp-app-tile")
+const { BuiltAppPreviewSync, BuiltAppChatPreview } = await import("../src/react-app/domains/apps/built-app-chat-preview")
+const { BuiltMcpAppPanel } = await import("../src/react-app/domains/apps/built-mcp-app-panel")
 const { removeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache")
 const { flushDashboardTileCacheStorage } = await import("../src/app/lib/dashboard-cache-storage")
+const { authorizeMcpAppAccess, denyMcpAppAccess, mcpAppAccessKey, mcpAppAccessVersion } = await import("../src/app/lib/mcp-app-presentation-cache")
+const mcpAppOpenLoads = await import("../src/app/lib/mcp-app-open-loads")
 const {
   buildMcpAppCsp,
   hasPreservedMcpAppResult,
@@ -38,6 +47,7 @@ const {
   McpAppFrame,
   McpAppSandboxView,
   secureMcpAppHtml,
+  mcpAppTextFallback,
 } = await import("../src/components/chat/mcp-app-frame")
 
 function fixture(overrides: Partial<OpenworkMcpAppResource> = {}): OpenworkMcpAppResource {
@@ -168,6 +178,282 @@ async function startupFixture(options: Pick<McpAppSandboxViewProps, "presentatio
     },
   }
 }
+
+function authoredPart(revisionId = "cov_00000000000000000000000000"): DynamicToolUIPart {
+  const appId = "cob_00000000000000000000000000"
+  const resourceUri = mcpAppResourceUri(appId, revisionId)
+  return {
+    type: "dynamic-tool", toolName: "openwork_create_app", toolCallId: "authored-app", state: "output-available", input: {}, output: "Published",
+    callProviderMetadata: { openwork: { mcpResult: {
+      content: [{ type: "text", text: "Transport prose must not be the fallback." }],
+      structuredContent: { app: { appId, revisionId, resourceUri, title: "Project checklist", description: null,
+        pluginId: "plg_00000000000000000000000000", toolName: "open_app", serverPath: `/mcp/agent/connections/${appId}`,
+        textFallback: "Review the project checklist and mark completed items.", tools: [] } },
+      _meta: { "openwork/mcpApp": { connectionId: appId, toolName: "open_app", resourceUri, arguments: {} } },
+    } } },
+  }
+}
+
+describe("Authored App presentation", () => {
+  test("a new publication offers Open but never opens, navigates or selects another pane", async () => {
+    const host = await startupFixture()
+    const part = authoredPart()
+    const origin = { client: host.client, workspaceId: "fixture", sessionId: "explicit-open", readOnly: false }
+    const appId = "cob_00000000000000000000000000"
+    const render = async (parts: DynamicToolUIPart[], active: boolean) => {
+      const messages: UIMessage[] = [{ id: "request", role: "user", parts: [{ type: "text", text: "Make a checklist" }] },
+        { id: "reply", role: "assistant", parts }]
+      await host.renderElement(createElement(MessageListProvider, {
+        client: host.client, workspaceId: "fixture", sessionId: origin.sessionId,
+        showThinking: false, developerMode: false, displaySuggestions: false, providerConnectedCount: 0,
+        dispatchAction: () => {}, setPrompt: () => {}, onRevertToUserMessage: () => {}, onForkAtMessage: () => {}, onEditUserMessage: () => {},
+        onMcpReconnect: async () => {}, onMcpReopenAuthorization: async () => {},
+        children: createElement(BuiltAppPreviewSync, { messages, active }, createElement(BuiltAppChatPreview, { part, compact: true })),
+      }))
+    }
+    usePanelTabStore.getState().clearSession(origin.sessionId)
+    try {
+      await render([{ ...part, state: "input-available" }], true)
+      await render([part], true)
+      expect(usePanelTabStore.getState().sessions[origin.sessionId]?.tabs ?? []).toEqual([])
+      const open = host.container.querySelector<HTMLButtonElement>('[aria-label="Open preview"]')
+      expect(open?.textContent).toContain("Open")
+      await act(async () => open?.click())
+      expect(usePanelTabStore.getState().sessions[origin.sessionId]?.activeTabId).toBe(`mcp-app:${appId}`)
+      usePanelTabStore.getState().openTab(origin.sessionId, { type: "app", id: "other", appId: "other", label: "Other" })
+      await render([structuredClone(part)], false)
+      expect(usePanelTabStore.getState().sessions[origin.sessionId]?.activeTabId).toBe("other")
+      usePanelTabStore.getState().closeTab(origin.sessionId, `mcp-app:${appId}`)
+      await render([structuredClone(part)], true)
+      expect(usePanelTabStore.getState().sessions[origin.sessionId]?.tabs.map(tab => tab.id)).toEqual(["other"])
+    } finally { usePanelTabStore.getState().clearSession(origin.sessionId); await host.dispose() }
+  })
+
+  test("panel reports observed renderer state, and fallback survives discovery, failure and retry", async () => {
+    const host = await startupFixture()
+    const part = authoredPart()
+    const origin = { client: host.client, workspaceId: "fallback", sessionId: "session-fallback", readOnly: true }
+    const pending = Promise.withResolvers<{ app: OpenworkMcpAppResource }>()
+    const resolve = spyOn(host.client, "resolveMcpApp").mockImplementationOnce(() => pending.promise)
+    const resourceUri = mcpAppResourceUri("cob_00000000000000000000000000", "cov_00000000000000000000000000")
+    const tab = { type: "mcp-app", id: "panel-fallback", appId: "cob_00000000000000000000000000", label: "Project checklist", part, origin } satisfies Parameters<typeof BuiltMcpAppPanel>[0]["tab"]
+    const state = () => host.container.querySelector("[data-app-renderer-state]")?.textContent
+    const fallback = () => host.container.querySelector("[data-mcp-app-fallback]")
+    const notify = async (method: string) => {
+      const source = host.container.querySelector("iframe")?.contentWindow
+      await act(async () => { window.dispatchEvent(new MessageEvent("message", { source, origin: "https://sandbox.example", data: { method, params: {} } })) })
+    }
+    try {
+      await host.renderElement(createElement(BuiltMcpAppPanel, { tab, onClose: () => {} }))
+      expect(state()).toBe("Opening")
+      const saved = fallback()
+      expect(saved?.textContent).toContain("Saved fallback · Not live data")
+      expect(saved?.textContent).toContain("Review the project checklist")
+      expect(host.container.textContent).not.toContain("Transport prose")
+      const app = fixture({ toolName: "render-0", resourceUri })
+      resolve.mockResolvedValue({ app })
+      await act(async () => pending.resolve({ app }))
+      expect(state()).toBe("Opening")
+      await notify("ui/notifications/sandbox-proxy-ready")
+      expect(state()).toBe("Opening")
+      await act(async () => { host.bridges[0].oninitialized?.() })
+      expect(state()).toBe("Connected")
+      await act(async () => { host.bridges[0].onloggingmessage?.({ level: "error", logger: "other-app", data: "react-render" }) })
+      expect(state()).toBe("Connected")
+      await act(async () => {
+        host.bridges[0].onloggingmessage?.({ level: "error", logger: "generated-mcp-app", data: "react-render" })
+        host.bridges[0].onloggingmessage?.({ level: "error", logger: "generated-mcp-app", data: { stage: "react-render", renderRevision: 0, hasLaunchResult: false } })
+      })
+      expect(state()).toBe("Connected")
+      expect(host.container.querySelector("iframe")).not.toBeNull()
+      await act(async () => { host.bridges[0].onloggingmessage?.({ level: "error", logger: "generated-mcp-app", data: { stage: "react-render", renderRevision: 2, hasLaunchResult: true } }) })
+      expect(state()).toBe("Unavailable")
+      expect(fallback()).toBe(saved)
+      expect(host.container.querySelector("iframe")).toBeNull()
+      const retry = Array.from(host.container.querySelectorAll("button")).find(button => button.textContent === "Retry")
+      await act(async () => retry?.click())
+      expect(state()).toBe("Opening")
+      expect(fallback()).toBe(saved)
+      await notify("ui/notifications/sandbox-proxy-ready")
+      await act(async () => { host.bridges[1].oninitialized?.() })
+      expect(state()).toBe("Connected")
+      expect(host.container.textContent).not.toContain("Ready")
+      expect(resolve).toHaveBeenCalledTimes(2)
+    } finally { resolve.mockRestore(); await host.dispose() }
+  })
+
+  test.each(["mcp_access_denied", "tool_denied", "tool_not_visible", "mcp_auth_required", "mcp_unreachable"])("reopening with %s masks only authoritative denials, including during a later transient retry", async code => {
+    const host = await startupFixture()
+    const part = authoredPart()
+    const origin = { client: host.client, workspaceId: `fallback-access-${code}`, sessionId: "session-access", readOnly: true }
+    const resourceUri = mcpAppResourceUri("cob_00000000000000000000000000", "cov_00000000000000000000000000")
+    const app = fixture({ resourceUri, toolName: "open_app" })
+    const resolve = spyOn(host.client, "resolveMcpApp").mockResolvedValue({ app })
+    const render = (nextPart = part, nextOrigin = origin) => host.renderElement(createElement(McpAppFrame, { part: nextPart, origin: nextOrigin }))
+    const fallback = () => host.container.querySelector("[data-mcp-app-fallback]")
+    const retry = async () => {
+      const button = Array.from(host.container.querySelectorAll("button")).find(candidate => candidate.textContent === "Retry")
+      if (!button) throw new Error("Missing access recovery action")
+      await act(async () => button.click())
+    }
+    const denied = ["mcp_access_denied", "tool_denied", "tool_not_visible"].includes(code)
+    try {
+      await render()
+      expect(fallback()?.textContent).toContain("Review the project checklist")
+      await host.renderElement(createElement("div"))
+      resolve.mockRejectedValue(new OpenworkServerError(403, code, "Access needs attention"))
+      await render()
+      if (code === "mcp_unreachable") await host.advance(4_000)
+      expect(host.container.querySelector("iframe")).toBeNull()
+      expect(Boolean(fallback())).toBe(!denied)
+      resolve.mockRejectedValue(new OpenworkServerError(401, "mcp_auth_required", "Sign-in needs refreshing"))
+      await retry()
+      expect(Boolean(fallback())).toBe(!denied)
+      await host.renderElement(createElement("div"))
+      await render()
+      expect(Boolean(fallback())).toBe(!denied)
+      await host.renderElement(createElement("div"))
+      await render(authoredPart("cov_00000000000000000000000001"))
+      expect(Boolean(fallback())).toBe(!denied)
+      await host.renderElement(createElement("div"))
+      resolve.mockResolvedValue({ app })
+      await render(part, { ...origin, sessionId: "fresh-authorized-read" })
+      expect(fallback()?.textContent).toContain("Review the project checklist")
+      expect(host.container.querySelector("iframe")).not.toBeNull()
+    } finally { resolve.mockRestore(); await host.dispose() }
+  })
+
+  test("denials are principal/workspace/App scoped, revision independent, and cannot be cleared by an older authorization response", async () => {
+    const host = await startupFixture()
+    const origin = { client: host.client, workspaceId: "scoped-access", sessionId: "first-chat", readOnly: false, principalScope: "cloud:member-a:organization" }
+    const app = "cob_00000000000000000000000000"
+    const uri = mcpAppResourceUri(app, "cov_00000000000000000000000000")
+    const key = mcpAppAccessKey(origin, uri)
+    try {
+      expect(key).not.toBeNull()
+      expect(mcpAppAccessKey({ ...origin, sessionId: "another-chat" }, mcpAppResourceUri(app, "cov_00000000000000000000000001"))).toBe(key)
+      expect(mcpAppAccessKey({ ...origin, principalScope: "cloud:member-b:organization" }, uri)).not.toBe(key)
+      expect(mcpAppAccessKey({ ...origin, workspaceId: "another-workspace" }, uri)).not.toBe(key)
+      const before = mcpAppAccessVersion(key)
+      denyMcpAppAccess(key)
+      const denied = mcpAppAccessVersion(key)
+      expect(denied).toBeGreaterThan(before)
+      authorizeMcpAppAccess(key, before)
+      expect(mcpAppAccessVersion(key)).toBe(denied)
+      authorizeMcpAppAccess(key, denied)
+      expect(mcpAppAccessVersion(key)).toBe(0)
+    } finally { await host.dispose() }
+  })
+
+  test("an allowed launch for another App cannot clear this App's saved denial", async () => {
+    const host = await startupFixture()
+    const part = authoredPart()
+    const origin = { client: host.client, workspaceId: "mismatched-access", sessionId: "mismatched-chat", readOnly: true, principalScope: "cloud:member:organization" }
+    const uri = mcpAppResourceUri("cob_00000000000000000000000000", "cov_00000000000000000000000000")
+    const otherUri = mcpAppResourceUri("cob_00000000000000000000000001", "cov_00000000000000000000000000")
+    const key = mcpAppAccessKey(origin, uri)
+    denyMcpAppAccess(key)
+    const version = mcpAppAccessVersion(key)
+    const result = Reflect.get(Object(part.callProviderMetadata?.openwork), "mcpResult")
+    Reflect.set(Reflect.get(result, "_meta"), "openwork/mcpApp", { connectionId: "cob_00000000000000000000000001", toolName: "open_app", resourceUri: otherUri, arguments: {} })
+    const resolve = spyOn(host.client, "resolveMcpApp").mockResolvedValue({ app: fixture({ resourceUri: otherUri }) })
+    try {
+      expect(mcpAppTextFallback(part)).toBeNull()
+      await host.renderElement(createElement(McpAppFrame, { part, origin }))
+      expect(resolve).toHaveBeenCalledTimes(1)
+      expect(mcpAppAccessVersion(key)).toBe(version)
+      expect(host.container.querySelector("[data-mcp-app-fallback]")).toBeNull()
+    } finally { authorizeMcpAppAccess(key, version); resolve.mockRestore(); await host.dispose() }
+  })
+
+  test.each([{ launch: false, sameResource: false, denied: false }, { launch: false, sameResource: true, denied: false }, { launch: true, sameResource: false, denied: false }, { launch: false, sameResource: false, denied: true }])("a retained summary cannot promote unrelated discovery into App access state ($launch/$sameResource/$denied)", async ({ launch, sameResource, denied }) => {
+    const host = await startupFixture()
+    const part = authoredPart()
+    const origin = { client: host.client, workspaceId: `unverified-grant-${launch}-${sameResource}-${denied}`, sessionId: "unverified-grant", readOnly: true, principalScope: "cloud:member:organization" }
+    const uri = mcpAppResourceUri("cob_00000000000000000000000000", "cov_00000000000000000000000000")
+    const otherUri = mcpAppResourceUri("cob_00000000000000000000000001", "cov_00000000000000000000000000")
+    const key = mcpAppAccessKey(origin, uri)
+    denyMcpAppAccess(key)
+    const version = mcpAppAccessVersion(key)
+    if (!launch) Reflect.deleteProperty(Reflect.get(Object(part.callProviderMetadata?.openwork), "mcpResult"), "_meta")
+    const resolve = spyOn(host.client, "resolveMcpApp").mockResolvedValue({ app: fixture({ resourceUri: sameResource ? uri : otherUri, toolName: "open_app" }) })
+    if (denied) resolve.mockRejectedValue(new OpenworkServerError(403, "mcp_access_denied", "The unrelated tool cannot be opened"))
+    try {
+      expect(mcpAppTextFallback(part)).toContain("Review the project checklist")
+      await host.renderElement(createElement(McpAppFrame, { part, origin }))
+      expect(resolve).toHaveBeenCalledTimes(1)
+      expect(mcpAppAccessVersion(key)).toBe(version)
+      expect(host.container.querySelector("[data-mcp-app-fallback]")).toBeNull()
+      expect(host.container.querySelector("iframe")).toBeNull()
+    } finally { resolve.mockRestore(); await host.dispose(); authorizeMcpAppAccess(key, version) }
+  })
+
+  test("an unknown principal masks saved text without inventing an access denial", async () => {
+    const host = await startupFixture()
+    const part = authoredPart()
+    const uri = mcpAppResourceUri("cob_00000000000000000000000000", "cov_00000000000000000000000000")
+    const resolve = spyOn(host.client, "resolveMcpApp").mockResolvedValue({ app: fixture({ resourceUri: uri, toolName: "open_app" }) })
+    try {
+      await host.renderElement(createElement(McpAppFrame, { part, origin: { client: host.client, workspaceId: "unknown-principal", sessionId: "unknown-chat", readOnly: true, principalScope: "" } }))
+      expect(host.container.textContent).toContain("could not be verified")
+      expect(host.container.textContent).not.toContain("was denied")
+      expect(host.container.querySelector("[data-mcp-app-fallback]")).toBeNull()
+      expect(host.container.querySelector("iframe")).toBeNull()
+    } finally { resolve.mockRestore(); await host.dispose() }
+  })
+
+  test("an error result cannot bypass a known App barrier just because its fallback is hidden", async () => {
+    const host = await startupFixture()
+    const part = authoredPart()
+    const origin = { client: host.client, workspaceId: "error-result-access", sessionId: "error-result", readOnly: true, principalScope: "cloud:member:organization" }
+    const uri = mcpAppResourceUri("cob_00000000000000000000000000", "cov_00000000000000000000000000")
+    const key = mcpAppAccessKey(origin, uri)
+    denyMcpAppAccess(key)
+    const version = mcpAppAccessVersion(key)
+    Reflect.set(Reflect.get(Object(part.callProviderMetadata?.openwork), "mcpResult"), "isError", true)
+    const pending = Promise.withResolvers<{ app: OpenworkMcpAppResource }>()
+    const resolve = spyOn(host.client, "resolveMcpApp").mockImplementation(() => pending.promise)
+    try {
+      expect(mcpAppTextFallback(part)).toBeNull()
+      await host.renderElement(createElement(McpAppFrame, { part, origin }))
+      expect(host.container.textContent).toContain("was denied")
+      expect(host.container.querySelector("iframe")).toBeNull()
+      await act(async () => pending.reject(new OpenworkServerError(401, "mcp_auth_required", "Sign-in needs refreshing")))
+      expect(mcpAppAccessVersion(key)).toBe(version)
+      expect(host.container.querySelector("iframe")).toBeNull()
+    } finally { resolve.mockRestore(); await host.dispose(); authorizeMcpAppAccess(key, version) }
+  })
+
+  test("panel remounts for different principals do not share an in-memory open-load key", async () => {
+    const host = await startupFixture()
+    const part = authoredPart()
+    const uri = mcpAppResourceUri("cob_00000000000000000000000000", "cov_00000000000000000000000000")
+    const resolve = spyOn(host.client, "resolveMcpApp").mockResolvedValue({ app: fixture({ resourceUri: uri, toolName: "open_app" }) })
+    const loads = spyOn(mcpAppOpenLoads, "createMcpAppOpenLoads")
+    const render = (principalScope: string) => host.renderElement(createElement(McpAppFrame, { part,
+      origin: { client: host.client, workspaceId: "scoped-kept-loads", sessionId: "shared-chat", readOnly: true, principalScope } }))
+    try {
+      await render("cloud:member-a:organization")
+      await host.renderElement(createElement("div"))
+      await render("cloud:member-b:organization")
+      const keys = loads.mock.calls.map(([key]) => key)
+      expect(keys).toHaveLength(2)
+      expect(keys[0]).toContain("member-a")
+      expect(keys[1]).toContain("member-b")
+      expect(keys[0]).not.toBe(keys[1])
+    } finally { loads.mockRestore(); resolve.mockRestore(); await host.dispose() }
+  })
+
+  test("does not mistake generic tool prose or a mismatched revision for authored fallback", () => {
+    const part = authoredPart()
+    expect(mcpAppTextFallback(part)).toContain("Review the project checklist")
+    expect(mcpAppTextFallback({ ...part, callProviderMetadata: undefined })).toBeNull()
+    const changed = structuredClone(part)
+    const result = Reflect.get(Object(changed.callProviderMetadata?.openwork), "mcpResult")
+    Reflect.set(Reflect.get(result, "structuredContent").app, "revisionId", "cov_00000000000000000000000001")
+    expect(mcpAppTextFallback(changed)).toBeNull()
+  })
+})
 
 describe("MCP App startup scheduling", () => {
   test("cached HTML exposes pending tools, waits for a live lease, and never reuses cached authority", async () => {
