@@ -9,7 +9,7 @@ import { PERMISSION_KEYS, getPermissionDefinition, isPermissionKey, type Permiss
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
-import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
+import { type TabItem, UnderlineTabs, UnderlineTabPanel } from "../../_components/ui/tabs";
 import { getMembersRoute, getPermissionsRoute, getTeamRoute, orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useDenToast } from "./den-toast";
@@ -57,7 +57,7 @@ export function PermissionSetScreen({ permissionSetId }: { permissionSetId: stri
   if (permissions.state !== "ready") {
     return <PermissionsPage title={teamRoles ? "Role" : "Permissions"} testId="permission-set"><PermissionsAccessState access={permissions} /></PermissionsPage>;
   }
-  return <PermissionSetContent key={permissionSetId} ready={permissions} permissionSetId={permissionSetId} teamRoles={teamRoles} />;
+  return <PermissionSetContent key={`${permissions.orgId}-${permissionSetId}`} ready={permissions} permissionSetId={permissionSetId} teamRoles={teamRoles} />;
 }
 
 function PermissionSetContent({ ready, permissionSetId, teamRoles }: { ready: ReadyAccess; permissionSetId: string; teamRoles: boolean }) {
@@ -71,7 +71,8 @@ function PermissionSetContent({ ready, permissionSetId, teamRoles }: { ready: Re
   const listBack = teamRoles ? rolesBack : { href: getPermissionsRoute(ready.orgSlug), label: "Permissions" };
   const loadingTitle = teamRoles ? "Role" : "Permissions";
 
-  if (query.isError) {
+  const accessDenied = query.error instanceof PermissionsRequestError && [401, 403, 404].includes(query.error.status);
+  if (query.isError && (!query.data || accessDenied)) {
     const notFound = query.error instanceof PermissionsRequestError && query.error.status === 404;
     const gone = teamRoles ? "This role doesn't exist anymore. Go back to Roles to see what's current." : "These permissions don't exist anymore. Go back to Permissions to see what's current.";
     return (
@@ -104,7 +105,8 @@ function PermissionSetContent({ ready, permissionSetId, teamRoles }: { ready: Re
   const impact = sharedCustom && setTeamNames.length > 0
     ? `Updates ${setTeamNames.length > 2 ? `${setTeamNames.slice(0, -1).join(", ")} and ${setTeamNames[setTeamNames.length - 1]}` : setTeamNames.join(" and ")}, ${plural(set.appliesTo.kind === "team" ? set.appliesTo.memberCount : 0, "person", "people")}`
     : undefined;
-  const removable = set.kind === "team" && set.archivedAt === null && ready.access.canManagePermissions;
+  const removable = set.kind === "team" && set.archivedAt === null && ready.access.canManagePermissions && !query.isError;
+  const verifiedReady = query.isError ? { ...ready, access: { ...ready.access, canManagePermissions: false } } : ready;
 
   return (
     <PermissionsPage
@@ -115,22 +117,15 @@ function PermissionSetContent({ ready, permissionSetId, teamRoles }: { ready: Re
       testId="permission-set"
     >
       {sharedCustom && set.archivedAt === null ? null : <AppliesTo ready={ready} set={set} teamRoles={teamRoles} />}
-      <UnderlineTabs tabs={tabs} activeTab={tab} onChange={setTab} />
-      {tab === "teams" ? (
-        <div role="tabpanel" aria-label="Teams">
-          <SharedRoleTeams ready={ready} set={set} />
-        </div>
-      ) : tab === "permissions" ? (
-        <div role="tabpanel" aria-label="Permissions" className="flex flex-col gap-6">
-          {sharedCustom && set.archivedAt === null ? <RoleNameField ready={ready} set={set} /> : null}
-          {/* Remount when the saved state changes so the draft starts from it. */}
-          <PermissionSetEditor key={set.permissions.map((state) => state.status).join("")} ready={ready} set={set} update={update} impact={impact} />
-        </div>
-      ) : (
-        <div role="tabpanel" aria-label="History">
-          <PermissionSetHistory ready={ready} setId={set.id} />
-        </div>
-      )}
+      {query.isError ? <DenNotice tone="error" message="Couldn't refresh saved permissions. Your draft is kept; verify the saved state before saving." action={<DenButton size="sm" variant="secondary" onClick={() => void query.refetch()}>Try again</DenButton>} /> : null}
+      <UnderlineTabs tabs={tabs} activeTab={tab} onChange={setTab} label="Role settings">
+        {sharedCustom && set.archivedAt === null ? <UnderlineTabPanel value="teams"><SharedRoleTeams ready={verifiedReady} set={set} /></UnderlineTabPanel> : null}
+        <UnderlineTabPanel value="permissions" className="flex flex-col gap-6">
+          {sharedCustom && set.archivedAt === null ? <RoleNameField ready={verifiedReady} set={set} /> : null}
+          <PermissionSetEditor ready={verifiedReady} set={set} update={update} impact={impact} />
+        </UnderlineTabPanel>
+        <UnderlineTabPanel value="history"><PermissionSetHistory ready={ready} setId={set.id} /></UnderlineTabPanel>
+      </UnderlineTabs>
     </PermissionsPage>
   );
 }
@@ -212,9 +207,11 @@ function PermissionSetEditor({ ready, set, update, impact }: {
   /** sharedRoles: who a save changes, e.g. "Updates Sales and Engineering, 9 people". */
   impact?: string;
 }) {
+  // This endpoint writes only changed keys, not a whole saved snapshot. Retain
+  // those edits while unrelated keys refresh; no remount or stale snapshot replay.
   const [draft, setDraft] = useState<ReadonlyMap<string, PermissionStatus>>(new Map());
   const toast = useDenToast();
-  const readOnlyReason = setReadOnlyReason(ready, set);
+  const readOnlyReason = update.isPending ? "Saving these changes." : setReadOnlyReason(ready, set);
 
   const rows: PermissionEditorRow[] = set.permissions.flatMap((state) => {
     if (!isPermissionKey(state.key)) return [];
@@ -232,6 +229,7 @@ function PermissionSetEditor({ ready, set, update, impact }: {
     setDraft((current) => {
       const saved = set.permissions.find((state) => state.key === key)?.status;
       const copy = new Map(current);
+      if (!saved) return current;
       if (next === saved) copy.delete(key);
       else copy.set(key, next);
       return copy;
@@ -239,7 +237,9 @@ function PermissionSetEditor({ ready, set, update, impact }: {
   }
 
   async function save(toSave: PermissionChange[], undoable: boolean) {
+    if (readOnlyReason) return;
     await update.mutateAsync(toSave);
+    setDraft((current) => new Map([...current].filter(([key, edit]) => !toSave.some((change) => change.key === key && change.status === edit))));
     const count = plural(toSave.length, "change");
     toast({
       title: undoable ? `Saved ${count}` : `Undid ${count}`,
@@ -274,7 +274,7 @@ function PermissionSetEditor({ ready, set, update, impact }: {
           summary={impact ? <span className="flex flex-col"><span className="font-medium text-gray-900">{impact}</span><span>{plural(changes.length, "unsaved change")}</span></span> : <span>{plural(changes.length, "unsaved change")}</span>}
         >
           <DenButton variant="secondary" disabled={update.isPending} onClick={() => { update.reset(); setDraft(new Map()); }}>Discard</DenButton>
-          <DenButton loading={update.isPending} onClick={() => void save(changes, true).catch(() => undefined)}>Save changes</DenButton>
+          <DenButton loading={update.isPending} disabled={Boolean(readOnlyReason)} onClick={() => void save(changes, true).catch(() => undefined)}>Save changes</DenButton>
         </DenStickyActionBar>
       ) : null}
     </div>

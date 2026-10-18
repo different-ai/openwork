@@ -1,220 +1,98 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Plus, ShieldCheck } from "lucide-react";
-import { getPermissionDefinition, permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions";
+import { getPermissionDefinition } from "@openwork/types/den/permissions";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
-import { getNewRoleRoute, getOrgAccessFlags, getPermissionSetRoute, type DenOrgTeam } from "../../_lib/den-org";
+import { getNewRoleRoute, getOrgAccessFlags, getPermissionSetRoute, permissionLockReason, type DenOrgTeam } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IconTile } from "./access-rows";
-import { RolePicker as SearchableRolePicker } from "./role-picker";
+import { RolePicker } from "./role-picker";
 import { useDenToast } from "./den-toast";
 import { ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection, LinkButton } from "./item-list";
 import { usePermissionSet, usePermissionSets, useSetTeamRole, type PermissionSetSummary } from "./permissions-data";
-import {
-  TEAM_ROLE_DESCRIPTIONS,
-  TEAM_ROLE_LABELS,
-  allowedKeys,
-  sameSharedTeamRole,
-  sharedTeamRole,
-  sharedTeamRoleLockReason,
-  sharedTeamRoleSteps,
-  type SharedTeamRole,
-  type SharedTeamRoleState,
-  type TeamRoleAbilities,
-} from "./team-roles";
+import { allowedKeys, permissionSetTeams } from "./team-roles";
+import { TeamAdminCheckbox } from "./team-admin-checkbox";
 
-/** Teams a set applies to (older responses only carry `team`). */
-function setTeams(set: PermissionSetSummary): { id: string; name: string | null }[] {
-  return set.teams.length > 0 ? set.teams : set.team ? [set.team] : [];
-}
-
-function teamNames(teams: readonly { name: string | null }[]): string {
-  return teams.map((team) => team.name ?? "A deleted team").join(", ");
-}
-
-/**
- * sharedRoles: a team's one role (Member, Admin, or one of the organization's
- * custom roles), what it adds, and Change role as a searchable picker of every
- * role. A custom role can be on several teams; changing it here only changes
- * this team.
- */
+/** Custom roles and organization Admin are independent grants, each saved by one request. */
 export function SharedTeamRolePanel({ team }: { team: DenOrgTeam }) {
   const { orgContext, orgId, orgSlug } = useOrgDashboard();
-  const access = orgContext
-    ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
-    : null;
-  const setsQuery = usePermissionSets(orgId, true);
-  const sets = setsQuery.data ?? [];
-  const customSets = sets.filter((set) => set.kind === "team");
-  const teamSet = customSets.find((set) => setTeams(set).some((entry) => entry.id === team.id)) ?? null;
-  const adminSet = sets.find((set) => set.kind === "admin_default") ?? null;
-  const memberSet = sets.find((set) => set.kind === "member_default") ?? null;
-  const state: SharedTeamRoleState = { admin: team.grantsOrganizationAdmin, setId: teamSet?.id ?? null };
-  const role = sharedTeamRole(state);
+  const access = orgContext ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions) : null;
+  const canView = access?.canViewPermissions ?? false;
+  const setsQuery = usePermissionSets(orgId, canView);
+  const customSets = (setsQuery.data ?? []).filter((set) => set.kind === "team");
+  const teamSet = customSets.find((set) => permissionSetTeams(set).some((entry) => entry.id === team.id)) ?? null;
+  const memberSet = setsQuery.data?.find((set) => set.kind === "member_default");
+  const teamDetail = usePermissionSet(orgId, teamSet?.id ?? "", canView && Boolean(teamSet));
+  const memberDetail = usePermissionSet(orgId, memberSet?.id ?? "", canView && Boolean(memberSet));
+  // Do not combine unrelated projections, even if a malformed response parses.
+  const teamData = teamDetail.data?.id === teamSet?.id && teamDetail.data?.kind === "team" && permissionSetTeams(teamDetail.data).some((entry) => entry.id === team.id) ? teamDetail.data : null;
+  const memberData = memberDetail.data?.id === memberSet?.id && memberDetail.data?.kind === "member_default" ? memberDetail.data : null;
+  const verified = canView && setsQuery.isSuccess && Boolean(memberData) && memberDetail.isSuccess && (!teamSet || Boolean(teamData) && teamDetail.isSuccess);
+  const loading = canView && (setsQuery.isPending || Boolean(teamSet && teamDetail.isPending) || Boolean(memberSet && memberDetail.isPending));
+  const failed = canView && !loading && !verified;
+  const canShowRole = canView && Boolean(setsQuery.data) && Boolean(memberData) && (!teamSet || Boolean(teamData));
+  const title = canShowRole ? teamSet?.name ?? "No custom role" : "Role not verified";
+  const extraKeys = verified && teamData && memberData ? allowedKeys(teamData.permissions).filter((key) => !allowedKeys(memberData.permissions).includes(key)) : [];
+  async function retry() { await setsQuery.refetch(); if (teamSet) await teamDetail.refetch(); if (memberSet) await memberDetail.refetch(); }
 
-  const teamSetDetail = usePermissionSet(orgId, teamSet?.id ?? "", Boolean(teamSet));
-  const adminSetDetail = usePermissionSet(orgId, adminSet?.id ?? "", Boolean(adminSet));
-  const memberSetDetail = usePermissionSet(orgId, memberSet?.id ?? "", Boolean(memberSet && memberSet.allowedCount > 0));
-  const adminKeys: PermissionKey[] = adminSetDetail.data ? allowedKeys(adminSetDetail.data.permissions) : permissionDefaultKeys("admin");
-  const memberKeys: PermissionKey[] = memberSetDetail.data ? allowedKeys(memberSetDetail.data.permissions) : permissionDefaultKeys("member");
-  const customKeys: PermissionKey[] = teamSetDetail.data ? allowedKeys(teamSetDetail.data.permissions) : [];
-  const alsoKeys = (role.kind === "admin" ? adminKeys : role.kind === "custom" ? customKeys : []).filter((key) => !memberKeys.includes(key));
-  const loading = setsQuery.isPending || (teamSet !== null && teamSetDetail.isPending);
-
-  const otherTeams = teamSet ? setTeams(teamSet).filter((entry) => entry.id !== team.id) : [];
-  const title = role.kind === "custom" && teamSet ? teamSet.name : TEAM_ROLE_LABELS[role.kind];
-  const description = role.kind === "admin"
-    ? `Everyone in ${team.name} is an admin`
-    : role.kind === "custom"
-      ? otherTeams.length > 0 ? `Custom role, also on ${teamNames(otherTeams)}` : "Custom role"
-      : TEAM_ROLE_DESCRIPTIONS.member;
-  const abilities: TeamRoleAbilities = {
-    canManageAdminTeams: access?.canManageAdminTeams ?? false,
-    canManagePermissions: access?.canManagePermissions ?? false,
-    permissionsFeature: true,
-  };
-
-  return (
-    <div className="flex flex-col gap-6" data-testid="team-role" data-role={role.kind}>
-      {setsQuery.isError ? <DenNotice tone="error" message={setsQuery.error instanceof Error ? setsQuery.error.message : "Couldn't load this team's role."} /> : null}
-      <ItemPanel>
-        <div className="flex flex-wrap items-center gap-3.5 px-5 py-4">
-          <IconTile icon={ShieldCheck} />
-          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="truncate text-[14px] font-medium leading-5 text-gray-900" title={title} data-testid="team-role-name">{loading ? <DenSkeleton className="h-5 w-28" /> : title}</span>
-            {loading ? <DenSkeleton className="h-[18px] w-48" /> : <span className="text-[13px] leading-[18px] text-gray-500">{description}</span>}
-          </span>
-          <span className="flex max-w-full flex-wrap gap-2">
-            {teamSet && role.kind === "custom" ? (
-              <LinkButton size="sm" variant="secondary" href={getPermissionSetRoute(orgSlug, teamSet.id)} data-testid="team-role-open">Open role</LinkButton>
-            ) : null}
-            <RolePicker
-              team={team}
-              state={state}
-              customSets={customSets}
-              abilities={abilities}
-              disabled={loading}
-              newRoleHref={getNewRoleRoute(orgSlug)}
-            />
-          </span>
-        </div>
-      </ItemPanel>
-
-      {loading ? (
-        <ItemPanel><ItemRowsSkeleton label="Loading what this team can do" rows={3} /></ItemPanel>
-      ) : alsoKeys.length > 0 ? (
-        <ItemSection title={`${team.name} can also`} testId="team-role-also">
-          <ItemPanel>
-            {alsoKeys.map((key) => <ItemRow key={key} logo={<CheckMark />} title={getPermissionDefinition(key).label} />)}
-          </ItemPanel>
-        </ItemSection>
-      ) : null}
-    </div>
-  );
-}
-
-function CheckMark() {
-  return <span aria-hidden className="flex h-8 w-8 items-center justify-center text-gray-900"><Check className="h-4 w-4" strokeWidth={2} /></span>;
-}
-
-type PickerOption = { role: SharedTeamRole; title: string; description: string };
-
-/** Change role: every role in one searchable list, opened under the button. */
-function RolePicker({ team, state, customSets, abilities, disabled, newRoleHref }: {
-  team: DenOrgTeam;
-  state: SharedTeamRoleState;
-  customSets: PermissionSetSummary[];
-  abilities: TeamRoleAbilities;
-  disabled: boolean;
-  newRoleHref: string;
-}) {
-  const toast = useDenToast();
-  const { orgId, updateTeam } = useOrgDashboard();
-  const setTeamRole = useSetTeamRole(orgId ?? "");
-  const current = sharedTeamRole(state);
-  const [open, setOpen] = useState(false);
-  const [choice, setChoice] = useState<SharedTeamRole>(current);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const builtIn: PickerOption[] = [
-    { role: { kind: "member" }, title: TEAM_ROLE_LABELS.member, description: TEAM_ROLE_DESCRIPTIONS.member },
-    { role: { kind: "admin" }, title: TEAM_ROLE_LABELS.admin, description: "Invite people, manage teams, and run connections and models" },
-  ];
-  const custom: PickerOption[] = customSets.map((set) => {
-    const teams = setTeams(set);
-    return {
-      role: { kind: "custom", setId: set.id },
-      title: set.name,
-      description: teams.length ? `On ${teamNames(teams)}` : "No teams yet",
-    };
-  });
-  const changed = !sameSharedTeamRole(choice, current);
-  const chosenTitle = [...builtIn, ...custom].find((option) => sameSharedTeamRole(option.role, choice))?.title ?? "";
-
-  function close() {
-    setOpen(false);
-    setChoice(current);
-    setError(null);
-  }
-
-  async function run(from: SharedTeamRoleState, to: SharedTeamRole) {
-    for (const step of sharedTeamRoleSteps(from, to)) {
-      if (step.kind === "set-admin") await updateTeam(team.id, { grantsOrganizationAdmin: step.value });
-      else await setTeamRole.mutateAsync({ teamId: team.id, permissionSetId: step.setId });
-    }
-  }
-
-  async function save() {
-    if (!changed) return;
-    const previous = current;
-    const before = state;
-    const after: SharedTeamRoleState = choice.kind === "admin"
-      ? { admin: true, setId: null }
-      : choice.kind === "custom" ? { admin: false, setId: choice.setId } : { admin: false, setId: null };
-    setBusy(true);
-    setError(null);
-    try {
-      await run(before, choice);
-      setOpen(false);
-        toast({
-        title: `${team.name} is now ${chosenTitle}`,
-        action: { label: "Undo", onClick: () => { void run(after, previous); } },
-      });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Couldn't change the role.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const options = [...builtIn, ...custom].map((option) => ({
-    value: option.role.kind === "custom" ? option.role.setId : option.role.kind,
-    label: option.title,
-    caption: option.description,
-    lockReason: sameSharedTeamRole(option.role, current) ? null : sharedTeamRoleLockReason(state, option.role, abilities),
-    disabled: !sameSharedTeamRole(option.role, current) && sharedTeamRoleLockReason(state, option.role, abilities) !== null,
-  }));
-  return <div className="w-[280px] max-w-full">
-    <SearchableRolePicker
-      value={choice.kind === "custom" ? choice.setId : choice.kind}
-      onChange={(value) => setChoice(value === "member" ? { kind: "member" } : value === "admin" ? { kind: "admin" } : { kind: "custom", setId: value })}
-      options={options} label={`Role for ${team.name}`} trigger="Change role" disabled={disabled}
-      testId="team-role" open={open} onOpenChange={(next) => next ? (setChoice(current), setOpen(true)) : close()}
-      footer={<>
-        {error ? <DenNotice tone="error" message={error} /> : null}
-        <Link href={newRoleHref} className="mb-2 inline-flex items-center gap-1.5 px-2 py-1 text-[12px] text-gray-700"><Plus className="h-3.5 w-3.5" aria-hidden />Create role</Link>
-        <div className="flex min-w-0 justify-end gap-2">
-          <DenButton size="sm" variant="secondary" onClick={close}>Cancel</DenButton>
-          <DenButton size="sm" disabled={!changed} loading={busy} onClick={() => void save()} className="min-w-0" title={changed ? `Change to ${chosenTitle}` : undefined} data-testid="team-role-save">
-            <span className="truncate">{changed ? `Change to ${chosenTitle}` : "Change role"}</span>
-          </DenButton>
-        </div>
-      </>}
-    />
+  if (!canView) return <div className="grid gap-4"><TeamAdminCheckbox team={team} /><DenNotice tone="neutral" message={permissionLockReason("permissions.view")} /></div>;
+  return <div className="flex flex-col gap-6" data-testid="team-role" data-role={verified ? teamSet ? "custom" : "member" : "unknown"}>
+    <TeamAdminCheckbox team={team} />
+    {!canView ? <DenNotice tone="neutral" message={permissionLockReason("permissions.view")} /> : null}
+    {failed ? <DenNotice tone="error" message={setsQuery.data ? `Couldn't verify this team's role. Last verified ${new Date(setsQuery.dataUpdatedAt).toLocaleString()}. Changes are blocked until verification succeeds.` : "Couldn't verify this team's role. Changes are blocked until verification succeeds."} action={<DenButton size="sm" variant="secondary" onClick={() => void retry()}>Try again</DenButton>} /> : null}
+    <ItemPanel>
+      <div className="flex flex-wrap items-center gap-3.5 px-5 py-4">
+        <IconTile icon={ShieldCheck} />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="break-words text-[14px] font-medium leading-5 text-gray-900" data-testid="team-role-name">{loading && !setsQuery.data ? <DenSkeleton className="h-5 w-28" /> : title}</span>
+          <span className="text-[13px] text-gray-500">{!canShowRole ? "Custom permissions not verified" : teamSet ? "Custom role" : "Only permissions available to everyone"}</span>
+        </span>
+        <span className="flex max-w-full flex-wrap gap-2">
+          {canShowRole && teamSet ? <LinkButton size="sm" variant="secondary" href={getPermissionSetRoute(orgSlug, teamSet.id)}>Open role</LinkButton> : null}
+          {canShowRole ? <CustomRolePicker team={team} setId={teamSet?.id ?? null} customSets={customSets} disabled={!verified} canManage={access?.canManagePermissions ?? false} newRoleHref={getNewRoleRoute(orgSlug)} /> : <DenButton size="sm" variant="secondary" disabled data-testid="team-role-change">Change custom role</DenButton>}
+        </span>
+      </div>
+    </ItemPanel>
+    {loading ? <ItemPanel><ItemRowsSkeleton label="Loading what this team can do" rows={3} /></ItemPanel> : extraKeys.length ? <ItemSection title={`${team.name}'s custom role allows`} testId="team-role-also"><ItemPanel>{extraKeys.map((key) => <ItemRow key={key} logo={<span aria-hidden className="flex size-8 items-center justify-center"><Check className="size-4" /></span>} title={getPermissionDefinition(key).label} />)}</ItemPanel></ItemSection> : null}
   </div>;
+}
+
+function CustomRolePicker({ team, setId, customSets, disabled, canManage, newRoleHref }: {
+  team: DenOrgTeam; setId: string | null; customSets: PermissionSetSummary[]; disabled: boolean; canManage: boolean; newRoleHref: string;
+}) {
+  const { orgId } = useOrgDashboard();
+  const saveRole = useSetTeamRole(orgId ?? "");
+  const toast = useDenToast();
+  const [open, setOpen] = useState(false);
+  const [choice, setChoice] = useState<string | null>(setId);
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  const currentName = customSets.find((set) => set.id === setId)?.name;
+  const chosenName = customSets.find((set) => set.id === choice)?.name ?? "No custom role";
+  const changed = choice !== setId;
+  async function save() {
+    if (!changed || disabled || !canManage) return;
+    try {
+      await saveRole.mutateAsync({ teamId: team.id, permissionSetId: choice });
+      if (!active.current) return;
+      setOpen(false);
+      toast({ title: choice ? `Assigned ${chosenName} to ${team.name}` : `Removed ${currentName} from ${team.name}` });
+    } catch { /* Keep the selection and the actual error in place. */ }
+  }
+  return <div className="w-[280px] max-w-full"><RolePicker
+    value={choice ?? "member"} onChange={(value) => { saveRole.reset(); setChoice(value === "member" ? null : value); }}
+    options={[{ value: "member", label: "No custom role", caption: "Keeps permissions available to everyone" }, ...customSets.map((set) => ({ value: set.id, label: set.name, caption: permissionSetTeams(set).map((entry) => entry.name ?? "A deleted team").join(", ") || "No teams yet" }))].map((option) => ({ ...option, disabled: !canManage, lockReason: canManage ? null : permissionLockReason("permissions.manage") }))}
+    label={`Custom role for ${team.name}`} trigger="Change custom role" disabled={disabled || saveRole.isPending}
+    testId="team-role" open={open} onOpenChange={(next) => { if (!saveRole.isPending) { setChoice(setId); saveRole.reset(); setOpen(next); } }}
+    footer={<>
+      {changed ? <p className="mb-2 break-words text-[13px] text-gray-600">{currentName ? `${currentName} will be removed from ${team.name}. ` : ""}{choice ? `${chosenName} will apply to everyone in this team. ` : ""}Organization Admin access stays {team.grantsOrganizationAdmin ? "on" : "off"}.</p> : null}
+      {saveRole.error ? <DenNotice tone="error" message={saveRole.error.message} /> : null}
+      <Link href={newRoleHref} className="mb-2 inline-flex items-center gap-1.5 px-2 py-1 text-[12px] text-gray-700"><Plus className="size-3.5" aria-hidden />Create role</Link>
+      <div className="flex justify-end gap-2"><DenButton size="sm" variant="secondary" disabled={saveRole.isPending} onClick={() => setOpen(false)}>Cancel</DenButton><DenButton size="sm" disabled={!changed || !canManage || disabled} loading={saveRole.isPending} onClick={() => void save()} data-testid="team-role-save">{choice ? "Assign role" : "Remove custom role"}</DenButton></div>
+    </>}
+  /></div>;
 }

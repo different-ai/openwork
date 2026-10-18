@@ -52,7 +52,7 @@ export function RolePicker({ value, onChange, options, label, trigger, disabled,
   return <Popover.Root open={open} onOpenChange={changeOpen}>
     <Popover.Trigger disabled={disabled} aria-label={label} data-testid={`${testId}-change`} title={trigger ?? current?.label}
       className="flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-3 text-left text-[13px] text-gray-900 focus-visible:outline-2 focus-visible:outline-gray-400">
-      <span className="min-w-0 truncate">{trigger ?? current?.label ?? "Member"}</span><ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0 truncate">{trigger ?? current?.label ?? "Role not verified"}</span><ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
     </Popover.Trigger>
     <Popover.Portal><Popover.Positioner side="bottom" align="start" sideOffset={8} className="z-50 max-w-[var(--available-width)]">
       <Popover.Popup data-testid={`${testId}-choice`} className="flex max-h-[var(--available-height)] w-[var(--anchor-width)] max-w-[var(--available-width)] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-lg outline-none">

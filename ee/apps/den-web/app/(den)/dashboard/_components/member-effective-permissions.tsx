@@ -37,12 +37,16 @@ function SourceLink({ source, orgSlug, linked, teamRoles, sharedRoles }: { sourc
 /** "Effective permissions" for one member, each with where it comes from. */
 export function MemberEffectivePermissions({ memberId, memberName }: { memberId: string; memberName: string }) {
   const { orgId, orgSlug, orgContext } = useOrgDashboard();
-  const query = useMemberPermissions(orgId, memberId, true);
+  const canView = orgContext?.organization.id === orgId && canViewMemberPermissions(orgContext, memberId);
+  const query = useMemberPermissions(orgId, memberId, canView);
   // Set pages need permissions.view; someone reading only their own sees plain labels.
   const linked = orgContext ? viewerCanViewPermissions(orgContext) : false;
   const teamRoles = orgContext ? orgFeatureEnabled(orgContext, "teamRoles") : false;
   const sharedRoles = useSharedRolesOn();
 
+  // A retained panel must stop reading and hide cached private data immediately
+  // when its organization or authorization changes.
+  if (!canView) return <DenNotice tone="neutral" message="You can no longer view these permissions. Ask the organization owner for access." />;
   if (query.isPending) return <PermissionRowsSkeleton rows={4} label={`Loading permissions for ${memberName}`} />;
   if (query.isError) {
     return (

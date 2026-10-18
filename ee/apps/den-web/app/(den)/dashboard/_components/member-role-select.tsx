@@ -61,7 +61,7 @@ export function MemberRoleEditor({ memberName, value, onChange, options, teamRol
       >
         <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)] gap-3 sm:w-[280px]" data-testid="member-role-select">
           <span className="truncate text-[14px] font-medium text-gray-700" title={`Role for ${memberName}`}>
-            Role for {memberName}
+            Organization role for {memberName}
           </span>
           <MemberRoleSelect value={value} onChange={onChange} options={options} label={`Role for ${memberName}`} searchable={searchable} />
         </div>

@@ -11,7 +11,7 @@ import { createDesktopPolicy, updateDesktopPolicy, useOrgDesktopPolicies, type D
 import { validateExecutionPolicy } from "./execution-policy-fields";
 import { TeamExecutionFields } from "./team-execution-fields";
 import { TeamPermissionGroup, TeamPermissionSelect } from "./team-permission-fields";
-import { teamCapabilities, teamPermissionChanges, teamPermissionDraft, teamWebsiteSummary, type TeamPermissionDraft } from "./team-permission-state";
+import { rebaseTeamPermissionDraft, teamCapabilities, teamPermissionChanges, teamPermissionDraft, teamWebsiteSummary, type TeamPermissionDraft } from "./team-permission-state";
 
 /**
  * `heading` replaces "What this team can do" and its description; teamRoles
@@ -21,18 +21,18 @@ export function TeamPermissionsPanel({ teamId, heading }: { teamId: string; head
   const { orgContext } = useOrgDashboard();
   const [saved, setSaved] = useState(false);
   const access = getOrgAccessFlags(orgContext?.currentMember.role ?? "member", orgContext?.currentMember.isOwner ?? false, orgContext?.currentMember.permissions);
-  const { desktopPolicies, definitions, busy, error, reloadPolicies } = useOrgDesktopPolicies(orgContext?.organization.id ?? null);
+  const { desktopPolicies, definitions, busy, error, readDenied, reloadPolicies } = useOrgDesktopPolicies(orgContext?.organization.id ?? null);
   const team = orgContext?.teams.find((entry) => entry.id === teamId);
   const policies = desktopPolicies.filter((policy) => policy.policy.access !== undefined && policy.assignments.some((entry) => entry.teamId === teamId));
   const policy = policies[0];
   const exclusivelyAssigned = !policy || (!policy.isDefault && policy.assignments.length === 1 && policy.assignments[0]?.teamId === teamId);
 
-  if (error) return <DenNotice tone="error" message={error} />;
-  if (busy || definitions.length === 0) return <p className="py-6 text-sm text-gray-500">Loading permissions…</p>;
+  if (readDenied || error && definitions.length === 0) return <DenNotice tone="error" message={error ?? "Couldn't verify access."} action={<DenButton size="sm" variant="secondary" onClick={() => void reloadPolicies()}>Try again</DenButton>} />;
+  if (definitions.length === 0) return <p className="py-6 text-sm text-gray-500">Loading permissions…</p>;
   if (!team) return <DenNotice tone="error" message="This team is no longer available." />;
   if (policies.length > 1 || !exclusivelyAssigned) return <DenNotice tone="error" message="This team has shared or overlapping access configurations. Ask your organization owner to review the assigned policies before editing team permissions." />;
 
-  return <>{saved ? <DenNotice tone="info" className="mb-4" message="Permissions saved. Members receive updates when their app refreshes." /> : null}<TeamPermissionsEditor key={`${teamId}-${JSON.stringify(policy)}`} teamId={teamId} teamName={team.name} heading={heading} policy={policy} canManage={access.canManageDesktopPolicies} onSaved={async () => { await reloadPolicies(); setSaved(true); }} /></>;
+  return <>{error ? <DenNotice tone="error" message="Couldn't refresh saved permissions. Your draft is kept; try again before saving." action={<DenButton size="sm" variant="secondary" onClick={() => void reloadPolicies()}>Try again</DenButton>} /> : null}{saved ? <DenNotice tone="info" className="mb-4" message="Permissions saved. Members receive updates when their app refreshes." /> : null}<TeamPermissionsEditor key={`${orgContext?.organization.id}-${teamId}`} teamId={teamId} teamName={team.name} heading={heading} policy={policy} canManage={access.canManageDesktopPolicies && !busy && !error} onSaved={async () => { await reloadPolicies(); setSaved(true); }} /></>;
 }
 
 
@@ -49,7 +49,12 @@ function TeamPermissionsEditor({ teamId, teamName, heading, policy, canManage, o
   const reviewHeading = useRef<HTMLHeadingElement>(null);
   const editorHeading = useRef<HTMLHeadingElement>(null);
   const initial = teamPermissionDraft(policy?.policy);
-  const [draft, setDraft] = useState(initial);
+  const [draftState, setDraftState] = useState<TeamPermissionDraft | null>(null);
+  const [draftBase, setDraftBase] = useState(initial);
+  const hasEdits = draftState !== null && JSON.stringify(draftBase) !== JSON.stringify(draftState);
+  const draft = hasEdits && draftState ? draftState : initial;
+  const conflict = hasEdits && JSON.stringify(draftBase) !== JSON.stringify(initial);
+  function setDraft(next: TeamPermissionDraft) { if (!hasEdits) setDraftBase(initial); setDraftState(next); }
   const [review, setReview] = useState<TeamPermissionDraft | null>(null);
   const [preview, setPreview] = useState(false);
   const [pendingSite, setPendingSite] = useState(false);
@@ -82,7 +87,7 @@ function TeamPermissionsEditor({ teamId, teamName, heading, policy, canManage, o
   }
 
   async function save() {
-    if (!review || !canManage || saving) return;
+    if (!review || !canManage || saving || conflict) return;
     setSaving(true);
     setError(null);
     try {
@@ -95,6 +100,8 @@ function TeamPermissionsEditor({ teamId, teamName, heading, policy, canManage, o
       if (policy) await updateDesktopPolicy(policy.id, payload);
       else await createDesktopPolicy(payload);
       await onSaved();
+      setDraftState(null);
+      setReview(null);
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not save team permissions.");
     } finally {
@@ -108,6 +115,8 @@ function TeamPermissionsEditor({ teamId, teamName, heading, policy, canManage, o
     const allowed = entries.filter((entry) => capabilities[entry.id]).length;
     return allowed === 0 ? "Admin managed" : allowed === entries.length ? "Allowed" : "Custom";
   };
+
+  const conflictNotice = conflict ? <DenNotice tone="warning" message={<div><p>Saved permissions changed while you were editing. Your draft is kept.</p><ul className="mt-2 grid gap-1">{teamPermissionChanges(draftBase, initial).map((change) => <li key={change.label} className="break-words">{change.label}: {change.before} → {change.after}</li>)}</ul></div>} action={<DenButton size="sm" variant="secondary" onClick={() => { setDraftState(rebaseTeamPermissionDraft(draftBase, draft, initial)); setDraftBase(initial); setReview(null); }}>Keep my edits on latest settings</DenButton>} /> : null;
 
   if (review) return <section aria-label="Review team permission changes" className="mb-8 space-y-5">
     <DenButton variant="ghost" size="sm" icon={ArrowLeft} onClick={keepEditing} disabled={saving}>Back to team access</DenButton>
@@ -123,12 +132,14 @@ function TeamPermissionsEditor({ teamId, teamName, heading, policy, canManage, o
       </div>)}
     </div>
     <DenNotice tone="info" message="Members receive updates when their app refreshes. Other team and organization restrictions continue to apply." />
+    {conflictNotice}
     {error ? <DenNotice tone="error" message={error} /> : null}
-    <div className="flex flex-wrap justify-between gap-3 border-t border-gray-200 pt-4"><DenButton variant="secondary" onClick={keepEditing} disabled={saving}>Keep editing</DenButton><DenButton onClick={() => void save()} disabled={!canManage} loading={saving}>Save permissions</DenButton></div>
+    <div className="flex flex-wrap justify-between gap-3 border-t border-gray-200 pt-4"><DenButton variant="secondary" onClick={keepEditing} disabled={saving}>Keep editing</DenButton><DenButton onClick={() => void save()} disabled={!canManage || conflict} loading={saving}>Save permissions</DenButton></div>
   </section>;
 
   return <section aria-label="Team permissions" className="mb-8 space-y-5">
     <div><div className="flex items-center gap-2"><ShieldCheck aria-hidden="true" className="h-5 w-5 text-gray-500" /><h2 ref={editorHeading} tabIndex={-1} className="text-lg font-semibold tracking-tight text-gray-950">{heading ?? "What this team can do"}</h2></div>{heading ? null : <p className="mt-1 text-sm text-gray-500">Choose what members of {teamName} can do in OpenWork.</p>}</div>
+    {conflictNotice}
     {enabling ? <DenNotice tone="warning" message="These permissions are currently disabled. Review and save to enable them for this team." /> : null}
     {!canManage ? <DenNotice tone="info" message="Changing these permissions needs permission to manage desktop policies." /> : null}
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium text-gray-900">Work permissions</h3><DenButton variant="ghost" size="sm" icon={Eye} aria-expanded={preview} aria-controls={previewId} onClick={() => setPreview(!preview)}>Preview member experience</DenButton></div>

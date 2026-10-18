@@ -9,6 +9,7 @@ import {
   type DesktopPolicyDocumentWrite,
 } from "@openwork/types/den/desktop-policies";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
+import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 
 export type DenDesktopPolicyRole = "owner" | "admin" | "member";
 
@@ -159,6 +160,7 @@ export function useOrgDesktopPolicies(orgId: string | null) {
   const [desktopPolicies, setDesktopPolicies] = useState<DenDesktopPolicy[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [readDenied, setReadDenied] = useState(false);
 
   async function reloadPolicies() {
     if (!orgId) {
@@ -170,11 +172,13 @@ export function useOrgDesktopPolicies(orgId: string | null) {
     setBusy(true);
     setError(null);
     try {
-      const { response, payload } = await requestJson("/v1/desktop-policies", { method: "GET" }, 12000);
+      const { response, payload } = await requestJson("/v1/desktop-policies", { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId } }, 12000);
       if (!response.ok) {
+        if ([401, 403, 404].includes(response.status)) setReadDenied(true);
         throw new Error(getErrorMessage(payload, `Failed to load desktop policies (${response.status}).`));
       }
       const parsed = parseDesktopPolicyList(payload);
+      setReadDenied(false);
       setDefinitions(parsed.definitions);
       setDesktopPolicies(parsed.desktopPolicies);
     } catch (error) {
@@ -188,7 +192,7 @@ export function useOrgDesktopPolicies(orgId: string | null) {
     void reloadPolicies();
   }, [orgId]);
 
-  return { definitions, desktopPolicies, busy, error, reloadPolicies };
+  return { definitions, desktopPolicies, busy, error, readDenied, reloadPolicies };
 }
 
 export async function createDesktopPolicy(input: DesktopPolicyPayload) {
