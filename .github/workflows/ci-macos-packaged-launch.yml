@@ -1,0 +1,77 @@
+name: macOS Packaged Launch
+
+on:
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - apps/desktop/build/entitlements*.plist
+      - apps/desktop/electron-builder*.yml
+      - apps/desktop/package.json
+      - apps/desktop/electron/**
+      - apps/desktop/scripts/electron-build.mjs
+      - apps/desktop/scripts/electron-after-pack.cjs
+      - apps/desktop/scripts/electron-after-sign.cjs
+      - apps/desktop/scripts/macos-launch-gate.sh
+      - pnpm-lock.yaml
+      - .github/workflows/ci-macos-packaged-launch.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-packaged-launch-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  packaged-launch:
+    name: Ad-hoc signed app survives launch
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@f4d14e03ff726c06358e5557344e1da148b56cf7 # v1
+        with:
+          bun-version: 1.3.10
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        continue-on-error: true
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: macos-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            macos-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Package Electron desktop (unsigned directory)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          set -euo pipefail
+          rm -rf apps/desktop/dist-electron
+          pnpm --filter @openwork/desktop package:electron:dir
+
+      - name: Ad-hoc sign and launch packaged app
+        run: bash apps/desktop/scripts/macos-launch-gate.sh
