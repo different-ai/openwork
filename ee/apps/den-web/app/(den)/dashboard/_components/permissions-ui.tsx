@@ -38,8 +38,9 @@ export type PermissionsAccess =
 /** Whether the Permissions screens can load, from GET /v1/org. */
 export function usePermissionsAccess(): PermissionsAccess {
   const { orgId, orgSlug, orgContext, orgBusy, orgError } = useOrgDashboard();
-  if (orgError && !orgBusy) return { state: "error" };
-  if (orgBusy || !orgContext || !orgId || orgContext.organization.id !== orgId) return { state: "checking" };
+  // A refresh of this same verified organization must not unmount its drafts.
+  // Missing or changed scope still masks content until access is established.
+  if (!orgContext || !orgId || orgContext.organization.id !== orgId) return orgError && !orgBusy ? { state: "error" } : { state: "checking" };
   if (!orgFeatureEnabled(orgContext, "permissions")) return { state: "feature_off" };
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
   const held = new Set<string>(access.isOwner ? PERMISSION_KEYS : orgContext.currentMember.permissions ?? []);

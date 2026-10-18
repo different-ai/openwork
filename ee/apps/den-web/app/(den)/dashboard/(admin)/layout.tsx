@@ -7,6 +7,7 @@ import { getOrgAccessFlags } from "../../_lib/den-org";
 import { DenNotice } from "../../_components/ui/notice";
 import { adminRouteLockedMessage, canOpenAdminRoute } from "../_lib/admin-route-access";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { useDenFlow } from "../../_providers/den-flow-provider";
 
 export default function AdminDashboardLayout({
   children,
@@ -15,7 +16,9 @@ export default function AdminDashboardLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { orgContext, orgBusy, orgError } = useOrgDashboard();
+  const { orgContext, orgId, orgBusy, orgError } = useOrgDashboard();
+  const { user, sessionHydrated } = useDenFlow();
+  const sameVerifiedScope = Boolean(sessionHydrated && user && orgContext && orgContext.currentMember.userId === user.id && orgContext.organization.id === orgId);
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
@@ -35,7 +38,9 @@ export default function AdminDashboardLayout({
     return <DenNotice tone="error" message={orgError} />;
   }
 
-  if (orgBusy || !orgContext) {
+  // Refreshing this same verified person/workspace must not unmount drafts or
+  // pending batch outcomes. Identity, scope and permission changes still mask.
+  if (!sameVerifiedScope || !orgContext) {
     return (
       <div className="flex min-h-[420px] items-center justify-center px-6" data-testid="admin-access-state" data-access-state="checking">
         <div className="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-6 shadow-[0_12px_40px_-28px_rgba(15,23,42,0.35)]">

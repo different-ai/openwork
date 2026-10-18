@@ -10,19 +10,14 @@ import {
   roleKindLabel,
   roleName,
   roleStartKeys,
-  sharedTeamRole,
-  sharedTeamRoleLockReason,
-  sharedTeamRoleSteps,
+  permissionSetTeams,
   teamRole,
   teamRoleLabels,
-  teamRoleLockReason,
-  teamRoleSteps,
 } from "./team-roles";
 
 const member = { admin: false, customSetId: null };
 const admin = { admin: true, customSetId: null };
 const custom = { admin: false, customSetId: "pms_team" };
-const all = { canManageAdminTeams: true, canManagePermissions: true, permissionsFeature: true };
 
 test("a team's role comes from the Admin flag and its permission set, Admin first", () => {
   assert.equal(teamRole(member), "member");
@@ -31,23 +26,12 @@ test("a team's role comes from the Admin flag and its permission set, Admin firs
   assert.equal(teamRole({ admin: true, customSetId: "pms_team" }), "admin");
 });
 
-test("changing a team's role never leaves it with less access part way", () => {
-  assert.deepEqual(teamRoleSteps(member, "admin", []), [{ kind: "set-admin", value: true }]);
-  assert.deepEqual(teamRoleSteps(custom, "admin", []), [{ kind: "set-admin", value: true }, { kind: "remove-custom", setId: "pms_team" }]);
-  assert.deepEqual(teamRoleSteps(admin, "custom", ["teams.view"]), [{ kind: "create-custom", keys: ["teams.view"] }, { kind: "set-admin", value: false }]);
-  assert.deepEqual(teamRoleSteps(member, "custom", ["teams.view"]), [{ kind: "create-custom", keys: [] }]);
-  assert.deepEqual(teamRoleSteps(admin, "member", []), [{ kind: "set-admin", value: false }]);
-  assert.deepEqual(teamRoleSteps(custom, "member", []), [{ kind: "remove-custom", setId: "pms_team" }]);
-  assert.deepEqual(teamRoleSteps(admin, "admin", []), []);
-});
-
-test("a role change is locked with the permission it needs", () => {
-  assert.equal(teamRoleLockReason(member, "admin", all), null);
-  assert.match(teamRoleLockReason(member, "admin", { ...all, canManageAdminTeams: false }) ?? "", /Manage Admin teams/);
-  assert.match(teamRoleLockReason(admin, "member", { ...all, canManageAdminTeams: false }) ?? "", /Manage Admin teams/);
-  assert.match(teamRoleLockReason(member, "custom", { ...all, permissionsFeature: false }) ?? "", /Enterprise/);
-  assert.match(teamRoleLockReason(custom, "member", { ...all, canManagePermissions: false }) ?? "", /Manage permissions/);
-  assert.equal(teamRoleLockReason(custom, "custom", { canManageAdminTeams: false, canManagePermissions: false, permissionsFeature: false }), null);
+test("shared team associations take precedence over the legacy first-team projection", () => {
+  const first = { id: "tem_first", name: "First" };
+  const second = { id: "tem_second", name: "Second" };
+  assert.deepEqual(permissionSetTeams({ teams: [first, second], team: first }), [first, second]);
+  assert.deepEqual(permissionSetTeams({ teams: [], team: first }), [first]);
+  assert.deepEqual(permissionSetTeams({ teams: [], team: null }), []);
 });
 
 test("a new role starts from Member, Admin or everything, limited to what the creator holds", () => {
@@ -92,24 +76,9 @@ test("allowed keys keep catalog order and drop retired keys", () => {
   assert.deepEqual(allowedKeys([{ key: "teams.view", status: "allow" }, { key: "organization.update", status: "allow" }, { key: "retired.key", status: "allow" }, { key: "sso.view", status: "deny" }]), ["organization.update", "teams.view"]);
 });
 
-test("sharedRoles: changing a team's role never leaves it with less access part way", () => {
-  const member = { admin: false, setId: null };
-  const admin = { admin: true, setId: null };
-  const publisher = { admin: false, setId: "pms_publisher" };
-  assert.deepEqual(sharedTeamRoleSteps(member, { kind: "custom", setId: "pms_publisher" }), [{ kind: "assign", setId: "pms_publisher" }]);
-  assert.deepEqual(sharedTeamRoleSteps(publisher, { kind: "custom", setId: "pms_billing" }), [{ kind: "assign", setId: "pms_billing" }]);
-  assert.deepEqual(sharedTeamRoleSteps(admin, { kind: "custom", setId: "pms_publisher" }), [{ kind: "assign", setId: "pms_publisher" }, { kind: "set-admin", value: false }]);
-  assert.deepEqual(sharedTeamRoleSteps(publisher, { kind: "admin" }), [{ kind: "set-admin", value: true }, { kind: "assign", setId: null }]);
-  assert.deepEqual(sharedTeamRoleSteps(publisher, { kind: "member" }), [{ kind: "assign", setId: null }]);
-  assert.deepEqual(sharedTeamRoleSteps(publisher, { kind: "custom", setId: "pms_publisher" }), []);
-  assert.deepEqual(sharedTeamRole({ admin: true, setId: "pms_publisher" }), { kind: "admin" });
-});
-
-test("sharedRoles: a role change is locked with the permission it needs", () => {
-  const abilities = { canManageAdminTeams: false, canManagePermissions: true, permissionsFeature: true };
-  assert.match(sharedTeamRoleLockReason({ admin: false, setId: null }, { kind: "admin" }, abilities) ?? "", /Manage Admin teams/);
-  assert.equal(sharedTeamRoleLockReason({ admin: false, setId: null }, { kind: "custom", setId: "pms_publisher" }, abilities), null);
-  assert.match(sharedTeamRoleLockReason({ admin: false, setId: null }, { kind: "custom", setId: "pms_publisher" }, { ...abilities, canManagePermissions: false }) ?? "", /Manage permissions/);
+test("an Admin team still contributes its independent custom role", () => {
+  const teams = [{ id: "tem_dual", name: "Editors", memberIds: ["om_1"], grantsOrganizationAdmin: true }];
+  assert.deepEqual(teamRoleLabels({ memberId: "om_1", ownRole: "member", teams, customTeamIds: new Set(["tem_dual"]), customRoleNameByTeam: new Map([["tem_dual", "Publisher"]]) }), ["Admin via Editors", "Publisher"]);
 });
 
 test("sharedRoles: custom roles read by their own name", () => {

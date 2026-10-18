@@ -4,6 +4,7 @@ import { Popover } from "@base-ui/react/popover";
 import { Check, Plus, Search, Users, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { DenButton } from "../../_components/ui/button";
+import { DenNotice } from "../../_components/ui/notice";
 import { ItemPanel } from "./item-list";
 
 /**
@@ -137,15 +138,20 @@ export function TeamsField({ teams, chosenIds, onChange, rowTestId }: {
 
 export type PickerOption = { id: string; name: string; detail: string };
 
-export function AddPicker({ kind, options, disabled, onAdd }: {
+export function AddPicker({ kind, options, disabled, onAdd, triggerLabel, actionLabel, showConsequences = false }: {
   kind: "person" | "team";
   options: PickerOption[];
   disabled?: boolean;
-  onAdd: (ids: string[]) => void;
+  onAdd: (ids: string[]) => void | Promise<void>;
+  triggerLabel?: string;
+  actionLabel?: string;
+  showConsequences?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const noun = kind === "person" ? "people" : "teams";
   const visible = options.filter((option) => `${option.name} ${option.detail}`.toLowerCase().includes(query.trim().toLowerCase()));
   const chosen = options.filter((option) => selected.includes(option.id));
@@ -157,16 +163,31 @@ export function AddPicker({ kind, options, disabled, onAdd }: {
     setOpen(false);
     setQuery("");
     setSelected([]);
+    setError(null);
+  }
+
+  async function submit() {
+    if (busy || chosen.length === 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onAdd(chosen.map((option) => option.id));
+      close();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Couldn't finish. Your selections are kept; try again.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
-    <Popover.Root open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
+    <Popover.Root open={open} onOpenChange={(next) => { if (!busy) { if (next) setOpen(true); else close(); } }}>
       <Popover.Trigger
         disabled={disabled}
         className="inline-flex h-8 items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 text-[12px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <Plus className="h-3.5 w-3.5" aria-hidden />
-        {kind === "person" ? "Add person" : "Add team"}
+        {triggerLabel ?? (kind === "person" ? "Add person" : "Add team")}
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner side="bottom" align="start" sideOffset={8} className="z-50">
@@ -198,6 +219,7 @@ export function AddPicker({ kind, options, disabled, onAdd }: {
                     type="button"
                     role="option"
                     aria-selected={isSelected}
+                    disabled={busy}
                     onClick={() => setSelected((current) => isSelected ? current.filter((id) => id !== option.id) : [...current, option.id])}
                     className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-gray-50"
                   >
@@ -210,19 +232,19 @@ export function AddPicker({ kind, options, disabled, onAdd }: {
                 );
               })}
             </div>
-            <div className="mt-1 flex items-center justify-between gap-3 border-t border-gray-100 px-2 pt-2">
+            {showConsequences && chosen.length > 0 ? <ul className="my-2 max-h-32 overflow-y-auto px-2 text-[12px] text-gray-600" aria-label="Changes to review">{chosen.map((option) => <li key={option.id} className="break-words py-1">{option.name}: {option.detail}</li>)}</ul> : null}
+            {error ? <DenNotice tone="error" message={error} /> : null}
+            <div className="mt-1 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-2 pt-2">
               <span className="text-[12px] text-gray-500">
                 {chosen.length === 0 ? `Pick ${noun}` : `${chosen.length} ${chosen.length === 1 ? (kind === "person" ? "person" : "team") : noun} selected`}
               </span>
               <DenButton
                 size="sm"
-                disabled={chosen.length === 0}
-                onClick={() => {
-                  onAdd(chosen.map((option) => option.id));
-                  close();
-                }}
+                disabled={chosen.length === 0 || busy}
+                loading={busy}
+                onClick={() => void submit()}
               >
-                {addLabel}
+                {actionLabel ?? addLabel}
               </DenButton>
             </div>
           </Popover.Popup>
