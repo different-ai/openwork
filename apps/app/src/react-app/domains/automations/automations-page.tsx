@@ -179,6 +179,7 @@ export function AutomationsPage(props: {
   const openProviderSettings = () => navigate(props.workspaceId?.trim() ? workspaceSettingsRoute(props.workspaceId.trim(), "ai") : globalSettingsRoute("ai"))
   const [searchParams, setSearchParams] = useSearchParams()
   const [query, setQuery] = useState("")
+  const [listPage, setListPage] = useState(0)
   const [editing, setEditing] = useState(false)
   const [repairingModel, setRepairingModel] = useState(false)
   const [archiveOpen, setArchiveOpen] = useState(false)
@@ -238,6 +239,8 @@ export function AutomationsPage(props: {
       || item.revision.instructions.toLowerCase().includes(normalized)
     ))
   }, [listQuery.data, query])
+  const listPageSize = 20
+  const currentListPage = Math.min(listPage, Math.max(0, Math.ceil(filteredItems.length / listPageSize) - 1))
 
   const openAutomation = (automationId: string | null) => {
     const next = new URLSearchParams()
@@ -279,16 +282,16 @@ export function AutomationsPage(props: {
       </div>
     )
   }
-  if (listQuery.isLoading) return <LoadingState />
-  if (listQuery.error) {
+  if (!ready || listQuery.isLoading) return <LoadingState />
+  if (listQuery.accessDenied || (listQuery.error && !listQuery.data)) {
     return (
       <div className="mx-auto flex max-w-xl flex-col items-center gap-4 p-6 pt-16 text-center" role="alert">
-        <AlertCircle className="size-8 text-destructive" aria-hidden="true" />
+        <AlertCircle className={`size-8 ${listQuery.accessDenied ? "text-muted-foreground" : "text-destructive"}`} aria-hidden="true" />
         <div>
-          <h2 className="font-medium">Automations unavailable</h2>
-          <p className="mt-2 text-sm text-muted-foreground">{describeError(listQuery.error)}</p>
+          <h2 className="font-medium">{listQuery.accessDenied ? "Automation access is blocked" : "Automations unavailable"}</h2>
+          <p className="mt-2 text-sm text-muted-foreground">{listQuery.accessDenied ? "Sign in again or ask your organization administrator for access." : describeError(listQuery.error)}</p>
         </div>
-        <Button variant="outline" onClick={() => void listQuery.refetch()}><RefreshCw />Retry</Button>
+        <Button variant="outline" disabled={listQuery.isFetching} onClick={() => void listQuery.refetch()}><RefreshCw />Retry</Button>
       </div>
     )
   }
@@ -747,16 +750,21 @@ export function AutomationsPage(props: {
         : props.headerActionsTarget === undefined ? <div className="flex justify-end">{newAutomation}</div> : null}
       <div className="relative max-w-md">
         <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
-        <Input className="pl-9" value={query} placeholder="Search Automations" onChange={(event) => setQuery(event.currentTarget.value)} />
+        <Input className="pl-9" value={query} placeholder="Search loaded Automations" onChange={(event) => { setQuery(event.currentTarget.value); setListPage(0) }} />
+      </div>
+      {listQuery.isError ? <p role="alert" className="text-sm text-muted-foreground">Couldn&apos;t verify more Automations. <Button variant="link" size="sm" onClick={() => void (listQuery.isFetchNextPageError ? listQuery.fetchNextPage() : listQuery.refetch())}>Retry</Button></p> : null}
+      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground" data-automation-list-completeness>
+        <span>{listQuery.data?.items.length ?? 0} loaded{listQuery.isError ? "; completeness unverified" : listQuery.hasNextPage ? "; more Automations available" : "; all Automations loaded"}</span>
+        {listQuery.hasNextPage ? <Button variant="outline" size="sm" disabled={listQuery.isFetching} onClick={() => void listQuery.fetchNextPage()}>{listQuery.isFetchingNextPage ? "Checking Automations…" : "Load more Automations"}</Button> : null}
       </div>
       {filteredItems.length === 0 ? (
         <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon"><CalendarClock /></EmptyMedia>
-            <EmptyTitle>{query ? "No matching Automations" : "No Automations yet"}</EmptyTitle>
+            <EmptyTitle>{query ? "No matches in loaded Automations" : listQuery.hasNextPage ? "No active Automations in this page" : "No Automations yet"}</EmptyTitle>
             <EmptyDescription>
               {query
-                ? "Try a different search."
+                ? listQuery.hasNextPage ? "Load more Automations to search further, or try a different search." : "Try a different search."
                 : placementChoices.length > 1
                   ? "Create a task that runs on your desktops or in the cloud."
                   : placement === "cloud"
@@ -768,7 +776,7 @@ export function AutomationsPage(props: {
         </Empty>
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
-          {filteredItems.map((item) => (
+          {filteredItems.slice(currentListPage * listPageSize, (currentListPage + 1) * listPageSize).map((item) => (
             <button
               key={item.automation.id}
               type="button"
@@ -801,6 +809,13 @@ export function AutomationsPage(props: {
           ))}
         </div>
       )}
+      {filteredItems.length > listPageSize ? <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span>Showing {currentListPage * listPageSize + 1}–{Math.min((currentListPage + 1) * listPageSize, filteredItems.length)} of {filteredItems.length} matches</span>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" disabled={currentListPage === 0} onClick={() => setListPage(currentListPage - 1)}>Previous Automations</Button>
+          <Button variant="outline" size="sm" disabled={(currentListPage + 1) * listPageSize >= filteredItems.length} onClick={() => setListPage(currentListPage + 1)}>Next Automations</Button>
+        </div>
+      </div> : null}
     </div>
   )
 }

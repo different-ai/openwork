@@ -90,9 +90,9 @@ export function calendarProviderPresence(
 export function useCalendarMeetings(input: {
   provider: CalendarProviderId
   transport: CalendarTransport | null
-  organizationId: string | null
+  keyPrefix: readonly unknown[]
   range: { start: number; end: number }
   enabled: boolean
 }) {
-  return useMeetingsQuery({ keyPrefix: ["calendar", input.organizationId], provider: input.provider, transport: input.transport, range: input.range, enabled: input.enabled })
+  return useMeetingsQuery({ keyPrefix: input.keyPrefix, provider: input.provider, transport: input.transport, range: input.range, enabled: input.enabled })
 }

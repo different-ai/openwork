@@ -2345,6 +2345,32 @@ function LibrarySignUpBanner(props: { onSignUp?: () => void }) {
   );
 }
 
+const LIBRARY_SECTION_PAGE_SIZE = 20;
+
+function LibraryInventorySection(props: { section: LibrarySection; rows: LibraryRow[]; meta?: string | null }) {
+  const [requestedPage, setPage] = useState(0);
+  const page = Math.min(requestedPage, Math.max(0, Math.ceil(props.rows.length / LIBRARY_SECTION_PAGE_SIZE) - 1));
+  const start = page * LIBRARY_SECTION_PAGE_SIZE;
+  const label = librarySectionLabel(props.section);
+  return (
+    <div data-library-section={props.section}>
+      <LibrarySectionHeader section={props.section} label={label} meta={props.meta} />
+      <div className="flex flex-col [&>div]:border-b [&>div]:border-dls-border/60">
+        {props.rows.slice(start, start + LIBRARY_SECTION_PAGE_SIZE).map((row) => <div key={row.key} data-library-row-key={row.key}>{row.node}</div>)}
+      </div>
+      {props.rows.length > LIBRARY_SECTION_PAGE_SIZE ? (
+        <div className="mt-2 flex items-center justify-between gap-3 text-xs text-dls-secondary" aria-label={`${label} pages`}>
+          <span>Showing {start + 1}–{Math.min(start + LIBRARY_SECTION_PAGE_SIZE, props.rows.length)} of {props.rows.length}</span>
+          <div className="flex gap-1">
+            <Button variant="ghost" size="sm" disabled={page === 0} aria-label={`Previous ${label} items`} onClick={() => setPage(page - 1)}>Previous</Button>
+            <Button variant="ghost" size="sm" disabled={start + LIBRARY_SECTION_PAGE_SIZE >= props.rows.length} aria-label={`Next ${label} items`} onClick={() => setPage(page + 1)}>Next</Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function LibraryInventory(props: {
   rows: LibraryRow[];
   loading: boolean;
@@ -2381,14 +2407,7 @@ export function LibraryInventory(props: {
         <div>
           <div className="space-y-6">
             {sections.map(({ section, rows }) => (
-              <div key={section} data-library-section={section}>
-                <LibrarySectionHeader section={section} label={librarySectionLabel(section)} meta={props.sectionMeta?.[section]} />
-                <div className={containerClassName}>
-                  {rows.map((row) => (
-                    <div key={row.key} data-library-row-key={row.key}>{row.node}</div>
-                  ))}
-                </div>
-              </div>
+              <LibraryInventorySection key={`${section}:${category}:${needle}:${Boolean(props.onlyNeedsSignIn)}`} section={section} rows={rows} meta={props.sectionMeta?.[section]} />
             ))}
             {showLocked ? (
               <div data-library-section="locked">

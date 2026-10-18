@@ -206,6 +206,7 @@ export function ComposerPlusMenu(props: ComposerPlusMenuProps) {
   const [view, setView] = useState<PlusMenuView>({ kind: "root" });
   const [query, setQuery] = useState("");
   const [recentIds, setRecentIds] = useState<string[]>([]);
+  const [requestedPage, setRequestedPage] = useState({ scope: "", index: 0 });
   const inputRef = useRef<HTMLInputElement | null>(null);
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -236,12 +237,37 @@ export function ComposerPlusMenu(props: ComposerPlusMenuProps) {
       }),
     [view, query, recentIds, props.skills, props.connectors, props.plugins, props.agents, props.commands, props.files],
   );
-  const itemIds = useMemo(() => model.groups.flatMap((group) => group.items.map((item) => item.id)), [model]);
+  const pageScope = `${JSON.stringify(view)}:${query}`;
+  const resultCount = model.groups.reduce((count, group) => count + (group.id === "manage" ? 0 : group.items.length), 0);
+  const pageSize = 20;
+  const page = requestedPage.scope === pageScope ? Math.min(requestedPage.index, Math.max(0, Math.ceil(resultCount / pageSize) - 1)) : 0;
+  let offset = 0;
+  const groups = model.groups.flatMap((group) => {
+    if (view.kind === "root" || group.id === "manage") return [group];
+    const start = Math.max(0, page * pageSize - offset);
+    const end = Math.max(0, (page + 1) * pageSize - offset);
+    offset += group.items.length;
+    const items = group.items.slice(start, end);
+    return items.length > 0 ? [{ ...group, items }] : [];
+  });
+  const itemIds = groups.flatMap((group) => group.items.map((item) => item.id));
+  const changePage = (index: number) => {
+    setRequestedPage({ scope: pageScope, index });
+    inputRef.current?.focus();
+  };
 
   const reset = () => {
+    setRequestedPage({ scope: "", index: 0 });
     setView({ kind: "root" });
     setQuery("");
   };
+
+  useEffect(() => {
+    if (props.open) return;
+    setRequestedPage((current) => current.index === 0 && current.scope === "" ? current : { scope: "", index: 0 });
+    setView((current) => current.kind === "root" ? current : { kind: "root" });
+    setQuery("");
+  }, [props.open]);
 
   const close = () => {
     props.onOpenChange(false);
@@ -249,6 +275,7 @@ export function ComposerPlusMenu(props: ComposerPlusMenuProps) {
   };
 
   const navigate = (next: PlusMenuView) => {
+    setRequestedPage({ scope: "", index: 0 });
     setView(next);
     setQuery("");
     inputRef.current?.focus();
@@ -383,7 +410,7 @@ export function ComposerPlusMenu(props: ComposerPlusMenuProps) {
         className="flex max-h-[min(var(--available-height),28rem)] w-[380px] max-w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden rounded-[14px] bg-popover p-0 shadow-[var(--dls-shell-shadow)] ring-0 data-open:animate-none data-closed:animate-none dark:ring-0"
       >
         {/* Without `items`, Base UI keeps its old highlight index when rows reorder. */}
-        <Command mode="none" items={itemIds} value={query} onValueChange={(value) => setQuery(value)}>
+        <Command mode="none" items={itemIds} value={query} onValueChange={(value) => { if (value !== query) setRequestedPage({ scope: "", index: 0 }); setQuery(value); }}>
           <div className="flex h-11 shrink-0 items-center gap-1 border-b border-gray-3 px-1.5">
             {view.kind !== "root" ? (
               <button
@@ -434,7 +461,7 @@ export function ComposerPlusMenu(props: ComposerPlusMenuProps) {
               </p>
             ) : null}
             <CommandList className="not-empty:p-1.5">
-              {model.groups.map((group, index) => {
+              {groups.map((group, index) => {
                 const label = groupLabel(group.id);
                 return (
                   <CommandGroup
@@ -465,6 +492,15 @@ export function ComposerPlusMenu(props: ComposerPlusMenuProps) {
               })}
             </CommandList>
           </div>
+          {view.kind !== "root" && resultCount > pageSize ? (
+            <div className="flex shrink-0 items-center justify-between gap-2 border-t border-gray-3 px-3 py-1.5 text-xs text-gray-10" data-plus-menu-pages>
+              <span>{page * pageSize + 1}–{Math.min((page + 1) * pageSize, resultCount)} of {resultCount}</span>
+              <div className="flex gap-1">
+                <Button variant="ghost" size="sm" disabled={page === 0} onClick={() => changePage(page - 1)}>Previous results</Button>
+                <Button variant="ghost" size="sm" disabled={(page + 1) * pageSize >= resultCount} onClick={() => changePage(page + 1)}>Next results</Button>
+              </div>
+            </div>
+          ) : null}
         </Command>
       </PopoverContent>
     </Popover>
