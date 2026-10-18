@@ -72,6 +72,30 @@ export async function denFetch(den: DenRef, path: string, init: RequestInit = {}
   return { response, body, text };
 }
 
+/**
+ * A Daytona preview URL carries a signed, expiring token in its hostname, and
+ * the proxy answers an expired one with its own 401 before the request ever
+ * reaches Den. That is indistinguishable from rejected credentials in the
+ * failure text, so a stale reused URL reads as "wrong password" and sends the
+ * reader hunting through Den auth. Name the real cause instead.
+ */
+export function expiredPreviewUrlHint(url: string, status: number, body: unknown): string {
+  if (status !== 401) return "";
+  let host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return "";
+  }
+  if (!/\.daytonaproxy\d*\.net$/i.test(host)) return "";
+  const code = typeof body === "object" && body !== null && "code" in body
+    ? String((body as { code?: unknown }).code ?? "")
+    : "";
+  if (code && code.toUpperCase() !== "UNAUTHORIZED") return "";
+  return " The Daytona preview URL looks expired (the proxy rejected the request before Den saw it)."
+    + " Re-provision the Den sandbox or re-mint its preview URLs, then update OPENWORK_EVAL_DEN_API_URL/_WEB_URL.";
+}
+
 export async function signIn(den: DenRef, credentials: { email: string; password: string }): Promise<DenSession> {
   const result = await denFetch(den, "/api/auth/sign-in/email", {
     method: "POST",
@@ -79,7 +103,10 @@ export async function signIn(den: DenRef, credentials: { email: string; password
   });
   const token = stringField(result.body, "token");
   if (!result.response.ok || !token) {
-    throw new Error(`Sign-in failed for ${credentials.email}: HTTP ${result.response.status} ${preview(result.body)}`);
+    const hint = expiredPreviewUrlHint(den.apiUrl, result.response.status, result.body);
+    throw new Error(
+      `Sign-in failed for ${credentials.email}: HTTP ${result.response.status} ${preview(result.body)}${hint}`,
+    );
   }
   return { ...den, token, email: credentials.email, password: credentials.password };
 }
