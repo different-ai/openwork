@@ -49,6 +49,16 @@ describe("den sign-in gate routing", () => {
     expect(route({ isSignedIn: true, onSignin: true })).toBe("/session");
   });
 
+  test("genuine pending organization decisions route to the chooser in both distributions, not ordinary verification", () => {
+    for (const requireSignin of [false, true]) {
+      expect(route({ requireSignin, isSignedIn: true, orgSelectionPending: true })).toBe("/onboarding");
+      expect(route({ requireSignin, isSignedIn: true, orgSelectionPending: true, onOnboarding: true })).toBeNull();
+      expect(route({ requireSignin, isSignedIn: true, orgSelectionPending: true, onSignin: true })).toBe("/onboarding");
+      expect(route({ requireSignin, isSignedIn: true, orgSelectionPending: false })).toBeNull();
+      expect(route({ requireSignin, isSignedIn: true, orgSelectionPending: true, authChecking: true })).toBeNull();
+    }
+  });
+
   test("optional sign-in keeps the existing routing", () => {
     expect(route({ onSignin: true })).toBe("/session");
     expect(route({ hasPreparedBootstrap: true })).toBe("/onboarding");

@@ -1,5 +1,4 @@
 /** @jsxImportSource react */
-import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
 import { useNavigate } from "react-router";
 import { ArrowUpRight, Building2, Check, LogOut, Loader2 } from "lucide-react";
 import { markOrgSelectionPending } from "@/app/lib/den-sign-in-intent";
@@ -42,14 +41,11 @@ export function CloudAccountSection({
   onRefreshOrgs,
   onSignOut,
 }: CloudAccountSectionProps) {
-  const { user, authToken } = useCloudSession();
+  const { user } = useCloudSession();
   const navigate = useNavigate();
   const activeOrg = orgs.find((org) => org.id === activeOrgId) ?? null;
   const controlsDisabled = authBusy || sessionBusy;
-  const memoryFeature = useOrgFeature("rememberLastOrganization", {
-    active: Boolean(authToken && user && activeOrgId && orgs.length > 1),
-  });
-  const switchOrganization = activeOrg && orgs.length > 1 && memoryFeature
+  const switchOrganization = activeOrg
     ? () => {
         // Deliberate switching always opens the picker; remembering a choice
         // must never remove the member's way to change it.

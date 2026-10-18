@@ -42,9 +42,7 @@ import { parseManualAuthInput } from "@/app/lib/manual-auth-input";
 import { clearOrgSelectionPending, readOrgSelectionPending } from "@/app/lib/den-sign-in-intent";
 import { usePlatform } from "../../kernel/platform";
 import { useBootState } from "../../shell/boot-state";
-import { resolveModelDisplayName, resolveProviderDisplayName } from "@/app/utils";
 import { ProviderIcon } from "../../design-system/provider-icon";
-import { writeStoredDefaultModel } from "../../kernel/model-config";
 import { orgOnboardingVisibilityEvent } from "../../shell/reload-coordinator";
 import {
   Page,
@@ -71,7 +69,6 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { cn } from "@/lib/utils";
 import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { Field, FieldLabel, FieldTitle } from "@/components/ui/field"
 import {
@@ -87,7 +84,6 @@ import {
   workspaceBrandingFingerprint,
 } from "./workspace-branding-restart";
 
-const RELOAD_AFTER_ONBOARDING_KEY = "openwork.reloadAfterOrgOnboarding";
 const APPLIED_BRANDING_FINGERPRINT_KEY = "openwork.den.appliedBrandingFingerprint";
 const BRANDING_RESTART_RESUME_KEY = "openwork.den.brandingRestartResume";
 
@@ -586,11 +582,6 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
 
   const prepared = usePreparedBootstrap();
 
-  const [selectedDefault, setSelectedDefault] = useState<{
-    providerId: string;
-    modelId: string;
-    label: string;
-  } | null>(null);
   const [preparingBranding, setPreparingBranding] = useState(false);
   const [brandingRestart, setBrandingRestart] = useState<BrandingRestartState | null>(null);
   const autoContinueAttemptedRef = useRef(false);
@@ -633,31 +624,21 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
     }),
   });
 
-  const finishOnboarding = useCallback((optionsArg?: { requestReload?: boolean }) => {
-    // If user picked a default model, write it
-    if (selectedDefault) {
-      writeStoredDefaultModel({
-        providerID: selectedDefault.providerId,
-        modelID: selectedDefault.modelId,
-      });
-    }
+  const finishOnboarding = useCallback(() => {
     // Mark all providers shown on this page as "seen" so the global
     // toast doesn't re-fire for them on the next sync interval.
     markProvidersSeen([...providers, ...gatewayProviders]);
     try {
       window.sessionStorage.removeItem(DEN_HANDOFF_AUTO_CONTINUE_KEY);
     } catch {}
-    if ((providers.length > 0 || gatewayProviders.length > 0) && optionsArg?.requestReload !== false) {
-      try {
-        window.localStorage.setItem(RELOAD_AFTER_ONBOARDING_KEY, "1");
-      } catch {}
-    }
+    // Provider synchronization owns applying/reloading actual provider changes.
+    // Choosing a model belongs to the chat picker, not this resource summary.
     navigate("/session", { replace: true });
-  }, [gatewayProviders, navigate, providers, selectedDefault]);
+  }, [gatewayProviders, navigate, providers]);
 
-  const handleContinue = useCallback(async (optionsArg?: { requestReload?: boolean }) => {
+  const handleContinue = useCallback(async () => {
     if (!window.__OPENWORK_ELECTRON__?.shell?.relaunch) {
-      finishOnboarding({ requestReload: optionsArg?.requestReload });
+      finishOnboarding();
       return;
     }
 
@@ -665,13 +646,13 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
     try {
       const desktopConfig = await refreshFresh();
       if (!hasWorkspaceBranding(desktopConfig)) {
-        finishOnboarding({ requestReload: optionsArg?.requestReload });
+        finishOnboarding();
         return;
       }
 
       const fingerprint = workspaceBrandingFingerprint(orgId, desktopConfig);
       if (window.localStorage.getItem(APPLIED_BRANDING_FINGERPRINT_KEY) === fingerprint) {
-        finishOnboarding({ requestReload: optionsArg?.requestReload });
+        finishOnboarding();
         return;
       }
 
@@ -713,7 +694,7 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
     if (loading || error || preparingBranding || brandingRestart) return;
 
     autoContinueAttemptedRef.current = true;
-    void handleContinue({ requestReload: false });
+    void handleContinue();
   }, [autoContinue, brandingRestart, error, handleContinue, loading, preparingBranding]);
 
   const restartWithBranding = useCallback(async () => {
@@ -934,12 +915,7 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
                       count={`${totalModels} model${totalModels === 1 ? "" : "s"}`}
                     >
                       {legacyProviders.map((provider) => (
-                        <ProviderCard
-                          key={provider.id}
-                          provider={provider}
-                          selectedDefault={selectedDefault}
-                          onSelectDefault={setSelectedDefault}
-                        />
+                        <ProviderAccessCard key={provider.id} provider={provider} />
                       ))}
                     </Section>
                   ) : null}
@@ -961,13 +937,6 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
                 </Accordion>
               </ScrollAreaViewport>
             </ScrollArea>
-            {/* Selected default indicator */}
-            {selectedDefault ? (
-              <div className="rounded-xl border border-green-6/30 bg-green-2/30 px-4 py-3 text-center text-sm text-green-11">
-                <Check size={14} className="mr-1 inline" />
-                {selectedDefault.label} will be set as your default model.
-              </div>
-            ) : null}
           </PageContent>
         )}
 
@@ -1068,101 +1037,6 @@ function Section({ icon, title, description, count, children }: SectionProps) {
         {children}
       </AccordionContent>
     </AccordionItem>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Provider card with "Use as default" option                         */
-/* ------------------------------------------------------------------ */
-
-interface ProviderCardProps {
-  provider: DenOrgLlmProvider;
-  selectedDefault: { providerId: string; modelId: string } | null;
-  onSelectDefault: (value: {
-    providerId: string;
-    modelId: string;
-    label: string;
-  } | null) => void;
-}
-
-function ProviderCard({ provider, selectedDefault, onSelectDefault }: ProviderCardProps) {
-  // The local provider ID matches the cloud provider's org-level ID
-  const localProviderId = provider.id.trim();
-  const firstModel = provider.models[0] ?? null;
-  const isSelected = selectedDefault?.providerId === localProviderId;
-
-  const handleUseAsDefault = () => {
-    if (!firstModel) return;
-    if (isSelected) {
-      onSelectDefault(null);
-    } else {
-      onSelectDefault({
-        providerId: localProviderId,
-        modelId: firstModel.id,
-        label: `${resolveProviderDisplayName(provider.name || provider.providerId)} · ${firstModel.name || resolveModelDisplayName(firstModel.id)}`,
-      });
-    }
-  };
-
-  return (
-    <div
-      className={cn(
-        "rounded-xl border px-3 py-3 transition-colors -mx-2",
-        isSelected ? "border-green-6" : "border-border",
-      )}
-    >
-      <div className="flex items-center gap-4.5">
-        <ProviderIcon
-          providerId={provider.providerId}
-          providerName={provider.name}
-          size={20}
-          className="text-foreground"
-        />
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-foreground">
-            {resolveProviderDisplayName(provider.name || provider.providerId)}
-          </div>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            {provider.models.length === 1
-              ? "1 model"
-              : `${provider.models.length} models`}
-          </div>
-        </div>
-        {firstModel ? (
-          <button
-            type="button"
-            className={cn(
-              "shrink-0 rounded-full px-3 py-1 text-xs font-medium transition-colors",
-              isSelected
-                ? "bg-green-3 text-green-11"
-                : "border border-border text-muted-foreground hover:bg-hover hover:text-foreground",
-            )}
-            onClick={handleUseAsDefault}
-          >
-            {isSelected ? "Default" : "Use as default"}
-          </button>
-        ) : (
-          <Check size={16} className="shrink-0 text-green-11" />
-        )}
-      </div>
-      {provider.models.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {provider.models.slice(0, 5).map((model) => (
-            <span
-              key={model.id}
-              className="inline-flex items-center rounded-md border border-border bg-hover px-2 py-0.5 font-mono text-xs text-muted-foreground"
-            >
-              {model.name || resolveModelDisplayName(model.id)}
-            </span>
-          ))}
-          {provider.models.length > 5 ? (
-            <span className="inline-flex items-center rounded-md px-2 py-0.5 text-xs text-muted-foreground">
-              +{provider.models.length - 5} more
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
   );
 }
 

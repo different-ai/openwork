@@ -5,7 +5,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** World-owned native HTTP fault fixture. It never evaluates renderer JavaScript. */
-export async function modelRemovalHttpFixture(app: AppWeb, patterns: string[], respond: (url: URL) => unknown | undefined) {
+export async function modelRemovalHttpFixture(app: Pick<AppWeb, "client" | "webUrl">, patterns: string[], respond: (url: URL) => unknown | Promise<unknown>) {
   const endpoint = app.client.webSocketDebuggerUrl;
   if (!endpoint) throw new Error("The model-removal fixture requires browser CDP.");
   const socket = new WebSocket(endpoint);
@@ -32,7 +32,7 @@ export async function modelRemovalHttpFixture(app: AppWeb, patterns: string[], r
   async function paused(params: Record<string, unknown>) {
     const { requestId, request } = params;
     if (typeof requestId !== "string" || !isRecord(request) || typeof request.url !== "string") throw new Error("Malformed Fetch.requestPaused event.");
-    const body = request.method === "GET" ? respond(new URL(request.url)) : undefined;
+    const body = request.method === "GET" ? await respond(new URL(request.url)) : undefined;
     if (body === undefined) return command("Fetch.continueRequest", { requestId });
     await command("Fetch.fulfillRequest", {
       requestId, responseCode: 200,

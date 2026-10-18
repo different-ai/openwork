@@ -38,6 +38,9 @@ export type DenSigninRedirect = "/signin" | "/session" | "/onboarding" | "signed
 
 export function resolveDenSigninRedirect(input: DenSigninRouteInput): DenSigninRedirect {
   if (input.authChecking) return null;
+  // A real uncommitted organization decision needs the chooser in every
+  // distribution. Ordinary verification with no pending choice keeps its route.
+  if (input.isSignedIn && input.orgSelectionPending && !input.onOnboarding) return "/onboarding";
 
   if (input.requireSignin) {
     if (!input.isSignedIn) {
@@ -56,12 +59,6 @@ export function resolveDenSigninRedirect(input: DenSigninRouteInput): DenSigninR
     return input.hasPreparedBootstrap && !input.isSignedIn ? null : "/session";
   }
   if (!input.isSignedIn && input.hasPreparedBootstrap && !input.onOnboarding) return "/onboarding";
-  if (input.isSignedIn && !input.onOnboarding && input.orgSelectionPending) {
-    // A desktop-initiated sign-in is still waiting for the user's explicit
-    // organization choice (including after an app relaunch mid-flow); the
-    // onboarding step owns resolving it.
-    return "/onboarding";
-  }
   if (input.onOnboarding && !input.isSignedIn && !input.hasPreparedBootstrap) return "/session";
   return null;
 }
