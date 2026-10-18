@@ -1,6 +1,8 @@
 "use memo";
 
-import { appBuildActivity, appBuildInProgress, appCreationRuns } from "@/react-app/domains/apps/app-creation-progress"
+import { appBuildActivity, appBuildInProgress, appCreationFailures, appCreationRuns, foldedAppCreationPartIds, unrepresentedAppCalls } from "@/react-app/domains/apps/app-creation-progress"
+import { appBuilderResultFailed } from "@/react-app/domains/apps/built-mcp-app-model"
+import { skillEvidence } from "@/lib/skill-evidence"
 import { useAppBuildProgressEnabled } from "@/react-app/domains/apps/use-app-build-progress-feature"
 import { BuiltAppPreviewSync } from "@/react-app/domains/apps/built-app-chat-preview"
 import { builtAppSummary } from "@/react-app/domains/apps/built-mcp-app-model"
@@ -109,7 +111,7 @@ import { CredentialPromptCard } from "@/components/chat/credential-prompt-card"
 import { credentialPromptCall } from "@/components/chat/credential-prompt"
 import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
 import { isReservedConnectionQuestion, type ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
-import { codeModeToolCalls } from "@/lib/code-mode-tools"
+import { codeModeHasFailures, codeModeToolCalls } from "@/lib/code-mode-tools"
 import { dedupeRenderedTurnErrors } from "@/react-app/domains/session/sync/transcript-reconcile"
 import { builtMcpAppId, hasPreservedMcpAppResult, isNativeConnectionAppLaunch, McpAppFrame } from "@/components/chat/mcp-app-frame"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
@@ -161,6 +163,7 @@ const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
 const COLLAPSED_STEP_RUN_MIN_ROWS = 4
 
 const AppCreationPartsContext = React.createContext<ReadonlySet<string>>(new Set())
+const PinnedSkillPartsContext = React.createContext<ReadonlySet<string>>(new Set())
 /**
  * While an App is being built (appBuildProgress), its panel is the one live
  * thing in the chat: thinking and plain tool rows fold away and the panel
@@ -268,16 +271,17 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   const connectionCardParts = React.useContext(ConnectionCardPartsContext)
   const appCreationParts = React.useContext(AppCreationPartsContext)
   const appPanelFold = React.useContext(AppPanelFoldContext)
-  if (appCreationParts.has(part.toolCallId)) return null
+  const pinnedSkills = React.useContext(PinnedSkillPartsContext)
+  if (appCreationParts.has(part.toolCallId) || pinnedSkills.has(part.toolCallId)) return null
   if (part.toolCallId === connectionQuestionToolCallId || isReservedConnectionQuestionPart(part)) return null
   const promptCall = credentialPromptCall(part)
   const remoteStart = remoteThreads && part.type === "dynamic-tool" ? remoteThreadFromToolPart(part) : null
-  const calls = part.type === "dynamic-tool" ? codeModeToolCalls(part) : null
+  const calls = part.type === "dynamic-tool" ? unrepresentedAppCalls(part, appCreationParts)?.filter(call => !pinnedSkills.has(call.toolCallId)) ?? null : null
   const remoteStarts = remoteThreads && calls && part.type === "dynamic-tool" ? (codeModeCallsWithResults(part) ?? []).flatMap((call) => {
     const start = remoteThreadFromToolPart(call)
     return start ? [{ start, call }] : []
   }) : []
-  const foldTool = appPanelFold && lifecycle !== "waiting" && !connectionCardParts.has(part.toolCallId) && !promptCall && !isTaskToolPart(part)
+  const foldTool = appPanelFold && part.state !== "output-error" && !(part.type === "dynamic-tool" && (appBuilderResultFailed(part) || codeModeHasFailures(part))) && lifecycle !== "waiting" && !connectionCardParts.has(part.toolCallId) && !promptCall && !isTaskToolPart(part)
   if (foldTool && !remoteStart && remoteStarts.length === 0) return null
 
   // Delegated work has its own lifecycle, even after a parent follow-up/error.
@@ -1516,7 +1520,7 @@ function MessageGroup({
   const panelLive = React.useContext(AppPanelLiveContext) && isLastGroup
   const creationLive = (parentActive || panelLive) && isLastGroup && !readOnly
   const creationRuns = React.useMemo(() => appCreationRuns(items.map(item => item.message), creationLive), [items, creationLive])
-  const creationParts = React.useMemo(() => new Set(creationRuns.flatMap(run => [...(run.executions ?? []).map(part => part.toolCallId), ...(run.discoveries ?? []).map(part => part.toolCallId), ...(run.attempts ?? []).map(part => part.toolCallId), ...(run.preparation ? [run.preparation.toolCallId] : []), ...run.builds.map(part => part.toolCallId)])), [creationRuns])
+  const creationParts = React.useMemo(() => foldedAppCreationPartIds(creationRuns), [creationRuns])
   const isLiveGroup = (isStreaming || (creationLive && creationRuns.length > 0)) && isLastGroup
   const panelActivity = React.useMemo(
     () => panelLive ? appBuildActivity(items.map(item => item.message), creationParts, showThinking) : null,
@@ -1604,9 +1608,15 @@ function MessageGroup({
       : stepRowCount === 1
         ? "1 step"
         : `${stepRowCount} steps`
-  // A short finished run reads fine as a list, so only long ones fold away.
+  // Unresolved failures are decisions, not finished work to fold away.
+  const hasUnresolvedFailure = creationRuns.some(run => appCreationFailures(run).length > 0) || items.some(item => item.message.parts.some(part =>
+    part.type === "dynamic-tool" && !creationParts.has(part.toolCallId) && (appBuilderResultFailed(part) || codeModeHasFailures(part)),
+  ))
   const collapseSteps =
-    !isLiveGroup && stepItems.length > 0 && stepRowCount > COLLAPSED_STEP_RUN_MIN_ROWS
+    !isLiveGroup && !hasUnresolvedFailure && stepItems.length > 0 && stepRowCount > COLLAPSED_STEP_RUN_MIN_ROWS
+  const pinnedSkills = collapseSteps ? items.flatMap(item => item.message.parts.flatMap(part => part.type === "dynamic-tool"
+    ? (codeModeToolCalls(part) ?? [part]).filter(call => !creationParts.has(part.toolCallId) && skillEvidence(call) !== null) : [])) : []
+  const pinnedSkillIds = new Set(pinnedSkills.map(part => part.toolCallId))
   // A task on another computer outlives the turn that started it and may still
   // need the person, so its row stays in view below a folded run.
   const pinnedRemoteThreads = collapseSteps ? remoteThreadStarts : []
@@ -1653,7 +1663,7 @@ function MessageGroup({
     const flush = () => {
       if (!run) return
       // Plain command, read and search runs fold into the App panel while it is live.
-      if (panelLive) {
+      if (panelLive && !run.parts.some(part => part.state === "output-error")) {
         run = null
         return
       }
@@ -1686,6 +1696,7 @@ function MessageGroup({
   return (
     <DevProfiler id={`MessageGroup:${lastItem.message.id}`}>
       <AppCreationPartsContext.Provider value={creationParts}>
+      <PinnedSkillPartsContext.Provider value={pinnedSkillIds}>
       <AppPanelFoldContext.Provider value={panelLive}>
       <PinnedRemoteThreadsContext.Provider value={pinnedRemoteIds}>
       <ConnectionCardPartsContext.Provider value={connectionCardParts}>
@@ -1713,6 +1724,7 @@ function MessageGroup({
         )
       ) : null}
       {creationRuns.map(run => <Message key={`creation-${run.id}`} className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10"><AppBuilderStep run={run} startedAt={getMessageCreated(items[0]!.message)} completedAt={getMessageCompleted(lastItem.message)} activity={run === creationRuns.at(-1) ? panelActivity : null} active={creationLive && (run === creationRuns.at(-1) || Boolean(run.preparation && isToolPartInFlight(run.preparation)) || run.builds.some(isToolPartInFlight))} /></Message>)}
+      {pinnedSkills.map(part => <Message key={`skill-${part.toolCallId}`} className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10"><div data-skill-evidence={skillEvidence(part)?.state}><CapabilityCallLine part={part} /></div></Message>)}
       {mcpAppParts.map(appFrame)}
       {pinnedRemoteThreads.map(({ start, part }) => (
         <Message key={`remote-thread-${start.key}`} className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
@@ -1775,6 +1787,7 @@ function MessageGroup({
       </ConnectionCardPartsContext.Provider>
       </PinnedRemoteThreadsContext.Provider>
       </AppPanelFoldContext.Provider>
+      </PinnedSkillPartsContext.Provider>
       </AppCreationPartsContext.Provider>
     </DevProfiler>
   )

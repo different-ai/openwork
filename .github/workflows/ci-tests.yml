@@ -103,6 +103,11 @@ jobs:
         run: pnpm test:boot
       - name: Check desktop links open real Den pages
         run: pnpm --filter @openwork/app test:den-links
+      - name: Test captured App results and instruction delivery
+        run: |
+          pnpm --filter @openwork/app exec bun test tests/code-mode-app-delivery.test.ts tests/app-creation-evidence.test.ts tests/native-skill-admission-evidence.test.ts
+          pnpm --filter @openwork/app exec bun test tests/app-activity-render.test.tsx
+          pnpm --filter openwork-server exec bun test test/openwork-mcp-results-v2.test.ts
       - name: Test the shared Calendar logic
         run: pnpm --filter @openwork/calendar test
       - name: Test fork authorization and free screening policy

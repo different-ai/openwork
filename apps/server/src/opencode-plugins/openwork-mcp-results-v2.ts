@@ -1,8 +1,24 @@
 import { nativeDiscoveryCode } from "./openwork-codemode-discovery-v2.js";
+import { skillDeliveryEvidence, type SkillDeliveryEvidence } from "@openwork/types/skill-delivery";
 
 type Registration = { dispose(): Promise<void> };
 type CallEvent = { readonly tool: string; readonly messageID: string; readonly id: string };
-type ToolResult = { output?: unknown; content?: unknown; metadata?: Record<string, unknown> };
+type ToolResult = { output?: unknown; content?: unknown; structuredContent?: unknown; _meta?: unknown; isError?: boolean; metadata?: Record<string, unknown> };
+
+function toolResultOutput(result: ToolResult): unknown {
+  if (result.output !== undefined) return result.output;
+  const preserved = result.metadata?.openworkMcpResult ?? result.metadata?.openworkMcpApp;
+  if (preserved !== undefined) return preserved;
+  // Native MCP tools can return the standard envelope instead of `output`.
+  // Keep its structured payload and launch, not just its text projection.
+  const text = Array.isArray(result.content) ? result.content.flatMap(block => isRecord(block) && block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n").trim() : "";
+  const structured = result.structuredContent === undefined && text.startsWith("{") && text.endsWith("}") ? parseRecord(text) : result.structuredContent;
+  return Array.isArray(result.content) ? { content: result.content,
+    ...(structured === undefined || structured === null ? {} : { structuredContent: structured }),
+    ...(result._meta === undefined ? {} : { _meta: result._meta }),
+    ...(result.isError === undefined ? {} : { isError: result.isError }),
+  } : result.content;
+}
 type ToolCall = { readonly messageID: string; readonly id: string; progress(metadata: Record<string, unknown>): Promise<void> };
 type EditableTool = { execute(input: unknown, call: ToolCall): Promise<ToolResult> };
 type ExecuteAfter = CallEvent & { readonly input: unknown } & (
@@ -22,9 +38,10 @@ type Context = {
 };
 
 /** One OpenWork Cloud call made inside a Code Mode `execute`, kept because it reports a connection or an App build. */
-export type PreservedMcpResult =
+export type PreservedMcpResult = (
   | { tool: string; input: unknown; status: "completed"; output: unknown }
-  | { tool: string; input: unknown; status: "error"; error: string };
+  | { tool: string; input: unknown; status: "error"; error: string }
+) & { invocationId?: string; ordinal?: number };
 
 const OPENWORK_CLOUD_TOOL = /^(?:openwork|openwork-cloud)_/;
 const MAX_ENTRY_BYTES = 64 * 1_024;
@@ -50,9 +67,10 @@ function parseRecord(text: string): Record<string, unknown> | null {
 /** The same shapes the chat's connection card reads (`connectionResultFromChatToolPart`). */
 export function reportsConnection(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  if ("connectionStatus" in value || "connectionAction" in value) return true;
-  if (typeof value.connectionId === "string" && typeof value.state === "string") return true;
-  return Array.isArray(value.matches) && value.matches.some(match => isRecord(match) && typeof match.connectionId === "string");
+  const payload = isRecord(value.structuredContent) ? value.structuredContent : value;
+  if ("connectionStatus" in payload || "connectionAction" in payload) return true;
+  if (typeof payload.connectionId === "string" && typeof payload.state === "string") return true;
+  return Array.isArray(payload.matches) && payload.matches.some(match => isRecord(match) && typeof match.connectionId === "string");
 }
 
 function errorText(error: unknown): string {
@@ -88,8 +106,13 @@ export function preservedEntry(rawEvent: ExecuteAfter): PreservedMcpResult | nul
   const event = { ...rawEvent, tool: normalizedTool(rawEvent.tool) };
   if (!OPENWORK_CLOUD_TOOL.test(event.tool)) return null;
   const appBuilder = /_(?:search_capabilities|prepare_app|create_app|update_app)$/.test(event.tool);
-  const appLaunch = event.status === "completed" && isRecord(event.result.output) && isRecord(event.result.output.launch);
-  const input = jsonCopy(event.input);
+  const appLaunch = event.status === "completed" && isRecord(event.result.output) && (isRecord(event.result.output.launch)
+    || (isRecord(event.result.output._meta) && isRecord(event.result.output._meta["openwork/mcpApp"])));
+  // Delivery needs identity/correlation, not a second copy of authored source.
+  // A valid 200 KB source must not crowd a small complete App launch out of the
+  // separate receipt. The bounded diagnostic entry still keeps its input.
+  const input = jsonCopy(/_(?:create_app|update_app)$/.test(event.tool) && isRecord(event.input)
+    ? Object.fromEntries(Object.entries(event.input).filter(([key]) => ["appId", "title", "preparationId", "expectedRevisionId"].includes(key))) : event.input);
   const entry: PreservedMcpResult | null = event.status === "completed"
     ? (appBuilder || appLaunch || reportsConnection(event.result.output)) ? { tool: event.tool, input, status: "completed", output: jsonCopy(event.result.output) } : null
     : (appBuilder || reportsConnection(parseRecord(errorText(event.error)))) ? { tool: event.tool, input, status: "error", error: errorText(event.error) } : null;
@@ -101,7 +124,7 @@ export function preservedEntry(rawEvent: ExecuteAfter): PreservedMcpResult | nul
 export type ToolDetail = {
   invocationId: string; ordinal: number; tool: string; input?: unknown;
   status: "running" | "completed" | "error"; startedAt: number; endedAt?: number;
-  output?: unknown; error?: string; truncated?: boolean;
+  output?: unknown; error?: string; truncated?: boolean; inputTruncated?: boolean; outputTruncated?: boolean; skillDelivery?: SkillDeliveryEvidence;
 };
 
 const MAX_EXECUTION_BYTES = 1_024 * 1_024;
@@ -154,12 +177,35 @@ export function createMcpResultsCollector() {
 
   function settle(execution: Execution, detail: ToolDetail, outcome: { status: "completed"; output: unknown } | { status: "error"; error: string }): void {
     if (detail.status !== "running") return;
+    const skill = skillDeliveryEvidence({ tool: detail.tool, input: execution.rawInputs.get(detail),
+      status: outcome.status === "completed" ? "completed" : "error", output: outcome.status === "completed" ? outcome.output : undefined });
+    if (skill) {
+      const bytes = byteLength(skill) + 24;
+      if (bytes <= execution.remaining) {
+        detail.skillDelivery = skill;
+        execution.remaining -= bytes;
+        execution.allowance.set(detail, Math.max(0, (execution.allowance.get(detail) ?? 0) - bytes));
+      }
+    }
+    // Keep delivery metadata before the bounded diagnostic preview. The input
+    // can exhaust that preview's allowance, but must not discard a real launch.
+    const entry = preservedEntry({ tool: detail.tool, messageID: "", id: detail.invocationId,
+      input: execution.rawInputs.get(detail),
+      ...(outcome.status === "completed" ? { status: "completed", result: { output: outcome.output } } : outcome) });
+    if (entry && execution.connections.length < MAX_ENTRIES) {
+      const preserved = { ...entry, invocationId: detail.invocationId, ordinal: detail.ordinal };
+      const bytes = byteLength(preserved) + 1;
+      if (bytes <= execution.remaining) {
+        execution.connections.push(preserved);
+        execution.remaining -= bytes;
+      }
+    }
     const result = bounded(outcome.status === "completed" ? outcome.output : outcome.error,
       Math.min(MAX_ENTRY_BYTES / 2, execution.allowance.get(detail) ?? 0, execution.remaining));
     execution.remaining -= result.bytes;
     detail.status = outcome.status;
     detail.endedAt = Date.now();
-    if (result.truncated) detail.truncated = true;
+    if (result.truncated) { detail.truncated = true; detail.outputTruncated = true; }
     if (result.value !== undefined) {
       if (outcome.status === "completed") detail.output = result.value;
       else detail.error = String(result.value);
@@ -190,7 +236,7 @@ export function createMcpResultsCollector() {
       const input = bounded(event.input, Math.min(MAX_ENTRY_BYTES / 2, execution.remaining));
       execution.remaining -= input.bytes;
       if (input.value !== undefined) detail.input = input.value;
-      if (input.truncated) detail.truncated = true;
+      if (input.truncated) { detail.truncated = true; detail.inputTruncated = true; }
       execution.allowance.set(detail, MAX_ENTRY_BYTES - envelope - input.bytes);
       execution.rawInputs.set(detail, event.input);
       const inputKey = input.truncated ? undefined : stableJson(event.input);
@@ -203,7 +249,7 @@ export function createMcpResultsCollector() {
         open.delete(key(event));
         if (event.status === "completed" && execution && (execution.connections.length || execution.calls.length || execution.truncated)) {
           event.result.metadata = { ...(event.result.metadata ?? {}),
-            ...(execution.connections.length ? { openworkMcpResults: execution.connections } : {}),
+            ...(execution.connections.length ? { openworkMcpResults: [...execution.connections].sort((left, right) => (left.ordinal ?? 0) - (right.ordinal ?? 0)) } : {}),
             ...(execution.calls.length ? { openworkToolDetails: execution.calls } : {}),
             ...(execution.truncated ? { openworkToolDetailsTruncated: true } : {}) };
         }
@@ -213,9 +259,12 @@ export function createMcpResultsCollector() {
       // The hook sees the same input object as `execute.before`. Matching by
       // tool name alone would cross-wire parallel repeated calls.
       const tool = normalizedTool(event.tool);
-      const matching = execution.calls.filter(call => call.status === "running" && call.tool === tool && execution.rawInputs.get(call) === event.input);
-      if (matching.length === 1) settle(execution, matching[0]!, event.status === "completed"
-        ? { status: "completed", output: event.result.output } : { status: "error", error: errorText(event.error) });
+      const matching = execution.calls.filter(call => call.tool === tool && execution.rawInputs.get(call) === event.input);
+      if (matching.length === 1) {
+        settle(execution, matching[0]!, event.status === "completed"
+          ? { status: "completed", output: event.result.output } : { status: "error", error: errorText(event.error) });
+        return;
+      }
       if (execution.connections.length >= MAX_ENTRIES) return;
       const entry = preservedEntry(event);
       if (!entry) return;
@@ -252,8 +301,13 @@ export function createMcpResultsCollector() {
       const detail = execution?.calls.find(call => call.invocationId === invocationId);
       if (execution && detail) settle(execution, detail, outcome);
     },
-    details(event: Pick<CallEvent, "messageID" | "id">): ToolDetail[] {
-      return open.get(key(event))?.calls.map(call => ({ ...call })) ?? [];
+    metadata(event: Pick<CallEvent, "messageID" | "id">): Record<string, unknown> {
+      const execution = open.get(key(event));
+      return execution ? {
+        openworkToolDetails: execution.calls.map(call => ({ ...call })),
+        openworkMcpResults: [...execution.connections].sort((left, right) => (left.ordinal ?? 0) - (right.ordinal ?? 0)),
+        ...(execution.truncated ? { openworkToolDetailsTruncated: true } : {}),
+      } : {};
     },
   };
 }
@@ -276,12 +330,14 @@ export default {
             const invocationId = collector.claim(event);
             if (invocationId === undefined) return execute(input, call);
             const publish = async () => {
-              await call.progress({ openworkToolDetails: collector.details(event) }).catch(() => {});
+              // Progress is persisted even when execute later throws. Do not
+              // wait for the parent success hook to deliver completed calls.
+              await call.progress(collector.metadata(event)).catch(() => {});
             };
             await publish();
             try {
               const result = await execute(input, call);
-              collector.settle(event, invocationId, { status: "completed", output: result.output ?? result.content });
+              collector.settle(event, invocationId, { status: "completed", output: toolResultOutput(result) });
               await publish();
               return result;
             } catch (error) {

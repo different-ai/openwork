@@ -18,7 +18,7 @@ import type {
   UnknownError,
 } from "@opencode-ai/sdk/v2/client";
 
-import { createClient, createDesktopFetch, type FieldsResult } from "./opencode";
+import { createClient, createDesktopFetch, PromptAdmissionUnknownError, type FieldsResult } from "./opencode";
 import type { OpenworkSessionHistory } from "./openwork-server";
 import { isDesktopRuntime } from "./runtime-env";
 import type { McpStatusMap, OpencodeEvent } from "../types";
@@ -642,8 +642,30 @@ function appEntriesFromScript(calls: unknown, output: unknown): Record<string, u
     const tool = (readString(call, "tool") ?? "").replace(/\.([^.]*)$/, "_$1");
     const input = readRecord(call, "input") ?? {};
     if (readString(call, "status") === "completed") return { tool, input, status: "completed", output: { unrecorded: true } };
+    if (readString(call, "status") === "running") return { tool, input, status: "running" };
     return { tool, input, status: "error", error: (failures === 1 ? scriptErrorMessage(text) : null) ?? "The App step failed. See the script result." };
   });
+}
+
+/** Preserve either native output or a standard MCP envelope from an inner
+ * call. Only that call's text projection may supply a missing structured body;
+ * the parent script's arbitrary return value is never used as its result. */
+function codeModeMcpResult(output: unknown): Record<string, unknown> {
+  const envelope: Record<string, unknown> | null = isRecord(output) && Array.isArray(output.content) ? output
+    : Array.isArray(output) ? { content: output } : null;
+  let payload: unknown = envelope && "structuredContent" in envelope ? envelope.structuredContent : output;
+  if (!envelope || !("structuredContent" in envelope)) {
+    const text = envelope ? toolOutput(envelope.content) : typeof output === "string" ? output : null;
+    if (text) {
+      try { payload = JSON.parse(text); } catch { /* A text result is not a launch. */ }
+    }
+  }
+  const meta = envelope && isRecord(envelope._meta) ? envelope._meta : {};
+  const launch = isRecord(payload) && isRecord(payload.launch) ? payload.launch : null;
+  return { ...(envelope ?? { content: [{ type: "text", text: toolOutput(undefined, output) }] }),
+    structuredContent: payload,
+    ...(launch && meta["openwork/mcpApp"] === undefined ? { _meta: { ...meta, "openwork/mcpApp": launch } } : {}),
+  };
 }
 
 /**
@@ -658,41 +680,37 @@ export function codeModeConnectionParts(part: ToolPart): ToolPart[] {
   const { metadata } = part.state;
   const appTool = (tool: string) => /_(?:search_capabilities|prepare_app|create_app|update_app)$/.test(tool);
   const appCallId = (tool: string, index: number) => `${part.callID}:app:${tool}:${index}`;
-  if (part.state.status === "running" || part.state.status === "error") {
-    const outerError = part.state.status === "error" ? part.state.error : null;
-    const startedAt = part.state.time.start;
-    const calls = metadata?.toolCalls;
-    if (!Array.isArray(calls)) return [];
-    const occurrences = new Map<string, number>();
-    return calls.flatMap((call): ToolPart[] => {
-      if (!isRecord(call)) return [];
-      const tool = readString(call, "tool")?.replace(/\.([^.]*)$/, "_$1");
-      if (!tool || !appTool(tool)) return [];
-      const index = occurrences.get(tool) ?? 0;
-      occurrences.set(tool, index + 1);
-      const callID = appCallId(tool, index);
-      const base = { id: callID, callID, messageID: part.messageID, sessionID: part.sessionID, type: "tool" as const, tool };
-      if (outerError && (call.status === "error" || call.status === "running")) return [{ ...base, state: { status: "error", input: readRecord(call, "input") ?? {}, error: readString(call, "error") ?? outerError ?? "The MCP call failed. See the Code Mode result.", metadata: {}, time: { start: startedAt, end: part.state.status === "error" ? part.state.time.end : startedAt } } }];
-      if (call.status !== "running") return [];
-      // Running inner calls are real engine events; results arrive at execute completion.
-      return [{ ...base, state: { status: "running", input: readRecord(call, "input") ?? {}, title: tool, metadata: {}, time: { start: startedAt } } }];
-    });
-  }
-  if (part.state.status !== "completed") return [];
-  const time = part.state.time;
-  const recorded = metadata?.openworkMcpResults;
-  // When the results plugin recorded nothing (an engine whose inner call
-  // names it did not recognise), rebuild the App steps from the script's own
-  // call list so a rejected build ends as failed instead of "checking"
-  // forever, and the preparation id still links retries into one card.
-  const entries = Array.isArray(recorded) && recorded.length > 0
-    ? recorded
-    : appEntriesFromScript(metadata?.toolCalls, part.state.output);
+  const terminal = part.state.status !== "running";
+  const time = { start: part.state.time.start, end: "end" in part.state.time ? part.state.time.end : part.state.time.start };
+  const recorded = (Array.isArray(metadata?.openworkMcpResults) ? metadata.openworkMcpResults : []).filter(isRecord);
+  const details = (Array.isArray(metadata?.openworkToolDetails) ? metadata.openworkToolDetails : []).filter(isRecord)
+    .filter(detail => appTool((readString(detail, "tool") ?? "").replace(/\.([^.]*)$/, "_$1")))
+    .toSorted((left, right) => (readNumber(left, "ordinal") ?? 0) - (readNumber(right, "ordinal") ?? 0));
+  const consumed = new Set<Record<string, unknown>>();
+  // A call's result is independent of the script's outcome. Prefer its delivery
+  // receipt over the bounded diagnostic output, even while execute is running.
+  const entries: Record<string, unknown>[] = details.map(detail => {
+    const receipt = recorded.find(entry => !consumed.has(entry) && (
+      (typeof detail.invocationId === "string" && entry.invocationId === detail.invocationId)
+      || (entry.invocationId === undefined && entry.tool === detail.tool && JSON.stringify(entry.input) === JSON.stringify(detail.input))
+    ));
+    if (receipt) { consumed.add(receipt); return receipt; }
+    const outputTruncated = detail.outputTruncated === true || (detail.truncated === true
+      && typeof detail.output === "string" && detail.output.includes("[Result truncated by OpenWork]"));
+    return detail.status === "completed" && (detail.output === undefined || outputTruncated)
+      ? { ...detail, output: { unrecorded: true } } : detail;
+  });
+  entries.push(...recorded.filter(entry => !consumed.has(entry)));
+  // Older engines kept only call statuses. Preserve known successes without
+  // inventing a launch or attributing the parent's error to a successful call.
+  const represented = new Set(entries.map(entry => readString(entry, "tool")));
+  const calls = Array.isArray(metadata?.toolCalls) ? metadata.toolCalls.filter(isRecord) : [];
+  entries.push(...appEntriesFromScript(calls.filter(call => !represented.has((readString(call, "tool") ?? "").replace(/\.([^.]*)$/, "_$1"))), part.state.status === "completed" ? part.state.output : ""));
   if (entries.length === 0) return [];
   const occurrences = new Map<string, number>();
   return entries.flatMap((entry, index): ToolPart[] => {
     if (!isRecord(entry)) return [];
-    const tool = readString(entry, "tool");
+    const tool = readString(entry, "tool")?.replace(/\.([^.]*)$/, "_$1");
     if (!tool) return [];
     const occurrence = occurrences.get(tool) ?? 0;
     occurrences.set(tool, occurrence + 1);
@@ -701,12 +719,13 @@ export function codeModeConnectionParts(part: ToolPart): ToolPart[] {
     const input = readRecord(entry, "input") ?? {};
     const status = readString(entry, "status");
     if (status === "completed") {
-      const output = toolOutput(undefined, entry.output);
-      return [{ ...base, state: { status, input, output, title: tool, time,
-        metadata: { openworkMcpResult: isRecord(entry.output) && Array.isArray(entry.output.content) ? entry.output : { content: [{ type: "text", text: output }], structuredContent: entry.output, ...(isRecord(entry.output) && isRecord(entry.output.launch) ? { _meta: { "openwork/mcpApp": entry.output.launch } } : {}) } } } }];
+      const mcpResult = codeModeMcpResult(entry.output);
+      const output = toolOutput(mcpResult.content, entry.output);
+      return [{ ...base, state: { status, input, output, title: tool, time, metadata: { openworkMcpResult: mcpResult } } }];
     }
-    const error = readString(entry, "error");
-    return status === "error" && error ? [{ ...base, state: { status, input, error, metadata: {}, time } }] : [];
+    if (status === "running" && !terminal) return [{ ...base, state: { status, input, title: tool, metadata: {}, time: { start: time.start } } }];
+    const error = readString(entry, "error") ?? (status === "running" && terminal ? "The App call did not record a result. See the script details." : undefined);
+    return error ? [{ ...base, state: { status: "error", input, error, metadata: {}, time } }] : [];
   });
 }
 
@@ -2639,6 +2658,15 @@ export function createClientV2(
         { text, ...(skills.length ? { skills } : {}) },
         options?.signal,
       );
+      // Pinned native admission hooks can reject an unavailable/blocked skill
+      // with an empty 500. That response identifies neither the skill nor the
+      // cause, and does not prove whether text was stored. Keep the existing
+      // unknown-admission hold; never invent Loaded evidence or auto-resend.
+      if (promptResult.response.status === 500 && promptResult.payload === null) {
+        return { error: new PromptAdmissionUnknownError({ messageID: parameters.messageID,
+          cause: "Message acceptance couldn’t be confirmed. Check pending approvals and skill access before retrying.",
+        }), request: promptResult.request, response: promptResult.response };
+      }
       return promptResult.response.ok ? successfulResult(promptResult, {}) : failedResult(promptResult);
     },
     abort: async (

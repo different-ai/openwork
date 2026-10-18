@@ -129,6 +129,14 @@
       "development": "./src/mcp-app.ts",
       "default": "./src/mcp-app.ts"
     },
+    "./skill-delivery": {
+      "types": {
+        "openwork-build": "./dist/types/src/skill-delivery.d.ts",
+        "default": "./src/skill-delivery.ts"
+      },
+      "development": "./src/skill-delivery.ts",
+      "default": "./src/skill-delivery.ts"
+    },
     "./skill-created-app": {
       "types": {
         "openwork-build": "./dist/types/src/skill-created-app.d.ts",

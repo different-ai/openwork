@@ -1,10 +1,23 @@
 import type { DynamicToolUIPart } from "ai";
+import { parseSkillDeliveryEvidence } from "@openwork/types/skill-delivery";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 const NO_INDIVIDUAL_ERROR = "The tool call failed. The engine did not provide an individual error; see the execution details.";
+
+/** Recorded inner failures need a visible home even when the script caught
+ * them and returned successfully. Never infer recovery from the parent. */
+export function codeModeHasFailures(part: DynamicToolUIPart): boolean {
+  const codeMode = part.callProviderMetadata?.openwork?.codeMode;
+  if (!isRecord(codeMode)) return false;
+  const calls = Array.isArray(codeMode.calls) ? codeMode.calls : [];
+  const details = Array.isArray(codeMode.details) ? codeMode.details : [];
+  return calls.some(call => isRecord(call) && call.status === "error") || details.some(detail =>
+    isRecord(detail) && (detail.status === "error" || parseSkillDeliveryEvidence(detail.skillDelivery)?.state === "blocked"),
+  );
+}
 
 function outputText(value: unknown): string | null {
   if (typeof value === "string") return value;
@@ -111,12 +124,16 @@ export function codeModeToolCalls(part: DynamicToolUIPart): DynamicToolUIPart[] 
     if (!isRecord(call) || typeof call.tool !== "string" || !call.tool.trim()) return [];
     const detail = details[ordinal] ?? null;
     const startedAt = typeof detail?.startedAt === "number" && Number.isFinite(detail.startedAt) ? detail.startedAt : null;
+    const skillDelivery = parseSkillDeliveryEvidence(detail?.skillDelivery);
     const base = {
       // v2 reports calls in their invocation order, including repeated/parallel calls.
       toolCallId: `${part.toolCallId}:call:${ordinal}`,
       toolName: call.tool.replaceAll(".", "_"),
       input: call.input,
-      ...(startedAt === null ? {} : { callProviderMetadata: { openwork: { toolStartedAt: startedAt } } }),
+      ...(startedAt === null && !skillDelivery ? {} : { callProviderMetadata: { openwork: {
+        ...(startedAt === null ? {} : { toolStartedAt: startedAt }),
+        ...(skillDelivery ? { skillDelivery } : {}),
+      } } }),
     };
     if (call.status === "running") return [{ ...base, type: "dynamic-tool", state: "input-streaming" }];
     if (call.status === "completed") return [{ ...base, type: "dynamic-tool", state: "output-available", output: detail?.output }];

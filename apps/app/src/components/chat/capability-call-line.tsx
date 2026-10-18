@@ -18,11 +18,15 @@ import type { ConnectorToolIdentity } from "@/react-app/domains/connections/conn
 
 type CapabilityCallLineProps = ChatToolReconnectCallbacks & {
   part: DynamicToolUIPart
+  /** Inspection may show the parent script; labels still use only this call. */
+  detailsPart?: DynamicToolUIPart
   className?: string
   connector?: ConnectorToolIdentity | null
   resultUnavailable?: boolean
   statusUnknown?: boolean
   quietFailure?: boolean
+  /** A verified domain rejection carried by a successful MCP transport. */
+  failureText?: string
   /** Calls inside a script have no recorded timing; don't invent one. */
   hideDuration?: boolean
   /** Inside a group already named for this service: drop the repeated name. */
@@ -155,11 +159,13 @@ export function DetailsToggle({ open, onToggle, label, alwaysVisible = false }: 
  */
 export function CapabilityCallLine({
   part,
+  detailsPart,
   className,
   connector,
 
   statusUnknown = false,
   quietFailure = false,
+  failureText,
   hideDuration = false,
   groupService = null,
   repeat = 1,
@@ -168,8 +174,9 @@ export function CapabilityCallLine({
   onReopenAuthorization,
 }: CapabilityCallLineProps) {
   const [open, setOpen] = useState(false)
+  const technicalDetails = <><TechnicalDetailsPanel part={part} />{detailsPart && detailsPart !== part ? <TechnicalDetailsPanel part={detailsPart} /> : null}</>
   const inFlight = !statusUnknown && isToolPartInFlight(part)
-  const isFailed = part.state === "output-error"
+  const isFailed = part.state === "output-error" || failureText !== undefined
   const duration = statusUnknown || hideDuration ? null : trackToolCallDuration(part)
   const { reconnectAction, reconnectState, reconnectError, reconnectPresentation, handleReconnect } =
     useChatToolReconnect(part, { onReconnect, onReopenAuthorization })
@@ -192,7 +199,7 @@ export function CapabilityCallLine({
           {duration ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{duration}</span> : null}
           <DetailsToggle open={open} onToggle={() => setOpen(!open)} label={label} alwaysVisible />
         </div>
-        {open ? <TechnicalDetailsPanel part={part} /> : null}
+        {open ? technicalDetails : null}
       </div>
     )
   }
@@ -205,7 +212,7 @@ export function CapabilityCallLine({
     const failureLabel = sentence.failure ?? `${sentence.past} failed`
     const reason = reconnectState === "connected"
       ? "Connection restored. Check whether the action finished before retrying."
-      : reconnectAction ? failureInstruction(part, reconnectAction.connectionName) : shortError(part.errorText)
+      : reconnectAction ? failureInstruction(part, reconnectAction.connectionName) : shortError(part.state === "output-error" ? part.errorText : failureText)
     return (
       <div data-capability-call={part.toolName} className={cn("group/step min-w-0", className)}>
         <div className="flex min-h-6 min-w-0 items-center gap-2 text-sm text-muted-foreground">
@@ -238,7 +245,7 @@ export function CapabilityCallLine({
         {reconnectError ? (
           <p className="mt-1 text-xs text-dls-secondary" role="alert">{describeChatToolFailure(reconnectError)}</p>
         ) : null}
-        {open ? <TechnicalDetailsPanel part={part} /> : null}
+        {open ? technicalDetails : null}
       </div>
     )
   }
@@ -266,7 +273,7 @@ export function CapabilityCallLine({
         ) : null}
         <DetailsToggle open={open} onToggle={() => setOpen(!open)} label={line} />
       </div>
-      {open ? <TechnicalDetailsPanel part={part} /> : null}
+      {open ? technicalDetails : null}
     </div>
   )
 }

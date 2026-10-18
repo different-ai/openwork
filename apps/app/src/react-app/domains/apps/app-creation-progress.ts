@@ -2,6 +2,8 @@ import type { DynamicToolUIPart, UIMessage } from "ai";
 import { prepareMcpAppOutputSchema } from "@openwork/types/mcp-app";
 import { getCapabilityCallSentence } from "@/lib/capability-call";
 import { isToolPartInFlight } from "@/lib/tool-activity";
+import { skillEvidence } from "@/lib/skill-evidence";
+import { codeModeHasFailures, codeModeToolCalls } from "@/lib/code-mode-tools";
 import {
   appBuilderResultFailed,
   builtAppSummary,
@@ -259,7 +261,7 @@ export function appCreationRuns(messages: UIMessage[], live = false): AppCreatio
   if (!live) {
     for (let index = runs.length - 1; index >= 0; index--) {
       const run = runs[index]!;
-      if (!run.preparation && !run.builds.length && !run.script) runs.splice(index, 1);
+      if (!run.preparation && !run.builds.length && !run.script && !appCreationFailures(run).length) runs.splice(index, 1);
     }
   }
   for (const run of runs) {
@@ -271,15 +273,65 @@ export function appCreationRuns(messages: UIMessage[], live = false): AppCreatio
   return runs;
 }
 
+/** Real calls only; no inferred completion of earlier stages. */
+export function appCreationParts(run: AppCreationRun): DynamicToolUIPart[] {
+  return [...new Map([...(run.discoveries ?? []), ...(run.attempts ?? []),
+    ...(run.preparation ? [run.preparation] : []), ...run.builds,
+    ...(run.script ? [run.script.part] : []), ...(run.intent ? [run.intent.part] : []),
+  ].map(part => [part.toolCallId, part])).values()];
+}
+
+/** A retry resolves a failure only when the same operation actually succeeds.
+ * An outer script error remains its own row, independent of an App receipt. */
+export function appCreationFailures(run: AppCreationRun): DynamicToolUIPart[] {
+  const parts = appCreationParts(run);
+  const guideLoaded = (part: DynamicToolUIPart) => {
+    const calls = codeModeToolCalls(part);
+    return skillEvidence(part)?.state === "instructions-loaded" || Boolean(calls?.length && calls.every(call =>
+      isAppGuidePart(call) && skillEvidence(call)?.state === "instructions-loaded",
+    ));
+  };
+  return parts.filter((part, index) => (appBuilderResultFailed(part) || skillEvidence(part)?.state === "blocked") && !parts.slice(index + 1).some(next =>
+    (isAppGuidePart(part) ? isAppGuidePart(next) && guideLoaded(next) : next.toolName === part.toolName)
+    && next.state === "output-available" && !appBuilderResultFailed(next),
+  ));
+}
+
+/** Calls with their own App row need not be repeated in the script's rail.
+ * Unprojected guide failures and the script's own outcome remain independent. */
+export function unrepresentedAppCalls(part: DynamicToolUIPart, represented: ReadonlySet<string>): DynamicToolUIPart[] | null {
+  const calls = codeModeToolCalls(part);
+  if (!calls) return null;
+  const occurrences = new Map<string, number>();
+  return calls.filter(call => {
+    const occurrence = occurrences.get(call.toolName) ?? 0;
+    occurrences.set(call.toolName, occurrence + 1);
+    return !represented.has(`${part.toolCallId}:app:${call.toolName}:${occurrence}`);
+  });
+}
+
+/** Only calls represented by the App row fold into it. A script's own failure
+ * or unrelated work is not an App-stage outcome and keeps its ordinary row. */
+export function foldedAppCreationPartIds(runs: AppCreationRun[]): Set<string> {
+  return new Set(runs.flatMap(run => {
+    const represented = new Set(appCreationParts(run).filter(part => !codeModeHasFailures(part) || appBuilderResultFailed(part)).map(part => part.toolCallId));
+    const executions = (run.executions ?? []).filter(part => {
+      if (appBuilderResultFailed(part)) return false;
+      const calls = unrepresentedAppCalls(part, represented);
+      // A lead-in inside a mixed script is not necessarily projected into the
+      // App row. Fold only calls whose individual outcome has a visible home.
+      return calls !== null && calls.length === 0;
+    });
+    return [...represented, ...executions.map(part => part.toolCallId)];
+  }));
+}
+
 export function appCreationProgress(run: AppCreationRun, active: boolean) {
   const preparation = appPreparation(run.preparation);
   const build = run.builds.at(-1);
   const app = build ? builtAppSummary(build) : null;
-  const failed = Boolean(
-    (build && appBuilderResultFailed(build)) ||
-      (!build && run.preparation && appBuilderResultFailed(run.preparation)) ||
-      (run.script && appBuilderResultFailed(run.script.part)),
-  );
+  const failures = appCreationFailures(run);
+  const failed = failures.length > 0;
   const checking = build?.state === "input-available";
   // Built, but the launch was not recorded: done, just not previewable here.
   const builtUnrecorded = appStepUnrecorded(build);
@@ -316,6 +368,7 @@ export function appCreationProgress(run: AppCreationRun, active: boolean) {
     build,
     app,
     failed,
+    failures,
     unavailable,
     builtUnrecorded,
     running,
@@ -327,7 +380,7 @@ export function appBuildInProgress(messages: UIMessage[]): boolean {
   const turn = messages.slice(Math.max(0, messages.findLastIndex((message) => message.role === "user")));
   return appCreationRuns(turn, true).some(run => {
     const progress = appCreationProgress(run, true);
-    return !progress.app && !progress.builtUnrecorded;
+    return !progress.failed && !progress.unavailable && !progress.app && !progress.builtUnrecorded;
   });
 }
 

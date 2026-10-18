@@ -5,6 +5,7 @@ import {
   connectionActionPayloadSchema,
 } from "@openwork/types/connection-action-app";
 
+import { parseSkillDeliveryEvidence } from "@openwork/types/skill-delivery";
 import { safeStringify } from "@/app/utils";
 import { normalizeErrorText } from "@/lib/error-text";
 
@@ -81,7 +82,9 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
     : null;
   const toolCompletedAt = appBuilder && "time" in part.state && "end" in part.state.time && typeof part.state.time.end === "number"
     && Number.isFinite(part.state.time.end) ? part.state.time.end : null;
+  const skillDelivery = parseSkillDeliveryEvidence(stateMetadata.openworkSkillDelivery);
   const openwork = {
+    ...(skillDelivery ? { skillDelivery } : {}),
     ...(part.id !== part.callID ? { sourcePartId: part.id } : {}),
     ...(mcpResult ? { mcpResult } : {}),
     ...(childSessionId ? { childSessionId } : {}),
