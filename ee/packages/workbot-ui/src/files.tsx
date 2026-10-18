@@ -4,7 +4,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import { Tooltip } from "@base-ui/react/tooltip";
 import { Download, FileText, Paperclip, Trash2, X } from "lucide-react";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { workbotHost } from "./host";
+import { workbotHost, useRetainedSurface } from "./host";
 import {
   downloadWorkbotFile,
   uploadWorkbotFile,
@@ -239,14 +239,16 @@ export function UploadTray({ uploads, onRemove, onRetry }: { uploads: Upload[]; 
 export function AttachButton({ enabled, onFiles }: { enabled: boolean; onFiles: (files: FileList) => void }) {
   const input = useRef<HTMLInputElement>(null);
   const [showLock, setShowLock] = useState(false);
+  const surface = useRetainedSurface(showLock);
   // A press (mouse click or touch tap) pins the explanation: on touch, the emulated hover and focus changes that
   // follow a tap would otherwise close it before it can be read. Only Escape or a press elsewhere dismisses it.
   const pinned = useRef(false);
   if (!enabled) {
     return (
       <Tooltip.Root
-        open={showLock}
+        open={surface.open}
         onOpenChange={(open, details) => {
+          if (surface.blocked) return;
           if (!open && pinned.current && (details.reason === "trigger-hover" || details.reason === "trigger-focus")) return;
           if (!open) pinned.current = false;
           setShowLock(open);
@@ -263,7 +265,7 @@ export function AttachButton({ enabled, onFiles }: { enabled: boolean; onFiles: 
         >
           <Paperclip size={18} strokeWidth={1.75} aria-hidden />
         </Tooltip.Trigger>
-        <Tooltip.Portal>
+        <Tooltip.Portal {...surface.portal}>
           <Tooltip.Positioner side="top" align="start" sideOffset={10} collisionPadding={8} positionMethod="fixed" collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }} className="z-50">
             <Tooltip.Popup data-workbot-attachment-hint className="workbot flex w-[300px] max-w-[min(var(--available-width),calc(100vw-1rem))] max-h-[var(--available-height)] items-center gap-2 overflow-y-auto rounded-xl bg-[var(--wb-text)] px-3 py-2 text-[13px] leading-4 text-[var(--wb-mark-text)]">
               <LockGlyph />
@@ -415,12 +417,13 @@ function FileRow({ file, assistantName, onOpen }: { file: WorkbotFile; assistant
 
 /** Everything kept, newest first (Paper v5, screen 7). */
 export function FilesPanel({ open, onClose, assistantName, onOpenFile }: { open: boolean; onClose: () => void; assistantName: string; onOpenFile: (file: WorkbotFile) => void }) {
-  const files = useWorkbotFiles(open);
+  const surface = useRetainedSurface(open);
+  const files = useWorkbotFiles(surface.open);
   const list = files.data?.files ?? [];
   const total = list.reduce((sum, file) => sum + file.size, 0);
   return (
-    <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <Dialog.Portal>
+    <Dialog.Root open={surface.open} onOpenChange={(next) => { if (!surface.blocked && !next) onClose(); }}>
+      <Dialog.Portal {...surface.portal}>
         <Dialog.Popup className="workbot fixed inset-y-0 right-0 z-50 flex w-full max-w-[400px] flex-col bg-[var(--wb-surface)] shadow-[var(--wb-sheet-shadow)] outline-none transition-transform duration-200 ease-out data-[ending-style]:translate-x-full data-[starting-style]:translate-x-full motion-reduce:transition-none">
           <div className="flex h-15 shrink-0 items-center justify-between border-b border-[var(--wb-hairline)] pl-6 pr-4">
             <Dialog.Title className="text-[15px] font-semibold leading-[18px] tracking-[-0.01em] text-[var(--wb-text)]">Files</Dialog.Title>

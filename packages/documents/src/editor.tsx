@@ -29,10 +29,12 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, active, sc
   const [saved, setSaved] = useState(false)
   const [closing, setClosing] = useState(false)
   const dirty = Object.keys(draft).length > 0
+  const accessCheck = useRef<() => Promise<void>>(async () => { throw new Error("The document is not open.") })
+  accessCheck.current = async () => { await editor.open(item.id, { sheetId, startRow, connectionId }) }
   const closeAction = useRef<() => void>(() => {})
   closeAction.current = () => { if (!saving) { if (dirty) setClosing(true); else onClose() } }
   useEffect(() => {
-    onControlsChange?.(item.id, { requestClose: () => closeAction.current() })
+    onControlsChange?.(item.id, { requestClose: () => closeAction.current(), checkAccess: () => accessCheck.current() })
     return () => onControlsChange?.(item.id, null)
   }, [item.id, onControlsChange])
   useEffect(() => { onSavingChange?.(item.id, saving); return () => onSavingChange?.(item.id, false) }, [item.id, saving, onSavingChange])

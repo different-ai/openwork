@@ -105,6 +105,9 @@
 .ow-editor-toolbar button:has(svg.lucide-save) { border: 1px solid var(--doc-line); }
 .ow-editor-message { padding: 8px 16px; font-size: 12px; color: var(--doc-muted); border-bottom: 1px solid var(--doc-line); }
 .ow-editor-message button { text-decoration: underline; margin-left: 10px; }
+.ow-documents-recovery { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.ow-documents-recovery > svg { flex-shrink: 0; }
+.ow-documents-recovery button { margin-left: 0; padding: 4px 8px; }
 .ow-editor-spreadsheet { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .ow-editor-formula { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--doc-line); }
 .ow-editor-formula label { display: flex; align-items: center; gap: 10px; white-space: nowrap; }

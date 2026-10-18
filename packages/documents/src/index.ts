@@ -112,5 +112,6 @@ export function documentType(item: DocumentItem): string {
   return native[item.mimeType] ?? (item.mimeType.startsWith("image/") ? "Image" : item.mimeType.startsWith("text/") ? "Text" : "File")
 }
 
+export { DOCUMENT_RECOVERY_MS } from "./access"
 export { googleDocumentsEditor } from "./google-editor"
 export type { DocumentsEditor } from "./model"

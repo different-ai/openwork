@@ -40,7 +40,7 @@ import { Check as CheckMark, ChevronLeft, ChevronRight, Cloud, Lock, Monitor, Pl
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CreateAutomationCard, type CreateAnchor } from "./calendar-create";
 import { ModelPicker, ModelSummary } from "./model-picker";
-import { workbotHost } from "./host";
+import { workbotHost, useRetainedSurface } from "./host";
 import { calendarKey, useAutomationModels, useAutomationRuns, useCalendarAction, useCalendarSources, useRunReceipt, useWorkbotAutomations, type AutomationChanges } from "./calendar-data";
 
 /**
@@ -453,6 +453,7 @@ function RunsOnCard({ target }: { target: "desktop" | "cloud" }) {
  * Den's Workbot allowlist accepts the name, schedule, instructions and model.
  */
 function EditDialog({ item, busy, onClose, onSave }: { item: ListItem; busy: boolean; onClose: () => void; onSave: (changes: AutomationChanges) => void }) {
+  const surface = useRetainedSurface(true);
   const { revision } = item;
   const target = revision.executionTarget ?? "desktop";
   const agent = revision.action?.kind !== "saved_script";
@@ -467,8 +468,8 @@ function EditDialog({ item, busy, onClose, onSave }: { item: ListItem; busy: boo
   };
   const changed = Object.keys(changes).length > 0;
   return (
-    <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <Dialog.Portal>
+    <Dialog.Root open={surface.open} onOpenChange={(open) => { if (!surface.blocked && !open) onClose(); }}>
+      <Dialog.Portal {...surface.portal}>
         <Dialog.Backdrop className="workbot fixed inset-0 z-50 bg-[var(--wb-ink)]/20" />
         <Dialog.Popup
           data-calendar-edit={item.automation.id}

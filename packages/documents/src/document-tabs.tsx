@@ -2,7 +2,7 @@ import { useRef, useState } from "react"
 import { FileText, X } from "lucide-react"
 import type { DocumentItem } from "./index"
 
-export type DocumentTabControls = { requestClose(): void }
+export type DocumentTabControls = { requestClose(): void; checkAccess(): Promise<void> }
 export type DocumentTabControlsChange = (id: string, controls: DocumentTabControls | null) => void
 
 /** Reorders navigation only. The host keeps mounted editors in their original order. */

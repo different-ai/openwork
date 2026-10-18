@@ -18,7 +18,7 @@ const who: DenSession = {
 // About the size of Den's JWT access tokens, so the cookie-size limit is exercised realistically.
 const accessToken = (n: number) => `access-${n}-${"x".repeat(1_400)}`
 
-function world(options: { secret?: string } = {}) {
+function world(options: { secret?: string; identity?: DenSession; identityForToken?(token: string): DenSession } = {}) {
   let clock = 1_000_000
   const calls = { refresh: [] as string[], revoke: [] as string[] }
   let refreshes = 0
@@ -27,7 +27,7 @@ function world(options: { secret?: string } = {}) {
   const den: DenAuth = {
     authorizeUrl: async ({ state }) => `https://den.test/authorize?state=${state}`,
     exchangeCode: async (): Promise<Tokens> => ({ accessToken: accessToken(0), refreshToken: "refresh-0", expiresAt: clock + 45 * 60_000 }),
-    session: async () => who,
+    session: async token => options.identityForToken?.(token) ?? options.identity ?? who,
     refresh: async (refreshToken) => {
       calls.refresh.push(refreshToken)
       // Held until released, so concurrent requests overlap one refresh.
@@ -86,6 +86,45 @@ test("sign-in keeps everything in sealed cookies, and any instance with the secr
   assert.equal(elsewhere.status, 200)
   assert.deepEqual(await elsewhere.json(), { token: "access-0-" })
   assert.equal(w.calls.refresh.length, 0)
+})
+
+test("a stale client's scope cannot read a different signed-in person or workspace or sign them out", async () => {
+  const identities: DenSession[] = [
+    { ...who, user: { ...who.user, id: "user_other" }, memberId: "member_other" },
+    { ...who, organization: { ...who.organization, id: "org_other" } },
+  ]
+  for (const identity of identities) {
+    const w = world({ identity })
+    const app = w.instance()
+    const { session } = await signIn(app)
+    const request = (headers: Record<string, string>) => app.request("/v1/workbot/me", { headers: { cookie: `__Host-workbot=${session}`, ...headers } })
+    const rejected = await request({ "x-openwork-client-user": who.user.id, "x-openwork-client-organization": who.organization.id })
+    assert.equal(rejected.status, 401)
+    assert.match(await rejected.text(), /"error":"identity_changed"/)
+    assert.equal(rejected.headers.getSetCookie().length, 0, "a stale tab cannot revoke the current account's cookie")
+    assert.equal((await request({ "x-openwork-client-user": identity.user.id })).status, 401, "partial scope claims fail closed")
+    assert.equal((await request({ "x-openwork-client-user": identity.user.id, "x-openwork-client-organization": identity.organization.id })).status, 200)
+    assert.equal((await me(app, session)).status, 200, "unscoped identity discovery still works")
+    assert.equal(w.calls.revoke.length, 0)
+  }
+})
+
+test("identity metadata is bound to the current token, not only the sealed session id", async () => {
+  const other = { ...who, user: { ...who.user, id: "user_other" }, memberId: "member_other" }
+  const w = world({ identityForToken: token => token.startsWith("access-0-") ? who : other })
+  const app = w.instance()
+  const { session } = await signIn(app)
+  w.advance(42 * 60_000 + 50_000)
+  assert.equal((await me(app, session)).status, 200) // Warm A's metadata just before refresh.
+  w.advance(20_000)
+  const refreshing = app.request("/v1/workbot/me", { headers: { cookie: `__Host-workbot=${session}`, "x-openwork-client-user": who.user.id, "x-openwork-client-organization": who.organization.id } })
+  await w.release()
+  const response = await refreshing
+  assert.equal(response.status, 401, "a fresh token cannot borrow the old token's identity cache")
+  assert.match(await response.text(), /"error":"identity_changed"/)
+  assert.equal(cookieValue(response, "__Host-workbot"), undefined, "a changed subject is not written into the old sign-in")
+  assert.equal((await me(app, session)).status, 401, "even unscoped discovery cannot silently rebind the old sign-in")
+  assert.equal(w.calls.refresh.length, 1)
 })
 
 test("forged, tampered, other-secret and wrong-purpose cookies are signed out", async () => {

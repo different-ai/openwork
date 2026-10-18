@@ -7,7 +7,7 @@ import { googleDriveProvider } from "@openwork/documents";
 import { googleDriveFileId, workbotContextLabel, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import { CalendarDays, FileText, House, Lock, MessageCircle, PanelLeft, X } from "lucide-react";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { workbotHost } from "./host";
+import { workbotHost, useRetainedSurface } from "./host";
 
 export type WorkspacePage = "home" | "calendar" | "documents";
 export const WorkspaceNavigationContext = createContext<((fileId: string) => void) | null>(null);
@@ -28,17 +28,18 @@ export function WorkspaceLink({ href, children }: { href: string; children: Reac
 export function WorkspaceMenu({ page, onPage, onDocument, onChats, drafts }: { page: WorkspacePage; onPage(page: WorkspacePage): void; onDocument(fileId: string): void; onChats?: () => void; drafts: boolean }) {
   const host = workbotHost();
   const [open, setOpen] = useState(false);
+  const surface = useRetainedSurface(open);
   const provider = useMemo(() => googleDriveProvider((path, signal) => host.requestJson(`/v1/workbot/documents${path}`, { signal })), [host]);
   const recent = useQuery({
     queryKey: ["documents", host.homeHref, host.identity?.organizationId, host.identity?.principalId, "workspace-recent"],
     queryFn: ({ signal }) => provider.list({ view: "recent", folderId: "root", query: "", signal }),
-    enabled: open && host.documents === true && !!host.identity, retry: false, staleTime: 0, gcTime: 0,
+    enabled: surface.open && host.documents === true && !!host.identity, retry: false, staleTime: 0, gcTime: 0,
   });
   const navigate = (next: WorkspacePage) => { onPage(next); setOpen(false); };
   const row = "flex h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-[13px] text-[var(--wb-text)] hover:bg-[var(--wb-chip)] aria-[current=page]:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
-  return <Dialog.Root open={open} onOpenChange={setOpen}>
+  return <Dialog.Root open={surface.open} onOpenChange={next => { if (!surface.blocked) setOpen(next); }}>
     <Dialog.Trigger className={control} aria-label="Open workspace navigation" title="Navigate"><PanelLeft size={16} strokeWidth={1.5} aria-hidden /></Dialog.Trigger>
-    <Dialog.Portal>
+    <Dialog.Portal {...surface.portal}>
       <Dialog.Backdrop className="fixed inset-0 z-40 bg-[var(--wb-ink)]/10 transition-opacity duration-150 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none" />
       <Dialog.Popup className="workbot fixed inset-y-0 left-0 z-50 flex w-[min(20rem,100vw)] flex-col bg-[var(--wb-surface)] shadow-[var(--wb-sheet-shadow)] outline-none transition-transform duration-200 ease-out data-[ending-style]:-translate-x-full data-[starting-style]:-translate-x-full motion-reduce:transition-none">
         <div className="flex h-14 shrink-0 items-center justify-between px-4"><Dialog.Title className="text-[14px] font-semibold text-[var(--wb-text)]">Workbot</Dialog.Title><Dialog.Close className={control} aria-label="Close workspace navigation"><X size={16} strokeWidth={1.5} aria-hidden /></Dialog.Close></div>
@@ -70,18 +71,19 @@ export function SentContext({ context }: { context?: WorkbotViewContext }) {
 /** The composer stays in the workspace; the conversation is disclosed through an anchored Base UI popover. */
 export function WorkspaceAssistant({ name, context, includeContext, onIncludeContext, composer, conversation, onDocument, unavailable, sentCount, active }: { active: boolean; sentCount: number; name: string; context: WorkbotViewContext | null; includeContext: boolean; onIncludeContext(value: boolean): void; composer: ReactNode; conversation: ReactNode; onDocument(fileId: string): void; unavailable: boolean }) {
   const [open, setOpen] = useState(false);
+  const surface = useRetainedSurface(open);
   const anchor = useRef<HTMLDivElement>(null);
   useEffect(() => { if (!active) setOpen(false); }, [active]);
   const lastSentCount = useRef(sentCount);
   useEffect(() => { if (active && sentCount > lastSentCount.current) setOpen(true); lastSentCount.current = sentCount; }, [active, sentCount]);
   return <div ref={anchor} className="fixed bottom-3 right-3 z-30 w-[min(26rem,calc(100vw-1.5rem))] sm:bottom-5 sm:right-5" data-workbot-workspace-assistant>
-    <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Root open={surface.open} onOpenChange={next => { if (!surface.blocked) setOpen(next); }}>
       <div className="mb-1 flex min-w-0 items-center justify-end gap-1.5">
         {context && <button type="button" aria-pressed={includeContext} onClick={() => onIncludeContext(!includeContext)} title={includeContext ? "Exclude this view from your next message" : "Include a read-only reference to this view"} className={`min-w-0 truncate rounded-full bg-[var(--wb-surface)] px-2.5 py-1 text-[11px] shadow-[var(--wb-card-shadow)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${includeContext ? "text-[var(--wb-text)]" : "text-[var(--wb-muted)] line-through"}`} data-workbot-view-context data-testid="workbot-view-context">{workbotContextLabel(context)}{includeContext ? " · Read-only context" : ""}{context.kind === "document" && context.unsaved ? " · Unsaved edits excluded" : ""}</button>}
         <Popover.Trigger className="flex h-7 shrink-0 items-center gap-1.5 rounded-full bg-[var(--wb-surface)] px-2.5 text-[11px] text-[var(--wb-text)] shadow-[var(--wb-card-shadow)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" aria-label={open ? "Hide workspace chat" : "Show workspace chat"}><MessageCircle size={13} strokeWidth={1.5} aria-hidden />{name}</Popover.Trigger>
       </div>
       {composer}
-      <Popover.Portal>
+      <Popover.Portal {...surface.portal}>
         <Popover.Positioner anchor={anchor} side="top" align="end" sideOffset={8} collisionPadding={12} className="z-40 max-w-[var(--available-width)]">
           <Popover.Popup initialFocus={false} className="workbot flex h-[min(34rem,var(--available-height))] w-[min(30rem,var(--available-width))] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-[var(--dls-radius,16px)] bg-[var(--wb-surface)] shadow-[var(--wb-panel-shadow)] outline-none" data-workbot-workspace-chat>
             <div className="flex h-10 shrink-0 items-center justify-between px-3"><Popover.Title className="text-[13px] font-medium text-[var(--wb-text)]">{name}</Popover.Title><Popover.Close className={control} aria-label="Hide workspace chat"><X size={15} strokeWidth={1.5} aria-hidden /></Popover.Close></div>

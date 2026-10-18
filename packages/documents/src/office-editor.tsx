@@ -19,10 +19,11 @@ export function OfficeEditorTab({ item, editor, enabled, active, scope, toolbarH
   const [saved, setSaved] = useState<string>()
   const [error, setError] = useState<string>()
   const [closing, setClosing] = useState(false)
+  const accessCheck = useRef<() => Promise<void>>(async () => { throw new Error("The document is not open.") })
   const closeAction = useRef<() => void>(() => {})
   closeAction.current = () => { if (!saving) { if (dirty) setClosing(true); else onClose() } }
   useEffect(() => {
-    onControlsChange?.(item.id, { requestClose: () => closeAction.current() })
+    onControlsChange?.(item.id, { requestClose: () => closeAction.current(), checkAccess: () => accessCheck.current() })
     return () => onControlsChange?.(item.id, null)
   }, [item.id, onControlsChange])
   useEffect(() => { onSavingChange?.(item.id, saving); return () => onSavingChange?.(item.id, false) }, [item.id, saving, onSavingChange])
@@ -35,6 +36,13 @@ export function OfficeEditorTab({ item, editor, enabled, active, scope, toolbarH
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; if (pending.current) { clearTimeout(pending.current.timer); pending.current.reject(new Error("The editor was closed.")); pending.current = undefined } } }, [])
   const query = useQuery({ queryKey: ["documents", ...scope, "office", item.id], queryFn: ({ signal }) => editor.open(item.id, signal), enabled: enabled && active, retry: false, gcTime: 0, staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false })
   const session = query.data
+  accessCheck.current = async () => {
+    if (session) { await editor.status(item.id, session.id); return }
+    // An initial open may have failed during auth. Rechecking must establish the
+    // missing session explicitly, not deadlock every other retained document.
+    const result = await query.refetch({ throwOnError: true })
+    if (!result.data) throw new Error("The document hasn't opened yet.")
+  }
   const formatLabel = session ? officeFormats[session.fileType].label : "document"
   const closeTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => {

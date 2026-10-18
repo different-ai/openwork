@@ -68,7 +68,7 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
   /** Keyed by the refresh token being spent: Den rotates refresh tokens, so each one is spent once. */
   const refreshing = new Map<string, Promise<Tokens>>()
   const refreshed = new Map<string, { at: number; tokens: Tokens }>()
-  const denSessions = new Map<string, { at: number; value: DenSession }>()
+  const denSessions = new Map<string, { at: number; tokenHash: string; value: DenSession }>()
 
   const readSession = (c: Context) => sealer.open(SESSION_PURPOSE, getCookie(c, sessionCookie), sessionSchema)
   const writeSession = (c: Context, session: Session) => {
@@ -105,17 +105,18 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
   }
 
   const denSession = async (sessionId: string, accessToken: string) => {
+    const tokenHash = hashToken(accessToken)
     const cached = denSessions.get(sessionId)
-    if (cached && now() - cached.at < DEN_SESSION_CACHE_MS) return cached.value
+    if (cached && cached.tokenHash === tokenHash && now() - cached.at < DEN_SESSION_CACHE_MS) return cached.value
     const value = await den.session(accessToken)
-    denSessions.set(sessionId, { at: now(), value })
+    denSessions.set(sessionId, { at: now(), tokenHash, value })
     if (denSessions.size > 10_000) {
       for (const [entry, cachedValue] of denSessions) if (now() - cachedValue.at >= DEN_SESSION_CACHE_MS) denSessions.delete(entry)
     }
     return value
   }
 
-  /** Requires a signed-in person; 401 `signed_out` sends the page to /auth/login. */
+  /** Requires a current session; a scope-bound tab may only see its original identity. */
   const member: MiddlewareHandler<AppEnv> = async (c, next) => {
     const session = readSession(c)
     if (!session) {
@@ -128,8 +129,19 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
       const { tokens, changed } = await freshTokens(session)
       stage = "session"
       const current = { ...session, tokens }
-      if (changed) writeSession(c, current)
       const value = await denSession(session.id, tokens.accessToken)
+      if (value.user.id !== session.userId || value.organization.id !== session.organizationId) {
+        return c.json({ error: "identity_changed", message: "The signed-in account or workspace changed. Sign in again before restoring work." }, 401)
+      }
+      if (changed) writeSession(c, current)
+      const expectedUser = c.req.header("x-openwork-client-user")
+      const expectedOrganization = c.req.header("x-openwork-client-organization")
+      if ((expectedUser !== undefined || expectedOrganization !== undefined)
+        && (expectedUser !== value.user.id || expectedOrganization !== value.organization.id)) {
+        // A stale tab cannot receive a newly signed-in person's data. These
+        // claims only restrict the authenticated identity; they never select it.
+        return c.json({ error: "identity_changed", message: "The signed-in account or workspace changed. Check sign-in before restoring work." }, 401)
+      }
       c.set("member", { session: current, accessToken: tokens.accessToken, den: value })
     } catch (error) {
       if (error instanceof DenSignedOutError) {

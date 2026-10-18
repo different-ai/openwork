@@ -1,5 +1,6 @@
 "use client";
 
+import { useRetainedSurface } from "./host";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Dialog } from "@base-ui/react/dialog";
 import { ArrowLeft, PanelLeft, Plus, Trash2, X } from "lucide-react";
@@ -101,13 +102,14 @@ export function SideChatTitle({ title, onBack, disabled = false }: { title: stri
 /** Removes the side chat on screen, after asking (OW-CONFIRM). */
 export function RemoveChatButton({ chatId, title, onRemoved, disabled = false }: { chatId: string; title: string; onRemoved: () => void; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
+  const surface = useRetainedSurface(open);
   const remove = useRemoveWorkbotChat();
   return (
-    <AlertDialog.Root open={open} onOpenChange={(next) => { setOpen(next); if (!next) remove.reset(); }}>
+    <AlertDialog.Root open={surface.open} onOpenChange={(next) => { if (!surface.blocked) { setOpen(next); if (!next) remove.reset(); } }}>
       <AlertDialog.Trigger disabled={disabled} aria-label="Remove side chat" title={disabled ? "Save or close document drafts before removing this chat." : "Remove side chat"} className={ICON_BUTTON}>
         <Trash2 size={15} strokeWidth={1.5} aria-hidden />
       </AlertDialog.Trigger>
-      <AlertDialog.Portal>
+      <AlertDialog.Portal {...surface.portal}>
         <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-black/20 transition-opacity duration-150 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none" />
         <AlertDialog.Popup className="workbot fixed left-1/2 top-1/2 z-50 w-[calc(100%-32px)] max-w-[380px] -translate-x-1/2 -translate-y-1/2 rounded-[18px] bg-[var(--wb-surface)] p-5 shadow-[var(--wb-sheet-shadow)] outline-none">
           <AlertDialog.Title className="text-[15px] font-semibold leading-5 text-[var(--wb-text)]">Remove &ldquo;{title}&rdquo;?</AlertDialog.Title>
@@ -152,6 +154,7 @@ export function ChatsDrawer(props: {
   onRetry: () => void;
   onOpenChat: (chat: string | null) => void;
 }) {
+  const surface = useRetainedSurface(props.open);
   const [filter, setFilter] = useState("");
   const side = props.chats?.side ?? [];
   const query = filter.trim().toLowerCase();
@@ -163,8 +166,8 @@ export function ChatsDrawer(props: {
   const row = (selected: boolean) =>
     `flex h-11 w-full items-center gap-3 rounded-[10px] px-3 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${selected ? "bg-[var(--wb-chip)]" : "hover:bg-[var(--wb-chip)]"}`;
   return (
-    <Dialog.Root open={props.open} onOpenChange={(next) => { if (!next) props.onClose(); }}>
-      <Dialog.Portal>
+    <Dialog.Root open={surface.open} onOpenChange={(next) => { if (!surface.blocked && !next) props.onClose(); }}>
+      <Dialog.Portal {...surface.portal}>
         <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/10 transition-opacity duration-200 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none" />
         <Dialog.Popup className="workbot fixed inset-y-0 left-0 z-50 flex w-full max-w-[340px] flex-col bg-[var(--wb-surface)] shadow-[var(--wb-sheet-shadow)] outline-none transition-transform duration-200 ease-out data-[ending-style]:-translate-x-full data-[starting-style]:-translate-x-full motion-reduce:transition-none">
           <div className="flex h-13 shrink-0 items-center justify-between pl-5 pr-3">

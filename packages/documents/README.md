@@ -14,8 +14,21 @@ provider/editor contracts without embedding Workbot.
   Closing a dirty file or leaving Documents asks whether to keep/discard edits.
   Page unload uses the browser's unsaved-changes protection.
 - Missing/expired Drive access shows Connect/Reconnect through Den's existing
-  connections page. Returning to the page rechecks the listing.
+  connections page. Parent sign-in revalidation retains the document owners,
+  masked, instead of unmounting them. A different person or organization cannot
+  reveal a retained draft even when they can read the same file.
+- Directory denial remains latched even with no open tabs and after later
+  outages. Only a fresh identity and authorized directory read clear it.
+- Each locked file has a non-extending 15-minute recovery deadline. Files are
+  checked independently: an allowed draft can return while another stays
+  locked, retryable or individually discardable. Hosts must implement
+  `verifyScope`; without it recovery remains locked. A full page refresh does
+  not restore memory-only drafts.
 - Explicit Save to Drive writes to the original file; no background writes.
+
+The Office recovery peer in these browser tests proves owner/session lifecycle,
+not engine fidelity or survival of edits still buffered inside Collabora.
+Representative engine and received-snapshot recovery require their own proofs.
 
 | File | Inline experience | Save path |
 | --- | --- | --- |

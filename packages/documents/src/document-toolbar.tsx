@@ -26,10 +26,12 @@ export function EditorToolbarMenu({ label, children, options, controller, classN
   label: string; children: ReactNode; options: readonly MenuOption[]; controller: EditorController; className?: string
 }) {
   const executed = useRef(false)
+  const [open, setOpen] = useState(false)
+  const allowed = controller.ready && controller.canEdit
   const { trigger, theme, inherit } = useToolbarTheme()
-  return <Menu.Root modal={false} onOpenChange={open => { if (open) { executed.current = false; inherit() } }}>
+  return <Menu.Root modal={false} open={open && allowed} onOpenChange={next => { if (!allowed) return; setOpen(next); if (next) { executed.current = false; inherit() } }}>
     <Toolbar.Button ref={trigger} render={<Menu.Trigger/>} className={`ow-editor-control ${className}`} disabled={!controller.ready || !controller.canEdit} aria-label={label}>{children}<ChevronDown size={12} aria-hidden/></Toolbar.Button>
-    <Menu.Portal><Menu.Positioner side="bottom" align="start" sideOffset={6} collisionPadding={8} className="ow-editor-positioner">
+    <Menu.Portal keepMounted={open && !allowed} hidden={!allowed} inert={!allowed} style={!allowed ? { display: "none" } : undefined}><Menu.Positioner side="bottom" align="start" sideOffset={6} collisionPadding={8} className="ow-editor-positioner">
       <Menu.Popup className="ow-editor-menu" style={theme} aria-label={label} finalFocus={() => executed.current ? false : true}>
         {options.map(option => <Menu.Item key={option.label} className="ow-editor-menu-item" onClick={() => { executed.current = true; controller.execute(option.command) }}>
           {option.icon}<span>{option.label}</span>{option.checked && <Check size={14} aria-hidden/>}
@@ -48,10 +50,12 @@ export function EditorToolbarButton({ label, children, action, controller, press
 function ColorControls({ controller }: { controller: EditorController }) {
   const [color, setColor] = useState("#11181c")
   const [highlight, setHighlight] = useState("#fff1a8")
+  const [open, setOpen] = useState(false)
+  const allowed = controller.ready && controller.canEdit
   const { trigger, theme, inherit } = useToolbarTheme()
-  return <Popover.Root onOpenChange={open => { if (open) inherit() }}>
+  return <Popover.Root open={open && allowed} onOpenChange={next => { if (!allowed) return; setOpen(next); if (next) inherit() }}>
     <Toolbar.Button ref={trigger} render={<Popover.Trigger/>} className="ow-editor-control ow-editor-icon-control" disabled={!controller.ready || !controller.canEdit} aria-label="Text and highlight colors" title="Text and highlight colors"><Palette size={16} aria-hidden/></Toolbar.Button>
-    <Popover.Portal><Popover.Positioner side="bottom" align="start" sideOffset={6} collisionPadding={8} className="ow-editor-positioner">
+    <Popover.Portal keepMounted={open && !allowed} hidden={!allowed} inert={!allowed} style={!allowed ? { display: "none" } : undefined}><Popover.Positioner side="bottom" align="start" sideOffset={6} collisionPadding={8} className="ow-editor-positioner">
       <Popover.Popup className="ow-editor-menu ow-editor-colors" style={theme} aria-label="Text and highlight colors">
         <label><Palette size={15} aria-hidden/><span>Text color</span><input type="color" aria-label="Text color" value={color} onChange={event => { setColor(event.target.value); controller.execute({ type: "color", value: event.target.value }) }}/></label>
         <label><Highlighter size={15} aria-hidden/><span>{controller.kind === "spreadsheet" ? "Cell background" : "Highlight"}</span><input type="color" aria-label={controller.kind === "spreadsheet" ? "Cell background" : "Highlight color"} value={highlight} onChange={event => { setHighlight(event.target.value); controller.execute({ type: "highlight", value: event.target.value }) }}/></label>
