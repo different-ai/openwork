@@ -41,7 +41,7 @@ export function splitSuggestions(text: string): { text: string; suggestions: str
   return { text: lines.slice(0, -1).join("\n").trimEnd(), suggestions }
 }
 
-export type WorkbotTurnStatus = "queued" | "working" | "done" | "failed" | "stopped"
+export type WorkbotTurnStatus = "queued" | "working" | "interrupted" | "done" | "failed" | "stopped"
 /** A file in the conversation; `updatedAt` changes when Workbot revises it in place. */
 export type WorkbotAttachment = { id: string; name: string; mediaType: string; size: number; updatedAt?: number }
 /**
@@ -53,7 +53,7 @@ export type WorkbotStep = {
   label: string
   /** What the leading slot shows: the connected app's logo, or Workbot's computer. */
   icon: "app" | "computer"
-  status: "running" | "done"
+  status: "running" | "done" | "failed" | "stopped" | "interrupted"
   /** The connected app it used, when known (for its logo). */
   app: string | null
   startedAt: number | null
@@ -129,13 +129,12 @@ function tasksOf(snapshot: RunnerSnapshot, parent: string, byTurn: Map<string, R
   return snapshot.turns
     .filter((entry) => entry.kind === "task" && entry.parent === parent)
     .map((entry) => {
-      const status = TASK_STATUS[entry.status] ?? "working"
+      const status = TASK_STATUS[entry.status] ?? "paused"
       const open = status === "queued" || status === "working" || status === "paused"
       // Its plain-language updates: the description it gave each command on its computer.
       const updates = (byTurn.get(entry.messageId) ?? [])
         .flatMap((message) => (message.role === "assistant" ? message.toolCalls : []))
-        .filter((call) => COMPUTER_TOOLS.has(call.name) && typeof call.input.description === "string" && call.input.description.trim())
-        .map((call) => String(call.input.description).trim())
+        .flatMap((call) => COMPUTER_TOOLS.has(call.name) ? (computerUpdate(call.input) ?? []) : [])
       const update = open ? (updates.at(-1) ?? null) : null
       return {
         id: entry.messageId.slice(WORKBOT_MESSAGE_PREFIX.length),
@@ -179,34 +178,18 @@ function friendlyError(code: string | null): string {
   return "Something went wrong on my side."
 }
 
-const APPS: Array<[RegExp, string]> = [
-  [/slack/i, "Slack"],
-  [/gmail|mail/i, "Gmail"],
-  [/calendar|gcal/i, "Google Calendar"],
-  [/drive|docs|sheets/i, "Google Drive"],
-  [/notion/i, "Notion"],
-  [/linear/i, "Linear"],
-  [/github/i, "GitHub"],
-  [/outlook|microsoft|teams|onedrive|sharepoint/i, "Microsoft 365"],
-  [/hubspot/i, "HubSpot"],
-  [/salesforce/i, "Salesforce"],
-  [/jira|confluence|atlassian/i, "Atlassian"],
-]
+/** Routing names are not display metadata. Never guess a service or action from a skill/catalog/tool id. */
+function isConnectedAppCall(name: string, input: Record<string, unknown>) {
+  return name === "execute_capability" && typeof input.name === "string"
+    && /^(mcp|google-workspace|microsoft-365):/.test(input.name)
+}
 
-/** What it is doing in a connected app, as a colleague would say it (DESIGN C4). */
-const APP_ACTIONS: Array<[RegExp, (app: string) => string]> = [
-  [/search|find|query|lookup/, (app) => `Searching ${app}`],
-  [/draft/, (app) => `Drafting in ${app}`],
-  [/send|post|reply|chat_?message|message/, (app) => `Sending in ${app}`],
-  [/create|add|insert|schedule/, (app) => `Adding to ${app}`],
-  [/update|edit|patch|move|rename/, (app) => `Updating ${app}`],
-  [/delete|remove|archive|trash/, (app) => `Removing from ${app}`],
-  [/list|get|read|fetch|retrieve|view|show|events|history/, (app) => `Checking ${app}`],
-]
-
-function appActionLabel(app: string, capability: string) {
-  const action = capability.split(/[:/]/).pop()?.toLowerCase() ?? ""
-  return APP_ACTIONS.find(([pattern]) => pattern.test(action))?.[1](app) ?? `Looking in ${app}`
+/** Descriptions are model-provided, but must not turn internal routing details into activity copy. */
+function computerUpdate(input: Record<string, unknown>) {
+  if (typeof input.description !== "string") return null
+  const text = input.description.trim()
+  if (!text || /\b(?:skill|mcp|catalog|plugin|capability):|\b(?:search_capabilities|execute_capability|get_skill|list_skills|tool[_-]?id)\b|\b(?:cob|plg|cov)_[a-z0-9]+/i.test(text)) return null
+  return text.slice(0, 80)
 }
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" })
@@ -216,11 +199,6 @@ function reactionOf(input: Record<string, unknown>): string | null {
   const emoji = typeof input.emoji === "string" ? input.emoji.trim() : ""
   if (!emoji || emoji.length > 32 || [...graphemes.segment(emoji)].length !== 1) return null
   return /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(emoji) ? emoji : null
-}
-
-function appOf(name: string, input: Record<string, unknown>): string | null {
-  const target = name === "execute_capability" && typeof input.name === "string" ? input.name : name
-  return APPS.find(([pattern]) => pattern.test(target))?.[1] ?? null
 }
 
 /** The conversation's kept files, so the ones Workbot made show under the answer that made them. */
@@ -235,7 +213,7 @@ const COMPUTER_TOOLS: ReadonlySet<string> = new Set(["bash", "look"])
  */
 function addComputerStep(parts: WorkbotPart[], input: Record<string, unknown>, result: RunnerMessage | undefined, at: number | null) {
   const running = result === undefined
-  const doing = typeof input.description === "string" && input.description.trim() ? input.description.trim().slice(0, 80) : null
+  const doing = computerUpdate(input)
   const last = parts.at(-1)
   const previous = last?.kind === "steps" ? last.steps.at(-1) : undefined
   const step: WorkbotStep =
@@ -247,7 +225,8 @@ function addComputerStep(parts: WorkbotPart[], input: Record<string, unknown>, r
   const took = at !== null && ended !== null ? Math.max(0, ended - at) : 0
   const worked = before + (took <= LONGEST_COMMAND_MS ? took : 0)
   workedMs.set(step, worked)
-  step.status = running ? "running" : "done"
+  // A later successful command may recover an internal failure. A missing/failed result is never success.
+  step.status = running ? "running" : result?.role === "tool" && result.isError ? "failed" : "done"
   // Duration is shown as finishedAt − startedAt, and a running step counts up from startedAt.
   if (running) {
     step.startedAt = at === null ? step.startedAt : at - before
@@ -271,8 +250,8 @@ const LONGEST_COMMAND_MS = 6 * 60_000
 
 function statusOf(turn: RunnerTurn): WorkbotTurnStatus {
   if (turn.status === "queued") return "queued"
-  // An interrupted turn is resumed by the next read, so the person sees it still working.
-  if (turn.status === "running" || turn.status === "interrupted") return "working"
+  if (turn.status === "running") return "working"
+  if (turn.status === "interrupted") return "interrupted"
   if (turn.status === "completed") return "done"
   if (turn.status === "aborted") return "stopped"
   return "failed"
@@ -331,23 +310,21 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
         if (call.name === "react") {
           const result = results.get(call.id)
           const emoji = reactionOf(call.input)
-          if (emoji && !(result?.role === "tool" && result.isError)) reaction = emoji
+          if (emoji && result?.role === "tool" && !result.isError) reaction = emoji
           continue
         }
         if (COMPUTER_TOOLS.has(call.name)) {
           addComputerStep(parts, call.input, results.get(call.id), message.createdAt ?? null)
           continue
         }
-        // Only work in a connected app is worth a line ("Searching Slack"); lookups, notes to self and files stay
-        // out of sight: files it made show as cards under the answer.
-        const app = call.name === "execute_capability" ? appOf(call.name, call.input) : null
-        if (!app) continue
+        // Catalog and skill loading did no visible work. Actual app calls use neutral copy until we have display metadata.
+        if (!isConnectedAppCall(call.name, call.input)) continue
         const result = results.get(call.id)
         const step: WorkbotStep = {
-          label: appActionLabel(app, String(call.input.name ?? "")),
+          label: "Using a connected app",
           icon: "app",
-          status: result === undefined ? "running" : "done",
-          app,
+          status: result === undefined ? "running" : result.role === "tool" && result.isError ? "failed" : "done",
+          app: null,
           startedAt: message.createdAt ?? null,
           finishedAt: result?.createdAt ?? null,
           updates: [],
@@ -360,6 +337,16 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
 
     const status = statusOf(turn)
     const working = status === "working" || status === "queued"
+    // Commands without a result can no longer claim to run after their turn ends or is interrupted.
+    for (const part of parts) {
+      if (part.kind !== "steps") continue
+      for (const step of part.steps) {
+        if (step.status !== "running" || working) continue
+        step.status = status === "stopped" ? "stopped" : "interrupted"
+        // The end of the turn is not a measured command completion.
+        step.finishedAt = null
+      }
+    }
     // A closing "Next: a | b | c" line becomes buttons: the hello asks for one, and later answers sometimes follow suit.
     let suggestions: string[] = []
     if (!working) {

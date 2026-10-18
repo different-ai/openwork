@@ -1,7 +1,7 @@
 "use client";
 
-import { ArrowUp, Check, CircleAlert, Copy, FileText, Lock, Pencil } from "lucide-react";
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
+import { ArrowUp, Check, CircleAlert, Copy, FileText, Lock, Monitor, Pencil } from "lucide-react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
 import { ChatsButton, ChatsDrawer, chatTitle, RemoveChatButton, SideChatTitle, useChatLocation } from "./chats";
@@ -15,6 +15,7 @@ import {
   useWorkbotChats,
   useWorkbotLive,
   useWorkbotThread,
+  useWorkbotThreadAccess,
   WorkbotChatProvider,
   workbotFilesKey,
   type LiveText,
@@ -53,6 +54,7 @@ type Pending = {
 
 const PAGE_TURNS = 30;
 const COLUMN = "min-w-0 w-full max-w-[640px]";
+const ActivityFreshness = createContext(true);
 
 function newMessageId() {
   return crypto.randomUUID().replaceAll("-", "");
@@ -75,6 +77,7 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   const [chat, openChat] = useChatLocation(sideChats, workspaceDrafts ? () => false : undefined);
   const [chatsOpen, setChatsOpen] = useState(false);
   const chats = useWorkbotChats(sideChats);
+  const access = useWorkbotThreadAccess(chat);
   const refetchChats = chats.refetch;
   // The list says when each chat was last used: it is read again each time it opens.
   useEffect(() => {
@@ -87,7 +90,7 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
     <WorkbotChatProvider value={chat}>
       {/* Each chat starts fresh: its own unsent messages, files to send and open file. */}
       <ChatScreen key={`${host.identity?.organizationId ?? ""}:${host.identity?.principalId ?? ""}:${chat ?? "main"}`} host={host} navigation={navigation} onDraftsChange={setWorkspaceDrafts} />
-      {sideChats ? (
+      {sideChats && !access.data.denied ? (
         <ChatsDrawer
           open={chatsOpen}
           onClose={() => setChatsOpen(false)}
@@ -151,10 +154,12 @@ function ChatScreen({ host, navigation, onDraftsChange }: { host: WorkbotHost; n
   // Messages replaced by an edit leave the page at once; the conversation catches up on its next read.
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const uploads = useUploads();
-  const data = thread.data?.available ? thread.data : null;
+  const accessDenied = thread.accessDenied;
+  const data = !accessDenied && thread.data?.available ? thread.data : null;
   // The open file at its newest version: when Workbot revises it, the preview follows (same id, newer updatedAt).
   const previewFile = useMemo(() => {
-    if (!preview || !data) return preview;
+    if (!data) return null;
+    if (!preview) return null;
     let newest = preview;
     for (const turn of data.turns) {
       for (const file of [...turn.outputs, ...turn.attachments]) {
@@ -163,6 +168,11 @@ function ChatScreen({ host, navigation, onDraftsChange }: { host: WorkbotHost; n
     }
     return newest;
   }, [preview, data]);
+  const activityFresh = !thread.isError && thread.failureCount === 0 && !stream.reconnecting;
+  const recovery = <>
+    {data && !activityFresh ? <ConnectionStatus verifiedAt={thread.dataUpdatedAt} onRefresh={() => void thread.refetch()} /> : null}
+    {stop.isError && (data?.status === "busy" || pending.some(entry => !entry.failed)) ? <ErrorLine action={{ label: "Try stopping again", onClick: () => stop.mutate() }}>Couldn't confirm that Workbot stopped. It may still be working.</ErrorLine> : null}
+  </>;
   const filesEnabled = data?.filesEnabled ?? false;
   const addFiles = uploads.add;
   const dragging = useFileDrop(filesEnabled, addFiles);
@@ -266,27 +276,27 @@ function ChatScreen({ host, navigation, onDraftsChange }: { host: WorkbotHost; n
         if (turn.greeting) { setGreetingAwaited(true); start.mutate(); return; }
         retry.mutate(turn.id, { onError: error => setEditErrors(current => ({ ...current, [turn.id]: error.message })) });
       }}
-      onSuggestion={text => submit(text)} starting={starting} intro={null}
+      onSuggestion={text => submit(text)} starting={starting} intro={null} fresh={activityFresh}
     /> : null;
-    const composer = <Composer name={name} busy={busy} stopping={stop.isPending} filesEnabled={filesEnabled}
+    const composer = <>{data ? recovery : null}<Composer concealed={!data} name={name} busy={busy} stopping={stop.isPending} filesEnabled={filesEnabled}
       uploads={uploads.uploads} onFiles={addFiles} onRemoveUpload={uploads.remove} onRetryUpload={uploads.retry}
-      onSend={text => submit(text)} onStop={() => stop.mutate()} autoFocus={false} disabled={!data} />;
+      onSend={text => submit(text)} onStop={() => stop.mutate()} autoFocus={false} disabled={!data} /></>;
     const firstName = user?.name?.trim().split(/\s+/)[0] ?? null;
     const home = thread.isPending ? <div className="flex flex-1 items-center justify-center" aria-busy="true" aria-label="Loading conversation"><span className="h-5 w-40 rounded bg-[var(--wb-chip)]" /></div>
-      : !data ? <div className="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center text-[13px] text-[var(--wb-muted)]" role="status"><p>Couldn't load your conversation.</p><button type="button" className="rounded-lg px-3 py-2 underline focus-visible:shadow-[var(--wb-focus)]" onClick={() => void thread.refetch()}>Try again</button></div>
+      : !data ? <div className="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center text-[13px] text-[var(--wb-muted)]" role="status"><p>{accessDenied ? "Your access to this conversation couldn't be verified." : "Couldn't load your conversation."}</p><button type="button" className="rounded-lg px-3 py-2 underline focus-visible:shadow-[var(--wb-focus)]" onClick={() => void thread.refetch()}>Check again</button></div>
       : welcome === "showing" ? <Welcome name={name} firstName={firstName} onBegin={() => { if (start.isIdle) { setGreetingAwaited(true); start.mutate(); } }} onDone={() => setWelcome("done")} />
       : empty && side ? <SideChatStart name={name} organizationName={data.organizationName}>{composer}</SideChatStart>
       : empty && !starting ? <FirstOpen name={name} organizationName={data.organizationName} firstName={firstName} onSuggestion={text => submit(text)} error={start.isError ? <ErrorLine action={{ label: "Try again", onClick: () => { setGreetingAwaited(true); start.mutate(); } }}>{HELLO_FAILED}</ErrorLine> : null}>{composer}</FirstOpen>
       : <>{conversation}<div className="flex shrink-0 justify-center px-3 pb-4 pt-3"><div className={COLUMN}>{composer}</div></div></>;
     return <OpenFileContext.Provider value={setPreview}>
-      <WorkspaceNavigationContext.Provider value={host.workspaceAssistant && host.documents ? navigateDocument : null}>
+      <WorkspaceNavigationContext.Provider value={data && host.workspaceAssistant && host.documents ? navigateDocument : null}>
         <div className="workbot flex h-dvh flex-col bg-[var(--wb-bg)] antialiased" data-workbot-workspace>
           <WorkbotHeader name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null}
             files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
-            chats={host.workspaceAssistant ? <WorkspaceMenu page={tab} onPage={setTab} onDocument={navigateDocument} drafts={documentsDirty} onChats={navigation?.openChats} /> : navigation ? <ChatsButton onOpen={navigation.openChats} /> : null}
+            chats={host.workspaceAssistant ? <WorkspaceMenu page={tab} onPage={setTab} onDocument={navigateDocument} drafts={documentsDirty} onChats={data ? navigation?.openChats : undefined} /> : navigation && data ? <ChatsButton onOpen={navigation.openChats} /> : null}
             nav={host.workspaceAssistant ? null : <WorkbotNav tab={tab} onTab={setTab} />}
             remove={navigation?.chat && data && data.turns.length > 0 ? <RemoveChatButton disabled={documentsDirty} chatId={navigation.chat} title={navigation.title} onRemoved={() => navigation.openChat(null)} /> : null}
-            title={navigation?.chat ? <SideChatTitle title={navigation.title} disabled={documentsDirty} onBack={() => navigation.openChat(null)} /> : undefined}
+            title={navigation?.chat && data ? <SideChatTitle title={navigation.title} disabled={documentsDirty} onBack={() => navigation.openChat(null)} /> : undefined}
           />
           <div className="flex min-h-0 min-w-0 flex-1">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -300,8 +310,8 @@ function ChatScreen({ host, navigation, onDraftsChange }: { host: WorkbotHost; n
           </div>
           {previewFile && <PreviewPanel file={previewFile} onClose={() => setPreview(null)} />}
           </div>
-          <div hidden={!host.workspaceAssistant || tab === "home"}><WorkspaceAssistant name={name} context={currentContext} includeContext={includeContext} onIncludeContext={setIncludeContext}
-            composer={composer} conversation={conversation} onDocument={navigateDocument} unavailable={!data} sentCount={pending.length} active={host.workspaceAssistant === true && tab !== "home"} /></div>
+          <div hidden={!host.workspaceAssistant || tab === "home"}><WorkspaceAssistant name={name} context={data ? currentContext : null} includeContext={includeContext} onIncludeContext={setIncludeContext}
+            composer={composer} conversation={conversation} onDocument={data ? navigateDocument : () => undefined} unavailable={!data} sentCount={data ? pending.length : 0} active={data !== null && host.workspaceAssistant === true && tab !== "home"} /></div>
           {filesEnabled && <FilesPanel open={filesOpen} onClose={() => setFilesOpen(false)} assistantName={name} onOpenFile={file => { setFilesOpen(false); setPreview(file); }} />}
         </div>
       </WorkspaceNavigationContext.Provider>
@@ -335,6 +345,12 @@ function ChatScreen({ host, navigation, onDraftsChange }: { host: WorkbotHost; n
       </Centered>
     );
   }
+  if (accessDenied) return <Centered>
+    <Lock size={16} strokeWidth={1.5} className="text-[var(--wb-muted)]" aria-hidden />
+    <p className="mt-3 text-[14px] text-[var(--wb-text)]">Your access to this conversation couldn't be verified.</p>
+    <p className="mt-1 text-[13px] text-[var(--wb-muted)]">Sign in again or ask your admin to check your access.</p>
+    <button type="button" onClick={() => void thread.refetch()} className="mt-3 rounded-full px-3 py-1.5 text-[13px] text-[var(--wb-text)] hover:bg-[var(--wb-chip)] focus-visible:shadow-[var(--wb-focus)]">Check again</button>
+  </Centered>;
   if (!data) {
     const notEnabled = thread.data?.available === false && thread.data.reason === "workbot_not_enabled";
     return (
@@ -368,7 +384,7 @@ function ChatScreen({ host, navigation, onDraftsChange }: { host: WorkbotHost; n
   // Right after the welcome: the conversation, with Workbot typing its hello. If that can't start, the drawn greeting.
   const starting = empty && (start.isPending || (greetingAwaited && start.data?.started === true));
   const composer = (
-    <Composer
+    <>{recovery}<Composer
       name={data.name}
       busy={busy}
       stopping={stop.isPending}
@@ -379,7 +395,7 @@ function ChatScreen({ host, navigation, onDraftsChange }: { host: WorkbotHost; n
       onRetryUpload={uploads.retry}
       onSend={(text) => submit(text)}
       onStop={() => stop.mutate()}
-    />
+    /></>
   );
 
   const chatId = navigation?.chat ?? null;
@@ -434,6 +450,7 @@ function ChatScreen({ host, navigation, onDraftsChange }: { host: WorkbotHost; n
             }}
             onSuggestion={(text) => submit(text)}
             starting={starting}
+            fresh={activityFresh}
             intro={
               data.hasEarlier
                 ? null
@@ -766,6 +783,7 @@ function showsTimestamp(previous: Row | undefined, row: Row) {
 }
 
 function Conversation(props: {
+  fresh: boolean;
   turns: WorkbotTurn[];
   pending: Pending[];
   live: Record<string, LiveText>;
@@ -801,11 +819,11 @@ function Conversation(props: {
   // neither keeps the dots. Uploading files say so instead.
   // Each message keeps its own waiting place where its answer will appear (TurnView, PendingView); only a hello that
   // hasn't reached the conversation yet shows its dots here.
-  const typing = useSettled(props.starting, 350);
+  const typing = props.starting && props.fresh;
   // A follow-up interrupts the answer before it: the newest message is answered next.
   const unsent = props.pending.filter((entry) => !known.has(entry.id) && !entry.failed);
   const lastPending = unsent.at(-1)?.id ?? null;
-  // Only the newest of Workbot's words may still be revealing, so two messages are never being written at once.
+  // The newest text identifies the latest answer across persisted and streamed parts.
   const newestText = [...props.turns].reverse().find((turn) => turn.parts.some((part) => part.kind === "text") || Boolean(props.live[turn.id]?.text))?.id ?? null;
   // Local previews keep a just-sent image on screen while its kept copy loads.
   const localUrls = useMemo(() => {
@@ -840,7 +858,7 @@ function Conversation(props: {
   }, [pendingCount]);
 
   return (
-    <div
+    <ActivityFreshness.Provider value={props.fresh}><div
       ref={scroller}
       className="workbot-scroll flex-1 overflow-y-auto [overflow-anchor:none]"
       onScroll={(event) => {
@@ -901,14 +919,14 @@ function Conversation(props: {
               <Gap />
               <div className="flex flex-col">
                 <WaitingSlot>
-                  <TypingDots />
+                  <QuietLine label="Waiting for the conversation" />
                 </WaitingSlot>
               </div>
             </div>
           ) : null}
         </div>
       </div>
-    </div>
+    </div></ActivityFreshness.Provider>
   );
 }
 
@@ -1116,20 +1134,18 @@ function WaitingSlot({ children }: { children?: ReactNode }) {
   return <div className="flex h-12.5 shrink-0 flex-col">{children}</div>;
 }
 
-/**
- * Workbot writing a reply that doesn't show yet: one small reply bubble with three dots that darken in turn, like a
- * messaging app's typing indicator. Nothing else moves (DESIGN V6, P11).
- */
-function TypingDots() {
-  return (
-    <div className="workbot-row-enter flex py-[3px]" role="status" aria-label="Workbot is processing">
-      <div className="flex h-9 items-center gap-[5px] rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 shadow-[var(--wb-card-shadow)]">
-        <span aria-hidden className="workbot-typing-dot" />
-        <span aria-hidden className="workbot-typing-dot" />
-        <span aria-hidden className="workbot-typing-dot" />
-      </div>
-    </div>
-  );
+/** Neutral state, not simulated typing or an invented acknowledgement. */
+function ActivityLine({ queued = false }: { queued?: boolean }) {
+  const fresh = useContext(ActivityFreshness);
+  const label = queued ? "Waiting to start" : "Working on your request";
+  return <QuietLine label={fresh ? label : `Last known: ${label.toLowerCase()}`} />;
+}
+
+function ConnectionStatus({ verifiedAt, onRefresh }: { verifiedAt: number; onRefresh: () => void }) {
+  return <div role="status" className="flex flex-wrap items-center gap-2 px-1 pb-2 text-[12px] leading-4 text-[var(--wb-muted)]">
+    <span>Connection interrupted. Showing the last known conversation{verifiedAt ? `, checked ${new Date(verifiedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}.</span>
+    <button type="button" onClick={onRefresh} className="rounded-full px-2 py-1 font-medium text-[var(--wb-text)] hover:bg-[var(--wb-chip)] focus-visible:shadow-[var(--wb-focus)]">Check again</button>
+  </div>;
 }
 
 /** Both ways Workbot's hello can fail read the same: the drawn greeting stays, and this one line says what didn't. */
@@ -1187,7 +1203,7 @@ function PendingView({ entry, onRetry, waiting }: { entry: Pending; onRetry: () 
               <QuietLine label="Uploading your files" />
             ) : (
               <WaitingSlot>
-                <TypingDots />
+                <QuietLine label="Sending your message" />
               </WaitingSlot>
             )}
           </div>
@@ -1197,56 +1213,16 @@ function PendingView({ entry, onRetry, waiting }: { entry: Pending; onRetry: () 
   );
 }
 
-/** Ticks once a second while mounted. */
-function useNow() {
+/** Completed and last-known cards never keep an elapsed-time interval alive. */
+function useNow(running: boolean) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    if (!running) return;
+    setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(timer);
-  }, []);
+  }, [running]);
   return now;
-}
-
-/**
- * Workbot's computer: a slim laptop with a soft blue screen whose two lines write themselves while it works.
- * Sized for the 16px slot (DESIGN V5); the motion stops for reduced motion (V6).
- */
-/** Workbot's computer; its screen "writes" only while it is working (V6). */
-function ComputerGlyph({ working = true }: { working?: boolean }) {
-  return (
-    <svg viewBox="0 0 16 16" width={16} height={16} fill="none" className={`workbot-computer ${working ? "is-working" : ""}`}>
-      <rect x="2.25" y="3" width="11.5" height="8" rx="1.75" className="workbot-computer-screen" strokeWidth={1.25} />
-      <path d="M1.5 13h13" className="workbot-computer-stand" strokeWidth={1.25} strokeLinecap="round" />
-      <path className="workbot-computer-line" d="M4.75 6h3.5" strokeWidth={1.25} strokeLinecap="round" />
-      <path className="workbot-computer-line" d="M4.75 8.25h5.5" strokeWidth={1.25} strokeLinecap="round" />
-    </svg>
-  );
-}
-
-/**
- * A little person at Workbot's computer: while it works they type (hands tapping, head nodding along, lines
- * appearing on the screen); when it's done they sit back. Only motion that means "working" (DESIGN V6).
- */
-function WorkerGlyph({ working }: { working: boolean }) {
-  return (
-    <svg viewBox="0 0 28 28" width={28} height={28} fill="none" className={`workbot-worker ${working ? "is-working" : ""}`}>
-      {/* desk */}
-      <path d="M2.5 21h23" stroke="var(--wb-computer-frame)" strokeWidth={1.25} strokeLinecap="round" />
-      {/* laptop: screen and base, facing the person */}
-      <rect x="14.5" y="12.25" width="10.5" height="7.5" rx="1.5" fill="var(--wb-computer-screen)" stroke="var(--wb-ink)" strokeWidth={1.25} />
-      <path d="M13 21h12.5" stroke="var(--wb-ink)" strokeWidth={1.5} strokeLinecap="round" />
-      <path className="workbot-worker-line" d="M17 15h4" stroke="var(--wb-computer-line-live)" strokeWidth={1.25} strokeLinecap="round" />
-      <path className="workbot-worker-line" d="M17 17.3h5.5" stroke="var(--wb-computer-line-live)" strokeWidth={1.25} strokeLinecap="round" />
-      {/* person: body, head, arm reaching to the keyboard */}
-      <path d="M4.5 21v-4.2a3.3 3.3 0 0 1 3.3-3.3h0.4a3.3 3.3 0 0 1 3.3 3.3v4.2" fill="var(--wb-ink)" />
-      <g className="workbot-worker-head">
-        <circle cx="8" cy="9.6" r="2.6" fill="var(--wb-ink)" />
-      </g>
-      <g className="workbot-worker-arm">
-        <path d="M10.2 16.8l3.6 2.5" stroke="var(--wb-ink)" strokeWidth={1.6} strokeLinecap="round" />
-      </g>
-    </svg>
-  );
 }
 
 /** A quiet line for the page's own waiting states ("Uploading your files", "Up next"): words only. */
@@ -1258,160 +1234,52 @@ function QuietLine({ label }: { label: string }) {
   );
 }
 
-/**
- * Streamed text arrives in bursts; this reveals it at a steady pace that speeds up when it falls behind,
- * so the reply reads as written rather than jumping a sentence at a time.
- */
-function useSmoothText(target: string, instant = false) {
-  const [shown, setShown] = useState(() => (instant ? target.length : 0));
-  const shownRef = useRef(instant ? target.length : 0);
-  const previous = useRef(instant ? target : "");
-  useEffect(() => {
-    const goal = target.length;
-    // A new piece of text (the next step's) starts from its beginning; more of the same text continues.
-    if (!target.startsWith(previous.current.slice(0, shownRef.current))) shownRef.current = 0;
-    previous.current = target;
-    if (instant || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      shownRef.current = goal;
-      setShown(goal);
-      return;
-    }
-    let frame = 0;
-    const tick = () => {
-      const current = shownRef.current;
-      if (current >= goal) return;
-      // A steady pace, as if written: about 15 frames (¼ s) to catch up with whatever has arrived, never slower than 2
-      // characters a frame, so a reply stops typing soon after Workbot does.
-      shownRef.current = Math.min(goal, current + Math.max(2, Math.ceil((goal - current) / 15)));
-      setShown(shownRef.current);
-      frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [target, instant]);
-  return instant ? target : target.slice(0, Math.min(shown, target.length));
-}
-
-/** `instant` shows the text in full (older words, and answers already done). A bubble keeps one line's height from its first frame. */
-function StreamingText({ text, instant = false }: { text: string; instant?: boolean }) {
-  const shown = useSmoothText(text, instant);
-  return (
-    <div className="workbot-streaming min-h-6">
-      <WorkbotMarkdown text={shown} />
-    </div>
-  );
-}
-
-
-
-/** An app the turn used, for the "Using …" line: Workbot's computer or a connected app. */
-type UsedApp = { key: string; name: string; computer: boolean };
-
-function usedApps(steps: WorkbotStep[], starting: LiveText["working"] | null): UsedApp[] {
-  const used: UsedApp[] = [];
-  const add = (entry: UsedApp) => {
-    if (!used.some((existing) => existing.key === entry.key)) used.push(entry);
-  };
-  for (const step of steps) {
-    if (step.icon === "computer") add({ key: "computer", name: "my computer", computer: true });
-    else if (step.app) add({ key: step.app, name: step.app, computer: false });
-  }
-  if (starting?.on === "computer") add({ key: "computer", name: "my computer", computer: true });
-  return used;
-}
-
-function joinNames(names: string[]) {
-  if (names.length <= 1) return names.join("");
-  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+/** Render bytes that have arrived immediately; stored text never replays a typing effect. */
+function StreamingText({ text }: { text: string }) {
+  return <div className="workbot-streaming min-h-6"><WorkbotMarkdown text={text} /></div>;
 }
 
 /**
- * The value, but each one stays at least `minMs` before the next replaces it, so quick changes read as one calm
- * change instead of a flicker.
- */
-function useHeld<T>(value: T, key: string, minMs: number): T {
-  const [shown, setShown] = useState({ key, value });
-  const shownAt = useRef(Date.now());
-  useEffect(() => {
-    if (key === shown.key) return;
-    const timer = window.setTimeout(() => {
-      shownAt.current = Date.now();
-      setShown({ key, value });
-    }, Math.max(0, minMs - (Date.now() - shownAt.current)));
-    return () => window.clearTimeout(timer);
-    // `value` travels with `key`.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, minMs, shown.key]);
-  return shown.value;
-}
-
-
-/** A computer update stays at least this long, so quick commands read as one calm change. */
-const UPDATE_HOLD_MS = 1_600;
-
-/**
- * Work done between two things Workbot said, where it happened: its computer as a card (the little person at work,
- * what it is doing, how long), or one quiet line for apps alone ("Using Gmail", then "Used Gmail"). `live` while
+ * Work done between two things Workbot said, where it happened: its computer as a card (neutral state,
+ * what it is doing, how long), or one quiet line for connected apps. `live` while
  * nothing has been said after it yet, so a card doesn't blink between two commands (DESIGN C3, T1, V6).
  */
 function StepsSegment({ steps, live }: { steps: WorkbotStep[]; live: boolean }) {
-  const used = usedApps(steps, null);
   const computer = steps.filter((step) => step.icon === "computer");
   const updates = computer.flatMap((step) => step.updates);
   const latest = updates.at(-1) ?? null;
-  const update = useHeld(latest, latest ?? "", UPDATE_HOLD_MS);
-  if (used.length === 0) return null;
-  const others = used.filter((app) => !app.computer);
+  const fresh = useContext(ActivityFreshness);
+  const running = live && fresh && (computer.length ? computer : steps).some((step) => step.status === "running");
+  const last = computer.at(-1);
+  const ended = last?.status === "failed" ? "Computer work couldn't finish" : last?.status === "stopped" ? "Stopped" : last?.status === "interrupted" || last?.status === "running" ? "Completion not confirmed" : "Computer work finished";
+  if (steps.length === 0) return null;
   if (computer.length > 0) {
     return (
       <div className="py-1 pl-1">
         <WorkCard
-          title={live ? "Using my computer" : "Used my computer"}
-          detail={(live ? update : latest) ?? (live ? "Getting started" : "Done")}
-          running={live}
-          outcome={live ? null : "done"}
+          title={running ? "Using my computer" : "Computer activity"}
+          detail={!fresh && live ? "Last known activity" : running ? (latest ?? "Running a command") : ended}
+          running={running}
+          outcome={null}
           startedAt={computer.find((step) => step.startedAt)?.startedAt ?? null}
-          finishedAt={live ? null : ([...computer].reverse().find((step) => step.finishedAt)?.finishedAt ?? null)}
-          updates={live ? [] : updates}
-          action={<AppLogos apps={others} />}
+          finishedAt={last?.finishedAt ?? null}
+          updates={running ? [] : updates}
+          action={null}
         />
       </div>
     );
   }
-  const label = `${live ? "Using" : "Used"} ${joinNames(others.map((app) => app.name))}`;
+  const appFailed = steps.at(-1)?.status === "failed";
+  const label = !fresh && live ? "Last known: using connected apps" : running ? "Using connected apps" : appFailed ? "Couldn't finish in a connected app" : steps.at(-1)?.status === "done" ? "Connected app activity ended" : "Connected app completion not confirmed";
   return (
     <p
-      className={`flex h-7 items-center gap-2 pl-1 text-[12.5px] leading-4 ${live ? "workbot-row-enter" : "text-[var(--wb-faint)]"}`}
-      role={live ? "status" : undefined}
-      aria-live={live ? "polite" : undefined}
+      className="flex h-7 items-center gap-2 pl-1 text-[12.5px] leading-4 text-[var(--wb-muted)]"
+      role="status"
     >
-      <span aria-hidden className="flex shrink-0 items-center gap-1">
-        {others.map((app) => (
-          <span key={app.key} className="workbot-app-enter grid size-4 place-items-center">
-            <AppMark name={app.name} size={14} />
-          </span>
-        ))}
-      </span>
-      <span key={label} className={`truncate ${live ? "workbot-shimmer text-[13px]" : ""}`}>{label}</span>
+      <span className="truncate">{label}</span>
     </p>
   );
 }
-
-/** The other apps a computer card's work used, as logos in its trailing slot. */
-function AppLogos({ apps }: { apps: UsedApp[] }) {
-  if (apps.length === 0) return null;
-  return (
-    <span aria-label={`Also using ${joinNames(apps.map((app) => app.name))}`} className="flex shrink-0 items-center gap-1.5 pr-1">
-      {apps.map((app) => (
-        <span key={app.key} className="workbot-app-enter grid size-4 place-items-center">
-          <AppMark name={app.name} size={14} />
-        </span>
-      ))}
-    </span>
-  );
-}
-
-
 
 /** An answer as it is written, without a closing "Next:" line, which becomes buttons once the answer is done. */
 function withoutNextLine(text: string) {
@@ -1428,30 +1296,16 @@ function withoutNextLine(text: string) {
 function replyProgress(turn: WorkbotTurn, live: LiveText | null) {
   const working = turn.status === "working" || turn.status === "queued";
   // The model call in progress (not stored yet): its text so far, and whether it has started a step.
-  const current = working && live && live.step >= turn.modelSteps ? live : null;
+  const current = live && live.step >= turn.modelSteps ? live : null;
   // Live text is trimmed like the stored text, so a finished bubble carries on instead of starting over.
   const liveText = withoutNextLine((current?.text ?? "").trimStart());
   const last = turn.parts.at(-1);
   // Its computer starting before the step is stored: the card shows right away, after what it just said.
   const startingCard = working && !turn.greeting && current?.working?.on === "computer" && !(last?.kind === "steps" && last.steps.some((step) => step.icon === "computer"));
-  const lastIsLive = working && last?.kind === "steps" && !liveText && !startingCard;
+  const lastIsLive = working && last?.kind === "steps" && last.steps.some((step) => step.status === "running") && !liveText && !startingCard;
   return { working, liveText, startingCard, lastIsLive };
 }
 
-
-/** True only once `flag` has held for `ms`: the typing bubble doesn't flash for a beat between two steps. */
-function useSettled(flag: boolean, ms: number) {
-  const [settled, setSettled] = useState(false);
-  useEffect(() => {
-    if (!flag) {
-      setSettled(false);
-      return;
-    }
-    const timer = window.setTimeout(() => setSettled(true), ms);
-    return () => window.clearTimeout(timer);
-  }, [flag, ms]);
-  return flag && settled;
-}
 
 /** One thing a turn shows: a model call's words (one bubble each) or the steps between them. */
 type TurnItem = { kind: "text"; key: string; text: string } | { kind: "steps"; key: string; steps: WorkbotStep[]; live: boolean };
@@ -1471,12 +1325,8 @@ function TurnView(props: {
 }) {
   const { turn } = props;
   const { working, liveText, startingCard, lastIsLive } = replyProgress(turn, props.live);
-  // An answer watched while it was written keeps revealing at its pace once it's stored; answers already done when the
-  // page opened show at once.
-  const watched = useRef(working);
-  if (working) watched.current = true;
   const parts = turn.parts;
-  const live = working && props.live && props.live.step >= turn.modelSteps ? props.live : null;
+  const live = props.live && props.live.step >= turn.modelSteps ? props.live : null;
   // One bubble per model call, keyed by that call from its first streamed word to its stored copy, so a bubble never
   // swaps, jumps to its full length or starts over when the conversation is read again (DESIGN P11). Words streamed for
   // an earlier call stay until the stored copy arrives.
@@ -1485,7 +1335,7 @@ function TurnView(props: {
     if (part.kind === "text") items.push({ kind: "text", key: `text-${part.step ?? `part-${index}`}`, text: part.text });
     else items.push({ kind: "steps", key: `steps-${index}`, steps: part.steps, live: working && index === parts.length - 1 && lastIsLive });
   });
-  if (working && props.live) {
+  if (props.live) {
     for (const entry of props.live.earlier ?? []) {
       const text = withoutNextLine(entry.text.trimStart());
       if (entry.step >= turn.modelSteps && text) items.push({ kind: "text", key: `text-${entry.step}`, text });
@@ -1502,16 +1352,8 @@ function TurnView(props: {
   if (runningApps) items.pop();
   const lastText = items.reduce((found, item, index) => (item.kind === "text" ? index : found), -1);
   const waiting = answering && !liveText && !startingCard && !lastIsLive;
-  const fresh = items.length === 0 && !runningApps;
-  const settled = useSettled(waiting && !fresh, 350);
-  const dots = waiting && (fresh || settled);
-  const running = runningApps !== null;
-  const [held, setHeld] = useState(false);
-  useEffect(() => {
-    if (dots || running) setHeld(true);
-    else if (!answering || liveText) setHeld(false);
-  }, [dots, running, answering, liveText]);
-  const slot = answering && !liveText && (dots || held || running);
+  // Reserve the same next-message space across real command boundaries; never hold an obsolete status.
+  const slot = answering && !liveText;
   const copyText = parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])).join("\n\n");
   return (
     <>
@@ -1528,14 +1370,14 @@ function TurnView(props: {
           item.kind === "text" ? (
             // Natural replies: Copy sits beside the last bubble, so a finished answer doesn't add a row under itself.
             <AssistantBubble key={item.key} trailing={turn.status === "done" && index === lastText ? <CopyAnswer text={copyText} /> : null}>
-              <StreamingText text={item.text} instant={!(props.newestText && index === lastText && watched.current)} />
+              <StreamingText text={item.text} />
             </AssistantBubble>
           ) : (
             <StepsSegment key={item.key} steps={item.steps} live={item.live} />
           ),
         )}
         {startingCard ? <StepsSegment steps={[{ label: "Using my computer", icon: "computer", status: "running", app: null, startedAt: null, finishedAt: null, updates: [] }]} live /> : null}
-        {slot ? <WaitingSlot>{runningApps ? <StepsSegment steps={runningApps.steps} live /> : dots ? <TypingDots /> : null}</WaitingSlot> : null}
+        {slot ? <WaitingSlot>{runningApps ? <StepsSegment steps={runningApps.steps} live /> : waiting ? <ActivityLine queued={turn.status === "queued"} /> : null}</WaitingSlot> : null}
       </div>
       {turn.outputs.length ? <OutputFiles files={turn.outputs} /> : null}
       {turn.tasks.length ? <TaskCards tasks={turn.tasks} canRetry={props.canChange} onRetry={(task) => props.onSuggestion(`Try the "${task.title}" background task again.`)} /> : null}
@@ -1558,7 +1400,8 @@ function TurnView(props: {
       {turn.status === "failed" ? (
         <ErrorLine action={props.latest && (turn.greeting || turn.retryable) ? { label: "Try again", onClick: props.onRetry } : null}>{turn.greeting ? HELLO_FAILED : turn.error}</ErrorLine>
       ) : null}
-      {/* Natural replies: an answer cut short by a follow-up or by Stop just ends where it was. */}
+      {turn.status === "stopped" ? <QuietLine label="Stopped. This answer may be incomplete." /> : null}
+      {turn.status === "interrupted" ? <QuietLine label="Interrupted. This answer may be incomplete." /> : null}
     </>
   );
 }
@@ -1576,8 +1419,8 @@ const isOpen = (task: WorkbotTask) => task.status === "queued" || task.status ==
 
 /**
  * Work Workbot did on its computer, as one card: the laptop, what the work is, and what it is doing now (or what it
- * last did, once it is over) with how long it has taken. Running: the laptop animates and the line shimmers (V6).
- * Finished: the card stays, quiet, with a check. Clicking a finished card shows everything it did, in its own words.
+ * last did, once it is over) with its measured duration.
+ * Finished: the card stays quiet. A check is reserved for a task with a confirmed completed status.
  */
 function WorkCard(props: {
   title: string;
@@ -1590,14 +1433,14 @@ function WorkCard(props: {
   updates: string[];
   action?: ReactNode;
 }) {
-  const now = useNow();
+  const now = useNow(props.running && props.startedAt !== null);
   const [open, setOpen] = useState(false);
   const elapsed = props.startedAt ? (props.finishedAt ?? (props.running ? now : null)) : null;
   const expandable = !props.running && props.updates.length > 1;
   const body = (
     <>
       <span aria-hidden className="relative grid size-9 shrink-0 place-items-center rounded-[10px] bg-[var(--wb-chip)]">
-        <WorkerGlyph working={props.running} />
+        <Monitor size={16} strokeWidth={1.5} className="text-[var(--wb-muted)]" />
         {props.outcome === "done" ? (
           <span className="absolute -bottom-1 -right-1 grid size-4 place-items-center rounded-full bg-[var(--wb-ink)] text-[var(--wb-surface)] ring-2 ring-[var(--wb-surface)]">
             <Check size={9} strokeWidth={3} />
@@ -1607,7 +1450,7 @@ function WorkCard(props: {
       <span className="flex min-w-0 flex-1 flex-col text-left">
         <span className="truncate text-[13.5px] font-medium leading-5 text-[var(--wb-text)]">{props.title}</span>
         <span className={`flex min-w-0 items-center gap-1.5 text-[12px] leading-4 ${props.outcome === "failed" ? "text-[var(--wb-danger)]" : "text-[var(--wb-muted)]"}`}>
-          <span key={props.detail} className={`workbot-subtitle-enter truncate ${props.running ? "workbot-shimmer" : ""}`}>{props.detail}</span>
+          <span className="truncate">{props.detail}</span>
           {props.startedAt && elapsed && elapsed - props.startedAt >= 1_000 ? (
             <span className="shrink-0 tabular-nums">· {duration(elapsed - props.startedAt)}</span>
           ) : null}
@@ -1617,7 +1460,7 @@ function WorkCard(props: {
     </>
   );
   return (
-    <div className="workbot-row-enter max-w-[480px] rounded-[14px] bg-[var(--wb-surface)] shadow-[var(--wb-card-shadow)]">
+    <div data-workbot-activity data-running={props.running} className="max-w-[480px] rounded-[14px] bg-[var(--wb-surface)] shadow-[var(--wb-card-shadow)]">
       {expandable ? (
         <div className="flex items-center pr-2">
           <button
@@ -1648,17 +1491,18 @@ function WorkCard(props: {
   );
 }
 
-/** One background task as a card: the little person at work, what it's doing, how long, and Stop. */
+/** A background task, its verified state and duration, and explicit Stop recovery. */
 function TaskCard({ task, onRetry, canRetry = true }: { task: WorkbotTask; onRetry?: () => void; canRetry?: boolean }) {
   const stop = useStopWorkbotTask();
-  const running = isOpen(task);
-  const outcome = running ? null : task.status === "done" ? "done" : task.status === "failed" ? "failed" : "stopped";
-  const detail = running
-    ? task.status === "queued" ? "Waiting to start" : task.status === "paused" ? "Picking it back up" : (task.update ?? "Working on it")
+  const fresh = useContext(ActivityFreshness);
+  const open = isOpen(task);
+  const running = fresh && task.status === "working";
+  const outcome = open ? null : task.status === "done" ? "done" : task.status === "failed" ? "failed" : "stopped";
+  const detail = !fresh && open ? "Last known activity" : task.status === "queued" ? "Waiting to start" : task.status === "paused" ? "Interrupted" : running ? (task.update ?? "Working on it")
     : outcome === "done" ? "Done" : outcome === "failed" ? "Couldn't finish" : "Stopped";
   const stopping = stop.isPending && stop.variables === task.id;
   return (
-    <WorkCard
+    <><WorkCard
       title={task.title}
       detail={detail}
       running={running}
@@ -1667,10 +1511,11 @@ function TaskCard({ task, onRetry, canRetry = true }: { task: WorkbotTask; onRet
       finishedAt={task.finishedAt}
       updates={task.updates}
       action={
-        running ? (
+        open ? (
           <button
             type="button"
             disabled={stopping}
+            aria-label={`Stop ${task.title}`}
             onClick={() => stop.mutate(task.id)}
             className="h-7 shrink-0 rounded-full px-3 text-[12px] font-medium text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
           >
@@ -1681,6 +1526,7 @@ function TaskCard({ task, onRetry, canRetry = true }: { task: WorkbotTask; onRet
         ) : null
       }
     />
+    {stop.isError && open ? <ErrorLine action={{ label: "Try stopping again", onClick: () => stop.mutate(task.id) }}>Couldn't confirm this task stopped. It may still be working.</ErrorLine> : null}</>
   );
 }
 
@@ -1718,6 +1564,8 @@ function OutputFiles({ files }: { files: WorkbotAttachment[] }) {
 
 function Composer(props: {
   name: string;
+  /** Keep unsent state mounted without exposing its DOM while conversation access is denied. */
+  concealed?: boolean;
   autoFocus?: boolean;
   disabled?: boolean;
   busy: boolean;
@@ -1740,7 +1588,7 @@ function Composer(props: {
     if (!node) return;
     node.style.height = "auto";
     node.style.height = `${Math.min(node.scrollHeight, 200)}px`;
-  }, [text]);
+  }, [text, props.concealed]);
 
   const sendNow = () => {
     if (!canSend || props.disabled) return;
@@ -1764,6 +1612,7 @@ function Composer(props: {
   // While an answer is in progress, a typed message is still sent (it is answered next); an empty box offers Stop.
   const showStop = props.busy && !canSend;
   const multiline = hasFiles || text.includes("\n") || text.length > 70;
+  if (props.concealed) return null;
 
   return (
     <div

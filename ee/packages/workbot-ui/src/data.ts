@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import { errorMessage as getErrorMessage, hostFetch, workbotHost } from "./host";
@@ -34,7 +34,7 @@ export function newChatId() {
 const stepSchema = z.object({
   label: z.string(),
   icon: z.enum(["app", "computer"]),
-  status: z.enum(["running", "done"]),
+  status: z.enum(["running", "done", "failed", "stopped", "interrupted"]),
   app: z.string().nullable(),
   startedAt: z.number().nullable(),
   finishedAt: z.number().nullable(),
@@ -63,7 +63,7 @@ const turnSchema = z.object({
   context: workbotViewContextSchema.optional(),
   sentAt: z.number().nullable(),
   finishedAt: z.number().nullable(),
-  status: z.enum(["queued", "working", "done", "failed", "stopped"]),
+  status: z.enum(["queued", "working", "interrupted", "done", "failed", "stopped"]),
   attachments: z.array(z.object({ id: z.string(), name: z.string(), mediaType: z.string(), size: z.number(), updatedAt: z.number().optional() })),
   /** Files Workbot made or revised while answering, to open from the answer. `updatedAt` moves with each revision. */
   outputs: z.array(z.object({ id: z.string(), name: z.string(), mediaType: z.string(), size: z.number(), updatedAt: z.number().optional() })).default([]),
@@ -97,7 +97,33 @@ const threadSchema = z.discriminatedUnion("available", [
 ]);
 export type WorkbotThread = z.infer<typeof threadSchema>;
 
+export class WorkbotReadError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "WorkbotReadError";
+  }
+}
+
 export const workbotQueryKey = ["workbot", "thread"] as const;
+
+type ThreadAccess = { denied: boolean; epoch: number };
+type ThreadRead = { thread: WorkbotThread; accessEpoch: number };
+
+/** A denial survives failed reads, paging and remounts. Only a new authorized thread read can lift it. */
+export function useWorkbotThreadAccess(chat: string | null) {
+  const host = workbotHost();
+  const organization = host.identity?.organizationId ?? "";
+  const principal = host.identity?.principalId ?? "";
+  const queryKey = useMemo(() => ["workbot", "thread-access", organization, principal, chat ?? "main"], [organization, principal, chat]);
+  const query = useQuery({
+    queryKey,
+    initialData: (): ThreadAccess => ({ denied: false, epoch: 0 }),
+    enabled: false,
+    staleTime: Number.POSITIVE_INFINITY,
+    gcTime: Number.POSITIVE_INFINITY,
+  });
+  return { ...query, queryKey };
+}
 
 /**
  * The conversation's newest `turns` turns. While the live stream is connected it is re-read only when
@@ -105,23 +131,41 @@ export const workbotQueryKey = ["workbot", "thread"] as const;
  */
 export function useWorkbotThread(input: { turns: number; awaiting: boolean; live: boolean }) {
   const chat = useWorkbotChat();
-  return useQuery({
-    queryKey: [...workbotQueryKey, chat ?? "main", input.turns],
-    queryFn: async () => {
+  const queryClient = useQueryClient();
+  const access = useWorkbotThreadAccess(chat);
+  const query = useQuery({
+    queryKey: [...workbotQueryKey, ...access.queryKey.slice(2), input.turns],
+    queryFn: async (): Promise<ThreadRead> => {
+      const accessEpoch = queryClient.getQueryData<ThreadAccess>(access.queryKey)?.epoch ?? 0;
       const { response, payload } = await requestJson(inChat(`/v1/workbot?turns=${input.turns}`, chat), { method: "GET" }, 30_000);
-      if (!response.ok) throw new Error(getErrorMessage(payload, "Couldn't load the conversation."));
-      return threadSchema.parse(payload);
+      if (response.status === 401 || response.status === 403) {
+        queryClient.setQueryData<ThreadAccess>(access.queryKey, current => ({ denied: true, epoch: (current?.epoch ?? 0) + 1 }));
+      }
+      if (!response.ok) throw new WorkbotReadError(getErrorMessage(payload, "Couldn't load the conversation."), response.status);
+      const thread = threadSchema.parse(payload);
+      // The shipped route reports a runner outage in a successful HTTP envelope, not necessarily a 503.
+      // It is not a new conversation snapshot: retain the last verified words and their verification time.
+      if (!thread.available && thread.reason === "workbot_runner_unavailable") throw new WorkbotReadError("Couldn't verify the conversation.", 503);
+      return { thread, accessEpoch };
     },
     placeholderData: keepPreviousData,
     refetchInterval: (query) => {
-      const data = query.state.data;
+      if (access.data.denied) return false;
+      const data = query.state.data?.thread;
       const busy = input.awaiting || (data?.available === true && data.status === "busy");
       if (input.live) return busy ? 10_000 : 60_000;
       return busy ? 1_500 : 20_000;
     },
     refetchIntervalInBackground: false,
-    retry: 2,
+    retry: (attempt, error) => !(error instanceof WorkbotReadError && (error.status === 401 || error.status === 403)) && attempt < 2,
   });
+  useEffect(() => {
+    const read = query.data;
+    if (!access.data.denied || !query.isSuccess || query.isPlaceholderData || !read?.thread.available || read.accessEpoch !== access.data.epoch) return;
+    // The authorized snapshot is already committed to the cache before any concealed content can return.
+    queryClient.setQueryData<ThreadAccess>(access.queryKey, current => current?.epoch === read.accessEpoch ? { ...current, denied: false } : current);
+  }, [access.data, access.queryKey, query.isSuccess, query.isPlaceholderData, query.data, queryClient]);
+  return { ...query, data: query.data?.thread, accessDenied: access.data.denied };
 }
 
 /** Reply text streamed for one turn's model call `step`, before that call is stored. */
@@ -153,6 +197,7 @@ export function useWorkbotLive(enabled: boolean) {
   const queryClient = useQueryClient();
   const chat = useWorkbotChat();
   const [connected, setConnected] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const [live, setLive] = useState<Record<string, LiveText>>({});
   const refetching = useRef<{ running: boolean; again: boolean }>({ running: false, again: false });
 
@@ -160,6 +205,8 @@ export function useWorkbotLive(enabled: boolean) {
     if (!enabled) return;
     // Another chat: none of the text streaming in the last one belongs here.
     setLive({});
+    setConnected(false);
+    setReconnecting(false);
     const controller = new AbortController();
     let attempt = 0;
 
@@ -213,7 +260,9 @@ export function useWorkbotLive(enabled: boolean) {
         try {
           const response = await openStream(controller.signal, chat);
           if (!response.ok || !response.body) throw new Error(`events_${response.status}`);
+          if (controller.signal.aborted) break;
           setConnected(true);
+          setReconnecting(false);
           attempt = 0;
           // Anything missed while disconnected is picked up by one re-read.
           void refresh();
@@ -236,8 +285,9 @@ export function useWorkbotLive(enabled: boolean) {
         } catch {
           // Reconnect below.
         }
-        setConnected(false);
         if (controller.signal.aborted) break;
+        setConnected(false);
+        setReconnecting(true);
         attempt += 1;
         await new Promise((resolve) => setTimeout(resolve, Math.min(10_000, attempt === 1 ? 250 : 1_000 * 2 ** Math.min(attempt - 2, 3))));
       }
@@ -246,7 +296,7 @@ export function useWorkbotLive(enabled: boolean) {
     return () => controller.abort();
   }, [enabled, queryClient, chat]);
 
-  return { connected, live };
+  return { connected, reconnecting, live };
 }
 
 export class WorkbotSendError extends Error {
@@ -307,14 +357,17 @@ export function useRetryWorkbotMessage() {
   });
 }
 
+const confirmedStopSchema = z.object({ stopped: z.literal(true) });
+
 export function useStopWorkbot() {
   const queryClient = useQueryClient();
   const chat = useWorkbotChat();
   return useMutation({
     mutationFn: async () => {
       const { response, payload } = await requestJson(inChat("/v1/workbot/stop", chat), { method: "POST" }, 15_000);
-      if (!response.ok) throw new Error(getErrorMessage(payload, "Couldn't stop."));
+      if (!response.ok || !confirmedStopSchema.safeParse(payload).success) throw new Error(getErrorMessage(payload, "Couldn't confirm that Workbot stopped."));
     },
+    retry: false,
     onSettled: async () => queryClient.invalidateQueries({ queryKey: workbotQueryKey }),
   });
 }
@@ -452,8 +505,9 @@ export function useStopWorkbotTask() {
   return useMutation({
     mutationFn: async (taskId: string) => {
       const { response, payload } = await requestJson(inChat(`/v1/workbot/tasks/${encodeURIComponent(taskId)}/stop`, chat), { method: "POST" }, 15_000);
-      if (!response.ok) throw new Error(getErrorMessage(payload, "Couldn't stop it."));
+      if (!response.ok || !confirmedStopSchema.safeParse(payload).success) throw new Error(getErrorMessage(payload, "Couldn't confirm this task stopped."));
     },
+    retry: false,
     onSettled: async () => queryClient.invalidateQueries({ queryKey: workbotQueryKey }),
   });
 }
