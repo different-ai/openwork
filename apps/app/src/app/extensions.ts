@@ -54,6 +54,7 @@ export type OpenWorkExtensionContributionType =
   | "composer-prompt"
   | "session-side-panel"
   | "session-rail-item"
+  | "composer-control"
   | "control-actions"
   | "server-route"
   | "native-capability"
@@ -208,5 +209,27 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
       { type: "provider-connected", ref: "ollama", label: "Ollama provider" },
     ],
     lifecycle: { reload: ["config"], detection: ["provider:ollama"] },
+  },
+  {
+    schemaVersion: 1,
+    id: "voice-dictation",
+    name: "Voice dictation",
+    description: "Dictate prompts with a speech-to-text model running on your own computer, such as Whisper or Parakeet.",
+    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
+    icon: { src: "/openwork-mark.svg" },
+    setup: {
+      instructions: "Run a local transcription server with an OpenAI-compatible /v1/audio/transcriptions endpoint (for example whisper.cpp's whisper-server), then enter its address.",
+    },
+    resources: [
+      { type: "local-service", id: "transcription-api", label: "Transcription server", description: "http://127.0.0.1:8080/v1/audio/transcriptions", required: true },
+    ],
+    contributions: [
+      { type: "settings-panel", ref: "openwork.dictation.settings", location: "settings-detail" },
+      { type: "composer-control", ref: "openwork.dictation.mic", label: "Microphone", location: "composer" },
+    ],
+    enablement: [
+      { type: "toggle-enabled", ref: "voice-dictation", label: "Enabled" },
+    ],
+    platform: ["darwin", "linux", "windows", "web"],
   },
 ];

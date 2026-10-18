@@ -94,6 +94,8 @@ export type LexicalPromptEditorHandle = {
   insertFileMentionAtSelection: (path: string) => string;
   /** Caret position in the serialized draft, so pasted chips land where the user pasted. */
   draftOffsetAtSelection: () => number | null;
+  /** Insert dictated text as ordinary editable text at the caret, or at the end when the editor has no caret. */
+  insertDictatedText: (text: string) => void;
 };
 
 type SerializedComposerMentionNode = Spread<
@@ -1495,6 +1497,27 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
     },
     draftOffsetAtSelection() {
       return editor.getEditorState().read(() => $draftOffsetAtSelection());
+    },
+    insertDictatedText(text: string) {
+      editor.update(() => {
+        if (!$isRangeSelection($getSelection())) {
+          const lastParagraph = $getRoot().getLastChild();
+          if ($isElementNode(lastParagraph)) lastParagraph.select(lastParagraph.getChildrenSize(), lastParagraph.getChildrenSize());
+          else $getRoot().selectEnd();
+        }
+        const selection = $getSelection();
+        const anchor = $isRangeSelection(selection) ? selection.anchor : null;
+        const anchorNode = anchor?.getNode();
+        const before = !anchor
+          ? ""
+          : $isTextNode(anchorNode)
+            ? anchorNode.getTextContent().slice(0, anchor.offset)
+            : $isElementNode(anchorNode)
+              ? anchorNode.getChildAtIndex(anchor.offset - 1)?.getTextContent() ?? ""
+              : "";
+        insertPastedText(/\S$/.test(before) ? ` ${text}` : text);
+      });
+      editor.focus();
     },
   }), [editor]);
 

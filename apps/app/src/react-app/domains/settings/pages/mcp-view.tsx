@@ -289,7 +289,9 @@ function extensionContributionLabels(entry: McpDirectoryInfo) {
 function isToggleOnlyExtension(entry: McpDirectoryInfo) {
   if (entry.kind !== "extension") return false;
   return entry.extensionManifest?.contributions?.some((contribution) =>
-    contribution.type === "session-side-panel" || contribution.type === "session-rail-item"
+    contribution.type === "session-side-panel"
+    || contribution.type === "session-rail-item"
+    || contribution.type === "composer-control"
   ) === true;
 }
 

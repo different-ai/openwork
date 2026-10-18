@@ -88,6 +88,7 @@ import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
 // Side-effect imports: register extension config components into the registry.
 import { OllamaConfig } from "@/react-app/domains/settings/ollama-config";
 import "@/react-app/domains/settings/browser-extension-config";
+import { VoiceDictationSettings } from "@/react-app/domains/settings/voice-dictation-config";
 import { useSettingsExtensionController } from "@/react-app/domains/settings/settings-extension-controller";
 import { buildExtensionItems } from "@/react-app/domains/settings/extension-items";
 import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
@@ -296,6 +297,7 @@ export function parseSettingsPath(pathname: string): {
     case "general":
     case "ai":
     case "ollama":
+    case "dictation":
     case "preferences":
     case "permissions":
     case "appearance":
@@ -2274,6 +2276,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onSync={syncLocalProvider}
           />
         );
+      case "dictation":
+        return <VoiceDictationSettings />;
       case "preferences":
         return (
           <PreferencesView

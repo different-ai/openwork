@@ -2413,6 +2413,7 @@ function parseExtensionContributionType(value: unknown): OpenWorkExtensionContri
     case "composer-prompt":
     case "session-side-panel":
     case "session-rail-item":
+    case "composer-control":
     case "control-actions":
     case "server-route":
     case "native-capability":

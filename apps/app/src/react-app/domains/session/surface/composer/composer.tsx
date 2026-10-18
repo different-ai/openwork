@@ -50,6 +50,8 @@ import { connectionDiagnosticHistory, type ConnectionDiagnosticSource, type Send
 import { composerDiagnosticBlockers } from "./composer-diagnostics";
 import { ModelRecoveryNote } from "./model-recovery-note";
 import { modelRecoveryChatKey, useModelRecoveryStore } from "../model-recovery-store";
+import { DictationControl } from "./dictation-control";
+import { useDictation, useDictationAvailable } from "./use-dictation";
 
 type MentionItem = {
   id: string;
@@ -256,6 +258,15 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [mcpLoading, setMcpLoading] = useState(false);
   const [dropzoneActive, setDropzoneActive] = useState(false);
   const editorRef = useRef<LexicalPromptEditorHandle | null>(null);
+  const dictationAvailable = useDictationAvailable();
+  const dictation = useDictation({
+    onTranscript: (text) => editorRef.current?.insertDictatedText(text),
+    onError: (message) => toast.error(message),
+  });
+  const cancelDictation = dictation.cancel;
+  useEffect(() => {
+    if (!dictationAvailable) cancelDictation();
+  }, [cancelDictation, dictationAvailable]);
   // The `/` and `@` suggestion lists are anchored to the composer panel.
   const panelRef = useRef<HTMLDivElement | null>(null);
   // IME composition guard: while an IME composition is active, we must not
@@ -1516,6 +1527,9 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   Cmd/Ctrl+Enter still steers).
               */}
               <div data-composer-actions className="col-start-2 row-start-2 ml-auto flex shrink-0 items-center gap-1.5">
+                {dictationAvailable ? (
+                  <DictationControl status={dictation.status} disabled={Boolean(props.disabled)} onToggle={dictation.toggle} />
+                ) : null}
                 <button
                   type="button"
                   onPointerDown={(event) => {
