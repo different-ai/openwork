@@ -2,6 +2,7 @@
 import {
   ChartNoAxesColumnIncreasing,
   Check,
+  CircleCheck,
   FolderPlus,
   Loader2,
   XCircle,
@@ -80,7 +81,7 @@ export type CreateWorkspaceLocalPanelProps = {
 
 function stepIcon(status: CreateWorkspaceProgressStep["status"]) {
   if (status === "done")
-    return <XCircle size={16} className="text-emerald-10" />;
+    return <CircleCheck size={16} className="text-emerald-10" />;
   if (status === "active")
     return <Loader2 size={16} className="animate-spin text-dls-accent" />;
   if (status === "error") return <XCircle size={16} className="text-red-10" />;
