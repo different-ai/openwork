@@ -22,6 +22,7 @@ import { createInternalMcpPrincipalHeader } from "../session.js"
 import { getOrganizationContextForUser, listTeamsForMember } from "../orgs.js"
 import { listMemberUsableConnectionFacts } from "../routes/org/mcp-connections.js"
 import { readWorkbotModel } from "@openwork/types/den/workbot-settings"
+import { AUTOMATION_MODEL_ATTENTION_CAPABILITY, AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER } from "@openwork/types/automations"
 import { organizationDefaultModel } from "./model.js"
 
 /**
@@ -167,6 +168,7 @@ const ID = "[A-Za-z0-9_-]{1,160}"
  */
 const WORKBOT_CALENDAR_ROUTES: ReadonlyArray<{ method: "GET" | "POST" | "PATCH"; path: RegExp; write: boolean }> = [
   { method: "GET", path: /^\/v1\/automations$/, write: false },
+  { method: "GET", path: new RegExp(`^/v1/automations/${ID}$`), write: false },
   { method: "GET", path: /^\/v1\/automation-runs$/, write: false },
   { method: "GET", path: new RegExp(`^/v1/automations/${ID}/runs$`), write: false },
   { method: "GET", path: new RegExp(`^/v1/automation-runs/${ID}$`), write: false },
@@ -294,7 +296,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       "x-mcp": false,
       summary: "Workbot's Calendar: the member's Automations, runs and calendar meetings",
       description:
-        "For the Workbot app only. Forwards an allowlisted Den route, as the member behind the Workbot token: GET /v1/automations, GET /v1/automation-runs, GET /v1/automations/{id}/runs, GET /v1/automation-runs/{id}, GET /v1/capabilities/{google-workspace|microsoft-365}/calendar-events, GET /v1/llm-providers (names and model IDs only), GET /v1/org/workbot-settings (subject to the destination's feature and permission guards), POST /v1/automations/{id}/{activate|deactivate|run}, POST /v1/cloud-automations and a PATCH /v1/automations/{id} limited to name, schedule, instructions and model. Refused while Workbot or its Calendar is off.",
+        "For the Workbot app only. Forwards an allowlisted Den route, as the member behind the Workbot token: GET /v1/automations, GET /v1/automations/{id} (owner-scoped detail), GET /v1/automation-runs, GET /v1/automations/{id}/runs, GET /v1/automation-runs/{id}, GET /v1/capabilities/{google-workspace|microsoft-365}/calendar-events, GET /v1/llm-providers (names and model IDs only), GET /v1/org/workbot-settings (subject to the destination's feature and permission guards), POST /v1/automations/{id}/{activate|deactivate|run}, POST /v1/cloud-automations and a PATCH /v1/automations/{id} limited to name, schedule, instructions and model. Refused while Workbot or its Calendar is off.",
       responses: {
         200: jsonResponse("The forwarded route's answer.", z.unknown()),
         401: jsonResponse("The token is missing, expired or revoked, or the membership ended.", unauthorizedSchema),
@@ -332,6 +334,8 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       }
       const headers = new Headers({
         accept: "application/json",
+        // This first-party Calendar renders needs-attention Automations and their retained history.
+        [AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER]: AUTOMATION_MODEL_ATTENTION_CAPABILITY,
         "x-den-internal-mcp-principal": createInternalMcpPrincipalHeader({
           userId: resolved.principal.userId,
           organizationId: resolved.principal.organizationId,

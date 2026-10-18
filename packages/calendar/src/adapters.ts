@@ -169,6 +169,8 @@ export function classifyCalendarError(provider: CalendarProviderId, error: unkno
   }
   if (error.status === 404) return new CalendarConnectionError(provider, "unsupported", `This OpenWork Cloud server cannot read ${label} yet.`)
   if (error.status === 403 && error.code === "policy_blocked") return new CalendarConnectionError(provider, "policy_blocked", error.message)
+  if (error.status === 401) return new CalendarConnectionError(provider, "auth_expired", `${label} access needs a fresh sign-in.`)
+  if (error.status === 403) return new CalendarConnectionError(provider, "permission_missing", `${label} did not allow reading your calendar.`)
   if (error.status === 409 && error.code === "needs_connection") {
     const permission = /missing the|disabled|permission/i.test(error.message)
     return new CalendarConnectionError(provider, permission ? "permission_missing" : "not_connected", error.message)

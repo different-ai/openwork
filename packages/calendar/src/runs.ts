@@ -12,8 +12,8 @@ type RunPage = { items: AutomationRun[]; nextCursor: string | null }
 export type AutomationRunsSource = {
   /** `GET /v1/automation-runs?from&to&cursor&limit`; older Dens answer 404. */
   listRunsInRange(input: { from: number; to: number; cursor?: string; limit?: number }): Promise<RunPage>
-  /** `GET /v1/automations/:id/runs?limit`, newest first. */
-  listRuns(automationId: string, input: { limit: number }): Promise<RunPage>
+  /** `GET /v1/automations/:id/runs?limit&cursor`, newest first. */
+  listRuns(automationId: string, input: { limit: number; cursor?: string }): Promise<RunPage>
 }
 
 export type RunsInRange = {

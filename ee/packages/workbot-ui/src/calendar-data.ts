@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import {
   denGoogleCalendarEventsResponseSchema,
@@ -18,6 +18,7 @@ import {
   automationRunRangeSchema,
   automationRunReceiptSchema,
   automationRunSchema,
+  type AutomationList,
   type AutomationModel,
   type AutomationSchedule,
 } from "@openwork/types/automations";
@@ -68,7 +69,11 @@ export const workbotRunsSource: AutomationRunsSource = {
     if (input.limit) params.set("limit", String(input.limit));
     return calendarJson(automationRunRangeSchema, `/v1/automation-runs?${params.toString()}`);
   },
-  listRuns: (automationId, input) => calendarJson(runPageSchema, `/v1/automations/${encodeURIComponent(automationId)}/runs?limit=${input.limit}`),
+  listRuns: (automationId, input) => {
+    const params = new URLSearchParams({ limit: String(input.limit) });
+    if (input.cursor) params.set("cursor", input.cursor);
+    return calendarJson(runPageSchema, `/v1/automations/${encodeURIComponent(automationId)}/runs?${params}`);
+  },
 };
 
 export const workbotCalendarTransport: CalendarTransport = {
@@ -79,25 +84,81 @@ export const workbotCalendarTransport: CalendarTransport = {
 
 export const calendarKey = ["workbot", "calendar"] as const;
 
+/** Calendar caches, including denial barriers, belong to one host and authenticated member. */
+export function calendarMemberKey() {
+  const host = workbotHost();
+  return [...calendarKey, host.homeHref, host.identity?.organizationId ?? null, host.identity?.principalId ?? null];
+}
+
+type WorkbotAutomationPage = AutomationList & { accessDenied?: boolean };
+
 export function useWorkbotAutomations() {
-  return useQuery({
-    queryKey: [...calendarKey, "automations"],
-    queryFn: () => calendarJson(automationListSchema, "/v1/automations?limit=100"),
+  const queryClient = useQueryClient();
+  const memberKey = calendarMemberKey();
+  const query = useInfiniteQuery({
+    queryKey: [...memberKey, "automations"],
+    initialPageParam: "",
+    queryFn: async ({ pageParam, signal }): Promise<WorkbotAutomationPage> => {
+      const params = new URLSearchParams({ limit: "100" });
+      if (pageParam) params.set("cursor", pageParam);
+      try {
+        const page = await calendarJson(automationListSchema, `/v1/automations?${params}`, { signal });
+        if (page.nextCursor === pageParam) throw new Error("The automation list did not advance. Try again.");
+        return page;
+      } catch (error) {
+        // A denial remains part of the cached inventory until a fresh authorized read replaces it.
+        // A later network error must not reveal the pre-denial names or instructions again.
+        if (error instanceof WorkbotCalendarError && (error.status === 401 || error.status === 403)) {
+          queryClient.removeQueries({ queryKey: memberKey, predicate: (entry) => entry.queryKey.length !== memberKey.length + 1 || entry.queryKey[memberKey.length] !== "automations" });
+          return { items: [], nextCursor: null, accessDenied: true };
+        }
+        throw error;
+      }
+    },
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
     refetchInterval: 60_000,
   });
+  const accessDenied = query.data?.pages.some((page) => page.accessDenied === true) ?? false;
+  const data = useMemo(() => query.data && !accessDenied ? {
+    items: [...new Map(query.data.pages.flatMap((page) => page.items).map((item) => [item.automation.id, item])).values()],
+    nextCursor: query.data.pages.at(-1)?.nextCursor ?? null,
+  } : undefined, [accessDenied, query.data]);
+  return { ...query, data, accessDenied };
 }
 
 export function useAutomationRuns(automationId: string | null) {
-  return useQuery({
-    queryKey: [...calendarKey, "runs", automationId],
-    queryFn: () => calendarJson(runPageSchema, `/v1/automations/${encodeURIComponent(automationId ?? "")}/runs?limit=10`),
+  const query = useInfiniteQuery({
+    queryKey: [...calendarMemberKey(), "runs", automationId],
+    initialPageParam: "",
+    queryFn: async ({ pageParam, signal }) => {
+      const params = new URLSearchParams({ limit: "20" });
+      if (pageParam) params.set("cursor", pageParam);
+      const page = await calendarJson(runPageSchema, `/v1/automations/${encodeURIComponent(automationId ?? "")}/runs?${params}`, { signal });
+      if (page.nextCursor === pageParam) throw new Error("The run history did not advance. Try again.");
+      return page;
+    },
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
     enabled: automationId !== null,
+  });
+  const data = useMemo(() => query.data ? {
+    items: [...new Map(query.data.pages.flatMap((page) => page.items).map((run) => [run.id, run])).values()],
+    nextCursor: query.data.pages.at(-1)?.nextCursor ?? null,
+  } : undefined, [query.data]);
+  return { ...query, data };
+}
+
+export function useWorkbotAutomation(automationId: string | null) {
+  return useQuery({
+    queryKey: [...calendarMemberKey(), "automation", automationId],
+    queryFn: ({ signal }) => calendarJson(automationDetailSchema, `/v1/automations/${encodeURIComponent(automationId ?? "")}`, { signal }),
+    enabled: automationId !== null,
+    refetchInterval: 60_000,
   });
 }
 
 export function useRunReceipt(runId: string | null) {
   return useQuery({
-    queryKey: [...calendarKey, "receipt", runId],
+    queryKey: [...calendarMemberKey(), "receipt", runId],
     queryFn: () => calendarJson(automationRunReceiptSchema, `/v1/automation-runs/${encodeURIComponent(runId ?? "")}`),
     enabled: runId !== null,
   });
@@ -167,14 +228,14 @@ const providerNamesSchema = z.object({
  */
 export function useAutomationModels(options: { includeCloudDefault: boolean }) {
   const query = useQuery({
-    queryKey: [...calendarKey, "models"],
+    queryKey: [...calendarMemberKey(), "models"],
     queryFn: () => calendarJson(providerNamesSchema, "/v1/llm-providers"),
     staleTime: 5 * 60_000,
   });
   const host = workbotHost();
   const identity = host.identity;
   const settings = useQuery({
-    queryKey: [...calendarKey, "organization-default-model", host.homeHref, identity?.organizationId ?? null, identity?.principalId ?? null],
+    queryKey: [...calendarMemberKey(), "organization-default-model"],
     queryFn: () => calendarJson(workbotSettingsSchema, "/v1/org/workbot-settings"),
     enabled: options.includeCloudDefault && identity !== undefined,
     retry: false,
