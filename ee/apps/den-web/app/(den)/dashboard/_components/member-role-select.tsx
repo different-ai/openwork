@@ -1,9 +1,8 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
-import { DenSelect } from "../../_components/ui/select";
 import type { MemberRoleOption } from "./team-roles";
 import { RolePicker } from "./role-picker";
 
@@ -12,31 +11,23 @@ import { RolePicker } from "./role-picker";
  * both list the same roles (see memberRoleOptions). The menu is exactly as
  * wide as the field; long role names truncate and show in full on hover.
  */
-export function MemberRoleSelect({ value, onChange, options, label = "Role", searchable = false }: {
+type RoleInventory = Pick<ComponentProps<typeof RolePicker>, "inventoryState" | "onRetryInventory">;
+
+export function MemberRoleSelect({ value, onChange, options, label = "Role", inventoryState, onRetryInventory }: {
   value: string;
   onChange: (value: string) => void;
   options: readonly MemberRoleOption[];
   label?: string;
   searchable?: boolean;
-}) {
-  if (searchable) return <RolePicker value={value} onChange={onChange} options={options} label={label} />;
-  return (
-    <DenSelect aria-label={label} value={value} onChange={(event) => onChange(event.target.value)} menuWidth="trigger">
-      {options.map((option) => (
-        <option key={option.value} value={option.value} disabled={option.disabled} title={option.label}>
-          {option.label}
-          {option.caption ? <span className="ml-1.5 font-normal text-gray-500">{option.caption}</span> : null}
-        </option>
-      ))}
-    </DenSelect>
-  );
+} & RoleInventory) {
+  return <RolePicker value={value} onChange={onChange} options={options} label={label} inventoryState={inventoryState} onRetryInventory={onRetryInventory} />;
 }
 
 /**
  * Members › Edit role: the person's own role, and the roles their teams give
  * them (sharedRoles), with Cancel and Save member.
  */
-export function MemberRoleEditor({ memberName, value, onChange, options, teamRoles, onCancel, onSave, saving, searchable, teamChoice, blocked }: {
+export function MemberRoleEditor({ memberName, value, onChange, options, teamRoles, onCancel, onSave, saving, searchable, teamChoice, blocked, inventoryState, onRetryInventory }: {
   memberName: string;
   value: string;
   onChange: (value: string) => void;
@@ -49,7 +40,7 @@ export function MemberRoleEditor({ memberName, value, onChange, options, teamRol
   searchable?: boolean;
   teamChoice?: ReactNode;
   blocked?: boolean;
-}) {
+} & RoleInventory) {
   return (
     <DenCard className="mb-6" data-testid="member-role-editor">
       <form
@@ -61,9 +52,9 @@ export function MemberRoleEditor({ memberName, value, onChange, options, teamRol
       >
         <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)] gap-3 sm:w-[280px]" data-testid="member-role-select">
           <span className="truncate text-[14px] font-medium text-gray-700" title={`Role for ${memberName}`}>
-            Role for {memberName}
+            Organization role for {memberName}
           </span>
-          <MemberRoleSelect value={value} onChange={onChange} options={options} label={`Role for ${memberName}`} searchable={searchable} />
+          <MemberRoleSelect value={value} onChange={onChange} options={options} label={`Role for ${memberName}`} searchable={searchable} inventoryState={inventoryState} onRetryInventory={onRetryInventory} />
         </div>
         {teamChoice}
         <div className="flex flex-wrap gap-2">

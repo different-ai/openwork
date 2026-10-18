@@ -6,7 +6,7 @@ import { ArrowLeft, Laptop, Compass, KeyRound, Layers, ShieldCheck, SquareTermin
 import { DenBadge } from "../../_components/ui/badge";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
-import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
+import { type TabItem, UnderlineTabs, UnderlineTabPanel } from "../../_components/ui/tabs";
 import { getMarketplaceRoute, getMembersRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../_lib/den-org";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
 import { DesktopSuggestionsPanel } from "./desktop-suggestions-panel";
@@ -69,7 +69,12 @@ function RoleBadge({ role }: { role: TeamPluginAccessItem["role"] }) {
   );
 }
 
-export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string; initialTab?: TeamDetailTab | null }) {
+export function TeamDetailScreen(props: { teamId: string; initialTab?: TeamDetailTab | null }) {
+  const { orgId } = useOrgDashboard();
+  return <TeamDetailContent key={`${orgId}-${props.teamId}`} {...props} />;
+}
+
+function TeamDetailContent({ teamId, initialTab = null }: { teamId: string; initialTab?: TeamDetailTab | null }) {
   const { orgContext, orgId, orgSlug } = useOrgDashboard();
   const viewerAccess = orgContext
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
@@ -164,17 +169,17 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
         tabs={tabs}
         activeTab={activeTab}
         onChange={setActiveTab}
-      />
+        label="Team settings"
+      >
 
       <div className="mt-6">
-        {activeTab === "role" && team ? (
-          <div role="tabpanel" aria-label="Role">
+        {teamRoles && team ? (
+          <UnderlineTabPanel value="role">
             {sharedRoles ? <SharedTeamRolePanel team={team} /> : <TeamRolePanel team={team} />}
-          </div>
+          </UnderlineTabPanel>
         ) : null}
 
-        {activeTab === "overview" ? (
-          <div role="tabpanel" aria-label="Overview">
+          <UnderlineTabPanel value="overview">
             {teamMembers.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
                 <p className="text-[14px] font-medium text-gray-800">This team has no members yet.</p>
@@ -193,11 +198,9 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
                 ))}
               </div>
             )}
-          </div>
-        ) : null}
+          </UnderlineTabPanel>
 
-        {activeTab === "access" ? (
-          <div role="tabpanel" aria-label="Access">
+          <UnderlineTabPanel value="access">
             {/* With the Models tab, the default model lives there instead. */}
             {defaultModelOn && viewerAccess?.canViewModelsSettings && !showModels ? (
               <TeamDefaultModelSection teamId={teamId} canManage={viewerAccess.canManageModelsSettings} />
@@ -306,29 +309,29 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
               direct = revocable here; via catalog = manage in the catalog; org-wide = org setting.
             </p>
             </>}
-          </div>
-        ) : null}
+          </UnderlineTabPanel>
 
-        {activeTab === "agents" && team ? (
-          <div role="tabpanel" aria-label="Agents">
+        {showAgents && team ? (
+          <UnderlineTabPanel value="agents">
             <AgentsPanel team={{ id: team.id, name: team.name }} area={showBrowser ? "agents" : "all"} />
-          </div>
+          </UnderlineTabPanel>
         ) : null}
 
-        {activeTab === "browser" && team ? (
-          <div role="tabpanel" aria-label="Browser">
+        {showBrowser && team ? (
+          <UnderlineTabPanel value="browser">
             <AgentsPanel team={{ id: team.id, name: team.name }} area="browser" />
-          </div>
+          </UnderlineTabPanel>
         ) : null}
 
-        {activeTab === "desktop" && team ? (<div role="tabpanel" aria-label="Desktop"><DesktopSuggestionsPanel team={{ id: team.id, name: team.name }} /></div>) : null}
+        {showDesktop && team ? (<UnderlineTabPanel value="desktop"><DesktopSuggestionsPanel team={{ id: team.id, name: team.name }} /></UnderlineTabPanel>) : null}
 
-        {activeTab === "models" && team ? (
-          <div role="tabpanel" aria-label="Models">
+        {showModels && team ? (
+          <UnderlineTabPanel value="models">
             <ModelsPanel team={{ id: team.id, name: team.name }} />
-          </div>
+          </UnderlineTabPanel>
         ) : null}
       </div>
+      </UnderlineTabs>
     </div>
   );
 }

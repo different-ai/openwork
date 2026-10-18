@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { ArrowLeft, Laptop, Compass, Layers, ShieldCheck, SquareTerminal } from "lucide-react";
-import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
+import { type TabItem, UnderlineTabs, UnderlineTabPanel } from "../../_components/ui/tabs";
 import { getMembersTeamsRoute, getOrgAccessFlags, getPermissionSetRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
 import { DesktopSuggestionsPanel } from "./desktop-suggestions-panel";
@@ -20,7 +20,12 @@ export type EveryoneTab = "role" | "agents" | "browser" | "models" | "desktop";
  * Members › Teams › Everyone: every member, including people in no team.
  * Its Agents tab is the base every team's Agents tab changes.
  */
-export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null }) {
+export function EveryoneScreen(props: { initialTab: EveryoneTab | null }) {
+  const { orgId } = useOrgDashboard();
+  return <EveryoneContent key={orgId} {...props} />;
+}
+
+function EveryoneContent({ initialTab }: { initialTab: EveryoneTab | null }) {
   const { orgContext, orgId, orgSlug } = useOrgDashboard();
   const access = orgContext
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
@@ -74,36 +79,17 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
         </span>
       </header>
 
-      <UnderlineTabs className="mt-6" tabs={tabs} activeTab={activeTab} onChange={chooseTab} />
-
-      <div className="mt-6">
-        {activeTab === "desktop" ? (<div role="tabpanel" aria-label="Desktop"><DesktopSuggestionsPanel team={null} /></div>) : activeTab === "role" ? (
-          <div role="tabpanel" aria-label="Role">
-            <ItemPanel>
-              <ItemRow
-                logo={<IconTile icon={ShieldCheck} />}
-                title="Member"
-                description="What everyone can do"
-                status="Built-in role"
-                href={memberSet ? getPermissionSetRoute(orgSlug, memberSet.id) : undefined}
-                testId="everyone-role-member"
-              />
-            </ItemPanel>
-          </div>
-        ) : activeTab === "browser" ? (
-          <div role="tabpanel" aria-label="Browser">
-            <AgentsPanel team={null} area="browser" />
-          </div>
-        ) : activeTab === "models" ? (
-          <div role="tabpanel" aria-label="Models">
-            <ModelsPanel team={null} />
-          </div>
-        ) : (
-          <div role="tabpanel" aria-label="Agents">
-            <AgentsPanel team={null} area={showBrowser ? "agents" : "all"} />
-          </div>
-        )}
-      </div>
+      <UnderlineTabs className="mt-6" tabs={tabs} activeTab={activeTab} onChange={chooseTab} label="Everyone settings">
+        <div className="mt-6">
+          <UnderlineTabPanel value="role">
+            <ItemPanel><ItemRow logo={<IconTile icon={ShieldCheck} />} title="Member" description="What everyone can do" status="Built-in role" href={canViewSets && memberSet ? getPermissionSetRoute(orgSlug, memberSet.id) : undefined} testId="everyone-role-member" /></ItemPanel>
+          </UnderlineTabPanel>
+          {showDesktop ? <UnderlineTabPanel value="desktop"><DesktopSuggestionsPanel team={null} /></UnderlineTabPanel> : null}
+          {showBrowser ? <UnderlineTabPanel value="browser"><AgentsPanel team={null} area="browser" /></UnderlineTabPanel> : null}
+          {showModels ? <UnderlineTabPanel value="models"><ModelsPanel team={null} /></UnderlineTabPanel> : null}
+          {showAgents ? <UnderlineTabPanel value="agents"><AgentsPanel team={null} area={showBrowser ? "agents" : "all"} /></UnderlineTabPanel> : null}
+        </div>
+      </UnderlineTabs>
     </div>
   );
 }

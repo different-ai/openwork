@@ -52,6 +52,7 @@ import { OrgMemberIdentity } from "./org-member-identity";
 import { MemberEffectivePermissions, canViewMemberPermissions } from "./member-effective-permissions";
 import { RolesTab, canCreateRole } from "./roles-tab";
 import { PeopleField } from "./access-rows";
+import { AccessSummary } from "./access-source-summary";
 import { ItemMenu } from "./item-list";
 import { MemberListToolbar } from "./member-list-toolbar";
 import { formatAddedDate } from "./item-dates";
@@ -59,7 +60,7 @@ import { TeamsListHeader, TeamsListLane, TeamsListLocked, TeamsListOpenLink, Tea
 import { teamOverrideSummary, useAgentPermissions } from "./agent-permissions-data";
 import { useCustomRoleTeams, useSharedRolesOn, usePermissionSets, useRoleGrantLocks } from "./permissions-data";
 import { MemberTeamRoles } from "./member-team-roles";
-import { TEAM_ROLE_LABELS, memberRoleOptions, parseRoleChoice, teamRole, teamRoleLabels } from "./team-roles";
+import { memberRoleOptions, parseRoleChoice, teamRoleLabels } from "./team-roles";
 import { MemberRoleEditor, MemberRoleSelect } from "./member-role-select";
 
 type MembersTab = "members" | "teams" | "roles";
@@ -152,6 +153,7 @@ export function ManageMembersScreen() {
     updateTeam,
     deleteTeam,
     runReauthableAction,
+    refreshOrgData,
   } = useOrgDashboard();
   const [activeTab, setActiveTab] = useState<MembersTab>("members");
   const [memberFilter, setMemberFilter] = useState("");
@@ -205,13 +207,20 @@ export function ManageMembersScreen() {
   // sharedRoles: list permission sets by name; custom grants still come from teams.
   const sharedRoles = useSharedRolesOn();
   const canChooseInviteRole = access.canManageRoles || sharedRoles && access.canViewPermissions && access.canManageTeams;
-  const roleSets = usePermissionSets(orgContext?.organization.id ?? null, sharedRoles && teamRoles && permissionsFeature && access.canViewPermissions);
+  const roleSets = usePermissionSets(orgContext?.organization.id ?? null, teamRoles && permissionsFeature && access.canViewPermissions);
   const customSets = (sharedRoles && teamRoles && permissionsFeature && access.canViewPermissions ? roleSets.data ?? [] : []).filter((set) => set.kind === "team");
-  const grantLocks = useRoleGrantLocks(orgContext?.organization.id ?? null, sharedRoles && teamRoles && permissionsFeature && access.canViewPermissions ? roleSets.data ?? [] : [], orgContext?.currentMember.permissions ?? [], orgContext?.currentMember.isOwner ?? false);
+  const selectedRoleIds = [inviteRole, memberRoleDraft].flatMap((value) => value.startsWith("role:") ? [value.slice(5)] : value === "admin" ? (roleSets.data ?? []).filter((set) => set.kind === "admin_default").map((set) => set.id) : []);
+  const grantChecks = useRoleGrantLocks(orgContext?.organization.id ?? null, sharedRoles && teamRoles && permissionsFeature && access.canViewPermissions ? roleSets.data ?? [] : [], orgContext?.currentMember.permissions ?? [], orgContext?.currentMember.isOwner ?? false, selectedRoleIds);
+  const grantLocks = grantChecks.locks;
+  const grantReasons = [...new Set(selectedRoleIds.flatMap((id) => grantLocks.get(id) ?? []))];
+  const grantNotice = grantReasons.length ? <DenNotice tone="neutral" message={grantReasons.join(" ")} action={grantChecks.failed ? <DenButton size="sm" variant="secondary" onClick={() => void grantChecks.retry()}>Try again</DenButton> : undefined} /> : null;
+  const adminGrantBlocked = sharedRoles && !orgContext?.currentMember.isOwner && (!roleSets.isSuccess || grantReasons.length > 0);
+  const roleInventoryState = !teamRoles || !permissionsFeature ? "ready" : !access.canViewPermissions ? "limited" : roleSets.isError ? "error" : roleSets.isPending ? "loading" : "ready";
+  const customSetById = new Map(customSets.map((set) => [set.id, set]));
+  const teamsById = new Map((orgContext?.teams ?? []).map((team) => [team.id, team]));
   const roleTeams = (setId: string) => {
-    const set = customSets.find((entry) => entry.id === setId);
-    const ids = (set?.teams.length ? set.teams : set?.team ? [set.team] : []).map((team) => team.id);
-    return (orgContext?.teams ?? []).filter((team) => ids.includes(team.id));
+    const set = customSetById.get(setId);
+    return (set?.teams.length ? set.teams : set?.team ? [set.team] : []).flatMap((team) => teamsById.get(team.id) ?? []);
   };
   const roleLocks = new Map(grantLocks);
   for (const set of customSets) {
@@ -221,19 +230,21 @@ export function ManageMembersScreen() {
   const memberRoles = memberRoleOptions({ sharedRoles, customRoleTeams, canManageTeams: access.canManageTeams, customRoles: customSets.map((set) => ({ ...set, teams: set.teams.length ? set.teams : set.team ? [set.team] : [] })), lockReasons: roleLocks, adminLockReason: sharedRoles ? !access.canManageRoles ? permissionLockReason("members.update") : grantLocks.get(roleSets.data?.find((set) => set.kind === "admin_default")?.id ?? "") : null });
   const inviteTeamPicker = sharedRoles && access.canManageTeams && (orgContext?.teams.length ?? 0) > 0;
   const [inviteTeamId, setInviteTeamId] = useState("");
-  const [memberRoleTeamId, setMemberRoleTeamId] = useState("");
+
   function chosenRole(value: string, teamId: string) {
     const set = value.startsWith("role:") ? customSets.find((entry) => entry.id === value.slice(5)) : null;
     const teams = set ? roleTeams(set.id) : [];
+    const referencedTeams = set?.teams.length ? set.teams : set?.team ? [set.team] : [];
+    const unverifiedTeams = referencedTeams.some((reference) => !teamsById.has(reference.id));
     const grantable = teams.filter((team) => !team.managedByScim && (!team.grantsOrganizationAdmin || access.canManageAdminTeams));
-    const selected = grantable.find((team) => team.id === teamId) ?? (teams.length === 1 ? grantable[0] : undefined);
-    return { set, teams, grantable, selected, blocked: value.startsWith("role:") && (!set || !selected || Boolean(roleLocks.get(set.id)) || !access.canManageTeams) };
+    const selected = grantable.find((team) => team.id === teamId) ?? (referencedTeams.length === 1 ? grantable[0] : undefined);
+    return { set, teams, grantable, selected, unverifiedTeams, blocked: value.startsWith("role:") && (!roleSets.isSuccess || unverifiedTeams || !set || !selected || Boolean(roleLocks.get(set.id)) || !access.canManageTeams) };
   }
   const inviteChoice = chosenRole(inviteRole, inviteTeamId);
-  const editChoice = chosenRole(memberRoleDraft, memberRoleTeamId);
   function customTeamChoice(value: string, teamId: string, onChange: (id: string) => void) {
     const choice = chosenRole(value, teamId);
     if (!choice.set) return null;
+    if (choice.unverifiedTeams || !roleSets.isSuccess) return <DenNotice tone="neutral" message="Some teams for this role aren't verified. Assignment is blocked." action={<DenButton size="sm" variant="secondary" onClick={() => void Promise.all([refreshOrgData(), roleSets.refetch()])}>Verify teams</DenButton>} />;
     if (!choice.teams.length) return (
       <p className="col-span-full min-w-0 text-[13px] text-gray-500">
         <Link href={getPermissionSetRoute(orgSlug, choice.set.id)} className="underline" title={choice.set.name}>{choice.set.name}</Link>
@@ -301,7 +312,6 @@ export function ManageMembersScreen() {
   function resetMemberEditor() {
     setEditingMemberId(null);
     setMemberRoleDraft("member");
-    setMemberRoleTeamId("");
   }
 
   function resetTeamEditor() {
@@ -404,7 +414,7 @@ export function ManageMembersScreen() {
             setPageError(null);
             try {
               // Custom roles remain Member and grant access through exactly one chosen team.
-              if (inviteChoice.blocked) return;
+              if (inviteChoice.blocked || inviteRole === "admin" && adminGrantBlocked) return;
               const choice = parseRoleChoice(canChooseInviteRole ? inviteRole : "member");
               const teamId = inviteChoice.set ? inviteChoice.selected?.id : inviteTeamPicker ? inviteTeamId || null : choice.teamId ?? undefined;
               await inviteMember({ email: inviteEmail, role: choice.role, teamId });
@@ -444,7 +454,7 @@ export function ManageMembersScreen() {
           {canChooseInviteRole ? (
             <label className="grid gap-3">
               <span className="text-[14px] font-medium text-gray-700">Role</span>
-              <MemberRoleSelect value={inviteRole} onChange={(value) => { setInviteRole(value); setInviteTeamId(""); }} options={memberRoles} searchable={sharedRoles} />
+              <MemberRoleSelect value={inviteRole} onChange={(value) => { setInviteRole(value); setInviteTeamId(""); }} options={memberRoles} searchable={sharedRoles} inventoryState={roleInventoryState} onRetryInventory={() => void roleSets.refetch()} />
             </label>
           ) : (
             <div className="grid gap-3">
@@ -453,6 +463,7 @@ export function ManageMembersScreen() {
             </div>
           )}
           {customTeamChoice(inviteRole, inviteTeamId, setInviteTeamId)}
+          {grantNotice}
           {inviteTeamPicker && !inviteChoice.set ? (
             <label className="grid gap-3">
               <span className="text-[14px] font-medium text-gray-700">Team</span>
@@ -470,7 +481,7 @@ export function ManageMembersScreen() {
           ) : null}
           <div className={`flex gap-2 lg:justify-end ${inviteTeamPicker ? "lg:col-span-3" : ""}`}>
             <ActionButton size="md" onClick={resetInviteForm}>Cancel</ActionButton>
-            <DenButton type="submit" loading={mutationBusy === "invite-member"} disabled={inviteChoice.blocked}>
+            <DenButton type="submit" loading={mutationBusy === "invite-member"} disabled={inviteChoice.blocked || inviteRole === "admin" && adminGrantBlocked}>
               Send invite
             </DenButton>
           </div>
@@ -505,19 +516,12 @@ export function ManageMembersScreen() {
   async function saveMemberRole(member: DenOrgMember) {
     setPageError(null);
     try {
-      // A custom role grants through a team, never through organization Admin.
-      // Remove direct Admin first: joining before demoting would temporarily
-      // combine the old Admin grant with the new custom permissions.
-      if (editChoice.blocked) return;
-      const choice = parseRoleChoice(memberRoleDraft);
-      const team = editChoice.set ? editChoice.selected : choice.teamId ? orgContext?.teams.find((entry) => entry.id === choice.teamId) : null;
-      const demoteFirst = sharedRoles && choice.role === "member" && assignableOrgRole(member.role) === "admin";
-      if (demoteFirst) await updateMemberRole(member.id, "member");
-      if (team && !team.memberIds.includes(member.id)) {
-        await updateTeam(team.id, { memberIds: [...team.memberIds, member.id] });
-      }
-      if (!demoteFirst && choice.role !== assignableOrgRole(member.role)) {
-        await updateMemberRole(member.id, choice.role);
+      // Organization role and membership are independent grants: exactly one
+      // direct-role write, never demotion as a step toward joining a team.
+      if (memberRoleDraft !== "member" && memberRoleDraft !== "admin") return;
+      if (memberRoleDraft === "admin" && adminGrantBlocked) return;
+      if (memberRoleDraft !== assignableOrgRole(member.role)) {
+        await updateMemberRole(member.id, memberRoleDraft);
       }
       resetMemberEditor();
     } catch (error) {
@@ -530,18 +534,20 @@ export function ManageMembersScreen() {
       <MemberRoleEditor
         memberName={editingMember.user.name || editingMember.user.email}
         value={memberRoleDraft}
-        onChange={(value) => { setMemberRoleDraft(value); setMemberRoleTeamId(""); }}
+        onChange={setMemberRoleDraft}
         searchable={sharedRoles}
-        teamChoice={customTeamChoice(memberRoleDraft, memberRoleTeamId, setMemberRoleTeamId)}
-        blocked={editChoice.blocked}
-        options={memberRoles}
+        inventoryState={roleInventoryState}
+        onRetryInventory={() => void roleSets.refetch()}
+        teamChoice={grantNotice}
+        blocked={memberRoleDraft === "admin" && adminGrantBlocked}
+        options={memberRoles.filter((option) => option.value === "member" || option.value === "admin")}
         saving={mutationBusy === "update-member-role" || mutationBusy === "update-team"}
         onCancel={resetMemberEditor}
         onSave={() => saveMemberRole(editingMember)}
         teamRoles={sharedRoles ? (
           <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1" data-testid="member-role-editor-team-roles">
             <span className="min-w-0 truncate" title={editingMemberTeamRoles.join(", ")}>
-              {editingMemberTeamRoles.length > 0 ? `From teams: ${editingMemberTeamRoles.join(", ")}` : "No roles from teams"}
+              {permissionsFeature && !customRoles.verified ? access.canViewPermissions ? "Team roles not verified" : "Custom roles not visible" : editingMemberTeamRoles.length > 0 ? `From teams: ${editingMemberTeamRoles.join(", ")}` : "No roles from teams"}
             </span>
             {access.canManageTeams ? (
               <button
@@ -829,11 +835,16 @@ export function ManageMembersScreen() {
 
             {visibleMembers.length === 0 ? <p className="px-5 py-6 text-[13px] text-gray-500" role="status">{memberFilter.trim() ? "No members match your filter." : "No members yet."}</p> : null}
             {visibleMembers.map((member) => {
-              const roleLabels = [
-                ...splitRoleString(member.role).map(formatRoleLabel),
-                ...(teamRoles ? teamRoleLabels({ memberId: member.id, ownRole: member.isOwner ? "owner" : getOrgAccessFlags(member.role, false).isAdmin ? "admin" : "member", teams: orgContext.teams, customTeamIds: customRoles.teamIds, customRoleNameByTeam: sharedRoles ? customRoles.nameByTeam : undefined }) : member.adminTeams.length > 0 ? ["Admin"] : []),
+              // The collapsed level comes from the API's effective role, never
+              // from sorting/guessing privilege in a list of source labels.
+              const effectiveRoleLabel = !member.joinedAt ? `Invited as ${splitRoleString(member.role).map(formatRoleLabel).join(", ")}` : member.isOwner ? "Owner" : getOrgAccessFlags(member.effectiveRole, false).isAdmin ? "Admin" : splitRoleString(member.effectiveRole).map(formatRoleLabel).join(", ");
+              const memberTeams = member.id === orgContext.currentMember.id ? orgContext.currentMemberTeams : orgContext.teams.filter((team) => team.memberIds.includes(member.id));
+              const accessSources = [
+                `${member.joinedAt ? "Organization role" : "Invitation role"}: ${splitRoleString(member.role).map(formatRoleLabel).join(", ")}`,
+                ...member.adminTeams.map((team) => `Admin via ${team.name}`),
+                ...(teamRoles ? memberTeams.flatMap((team) => { const role = customRoles.setByTeam.get(team.id); return role ? [`${sharedRoles ? `${role.name} (custom role)` : "Custom role"} via ${team.name}`] : []; }) : []),
               ];
-              const roleLabel = [...new Set(roleLabels)].join(", ");
+              const completeTeamSources = access.canViewTeams || member.id === orgContext.currentMember.id;
               const isInvited = !member.joinedAt;
               const inviteId = member.inviteId;
               const memberAccess = getOrgAccessFlags(member.effectiveRole, member.isOwner);
@@ -864,14 +875,16 @@ export function ManageMembersScreen() {
                   className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-b border-gray-100 transition hover:bg-gray-50/60 last:border-b-0 lg:gap-4 ${listToolbars ? "min-h-16 px-5 py-3 lg:grid-cols-[minmax(0,1fr)_180px_140px_28px]" : "px-4 py-3.5 lg:grid-cols-[minmax(0,1fr)_180px_140px_160px] lg:px-6"}`}
                 >
                   <OrgMemberIdentity member={member} compact={listToolbars} />
-                  <span title={listToolbars ? roleLabel : undefined} className={`col-start-1 row-start-2 min-w-0 pl-11 text-[13px] text-gray-500 lg:col-auto lg:row-auto lg:pl-0 ${listToolbars ? "truncate" : ""}`} data-testid="member-role">
-                    {listToolbars ? roleLabel : splitRoleString(member.role).map(formatRoleLabel).join(", ")}
+                  <div className="col-start-1 row-start-2 min-w-0 break-words pl-11 text-[13px] text-gray-500 lg:col-auto lg:row-auto lg:pl-0" data-testid="member-role">
+                    <span className="block font-medium text-gray-700" data-testid="member-effective-role">{effectiveRoleLabel}</span>
+                    {listToolbars && accessSources.length > 1 ? <AccessSummary items={accessSources} label={`${completeTeamSources ? "Access sources" : "Known access sources"} for ${member.user.name || member.user.email}`} preview="count" /> : null}
                     {!listToolbars && teamRoles ? (
                       <MemberTeamRoles member={member} teams={orgContext.teams} customTeamIds={customRoles.teamIds} customRoleNameByTeam={sharedRoles ? customRoles.nameByTeam : undefined} />
                     ) : !listToolbars && member.adminTeams.length > 0 ? (
                       <span className="mt-1 block text-[12px] text-cyan-700">Admin via {member.adminTeams.map((team) => team.name).join(", ")}</span>
                     ) : null}
-                  </span>
+                    {teamRoles && permissionsFeature && (!customRoles.verified || !completeTeamSources) ? <span className="block whitespace-normal text-[12px] text-gray-500">{!access.canViewPermissions ? "Custom roles not visible" : !completeTeamSources ? "Some team roles aren't visible" : "Team roles not verified"}</span> : null}
+                  </div>
                   <span data-testid="member-joined" className="col-start-1 row-start-3 pl-11 text-[13px] text-gray-500 lg:col-auto lg:row-auto lg:pl-0">
                     {member.joinedAt ? <span className="lg:hidden">Joined </span> : null}
                     {member.joinedAt
@@ -1175,9 +1188,9 @@ export function ManageMembersScreen() {
                 subtitle="Every member, including people in no team"
                 lanes={(
                   <>
-                    {teamRoles ? <TeamsListLane testId="team-row-role">Member</TeamsListLane> : null}
-                    {agentPermissionsColumn ? <TeamsListLane testId="team-row-agent-permissions">Base for every team</TeamsListLane> : null}
-                    <TeamsListLane testId="team-row-members" tone="muted">{peopleCount(orgContext.members.length)}</TeamsListLane>
+                    {teamRoles ? <TeamsListLane label="Role" testId="team-row-role">Member</TeamsListLane> : null}
+                    {agentPermissionsColumn ? <TeamsListLane label="Agent permissions" testId="team-row-agent-permissions">Base for every team</TeamsListLane> : null}
+                    <TeamsListLane label="Members" testId="team-row-members" tone="muted">{peopleCount(orgContext.members.length)}</TeamsListLane>
                   </>
                 )}
                 action={<TeamsListOpenLink href={getEveryoneRoute(orgSlug)} name="Everyone" />}
@@ -1191,14 +1204,11 @@ export function ManageMembersScreen() {
             ) : (
               visibleTeams.map((team) => {
                 const names = teamMemberNames.get(team.id) ?? [];
-                const role = teamRoles
-                  // Without permissions.view a custom role can't be told from Member, so only Admin is named.
-                  ? team.grantsOrganizationAdmin || !permissionsFeature || access.canViewPermissions
-                    ? team.grantsOrganizationAdmin || !sharedRoles || !customRoles.setByTeam.get(team.id)
-                      ? TEAM_ROLE_LABELS[teamRole({ admin: team.grantsOrganizationAdmin, customSetId: customRoles.setByTeam.get(team.id)?.id ?? null })]
-                      : customRoles.setByTeam.get(team.id)?.name ?? ""
-                    : "—"
-                  : "";
+                const custom = customRoles.setByTeam.get(team.id);
+                const role = !teamRoles ? "" : !permissionsFeature ? team.grantsOrganizationAdmin ? "Admin" : "Member"
+                  : !access.canViewPermissions ? `${team.grantsOrganizationAdmin ? "Admin; " : ""}custom role not visible`
+                    : !roleSets.isSuccess ? `${team.grantsOrganizationAdmin ? "Admin; " : ""}custom role not verified`
+                      : [team.grantsOrganizationAdmin ? "Admin" : null, custom ? sharedRoles ? custom.name : "Custom" : null].filter(Boolean).join(", ") || "Member";
                 const canEdit = !team.managedByScim && access.canManageTeams && (!team.grantsOrganizationAdmin || access.canManageAdminTeams);
                 return (
                   <TeamsListRow
@@ -1211,14 +1221,14 @@ export function ManageMembersScreen() {
                     badge={team.managedByScim ? (
                       <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">Managed by SCIM</span>
                     ) : null}
-                    subtitle={names.length > 0 ? names.join(", ") : team.memberIds.length > 0 ? peopleCount(team.memberIds.length) : "No members yet"}
+                    subtitle={names.length > 0 ? <AccessSummary items={names} label={`People in ${team.name}`} /> : team.memberIds.length > 0 ? peopleCount(team.memberIds.length) : "No members yet"}
                     // teamRoles: Admin is the team's role (Role tab), so the old checkbox goes away.
                     extra={teamRoles ? null : <TeamAdminCheckbox team={team} />}
                     lanes={(
                       <>
-                        {teamRoles ? <TeamsListLane testId="team-row-role" title={role}>{role}</TeamsListLane> : null}
-                        {agentPermissionsColumn ? <TeamAgentPermissionsCell summary={agentPolicies.isSuccess ? teamOverrideSummary(agentPolicies.data.teams.find((policy) => policy.scopeId === team.id)) : undefined} failed={agentPolicies.isError} /> : null}
-                        <TeamsListLane testId="team-row-members" tone="muted">{peopleCount(team.memberIds.length)}</TeamsListLane>
+                        {teamRoles ? <TeamsListLane label="Role" testId="team-row-role" title={role}>{role}</TeamsListLane> : null}
+                        {agentPermissionsColumn ? <TeamAgentPermissionsCell summary={agentPolicies.isSuccess && agentPolicies.data ? teamOverrideSummary(agentPolicies.data.teams.find((policy) => policy.scopeId === team.id)) : undefined} failed={agentPolicies.isError} /> : null}
+                        <TeamsListLane label="Members" testId="team-row-members" tone="muted">{peopleCount(team.memberIds.length)}</TeamsListLane>
                       </>
                     )}
                     action={canEdit ? (
@@ -1272,11 +1282,11 @@ export function ManageMembersScreen() {
 
 /** A team's agent permissions in the Teams list: its own overrides, or that it follows Everyone. */
 function TeamAgentPermissionsCell({ summary, failed }: { summary: string | null | undefined; failed: boolean }) {
-  if (failed) return <TeamsListLane testId="team-row-agent-permissions" title="Couldn't load agent permissions" tone="muted">—</TeamsListLane>;
+  if (failed) return <TeamsListLane label="Agent permissions" testId="team-row-agent-permissions" title="Couldn't load agent permissions" tone="muted">—</TeamsListLane>;
   if (summary === undefined) return <span role="status" aria-label="Loading agent permissions" data-testid="team-row-agent-permissions" className="hidden lg:block"><DenSkeleton className="h-3 w-24" /></span>;
   return summary === null
-    ? <TeamsListLane testId="team-row-agent-permissions" tone="muted">Follows Everyone</TeamsListLane>
-    : <TeamsListLane testId="team-row-agent-permissions" title={summary}>{summary}</TeamsListLane>;
+    ? <TeamsListLane label="Agent permissions" testId="team-row-agent-permissions" tone="muted">Follows Everyone</TeamsListLane>
+    : <TeamsListLane label="Agent permissions" testId="team-row-agent-permissions" title={summary}>{summary}</TeamsListLane>;
 }
 
 function peopleCount(count: number): string {

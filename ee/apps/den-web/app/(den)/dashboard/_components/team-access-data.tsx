@@ -3,6 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
+import { getOrgAccessFlags } from "../../_lib/den-org";
 
 export type TeamPluginAccessEdge = "direct_team" | "via_catalog" | "org_wide";
 export type TeamPluginAccessRole = "viewer" | "editor" | "manager";
@@ -29,7 +31,7 @@ export type TeamPluginAccessItem = {
 
 export const teamAccessQueryKeys = {
   all: ["team-access"],
-  detail: (teamId: string) => ["team-access", "detail", teamId],
+  detail: (teamId: string, orgId: string) => ["team-access", orgId, "detail", teamId],
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -109,37 +111,48 @@ function parseTeamPluginAccessItem(entry: unknown): TeamPluginAccessItem | null 
   };
 }
 
+export class TeamAccessReadError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
+
 export function useTeamPluginAccess(teamId: string) {
-  return useQuery({
-    queryKey: teamAccessQueryKeys.detail(teamId),
-    queryFn: async (): Promise<TeamPluginAccessItem[]> => {
+  const { orgId, orgContext } = useOrgDashboard();
+  // Match the API's teams.view-or-membership rule using its authoritative
+  // membership association, not a potentially partial team-directory projection.
+  const canRead = Boolean(orgId && orgContext?.organization.id === orgId && (getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canViewTeams || orgContext.currentMemberTeams.some((team) => team.id === teamId)));
+  const query = useQuery({
+    queryKey: [...teamAccessQueryKeys.detail(teamId, orgId ?? ""), orgContext?.currentMember.id ?? ""],
+    enabled: canRead,
+    retry: false,
+    queryFn: async ({ signal }): Promise<TeamPluginAccessItem[]> => {
       const { response, payload } = await requestJson(
         `/v1/teams/${encodeURIComponent(teamId)}/plugin-access`,
-        { method: "GET" },
+        { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId ?? "" }, signal, cache: "no-store" },
         15000,
       );
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to load team access (${response.status}).`));
+        throw new TeamAccessReadError(getErrorMessage(payload, `Failed to load team access (${response.status}).`), response.status);
       }
 
-      const items = isRecord(payload) && Array.isArray(payload.items) ? payload.items : [];
-      return items
-        .map(parseTeamPluginAccessItem)
-        .filter((item): item is TeamPluginAccessItem => item !== null);
+      if (!isRecord(payload) || !Array.isArray(payload.items)) throw new Error("Couldn't verify team access: unexpected response.");
+      const items = payload.items.map(parseTeamPluginAccessItem);
+      if (items.some((item) => item === null)) throw new Error("Couldn't verify all team access. Try again before making changes.");
+      return items.filter((item): item is TeamPluginAccessItem => item !== null);
     },
   });
+  return { ...query, data: canRead ? query.data : undefined, canRead };
 }
 
 export function useRevokeTeamPluginAccess() {
   const queryClient = useQueryClient();
-  const { runReauthableAction } = useOrgDashboard();
+  const { runReauthableAction, orgId } = useOrgDashboard();
 
   return useMutation({
     mutationFn: async (input: { teamId: string; pluginId: string; grantId: string }) => {
       await runReauthableAction("revoke-team-plugin-access", async () => {
         const { response, payload } = await requestJson(
           `/v1/plugins/${encodeURIComponent(input.pluginId)}/access/${encodeURIComponent(input.grantId)}`,
-          { method: "DELETE" },
+          { method: "DELETE", headers: { [ORG_SCOPE_HEADER]: orgId ?? "" } },
           15000,
         );
         if (response.status !== 204 && !response.ok) {
@@ -149,7 +162,7 @@ export function useRevokeTeamPluginAccess() {
       return input.teamId;
     },
     onSuccess: (teamId) => {
-      queryClient.invalidateQueries({ queryKey: teamAccessQueryKeys.detail(teamId) });
+      queryClient.invalidateQueries({ queryKey: teamAccessQueryKeys.detail(teamId, orgId ?? "") });
     },
   });
 }

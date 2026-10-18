@@ -8,7 +8,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
+import { getOrgAccessFlags, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { PERMISSION_READ_STALE_TIME } from "./permissions-query-keys";
 
 const AGENT_PERMISSIONS_PATH = "/v1/agent-permissions";
 
@@ -58,34 +60,43 @@ function toPolicy(policy: z.infer<typeof policySchema>): AgentPermissionPolicy {
   };
 }
 
-export function agentPermissionsQueryKey(orgId: string): string[] {
-  return ["agent-permissions", orgId];
+export function agentPermissionsQueryKey(orgId: string, viewerId?: string): string[] {
+  return viewerId === undefined ? ["agent-permissions", orgId] : ["agent-permissions", orgId, viewerId];
+}
+
+export class AgentPermissionsReadError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
 }
 
 export function useAgentPermissions(orgId: string, enabled = true) {
-  return useQuery({
-    queryKey: agentPermissionsQueryKey(orgId),
-    enabled,
+  const { orgContext } = useOrgDashboard();
+  const client = useQueryClient();
+  const viewerId = orgContext?.organization.id === orgId ? orgContext.currentMember.id : "";
+  const canRead = Boolean(viewerId && orgContext && orgFeatureEnabled(orgContext, "agentPermissions") && getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canViewAgentPermissions);
+  const key = agentPermissionsQueryKey(orgId, viewerId);
+  const query = useQuery<AgentPermissionPolicies | null>({
+    queryKey: key,
+    enabled: enabled && canRead,
     retry: false,
+    staleTime: PERMISSION_READ_STALE_TIME,
     refetchOnWindowFocus: false,
-    queryFn: async ({ signal }): Promise<AgentPermissionPolicies> => {
-      const { response, payload } = await requestJson(
-        AGENT_PERMISSIONS_PATH,
-        { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId }, cache: "no-store", signal },
-        15000,
-      );
+    refetchOnMount: "always",
+    queryFn: async ({ signal }) => {
+      const { response, payload } = await requestJson(AGENT_PERMISSIONS_PATH, { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId }, cache: "no-store", signal }, 15000);
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Couldn't load agent permissions (${response.status}).`));
+        if ([401, 403, 404].includes(response.status)) {
+          await client.cancelQueries({ queryKey: key, exact: true }, { revert: false });
+          client.setQueryData(key, null);
+        }
+        throw new AgentPermissionsReadError(getErrorMessage(payload, `Couldn't load agent permissions (${response.status}).`), response.status);
       }
       const parsed = listSchema.safeParse(payload);
       if (!parsed.success) throw new Error("Agent permissions returned an unexpected response.");
-      return {
-        everyone: toPolicy(parsed.data.everyone),
-        teams: parsed.data.teams.map(toPolicy),
-        canEdit: parsed.data.canEdit,
-      };
+      return { everyone: toPolicy(parsed.data.everyone), teams: parsed.data.teams.map(toPolicy), canEdit: parsed.data.canEdit };
     },
   });
+  const blocked = query.data === null || query.error instanceof AgentPermissionsReadError && [401, 403, 404].includes(query.error.status);
+  return { ...query, data: canRead && !blocked ? query.data ?? undefined : undefined, isSuccess: canRead && query.isSuccess && !blocked, isError: query.isError || blocked, error: blocked ? new Error("Couldn't verify access to agent permissions. Try again.") : query.error };
 }
 
 function scopePath(scopeId: AgentPermissionScopeId): string {

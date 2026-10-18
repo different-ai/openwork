@@ -99,6 +99,7 @@ export function ItemRow({
   statusOnNarrow,
   wideAction,
   wrapDescription,
+  wrapStatus = false,
   action,
   href,
   testId,
@@ -108,6 +109,7 @@ export function ItemRow({
   statusOnNarrow?: boolean;
   wideAction?: boolean;
   wrapDescription?: boolean;
+  wrapStatus?: boolean;
   /** Numeric comparisons stay next to the name instead of using the status lane. */
   comparison?: ReactNode;
   logo?: ReactNode;
@@ -123,29 +125,29 @@ export function ItemRow({
   const body = (
     <>
       {logo ? <span className="flex shrink-0 items-center">{logo}</span> : null}
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-[14px] font-medium leading-5 text-gray-900">{title}</span>
-        {statusOnNarrow && status ? <span className="whitespace-nowrap text-[12px] leading-4 text-muted-foreground sm:hidden">{status}</span> : null}
         {description ? <span className={wrapDescription ? "break-words text-[13px] leading-[18px] text-gray-500" : "truncate text-[13px] leading-[18px] text-gray-500"}>{description}</span> : null}
-      </span>
+      </div>
     </>
   );
   return (
-    <div className={compact ? "flex items-center gap-3 px-3 py-3" : statusOnNarrow ? "flex items-center gap-2 px-3 py-3 sm:gap-3.5 sm:px-5" : "flex items-center gap-3.5 px-5 py-3"} data-testid={testId} data-library-integrated-row={compact || undefined}>
+    <div className={compact ? "flex items-center gap-3 px-3 py-3" : statusOnNarrow ? "flex flex-wrap items-center gap-2 px-3 py-3 sm:flex-nowrap sm:gap-3.5 sm:px-5" : "flex items-center gap-3.5 px-5 py-3"} data-testid={testId} data-library-integrated-row={compact || undefined}>
       {href ? (
         <Link href={href} className="flex min-w-0 flex-1 items-center gap-3.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-gray-300">
           {body}
         </Link>
       ) : (
-        <span className="flex min-w-0 flex-1 items-center gap-3.5">{body}</span>
+        <div className="flex min-w-0 flex-1 items-center gap-3.5">{body}</div>
       )}
       {comparison}
       {status !== undefined ? (
-        <span className={compact ? "w-14 shrink-0 truncate text-right text-[13px] text-[var(--dls-text-secondary)] sm:w-28" : "hidden w-[220px] shrink-0 truncate text-right text-[12px] leading-4 text-gray-500 sm:block"} data-item-status>
+        <div className={wrapStatus ? "hidden w-[220px] max-w-[40%] shrink-0 whitespace-normal break-words text-[12px] leading-4 text-gray-500 sm:block" : compact ? "w-14 shrink-0 truncate text-right text-[13px] text-[var(--dls-text-secondary)] sm:w-28" : "hidden w-[220px] shrink-0 truncate text-right text-[12px] leading-4 text-gray-500 sm:block"} data-item-status>
           {status}
-        </span>
+        </div>
       ) : null}
       {action !== undefined ? <span className={wideAction ? "flex w-[96px] shrink-0 justify-end" : compact ? "flex w-7 shrink-0 justify-end sm:w-[72px]" : "flex w-[72px] shrink-0 justify-end"} data-item-action>{action}</span> : null}
+      {statusOnNarrow && status ? <div className="w-full min-w-0 break-words pl-11 text-[12px] leading-4 text-muted-foreground sm:hidden">{status}</div> : null}
     </div>
   );
 }

@@ -34,15 +34,15 @@ export function TeamsListHeader({ columns, role, agentPermissions }: { columns: 
 }
 
 /** A lane's value: one line, cut short with the full text on hover. */
-export function TeamsListLane({ children, title, testId, tone = "default" }: { children: ReactNode; title?: string; testId?: string; tone?: "default" | "muted" }) {
+export function TeamsListLane({ children, title, testId, tone = "default", label }: { children: ReactNode; title?: string; testId?: string; tone?: "default" | "muted"; label?: string }) {
   return (
-    <span
-      className={`hidden min-w-0 truncate text-[13px] leading-[18px] lg:block ${tone === "muted" ? "text-gray-500" : "text-gray-700"}`}
+    <div
+      className={`col-start-1 min-w-0 break-words pl-11 text-[13px] leading-[18px] lg:col-auto lg:pl-0 ${tone === "muted" ? "text-gray-500" : "text-gray-700"}`}
       title={title}
       data-testid={testId}
     >
-      {children}
-    </span>
+      {label ? <span className="text-gray-500 lg:hidden">{label}: </span> : null}{children}
+    </div>
   );
 }
 
@@ -56,7 +56,7 @@ export function TeamsListRow({ columns, icon, name, href, badge, subtitle, lanes
   name: string;
   href?: string;
   badge?: ReactNode;
-  subtitle: string;
+  subtitle: ReactNode;
   lanes: ReactNode;
   action: ReactNode;
   /** Legacy controls under the name (the Admin checkbox without Team roles). */
@@ -79,12 +79,12 @@ export function TeamsListRow({ columns, icon, name, href, badge, subtitle, lanes
             )}
             {badge}
           </span>
-          <span title={subtitle} data-testid="team-row-subtitle" className="truncate text-[13px] leading-[18px] text-gray-500">{subtitle}</span>
+          <div data-testid="team-row-subtitle" className="min-w-0 break-words text-[13px] leading-[18px] text-gray-500">{subtitle}</div>
           {extra}
         </div>
       </div>
       {lanes}
-      <div className="flex w-7 justify-end" data-team-action>{action}</div>
+      <div className="col-start-2 row-start-1 flex w-7 justify-end lg:col-auto lg:row-auto" data-team-action>{action}</div>
     </div>
   );
 }

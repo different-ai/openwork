@@ -43,6 +43,7 @@ import {
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
+  AgentPermissionsReadError,
   hasTeamRecord,
   useAgentPermissions,
   useRemoveTeamAgentPermissions,
@@ -52,6 +53,7 @@ import {
   type AgentPermissionScopeId,
 } from "./agent-permissions-data";
 import { useDenToast } from "./den-toast";
+import { rebaseAgentPermissionDraft } from "./agent-permission-draft";
 import { ENTERPRISE_CONTACT_URL } from "./permissions-ui";
 
 // ---------------------------------------------------------------------------
@@ -64,6 +66,12 @@ export function sameSettings(left: AgentPermissionSettings, right: AgentPermissi
 
 function sameSetting(definition: AgentPermissionDefinition, left: AgentPermissionSetting | undefined, right: AgentPermissionSetting | undefined): boolean {
   return JSON.stringify(normalizeAgentPermissionSetting(definition, left)) === JSON.stringify(normalizeAgentPermissionSetting(definition, right));
+}
+
+function settingLabel(definition: AgentPermissionDefinition, setting: AgentPermissionSetting | undefined): string {
+  const value = normalizeAgentPermissionSetting(definition, setting);
+  if (!value) return "Follows Everyone";
+  return [value.decision ? agentPermissionDecisionLabels[value.decision] : "Follows Everyone", value.allow?.length ? `Allowed: ${value.allow.join(", ")}` : "", value.block?.length ? `Blocked: ${value.block.join(", ")}` : ""].filter(Boolean).join("; ");
 }
 
 function withSetting(settings: AgentPermissionSettings, key: AgentPermissionDefinition["key"], setting: AgentPermissionSetting | null): AgentPermissionSettings {
@@ -148,16 +156,10 @@ export function AgentPermissionsAccessState({ access }: { access: AgentPermissio
 export function WithPolicies({ orgId, children }: { orgId: string; children: (data: AgentPermissionPolicies) => ReactNode }) {
   const query = useAgentPermissions(orgId);
   if (query.isPending) return <EditorSkeleton />;
-  if (query.isError) {
-    return (
-      <DenNotice
-        tone="error"
-        message={query.error instanceof Error ? query.error.message : "Couldn't load agent permissions."}
-        action={<DenButton variant="secondary" size="sm" loading={query.isFetching} onClick={() => void query.refetch()}>Try again</DenButton>}
-      />
-    );
-  }
-  return <>{children(query.data)}</>;
+  const denied = query.error instanceof AgentPermissionsReadError && [401, 403, 404].includes(query.error.status);
+  const failure = query.isError ? <DenNotice tone="error" message={query.data && !denied ? "Couldn't refresh agent permissions. Your draft is kept; verify the saved settings before saving." : query.error?.message ?? "Couldn't load agent permissions."} action={<DenButton variant="secondary" size="sm" loading={query.isFetching} onClick={() => void query.refetch()}>Try again</DenButton>} /> : null;
+  if (!query.data || denied) return failure;
+  return <>{failure}{children(query.isError ? { ...query.data, canEdit: false } : query.data)}</>;
 }
 
 export function ReadOnlyNotice() {
@@ -197,7 +199,7 @@ export function AgentsPanel({ team, area = "all" }: { team: { id: string; name: 
         const policy: AgentPermissionPolicy = team
           ? data.teams.find((entry) => entry.scopeId === team.id) ?? { scopeId: team.id, teamId: team.id, name: team.name, memberCount: null, settings: {}, updatedAt: null }
           : data.everyone;
-        return <ScopeAgents key={`${policy.scopeId}-${policy.updatedAt ?? ""}`} access={access} data={data} policy={policy} team={team ? policy.name : null} area={area} />;
+        return <ScopeAgents key={`${access.orgId}-${policy.scopeId}-${area}`} access={access} data={data} policy={policy} team={team ? policy.name : null} area={area} />;
       }}
     </WithPolicies>
   );
@@ -215,12 +217,15 @@ function ScopeAgents({ access, data, policy, team, area }: {
   const remove = useRemoveTeamAgentPermissions(access.orgId, policy.scopeId);
   const toast = useDenToast();
   const [draft, setDraft] = useState<AgentPermissionSettings | null>(null);
+  const [draftBase, setDraftBase] = useState(policy.settings);
+  const hasEdits = draft !== null && !sameSettings(draft, draftBase);
+  const conflict = hasEdits && !sameSettings(draftBase, policy.settings);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const editable = data.canEdit;
-  const settings = draft ?? policy.settings;
+  const editable = data.canEdit && access.canManage;
+  const settings = hasEdits && draft ? draft : policy.settings;
   const name = team ?? "Everyone";
-  const changes = agentPermissionDefinitions.filter((definition) => !sameSetting(definition, settings[definition.key], policy.settings[definition.key])).length;
-  const dirty = draft !== null && changes > 0;
+  const changes = hasEdits && draft ? agentPermissionDefinitions.filter((definition) => !sameSetting(definition, draft[definition.key], draftBase[definition.key])).length : 0;
+  const dirty = hasEdits;
   const savedChanges = team ? changedDefinitions(policy.settings) : [];
   const hadRecord = hasTeamRecord(policy);
 
@@ -249,7 +254,7 @@ function ScopeAgents({ access, data, policy, team, area }: {
   }
 
   async function handleSave() {
-    if (!draft) return;
+    if (!draft || conflict || !editable) return;
     const previous = policy.settings;
     setSaveError(null);
     if (!(await saveSettings(normalizeAgentPermissionSettings(draft)))) return;
@@ -312,9 +317,10 @@ function ScopeAgents({ access, data, policy, team, area }: {
         everyone={data.everyone.settings}
         teams={team ? [] : data.teams.filter(hasTeamRecord)}
         area={area}
-        editable={editable}
-        onChange={(next) => { setSaveError(null); setDraft(next); }}
+        editable={editable && !save.isPending}
+        onChange={(next) => { if (!hasEdits) setDraftBase(policy.settings); setSaveError(null); setDraft(next); }}
       />
+      {conflict ? <DenNotice tone="warning" message={<div><p>Saved settings changed while you were editing. Your draft is kept.</p><ul className="mt-2 grid gap-1">{agentPermissionDefinitions.filter((definition) => !sameSetting(definition, draftBase[definition.key], policy.settings[definition.key])).map((definition) => <li key={definition.key} className="break-words">{definition.label}: saved {settingLabel(definition, policy.settings[definition.key])}; your draft {settingLabel(definition, settings[definition.key])}</li>)}</ul></div>} action={<DenButton size="sm" variant="secondary" onClick={() => { if (draft) setDraft(rebaseAgentPermissionDraft(draftBase, draft, policy.settings)); setDraftBase(policy.settings); }}>Keep my edits on latest settings</DenButton>} /> : null}
       {saveError ? <DenNotice tone="error" message={saveError} /> : null}
       {dirty ? (
         <DenStickyActionBar
@@ -330,7 +336,7 @@ function ScopeAgents({ access, data, policy, team, area }: {
           )}
         >
           <DenButton variant="ghost" size="sm" disabled={save.isPending} onClick={() => { setDraft(null); setSaveError(null); }}>Discard</DenButton>
-          <DenButton variant="primary" size="sm" loading={save.isPending} disabled={!editable} onClick={() => void handleSave()}>Save changes</DenButton>
+          <DenButton variant="primary" size="sm" loading={save.isPending} disabled={!editable || conflict} onClick={() => void handleSave()}>Save changes</DenButton>
         </DenStickyActionBar>
       ) : null}
     </div>

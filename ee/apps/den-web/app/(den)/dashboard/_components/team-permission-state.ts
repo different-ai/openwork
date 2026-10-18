@@ -11,6 +11,17 @@ export function teamPermissionDraft(policy?: { access?: TeamAccess; execution?: 
   };
 }
 
+export function rebaseTeamPermissionDraft(before: TeamPermissionDraft, draft: TeamPermissionDraft, latest: TeamPermissionDraft): TeamPermissionDraft {
+  const capabilities = { ...latest.access.capabilities };
+  for (const entry of teamCapabilities) {
+    if (before.access.capabilities[entry.id] !== draft.access.capabilities[entry.id]) capabilities[entry.id] = draft.access.capabilities[entry.id];
+  }
+  function edited<K extends keyof DesktopExecutionPolicy>(key: K): DesktopExecutionPolicy[K] {
+    return JSON.stringify(before.execution[key]) !== JSON.stringify(draft.execution[key]) ? draft.execution[key] : latest.execution[key];
+  }
+  return { access: { mode: "custom", capabilities }, execution: { commands: edited("commands"), blockedCommands: edited("blockedCommands"), browserOrigins: edited("browserOrigins"), blockBrowserUploads: edited("blockBrowserUploads") } };
+}
+
 export function teamWebsiteSummary(execution: DesktopExecutionPolicy): string {
   if (execution.browserOrigins === undefined) return "All websites";
   return execution.browserOrigins.length ? `${execution.browserOrigins.length} approved ${execution.browserOrigins.length === 1 ? "site" : "sites"}` : "Browsing blocked";
