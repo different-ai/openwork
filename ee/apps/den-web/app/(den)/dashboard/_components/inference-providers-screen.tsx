@@ -24,7 +24,15 @@ function modelsLabel(provider: DenInferenceProvider) {
   return `${provider.modelIds.length} ${provider.modelIds.length === 1 ? "model" : "models"}`;
 }
 
-function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; orgSlug: string | null }) {
+export type GatewayProviderSummary = {
+  audience: string;
+  nobody: boolean;
+  ready: boolean;
+  status: { label: string; dot: string; text: string };
+};
+
+/** Who can use a gateway provider and whether it is ready, shared by every provider list. */
+export function useGatewayProviderSummary(provider: DenInferenceProvider): GatewayProviderSummary {
   const { orgContext } = useOrgDashboard();
   // LiteLLM per-person keys add automatic member grants; only the access group says who may use it.
   const accessGroupId = provider.litellm ? liteLlmAccessGroupId(provider) : null;
@@ -47,6 +55,16 @@ function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; or
       : nobody
         ? { label: "Give access", dot: "bg-amber-500", text: "text-amber-700" }
         : { label: "Ready", dot: "bg-emerald-500", text: "text-gray-600" };
+  return { audience, nobody, ready, status };
+}
+
+export function gatewayModelsLabel(provider: DenInferenceProvider) {
+  return modelsLabel(provider);
+}
+
+function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; orgSlug: string | null }) {
+  const { audience, nobody, ready, status } = useGatewayProviderSummary(provider);
+  const litellm = provider.litellm;
   return (
     <div className={ROW} data-testid="gateway-provider-row">
       <DenBrandMark

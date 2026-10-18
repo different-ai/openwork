@@ -53,6 +53,13 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  providerManagementLayout: {
+    label: "Side-by-side provider management",
+    description: "Compare AI Gateway and legacy bring-your-own-key providers side by side, with clearly marked provider systems.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   liveProviderSync: {
     label: "Live provider sync",
     description: "Keep desktop OpenCode v2 models up to date with the organization's AI Gateway in real time.",

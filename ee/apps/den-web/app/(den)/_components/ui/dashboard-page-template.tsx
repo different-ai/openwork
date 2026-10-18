@@ -24,15 +24,18 @@ export type DashboardPageTemplateProps = {
   /** Retained for compatibility; supporting copy always renders below the header. */
   descriptionPlacement?: "below" | "hero";
   children?: React.ReactNode;
+  /** "wide" gives side-by-side comparisons room; reading pages stay at the default measure. */
+  width?: "default" | "wide";
 };
 
 export function DashboardPageTemplate({
   title,
   description,
   children,
+  width = "default",
 }: DashboardPageTemplateProps) {
   return (
-    <div className="mx-auto max-w-[860px] p-4 sm:p-6 md:p-8">
+    <div className={`mx-auto ${width === "wide" ? "max-w-[1120px]" : "max-w-[860px]"} p-4 sm:p-6 md:p-8`}>
       <div data-dashboard-flat-header>
         <DenPageHeader title={title} size="compact" className="mb-1 break-words" />
       </div>

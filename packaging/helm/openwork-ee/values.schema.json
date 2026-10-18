@@ -18,6 +18,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "providerManagementLayout": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Side-by-side provider management: Compare AI Gateway and legacy bring-your-own-key providers side by side, with clearly marked provider systems. Renders DEN_FEATURE_PROVIDER_MANAGEMENT_LAYOUT."
+            },
             "liveProviderSync": {
               "enum": [
                 "",

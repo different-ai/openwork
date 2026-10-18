@@ -362,6 +362,7 @@ OpenWork Cloud. Don't change it on a customer install.
 <!-- BEGIN GENERATED features (pnpm features:sync) -->
 | `config.features.*` | Environment variable | Default | What it does |
 | --- | --- | --- | --- |
+| `providerManagementLayout` | `DEN_FEATURE_PROVIDER_MANAGEMENT_LAYOUT` | default off | Compare AI Gateway and legacy bring-your-own-key providers side by side, with clearly marked provider systems. |
 | `liveProviderSync` | `DEN_FEATURE_LIVE_PROVIDER_SYNC` | default off | Keep desktop OpenCode v2 models up to date with the organization's AI Gateway in real time. |
 | `googleDocumentTools` | `DEN_FEATURE_GOOGLE_DOCUMENT_TOOLS` | default off | Connected assistants inspect document tabs and headings, read or search bounded passages, and replace text against the revision they read. |
 | `offlineRecovery` | `DEN_FEATURE_OFFLINE_RECOVERY` | default off | Show compact App connection failures and a discreet offline indicator in OpenCode v2 conversations. |

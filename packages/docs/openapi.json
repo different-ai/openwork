@@ -2430,6 +2430,7 @@
           "key": {
             "type": "string",
             "enum": [
+              "providerManagementLayout",
               "liveProviderSync",
               "googleDocumentTools",
               "offlineRecovery",
@@ -2640,6 +2641,9 @@
                 "capabilities": {
                   "type": "object",
                   "properties": {
+                    "providerManagementLayout": {
+                      "type": "boolean"
+                    },
                     "liveProviderSync": {
                       "type": "boolean"
                     },
@@ -2756,6 +2760,7 @@
                     }
                   },
                   "required": [
+                    "providerManagementLayout",
                     "liveProviderSync",
                     "googleDocumentTools",
                     "offlineRecovery",
@@ -2798,6 +2803,62 @@
                 "featureStates": {
                   "type": "object",
                   "properties": {
+                    "providerManagementLayout": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "liveProviderSync": {
                       "type": "object",
                       "properties": {
@@ -4816,6 +4877,7 @@
                     }
                   },
                   "required": [
+                    "providerManagementLayout",
                     "liveProviderSync",
                     "googleDocumentTools",
                     "offlineRecovery",
@@ -5221,6 +5283,9 @@
                 "capabilities": {
                   "type": "object",
                   "properties": {
+                    "providerManagementLayout": {
+                      "type": "boolean"
+                    },
                     "liveProviderSync": {
                       "type": "boolean"
                     },
@@ -5337,6 +5402,7 @@
                     }
                   },
                   "required": [
+                    "providerManagementLayout",
                     "liveProviderSync",
                     "googleDocumentTools",
                     "offlineRecovery",
@@ -5379,6 +5445,62 @@
                 "featureStates": {
                   "type": "object",
                   "properties": {
+                    "providerManagementLayout": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "liveProviderSync": {
                       "type": "object",
                       "properties": {
@@ -7397,6 +7519,7 @@
                     }
                   },
                   "required": [
+                    "providerManagementLayout",
                     "liveProviderSync",
                     "googleDocumentTools",
                     "offlineRecovery",
@@ -31415,6 +31538,9 @@
                     "capabilities": {
                       "type": "object",
                       "properties": {
+                        "providerManagementLayout": {
+                          "type": "boolean"
+                        },
                         "liveProviderSync": {
                           "type": "boolean"
                         },
@@ -31531,6 +31657,7 @@
                         }
                       },
                       "required": [
+                        "providerManagementLayout",
                         "liveProviderSync",
                         "googleDocumentTools",
                         "offlineRecovery",
@@ -31573,6 +31700,62 @@
                     "featureStates": {
                       "type": "object",
                       "properties": {
+                        "providerManagementLayout": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "liveProviderSync": {
                           "type": "object",
                           "properties": {
@@ -33591,6 +33774,7 @@
                         }
                       },
                       "required": [
+                        "providerManagementLayout",
                         "liveProviderSync",
                         "googleDocumentTools",
                         "offlineRecovery",
@@ -33745,6 +33929,9 @@
                     "capabilities": {
                       "type": "object",
                       "properties": {
+                        "providerManagementLayout": {
+                          "type": "boolean"
+                        },
                         "liveProviderSync": {
                           "type": "boolean"
                         },
@@ -33861,6 +34048,7 @@
                         }
                       },
                       "required": [
+                        "providerManagementLayout",
                         "liveProviderSync",
                         "googleDocumentTools",
                         "offlineRecovery",
@@ -33903,6 +34091,62 @@
                     "featureStates": {
                       "type": "object",
                       "properties": {
+                        "providerManagementLayout": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "liveProviderSync": {
                           "type": "object",
                           "properties": {
@@ -35921,6 +36165,7 @@
                         }
                       },
                       "required": [
+                        "providerManagementLayout",
                         "liveProviderSync",
                         "googleDocumentTools",
                         "offlineRecovery",

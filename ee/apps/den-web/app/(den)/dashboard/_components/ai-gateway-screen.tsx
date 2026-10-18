@@ -24,6 +24,7 @@ import { useOrgInferenceProviders } from "./inference-provider-data";
 import { GatewayProvidersSection } from "./inference-providers-screen";
 import { LegacyProvidersSection } from "./llm-providers-screen";
 import { InferenceScreen } from "./inference-screen";
+import { ProviderComparison } from "./provider-comparison";
 
 export type AiGatewayTab = "overview" | "ai-providers" | "limits" | "users-and-teams" | "openwork-models";
 
@@ -118,6 +119,9 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
     : AI_GATEWAY_TABS.find((item) => item.value === searchParams.get("tab"))?.value ?? defaultTab;
   const gatewayTabArea = tab === "openwork-models" ? "any" : GATEWAY_TAB_AREAS[tab];
   const access = useGatewayDashboardAccess(gatewayTabArea);
+  // Off: the original stacked AI Providers tab, unchanged.
+  const providerManagementLayout = orgFeatureEnabled(orgContext, "providerManagementLayout");
+  const comparison = providerManagementLayout && tab === "ai-providers" && nestedContent === undefined;
 
   function setTab(next: AiGatewayTab) {
     const params = new URLSearchParams(searchParams.toString());
@@ -132,6 +136,7 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
     <DashboardPageTemplate
       title="AI Gateway"
       description="Manage Providers, Models, Usage Limits and LLM Controls for your team"
+      width={providerManagementLayout ? "wide" : "default"}
     >
       <div data-testid="ai-gateway-tabs" className="mb-6">
         <UnderlineTabs tabs={AI_GATEWAY_TABS} activeTab={tab} onChange={setTab} />
@@ -141,8 +146,13 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
         role="tabpanel"
         aria-label={AI_GATEWAY_TABS.find((item) => item.value === tab)?.label}
         data-testid={`ai-gateway-panel-${tab}`}
+        // The wide page is for the provider comparison; every other panel keeps the reading measure.
+        className={providerManagementLayout && !comparison ? "max-w-[796px]" : undefined}
       >
-        {nestedContent !== undefined ? nestedContent : (
+        {comparison ? (
+          orgError ? <DenNotice tone="error" message={orgError} />
+            : <ProviderComparison key={orgId} gatewayAccess={access} showLegacy={memberAccess.canViewAllLlmProviders} />
+        ) : nestedContent !== undefined ? nestedContent : (
           <>
             {tab === "overview" || tab === "ai-providers" || tab === "limits" || tab === "users-and-teams" ? (
               orgError ? <DenNotice tone="error" message={orgError} />
