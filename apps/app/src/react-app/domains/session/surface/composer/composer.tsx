@@ -51,6 +51,7 @@ import { composerDiagnosticBlockers } from "./composer-diagnostics";
 import { ModelRecoveryNote } from "./model-recovery-note";
 import { modelRecoveryChatKey, useModelRecoveryStore } from "../model-recovery-store";
 import { DictationControl } from "./dictation-control";
+import { useBuiltinModelId } from "./dictation-builtin";
 import { useDictation, useDictationAvailable } from "./use-dictation";
 
 type MentionItem = {
@@ -259,7 +260,9 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [dropzoneActive, setDropzoneActive] = useState(false);
   const editorRef = useRef<LexicalPromptEditorHandle | null>(null);
   const dictationAvailable = useDictationAvailable();
+  const builtinDictationModelId = useBuiltinModelId();
   const dictation = useDictation({
+    builtinModelId: builtinDictationModelId,
     onTranscript: (text) => editorRef.current?.insertDictatedText(text),
     onError: (message) => toast.error(message),
   });
@@ -1528,7 +1531,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               */}
               <div data-composer-actions className="col-start-2 row-start-2 ml-auto flex shrink-0 items-center gap-1.5">
                 {dictationAvailable ? (
-                  <DictationControl status={dictation.status} disabled={Boolean(props.disabled)} onToggle={dictation.toggle} />
+                  <DictationControl status={dictation.status} disabled={Boolean(props.disabled)} builtinModelId={builtinDictationModelId} onToggle={dictation.toggle} />
                 ) : null}
                 <button
                   type="button"

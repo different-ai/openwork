@@ -1,16 +1,26 @@
 /** @jsxImportSource react */
 import { useState } from "react";
-import { CheckCircle2, LoaderCircle, XCircle } from "lucide-react";
+import { CheckCircle2, Download, LoaderCircle, Trash2, XCircle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
 import { t } from "@/i18n";
+import { formatFileSize } from "@/lib/utils";
 import { useOrgRestrictions } from "../cloud/desktop-config-provider";
 import { DictationError, encodeWav, transcribeRecording } from "../session/surface/composer/dictation-audio";
-import { DICTATION_DEFAULT_ENDPOINT, useDictationStore } from "../session/surface/composer/dictation-store";
+import {
+  useBuiltinModelActions,
+  useBuiltinModelId,
+  useBuiltinModels,
+  useBuiltinModelStatus,
+  type DictationModelInfo,
+} from "../session/surface/composer/dictation-builtin";
+import { DICTATION_DEFAULT_ENDPOINT, useDictationStore, type DictationEngine } from "../session/surface/composer/dictation-store";
 import { setDictationExtensionEnabled, useDictationExtensionEnabled } from "../session/surface/composer/use-dictation";
 import { surfaceCardClass } from "../workspace/modal-styles";
 import { registerExtensionConfig } from "./extension-registry";
@@ -20,7 +30,7 @@ const voiceDictationConfigFactory = () => <VoiceDictationConfig />;
 registerExtensionConfig("openwork.dictation.settings", voiceDictationConfigFactory);
 registerExtensionConfig("voice-dictation", voiceDictationConfigFactory);
 
-/** Settings › Voice dictation: the on/off switch for the composer mic, then where to send recordings. */
+/** Settings › Voice dictation: the on/off switch for the composer mic, then which speech engine it uses. */
 export function VoiceDictationSettings() {
   const enabled = useDictationExtensionEnabled();
   const blocked = useOrgRestrictions().allowBuiltInExtensions === false;
@@ -47,9 +57,94 @@ export function VoiceDictationSettings() {
   );
 }
 
+function VoiceDictationConfig() {
+  const engine = useDictationStore((state) => state.engine);
+  const updateSettings = useDictationStore((state) => state.updateSettings);
+  return (
+    <div className={`${surfaceCardClass} space-y-4 p-4`}>
+      <RadioGroup
+        className="w-full gap-2"
+        value={engine}
+        onValueChange={(value: DictationEngine) => updateSettings({ engine: value })}
+      >
+        <FieldLabel htmlFor="dictation-engine-builtin">
+          <Field orientation="horizontal">
+            <RadioGroupItem value="builtin" id="dictation-engine-builtin" />
+            <FieldContent>
+              <FieldTitle>Built into OpenWork</FieldTitle>
+              <FieldDescription>Downloads a speech model once, then works offline. Your voice never leaves this computer.</FieldDescription>
+            </FieldContent>
+          </Field>
+        </FieldLabel>
+        <FieldLabel htmlFor="dictation-engine-server">
+          <Field orientation="horizontal">
+            <RadioGroupItem value="server" id="dictation-engine-server" />
+            <FieldContent>
+              <FieldTitle>Your own transcription server</FieldTitle>
+              <FieldDescription>Use a server you run, such as whisper.cpp or a Parakeet server.</FieldDescription>
+            </FieldContent>
+          </Field>
+        </FieldLabel>
+      </RadioGroup>
+      {engine === "builtin" ? <BuiltinModels /> : <ServerSettings />}
+    </div>
+  );
+}
+
+function BuiltinModels() {
+  const models = useBuiltinModels();
+  const activeModelId = useBuiltinModelId();
+  const updateSettings = useDictationStore((state) => state.updateSettings);
+  if (!models.data) return null;
+  if (models.data.length === 1) return <BuiltinModelRow model={models.data[0]} />;
+  return (
+    <RadioGroup
+      className="w-full gap-2"
+      value={activeModelId}
+      onValueChange={(value: string) => updateSettings({ desktopModel: value })}
+    >
+      {models.data.map((model) => <BuiltinModelRow key={model.id} model={model} selectable />)}
+    </RadioGroup>
+  );
+}
+
+function BuiltinModelRow(props: { model: DictationModelInfo; selectable?: boolean }) {
+  const status = useBuiltinModelStatus(props.model.id);
+  const actions = useBuiltinModelActions(props.model.id);
+  const data = status.data;
+  const percent = data?.state === "downloading" && data.totalBytes > 0 ? Math.min(99, Math.round((data.receivedBytes / data.totalBytes) * 100)) : 0;
+  const content = (
+    <Field orientation="horizontal">
+      {props.selectable ? <RadioGroupItem value={props.model.id} id={`dictation-model-${props.model.id}`} /> : null}
+      <FieldContent>
+        <FieldTitle>{props.model.label}</FieldTitle>
+        <FieldDescription>
+          {props.model.description} {data?.state === "ready" ? "Downloaded." : `${formatFileSize(props.model.downloadBytes)} download.`}
+        </FieldDescription>
+        {data?.state === "downloading" ? <Progress value={percent} className="mt-1" /> : null}
+        {data?.state === "failed" ? <p className="text-[13px] text-dls-secondary">Couldn't download it: {data.error}</p> : null}
+      </FieldContent>
+      {data?.state === "ready" ? (
+        <Button variant="ghost" size="sm" onClick={() => void actions.remove()}>
+          <Trash2 />
+          Remove
+        </Button>
+      ) : data?.state === "downloading" ? (
+        <span className="shrink-0 text-[13px] tabular-nums text-dls-secondary">{percent}%</span>
+      ) : (
+        <Button variant="outline" size="sm" onClick={() => void actions.download()}>
+          <Download />
+          {data?.state === "failed" ? "Try again" : "Download"}
+        </Button>
+      )}
+    </Field>
+  );
+  return props.selectable ? <FieldLabel htmlFor={`dictation-model-${props.model.id}`}>{content}</FieldLabel> : content;
+}
+
 type CheckState = { kind: "idle" } | { kind: "checking" } | { kind: "ok" } | { kind: "failed"; message: string };
 
-function VoiceDictationConfig() {
+function ServerSettings() {
   const endpoint = useDictationStore((state) => state.endpoint);
   const model = useDictationStore((state) => state.model);
   const language = useDictationStore((state) => state.language);
@@ -68,7 +163,7 @@ function VoiceDictationConfig() {
   };
 
   return (
-    <div className={`${surfaceCardClass} space-y-4 p-4`}>
+    <div className="space-y-4">
       <FieldGroup>
         <Field>
           <FieldLabel htmlFor="dictation-endpoint">Transcription server</FieldLabel>

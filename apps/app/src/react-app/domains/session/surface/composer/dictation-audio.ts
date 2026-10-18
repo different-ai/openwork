@@ -5,12 +5,13 @@ const TRANSCRIBE_TIMEOUT_MS = 120_000;
 
 export class DictationError extends Error {}
 
+export const DICTATION_SAMPLE_RATE = TARGET_SAMPLE_RATE;
+
 /**
- * Whisper-style servers all accept 16 kHz mono PCM WAV, while browsers record
- * WebM/Opus or MP4. Decode the recording and resample it so any
- * OpenAI-compatible server works without ffmpeg on its side.
+ * Speech models expect 16 kHz mono audio, while browsers record WebM/Opus or
+ * MP4. Decode the recording and resample it so every engine gets the same input.
  */
-export async function recordingToWav(recording: Blob): Promise<Blob> {
+export async function recordingToSamples(recording: Blob): Promise<Float32Array> {
   const context = new AudioContext();
   let decoded: AudioBuffer;
   try {
@@ -25,7 +26,7 @@ export async function recordingToWav(recording: Blob): Promise<Blob> {
   source.connect(offline.destination);
   source.start();
   const rendered = await offline.startRendering();
-  return encodeWav(rendered.getChannelData(0), TARGET_SAMPLE_RATE);
+  return rendered.getChannelData(0);
 }
 
 export function encodeWav(samples: Float32Array, sampleRate: number): Blob {

@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { MCP_QUICK_CONNECT } from "@/app/constants";
 import { useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider";
 import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED, setOpenWorkExtensionEnabled } from "@/react-app/domains/settings/extension-state";
-import { DictationError, recordingToWav, transcribeRecording } from "./dictation-audio";
+import { DICTATION_SAMPLE_RATE, DictationError, encodeWav, recordingToSamples, transcribeRecording } from "./dictation-audio";
+import { transcribeWithBuiltinModel } from "./dictation-builtin";
 import { useDictationStore } from "./dictation-store";
 
 export type DictationStatus = "idle" | "recording" | "transcribing";
@@ -41,7 +42,11 @@ export function useDictationAvailable(): boolean {
   return useDictationExtensionEnabled() && restrictions.allowBuiltInExtensions !== false && microphoneSupported();
 }
 
-export function useDictation(options: { onTranscript: (text: string) => void; onError: (message: string) => void }) {
+export function useDictation(options: {
+  builtinModelId: string;
+  onTranscript: (text: string) => void;
+  onError: (message: string) => void;
+}) {
   const [status, setStatus] = useState<DictationStatus>("idle");
   const recorderRef = useRef<MediaRecorder | null>(null);
   const discardRef = useRef(false);
@@ -55,9 +60,11 @@ export function useDictation(options: { onTranscript: (text: string) => void; on
     }
     setStatus("transcribing");
     try {
-      const wav = await recordingToWav(new Blob(chunks, { type: mimeType }));
-      const { endpoint, model, language } = useDictationStore.getState();
-      const text = await transcribeRecording(wav, { endpoint, model, language });
+      const samples = await recordingToSamples(new Blob(chunks, { type: mimeType }));
+      const { engine, endpoint, model, language } = useDictationStore.getState();
+      const text = engine === "builtin"
+        ? await transcribeWithBuiltinModel(optionsRef.current.builtinModelId, samples)
+        : await transcribeRecording(encodeWav(samples, DICTATION_SAMPLE_RATE), { endpoint, model, language });
       if (text) {
         useDictationStore.getState().addTranscript(text);
         optionsRef.current.onTranscript(text);

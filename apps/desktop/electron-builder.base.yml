@@ -29,6 +29,8 @@ asar: true
 asarUnpack:
   - node_modules/.pnpm/@lydell+node-pty*/**
   - node_modules/node-pty/**
+  - node_modules/.pnpm/sherpa-onnx*/**
+  - node_modules/sherpa-onnx-*/**
 npmRebuild: false
 afterPack: scripts/electron-after-pack.cjs
 afterSign: scripts/electron-after-sign.cjs

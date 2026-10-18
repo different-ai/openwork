@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { useEffect, useRef } from "react";
 import { ChevronDown, Copy, LoaderCircle, Mic, Trash2 } from "lucide-react";
 
 import {
@@ -16,6 +17,8 @@ import {
 import { toast } from "@/components/ui/sonner";
 import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { formatFileSize } from "@/lib/utils";
+import { useBuiltinModelActions, useBuiltinModelStatus } from "./dictation-builtin";
 import { DICTATION_RECENT_LIMIT, useDictationStore, type DictationTranscript } from "./dictation-store";
 import type { DictationStatus } from "./use-dictation";
 
@@ -37,18 +40,45 @@ function TranscriptItem(props: { transcript: DictationTranscript }) {
   );
 }
 
-export function DictationControl(props: { status: DictationStatus; disabled: boolean; onToggle: () => void }) {
+/** The built-in model downloads on the first click of the mic; until then the mic offers that download. */
+function useBuiltinModelGate(modelId: string, active: boolean) {
+  const status = useBuiltinModelStatus(modelId);
+  const actions = useBuiltinModelActions(modelId);
+  const state = active ? status.data?.state : "ready";
+  const previous = useRef(state);
+  useEffect(() => {
+    if (previous.current === "downloading" && state === "ready") toast.success(t("composer.dictation_model_ready"));
+    if (previous.current === "downloading" && status.data?.state === "failed") toast.error(t("composer.dictation_model_failed", { error: status.data.error }));
+    previous.current = state;
+  }, [state, status.data]);
+  const data = status.data;
+  return {
+    ready: state === "ready",
+    downloading: data?.state === "downloading" && active,
+    percent: data?.state === "downloading" && data.totalBytes > 0 ? Math.min(99, Math.floor((data.receivedBytes / data.totalBytes) * 100)) : 0,
+    size: data?.state === "missing" ? formatFileSize(data.totalBytes) : null,
+    download: () => void actions.download(),
+  };
+}
+
+export function DictationControl(props: { status: DictationStatus; disabled: boolean; builtinModelId: string; onToggle: () => void }) {
   const transcripts = useDictationStore((state) => state.transcripts);
   const clearStash = useDictationStore((state) => state.clearStash);
+  const engine = useDictationStore((state) => state.engine);
+  const model = useBuiltinModelGate(props.builtinModelId, engine === "builtin");
   const recent = transcripts.slice(0, DICTATION_RECENT_LIMIT);
   const stashed = transcripts.slice(DICTATION_RECENT_LIMIT);
   const recording = props.status === "recording";
   const transcribing = props.status === "transcribing";
-  const label = recording
-    ? t("composer.dictation_stop")
-    : transcribing
-      ? t("composer.dictation_transcribing")
-      : t("composer.dictation_start");
+  const label = model.downloading
+    ? t("composer.dictation_model_downloading", { percent: model.percent })
+    : !model.ready
+      ? model.size ? t("composer.dictation_model_download", { size: model.size }) : t("composer.dictation_model_download_unsized")
+      : recording
+        ? t("composer.dictation_stop")
+        : transcribing
+          ? t("composer.dictation_transcribing")
+          : t("composer.dictation_start");
 
   return (
     <div data-composer-dictation className="flex shrink-0 items-center">
@@ -59,13 +89,19 @@ export function DictationControl(props: { status: DictationStatus; disabled: boo
           recording ? "bg-red-3 text-red-11 hover:bg-red-4" : "text-gray-10 hover:bg-gray-3 hover:text-gray-12",
         )}
         onMouseDown={(event) => event.preventDefault()}
-        onClick={props.onToggle}
-        disabled={transcribing || (props.disabled && !recording)}
+        onClick={model.ready ? props.onToggle : model.download}
+        disabled={transcribing || model.downloading || (props.disabled && !recording)}
         aria-pressed={recording}
         aria-label={label}
         title={label}
       >
-        {transcribing ? <LoaderCircle size={16} className="animate-spin" /> : <Mic size={16} className={recording ? "animate-pulse" : ""} />}
+        {model.downloading ? (
+          <span className="text-[11px] font-medium tabular-nums">{model.percent}%</span>
+        ) : transcribing ? (
+          <LoaderCircle size={16} className="animate-spin" />
+        ) : (
+          <Mic size={16} className={recording ? "animate-pulse" : ""} />
+        )}
       </button>
       {transcripts.length > 0 ? (
         <DropdownMenu>
