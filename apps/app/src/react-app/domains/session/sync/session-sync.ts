@@ -73,6 +73,7 @@ import {
 import {
   addBackgroundShell,
   clearBackgroundShellSession,
+  markBackgroundShellFreshness,
   resyncBackgroundShells,
   settleBackgroundShell,
   useBackgroundShellStore,
@@ -1152,7 +1153,12 @@ async function reconcileBackgroundShells(entry: SyncEntry, scope: "all" | string
       },
     }));
   } catch {
-    // A failed read is not evidence that anything ended. Keep the last state.
+    // A failed read is not evidence that anything ended. Keep the last state,
+    // but no longer claim that its running count is verified.
+    if (!controller.signal.aborted && syncs.get(syncKey(entry.input)) === entry) {
+      useBackgroundShellStore.getState().update(entry.input.workspaceId, (book) =>
+        markBackgroundShellFreshness(book, scope === "all" ? "all" : new Set([scope]), undefined, startedAt));
+    }
   } finally {
     entry.backgroundShellReads.delete(controller);
   }

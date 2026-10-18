@@ -151,7 +151,7 @@ export function readBackgroundShellNotice(value: unknown): BackgroundShellNotice
 export function backgroundShellNoticeLabel(notice: Pick<BackgroundShellNotice, "outcome" | "exit">): string {
   if (notice.outcome === "timed-out") return "Background task timed out";
   if (notice.outcome === "stopped") return "Background task stopped";
-  if (notice.outcome === "failed") return notice.exit === null ? "Background task failed" : `Background task failed · exit ${notice.exit}`;
+  if (notice.outcome === "failed") return "Background task failed";
   return "Background task finished";
 }
 

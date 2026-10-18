@@ -12,6 +12,8 @@ import { formatElapsedSeconds } from "@/lib/tool-call-duration"
 import { Message } from "@/components/ui/message"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
+import { formatRelativeTime } from "@/app/utils"
+import { TaskRecovery } from "./task-recovery"
 import { useBackgroundShellStore, type BackgroundShell } from "@/react-app/domains/session/status/background-shell-store"
 
 const COMMAND_PREVIEW_LENGTH = 80
@@ -53,7 +55,10 @@ export const BackgroundTaskNotice = React.memo(function BackgroundTaskNotice({ m
         className="flex w-full min-w-0 items-center gap-2 py-1 text-sm text-muted-foreground"
       >
         <SquareTerminal aria-hidden="true" className="size-4 shrink-0" />
-        <span className="shrink-0">{backgroundShellNoticeLabel(notice)}</span>
+        {notice.outcome === "failed" || notice.outcome === "timed-out" ? <TaskRecovery compact title={backgroundShellNoticeLabel(notice)}
+          description="Ask to review the command's output before trying again."
+          technicalDetails={[notice.command, notice.exit !== null ? `Exit code: ${notice.exit}` : null].filter(Boolean).join("\n")} />
+          : <span className="shrink-0">{backgroundShellNoticeLabel(notice)}</span>}
         {command ? <code className="min-w-0 truncate font-mono text-xs opacity-80" title={notice.command}>{command}</code> : null}
       </div>
     </Message>
@@ -78,23 +83,26 @@ type BackgroundTasksLabelProps = BackgroundTasksProps & {
  */
 export const BackgroundTasksLabel = React.memo(function BackgroundTasksLabel({ shells, stale = false, shimmer = true }: BackgroundTasksLabelProps) {
   const [open, setOpen] = React.useState(false)
+  const uncertain = stale || shells.some((shell) => shell.stale)
+  const checkedAt = Math.min(...shells.map((shell) => shell.checkedAt ?? shell.observedAt))
   const [now, setNow] = React.useState(() => Date.now())
   React.useEffect(() => {
-    if (!open) return
+    if (!open && !uncertain) return
     setNow(Date.now())
-    const interval = window.setInterval(() => setNow(Date.now()), 1_000)
+    const interval = window.setInterval(() => setNow(Date.now()), open ? 1_000 : 30_000)
     return () => window.clearInterval(interval)
-  }, [open])
+  }, [open, uncertain])
   return (
     <span data-background-tasks={shells.length}>
       <Tooltip open={open} onOpenChange={setOpen}>
         <TooltipTrigger
           render={<span tabIndex={0} />}
-          className={cn("cursor-default rounded-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring/50", shimmer && !stale && "ow-text-shimmer")}
+          className={cn("cursor-default rounded-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring/50", uncertain && "text-muted-foreground", shimmer && !uncertain && "ow-text-shimmer")}
         >
-          {runningBackgroundTasksLabel(shells.length)}
+          {uncertain ? `${shells.length} background ${shells.length === 1 ? "task" : "tasks"} last known running · ${Number.isFinite(checkedAt) ? `checked ${formatRelativeTime(checkedAt)}` : "last check unknown"} · couldn't verify` : runningBackgroundTasksLabel(shells.length)}
         </TooltipTrigger>
         <TooltipContent side="top" align="start" className="flex-col items-stretch gap-1">
+          {uncertain ? <span>Last confirmed {Number.isFinite(checkedAt) ? formatRelativeTime(checkedAt) : "at an unknown time"}. Reopen the conversation to check again.</span> : null}
           {shells.map((shell) => (
             <span key={shell.id} className="flex min-w-0 items-center gap-3">
               <code className="min-w-0 flex-1 truncate font-mono">{commandPreview(shell.command) || "Command"}</code>

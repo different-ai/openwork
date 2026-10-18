@@ -18,6 +18,7 @@ import {
   addBackgroundShell,
   emptyBackgroundShellBook,
   resyncBackgroundShells,
+  markBackgroundShellFreshness,
   sessionBackgroundShells,
   settleBackgroundShell,
   useBackgroundShellStore,
@@ -129,7 +130,7 @@ describe("translating engine shell events", () => {
   });
 
   test("completion rows say how the command ended", () => {
-    expect(backgroundShellNoticeLabel({ outcome: "failed", exit: 2 })).toBe("Background task failed · exit 2");
+    expect(backgroundShellNoticeLabel({ outcome: "failed", exit: 2 })).toBe("Background task failed");
     expect(backgroundShellNoticeLabel({ outcome: "timed-out", exit: null })).toBe("Background task timed out");
     expect(runningBackgroundTasksLabel(1)).toBe("1 running background task");
     expect(runningBackgroundTasksLabel(2)).toBe("2 running background tasks");
@@ -158,6 +159,17 @@ describe("the background shell book", () => {
     });
     expect(Object.keys(book.running).sort()).toEqual(["sh_kept", "sh_missed", "sh_new"]);
     expect(book.settled).toContain("sh_stale");
+  });
+
+  test("a failed check retains the last known count and age without overriding a newer check", () => {
+    let book = addBackgroundShell(emptyBackgroundShellBook, shell("sh_known"));
+    book = markBackgroundShellFreshness(book, "all", 200);
+    book = markBackgroundShellFreshness(book, "all", undefined, 300);
+    expect(book.running.sh_known).toMatchObject({ stale: true, checkedAt: 200 });
+    expect(Object.keys(book.running)).toEqual(["sh_known"]);
+    book = markBackgroundShellFreshness(book, "all", 500);
+    book = markBackgroundShellFreshness(book, "all", undefined, 400);
+    expect(book.running.sh_known).toMatchObject({ stale: false, checkedAt: 500 });
   });
 
   test("a resync for one conversation leaves the others alone", () => {
@@ -222,6 +234,18 @@ describe("session sync", () => {
     await __reconcileBackgroundShellsForTest(sync, SESSION);
     const shells = sessionBackgroundShells(useBackgroundShellStore.getState().booksByWorkspaceId[WORKSPACE]?.running, SESSION);
     expect(shells.map((shell) => shell.id)).toEqual(["sh_started_offline"]);
+  });
+
+  test("a failed running-command read marks retained commands uncertain until a successful reconciliation", async () => {
+    apply(shellToolCall("call_uncertain", { metadata: { status: "running", shellID: "sh_uncertain" } }));
+    __setWorkspaceSessionSyncRunningShellFetcherForTest(async () => { throw new Error("fixture connection refused"); });
+    await __reconcileBackgroundShellsForTest(sync, SESSION);
+    expect(sessionCount()).toBe(1);
+    expect(useBackgroundShellStore.getState().booksByWorkspaceId[WORKSPACE]?.running.sh_uncertain?.stale).toBe(true);
+    __setWorkspaceSessionSyncRunningShellFetcherForTest(async () => [engineShell("sh_uncertain", SESSION)]);
+    await __reconcileBackgroundShellsForTest(sync, SESSION);
+    expect(sessionCount()).toBe(1);
+    expect(useBackgroundShellStore.getState().booksByWorkspaceId[WORKSPACE]?.running.sh_uncertain?.stale).toBe(false);
   });
 
   test("another conversation's commands are not counted for this one", async () => {
