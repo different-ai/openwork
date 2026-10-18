@@ -7,7 +7,6 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState, type Rea
 import { workbotHost } from "./host";
 import {
   downloadWorkbotFile,
-  uploadWorkbotFile,
   useDeleteWorkbotFile,
   useWorkbotChat,
   useWorkbotFiles,
@@ -17,6 +16,8 @@ import {
 } from "./data";
 import { OpenFileContext } from "./open-file";
 import { dayLabel } from "./format";
+import type { Upload } from "./composer-state";
+export type { Upload } from "./composer-state";
 
 /** Files in Workbot (Paper v5: screens 5–8). */
 
@@ -96,83 +97,6 @@ export function AppMark({ name, size = 12 }: { name: string; size?: number }) {
 }
 
 // ---------------------------------------------------------------- uploads
-
-export type Upload = {
-  key: string;
-  file: File;
-  /** Local preview for images, before the upload finishes. */
-  previewUrl: string | null;
-  loaded: number;
-  status: "uploading" | "done" | "failed";
-  error: string | null;
-  saved: WorkbotFile | null;
-};
-
-/**
- * Files picked, dropped or pasted into the composer. Each uploads right away; the message can be sent while
- * they finish, and waits for them.
- */
-export function useUploads() {
-  const [uploads, setUploads] = useState<Upload[]>([]);
-  const waiters = useRef(new Map<string, { promise: Promise<WorkbotFile | null>; controller: AbortController }>());
-
-  const update = (key: string, patch: Partial<Upload>) => setUploads((current) => current.map((upload) => (upload.key === key ? { ...upload, ...patch } : upload)));
-  // Files are kept in the chat they are sent in; the page starts a fresh tray for each chat.
-  const chat = useWorkbotChat();
-
-  const start = useCallback((file: File, key: string = crypto.randomUUID()) => {
-    const controller = new AbortController();
-    const promise = uploadWorkbotFile(file, (loaded) => update(key, { loaded }), controller.signal, chat)
-      .then((saved) => {
-        update(key, { status: "done", saved, loaded: file.size });
-        return saved;
-      })
-      .catch((error: unknown) => {
-        update(key, { status: "failed", error: error instanceof Error ? error.message : "Couldn't upload." });
-        return null;
-      });
-    waiters.current.set(key, { promise, controller });
-    return key;
-  }, [chat]);
-
-  const add = useCallback((files: FileList | File[]) => {
-    const added = Array.from(files).map((file) => ({
-      key: crypto.randomUUID(),
-      file,
-      previewUrl: isImage(file.type) ? URL.createObjectURL(file) : null,
-      loaded: 0,
-      status: "uploading" as const,
-      error: null,
-      saved: null,
-    }));
-    setUploads((current) => [...current, ...added]);
-    for (const upload of added) start(upload.file, upload.key);
-  }, [start]);
-
-  const retry = (key: string) => {
-    const upload = uploads.find((entry) => entry.key === key);
-    if (!upload) return;
-    update(key, { status: "uploading", error: null, loaded: 0 });
-    start(upload.file, key);
-  };
-
-  const remove = (key: string) => {
-    waiters.current.get(key)?.controller.abort();
-    waiters.current.delete(key);
-    setUploads((current) => current.filter((upload) => upload.key !== key));
-  };
-
-  /** Hands the tray's files to a message and clears the tray. Resolves once every upload settled. */
-  const take = () => {
-    const taken = uploads;
-    const pending = taken.map((upload) => waiters.current.get(upload.key)?.promise ?? Promise.resolve(upload.saved));
-    waiters.current.clear();
-    setUploads([]);
-    return { taken, settled: Promise.all(pending).then((files) => files.flatMap((file) => (file ? [file] : []))) };
-  };
-
-  return { uploads, add, retry, remove, take };
-}
 
 function ProgressRing({ value }: { value: number }) {
   const circumference = 2 * Math.PI * 8;

@@ -39,6 +39,8 @@ export interface User {
   rightClick(target: Target, options?: ClickOptions): Promise<void>;
   dblclick(target: Target): Promise<void>;
   type(target: Target, text: string, options?: TypeOptions): Promise<void>;
+  /** Select fixtures on the browser's host through a real file input, without a native OS dialog. */
+  attachFiles(selector: string, files: string[]): Promise<void>;
   press(key: string): Promise<void>;
   hover(target: Target): Promise<void>;
   /** Trusted wheel input at an observed point, without locator auto-scrolling. */

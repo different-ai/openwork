@@ -24,10 +24,12 @@ test("a member asks about an open document and calendar without losing a draft",
     const sent = await probe.eventually(() => world.messages(), { within: 5000, label: "the question includes visible document metadata", until: values => values.length === 1 });
     expect(sent[0]).toMatchObject({ text: "Summarize this", context: { kind: "document", fileId: "file_brief", title: "Project brief.txt", unsaved: true } });
     expect(JSON.stringify(sent)).not.toContain("Private unsaved draft");
+    await user.notSee({ role: "button", label: "Hide workspace chat" });
+    expect((await probe.dom('textarea[aria-label="Message Workbot"]')).elements.some(input => input.focused)).toBe(true);
+    await user.click({ role: "button", label: "Show workspace chat" });
     await user.see({ role: "link", label: "Budget notes", nth: 0 });
     expect((await probe.url())).toContain("/documents");
     expect(world.opened()).toEqual(["file_brief"]);
-    expect((await probe.dom('textarea[aria-label="Message Workbot"]')).elements.some(input => input.focused)).toBe(true);
     evidence.recordAssertionEvidence("Only the current file metadata accompanies the question", JSON.stringify(sent[0]), !JSON.stringify(sent).includes("Private unsaved draft"));
     await user.screenshot();
   });
@@ -49,6 +51,7 @@ test("a member asks about an open document and calendar without losing a draft",
     const sent = await probe.eventually(() => world.messages(), { within: 5000, label: "calendar replaces the earlier document context", until: values => values.length === 2 });
     expect(sent[1]).toMatchObject({ text: "Help me prepare for this meeting", context: { kind: "calendar", view: "week", selected: { kind: "meeting", id: "event_review", title: "Team review" } } });
     expect(JSON.stringify(sent[1])).not.toContain("file_brief");
+    await user.click({ role: "button", label: "Show workspace chat" });
     evidence.recordAssertionEvidence("The new question refers to Calendar", JSON.stringify(sent[1]), JSON.stringify(sent[1]).includes('"kind":"calendar"'));
     await user.screenshot();
   });
@@ -62,6 +65,7 @@ test("a member asks about an open document and calendar without losing a draft",
     await user.press("Enter");
     const sent = await probe.eventually(() => world.messages(), { within: 5000, label: "context can be excluded", until: values => values.length === 3 });
     expect(sent[2]).not.toHaveProperty("context");
+    await user.click({ role: "button", label: "Show workspace chat" });
     evidence.recordAssertionEvidence("The draft survives navigation and view sharing can be turned off", "Private unsaved draft remains; the third question contains no context", !("context" in sent[2]));
     await user.screenshot();
   });

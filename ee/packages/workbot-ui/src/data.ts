@@ -3,7 +3,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { z } from "zod";
-import { workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
+import { workbotViewContextSchema, WORKBOT_MAX_MESSAGE_CHARS, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import { errorMessage as getErrorMessage, hostFetch, workbotHost } from "./host";
 
 const requestJson = (path: string, init?: RequestInit, timeoutMs?: number) => workbotHost().requestJson(path, init, timeoutMs);
@@ -257,7 +257,7 @@ export class WorkbotSendError extends Error {
 }
 
 /** The most one message can carry (the runner's limit); longer text goes as a file. */
-export const MAX_MESSAGE_CHARS = 100_000;
+export const MAX_MESSAGE_CHARS = WORKBOT_MAX_MESSAGE_CHARS;
 
 /** Why sending was refused, in the person's words. */
 function sendRefused(status: number, payload: unknown) {
@@ -426,7 +426,7 @@ export function useDeleteWorkbotMessage() {
   });
 }
 
-/** Edits one of the person's messages; Workbot answers the edited message fresh, from that point on. */
+/** Sends a correction as a new message; earlier messages and replies remain in the conversation. */
 export function useEditWorkbotMessage() {
   const queryClient = useQueryClient();
   const chat = useWorkbotChat();
@@ -503,6 +503,7 @@ export async function uploadWorkbotFile(file: File, onProgress: (loaded: number)
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const path = inChat(`/v1/workbot/files?${new URLSearchParams({ name: file.name || "file", timeZone }).toString()}`, chat);
   const target = await workbotHost().prepare(path);
+  if (signal.aborted) throw new Error("Canceled.");
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("POST", target.url);

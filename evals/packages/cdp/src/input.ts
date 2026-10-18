@@ -67,6 +67,30 @@ export async function readDom(surface: Surface, selector: string) {
   return snapshot;
 }
 
+/** Browser-native file selection. Uses the real file input/change path without opening an OS picker or evaluating app state. */
+export async function attachFiles(surface: Surface, selector: string, files: string[]): Promise<void> {
+  const documentSnapshot = await surface.client.send("DOM.getDocument", { depth: 0 });
+  const root = isRecord(documentSnapshot) && isRecord(documentSnapshot.root) ? numberField(documentSnapshot.root, "nodeId") : null;
+  if (!root) throw new Error("The file picker document is unavailable");
+  const result = await surface.client.send("DOM.querySelectorAll", { nodeId: root, selector });
+  const nodes = isRecord(result) && Array.isArray(result.nodeIds) ? result.nodeIds : [];
+  if (nodes.length !== 1 || typeof nodes[0] !== "number") throw new Error(`Expected one file input for ${selector}; found ${nodes.length}`);
+  const unavailable = await callFunctionOnSurface(surface, (selector) => {
+    const input = document.querySelector(selector);
+    if (!(input instanceof HTMLInputElement) || input.type !== "file" || !input.isConnected) return "not an available file input";
+    // :disabled includes inherited fieldset disabling (and respects the first-legend exception).
+    if (input.matches(":disabled") || input.closest('[aria-disabled="true"], [inert]')) return "disabled";
+    // A file input itself is intentionally hidden by most pickers; an unavailable parent surface is not.
+    for (let parent = input.parentElement; parent; parent = parent.parentElement) {
+      const style = getComputedStyle(parent);
+      if (parent.getAttribute("aria-hidden") === "true" || style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return "unavailable parent surface";
+    }
+    return null;
+  }, [selector]);
+  if (unavailable !== null) throw new Error(`File input unavailable: ${unavailable}`);
+  await surface.client.send("DOM.setFileInputFiles", { nodeId: nodes[0], files });
+}
+
 interface SerializedMatcher {
   kind: "string" | "regexp";
   value: string;

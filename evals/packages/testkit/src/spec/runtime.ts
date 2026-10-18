@@ -20,6 +20,7 @@ import {
   callFunctionOnSurface,
   CdpPageError,
   addInitScript,
+  attachFiles,
   callFunction, connect, debuggerUrlFor, listTargets,
   clickTarget,
   dumpScreenState,
@@ -897,6 +898,12 @@ export class UserChannel implements User {
         throw new Error("Typed field did not retain the expected value");
       }
     });
+  }
+
+  attachFiles(selector: string, files: string[]): Promise<void> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("user", "attachFiles", `attachFiles(${selector}, ${files.length} files)`, surface,
+      () => attachFiles(surface, selector, files));
   }
 
   press(key: string): Promise<void> {

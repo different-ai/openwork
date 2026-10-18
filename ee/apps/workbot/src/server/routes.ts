@@ -13,7 +13,7 @@ import type { Context, Hono, MiddlewareHandler } from "hono"
 import { bodyLimit } from "hono/body-limit"
 import { streamSSE } from "hono/streaming"
 import { z } from "zod"
-import { workbotContextPrompt, workbotViewContextSchema } from "@openwork/types/workbot-context"
+import { workbotContextPrompt, workbotViewContextSchema, WORKBOT_MAX_MESSAGE_CHARS } from "@openwork/types/workbot-context"
 import type { AppEnv, Member } from "./auth.js"
 import type { Config } from "./config.js"
 import type { Den } from "./den.js"
@@ -27,7 +27,7 @@ import { observedRunnerFetch, reportError } from "./error-reporting.js"
 
 const fileIdSchema = z.string().regex(/^fl_[a-f0-9]{32}$/)
 /** The runner's own limit on one message; anything longer goes as a file. */
-const MAX_MESSAGE_CHARS = 100_000
+const MAX_MESSAGE_CHARS = WORKBOT_MAX_MESSAGE_CHARS
 const sendSchema = z
   .object({
     id: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/),
@@ -273,6 +273,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     if (retryAfter !== null) return c.json({ error: "rate_limited" as const, retryAfter }, 429)
     try {
       const result = await workbotFor(member).send(actorOf(member), { ...body.data, chat: scope.chat })
+      if (!result.ok && result.code === "message_too_long") return c.json(messageTooLong, 400)
       if (!result.ok) return c.json({ error: result.code }, result.code === "unknown_file" ? 400 : 429)
       return c.json({ ok: true as const }, 202)
     } catch (error) {
@@ -330,7 +331,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     }
   })
 
-  /** Edits one of the person's messages: what came after it is replaced by Workbot's answer to the edit. */
+  /** Appends a correction with an authoritative reference to the original message; earlier turns stay. */
   app.post("/v1/workbot/messages/:id/edit", async (c) => {
     const body = editSchema.safeParse(await c.req.json().catch(() => null))
     if (!body.success) return c.json(tooLong(body.error) ? messageTooLong : { error: "invalid_request" }, 400)
@@ -345,8 +346,9 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     if (retryAfter !== null) return c.json({ error: "rate_limited" as const, retryAfter }, 429)
     try {
       const result = await workbotFor(member).editMessage(actorOf(member), { id: c.req.param("id"), ...body.data, chat: scope.chat })
+      if (!result.ok && result.code === "message_too_long") return c.json(messageTooLong, 400)
       if (!result.ok) {
-        const status = result.code === "busy" ? 409 : result.code === "unknown_message" ? 404 : result.code === "unknown_file" ? 400 : 429
+        const status = result.code === "unknown_message" ? 404 : result.code === "unknown_file" ? 400 : 429
         return c.json({ error: result.code }, status)
       }
       return c.json({ ok: true as const }, 202)

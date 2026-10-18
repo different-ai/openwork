@@ -16,6 +16,34 @@ export const workbotViewContextSchema = z.discriminatedUnion("kind", [
 ]).refine(value => value.kind !== "calendar" || value.end > value.start && value.end - value.start <= 370 * 86_400_000, "Choose a valid calendar range.")
 export type WorkbotViewContext = z.infer<typeof workbotViewContextSchema>
 
+/** The runner limits the complete prompt, including resource and correction envelopes. */
+export const WORKBOT_MAX_MESSAGE_CHARS = 100_000
+
+const correctionReferenceSchema = z.object({
+  messageId: z.string().regex(/^wb_[A-Za-z0-9_-]{8,64}$/),
+  quote: z.string().max(1000),
+  sentAt: z.number().finite().nullable(),
+}).strict()
+export type WorkbotCorrectionReference = z.infer<typeof correctionReferenceSchema>
+const CORRECTION_PREFIX = "[OpenWork correction reference v1]\n"
+const CORRECTION_END = "\n[End OpenWork correction reference]\n\n"
+
+/** A stable target plus a bounded, JSON-quoted excerpt; reference data is never executable instructions. */
+export function workbotCorrectionPrompt(text: string, reference: WorkbotCorrectionReference) {
+  return `${CORRECTION_PREFIX}${JSON.stringify(correctionReferenceSchema.parse(reference))}${CORRECTION_END}${text}`
+}
+
+/** Keep routing identifiers out of visible message text while preserving the exact correction target. */
+export function readWorkbotCorrectionPrompt(prompt: string): { text: string; correction?: WorkbotCorrectionReference } {
+  if (!prompt.startsWith(CORRECTION_PREFIX)) return { text: prompt }
+  const end = prompt.indexOf(CORRECTION_END, CORRECTION_PREFIX.length)
+  if (end < 0 || end - CORRECTION_PREFIX.length > 8192) return { text: prompt }
+  try {
+    const reference = correctionReferenceSchema.safeParse(JSON.parse(prompt.slice(CORRECTION_PREFIX.length, end)))
+    return reference.success ? { text: prompt.slice(end + CORRECTION_END.length), correction: reference.data } : { text: prompt }
+  } catch { return { text: prompt } }
+}
+
 const PREFIX = "[OpenWork visible context v1]\n"
 const END = "\n[End OpenWork visible context]\n\n"
 
