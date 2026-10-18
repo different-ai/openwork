@@ -61,10 +61,10 @@ export async function readMcpSkillIndex(config: Record<string, unknown>, fetcher
   return { skills: index.skills, ...(index.delivery ? { delivery: index.delivery } : {}) };
 }
 
-async function readIndexCached(cloud: Record<string, unknown>, fetcher: McpFetch): Promise<OpenWorkConnectSkillIndex | null> {
+export async function readMcpSkillIndexCached(cloud: Record<string, unknown>, fetcher: McpFetch, fresh = false): Promise<OpenWorkConnectSkillIndex | null> {
   const cacheKey = createHash("sha256").update(JSON.stringify(cloud)).digest("hex");
   const cached = catalogCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return await cached.value;
+  if (!fresh && cached && cached.expiresAt > Date.now()) return await cached.value;
   const value = readMcpSkillIndex(cloud, fetcher).catch(() => null);
   catalogCache.set(cacheKey, { expiresAt: Date.now() + CATALOG_CACHE_TTL_MS, value });
   return await value;
@@ -78,7 +78,7 @@ async function readIndexCached(cloud: Record<string, unknown>, fetcher: McpFetch
  * of shadowing a valid config, and the winning workspace copy is promoted to
  * server scope so Connect stays account-level.
  */
-async function readWorkingCloudIndex(config: ServerConfig, fetcher: McpFetch): Promise<CloudIndex | null> {
+async function readWorkingCloudIndex(config: ServerConfig, fetcher: McpFetch, fresh = false): Promise<CloudIndex | null> {
   const serverCloud = await readConnectCloudMcp(config);
   const candidates: Array<{ cloud: Record<string, unknown>; source: "server" | "workspace" }> = [];
   const globalCloud = await readGlobalRuntimeMcpConfig(config, OPENWORK_CLOUD_MCP_NAME);
@@ -94,7 +94,7 @@ async function readWorkingCloudIndex(config: ServerConfig, fetcher: McpFetch): P
     const key = JSON.stringify(candidate.cloud);
     if (seen.has(key)) continue;
     seen.add(key);
-    const index = await readIndexCached(candidate.cloud, fetcher);
+    const index = await readMcpSkillIndexCached(candidate.cloud, fetcher, fresh);
     if (index === null) continue;
     if (candidate.source === "workspace") {
       await writeConnectCloudMcp(config, candidate.cloud).catch(() => {
@@ -117,9 +117,10 @@ async function readWorkingCloudIndex(config: ServerConfig, fetcher: McpFetch): P
 export async function readOpenWorkConnectSkillIndex(
   config: ServerConfig,
   fetcher: McpFetch = externalFetch,
+  options: { fresh?: boolean } = {},
 ): Promise<OpenWorkConnectSkillIndex> {
   try {
-    return (await readWorkingCloudIndex(config, fetcher))?.index ?? { skills: [] };
+    return (await readWorkingCloudIndex(config, fetcher, options.fresh))?.index ?? { skills: [] };
   } catch {
     return { skills: [] };
   }

@@ -123,6 +123,12 @@ jobs:
           pnpm --dir evals exec vitest run --config vitest.config.ts --project pr ../apps/server/test/session-title-sigv4.vitest.test.ts
       - name: Test native MCP readiness and Stop ownership
         run: pnpm --filter openwork-server test:readiness
+      - name: Test native Cloud skill permissions and cold readiness
+        run: |
+          OPENWORK_TEST_OPENCODE2="$(pnpm exec bun -e 'import { installOpencodeV2Binary } from "./apps/server/src/opencode-v2-binary.ts"; import artifacts from "./apps/server/src/opencode-v2-artifacts.json"; console.log(await installOpencodeV2Binary(`${process.env.RUNNER_TEMP}/openwork-opencode2`, artifacts.version));')"
+          export OPENWORK_TEST_OPENCODE2
+          test -x "$OPENWORK_TEST_OPENCODE2"
+          pnpm --filter openwork-server test:cloud-skills
       # Uses the pinned OpenCode that Setup tests put on PATH.
       - name: Run Den provider unit tests
         run: |

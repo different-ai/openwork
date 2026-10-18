@@ -296,9 +296,10 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     });
   });
 
-  addRoute(routes, "GET", "/experimental/connect/skills", "client", async (_ctx) => {
-    // Connect skills are server/account-scoped (openwork-cloud on the host), not per-workspace.
-    const { skills, delivery } = await readOpenWorkConnectSkillIndex(config);
+  addRoute(routes, "GET", "/experimental/connect/skills", "client", async (ctx) => {
+    // Discovery may use its short cache; instruction authorization must not
+    // reuse that cached readiness/kill decision as an access grant.
+    const { skills, delivery } = await readOpenWorkConnectSkillIndex(config, undefined, { fresh: ctx.url.searchParams.get("fresh") === "true" });
     return jsonResponse({
       ok: true,
       schemaVersion: 1,

@@ -949,7 +949,16 @@ export function createEngineV2Preview(options: {
     // skills now use the same metadata/on-demand Connect path as v1.
     await rm(join(rootDir, "cloud-skills"), { recursive: true, force: true });
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
-    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest) : undefined;
+    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest, async (sessionID, ids) => {
+      if (!sidecar) throw new Error("Native skill authorization is unavailable");
+      // The pinned plugin API has no permission-create operation. Use the same
+      // engine endpoint as composer attachments, never another policy evaluator.
+      const result = await sidecar.fetchJson(`/api/session/${encodeURIComponent(sessionID)}/permission`, {
+        method: "POST", body: { action: "skill", resources: ids, save: ids },
+      });
+      if (result.status !== 200) throw new Error("Native skill authorization failed");
+      return result.json;
+    }) : undefined;
     providerSessionBridge = options.providerSession ? await createV2ProviderSessionBridge(() =>
       ownsGateway() ? options.providerSession?.() ?? null : null) : undefined;
     const globalSkills = globalSkillDirectories();
