@@ -29,7 +29,10 @@ impersonated Terraform behind `managedDeploymentsGcp` (cloud only, off).
 Installer publication/configuration is an operator action, not CLI sign-in or a
 feature rollout. Never fake readiness; local tests do not prove a live install.
 Killing a rollout blocks launches without deleting customer resources or
-interrupting authenticated enrollment/health reports.
+interrupting authenticated enrollment/health reports. Readiness errors name the
+operator's configuration or enablement action. A prepared approval is not cloud
+approval, services started is not healthy, and only observed health certifies
+an operational install; keep these distinctions in the page and MCP.
 
 ## Confidentiality (hard rule — this repo is public)
 

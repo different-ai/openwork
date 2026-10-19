@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { managedDeploymentSchema } from "@openwork/types/den/managed-deployments";
-import { deploymentStatus, providerName, readinessMessage, type ProviderReadiness } from "./managed-deployments-state";
+import { deploymentActionError, deploymentReadGateAfterFailure, deploymentStatus, parentDeploymentsRefused, providerName, readinessMessage, type ProviderReadiness } from "./managed-deployments-state";
 
 function deployment(provider: "aws" | "gcp" = "aws") {
   return managedDeploymentSchema.parse({
@@ -57,4 +57,52 @@ test("locks name the remediation owner and distinguish readiness causes", () => 
   }
   assert.match(readinessMessage({ provider: "aws", available: false }), /publish and configure a verified installer/);
   assert.equal(providerName("azure"), "Azure");
+});
+
+test("late rollout and publication errors give the same operator recovery as readiness", () => {
+  assert.equal(deploymentActionError({ error: "feature_disabled" }, "gcp"), readinessMessage({ provider: "gcp", available: false, reason: "feature_disabled" }));
+  assert.equal(deploymentActionError({ error: "release_not_configured" }, "gcp"), readinessMessage({ provider: "gcp", available: false, reason: "not_configured" }));
+  assert.equal(deploymentActionError({ error: "release_not_configured", message: "An OpenWork operator must correct the published release configuration." }, "gcp"), "An OpenWork operator must correct the published release configuration.");
+  assert.equal(deploymentActionError({ error: "fresh_auth_required" }, "gcp"), null);
+  assert.equal(deploymentActionError(null, "gcp"), null);
+});
+
+test("only the known parent GET guard establishes the rollout lock", () => {
+  const parent = { status: 404, payload: { error: "feature_disabled", feature: "managedDeployments" } };
+  assert.equal(parentDeploymentsRefused(parent), true);
+  assert.equal(deploymentReadGateAfterFailure("verified", [parent]), "feature_locked");
+  assert.equal(parentDeploymentsRefused({ status: 404, payload: { error: "feature_disabled", feature: "managedDeploymentsGcp" } }), false);
+  assert.equal(parentDeploymentsRefused({ status: 404, payload: { error: "feature_disabled" } }), false);
+  assert.equal(parentDeploymentsRefused({ status: 500, payload: parent.payload }), false);
+});
+
+test("partial reads and network failures cannot lift a known parent lock", () => {
+  const partial = [{ status: 200, payload: { deployments: [] } }, { status: 503, payload: { error: "unavailable" } }];
+  assert.equal(deploymentReadGateAfterFailure("feature_locked", partial), "feature_locked");
+  assert.equal(deploymentReadGateAfterFailure("feature_locked", []), "feature_locked");
+  assert.equal(deploymentReadGateAfterFailure("verified", partial), "unavailable");
+});
+
+test("authentication and scoped-access denials take precedence and keep content masked across later failures", () => {
+  const parent = { status: 404, payload: { error: "feature_disabled", feature: "managedDeployments" } };
+  for (const status of [401, 403]) assert.equal(deploymentReadGateAfterFailure("feature_locked", [parent, { status, payload: {} }]), "access_denied");
+  assert.equal(deploymentReadGateAfterFailure("verified", [{ status: 404, payload: { error: "organization_not_found" } }]), "access_denied");
+  assert.equal(deploymentReadGateAfterFailure("access_denied", [{ status: 500, payload: {} }]), "access_denied");
+  assert.equal(deploymentReadGateAfterFailure("access_denied", [parent]), "access_denied", "a later sibling feature refusal cannot downgrade an auth denial");
+  assert.equal(deploymentReadGateAfterFailure("verified", [{ status: 403, payload: null }]), "access_denied", "headers alone suffice when the body is unreadable");
+});
+
+test("approval and services started never stand in for verified health", () => {
+  const item = deployment("gcp");
+  if (!item.run) throw new Error("Missing fixture run");
+  item.installedVersion = null;
+  item.run.state = "provisioning";
+  assert.equal(deploymentStatus(item).label, "Approved · installing");
+  item.run.events.push({ sequence: 5, step: "services_ready", outcome: "succeeded", receivedAt: "2026-10-01T00:01:00.000Z" });
+  assert.equal(deploymentStatus(item).label, "Services started · checking health");
+  item.run.state = "ready";
+  item.health.state = "awaiting_report";
+  assert.equal(deploymentStatus(item).label, "Waiting for first report");
+  item.health.state = "operational";
+  assert.equal(deploymentStatus(item).label, "Operational");
 });

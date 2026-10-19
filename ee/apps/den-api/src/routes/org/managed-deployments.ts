@@ -10,7 +10,7 @@ import { compareVersions, hashToken, summarizeHealth, tokenMatches, validateEven
 import {
   awsTargetSchema, gcpTargetSchema, deploymentEventInputSchema, healthCheckSchema, healthReportSchema, managedDeploymentConfigurationSchema,
   managedDeploymentInputSchema, managedDeploymentLaunchInputSchema, managedDeploymentLaunchSchema, managedDeploymentListSchema,
-  managedDeploymentSchema, type ManagedDeployment,
+  managedDeploymentSchema, managedDeploymentReadinessMessage, type ManagedDeployment,
 } from "@openwork/managed-deployments/schema"
 import type { Hono } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
@@ -31,7 +31,13 @@ const deploymentParam = z.object({ deploymentId: z.string().uuid() })
 const runParam = deploymentParam.extend({ runId: z.string().uuid() })
 const acceptedSchema = z.object({ ok: z.literal(true) })
 const enrollmentResponseSchema = z.object({ token: z.string(), expiresAt: z.string().datetime() })
-const errorSchema = z.object({ error: z.string() })
+const errorSchema = z.object({ error: z.string(), message: z.string().optional() })
+
+function readinessError(provider: "aws" | "gcp", error: "feature_disabled" | "release_not_configured") {
+  const reason = error === "feature_disabled" ? "feature_disabled"
+    : releaseReadiness(provider).reason === "invalid_configuration" ? "invalid_configuration" : "not_configured"
+  return { error, message: managedDeploymentReadinessMessage({ provider, available: false, reason }) }
+}
 
 type DeploymentRow = typeof ManagedDeploymentTable.$inferSelect
 type RunRow = typeof ManagedDeploymentRunTable.$inferSelect
@@ -158,23 +164,24 @@ function bearerToken(header: string | undefined) {
 }
 
 export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
-  app.get(`${PATH}/configuration`, operation("Read which clouds can be launched", "Lists the clouds this OpenWork environment can install into and the published installer version for each. Agents call this first: only a provider with available true can be deployed; otherwise relay its reason and missing field names to the person.", managedDeploymentConfigurationSchema, { mcp: true }),
+  app.get(`${PATH}/configuration`, operation("Read which clouds can be launched", "Lists the clouds this OpenWork environment can install into and the published installer version for each. Agents call this first: available true means enabled and configured for preparing approval, not approved, started or healthy. Otherwise relay its message and missing field names to the person's OpenWork operator.", managedDeploymentConfigurationSchema, { mcp: true }),
     orgPermissionRoute("deployments.view"), requireFeature("managedDeployments"), async (c) => {
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
       const enabled = await organizationFeatureEnabled(org.organization.id, "managedDeploymentsGcp")
       const gcp = releaseReadiness("gcp")
-      return c.json(managedDeploymentConfigurationSchema.parse({
+      const configuration = managedDeploymentConfigurationSchema.parse({
         providers: [
           releaseReadiness("aws"),
           { provider: "azure", available: false, version: null, reason: "not_supported" },
           enabled ? gcp : { ...gcp, available: false, reason: "feature_disabled" },
         ],
         updateMode: "approval",
-      }))
+      })
+      return c.json({ ...configuration, providers: configuration.providers.map((entry) => ({ ...entry, message: managedDeploymentReadinessMessage(entry) })) })
     })
 
-  app.get(PATH, operation("List the organization's managed deployments", "Returns each installation in the organization's own cloud accounts with its latest installer run, health checks and available update. Agents poll this after the person approves: report run.events as progress, a failed event's errorCode as the problem, and give the person webUrl only once health.state is operational.", managedDeploymentListSchema, { mcp: true }),
+  app.get(PATH, operation("List the organization's managed deployments", "Returns each installation in the organization's own cloud accounts with its latest installer run, health checks and available update. Agents distinguish each observed state: awaiting_approval means approval prepared, not approved; provisioning means the authenticated installer connected after approval; a succeeded services_ready event means services started, not healthy. Only health.state operational is healthy. Report failed events as problems and give the person webUrl only once healthy.", managedDeploymentListSchema, { mcp: true }),
     orgPermissionRoute("deployments.view"), requireFeature("managedDeployments"), async (c) => {
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
@@ -187,8 +194,8 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
       const body = c.req.valid("json")
-      if (body.provider === "gcp" && !await organizationFeatureEnabled(org.organization.id, "managedDeploymentsGcp")) return c.json({ error: "feature_disabled" }, 404)
-      if (!(body.provider === "aws" ? awsRelease() : gcpRelease())) return c.json({ error: "release_not_configured" }, 503)
+      if (body.provider === "gcp" && !await organizationFeatureEnabled(org.organization.id, "managedDeploymentsGcp")) return c.json(readinessError("gcp", "feature_disabled"), 404)
+      if (!(body.provider === "aws" ? awsRelease() : gcpRelease())) return c.json(readinessError(body.provider, "release_not_configured"), 503)
       const id = randomUUID()
       await db.insert(ManagedDeploymentTable).values({
         id, org_id: org.organization.id, provider: body.provider, name: body.name, target: body.target,
@@ -220,7 +227,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       return c.json({ ok: true })
     })
 
-  app.post(`${PATH}/:deploymentId/launch`, operation("Prepare an install, retry or approved update", "Creates or reuses an installer run pinned to the published release and returns handoff: the one step the person takes in their own cloud. open_link: give them handoff.url to approve. run_in_cloud_shell: give them handoff.url and handoff.command to paste. OpenWork never runs it; repeating this call reopens the same pending run.", managedDeploymentLaunchSchema, { mcp: true }),
+  app.post(`${PATH}/:deploymentId/launch`, operation("Prepare an install, retry or approved update", "Creates or reuses an installer run pinned to the published release and returns handoff: the one step the person takes in their own cloud. open_link: give them handoff.url to approve. run_in_cloud_shell: give them handoff.url and handoff.command to paste. This only prepares approval: it is not cloud approval, services started or healthy. OpenWork never runs it; repeating this call reopens the same pending run.", managedDeploymentLaunchSchema, { mcp: true }),
     orgPermissionRoute("deployments.manage"), requireFeature("managedDeployments"), paramValidator(deploymentParam), jsonValidator(managedDeploymentLaunchInputSchema), async (c) => {
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
@@ -230,9 +237,9 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const result = await db.transaction(async (tx) => {
         const [row] = await tx.select().from(ManagedDeploymentTable).where(and(eq(ManagedDeploymentTable.id, id), eq(ManagedDeploymentTable.org_id, org.organization.id))).limit(1).for("update")
         if (!row) return { error: "deployment_not_found", status: 404 } as const
-        if (row.provider === "gcp" && !await organizationFeatureEnabled(org.organization.id, "managedDeploymentsGcp", { database: tx, lock: "share" })) return { error: "feature_disabled", status: 404 } as const
+        if (row.provider === "gcp" && !await organizationFeatureEnabled(org.organization.id, "managedDeploymentsGcp", { database: tx, lock: "share" })) return { ...readinessError("gcp", "feature_disabled"), status: 404 } as const
         const release = releaseFor(row)
-        if (!release) return { error: "release_not_configured", status: 503 } as const
+        if (!release) return { ...readinessError(row.provider === "gcp" ? "gcp" : "aws", "release_not_configured"), status: 503 } as const
         const [active] = row.active_run_id ? await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, row.active_run_id)).limit(1) : []
         const live = active && active.expires_at > now && (active.state === "awaiting_approval" || active.state === "provisioning")
         // Reopening a prepared approval returns the same run (no duplicates).
@@ -259,7 +266,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         if (!run) return { error: "deployment_not_found", status: 404 } as const
         return { row: { ...row, active_run_id: runId }, run }
       })
-      if ("error" in result) return c.json({ error: result.error }, result.status)
+      if ("error" in result) return c.json({ error: result.error, ...("message" in result ? { message: result.message } : {}) }, result.status)
       return c.json(managedDeploymentLaunchSchema.parse({
         deployment: await oneView(result.row), kind: result.run.kind,
         ...launchDetails(result.row, result.run),

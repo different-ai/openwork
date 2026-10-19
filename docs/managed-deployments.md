@@ -70,6 +70,15 @@ through `search_capabilities` / `execute_capability`:
 4. Follow progress (`GET /v1/managed-deployments`) and give the person `webUrl`
    once health reads operational.
 
+Readiness, preparation, approval and health are separate observations. The
+configuration response's `message` names operator recovery without configuration
+values. `awaiting_approval` means approval is prepared, not approved;
+`provisioning` means the authenticated installer connected after approval. A
+successful `services_ready` event means services started, not healthy. Only
+`health.state: operational` certifies healthy services. The page and MCP use
+these same distinctions, including when old health is still operational during
+a failed update.
+
 Agents cannot remove deployment records or call the installer's enrollment,
 milestone or health endpoints. The routes keep their permissions
 (`deployments.view` / `deployments.manage`) and feature checks; turning
@@ -186,7 +195,11 @@ profile; do not use a shared production project. See
 4. Only after live rollout gates pass, opt an internal organization into both
    features through `/admin`. Turning GCP off blocks create/launch but keeps
    existing records and authenticated reports; it never removes cloud resources.
-5. Create a deployment and prepare approval. Review the generated command,
+5. Enter the deployment details and choose **Prepare Google Cloud approval**.
+   This records the target and prepares its handoff; it does not approve or run
+   cloud work. If configuration changes while the form is open, the error names
+   the OpenWork operator's next action and keeps the entered details.
+   Review the generated command,
    open Google Cloud Shell, and run it there. The command verifies the pinned
    bundle before extraction/execution. The installer checks project number and
    DNS, asks for the exact project ID as approval, and prompts for Google ADC

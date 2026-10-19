@@ -7,22 +7,24 @@ import {
   type ManagedDeployment,
 } from "@openwork/types/den/managed-deployments";
 import { AlertTriangle, CheckCircle2, CircleDashed, Copy, ExternalLink, LockKeyhole, X, XCircle } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { z } from "zod";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
+import { DenNotice } from "../../_components/ui/notice";
 import { DenOptionCard } from "../../_components/ui/option-card";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { DenSelect } from "../../_components/ui/select";
 import { DenSkeleton } from "../../_components/ui/skeleton";
-import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
-import { getOrgAccessFlags, orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
+import { getRequestError, requestJson } from "../../_lib/den-flow";
+import { getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ConfirmDialog } from "./item-list";
-import { deploymentStatus, providerName, readinessMessage, type DeploymentTone, type ProviderReadiness } from "./managed-deployments-state";
+import { DeploymentReadinessError, deploymentActionError, deploymentPreparationLockMessage, deploymentReadGateAfterFailure, deploymentStatus, providerName, readinessMessage, type DeploymentReadGate, type DeploymentReadResponse, type DeploymentTone, type ProviderReadiness } from "./managed-deployments-state";
 export { deploymentStatus } from "./managed-deployments-state";
 
 type Configuration = z.infer<typeof managedDeploymentConfigurationSchema>;
+type DeploymentMutationRequest = (path: string, init: RequestInit) => Promise<Awaited<ReturnType<typeof requestJson>> | null>;
 type Launch = z.infer<typeof managedDeploymentLaunchSchema>;
 type Check = ManagedDeployment["health"]["checks"][number];
 type Tone = DeploymentTone;
@@ -114,6 +116,12 @@ function ProviderLock({ entry }: { entry: ProviderReadiness }) {
   );
 }
 
+function DeploymentActionFeedback({ error }: { error: Error | null }) {
+  if (!error) return null;
+  if (error instanceof DeploymentReadinessError) return <DenNotice tone="neutral" presentation="inline" icon={LockKeyhole} message={error.message} />;
+  return <p role="alert" className="text-[13px] text-red-700">{error.message}</p>;
+}
+
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex min-h-10 flex-col gap-1 border-b border-gray-100 py-2 text-[13px] last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
@@ -126,13 +134,20 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 export function ManagedDeploymentsScreen() {
   const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
   const access = getOrgAccessFlags(orgContext?.currentMember.role ?? "member", orgContext?.currentMember.isOwner ?? false, orgContext?.currentMember.permissions);
-  const enabled = orgFeatureEnabled(orgContext, "managedDeployments");
+  const memberId = orgContext?.currentMember.id;
   const [deployments, setDeployments] = useState<ManagedDeployment[]>([]);
   const [configuration, setConfiguration] = useState<Configuration | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadedAt, setLoadedAt] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [readGate, setReadGate] = useState<DeploymentReadGate>("pending");
+  const readGateRef = useRef<DeploymentReadGate>("pending");
+  const readBarrier = useRef(0);
+  const refreshRef = useRef<(() => Promise<void>) | null>(null);
+  const updateReadGate = useCallback((next: DeploymentReadGate) => {
+    if (next === "feature_locked" || next === "access_denied") readBarrier.current++;
+    readGateRef.current = next; setReadGate(next);
+  }, []);
+  const [actionError, setActionError] = useState<Error | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [launch, setLaunch] = useState<Launch | null>(null);
   const [busy, setBusy] = useState(false);
@@ -143,95 +158,183 @@ export function ManagedDeploymentsScreen() {
   const available = configuration?.providers.some((entry) => entry.available && (entry.provider === "aws" || entry.provider === "gcp")) ?? false;
   const selected = deployments.find((entry) => entry.id === selectedId) ?? deployments[0] ?? null;
 
+  const maskObservations = useCallback(() => {
+    setDeployments([]); setConfiguration(null); setLoadedAt(null); setSelectedId(null); setLaunch(null); setDialogOpen(false); setDeploymentToRemove(null);
+  }, []);
+
   useEffect(() => {
     const current = ++generation.current;
-    setDeployments([]); setConfiguration(null); setLoadedAt(null); setSelectedId(null); setLaunch(null); setError(null); setActionError(null); setBusy(false); setDialogOpen(false); setDeploymentToRemove(null);
-    setLoading(enabled && access.canViewDeployments);
-    if (!enabled || !orgId || !access.canViewDeployments) return;
+    maskObservations(); setActionError(null); setBusy(false);
+    updateReadGate("pending");
+    setLoading(Boolean(orgId && access.canViewDeployments));
+    if (!orgId || !access.canViewDeployments) { updateReadGate("access_denied"); return; }
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
+    let pending = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     async function refresh() {
+      if (stopped || pending) return;
+      pending = true;
+      const verificationBarrier = readBarrier.current;
+      clearTimeout(timer);
+      const responses: DeploymentReadResponse[] = [];
+      function applyFailure() {
+        if (stopped || generation.current !== current) return;
+        const next = deploymentReadGateAfterFailure(readGateRef.current, responses);
+        if (next === "access_denied") maskObservations();
+        updateReadGate(next);
+        setActionError(null);
+        setLoading(false);
+      }
+      async function read(path: string) {
+        const result = await requestJson(path, { method: "GET", cache: "no-store" }, 30_000, (response) => {
+          responses.push({ status: response.status, payload: null });
+          // Mask on receipt of auth headers, even if this body or the sibling hangs/fails.
+          if (response.status === 401 || response.status === 403) applyFailure();
+        });
+        responses.push({ status: result.response.status, payload: result.payload });
+        // A completed refusal takes effect immediately, not after the sibling settles.
+        if (!result.response.ok) applyFailure();
+        return result;
+      }
       try {
-        const [list, settings] = await Promise.all([
-          requestJson("/v1/managed-deployments", { method: "GET" }),
-          requestJson("/v1/managed-deployments/configuration", { method: "GET" }),
+        const [list, settings] = await Promise.allSettled([
+          read("/v1/managed-deployments"),
+          read("/v1/managed-deployments/configuration"),
         ]);
-        if (!list.response.ok) throw new Error(getErrorMessage(list.payload, "Couldn't load deployments."));
-        if (!settings.response.ok) throw new Error(getErrorMessage(settings.payload, "Couldn't load deployment settings."));
-        const parsed = managedDeploymentListSchema.parse(list.payload);
+        if (stopped || generation.current !== current) return;
+        if (list.status !== "fulfilled" || settings.status !== "fulfilled" || !list.value.response.ok || !settings.value.response.ok) {
+          applyFailure();
+          return;
+        }
+        // A read begun before an authoritative refusal cannot lift that lock.
+        if (verificationBarrier !== readBarrier.current) return;
+        const parsed = managedDeploymentListSchema.parse(list.value.payload);
+        const parsedSettings = managedDeploymentConfigurationSchema.parse(settings.value.payload);
         if (!stopped && generation.current === current) {
           setDeployments(parsed.deployments);
-          setConfiguration(managedDeploymentConfigurationSchema.parse(settings.payload));
+          setConfiguration(parsedSettings);
           setLoadedAt(new Date().toISOString());
-          setError(null);
+          // Only this matching, fully validated read pair may lift the lock.
+          updateReadGate("verified");
         }
-      } catch (failure) {
-        if (!stopped && generation.current === current) setError(failure instanceof Error ? failure.message : "Couldn't load deployments.");
+      } catch {
+        // Parsing/transport failures never discard an already observed refusal.
+        applyFailure();
       } finally {
+        pending = false;
         if (!stopped && generation.current === current) {
           setLoading(false);
           timer = setTimeout(() => { void refresh(); }, 10_000);
         }
       }
     }
+    refreshRef.current = refresh;
     void refresh();
-    return () => { stopped = true; clearTimeout(timer); };
-  }, [orgId, enabled, access.canViewDeployments]);
+    return () => {
+      stopped = true; clearTimeout(timer);
+      // Invalidate mutation callbacks on both scope changes and unmount, not just the next mount.
+      if (generation.current === current) generation.current++;
+      if (refreshRef.current === refresh) refreshRef.current = null;
+    };
+  }, [orgId, memberId, access.canViewDeployments, maskObservations, updateReadGate]);
+
+  /** Every write stays pinned to its starting scope and uses the same denial precedence as reads. */
+  function beginMutation(): DeploymentMutationRequest {
+    const current = generation.current;
+    function observe(response: DeploymentReadResponse) {
+      if (generation.current !== current) return;
+      const refusal = deploymentReadGateAfterFailure("pending", [response]);
+      if (refusal !== "access_denied" && refusal !== "feature_locked") return;
+      const next = deploymentReadGateAfterFailure(readGateRef.current, [response]);
+      if (next === "access_denied") maskObservations();
+      setDeploymentToRemove(null);
+      updateReadGate(next);
+      setActionError(null);
+    }
+    return async (path, init) => {
+      if (generation.current !== current || readGateRef.current !== "verified") return null;
+      try {
+        const result = await requestJson(path, init, 30_000, (response) => observe({ status: response.status, payload: null }));
+        if (generation.current !== current) return null;
+        observe({ status: result.response.status, payload: result.payload });
+        return result;
+      } catch (failure) {
+        // Stale body/transport errors must not reopen recovery in a different scope either.
+        if (generation.current !== current) return null;
+        throw failure;
+      }
+    };
+  }
 
   function replace(item: ManagedDeployment) {
     setDeployments((previous) => previous.some((entry) => entry.id === item.id) ? previous.map((entry) => entry.id === item.id ? item : entry) : [...previous, item]);
   }
 
   async function prepare(deployment: ManagedDeployment, kind: Launch["kind"]) {
+    if (readGateRef.current !== "verified") return;
     const current = generation.current;
+    const barrier = readBarrier.current;
+    const request = beginMutation();
     setBusy(true); setActionError(null); setCopied(false);
     try {
       await runReauthableAction(kind === "install" ? `Prepare ${providerName(deployment.provider)} approval` : kind === "update" ? "Prepare update" : "Prepare retry", async () => {
-        const result = await requestJson(`/v1/managed-deployments/${deployment.id}/launch`, { method: "POST", body: JSON.stringify({ kind }) });
-        if (!result.response.ok) throw getRequestError(result.payload, result.response, "Couldn't prepare the installer.");
+        const result = await request(`/v1/managed-deployments/${deployment.id}/launch`, { method: "POST", body: JSON.stringify({ kind }) });
+        if (!result) return;
+        if (!result.response.ok) {
+          const recovery = deploymentActionError(result.payload, deployment.provider);
+          throw recovery ? new DeploymentReadinessError(recovery) : getRequestError(result.payload, result.response, "Couldn't prepare the installer.");
+        }
         const parsed = managedDeploymentLaunchSchema.parse(result.payload);
-        if (generation.current === current) { setLaunch(parsed); replace(parsed.deployment); }
+        if (generation.current === current && readBarrier.current === barrier && readGateRef.current === "verified") { setLaunch(parsed); replace(parsed.deployment); }
       });
     } catch (failure) {
-      if (generation.current === current) setActionError(failure instanceof Error ? failure.message : "Couldn't prepare the installer.");
+      if (generation.current === current && readGateRef.current === "verified") setActionError(failure instanceof Error ? failure : new Error("Couldn't prepare the installer."));
     } finally {
       if (generation.current === current) setBusy(false);
     }
   }
 
   async function remove(deployment: ManagedDeployment) {
+    if (readGateRef.current !== "verified") return;
     const current = generation.current;
+    const barrier = readBarrier.current;
+    const request = beginMutation();
     setBusy(true); setActionError(null);
     try {
       await runReauthableAction("Remove deployment", async () => {
-        const result = await requestJson(`/v1/managed-deployments/${deployment.id}`, { method: "DELETE" });
+        const result = await request(`/v1/managed-deployments/${deployment.id}`, { method: "DELETE" });
+        if (!result) return;
         if (!result.response.ok) throw getRequestError(result.payload, result.response, "Couldn't remove the deployment.");
-        if (generation.current === current) { setDeployments((previous) => previous.filter((entry) => entry.id !== deployment.id)); setSelectedId(null); setLaunch(null); }
+        if (generation.current === current && readBarrier.current === barrier && readGateRef.current === "verified") { setDeployments((previous) => previous.filter((entry) => entry.id !== deployment.id)); setSelectedId(null); setLaunch(null); }
       });
     } finally {
       if (generation.current === current) setBusy(false);
     }
   }
 
-  const locked = !enabled ? "Deployments aren't turned on for this workspace. Ask your OpenWork contact to enable them."
-    : !access.canViewDeployments ? permissionLockReason("deployments.view") : null;
-  const canCreate = Boolean(!locked && available && access.canManageDeployments);
+  const accessDenied = !access.canViewDeployments || readGate === "access_denied";
+  const blockedReason = readGate === "feature_locked" ? deploymentPreparationLockMessage
+    : readGate === "verified" ? null : "Deployment access couldn't be verified. Check again before preparing cloud approval.";
+  const lastKnown = loadedAt !== null && readGate !== "verified";
+  const canCreate = Boolean(!accessDenied && readGate === "verified" && available && access.canManageDeployments);
 
   return (
-    <section className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-6 p-4 sm:p-6" data-testid="managed-deployments-screen">
+    <section className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-6 p-4 sm:p-6" data-testid="managed-deployments-screen" data-deployment-read-state={readGate}>
       <DenPageHeader title="Deployments" size="compact" className="max-sm:flex-col max-sm:gap-3" action={
-        <DenButton type="button" disabled={!canCreate || loading} onClick={() => { setActionError(null); setDialogOpen(true); }}>Create deployment</DenButton>
+        <DenButton type="button" data-testid="managed-deployment-create" disabled={!canCreate || loading} onClick={() => { setActionError(null); setDialogOpen(true); }}>Create deployment</DenButton>
       } />
-      {locked ? (
-        <p className="flex items-center gap-2 text-[13px] text-gray-500"><LockKeyhole aria-hidden className="size-4" />{locked}</p>
+      {accessDenied ? (
+        <DenNotice tone="neutral" icon={LockKeyhole} message={access.canViewDeployments ? "Deployment access changed. Sign in again or ask an organization owner for access." : permissionLockReason("deployments.view")} />
       ) : (
         <>
-          {error ? <p role="alert" className="text-[13px] text-red-700">{error} {loadedAt ? `Showing deployments from ${new Date(loadedAt).toLocaleTimeString()}.` : ""}</p> : null}
+          {readGate === "feature_locked" ? <DenNotice tone="neutral" icon={LockKeyhole} message={deploymentPreparationLockMessage} action={<DenButton variant="secondary" onClick={() => void refreshRef.current?.()}>Check again</DenButton>} />
+            : readGate === "unavailable" ? <DenNotice message="Could not verify deployments. Check again to refresh the last known observations." action={<DenButton variant="secondary" onClick={() => void refreshRef.current?.()}>Check again</DenButton>} /> : null}
+          {lastKnown ? <p role="status" className="text-[13px] text-gray-500" data-testid="deployment-last-known">Last verified {new Date(loadedAt).toLocaleString()}. Showing last known observations.</p> : null}
           {!loading ? configuration?.providers.filter((entry) => !entry.available).map((entry) => <ProviderLock key={entry.provider} entry={entry} />) : null}
           {!loading && !access.canManageDeployments ? <p className="flex items-center gap-2 text-[13px] text-gray-500"><LockKeyhole aria-hidden className="size-4" />{permissionLockReason("deployments.manage")}</p> : null}
           {loading ? (
             <div className="space-y-2" aria-busy="true"><DenSkeleton className="h-12 w-full" /><DenSkeleton className="h-12 w-full" /></div>
-          ) : deployments.length === 0 && !error ? (
+          ) : deployments.length === 0 && readGate === "verified" ? (
             <p className="text-[13px] text-gray-500">No deployments yet. Create one in your cloud account with a public domain.</p>
           ) : (
             <ul className="divide-y divide-gray-100" aria-label="Deployments">
@@ -246,7 +349,7 @@ export function ManagedDeploymentsScreen() {
                         <span className="block truncate text-[12px] text-gray-500">{providerName(item.provider)} · {item.provider === "aws" ? item.target.accountId : item.target.projectId} · {item.target.region}{item.provider === "aws" && item.target.network.mode === "existing" ? ` · ${item.target.network.vpcId}` : ""}</span>
                       </span>
                       <span className="text-right text-[13px] text-gray-500" data-deployment-version>{item.installedVersion ?? ""}</span>
-                      <span className={`col-span-2 min-w-0 text-right text-[13px] sm:col-span-1 ${toneText[status.tone]}`} data-deployment-status>{status.label}</span>
+                      <span className={`col-span-2 min-w-0 text-right text-[13px] sm:col-span-1 ${toneText[status.tone]}`} data-deployment-status>{lastKnown ? `Last known: ${status.label}` : status.label}</span>
                     </button>
                   </li>
                 );
@@ -255,9 +358,9 @@ export function ManagedDeploymentsScreen() {
           )}
           {selected ? (
             <DeploymentDetail deployment={selected} launch={launch?.deployment.id === selected.id ? launch : null} busy={busy} canManage={access.canManageDeployments}
-              copied={copied} actionError={actionError} canPrepare={configuration?.providers.some((entry) => entry.provider === selected.provider && entry.available) ?? false}
+              copied={copied} actionError={readGate === "verified" ? actionError : null} lastKnown={lastKnown} canPrepare={readGate === "verified" && (configuration?.providers.some((entry) => entry.provider === selected.provider && entry.available) ?? false)}
               onPrepare={(kind) => { void prepare(selected, kind); }}
-              onCopy={(command) => { void navigator.clipboard.writeText(command).then(() => setCopied(true)).catch(() => setActionError("Couldn't copy. Open Technical details and copy the command.")); }}
+              onCopy={(command) => { void navigator.clipboard.writeText(command).then(() => setCopied(true)).catch(() => setActionError(new Error("Couldn't copy. Open Technical details and copy the command."))); }}
               onRemove={() => { setActionError(null); setDeploymentToRemove(selected); }} />
           ) : null}
         </>
@@ -267,15 +370,21 @@ export function ManagedDeploymentsScreen() {
         description: `This removes the deployment record and its pending approval from this workspace. ${providerName(deploymentToRemove.provider)} resources and charges are unchanged. This cannot be undone.`,
         action: "Remove",
       } : null} onConfirm={async () => { if (deploymentToRemove) await remove(deploymentToRemove); }} onClose={() => setDeploymentToRemove(null)} />
-      <CreateDeploymentDialog open={dialogOpen} onOpenChange={setDialogOpen} configuration={configuration} runReauthableAction={runReauthableAction}
-        onCreated={(item) => { replace(item); setSelectedId(item.id); setLaunch(null); setDialogOpen(false); }} />
+      {configuration ? <CreateDeploymentDialog key={`${orgId}:${orgContext?.currentMember.id}`} open={dialogOpen} onOpenChange={setDialogOpen} configuration={configuration} blockedReason={blockedReason} beginMutation={beginMutation} runReauthableAction={runReauthableAction}
+        onCreated={(item) => {
+          setDialogOpen(false);
+          if (readGateRef.current !== "verified") return;
+          replace(item); setSelectedId(item.id); setLaunch(null);
+          // Preparing a handoff does not run it or approve billable cloud work.
+          if (item.provider === "gcp") void prepare(item, "install");
+        }} /> : null}
     </section>
   );
 }
 
-function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, copied, actionError, onPrepare, onCopy, onRemove }: {
+function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, copied, actionError, lastKnown, onPrepare, onCopy, onRemove }: {
   deployment: ManagedDeployment; launch: Launch | null; busy: boolean; canManage: boolean; canPrepare: boolean; copied: boolean;
-  actionError: string | null; onPrepare: (kind: Launch["kind"]) => void; onCopy: (command: string) => void; onRemove: () => void;
+  actionError: Error | null; lastKnown: boolean; onPrepare: (kind: Launch["kind"]) => void; onCopy: (command: string) => void; onRemove: () => void;
 }) {
   const status = deploymentStatus(deployment);
   const cloud = providerName(deployment.provider);
@@ -291,7 +400,7 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, cop
     <div className="flex min-w-0 flex-col gap-6 border-t border-gray-100 px-2 pt-6" data-testid="managed-deployment-detail">
       <div className="grid grid-cols-[minmax(0,1fr)] items-center gap-x-4 gap-y-1 sm:grid-cols-[minmax(0,1fr)_13rem]">
         <h2 className="min-w-0 break-words text-[15px] font-semibold text-gray-900 [overflow-wrap:anywhere]">{deployment.name}</h2>
-        <span className={`text-right text-[13px] ${toneText[status.tone]}`} data-testid="managed-deployment-status">{status.label}</span>
+        <span className={`text-right text-[13px] ${toneText[status.tone]}`} data-testid="managed-deployment-status">{lastKnown ? `Last known: ${status.label}` : status.label}</span>
       </div>
 
       <div data-testid="managed-deployment-configuration">
@@ -357,19 +466,19 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, cop
         </section>
       ) : null}
 
-      {actionError ? <p role="alert" className="text-[13px] text-red-700">{actionError}</p> : null}
+      <DeploymentActionFeedback error={actionError} />
 
       <div className="flex flex-wrap items-center gap-2">
         {canManage && !installed && (!run || (run.state === "awaiting_approval" && !run.expired)) ? (
           launch?.approvalUrl ? (
             <a className={buttonVariants({})} href={launch.approvalUrl} target="_blank" rel="noopener noreferrer">Review and approve in AWS<ExternalLink aria-hidden className="size-4" /></a>
-          ) : !launch?.command ? <DenButton type="button" loading={busy} disabled={!canPrepare} onClick={() => onPrepare("install")}>Prepare {cloud} approval</DenButton> : null
+          ) : !launch?.command ? <DenButton type="button" data-testid="deployment-prepare-install" loading={busy} disabled={!canPrepare} onClick={() => onPrepare("install")}>Prepare {cloud} approval</DenButton> : null
         ) : null}
         {canManage && runFailed ? <DenButton type="button" loading={busy} disabled={!canPrepare} onClick={() => onPrepare(installed || run?.events.length || run?.state === "failed" ? "retry" : "install")}>Prepare retry</DenButton> : null}
         {canManage && installed && deployment.updateAvailable && !runFailed && run?.state !== "provisioning" && (launch?.kind !== "update" || run?.state === "ready") ? <DenButton type="button" loading={busy} disabled={!canPrepare} onClick={() => onPrepare("update")}>Update to {deployment.availableVersion}</DenButton> : null}
         {installed ? <a className={buttonVariants({ variant: "secondary" })} href={deployment.webUrl} target="_blank" rel="noopener noreferrer">Open OpenWork<ExternalLink aria-hidden className="size-4" /></a> : null}
         <a className={buttonVariants({ variant: "ghost" })} href={deployment.consoleUrl} target="_blank" rel="noopener noreferrer">Open in {cloud}<ExternalLink aria-hidden className="size-4" /></a>
-        {canManage && neverStarted ? <DenButton type="button" variant="secondary" disabled={busy} data-testid="managed-deployment-remove" onClick={onRemove}>Remove</DenButton> : null}
+        {canManage && neverStarted ? <DenButton type="button" variant="secondary" disabled={busy || !canPrepare} data-testid="managed-deployment-remove" onClick={onRemove}>Remove</DenButton> : null}
       </div>
 
       <details className="text-[13px]">
@@ -384,12 +493,13 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, cop
   );
 }
 
-function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthableAction, onCreated }: {
-  open: boolean; onOpenChange: (open: boolean) => void; configuration: Configuration | null;
+function CreateDeploymentDialog({ open, onOpenChange, configuration, blockedReason, beginMutation, runReauthableAction, onCreated }: {
+  open: boolean; onOpenChange: (open: boolean) => void; configuration: Configuration;
+  blockedReason: string | null; beginMutation: () => DeploymentMutationRequest;
   runReauthableAction: (label: string, action: () => Promise<void>) => Promise<void>; onCreated: (deployment: ManagedDeployment) => void;
 }) {
-  const [chosenProvider, setChosenProvider] = useState<"aws" | "gcp" | null>(null);
-  const provider = chosenProvider ?? (configuration?.providers.find((entry) => entry.available && (entry.provider === "aws" || entry.provider === "gcp"))?.provider === "gcp" ? "gcp" : "aws");
+  // Snapshot the initial cloud once: polling a late lock must not switch the entered target to another cloud.
+  const [provider, setProvider] = useState<"aws" | "gcp">(() => configuration.providers.find((entry) => entry.available && (entry.provider === "aws" || entry.provider === "gcp"))?.provider === "gcp" ? "gcp" : "aws");
   const readiness = configuration?.providers.find((entry) => entry.provider === provider);
   const [projectId, setProjectId] = useState("");
   const [projectNumber, setProjectNumber] = useState("");
@@ -408,32 +518,42 @@ function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthab
   const [clusterArn, setClusterArn] = useState("");
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (blockedReason) { setError(new DeploymentReadinessError(blockedReason)); return; }
     const network = networkMode === "dedicated" ? { mode: "dedicated" } : {
       mode: "existing", vpcId: vpcId.trim(), serviceSubnetIds: idList(serviceSubnets), loadBalancerSubnetIds: idList(loadBalancerSubnets),
       ...(clusterArn.trim() ? { ecsClusterArn: clusterArn.trim() } : {}),
     };
-    if (!readiness?.available) { setError("This cloud is not ready. Ask your OpenWork operator to resolve the deployment lock."); return; }
+    if (!readiness?.available) { setError(new DeploymentReadinessError("This cloud is not ready. Ask your OpenWork operator to resolve the deployment lock.")); return; }
     const parsed = managedDeploymentInputSchema.safeParse(provider === "gcp"
       ? { provider, name, domainName, ownerEmail, target: { projectId: projectId.trim(), projectNumber: projectNumber.trim(), region: gcpRegion, dnsZoneName: dnsZoneName.trim() } }
       : { provider, name, domainName, ownerEmail, target: { accountId: accountId.trim(), region, route53ZoneId: zoneId.trim(), network } });
-    if (!parsed.success) { setError(parsed.error.issues[0]?.message ?? "Check the deployment details."); return; }
-    if (!consent) { setError("Confirm the cloud account, permissions and costs first."); return; }
+    if (!parsed.success) { setError(new Error(parsed.error.issues[0]?.message ?? "Check the deployment details.")); return; }
+    if (!consent) { setError(new Error("Confirm the cloud account, permissions and costs first.")); return; }
+    const request = beginMutation();
     setBusy(true); setError(null);
     try {
       await runReauthableAction("Create deployment", async () => {
-        const result = await requestJson("/v1/managed-deployments", { method: "POST", body: JSON.stringify(parsed.data) });
-        if (!result.response.ok) throw getRequestError(result.payload, result.response, "Couldn't create the deployment.");
-        onCreated(managedDeploymentSchema.parse(result.payload));
-        setConsent(false);
+        if (!mounted.current) return;
+        const result = await request("/v1/managed-deployments", { method: "POST", body: JSON.stringify(parsed.data) });
+        if (!mounted.current || !result) return;
+        if (!result.response.ok) {
+          const recovery = deploymentActionError(result.payload, provider);
+          throw recovery ? new DeploymentReadinessError(recovery) : getRequestError(result.payload, result.response, "Couldn't create the deployment.");
+        }
+        const created = managedDeploymentSchema.parse(result.payload);
+        // A completed request still belongs to its original organization/account.
+        if (mounted.current) { onCreated(created); setConsent(false); }
       });
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Couldn't create the deployment.");
+      if (mounted.current) setError(failure instanceof Error ? failure : new Error("Couldn't create the deployment."));
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   }
 
@@ -452,7 +572,7 @@ function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthab
             <div className="space-y-1 text-[13px]">
               <label htmlFor="deployment-cloud" className="text-gray-700">Cloud</label>
               <DenSelect id="deployment-cloud" value={provider} onChange={(event) => {
-                if (event.target.value === "aws" || event.target.value === "gcp") { setChosenProvider(event.target.value); setConsent(false); setError(null); }
+                if (event.target.value === "aws" || event.target.value === "gcp") { setProvider(event.target.value); setConsent(false); setError(null); }
               }}>
                 {(configuration?.providers ?? []).map((entry) => (
                   <option key={entry.provider} value={entry.provider} disabled={!entry.available || entry.provider === "azure"}>{providerName(entry.provider)}{!entry.available ? " (locked)" : ""}</option>
@@ -501,8 +621,8 @@ function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthab
               <input type="checkbox" className="mt-0.5" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
               <span className="min-w-0" data-testid="deployment-cost-consent">{provider === "gcp" ? "I control this Google Cloud project and public DNS zone, with billing enabled. I'll review the installer's permissions and run its command in Google Cloud Shell to approve. Only running the command creates or changes billable Cloud Run, Cloud SQL, load balancer and storage resources in my project. Removing this record does not delete those resources or stop charges. OpenWork receives deployment progress and health checks, never the first-sign-in code." : `I control this AWS account and hosted zone. AWS bills my account for the containers, database and load balancer${networkMode === "dedicated" ? " and NAT gateway (about $100–150 a month at the small size)" : " (about $60–100 a month at the small size, plus my network's own costs)"}. I'll review the installer's permissions in AWS before approving.`}</span>
             </label>
-            {error ? <p role="alert" className="text-[13px] text-red-700">{error}</p> : null}
-            <DenButton type="submit" data-testid="create-deployment-submit" loading={busy} disabled={!consent || !readiness?.available}>Create deployment</DenButton>
+            {blockedReason ? <DenNotice tone="neutral" icon={LockKeyhole} message={blockedReason} /> : readiness && !readiness.available ? <ProviderLock entry={readiness} /> : <DeploymentActionFeedback error={error} />}
+            <DenButton type="submit" data-testid="create-deployment-submit" loading={busy} disabled={!consent || !readiness?.available || Boolean(blockedReason)}>{provider === "gcp" ? "Prepare Google Cloud approval" : "Create deployment"}</DenButton>
           </form>
         </Dialog.Popup>
       </Dialog.Portal>

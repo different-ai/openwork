@@ -190,8 +190,22 @@ export const managedDeploymentConfigurationSchema = z.object({
     version: versionSchema.nullable(),
     reason: z.enum(["ready", "not_configured", "invalid_configuration", "not_supported", "feature_disabled"]).optional(),
     missingFields: z.array(z.string()).optional(),
+    message: z.string().optional(),
   })),
   updateMode: z.literal("approval"),
 })
 export type ManagedDeployment = z.infer<typeof managedDeploymentSchema>
 export type DeploymentHealth = z.infer<typeof deploymentHealthSchema>
+export type ManagedDeploymentProviderReadiness = z.infer<typeof managedDeploymentConfigurationSchema>["providers"][number]
+
+/** Shared operator recovery copy for the page, API and agent clients. Never include configuration values. */
+export function managedDeploymentReadinessMessage(entry: Pick<ManagedDeploymentProviderReadiness, "provider" | "available" | "reason" | "missingFields">): string {
+  const name = entry.provider === "aws" ? "AWS" : entry.provider === "gcp" ? "Google Cloud" : "Azure"
+  if (entry.available) return `${name} installer is configured for customer approval.`
+  switch (entry.reason) {
+    case "feature_disabled": return `${name} deployments aren't enabled for this workspace. Ask your OpenWork operator to enable them.`
+    case "invalid_configuration": return `${name} installer configuration is invalid. An OpenWork operator must correct the published release configuration.`
+    case "not_supported": return `${name} deployments aren't supported yet. An OpenWork operator can confirm supported clouds.`
+    default: return `${name} installer isn't configured for this OpenWork environment. An OpenWork operator must publish and configure a verified installer release.`
+  }
+}

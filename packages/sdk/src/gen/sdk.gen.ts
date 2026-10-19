@@ -3551,7 +3551,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Read which clouds can be launched
    *
-   * Lists the clouds this OpenWork environment can install into and the published installer version for each. Agents call this first: only a provider with available true can be deployed; otherwise relay its reason and missing field names to the person.
+   * Lists the clouds this OpenWork environment can install into and the published installer version for each. Agents call this first: available true means enabled and configured for preparing approval, not approved, started or healthy. Otherwise relay its message and missing field names to the person's OpenWork operator.
    */
   public getV1ManagedDeploymentsConfiguration<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
@@ -3566,7 +3566,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List the organization's managed deployments
    *
-   * Returns each installation in the organization's own cloud accounts with its latest installer run, health checks and available update. Agents poll this after the person approves: report run.events as progress, a failed event's errorCode as the problem, and give the person webUrl only once health.state is operational.
+   * Returns each installation in the organization's own cloud accounts with its latest installer run, health checks and available update. Agents distinguish each observed state: awaiting_approval means approval prepared, not approved; provisioning means the authenticated installer connected after approval; a succeeded services_ready event means services started, not healthy. Only health.state operational is healthy. Report failed events as problems and give the person webUrl only once healthy.
    */
   public getV1ManagedDeployments<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<
@@ -3683,7 +3683,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Prepare an install, retry or approved update
    *
-   * Creates or reuses an installer run pinned to the published release and returns handoff: the one step the person takes in their own cloud. open_link: give them handoff.url to approve. run_in_cloud_shell: give them handoff.url and handoff.command to paste. OpenWork never runs it; repeating this call reopens the same pending run.
+   * Creates or reuses an installer run pinned to the published release and returns handoff: the one step the person takes in their own cloud. open_link: give them handoff.url to approve. run_in_cloud_shell: give them handoff.url and handoff.command to paste. This only prepares approval: it is not cloud approval, services started or healthy. OpenWork never runs it; repeating this call reopens the same pending run.
    */
   public postV1ManagedDeploymentsByDeploymentIdLaunch<ThrowOnError extends boolean = false>(
     parameters: {

@@ -423,7 +423,9 @@ export function getWorkflowRuns(payload: unknown): WorkflowRun[] {
   });
 }
 
-export async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 30000) {
+export type DenResponseStatus = Readonly<Pick<Response, "status" | "ok">>;
+
+export async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 30000, observeResponse?: (response: DenResponseStatus) => void) {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
 
@@ -463,6 +465,8 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
       credentials: init.credentials ?? denApiCredentials(endpoint, path),
       signal: init.signal ?? timeoutController?.signal
     });
+    // Observe authority-bearing headers before body reads (which can fail independently).
+    observeResponse?.({ status: response.status, ok: response.ok });
     if (path === "/v1/me" && response.status === 401 && typeof window !== "undefined") {
       await fetch("/api/auth/clear-session-cookie", {
         method: "POST",
