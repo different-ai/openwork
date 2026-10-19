@@ -1,0 +1,24 @@
+{
+  "name": "@openwork/sandbox-connect",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
+    "test": "node --test src/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@openwork/sandbox": "workspace:*"
+  },
+  "description": "Reach a port inside any provider's sandbox as local loopback, racing every route the adapter offers (HTTPS edge, SSH gateway)."
+}

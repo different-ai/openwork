@@ -54,3 +54,33 @@ test("unknown launch timeout is not retried and never advertised as a killed com
   })
   assert.equal(f.launched(), 1)
 })
+
+test("routes offers the preview proxy and the SSH gateway; release revokes the SSH token", async () => {
+  const f = fixture()
+  const h = await f.provider.create(spec, { timeoutMs: 1000 })
+  const revoked: string[] = []
+  const withSsh = fixtureWithSsh(revoked)
+  const routes = await withBlocks(withSsh, ["routes"]).routes(await withSsh.create(spec, { timeoutMs: 1000 }), 8081, { timeoutMs: 1000 })
+  assert.deepEqual(routes.map((route) => route.label), ["daytona-preview", "daytona-ssh"])
+  const ssh = routes[1]
+  assert.ok(ssh?.kind === "ssh")
+  assert.deepEqual({ host: ssh.host, port: ssh.port, user: ssh.user, target: ssh.target }, { host: "ssh.example.test", port: 2222, user: "ssh-token", target: { port: 8081 } })
+  await ssh.release?.()
+  assert.deepEqual(revoked, ["ssh-token"])
+  // A client without SSH access still offers the preview route rather than failing.
+  assert.deepEqual((await withBlocks(f.provider, ["routes"]).routes(h, 8081, { timeoutMs: 1000 })).map((route) => route.label), ["daytona-preview"])
+})
+
+function fixtureWithSsh(revoked: string[]) {
+  const box: DaytonaSandboxClient = {
+    id: "ssh", state: "started", target: null,
+    refreshData: async () => {}, start: async () => {}, stop: async () => {}, delete: async () => {},
+    getSignedPreviewUrl: async () => ({ url: "https://8081-signed.example.com" }),
+    createSshAccess: async () => ({ token: "ssh-token", sshCommand: "ssh -p 2222 ssh-token@ssh.example.test" }),
+    revokeSshAccess: async (token) => { revoked.push(token) },
+    fs: { createFolder: async () => {}, uploadFile: async () => {}, setFilePermissions: async () => {}, deleteFile: async () => {} },
+    process: { createSession: async () => {}, executeSessionCommand: async () => ({ cmdId: "c" }), getSessionCommand: async () => ({ exitCode: 0 }), getSessionCommandLogs: async () => ({}) },
+  }
+  const client: DaytonaClient = { create: async () => box, get: async () => box, list: async function* () {}, volume: { get: async () => ({ id: "volume", state: "ready" }) } }
+  return createDaytonaProvider({ apiKey: "not-used", apiUrl: "https://example.com", snapshot: "test", image: "test", resources: { cpu: 1, memoryGb: 1, diskGb: 4 }, helperCreateTimeoutMs: 1000, pollIntervalMs: 1 }, { client })
+}

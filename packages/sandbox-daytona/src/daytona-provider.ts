@@ -18,6 +18,8 @@ import {
   type SandboxState,
   type SandboxStorage,
   type SandboxPlatform,
+  type SandboxRoute,
+  type SandboxSshRoute,
 } from "@openwork/sandbox"
 import { toRuntimeProviderError } from "./errors.js"
 
@@ -54,6 +56,9 @@ export type DaytonaSandboxClient = {
   delete(timeoutSeconds?: number): Promise<unknown>
   pause?(timeoutSeconds?: number): Promise<unknown>
   getSignedPreviewUrl(port: number, expiresInSeconds?: number): Promise<{ url: string }>
+  /** Token for Daytona's SSH gateway (`ssh <token>@<host>`), a route independent of preview URLs. */
+  createSshAccess?(expiresInMinutes: number): Promise<{ token: string; sshCommand?: string }>
+  revokeSshAccess?(token: string): Promise<void>
   fs: {
     createFolder(path: string, mode: string): Promise<unknown>
     uploadFile(source: Buffer, path: string, timeoutSeconds?: number): Promise<unknown>
@@ -160,6 +165,8 @@ function toSandboxClient(sandbox: Sandbox): DaytonaSandboxClient {
     delete: (timeout) => sandbox.delete(timeout),
     pause: (timeout) => sandbox.pause(timeout),
     getSignedPreviewUrl: (port, expiresInSeconds) => sandbox.getSignedPreviewUrl(port, expiresInSeconds),
+    createSshAccess: (expiresInMinutes) => sandbox.createSshAccess(expiresInMinutes),
+    revokeSshAccess: (token) => sandbox.revokeSshAccess(token),
     fs: {
       createFolder: (path, mode) => sandbox.fs.createFolder(path, mode),
       uploadFile: (source, path, timeout) => sandbox.fs.uploadFile(source, path, timeout),
@@ -174,6 +181,17 @@ function toSandboxClient(sandbox: Sandbox): DaytonaSandboxClient {
       getSessionCommand: (sessionId, commandId) => sandbox.process.getSessionCommand(sessionId, commandId),
       getSessionCommandLogs: (sessionId, commandId) => sandbox.process.getSessionCommandLogs(sessionId, commandId),
     },
+  }
+}
+
+/** `sshCommand` is `ssh [-p <port>] <token>@<host>`; only its host and port are read. */
+export function daytonaSshRoute(access: { token: string; sshCommand?: string }, port: number, release?: () => Promise<void>): SandboxSshRoute {
+  const command = access.sshCommand ?? ""
+  return {
+    kind: "ssh", label: "daytona-ssh", user: access.token, target: { port },
+    host: command.match(/@([A-Za-z0-9.-]+)\s*$/)?.[1] ?? "ssh.app.daytona.io",
+    port: Number(command.match(/\s-p\s+(\d{1,5})\b/)?.[1] ?? 22),
+    ...(release ? { release } : {}),
   }
 }
 
@@ -726,6 +744,21 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
             throw error
           }
         },
+      },
+      // Preview proxy and SSH gateway are separate Daytona services; offer both
+      // so a preview outage is a fallback, not a failure.
+      async routes(handle, port, opts) {
+        const sandbox = await resolve(handle)
+        const ttlSeconds = Math.max(60, Math.min(opts.ttlSeconds ?? 3600, maxSignedPreviewExpirySeconds))
+        const create = sandbox.createSshAccess
+        const [preview, ssh] = await Promise.allSettled([
+          boundedScriptOperation(wrap(() => sandbox.getSignedPreviewUrl(port, ttlSeconds)), opts.timeoutMs, () => new RuntimeProviderError({ providerId, code: "timeout", message: "Preview URL timed out", retryable: true })),
+          create ? boundedScriptOperation(wrap(() => create(Math.ceil(ttlSeconds / 60))), opts.timeoutMs, () => new RuntimeProviderError({ providerId, code: "timeout", message: "SSH access timed out", retryable: true })) : Promise.reject(new Error("no SSH access")),
+        ])
+        const routes: SandboxRoute[] = []
+        if (preview.status === "fulfilled") routes.push({ kind: "https", label: "daytona-preview", url: preview.value.url })
+        if (ssh.status === "fulfilled") routes.push(daytonaSshRoute(ssh.value, port, () => sandbox.revokeSshAccess?.(ssh.value.token) ?? Promise.resolve()))
+        return routes
       },
       ...(config.supportsPause ? {
         pause: async (handle, opts) => {

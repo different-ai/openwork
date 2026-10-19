@@ -1,6 +1,4 @@
-import { createServer } from "node:http";
-import { request } from "node:https";
-import type { Duplex } from "node:stream";
+import { loopbackRelay } from "@openwork/sandbox-connect";
 import { attachSurface } from "@openwork/cdp";
 import { trackResource } from "@openwork/world";
 import { ensureEvidenceSnapshot } from "@openwork/freestyle/evidence-builder";
@@ -20,41 +18,12 @@ export async function evidenceCdpRelay(session: Pick<EvidenceSession, "cdpOrigin
 /**
  * Loopback relay to a remote browser's remote-control port. Access headers (the
  * gateway cookie, a provider token) are added here, so they never appear in CDP
- * URLs, surfaces or evidence logs.
+ * URLs, surfaces or evidence logs. Shared with every provider via
+ * @openwork/sandbox-connect.
  */
 export async function cdpRelay(remote: URL, access: Record<string, string>) {
   if (remote.protocol !== "https:") throw new Error("Remote browser control must use HTTPS");
-  const peers = new Set<Duplex>();
-  const server = createServer((req, res) => {
-    // This loopback endpoint is for the Node controller, not arbitrary websites.
-    if (req.headers.origin || req.headers["sec-fetch-site"]) { res.writeHead(403).end(); return; }
-    const upstream = request({ hostname: remote.hostname, port: 443, path: req.url, method: req.method,
-      headers: { ...access, host: remote.host, "content-type": "application/json" }, timeout: 30_000 }, (response) => {
-      res.writeHead(response.statusCode ?? 502, { "content-type": "application/json", "cache-control": "no-store" }); response.pipe(res);
-    });
-    upstream.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end(); });
-    upstream.on("timeout", () => upstream.destroy()); req.pipe(upstream);
-  });
-  server.on("connection", (socket) => { peers.add(socket); socket.on("close", () => peers.delete(socket)); });
-  server.on("upgrade", (req, socket, head) => {
-    if (req.headers.origin || req.headers["sec-fetch-site"]) { socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"); return; }
-    const upstream = request({ hostname: remote.hostname, port: 443, path: req.url,
-      headers: { ...req.headers, ...access, host: remote.host } });
-    upstream.on("upgrade", (response, peer, upstreamHead) => {
-      peers.add(peer); peer.on("close", () => peers.delete(peer));
-      socket.write(`HTTP/1.1 101 Switching Protocols\r\n${Object.entries(response.headers).map(([key, value]) => `${key}: ${value}`).join("\r\n")}\r\n\r\n`);
-      if (head.length) peer.write(head); if (upstreamHead.length) socket.write(upstreamHead);
-      socket.pipe(peer).pipe(socket); peer.on("error", () => socket.destroy()); socket.on("error", () => peer.destroy());
-    });
-    upstream.on("response", () => socket.destroy()); upstream.on("error", () => socket.destroy()); upstream.end();
-  });
-  await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("CDP relay did not bind");
-  return { url: `http://127.0.0.1:${address.port}`, async [Symbol.asyncDispose]() {
-    for (const peer of peers) peer.destroy();
-    server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve()));
-  } };
+  return loopbackRelay(remote, access);
 }
 
 export async function attachEvidenceBrowser(session: EvidenceSession) {

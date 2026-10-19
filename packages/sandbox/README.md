@@ -50,6 +50,7 @@ and CLI paths are not silently replaced.
 | `snapshots`: capture a running instance, delete the image | absent; image building is a different operation | yes |
 | Persistent volumes | existing Daytona storage implementation | absent |
 | Endpoints | signed preview URLs | requires an explicit endpoint binding for TLS/domain setup |
+| `routes`: every way to reach a guest port, for `@openwork/sandbox-connect` | signed preview URL + SSH gateway token | bound domain (if any) + VM-scoped SSH identity |
 
 **Flavors are adapter configuration.** Daytona's `snapshot`, `target`, explicit
 `platform` and `supportsPause` identify the configured flavor. We do not infer

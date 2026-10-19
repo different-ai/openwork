@@ -275,6 +275,24 @@ export class DaytonaApi {
     return { url: trimTrailingSlashes(value.url), token: value.token };
   }
 
+  /**
+   * Token for Daytona's SSH gateway: `ssh <token>@<host>`. It reaches the guest
+   * without the preview proxy, so it still works when preview URLs answer 502.
+   */
+  async createSshAccess(id: string, expiresInMinutes: number): Promise<{ token: string; host: string; port: number }> {
+    const value = await this.call("POST", `/sandbox/${encodeURIComponent(id)}/ssh-access?expiresInMinutes=${expiresInMinutes}`);
+    if (!record(value) || typeof value.token !== "string" || !value.token) throw new Error("Invalid Daytona SSH access response");
+    // `sshCommand` is `ssh [-p <port>] <token>@<host>`; read only the host and port.
+    const command = text(value.sshCommand) ?? "";
+    const host = command.match(/@([A-Za-z0-9.-]+)\s*$/)?.[1] ?? "ssh.app.daytona.io";
+    const port = Number(command.match(/\s-p\s+(\d{1,5})\b/)?.[1] ?? 22);
+    return { token: value.token, host, port };
+  }
+
+  async revokeSshAccess(id: string, token: string): Promise<void> {
+    await this.call("DELETE", `/sandbox/${encodeURIComponent(id)}/ssh-access?token=${encodeURIComponent(token)}`);
+  }
+
   private toolbox(sandbox: Sandbox): string {
     return sandbox.toolboxProxyUrl ? `${trimTrailingSlashes(sandbox.toolboxProxyUrl)}/${sandbox.id}` : `${this.config.apiUrl}/toolbox/${sandbox.id}/toolbox`;
   }

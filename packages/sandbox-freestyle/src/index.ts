@@ -1,5 +1,5 @@
 import { Freestyle, FreestyleApiError, type VmData, type CreateVmOptions } from "freestyle"
-import { SandboxError, shellQuote, type SandboxProvider, type SandboxHandle, type SandboxRef, type SandboxQuery, type SandboxState, type RunSpec, type RunResult } from "@openwork/sandbox"
+import { SandboxError, shellQuote, type SandboxProvider, type SandboxHandle, type SandboxRef, type SandboxQuery, type SandboxState, type RunSpec, type RunResult, type SandboxRoute } from "@openwork/sandbox"
 
 export type FreestyleProviderOptions = {
   apiKey?: string
@@ -11,8 +11,10 @@ export type FreestyleProviderOptions = {
   firewall: NonNullable<Parameters<Freestyle["vms"]["create"]>[0]["firewall"]>
   /** Provider-specific endpoint composition (TLS/domains), not assumed by compute. */
   endpoint?: SandboxProvider["endpoint"]
+  /** Freestyle's SSH proxy; see https://www.freestyle.sh/docs/vms/ssh. */
+  sshHost?: string
 }
-export type FreestyleProviderDeps = { client?: Pick<Freestyle, "vms">; now?: () => number }
+export type FreestyleProviderDeps = { client?: Pick<Freestyle, "vms"> & Partial<Pick<Freestyle, "identities">>; now?: () => number }
 
 export function freestyleError(error: unknown): SandboxError {
   if (error instanceof SandboxError) return error
@@ -118,6 +120,28 @@ export function createFreestyleProvider(options: FreestyleProviderOptions, deps:
     storage: { ensureVolume: async () => unsupported("volumes"), eraseSubpaths: async () => unsupported("volumes") },
     blocks: {
       run,
+      // The bound domain (when configured) and the SSH proxy are independent ways in.
+      async routes(h, port, opts) {
+        const vmId = identity(h.ref)
+        const identities = api.identities
+        const [edge, ssh] = await Promise.allSettled([
+          options.endpoint ? bounded(() => provider.endpoint(h, port, opts.ttlSeconds === undefined ? undefined : { ttlSeconds: opts.ttlSeconds }), opts.timeoutMs) : Promise.reject(new Error("no endpoint binding")),
+          identities ? bounded(async () => {
+            // One identity per route, scoped to this VM, deleted on release.
+            const { identity: grantee } = await identities.create()
+            try {
+              await grantee.permissions.vm.grant({ vmId, allowedLinuxUsers: options.linuxUser ? [options.linuxUser] : null })
+              const { token } = await grantee.tokens.create()
+              return { token, release: () => grantee.delete() }
+            } catch (error) { await grantee.delete().catch(() => undefined); throw error }
+          }, opts.timeoutMs) : Promise.reject(new Error("no identities client")),
+        ])
+        const routes: SandboxRoute[] = []
+        if (edge.status === "fulfilled") routes.push({ kind: "https", label: "freestyle-edge", url: edge.value.url })
+        if (ssh.status === "fulfilled") routes.push({ kind: "ssh", label: "freestyle-ssh", host: options.sshHost ?? "beta-ssh.freestyle.sh",
+          user: `${vmId}${options.linuxUser ? `+${options.linuxUser}` : ""}:${ssh.value.token}`, target: { port }, release: ssh.value.release })
+        return routes
+      },
       files: {
         async read(h, path, opts) { return bounded(() => api.vms.ref(identity(h.ref)).fs.readFile(path, { signal: AbortSignal.timeout(opts.timeoutMs) }), opts.timeoutMs) },
         async write(h, path, bytes, opts) { await bounded(() => api.vms.ref(identity(h.ref)).fs.writeFile(path, bytes, { signal: AbortSignal.timeout(opts.timeoutMs), ...(opts.mode === undefined ? {} : { mode: opts.mode }) }), opts.timeoutMs) },
