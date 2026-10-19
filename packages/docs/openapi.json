@@ -79537,7 +79537,7 @@
                       },
                       "connectionId": {
                         "type": "string",
-                        "pattern": "^(google-workspace|emc_[A-Za-z0-9]+)$"
+                        "pattern": "^(google-workspace|microsoft-365|emc_[A-Za-z0-9]+)$"
                       },
                       "revision": {
                         "type": "string",
@@ -79602,7 +79602,7 @@
                       },
                       "connectionId": {
                         "type": "string",
-                        "pattern": "^(google-workspace|emc_[A-Za-z0-9]+)$"
+                        "pattern": "^(google-workspace|microsoft-365|emc_[A-Za-z0-9]+)$"
                       },
                       "revision": {
                         "type": "string",
@@ -79655,7 +79655,7 @@
                       },
                       "connectionId": {
                         "type": "string",
-                        "pattern": "^(google-workspace|emc_[A-Za-z0-9]+)$"
+                        "pattern": "^(google-workspace|microsoft-365|emc_[A-Za-z0-9]+)$"
                       },
                       "revision": {
                         "type": "string",
@@ -87229,6 +87229,1137 @@
             }
           }
         },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/documents/microsoft-365/files": {
+      "get": {
+        "operationId": "listMicrosoft365Documents",
+        "tags": [
+          "Documents"
+        ],
+        "x-mcp": false,
+        "summary": "Browse, search and list recent OneDrive files",
+        "description": "Requires organization membership and Documents, and the member's Microsoft 365 connection with OneDrive read access. Saves also require OneDrive write access and a matching file version.",
+        "responses": {
+          "200": {
+            "description": "Document result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "pattern": "^[A-Za-z0-9_-]+$"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "mimeType": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "folder",
+                              "file"
+                            ]
+                          },
+                          "modifiedTime": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "size": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "openUrl": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "mimeType",
+                          "kind",
+                          "modifiedTime",
+                          "size",
+                          "openUrl"
+                        ]
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "files",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unsupported file or edit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Connect Microsoft 365, or reload the changed file.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "view",
+            "schema": {
+              "default": "folder",
+              "type": "string",
+              "enum": [
+                "recent",
+                "folder"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "folderId",
+            "schema": {
+              "default": "root",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "root"
+                },
+                {
+                  "type": "string",
+                  "const": "shared"
+                },
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "pattern": "^[A-Za-z0-9_-]+$"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 500
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          }
+        ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/documents/microsoft-365/files/{fileId}/metadata": {
+      "get": {
+        "operationId": "getMicrosoft365DocumentMetadata",
+        "tags": [
+          "Documents"
+        ],
+        "x-mcp": false,
+        "summary": "Read a OneDrive file's details without its content",
+        "description": "Requires organization membership and Documents, and the member's Microsoft 365 connection with OneDrive read access. Saves also require OneDrive write access and a matching file version.",
+        "responses": {
+          "200": {
+            "description": "Document result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "pattern": "^[A-Za-z0-9_-]+$"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "modifiedTime": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "size": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "openUrl": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "mimeType",
+                    "modifiedTime",
+                    "size",
+                    "openUrl"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unsupported file or edit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Connect Microsoft 365, or reload the changed file.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fileId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/documents/microsoft-365/files/{fileId}/editor": {
+      "get": {
+        "operationId": "openMicrosoft365DocumentEditor",
+        "tags": [
+          "Documents"
+        ],
+        "x-mcp": false,
+        "summary": "Open a OneDrive file in the inline editor",
+        "description": "Requires organization membership and Documents, and the member's Microsoft 365 connection with OneDrive read access. Saves also require OneDrive write access and a matching file version.",
+        "responses": {
+          "200": {
+            "description": "Document result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "connectionId": {
+                          "type": "string"
+                        },
+                        "fileId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "pattern": "^[A-Za-z0-9_-]+$"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "type": "string"
+                        },
+                        "canEdit": {
+                          "type": "boolean"
+                        },
+                        "notice": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "spreadsheet"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "google",
+                            "xlsx"
+                          ]
+                        },
+                        "sheets": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "rows": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "columns": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "rows",
+                              "columns"
+                            ]
+                          }
+                        },
+                        "activeSheetId": {
+                          "type": "string"
+                        },
+                        "startRow": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "endRow": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "cells": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "row": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                              },
+                              "column": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                              },
+                              "text": {
+                                "type": "string"
+                              },
+                              "formula": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "row",
+                              "column",
+                              "text"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "connectionId",
+                        "fileId",
+                        "name",
+                        "revision",
+                        "canEdit",
+                        "kind",
+                        "source",
+                        "sheets",
+                        "activeSheetId",
+                        "startRow",
+                        "endRow",
+                        "cells"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "connectionId": {
+                          "type": "string"
+                        },
+                        "fileId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "pattern": "^[A-Za-z0-9_-]+$"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "type": "string"
+                        },
+                        "canEdit": {
+                          "type": "boolean"
+                        },
+                        "notice": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "document"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "google",
+                            "docx"
+                          ]
+                        },
+                        "sections": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "paragraphs": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "heading": {
+                                      "type": "boolean"
+                                    },
+                                    "runs": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "text": {
+                                            "type": "string"
+                                          },
+                                          "bold": {
+                                            "type": "boolean"
+                                          },
+                                          "italic": {
+                                            "type": "boolean"
+                                          },
+                                          "underline": {
+                                            "type": "boolean"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "text"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "runs"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "paragraphs"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "connectionId",
+                        "fileId",
+                        "name",
+                        "revision",
+                        "canEdit",
+                        "kind",
+                        "source",
+                        "sections"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "connectionId": {
+                          "type": "string"
+                        },
+                        "fileId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "pattern": "^[A-Za-z0-9_-]+$"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "type": "string"
+                        },
+                        "canEdit": {
+                          "type": "boolean"
+                        },
+                        "notice": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "text"
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "connectionId",
+                        "fileId",
+                        "name",
+                        "revision",
+                        "canEdit",
+                        "kind",
+                        "text"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "connectionId": {
+                          "type": "string"
+                        },
+                        "fileId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "pattern": "^[A-Za-z0-9_-]+$"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "type": "string"
+                        },
+                        "canEdit": {
+                          "type": "boolean"
+                        },
+                        "notice": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "preview"
+                        },
+                        "mimeType": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "connectionId",
+                        "fileId",
+                        "name",
+                        "revision",
+                        "canEdit",
+                        "kind",
+                        "mimeType"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unsupported file or edit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Connect Microsoft 365, or reload the changed file.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fileId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "sheetId",
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
+            "in": "query",
+            "name": "startRow",
+            "schema": {
+              "default": 1,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1048526
+            }
+          },
+          {
+            "in": "query",
+            "name": "connectionId",
+            "schema": {
+              "type": "string",
+              "const": "microsoft-365"
+            }
+          }
+        ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "saveMicrosoft365DocumentEdits",
+        "tags": [
+          "Documents"
+        ],
+        "x-mcp": false,
+        "summary": "Save explicit inline edits to the same OneDrive file",
+        "description": "Requires organization membership and Documents, and the member's Microsoft 365 connection with OneDrive read access. Saves also require OneDrive write access and a matching file version.",
+        "responses": {
+          "200": {
+            "description": "Document result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unsupported file or edit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Connect Microsoft 365, or reload the changed file.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fileId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "spreadsheet"
+                      },
+                      "connectionId": {
+                        "type": "string",
+                        "pattern": "^(google-workspace|microsoft-365|emc_[A-Za-z0-9]+)$"
+                      },
+                      "revision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      },
+                      "sheetId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "changes": {
+                        "minItems": 1,
+                        "maxItems": 500,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "row": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1048576
+                            },
+                            "column": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 16384
+                            },
+                            "value": {
+                              "type": "string",
+                              "maxLength": 32767
+                            },
+                            "formula": {
+                              "default": false,
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "row",
+                            "column",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "connectionId",
+                      "revision",
+                      "sheetId",
+                      "changes"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "document"
+                      },
+                      "connectionId": {
+                        "type": "string",
+                        "pattern": "^(google-workspace|microsoft-365|emc_[A-Za-z0-9]+)$"
+                      },
+                      "revision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      },
+                      "changes": {
+                        "minItems": 1,
+                        "maxItems": 500,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "sectionId": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "runId": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "value": {
+                              "type": "string",
+                              "maxLength": 32767
+                            }
+                          },
+                          "required": [
+                            "sectionId",
+                            "runId",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "connectionId",
+                      "revision",
+                      "changes"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "text"
+                      },
+                      "connectionId": {
+                        "type": "string",
+                        "pattern": "^(google-workspace|microsoft-365|emc_[A-Za-z0-9]+)$"
+                      },
+                      "revision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      },
+                      "text": {
+                        "type": "string",
+                        "maxLength": 1000000
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "connectionId",
+                      "revision",
+                      "text"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/documents/microsoft-365/files/{fileId}/content": {
+      "get": {
+        "operationId": "readMicrosoft365DocumentContent",
+        "tags": [
+          "Documents"
+        ],
+        "x-mcp": false,
+        "summary": "Preview a OneDrive PDF or image",
+        "description": "Requires organization membership and Documents, and the member's Microsoft 365 connection with OneDrive read access. Saves also require OneDrive write access and a matching file version.",
+        "responses": {
+          "200": {
+            "description": "Document result.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Unsupported file or edit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Connect Microsoft 365, or reload the changed file.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fileId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "connectionId",
+            "schema": {
+              "type": "string",
+              "const": "microsoft-365"
+            },
+            "required": true
+          }
+        ],
         "security": [
           {
             "denApiKey": []

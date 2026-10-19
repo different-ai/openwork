@@ -11,7 +11,7 @@ const selection = z.discriminatedUnion("kind", [
 /** A snapshot of visible metadata at Send, never document bytes, a permission, or a live screen feed. */
 export const workbotViewContextSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("documents"), view: z.enum(["recent", "folder"]), folderId: id, folderName: label, query: z.string().max(500) }).strict(),
-  z.object({ kind: z.literal("document"), provider: z.literal("google-drive"), fileId: id, title: label, mimeType: z.string().min(1).max(255), unsaved: z.boolean() }).strict(),
+  z.object({ kind: z.literal("document"), provider: z.enum(["google-drive", "microsoft-365"]), fileId: id, title: label, mimeType: z.string().min(1).max(255), unsaved: z.boolean() }).strict(),
   z.object({ kind: z.literal("calendar"), view: z.enum(["day", "week", "month"]), start: instant, end: instant, timeZone: z.string().min(1).max(64).refine(value => { try { new Intl.DateTimeFormat("en", { timeZone: value }); return true } catch { return false } }, "Choose a valid time zone."), selected: selection.optional() }).strict(),
 ]).refine(value => value.kind !== "calendar" || value.end > value.start && value.end - value.start <= 370 * 86_400_000, "Choose a valid calendar range.")
 export type WorkbotViewContext = z.infer<typeof workbotViewContextSchema>

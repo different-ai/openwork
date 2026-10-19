@@ -9,13 +9,25 @@ export type DocumentItem = {
   modifiedTime: string | null
   size: number | null
   openUrl: string | null
+  /** Set by a combined listing: the connected service this item came from. */
+  source?: DocumentSource
 }
-export type DocumentsPage = { items: DocumentItem[]; nextCursor: string | null; incomplete: boolean }
+/** A connected service in a combined listing; `storage` names it in sentences like "Save to Drive". */
+export type DocumentSource = { id: string; label: string; storage: string; connectionId?: string }
+/** A service a combined listing could not reach this time, shown beside the files that did load. */
+export type DocumentsUnavailable = { source: DocumentSource; code: string; message: string; connectionId?: string }
+export type DocumentsPage = { items: DocumentItem[]; nextCursor: string | null; incomplete: boolean; unavailable?: DocumentsUnavailable[] }
 export type DocumentsRequest = { view?: "recent" | "folder"; folderId: string; query: string; cursor?: string; signal?: AbortSignal }
 export type DocumentsProvider = {
   id: string
   label: string
   rootLabel: string
+  /** How sentences name where files are saved, e.g. "Drive" or "OneDrive". Defaults to the label. */
+  storage?: string
+  /** The host connection that recovers this provider's access, when it is not the default one. */
+  connectionId?: string
+  /** Top-level places to browse; defaults to one root named `rootLabel`. */
+  roots?: { id: string; name: string }[]
   list(request: DocumentsRequest): Promise<DocumentsPage>
   /** Resolve a user-opened link with current provider permissions, without downloading bytes. */
   get?(id: string, signal?: AbortSignal): Promise<DocumentItem>
@@ -53,7 +65,7 @@ export function googleDocumentUrl(value: string): string | null {
 /** Den owns OAuth, membership and connector policy; the host supplies its authenticated transport. */
 export function googleDriveProvider(transport: DocumentsTransport): DocumentsProvider {
   return {
-    id: "google-drive", label: "Google Drive", rootLabel: "My Drive",
+    id: "google-drive", label: "Google Drive", rootLabel: "My Drive", storage: "Drive",
     async get(id, signal) {
       if (!/^[A-Za-z0-9_-]{1,512}$/.test(id)) throw new DocumentsError(400, "invalid_request", "This document link is invalid.")
       const { response, payload } = await transport(`/v1/documents/google-drive/files/${encodeURIComponent(id)}/metadata`, signal)
@@ -114,4 +126,5 @@ export function documentType(item: DocumentItem): string {
 
 export { DOCUMENT_RECOVERY_MS } from "./access"
 export { googleDocumentsEditor } from "./google-editor"
+export { combinedDocumentsEditor, combinedDocumentsProvider, documentSourceFileId, microsoftDocumentsEditor, microsoftOneDriveProvider } from "./sources"
 export type { DocumentsEditor } from "./model"

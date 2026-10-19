@@ -1,6 +1,6 @@
 import { decodeFileContent, truncateText } from "./binary-content.js"
 
-const DEFAULT_GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
+export const DEFAULT_GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024
 const DEFAULT_MAX_JSON_RESPONSE_BYTES = 5_000_000

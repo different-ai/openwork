@@ -9,13 +9,14 @@ import { env } from "../../env.js"
 import { jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
-import { MicrosoftGraphClient, MicrosoftGraphMutationOutcomeUnknownError, MicrosoftGraphRequestError } from "../../capability-sources/microsoft-graph.js"
+import { DEFAULT_GRAPH_BASE_URL, MicrosoftGraphClient, MicrosoftGraphMutationOutcomeUnknownError, MicrosoftGraphRequestError } from "../../capability-sources/microsoft-graph.js"
 import { getOrgOAuthClient } from "../../capability-sources/oauth-credentials.js"
 import { listNativeProviderUsableEntries, nativeProviderConnectionPolicyError, resolveDefaultNativeProviderCredentialId, type NativeProviderPolicyError } from "../../capability-sources/native-provider-connections.js"
 import { clientSelectedFeatures, getNativeOAuthProvider, providerScopesSatisfy } from "../../capability-sources/provider-registry.js"
 import { listTeamsForMember } from "../../orgs.js"
 import { INTERNAL_CAPABILITY_CONNECTOR_HEADER, readInternalCapabilityConnectorId } from "../../session.js"
 import type { OrgRouteVariables } from "./shared.js"
+import { registerMicrosoftDocumentRoutes } from "./microsoft-documents.js"
 
 const CONNECT_MICROSOFT_ACCOUNT_MESSAGE = "Connect your Microsoft work account first: open Settings > Connect and use Connect your account on the Microsoft 365 row, or connect from the OpenWork Cloud dashboard."
 
@@ -434,6 +435,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
   options: Microsoft365RouteOptions = {},
 ) {
   app.use("/v1/capabilities/microsoft-365/*", contextStorage())
+  app.use("/v1/documents/microsoft-365/*", contextStorage())
   const resolveAccessToken = options.resolveAccessToken ?? defaultAccessTokenResolver
   const orgMemberRouteMiddleware = options.memberRoute ?? orgMemberRoute()
   const boundedMutationBody = bodyLimit({
@@ -459,6 +461,24 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     if (!featureGranted(token, features)) return Response.json({ error: "needs_connection", message: missingPermissionMessage(label) }, { status: 409 })
     return graphClient(token.accessToken, signal)
   }
+
+  // Documents reads need any OneDrive permission; saving also needs a write permission.
+  registerMicrosoftDocumentRoutes(app, {
+    memberRoute: orgMemberRouteMiddleware,
+    graphBaseUrl: options.graphBaseUrl ?? env.microsoftGraphBaseUrl ?? DEFAULT_GRAPH_BASE_URL,
+    fetch: options.fetch ?? fetch,
+    async access(c) {
+      const payload = c.get("organizationContext")
+      if (!payload) return { ok: false, reply: c.json({ error: "unauthorized", message: "Sign in to your workspace." }, 401) }
+      const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
+      if (token.kind === "microsoft_graph_error") return { ok: false, reply: c.json({ error: token.kind, message: token.message }, 502) }
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") return { ok: false, reply: c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409) }
+      const read = ["filesRead", "filesWrite", "filesReadAll", "filesFull"]
+      if (!featureEnabled(token, read)) return { ok: false, reply: c.json({ error: "needs_connection", message: disabledFeatureMessage("OneDrive access") }, 409) }
+      if (!featureGranted(token, read)) return { ok: false, reply: c.json({ error: "needs_connection", message: missingPermissionMessage("OneDrive read") }, 409) }
+      return { ok: true, accessToken: token.accessToken, canWrite: featureGranted(token, ["filesWrite", "filesFull"]) }
+    },
+  })
 
   app.post(
     "/v1/capabilities/microsoft-365/mail-drafts/:messageId/send",

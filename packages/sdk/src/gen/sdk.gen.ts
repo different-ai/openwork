@@ -193,6 +193,8 @@ import type {
   GetMcpAdminWellKnownOauthProtectedResourceResponses,
   GetMcpAgentWellKnownOauthProtectedResourceResponses,
   GetMcpWellKnownOauthProtectedResourceResponses,
+  GetMicrosoft365DocumentMetadataErrors,
+  GetMicrosoft365DocumentMetadataResponses,
   GetOfficeFileContentsErrors,
   GetOfficeFileContentsResponses,
   GetOfficeFileInfoErrors,
@@ -579,6 +581,8 @@ import type {
   ListGmailDraftsResponses,
   ListGmailLabelsErrors,
   ListGmailLabelsResponses,
+  ListMicrosoft365DocumentsErrors,
+  ListMicrosoft365DocumentsResponses,
   ListWorkbotConnectionsErrors,
   ListWorkbotConnectionsResponses,
   LockOfficeFileErrors,
@@ -604,6 +608,8 @@ import type {
   OpenGoogleDriveDocumentEditorResponses,
   OpenGoogleDriveOfficeEditorErrors,
   OpenGoogleDriveOfficeEditorResponses,
+  OpenMicrosoft365DocumentEditorErrors,
+  OpenMicrosoft365DocumentEditorResponses,
   OrganizationWebOriginApproveBody,
   PatchApiAuthScimV2GroupsByGroupIdErrors,
   PatchApiAuthScimV2GroupsByGroupIdResponses,
@@ -1018,6 +1024,8 @@ import type {
   ReadGoogleDocumentTextResponses,
   ReadGoogleDriveDocumentContentErrors,
   ReadGoogleDriveDocumentContentResponses,
+  ReadMicrosoft365DocumentContentErrors,
+  ReadMicrosoft365DocumentContentResponses,
   RecordWorkbotTelemetryErrors,
   RecordWorkbotTelemetryResponses,
   RemoteSessionStatusRequest,
@@ -1030,6 +1038,8 @@ import type {
   SaveGoogleDriveDocumentEditsResponses,
   SaveGoogleDriveOfficeEditorErrors,
   SaveGoogleDriveOfficeEditorResponses,
+  SaveMicrosoft365DocumentEditsErrors,
+  SaveMicrosoft365DocumentEditsResponses,
   SaveWorkflowErrors,
   SaveWorkflowResponses,
   SendGmailDraftErrors,
@@ -11307,6 +11317,206 @@ export class DenClient extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    });
+  }
+
+  /**
+   * Browse, search and list recent OneDrive files
+   *
+   * Requires organization membership and Documents, and the member's Microsoft 365 connection with OneDrive read access. Saves also require OneDrive write access and a matching file version.
+   */
+  public listMicrosoft365Documents<ThrowOnError extends boolean = false>(
+    parameters?: {
+      view?: "recent" | "folder";
+      folderId?: "root" | "shared" | string;
+      query?: string;
+      cursor?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "view" },
+            { in: "query", key: "folderId" },
+            { in: "query", key: "query" },
+            { in: "query", key: "cursor" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      ListMicrosoft365DocumentsResponses,
+      ListMicrosoft365DocumentsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/documents/microsoft-365/files",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Read a OneDrive file's details without its content
+   *
+   * Requires organization membership and Documents, and the member's Microsoft 365 connection with OneDrive read access. Saves also require OneDrive write access and a matching file version.
+   */
+  public getMicrosoft365DocumentMetadata<ThrowOnError extends boolean = false>(
+    parameters: {
+      fileId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "fileId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetMicrosoft365DocumentMetadataResponses,
+      GetMicrosoft365DocumentMetadataErrors,
+      ThrowOnError
+    >({
+      url: "/v1/documents/microsoft-365/files/{fileId}/metadata",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Open a OneDrive file in the inline editor
+   *
+   * Requires organization membership and Documents, and the member's Microsoft 365 connection with OneDrive read access. Saves also require OneDrive write access and a matching file version.
+   */
+  public openMicrosoft365DocumentEditor<ThrowOnError extends boolean = false>(
+    parameters: {
+      fileId: string;
+      sheetId?: string;
+      startRow?: number;
+      connectionId?: "microsoft-365";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "fileId" },
+            { in: "query", key: "sheetId" },
+            { in: "query", key: "startRow" },
+            { in: "query", key: "connectionId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      OpenMicrosoft365DocumentEditorResponses,
+      OpenMicrosoft365DocumentEditorErrors,
+      ThrowOnError
+    >({
+      url: "/v1/documents/microsoft-365/files/{fileId}/editor",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Save explicit inline edits to the same OneDrive file
+   *
+   * Requires organization membership and Documents, and the member's Microsoft 365 connection with OneDrive read access. Saves also require OneDrive write access and a matching file version.
+   */
+  public saveMicrosoft365DocumentEdits<ThrowOnError extends boolean = false>(
+    parameters: {
+      fileId: string;
+      body:
+        | {
+            kind: "spreadsheet";
+            connectionId: string;
+            revision: string;
+            sheetId: string;
+            changes: Array<{
+              row: number;
+              column: number;
+              value: string;
+              formula?: boolean;
+            }>;
+          }
+        | {
+            kind: "document";
+            connectionId: string;
+            revision: string;
+            changes: Array<{
+              sectionId: string;
+              runId: string;
+              value: string;
+            }>;
+          }
+        | {
+            kind: "text";
+            connectionId: string;
+            revision: string;
+            text: string;
+          };
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "fileId" },
+            { key: "body", map: "body" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      SaveMicrosoft365DocumentEditsResponses,
+      SaveMicrosoft365DocumentEditsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/documents/microsoft-365/files/{fileId}/editor",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Preview a OneDrive PDF or image
+   *
+   * Requires organization membership and Documents, and the member's Microsoft 365 connection with OneDrive read access. Saves also require OneDrive write access and a matching file version.
+   */
+  public readMicrosoft365DocumentContent<ThrowOnError extends boolean = false>(
+    parameters: {
+      fileId: string;
+      connectionId: "microsoft-365";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "fileId" },
+            { in: "query", key: "connectionId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      ReadMicrosoft365DocumentContentResponses,
+      ReadMicrosoft365DocumentContentErrors,
+      ThrowOnError
+    >({
+      url: "/v1/documents/microsoft-365/files/{fileId}/content",
+      ...options,
+      ...params,
     });
   }
 

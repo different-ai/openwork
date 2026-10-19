@@ -26816,6 +26816,324 @@ export type PostV1CapabilitiesGoogleWorkspaceDriveFileShareByFileIdResponses = {
 export type PostV1CapabilitiesGoogleWorkspaceDriveFileShareByFileIdResponse =
   PostV1CapabilitiesGoogleWorkspaceDriveFileShareByFileIdResponses[keyof PostV1CapabilitiesGoogleWorkspaceDriveFileShareByFileIdResponses];
 
+export type ListMicrosoft365DocumentsData = {
+  body?: never;
+  path?: never;
+  query?: {
+    view?: "recent" | "folder";
+    folderId?: "root" | "shared" | string;
+    query?: string;
+    cursor?: string;
+  };
+  url: "/v1/documents/microsoft-365/files";
+};
+
+export type ListMicrosoft365DocumentsErrors = {
+  /**
+   * Unsupported file or edit.
+   */
+  400: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Connect Microsoft 365, or reload the changed file.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+};
+
+export type ListMicrosoft365DocumentsError = ListMicrosoft365DocumentsErrors[keyof ListMicrosoft365DocumentsErrors];
+
+export type ListMicrosoft365DocumentsResponses = {
+  /**
+   * Document result.
+   */
+  200: {
+    files: Array<{
+      id: string;
+      name: string;
+      mimeType: string;
+      kind: "folder" | "file";
+      modifiedTime: string | null;
+      size: number | null;
+      openUrl: string | null;
+    }>;
+    nextCursor: string | null;
+  };
+};
+
+export type ListMicrosoft365DocumentsResponse =
+  ListMicrosoft365DocumentsResponses[keyof ListMicrosoft365DocumentsResponses];
+
+export type GetMicrosoft365DocumentMetadataData = {
+  body?: never;
+  path: {
+    fileId: string;
+  };
+  query?: never;
+  url: "/v1/documents/microsoft-365/files/{fileId}/metadata";
+};
+
+export type GetMicrosoft365DocumentMetadataErrors = {
+  /**
+   * Unsupported file or edit.
+   */
+  400: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Connect Microsoft 365, or reload the changed file.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+};
+
+export type GetMicrosoft365DocumentMetadataError =
+  GetMicrosoft365DocumentMetadataErrors[keyof GetMicrosoft365DocumentMetadataErrors];
+
+export type GetMicrosoft365DocumentMetadataResponses = {
+  /**
+   * Document result.
+   */
+  200: {
+    id: string;
+    name: string;
+    mimeType: string;
+    modifiedTime: string | null;
+    size: number | null;
+    openUrl: string | null;
+  };
+};
+
+export type GetMicrosoft365DocumentMetadataResponse =
+  GetMicrosoft365DocumentMetadataResponses[keyof GetMicrosoft365DocumentMetadataResponses];
+
+export type OpenMicrosoft365DocumentEditorData = {
+  body?: never;
+  path: {
+    fileId: string;
+  };
+  query?: {
+    sheetId?: string;
+    startRow?: number;
+    connectionId?: "microsoft-365";
+  };
+  url: "/v1/documents/microsoft-365/files/{fileId}/editor";
+};
+
+export type OpenMicrosoft365DocumentEditorErrors = {
+  /**
+   * Unsupported file or edit.
+   */
+  400: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Connect Microsoft 365, or reload the changed file.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+};
+
+export type OpenMicrosoft365DocumentEditorError =
+  OpenMicrosoft365DocumentEditorErrors[keyof OpenMicrosoft365DocumentEditorErrors];
+
+export type OpenMicrosoft365DocumentEditorResponses = {
+  /**
+   * Document result.
+   */
+  200:
+    | {
+        connectionId: string;
+        fileId: string;
+        name: string;
+        revision: string;
+        canEdit: boolean;
+        notice?: string;
+        kind: "spreadsheet";
+        source: "google" | "xlsx";
+        sheets: Array<{
+          id: string;
+          name: string;
+          rows: number;
+          columns: number;
+        }>;
+        activeSheetId: string;
+        startRow: number;
+        endRow: number;
+        cells: Array<{
+          row: number;
+          column: number;
+          text: string;
+          formula?: string;
+        }>;
+      }
+    | {
+        connectionId: string;
+        fileId: string;
+        name: string;
+        revision: string;
+        canEdit: boolean;
+        notice?: string;
+        kind: "document";
+        source: "google" | "docx";
+        sections: Array<{
+          id: string;
+          name: string;
+          paragraphs: Array<{
+            id: string;
+            heading?: boolean;
+            runs: Array<{
+              id: string;
+              text: string;
+              bold?: boolean;
+              italic?: boolean;
+              underline?: boolean;
+            }>;
+          }>;
+        }>;
+      }
+    | {
+        connectionId: string;
+        fileId: string;
+        name: string;
+        revision: string;
+        canEdit: boolean;
+        notice?: string;
+        kind: "text";
+        text: string;
+      }
+    | {
+        connectionId: string;
+        fileId: string;
+        name: string;
+        revision: string;
+        canEdit: boolean;
+        notice?: string;
+        kind: "preview";
+        mimeType: string;
+      };
+};
+
+export type OpenMicrosoft365DocumentEditorResponse =
+  OpenMicrosoft365DocumentEditorResponses[keyof OpenMicrosoft365DocumentEditorResponses];
+
+export type SaveMicrosoft365DocumentEditsData = {
+  body:
+    | {
+        kind: "spreadsheet";
+        connectionId: string;
+        revision: string;
+        sheetId: string;
+        changes: Array<{
+          row: number;
+          column: number;
+          value: string;
+          formula?: boolean;
+        }>;
+      }
+    | {
+        kind: "document";
+        connectionId: string;
+        revision: string;
+        changes: Array<{
+          sectionId: string;
+          runId: string;
+          value: string;
+        }>;
+      }
+    | {
+        kind: "text";
+        connectionId: string;
+        revision: string;
+        text: string;
+      };
+  path: {
+    fileId: string;
+  };
+  query?: never;
+  url: "/v1/documents/microsoft-365/files/{fileId}/editor";
+};
+
+export type SaveMicrosoft365DocumentEditsErrors = {
+  /**
+   * Unsupported file or edit.
+   */
+  400: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Connect Microsoft 365, or reload the changed file.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+};
+
+export type SaveMicrosoft365DocumentEditsError =
+  SaveMicrosoft365DocumentEditsErrors[keyof SaveMicrosoft365DocumentEditsErrors];
+
+export type SaveMicrosoft365DocumentEditsResponses = {
+  /**
+   * Document result.
+   */
+  200: {
+    ok: true;
+  };
+};
+
+export type SaveMicrosoft365DocumentEditsResponse =
+  SaveMicrosoft365DocumentEditsResponses[keyof SaveMicrosoft365DocumentEditsResponses];
+
+export type ReadMicrosoft365DocumentContentData = {
+  body?: never;
+  path: {
+    fileId: string;
+  };
+  query: {
+    connectionId: "microsoft-365";
+  };
+  url: "/v1/documents/microsoft-365/files/{fileId}/content";
+};
+
+export type ReadMicrosoft365DocumentContentErrors = {
+  /**
+   * Unsupported file or edit.
+   */
+  400: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Connect Microsoft 365, or reload the changed file.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+};
+
+export type ReadMicrosoft365DocumentContentError =
+  ReadMicrosoft365DocumentContentErrors[keyof ReadMicrosoft365DocumentContentErrors];
+
+export type ReadMicrosoft365DocumentContentResponses = {
+  /**
+   * Document result.
+   */
+  200: unknown;
+};
+
 export type SendMicrosoft365MailDraftData = {
   body: Microsoft365MailSendBody;
   path: {
