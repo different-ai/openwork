@@ -75,6 +75,21 @@ test("repeated reads cache the team join, restore dates and read only the DB rev
   } finally { h.restore() }
 })
 
+test("an already-resolved cache flag avoids another feature lookup without skipping live authority", async () => {
+  const h = setup()
+  try {
+    const featureRead = mock.method(cache.features, "state", async () => { throw new Error("unexpected second feature lookup") })
+    assert.deepEqual(await listTeamsForMember({ ...h.input, teamMembershipCache: true }), [h.team])
+    assert.deepEqual(await listTeamsForMember({ ...h.input, teamMembershipCache: true }), [h.team])
+    assert.equal(featureRead.mock.callCount(), 0)
+    assert.equal(h.joins(), 1)
+    assert.equal(h.checks(), 2)
+    h.revoke()
+    assert.deepEqual(await listTeamsForMember({ ...h.input, teamMembershipCache: true }), [])
+    assert.equal(h.checks(), 3)
+  } finally { h.restore() }
+})
+
 test("turning the rollout off bypasses already-populated cache entries", async () => {
   const h = setup()
   try {
