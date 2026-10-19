@@ -6,7 +6,7 @@ DOCKERFILE="$ROOT_DIR/packaging/docker/Dockerfile.microsandbox"
 
 IMAGE_REF="${1:-openwork-microsandbox:dev}"
 DOCKER_PLATFORM="${DOCKER_PLATFORM:-}"
-OPENCODE_VERSION="${OPENCODE_VERSION:-$(node -e 'const fs=require("fs"); const parsed=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(parsed.opencodeVersion || "").trim().replace(/^v/, ""));' "$ROOT_DIR/constants.json")}"
+OPENCODE2_VERSION="$(node -e 'const fs=require("fs"); process.stdout.write(String(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).opencodeV2Version));' "$ROOT_DIR/constants.json")"
 OPENWORK_SERVER_VERSION="${OPENWORK_SERVER_VERSION:-$(node -e 'const fs=require("fs"); const pkg=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(pkg.version));' "$ROOT_DIR/apps/server/package.json")}"
 
 args=(
@@ -14,7 +14,6 @@ args=(
   -t "$IMAGE_REF"
   -f "$DOCKERFILE"
   --build-arg "OPENWORK_SERVER_VERSION=$OPENWORK_SERVER_VERSION"
-  --build-arg "OPENCODE_VERSION=$OPENCODE_VERSION"
 )
 
 if [ -n "$DOCKER_PLATFORM" ]; then
@@ -25,7 +24,7 @@ args+=("$ROOT_DIR")
 
 printf 'Building micro-sandbox image %s\n' "$IMAGE_REF"
 printf '  openwork-server@%s\n' "$OPENWORK_SERVER_VERSION"
-printf '  opencode@%s\n' "$OPENCODE_VERSION"
+printf '  opencode2@%s\n' "$OPENCODE2_VERSION"
 
 docker "${args[@]}"
 

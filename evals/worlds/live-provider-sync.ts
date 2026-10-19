@@ -79,14 +79,13 @@ export async function liveProviderSync(seed: Seed) {
   const baseline = await createProvider(initialName, [initialModel, siblingModel]);
   const fixtureHostToken = randomBytes(32).toString("hex");
   const { app, workspace } = await signedInAppWeb(seed, {
-    den, webPort, as: "riley", engine: "v2", name: "live-provider-sync", workspacePath: seed.tmpPath("live-provider-sync"),
+    den, webPort, as: "riley", name: "live-provider-sync", workspacePath: seed.tmpPath("live-provider-sync"),
     env: {
       OPENWORK_HOST_TOKEN: fixtureHostToken, VITE_OPENWORK_HOST_TOKEN: fixtureHostToken,
       // A five-second pass must not be ordinary periodic sync in disguise.
       OPENWORK_CLOUD_PROVIDER_SYNC_INTERVAL_MS: "600000",
       // Without an override, the shipping server installs its pinned verified v2
-      // binary. No external opencode2 command or CLI --engine flag is required.
-      ...(process.env.OPENWORK_OPENCODE_BIN ? { OPENWORK_OPENCODE_BIN: process.env.OPENWORK_OPENCODE_BIN } : {}),
+      // binary. No external opencode2 command is required.
       ...(process.env.OPENWORK_OPENCODE2_BIN ? { OPENWORK_OPENCODE2_BIN: process.env.OPENWORK_OPENCODE2_BIN } : {}),
     },
   });
@@ -104,7 +103,7 @@ export async function liveProviderSync(seed: Seed) {
   try {
     session = await seed.session(app, { title: "Organization models arrive live" });
   } catch (error) {
-    const response = await fetch(`${app.openworkUrl}/experimental/engine-v2-preview/status`, {
+    const response = await fetch(`${app.openworkUrl}/engine/status`, {
       headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000),
     });
     const status: unknown = await response.json();
@@ -151,7 +150,7 @@ export async function liveProviderSync(seed: Seed) {
         const body: unknown = await response.json();
         return { status: response.status, body };
       };
-      const engine = await call("/experimental/engine-v2-preview/status");
+      const engine = await call("/engine/status");
       const plugins = await call(`/workspace/${workspace.workspaceId}/opencode2/api/plugin`);
       const models = await call(`/workspace/${workspace.workspaceId}/opencode2/api/model`);
       return {
@@ -169,7 +168,7 @@ export async function liveProviderSync(seed: Seed) {
       return navigation.value;
     },
     async runtime() {
-      const result = await fetch(`${app.openworkUrl}/experimental/engine-v2-preview/status`, {
+      const result = await fetch(`${app.openworkUrl}/engine/status`, {
         headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000),
       });
       const body: unknown = await result.json();

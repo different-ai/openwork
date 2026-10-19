@@ -1,4 +1,4 @@
-import type { Session } from "@opencode-ai/sdk/v2/client";
+import type { Session } from "@/app/lib/opencode-types";
 import { create } from "zustand";
 import { snapshotComposerSessionState, type ComposerSessionState } from "../surface/composer-state-store";
 import type { NewSessionDestination } from "./new-session-destination";

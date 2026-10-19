@@ -3,9 +3,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { createClientV2 } from "../src/app/lib/opencode-v2-adapter";
 import { subscribeProviderCatalogChanges } from "../src/app/lib/provider-events";
 import {
-  ensureProviderCatalogQuery,
   handleProviderCatalogChange,
-  providerCatalogQueryKey,
   providerListQueryKey,
 } from "../src/react-app/infra/provider-list-query";
 
@@ -88,11 +86,10 @@ describe("V2 native provider catalog events", () => {
     });
   }
 
-  test("bursts invalidate connected and full catalogs once and only in scope", async () => {
+  test("bursts invalidate the connected catalog once and only in scope", async () => {
     const queryClient = new QueryClient();
     const other = { ...scope, directory: "/other" };
-    for (const key of [providerListQueryKey(scope), providerCatalogQueryKey(scope),
-      providerListQueryKey(other), providerCatalogQueryKey(other)]) {
+    for (const key of [providerListQueryKey(scope), providerListQueryKey(other)]) {
       queryClient.setQueryData(key, { all: [], connected: [], default: {} });
     }
     queryClient.setQueryData(liveProviderSyncStatusQueryKey(baseUrl), {
@@ -102,54 +99,14 @@ describe("V2 native provider catalog events", () => {
     try {
       for (let i = 0; i < 20; i += 1) handleProviderCatalogChange(queryClient, { ...scope, reason: "native" });
       await pause();
-      expect(invalidate).toHaveBeenCalledTimes(2);
+      expect(invalidate).toHaveBeenCalledTimes(1);
       expect(queryClient.getQueryState(providerListQueryKey(scope))?.isInvalidated).toBe(true);
-      expect(queryClient.getQueryState(providerCatalogQueryKey(scope))?.isInvalidated).toBe(true);
       expect(queryClient.getQueryState(providerListQueryKey(other))?.isInvalidated).toBe(false);
-      expect(queryClient.getQueryState(providerCatalogQueryKey(other))?.isInvalidated).toBe(false);
       // A later mutation is not suppressed by the previous burst.
       handleProviderCatalogChange(queryClient, { ...scope, reason: "reconnect" });
       await pause();
-      expect(invalidate).toHaveBeenCalledTimes(4);
+      expect(invalidate).toHaveBeenCalledTimes(2);
     } finally {
-      queryClient.clear();
-    }
-  });
-
-  test("off keeps the existing full-catalog cache behavior after invalidation", async () => {
-    const queryClient = new QueryClient();
-    const cached = { all: [], connected: [], default: {} };
-    queryClient.setQueryData(providerCatalogQueryKey(scope), cached);
-    await queryClient.invalidateQueries({ queryKey: providerCatalogQueryKey(scope) });
-    const fetch = spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ items: [] }));
-    try {
-      const client = createClientV2(baseUrl, directory, {});
-      expect(await ensureProviderCatalogQuery(queryClient, { ...scope, client })).toEqual(cached);
-      expect(fetch).toHaveBeenCalledTimes(0);
-    } finally {
-      fetch.mockRestore();
-      queryClient.clear();
-    }
-  });
-
-  test("invalidated full catalog is reread on the next provider-picker open", async () => {
-    const queryClient = new QueryClient();
-    queryClient.setQueryData(providerCatalogQueryKey(scope), { all: [], connected: [], default: {} });
-    await queryClient.invalidateQueries({ queryKey: providerCatalogQueryKey(scope) });
-    queryClient.setQueryData(liveProviderSyncStatusQueryKey(baseUrl), {
-      enabled: true, chatRouting: true, liveProviderSync: true,
-    });
-    const fetch = spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ items: [] }));
-    try {
-      const client = createClientV2(baseUrl, directory, {});
-      await ensureProviderCatalogQuery(queryClient, { ...scope, client });
-      // V2 lists models, defaults, and providers to build the compatible catalog.
-      expect(fetch).toHaveBeenCalledTimes(3);
-      expect(queryClient.getQueryState(providerCatalogQueryKey(scope))?.isInvalidated).toBe(false);
-      await ensureProviderCatalogQuery(queryClient, { ...scope, client });
-      expect(fetch).toHaveBeenCalledTimes(3);
-    } finally {
-      fetch.mockRestore();
       queryClient.clear();
     }
   });

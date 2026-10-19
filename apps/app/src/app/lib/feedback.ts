@@ -13,7 +13,6 @@ type FeedbackUrlOptions = {
   appVersion?: string | null;
   buildSha?: string | null;
   openworkServerVersion?: string | null;
-  opencodeVersion?: string | null;
 };
 
 type ClientOsContext = {
@@ -103,7 +102,6 @@ export function buildFeedbackUrl(options: FeedbackUrlOptions): string {
     deployment,
     appVersion,
     openworkServerVersion: options.openworkServerVersion?.trim() ?? "",
-    opencodeVersion: options.opencodeVersion?.trim() ?? "",
     osName: osContext.osName?.trim() ?? "",
     osVersion: osContext.osVersion?.trim() ?? "",
     platform: osContext.platform?.trim() ?? "",

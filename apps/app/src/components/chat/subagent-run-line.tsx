@@ -18,7 +18,7 @@ import { useSessionActivityStore } from "@/react-app/domains/session/status/sess
 import { hasNoNewActivity } from "@/react-app/domains/session/status/session-progress"
 import { statusKey } from "@/react-app/domains/session/sync/session-sync"
 import { useQueryCacheState } from "@/react-app/infra/query-cache-state"
-import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
+import type { SessionStatus } from "@/app/lib/opencode-types"
 
 type SubagentRunLineProps = {
   part: TaskToolPart

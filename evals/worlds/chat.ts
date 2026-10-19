@@ -6,7 +6,7 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { evalIn, go, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
-import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
+import { SkipError, type Seed } from "@openwork/env";
 import type { MockAgentWorkload, MockMcpHandle } from "@openwork/labs";
 import { chatContinuity } from "./chat-continuity.ts";
 import { readDefaultDesktopPolicy } from "./desktop-policies.ts";
@@ -75,7 +75,7 @@ export async function configureProvider(
   providerId: string,
   modelId: string,
   opencode: Record<string, unknown>,
-  engine = resolveEvalEngine(),
+  engine = "v2",
 ): Promise<void> {
   // TODO(primitive): configure a workspace provider and select its model.
   const result = await seed.evalIn(app, browserScript(async (workspaceId, providerId, modelId, defaultModel, opencodeJson) => {
@@ -152,18 +152,18 @@ export async function configureProvider(
       const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
       const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") };
       try {
-        const statusResponse = await fetch(base + "/experimental/engine-v2-preview/status", { headers });
+        const statusResponse = await fetch(base + "/engine/status", { headers });
         const status = statusResponse.ok ? await statusResponse.json() : null;
-        const selected = status ? status.enabled && status.chatRouting : false;
-        if ((engine === "v2") !== selected || (!statusResponse.ok && statusResponse.status !== 404)) {
+        const selected = status?.running === true;
+        if (!selected || !statusResponse.ok) {
           await new Promise((resolve) => setTimeout(resolve, 250));
           continue;
         }
         const mounted = base + "/workspace/" + encodeURIComponent(workspaceId);
-        const response = await fetch(mounted + (engine === "v2" ? "/opencode2/api/model" : "/opencode/session"), { headers });
+        const response = await fetch(mounted + ("/opencode2/api/model"), { headers });
         if (response.ok && window.__openworkControl) {
           let catalogName: string | null = null;
-          if (engine === "v2") {
+          {
             const record = (value: unknown): value is Record<string, unknown> =>
               typeof value === "object" && value !== null && !Array.isArray(value);
             const catalog: unknown = await response.json();
@@ -342,8 +342,8 @@ async function splitPaneQuestions(
 }
 
 export async function delegatedQuestionHandoff(seed: Seed) {
-  const engine = resolveEvalEngine();
-  const delegationTool = engine === "v2" ? "subagent" : "task";
+  const engine = "v2";
+  const delegationTool = "subagent";
   const rootPrompt = "Delegate choosing the task format, then report the result.";
   const child = {
     prompt: "Help me choose the delegated task format",
@@ -365,7 +365,7 @@ export async function delegatedQuestionHandoff(seed: Seed) {
       steps: [{ tool: delegationTool, arguments: {
         description: "Choose delegated task format", prompt: child.prompt,
         // v2 beta-19086 calls this subagent; foreground must await the child's answer.
-        ...(engine === "v2" ? { agent: "general", background: false } : { subagent_type: "general" }),
+        ...({ agent: "general", background: false }),
       } }],
     },
     ...[child, unrelated].map((question): MockAgentWorkload => ({
@@ -392,8 +392,8 @@ export async function delegatedQuestionHandoff(seed: Seed) {
 
 /** A real native question whose turn is stopped and superseded by a follow-up prompt, as another agent's STOP does. */
 export async function abandonedQuestion(seed: Seed) {
-  const engine = resolveEvalEngine();
-  if (engine !== "v1") throw new SkipError("Abandoned-question archive requires v1; v2 has no session archive.");
+  const engine = "v2";
+  throw new SkipError("Abandoned-question archive requires v1; v2 has no session archive.");
   const ask = {
     prompt: "Help me choose the abandoned task format",
     question: "Which format should the abandoned task use?",
@@ -451,7 +451,7 @@ export async function sessionProviderErrorRecovery(seed: Seed, options: { termin
 
 /** Real native permissions and a provider retry, without synthetic UI events. */
 export async function permissionStopRecovery(seed: Seed) {
-  const engine = resolveEvalEngine();
+  const engine = "v2";
   const retry = { prompt: "Prepare the retry reliability summary", reply: "Retry recovery finished." };
   const stopped = { prompt: "Inspect the stopped permission workspace", command: "printf STOP_PERMISSION_WITNESS" };
   const other = { prompt: "Inspect the other permission workspace", command: "printf OTHER_PERMISSION_WITNESS" };
@@ -460,7 +460,7 @@ export async function permissionStopRecovery(seed: Seed) {
     { promptMarker: retry.prompt, latestUserTurn: true, rateLimitAttempts: 1, finalReply: retry.reply, steps: [] },
     ...[stopped, other].map((item): MockAgentWorkload => ({
       promptMarker: item.prompt, latestUserTurn: true, finalReply: "Permission work finished.",
-      steps: [{ tool: engine === "v2" ? "shell" : "bash", arguments: {
+      steps: [{ tool: "shell", arguments: {
         command: item.command, description: "Inspect the permission workspace", timeout: 30_000,
       } }],
     })),
@@ -473,7 +473,7 @@ export async function permissionStopRecovery(seed: Seed) {
 
 /** Synthetic release/model responses, but real Electron quit, engine teardown, and relaunch. */
 export async function restartUpdateTaskWorld(seed: Seed) {
-  const engine = resolveEvalEngine();
+  const engine = "v2";
   const active = { prompt: "Prepare the restart continuity report", title: "Continue after update" };
   const stopped = { prompt: "Prepare the cancelled continuity report", title: "Keep stopped after update" };
   const completed = { prompt: "Prepare the completed continuity report", title: "Keep completed after update", reply: "The completed report is ready." };
@@ -481,7 +481,7 @@ export async function restartUpdateTaskWorld(seed: Seed) {
   const base = await splitPaneQuestions(seed, "restart-update-task", [
     ...[active, stopped].map((task): MockAgentWorkload => ({
       promptMarker: task.prompt, latestUserTurn: true, finalReply: "The original turn finished without restarting.",
-      steps: [{ tool: engine === "v2" ? "shell" : "bash", arguments: {
+      steps: [{ tool: "shell", arguments: {
         command: "sleep 120", description: "Wait for the report input", timeout: 180_000,
       } }],
     })),
@@ -852,7 +852,7 @@ export async function modelPickerEffortWeb(seed: Seed) {
     promptMarker: prompt, latestUserTurn: true, finalReply: "Air scatters blue light more strongly.", steps: [],
   }] });
   const workspacePath = seed.tmpPath("model-picker-effort");
-  const app = await seed.appWeb({ name: "model-picker-effort", workspacePath, engine, mocks: { agent: mock } });
+  const app = await seed.appWeb({ name: "model-picker-effort", workspacePath, mocks: { agent: mock } });
   // Observe model references without consuming or changing the app's requests.
   await addInitScript(app.client, () => {
     window.__modelEffortRequests = [];
@@ -1088,80 +1088,6 @@ export async function attachmentUpload(seed: Seed) {
   }
 }
 
-export async function streamedToolHistory(seed: Seed) {
-  if (resolveEvalEngine() !== "v1") throw new SkipError("native v1 transcript history (OPENWORK_EVAL_ENGINE=v1)");
-  const providerId = "streamed-history-mock";
-  const modelId = "streamed-history-model";
-  const prompt = "Continue the history review and report the latest tool result.";
-  const opening = "History review is advancing.";
-  const middle = "The next review section is arriving.";
-  const closing = "History review is complete.";
-  const answer = [opening, "Earlier work remains available. ".repeat(16), middle,
-    "The current answer continues to grow. ".repeat(20), closing].join("\n\n");
-  const history = Array.from({ length: 150 }, (_, index) => `Settled history ${String(index + 1).padStart(3, "0")}.`);
-  const toolNames = Array.from({ length: 20 }, (_, index) => `history-tool-${String(index + 1).padStart(2, "0")}`);
-  const latestTool = "latest-tool-result";
-  // The complete URL exists only in output, not in the tool input or final reply.
-  const command = (name: string) => `printf '%s%s/%s\\n' 'http://' '127.0.0.1:43123' '${name}'`;
-  const mock = seed.mock({ agentWorkloads: [{
-    promptMarker: prompt, latestUserTurn: true, finalReply: answer, finalReplyChunkSize: 2,
-    steps: [{ tool: "bash", arguments: { command: command(latestTool), description: "Read the latest history result" } }],
-  }] });
-  const { den, webPort } = await denForAppWeb(seed, { mocks: { agent: mock } });
-  const { app, workspace } = await signedInAppWeb(seed, { name: "streamed-tool-history", den, webPort, workspacePath: seed.tmpPath("streamed-tool-history") });
-  const profile = await seed.api(den.admin, "/v1/me");
-  if (!profile.response.ok || !isRecord(profile.body) || !isRecord(profile.body.user)
-    || typeof profile.body.user.id !== "string" || !profile.body.user.id.trim()) {
-    throw new Error("Streamed history fixture could not resolve its authenticated principal");
-  }
-  const principalId = profile.body.user.id.trim();
-  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
-    permission: { bash: "allow" },
-    provider: { [providerId]: {
-      npm: "@ai-sdk/openai-compatible", name: "Streamed history mock",
-      options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-streamed-history" },
-      models: { [modelId]: { name: "Streamed history model" } },
-    } },
-  });
-  const neighbor = await seedSessionRetry(seed, app, { title: "Unrelated history review" });
-  const session = await seedSessionRetry(seed, app, { title: "Long tool history" });
-  const historyPath = `/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode/session/${encodeURIComponent(session.sessionId)}/message`;
-  // Persist through native HTTP boundaries while the real SSE subscriber builds
-  // its cache. Never inject renderer messages or import the merge implementation.
-  await seed.evalIn(app, browserScript(async (historyPath, history, commands, providerId, modelId) => {
-    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
-    const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" };
-    const deadline = Date.now() + 150000;
-    const post = async (path: string, body: unknown) => {
-      if (Date.now() >= deadline) throw new Error("Native history arrangement exceeded 150 seconds");
-      const response = await fetch(base + path, {
-        method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(30000),
-      });
-      if (!response.ok) throw new Error("Native history arrangement failed: " + response.status);
-      return response.json();
-    };
-    for (const text of history) {
-      await post(historyPath, { noReply: true, model: { providerID: providerId, modelID: modelId }, parts: [{ type: "text", text }] });
-      // Wait for each native event to reach the transcript, including the oldest
-      // entries that will no longer fit in a later bounded snapshot.
-      const visibleDeadline = Math.min(deadline, Date.now() + 10000);
-      while (![...document.querySelectorAll<HTMLElement>('[data-message-role="user"]')].some(node => node.innerText.includes(text))) {
-        if (Date.now() >= visibleDeadline) throw new Error("Native history event did not render: " + text);
-        await new Promise(resolve => setTimeout(resolve, 25));
-      }
-    }
-    for (const command of commands) {
-      const result = await post(historyPath.replace(/\/message$/, "/shell"), {
-        agent: "build", model: { providerID: providerId, modelID: modelId }, command,
-      });
-      if (!Array.isArray(result.parts) || !result.parts.some((part: { type?: string; state?: { status?: string } }) => part.type === "tool" && part.state?.status === "completed")) {
-        throw new Error("Native shell history did not complete");
-      }
-    }
-  }, [historyPath, history, toolNames.map(command), providerId, modelId]), { awaitPromise: true, timeoutMs: 185_000 });
-  return { app, workspace, session, neighbor, principalId, historyPath, history, toolNames, latestTool, prompt, opening, middle, closing };
-}
-
 export const streamedMarkdownMarker = "STREAM_MARKDOWN_ANSWER";
 export const streamedMarkdownReasoning = "Preparing the formatted response.";
 /** A multi-block answer: heading, prose, list, table, fenced code, closing prose. */
@@ -1318,15 +1244,14 @@ export async function streamedMarkdown(seed: Seed) {
     });
     if (!response.ok) throw new Error("Video fixture write failed: " + response.status);
   }, [workspace.workspaceId, (await readFile(new URL("../fixtures/assistant-video.mp4", import.meta.url))).toString("base64")]), { awaitPromise: true });
-  const engine = resolveEvalEngine();
+  const engine = "v2";
   const ready = await seed.evalIn(app, browserScript(async (workspaceId, engine, providerId, modelId) => {
     const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
     const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") };
     const deadline = Date.now() + 60000;
     while (Date.now() < deadline) {
-      const status = await (await fetch(base + "/experimental/engine-v2-preview/status", { headers })).json();
-      if (engine === "v1" && !status.chatRouting) return true;
-      if (engine === "v2" && status.running && status.chatRouting) {
+      const status = await (await fetch(base + "/engine/status", { headers })).json();
+      if (status.running) {
         const response = await fetch(base + "/workspace/" + workspaceId + "/opencode2/api/model", { headers });
         if (response.ok) {
           const catalog = JSON.stringify(await response.json());
@@ -1551,7 +1476,7 @@ export const longHistoryLast = "LONG-HISTORY-LAST-MESSAGE 7c31";
 
 /** A long stored conversation opened cold, from another selected session. */
 export async function longHistory(seed: Seed, options: { holdAncillaryReads?: boolean; surface?: AppSurface } = {}) {
-  if (resolveEvalEngine() !== "v1") throw new SkipError("native v1 stored history (OPENWORK_EVAL_ENGINE=v1)");
+  throw new SkipError("native v1 stored history (OPENWORK_EVAL_ENGINE=v1)");
   const workspacePath = seed.tmpPath("session-full-history");
   // The desktop surface only for prompt recall across a main-process relaunch.
   const app = options.surface === "electron"
@@ -1798,7 +1723,7 @@ export async function longHistory(seed: Seed, options: { holdAncillaryReads?: bo
 }
 
 export async function warmCachedLongHistory(seed: Seed) {
-  if (resolveEvalEngine() !== "v1") throw new SkipError("native v1 stored history (OPENWORK_EVAL_ENGINE=v1)");
+  throw new SkipError("native v1 stored history (OPENWORK_EVAL_ENGINE=v1)");
   const base = await longHistory(seed, { holdAncillaryReads: false });
   return {
     ...base,
@@ -2105,7 +2030,7 @@ async function stoppingFeedbackFault(
 }
 
 export async function unfinishedToolsWeb(seed: Seed, options: { editRunning?: boolean } = {}) {
-  const engine = resolveEvalEngine();
+  const engine = "v2";
   const prompt = "Hold the native tool open for Stop feedback proof.";
   const warmup = { prompt: "Create the Stop feedback fixture.", reply: "Stop feedback fixture ready." };
   // Opt-in turns whose answers stream one chunk and then hold, so a person can
@@ -2130,7 +2055,7 @@ export async function unfinishedToolsWeb(seed: Seed, options: { editRunning?: bo
       promptMarker: prompt,
       latestUserTurn: true,
       finalReply: "The held tool finished without Stop.",
-      steps: [{ tool: engine === "v2" ? "shell" : "bash", arguments: {
+      steps: [{ tool: "shell", arguments: {
         command: "sleep 120",
         description: "Hold the native tool for Stop feedback",
         timeout: 180_000,
@@ -2140,7 +2065,7 @@ export async function unfinishedToolsWeb(seed: Seed, options: { editRunning?: bo
   const session = await seedSessionRetry(seed, base.app);
   // v2 exposes live runs through /session/active ({ type: "running" }) rather than /session/status.
   const statusPath = `/workspace/${encodeURIComponent(base.workspace.workspaceId)}`
-    + `/${engine === "v2" ? "opencode2/api/session/active" : "opencode/session/status"}`;
+    + `/${"opencode2/api/session/active"}`;
   return {
     ...base,
     session,
@@ -2257,7 +2182,7 @@ export async function computerMentions(seed: Seed) {
 
 /** One profile across engine switches; the journey, not the seed, creates its history. */
 export async function workspaceEngineUpgrade(seed: Seed) {
-  if (resolveEvalEngine() !== "v1") throw new SkipError("upgrade baseline requires OPENWORK_EVAL_ENGINE=v1");
+  throw new SkipError("upgrade baseline requires OPENWORK_EVAL_ENGINE=v1");
   const live = liveOpenAiEnabled();
   const orgName = "Workspace engine upgrade";
   const mocks: Record<string, ReturnType<Seed["mock"]>> = live ? {} : { agent: seed.mock({ agentWorkloads: [{
@@ -2320,7 +2245,7 @@ export async function workspaceEngineUpgrade(seed: Seed) {
         // Observe only renderer-owned inventory reads and sidebar state, never
         // issue an API request that could satisfy the refresh witness itself.
         return seed.evalIn(app, browserScript((workspaceId, engine, since) => {
-          const sessionPath = `/workspace/${workspaceId}/${engine === "v2" ? "opencode2/api" : "opencode"}/session`;
+          const sessionPath = `/workspace/${workspaceId}/${"opencode2/api"}/session`;
           const route = window.__openwork?.slice("route");
           const workspace = route?.workspaces.find(workspace => workspace.id === workspaceId);
           const requests = (window.__openwork?.events(200) ?? []).flatMap(event => {
@@ -2344,8 +2269,8 @@ export async function workspaceEngineUpgrade(seed: Seed) {
         }, [workspaceId, engine, since]));
       },
       async createOtherWorkspace() {
-        const status = await request("/experimental/engine-v2-preview/status");
-        if (!isRecord(status.json) || status.json.chatRouting !== true || status.json.running !== true) {
+        const status = await request("/engine/status");
+        if (!isRecord(status.json) || status.json.running !== true) {
           throw new Error("Workspace B must be created only after the Settings switch to v2");
         }
         const other = await seed.workspace(app, otherPath, { create: true });
@@ -2386,16 +2311,6 @@ export async function skillLifecycle(seed: Seed) {
     };
     const providerId = live ? await liveProviderId(request, managed.id) : "skill-lifecycle";
     const modelId = live ? liveOpenAiModel() : "skill-lifecycle-model";
-    // This world arranges an opted-in native v2 conversation, including when
-    // invoked by the standard E2E command without an engine override.
-    await seed.evalIn(app, async () => {
-      const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/experimental/engine-v2-preview", {
-        method: "PUT", headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: true, chatRouting: true }), signal: AbortSignal.timeout(180000),
-      });
-      if (!response.ok) throw new Error("Could not enable the native engine");
-      return true;
-    }, { awaitPromise: true, timeoutMs: 185_000 });
     await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
       permission: { skill: "allow" },
       ...(!live ? { provider: { [providerId]: {
@@ -2446,8 +2361,8 @@ export async function skillLifecycle(seed: Seed) {
           && (!live || (isRecord(message.tokens) && typeof message.tokens.output === "number" && message.tokens.output > 0)));
       },
       async runtimeIdentity() {
-        const result = await request("/experimental/engine-v2-preview/status");
-        if (!isRecord(result.json) || result.json.running !== true || result.json.chatRouting !== true
+        const result = await request("/engine/status");
+        if (!isRecord(result.json) || result.json.running !== true
           || typeof result.json.pid !== "number") throw new Error("The v2 conversation runtime is not running");
         return result.json.pid;
       },

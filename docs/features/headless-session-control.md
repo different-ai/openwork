@@ -65,17 +65,8 @@ The same split exists in comparable products:
   With `reveal: true` it sends first, then issues one `session.open` through the UI
   mailbox stamped with the requester's `origin`, and reports `revealed`. `effects.ui` is
   `navigate` only when the reveal actually happened.
-- **Queue semantics (engine, opencode 1.18.18):** `prompt_async` persists the user message
-  and returns 204 immediately (`server/routes/instance/httpapi/handlers/session.ts`
-  `promptAsync`, forked). `SessionPrompt.prompt` → `loop` → `SessionRunState.ensureRunning`
-  (`effect/runner.ts`): if the session is already running, the call awaits the existing
-  run and the running loop picks the new user message up at its next step; nothing is
-  rejected or dropped. If no `model` is given, the session's stored model is used.
-  `evals/specs/session-send-headless-by-id.test.ts` witnesses this against the real
-  engine.
-- **B. by-id actions already headless:** `session.rename`, `session.pin`,
-  `session.archive` act by id and do not navigate (archive closes the tab only when the
-  target is the one on screen). No change needed beyond documentation.
+- **B. by-id actions already headless:** `session.rename` and `session.pin` act by id
+  and do not navigate. No change needed beyond documentation.
 - **C. truthful effects:** `session.create_task` now declares `ui: navigate`;
   `session.open`, `workbench.session.focus` keep `ui: navigate`; `composer.set_text`
   keeps `ui: focus`.

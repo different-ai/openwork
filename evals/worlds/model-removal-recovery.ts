@@ -42,7 +42,7 @@ export async function modelRemovalRecovery(seed: Seed) {
   const token = "model-removal-local-owner";
   const hostToken = "model-removal-local-host";
   const { app, workspace } = await signedInAppWeb(seed, {
-    name: "model-removal-recovery", den, webPort, headless: true, engine: "v2",
+    name: "model-removal-recovery", den, webPort, headless: true,
     workspacePath: join(seed.tmpPath("model-removal-recovery"), "Planning"),
     env: { OPENWORK_TOKEN: token, OPENWORK_HOST_TOKEN: hostToken, OPENWORK_CLOUD_PROVIDER_SYNC_INTERVAL_MS: "600000" },
   });

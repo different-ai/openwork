@@ -42,7 +42,6 @@ config:
     workbotGuidedNavigation: ""   # default off · Workbot offers to open the documents it mentions, and the conversation stays open beside the document. Needs the workspace assistant.
     automationCalendar: ""        # default off · Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar.
     engineV2ForceUpgrade: ""      # default off · Desktop and web instances copy chats with a backup and switch to OpenCode v2 automatically when idle, without asking for consent.
-    engineV2Upgrade: ""           # default off · Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines.
     remoteSessionEvents: ""       # default off · MCP clients can subscribe to changes in their remote session receipts and read the current state after reconnecting.
     remoteSessionSubagents: ""    # default off · A task the agent starts on the cloud or another computer shows in the chat like a sub-agent: whether it is working, needs an answer or finished, and its conversation, which people can open, follow up on and stop.
     headlessDurableTurns: ""      # default off · Workbot, Slack and Automations answers keep going after a restart, deploy or server failure, without waiting for someone to reopen the chat.

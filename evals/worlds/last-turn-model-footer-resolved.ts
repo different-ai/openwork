@@ -36,7 +36,7 @@ export async function lastTurnModelFooterResolved(seed: Seed) {
   const hostToken = randomUUID();
   const { app, workspace } = await signedInAppWeb(seed, {
     env: { OPENWORK_HOST_TOKEN: hostToken, VITE_OPENWORK_HOST_TOKEN: hostToken },
-    name: "last-turn-model-footer-resolved", den, webPort, headless: true, engine: "v2",
+    name: "last-turn-model-footer-resolved", den, webPort, headless: true,
     workspacePath: seed.tmpPath("last-turn-model-footer-resolved"),
   });
   const normal = await seed.session(app, { title: "Model footer" });

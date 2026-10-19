@@ -714,7 +714,7 @@ describe("MCP App data continuity", () => {
     } finally { await host.dispose() }
   })
 
-  test.each(["app", "resource", "origin", "session", "engine", "workspace", "client", "read-only", "presentation", "update-mode"])("notify retires actions and pending delivery when %s changes", async change => {
+  test.each(["app", "resource", "origin", "session", "workspace", "client", "read-only", "presentation", "update-mode"])("notify retires actions and pending delivery when %s changes", async change => {
     const host = await startupFixture({ updateMode: "notify" })
     const createActions = mcpAppOrigin.createMcpAppActions
     const scopes: Array<ReturnType<typeof createActions>> = []
@@ -734,14 +734,13 @@ describe("MCP App data continuity", () => {
         return new Promise(resolve => { finishAction = () => resolve({ content: [] }) })
       },
     }
-    const origin: McpAppSandboxViewProps["origin"] = { client, workspaceId: "workspace-0", sessionId: "session-0", engine: "v1", readOnly: false }
+    const origin: McpAppSandboxViewProps["origin"] = { client, workspaceId: "workspace-0", sessionId: "session-0", readOnly: false }
     const app = fixture({ toolName: "render-0" })
     const changes: Record<string, Partial<McpAppSandboxViewProps>> = {
       app: { app: { ...app, launchId: "launch_replacement" } },
       resource: { app: { ...app, resourceUri: "ui://fixture/replacement.html", html: "<p>Replacement</p>" } },
       origin: { origin: { ...origin } },
       session: { origin: { ...origin, sessionId: "session-1" } },
-      engine: { origin: { ...origin, engine: "v2" } },
       workspace: { origin: { ...origin, workspaceId: "workspace-1" } },
       client: { origin: { ...origin, client: { ...client } } },
       "read-only": { origin: { ...origin, readOnly: true } },
@@ -755,7 +754,7 @@ describe("MCP App data continuity", () => {
       await act(async () => { host.bridges[0].oninitialized?.() })
       const pendingAction = scopes[0].callTool("read_detail", { value: "old scope" }, true).catch((cause: unknown) => cause)
       expect(calls).toEqual([["workspace-0", {
-        launchId: "launch_fixture", sessionId: "session-0", engine: "v1", serverName: "fixture",
+        launchId: "launch_fixture", sessionId: "session-0", serverName: "fixture",
         resourceUri: app.resourceUri, name: "read_detail", arguments: { value: "old scope" }, approved: true,
       }]])
       await host.renderView({ ...toolDelivery(2), ...changes[change] })
@@ -1122,7 +1121,7 @@ describe("MCP App resolution", () => {
       } } },
     }
     const render = async (nextPart = part) => { await act(async () => root.render(createElement(MessageListProvider, {
-      client, workspaceId: "fixture", sessionId: "session_fixture", mcpAppEngine: "v2",
+      client, workspaceId: "fixture", sessionId: "session_fixture",
       showThinking: false, developerMode: false, displaySuggestions: false, providerConnectedCount: 0,
       dispatchAction: () => {}, setPrompt: () => {}, onRevertToUserMessage: () => {},
       onForkAtMessage: () => {}, onEditUserMessage: () => {},
@@ -1593,7 +1592,7 @@ describe("MCP App resolution", () => {
 })
 
 describe("MCP App iframe policy", () => {
-  test.each(["input", "result", "client", "workspace", "session", "engine", "read-only", "tool-call"])("refreshes the launch and delivery when %s really changes", async change => {
+  test.each(["input", "result", "client", "workspace", "session", "read-only", "tool-call"])("refreshes the launch and delivery when %s really changes", async change => {
     const host = await startupFixture()
     const resolutions: unknown[] = []
     const releases: unknown[] = []
@@ -1618,10 +1617,9 @@ describe("MCP App iframe policy", () => {
     const nextClient = change === "client" ? replacementClient : client
     const nextWorkspace = change === "workspace" ? "updated-workspace" : "fixture"
     const nextSession = change === "session" ? "updated-session" : "session_fixture"
-    const nextEngine = change === "engine" ? "v2" : "v1"
     const render = (updated: boolean) => host.renderElement(createElement(MessageListProvider, {
       client: updated ? nextClient : client, workspaceId: updated ? nextWorkspace : "fixture",
-      sessionId: updated ? nextSession : "session_fixture", mcpAppEngine: updated ? nextEngine : "v1",
+      sessionId: updated ? nextSession : "session_fixture",
       readOnly: updated && change === "read-only", showThinking: false, developerMode: false,
       displaySuggestions: false, providerConnectedCount: 0,
       dispatchAction: () => {}, setPrompt: () => {}, onRevertToUserMessage: () => {},
@@ -1646,7 +1644,7 @@ describe("MCP App iframe policy", () => {
       expect(releases).toEqual([["fixture", "launch-1"]])
       expect(resolutions[1]).toEqual([nextWorkspace, part.toolName, undefined, {
         client: nextClient, workspaceId: nextWorkspace, sessionId: nextSession,
-        engine: nextEngine, readOnly: change === "read-only",
+        readOnly: change === "read-only",
       }])
       expect(host.teardownSpy).toHaveBeenCalledTimes(1)
       expect(host.closeSpy).toHaveBeenCalledTimes(1)
@@ -1749,7 +1747,7 @@ describe("MCP App iframe policy", () => {
               app, toolName: part.toolName, inputArguments: input, result, unavailableNotice: "Unavailable",
             })
           : createElement(MessageListProvider, {
-              client, workspaceId: "fixture", sessionId: "session_fixture", mcpAppEngine: "v2", readOnly,
+              client, workspaceId: "fixture", sessionId: "session_fixture", readOnly,
               uiStateOwner: "fixture-principal/org/endpoint/workspace/session", showThinking: false, developerMode: false,
               displaySuggestions: false, providerConnectedCount: 0,
               dispatchAction: () => {}, setPrompt: () => {}, onRevertToUserMessage: () => {},
@@ -1766,7 +1764,7 @@ describe("MCP App iframe policy", () => {
       await render()
       expect(resolutions).toEqual(preview ? [] : [{
         workspaceId: "fixture", name: part.toolName, launch: undefined,
-        context: { client, workspaceId: "fixture", sessionId: "session_fixture", engine: "v2", readOnly },
+        context: { client, workspaceId: "fixture", sessionId: "session_fixture", readOnly },
       }])
       const iframe = container.querySelector("iframe")
       if (!iframe?.contentWindow) throw new Error("Missing fixture iframe")
@@ -1822,7 +1820,7 @@ describe("MCP App iframe policy", () => {
         readOnly ? { error: { code: -32601 } } : { result: { isError: true } },
       )
       expect(toolCalls).toEqual(readOnly ? [] : [{ workspaceId: "fixture", payload: {
-        launchId: "launch_fixture", sessionId: "session_fixture", engine: "v2",
+        launchId: "launch_fixture", sessionId: "session_fixture",
         serverName: app.serverName, resourceUri: app.resourceUri, name: "read_detail", arguments: {}, approved: true,
       } }])
       if (challenge && !readOnly) {

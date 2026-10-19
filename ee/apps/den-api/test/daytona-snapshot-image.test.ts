@@ -2,20 +2,18 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "node:test"
 
-test("Daytona image bakes pinned v2 with integrity verification and asserts both engines", () => {
+test("Daytona image bakes the pinned, integrity-checked v2 engine and asserts it", () => {
   const dockerfile = readFileSync(new URL("../../den-worker-runtime/Dockerfile.daytona-snapshot", import.meta.url), "utf8")
-  assert.match(dockerfile, /COPY --from=openwork-builder \/src\/constants\.json/)
-  assert.match(dockerfile, /a\.version!==c\.opencodeV2Version/)
-  assert.match(dockerfile, /amd64\) platform="linux-x64-baseline"/)
-  assert.match(dockerfile, /arm64\) platform="linux-arm64"/)
-  assert.ok(dockerfile.indexOf("createHash(\"sha512\")") < dockerfile.indexOf('tar -xzf "$tmpdir/opencode2.tgz"'))
-  assert.match(dockerfile, /actual!==a\.platforms\[process\.argv\[1\]\]\.integrity/)
-  assert.match(dockerfile, /install -m 0755 "\$tmpdir\/package\/bin\/opencode" \/usr\/local\/bin\/opencode2/)
-  assert.match(dockerfile, /ENV OPENWORK_OPENCODE2_BIN=\/usr\/local\/bin\/opencode2/)
-  assert.match(dockerfile, /&& opencode --version/)
-  assert.match(dockerfile, /\$OPENWORK_OPENCODE2_BIN" --version/)
-  assert.match(dockerfile, /actual!==expected/)
-  assert.match(dockerfile, /replace\(\/\^opencode v\?\//)
+  // scripts/install-opencode2.mjs installs constants.json's opencodeV2Version
+  // and verifies the archive against opencode-v2-artifacts.json.
+  assert.match(dockerfile, /amd64\) target="bun-linux-x64"; triple="x86_64-unknown-linux-gnu"/)
+  assert.match(dockerfile, /arm64\) target="bun-linux-arm64"; triple="aarch64-unknown-linux-gnu"/)
+  assert.match(dockerfile, /node scripts\/install-opencode2\.mjs --outdir \/tmp\/opencode2 --target "\$triple"/)
+  assert.match(dockerfile, /COPY --from=openwork-builder \/tmp\/opencode2\/opencode2 \/usr\/local\/bin\/opencode2/)
+  assert.match(dockerfile, /&& opencode2 --version/)
+  // OpenCode v1 is gone: no second engine is installed or asserted.
+  assert.doesNotMatch(dockerfile, /\/usr\/local\/bin\/opencode(?!2)/)
+  assert.doesNotMatch(dockerfile, /&& opencode --version/)
   // Baking a binary must not silently enable org policy evaluation in all images.
   assert.doesNotMatch(dockerfile, /ENV OPENWORK_(ENGINE_AUTO_UPGRADE|ENGINE_FORCE_POLICY|FRESH_INSTALL_ENGINE)=/)
 })

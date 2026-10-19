@@ -21,10 +21,8 @@ const appPkg = readJson(resolve(root, "apps", "app", "package.json"));
 const desktopPkg = readJson(resolve(root, "apps", "desktop", "package.json"));
 const serverPkg = readJson(resolve(root, "apps", "server", "package.json"));
 const pinnedOpencodeVersion = String(
-  readJson(resolve(root, "constants.json")).opencodeVersion ?? "",
-)
-  .trim()
-  .replace(/^v/, "");
+  readJson(resolve(root, "constants.json")).opencodeV2Version ?? "",
+).trim();
 
 const versions = {
   app: appPkg.version ?? null,

@@ -196,13 +196,11 @@ export function createRouteWorkspaceLoadCoalescer(): RouteWorkspaceLoadCoalescer
   };
 }
 
-/** Unknown local routing is not v1. */
 export function routeWorkspaceSessionLoadScope(
   workspace: RouteWorkspace,
   endpoint: ResolvedWorkspaceEndpoint | null,
-  engineV2ChatRouting: boolean | undefined,
 ): string | null {
-  if (!endpoint || engineV2ChatRouting === undefined) return null;
+  if (!endpoint) return null;
   return JSON.stringify([
     workspace.workspaceType,
     workspace.path,
@@ -211,7 +209,6 @@ export function routeWorkspaceSessionLoadScope(
     endpoint.mountedBaseUrl,
     endpoint.opencodeBaseUrl,
     endpoint.token,
-    engineV2ChatRouting,
   ]);
 }
 

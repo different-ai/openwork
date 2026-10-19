@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { evalIn, quitDesktop, readComposerState } from "@openwork/behaviors";
 import { addInitScript, browserScript } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
-import { mcpMock, resolveEvalEngine } from "@openwork/env";
+import { mcpMock } from "@openwork/env";
 import type { MockHandle, Place, Seed } from "@openwork/env";
 import { desktop as launchDesktop } from "@openwork/hosts";
 import type { DesktopHandle } from "@openwork/hosts";
@@ -89,6 +89,75 @@ declare global {
   }
 }
 
+/**
+ * A cold engine after a restart can take longer than the renderer's request
+ * timeout to return a long thread's complete history, while bounded reads
+ * still answer quickly. Model exactly that from the renderer's first request
+ * onwards (the caller reloads the document): every uncapped message read for
+ * this thread is delayed past the timeout; reads with a limit pass untouched.
+ */
+export async function slowUncappedHistoryReads(app: Surface, workspaceId: string, sessionId: string, delayMs: number) {
+  const script = await addInitScript(app.client, browserScript((workspaceId, sessionId, delayMs) => {
+    if (window.top !== window || window.__openworkSlowHistoryFault) return;
+    const paths = ["workspace", "w"].map((mount) =>
+      `/${mount}/${encodeURIComponent(workspaceId)}/opencode2/api/session/${encodeURIComponent(sessionId)}/message`);
+    const originalFetch = window.fetch;
+    const state = { delayed: 0, bounded: 0 };
+    const wrappedFetch: typeof window.fetch = async (...args) => {
+      const [input, init] = args;
+      const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+      const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+      const port = localStorage.getItem("openwork.server.port");
+      const owned = Boolean(port) && url.origin === `http://127.0.0.1:${port}` && method === "GET" && paths.includes(url.pathname);
+      if (!owned) return originalFetch.apply(window, args);
+      if (url.searchParams.has("limit")) { state.bounded += 1; return originalFetch.apply(window, args); }
+      state.delayed += 1;
+      const signal = init?.signal !== undefined ? init.signal : input instanceof Request ? input.signal : undefined;
+      await new Promise<void>((resolveDelay, rejectDelay) => {
+        const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolveDelay(); }, delayMs);
+        const abort = () => { clearTimeout(timer); rejectDelay(signal?.reason ?? new DOMException("Aborted", "AbortError")); };
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) abort();
+      });
+      return originalFetch.apply(window, args);
+    };
+    window.fetch = wrappedFetch;
+    window.__openworkSlowHistoryFault = {
+      state,
+      dispose: () => { if (window.fetch === wrappedFetch) window.fetch = originalFetch; delete window.__openworkSlowHistoryFault; },
+    };
+  }, [workspaceId, sessionId, delayMs]));
+  return {
+    read: () => evalIn(app, () => {
+      const fault = window.__openworkSlowHistoryFault;
+      if (!fault) throw new Error("Slow history fault lost its document");
+      return { ...fault.state };
+    }),
+    async dispose() {
+      await script.dispose().catch(() => undefined);
+      await evalIn(app, () => { window.__openworkSlowHistoryFault?.dispose(); }).catch(() => undefined);
+    },
+  };
+}
+
+/** Reload the renderer document the way a render-crash recovery or Cmd+R does; the shell and engine stay up. */
+export async function reloadRenderer(app: Surface): Promise<void> {
+  await evalIn(app, () => { window.setTimeout(() => window.location.reload(), 50); return true; });
+  const deadline = Date.now() + 60_000;
+  let last: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      const state = await readComposerState(app);
+      if (state.composerEditable) return;
+      last = state;
+    } catch (error) {
+      last = error;
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+  }
+  throw new Error(`The renderer did not come back after reload; last observed ${last instanceof Error ? last.message : JSON.stringify(last)}`);
+}
+
 /** Refuse to send unless the composer is bound to the model witness. */
 export async function assertWitnessModel(app: Surface): Promise<void> {
   const deadline = Date.now() + 60_000;
@@ -103,12 +172,11 @@ export async function assertWitnessModel(app: Surface): Promise<void> {
 
 export async function restartedThreadWorld(seed: Seed, ctx: { place: Place }) {
   if (ctx.place.kind !== "local") throw new Error("This world kills and relaunches the desktop process group on the host running it; run it on the local lane.");
-  const engine = resolveEvalEngine();
   const prompts = restartedThreadPrompts;
   const workloads: MockAgentWorkload[] = [
     {
       promptMarker: prompts.interrupted, latestUserTurn: true, finalReply: prompts.interruptedReply,
-      steps: [{ tool: engine === "v2" ? "shell" : "bash", arguments: {
+      steps: [{ tool: "shell", arguments: {
         command: "sleep 120", description: "Wait for the report input", timeout: 180_000,
       } }],
     },
@@ -151,7 +219,7 @@ export async function restartedThreadWorld(seed: Seed, ctx: { place: Place }) {
   if (!session) throw new Error(`Session creation did not settle: ${lastSessionError instanceof Error ? lastSessionError.message : String(lastSessionError)}`);
   let restarted: DesktopHandle | null = null;
   return {
-    engine, mock, workspace, workspacePath, session, prompts, modelName: restartedThreadModelName,
+    mock, workspace, workspacePath, session, prompts, modelName: restartedThreadModelName,
     get app(): Surface { return app; },
     /**
      * Take the whole desktop away — `kill` is a crash or force quit (SIGKILL to

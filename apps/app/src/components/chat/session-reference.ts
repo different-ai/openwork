@@ -1,5 +1,5 @@
 import { getDisplaySessionTitle } from "@/app/lib/session-title";
-import type { Session } from "@opencode-ai/sdk/v2/client";
+import type { Session } from "@/app/lib/opencode-types";
 
 export type SessionMetadataRuntime = {
   workspaceId: string;
@@ -21,13 +21,11 @@ export type SessionReferenceIdentity = {
 
 export type SessionReference = SessionReferenceIdentity & {
   title: string;
-  archived?: boolean;
 };
 
 export type SessionReferenceMetadata = {
   id: string;
   title?: string | null;
-  time?: { archived?: number | null };
 };
 
 export type SessionReferenceInventory = {
@@ -100,7 +98,6 @@ export function createSessionReferenceIndex(inventories: readonly SessionReferen
       const reference: SessionReference = {
         ...identity,
         title: getDisplaySessionTitle(session.title),
-        archived: Boolean(session.time?.archived),
       };
       byPair.set(key, reference);
       bySessionId.set(session.id, bySessionId.has(session.id) ? undefined : reference);

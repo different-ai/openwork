@@ -25,7 +25,7 @@ export function openSessionReference(
     return;
   }
   actions.openTab(reference);
-  if (workbench.primary && workbench.secondary && workbench.focusedPane === "secondary" && !reference.archived) {
+  if (workbench.primary && workbench.secondary && workbench.focusedPane === "secondary") {
     actions.setSplit(reference);
     actions.focusPane("secondary");
     return;

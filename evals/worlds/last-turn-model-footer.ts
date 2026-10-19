@@ -26,7 +26,7 @@ export async function lastTurnModelFooter(seed: Seed) {
   const hostToken = randomUUID();
   const { app, workspace } = await signedInAppWeb(seed, {
     name: "last-turn-model-footer", den, webPort, headless: true,
-    workspacePath: seed.tmpPath("last-turn-model-footer"), engine: "v2",
+    workspacePath: seed.tmpPath("last-turn-model-footer"),
     env: { OPENWORK_TOKEN: token, OPENWORK_HOST_TOKEN: hostToken },
   });
   const mount = `/workspace/${workspace.workspaceId}`;

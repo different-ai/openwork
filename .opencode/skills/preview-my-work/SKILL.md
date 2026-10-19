@@ -110,13 +110,13 @@ them, from the repo root; never print a value.
   `preview-desktop` (signed-out `fresh` only); `preview-den` and `preview-full`
   do not run there.
 
-To turn on an app setting such as the v2 engine, export it and select it with
+To turn on an app setting, export it and select it with
 `--env` **before** `--`; desktop previews on local and Daytona pass selected keys
 to the app and list them in the `appEnv` output. Freestyle refuses `--env` for
 desktops because its snapshot starts the app at build time.
 
 ```sh
-OPENWORK_ENGINE_V2_PREVIEW=1 pnpm world up preview-desktop --place daytona --stage pr-1234-v2 --detach --env OPENWORK_ENGINE_V2_PREVIEW
+MY_SETTING=1 pnpm world up preview-desktop --place daytona --stage pr-1234 --detach --env MY_SETTING
 ```
 
 For the isolated `preview-den`/`preview-full` presets, choose `--scenario fresh`
@@ -169,7 +169,7 @@ To run the opt-in proof from the requested branch:
 
 ```sh
 pnpm --filter @openwork/review-app build
-pnpm evals:e2e web-checkpoint-fork --local --engine v1 --surface web --checkpoints
+pnpm evals:e2e web-checkpoint-fork --local --surface web --checkpoints
 ```
 
 `--local` places the test controller and review browser locally (Blacksmith in

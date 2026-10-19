@@ -3,11 +3,8 @@
  * environment variable when that option is not passed, e.g. `@ai-sdk/amazon-bedrock`
  * calls `loadSetting({ settingValue: options.region, environmentVariableName: "AWS_REGION" })`.
  *
- * These pairs are hard-coded inside the SDK copies bundled in the pinned
- * OpenCode engine and are not exported, so they are listed here.
- * `evals/specs/ai-sdk-env-settings-drift.test.ts` extracts every pair from the
- * pinned engine binary and fails when this list no longer matches it: update
- * it whenever `constants.json` moves `opencodeVersion`.
+ * These pairs are hard-coded inside the AI SDK provider packages and are not
+ * exported, so they are listed here.
  */
 export const aiSdkEnvSettings = {
   AI_GATEWAY_API_KEY: "apiKey",

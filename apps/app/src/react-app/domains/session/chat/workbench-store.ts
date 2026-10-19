@@ -26,8 +26,6 @@ export type SyncWorkbenchInput = {
   primarySessionId: string | null;
   sessions: OpenworkSessionRef[];
   sessionsKnown: boolean;
-  /** Explicit archive metadata for this workspace, not sessions missing from its engine index. */
-  archivedSessionIds?: string[];
 };
 
 const initialWorkbenchSnapshot: WorkbenchSnapshot = {
@@ -107,16 +105,9 @@ export function syncWorkbenchSnapshot(
     const key = workbenchSessionKey(session);
     if (!available.has(key)) available.set(key, { ...session, workspaceTitle });
   }
-  const archivedSessionIds = new Set(input.archivedSessionIds);
-  // An index only covers one engine. Absence is not evidence of deletion:
-  // retained tabs, like saved pairs, require an explicit close or archive.
+  // Absence from a session list is not evidence of deletion: retained tabs,
+  // like saved pairs, require an explicit close.
   let tabs = current.tabs
-    .filter((tab) => (
-      tab.workspaceId !== input.workspaceId
-      || !archivedSessionIds.has(tab.sessionId)
-      // Keep the routed archived primary viewable until navigation leaves it.
-      || tab.sessionId === input.primarySessionId
-    ))
     .map((tab) => {
       const fresh = available.get(workbenchSessionKey(tab));
       return fresh ? { ...tab, ...fresh } : tab;
@@ -171,12 +162,11 @@ export function openWorkbenchTab(
 export function closeWorkbenchTab(
   current: WorkbenchSnapshot,
   tab: Pick<OpenworkSessionRef, "workspaceId" | "sessionId">,
-  promoteSecondary = true,
 ): WorkbenchSnapshot {
   const tabs = current.tabs.filter((entry) => !isSameWorkbenchSession(entry, tab));
   const closesPrimary = isSameWorkbenchSession(current.primary, tab);
   const closesSecondary = isSameWorkbenchSession(current.secondary, tab);
-  const primary = closesPrimary ? (promoteSecondary ? current.secondary : null) : current.primary;
+  const primary = closesPrimary ? current.secondary : current.primary;
   const secondary = closesPrimary || closesSecondary ? null : current.secondary;
   return withRevision(current, {
     sideChats: Object.fromEntries(Object.entries(current.sideChats).filter(([owner, chat]) =>
@@ -242,7 +232,6 @@ type WorkbenchStore = WorkbenchSnapshot & {
   sync: (input: SyncWorkbenchInput) => void;
   openTab: (tab: WorkbenchSessionTab) => void;
   closeTab: (tab: Pick<OpenworkSessionRef, "workspaceId" | "sessionId">) => void;
-  archiveTab: (tab: Pick<OpenworkSessionRef, "workspaceId" | "sessionId">) => void;
   setSplit: (session: Pick<OpenworkSessionRef, "workspaceId" | "sessionId"> | null) => void;
   setSideChat: (owner: WorkbenchSessionTab, session: WorkbenchSessionTab) => void;
   focusPane: (pane: WorkbenchPane) => void;
@@ -253,7 +242,6 @@ export const useWorkbenchStore = create<WorkbenchStore>()(persist((set) => ({
   sync: (input) => set((state) => syncWorkbenchSnapshot(state, input)),
   openTab: (tab) => set((state) => openWorkbenchTab(state, tab)),
   closeTab: (tab) => set((state) => closeWorkbenchTab(state, tab)),
-  archiveTab: (tab) => set((state) => closeWorkbenchTab(state, tab, false)),
   setSplit: (session) => set((state) => setWorkbenchSplit(state, session)),
   setSideChat: (owner, session) => set((state) => setWorkbenchSideChat(state, owner, session)),
   focusPane: (pane) => set((state) => focusWorkbenchPane(state, pane)),

@@ -1,15 +1,9 @@
 /**
  * A function-driven client for native OpenWork threads.
  *
- * Every call goes through OpenWork's workspace-scoped engine mounts, on the
- * engine the server routes chats to, so a headless thread is an ordinary chat:
- *
- * - v1: the OpenCode SDK against `/workspace/:id/opencode`
- * - v2: native routes under `/workspace/:id/opencode2/api`
- *
- * `GET /experimental/engine-v2-preview/status` picks the engine once per client.
+ * Every call goes through OpenWork's workspace-scoped OpenCode mount,
+ * `/workspace/:id/opencode2/api`, so a headless thread is an ordinary chat.
  */
-import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { z } from "zod";
 
 import { HeadlessThreadError } from "./errors.js";
@@ -20,7 +14,6 @@ import type {
   HeadlessThread,
   HeadlessThreadClient,
   HeadlessThreadClientOptions,
-  HeadlessThreadEngine,
   HeadlessThreadModel,
   HeadlessThreadSnapshot,
   HeadlessThreadTranscript,
@@ -31,21 +24,14 @@ import type {
   HeadlessTurnAcceptance,
 } from "./types.js";
 import {
-  abortResultSchema,
   isRunning,
-  sessionSchema,
-  threadMessagesSchema,
   threadSnapshotSchema,
-  threadStatusesSchema,
-  threadTodosSchema,
   toSnapshot,
   toThread,
   type MessageWire,
-  type SessionWire,
 } from "./wire.js";
 import {
   defaultModelSchema,
-  engineStatusSchema,
   fromV2Messages,
   fromV2Session,
   toHeadlessModel,
@@ -63,25 +49,9 @@ const errorBodySchema = z
   .object({
     code: z.string().optional(),
     _tag: z.string().optional(),
-    name: z.string().optional(),
     message: z.string().optional(),
-    data: z.object({ message: z.string().optional() }).passthrough().optional(),
   })
   .passthrough();
-
-const effectiveProvidersSchema = z.object({
-  providers: z.array(z.object({
-    id: z.string(),
-    models: z.record(z.string(), z.object({}).passthrough()),
-  })),
-});
-
-/** v1 lists every session's pending requests; v2 lists one session's, sometimes wrapped in `data`. */
-const pendingRequestRowSchema = z.object({ sessionID: z.string().optional() }).passthrough();
-const pendingRequestListSchema = z.union([
-  z.array(pendingRequestRowSchema),
-  z.object({ data: z.array(pendingRequestRowSchema) }).passthrough(),
-]).transform((value) => Array.isArray(value) ? value : value.data);
 
 const v2ModelEntrySchema = z.object({ providerID: z.string(), id: z.string() }).passthrough();
 const v2ModelCatalogSchema = z.union([
@@ -121,15 +91,17 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const workspacePath = `/workspace/${encodeURIComponent(workspaceId)}`;
-  const opencodePath = `${workspacePath}/opencode`;
+  const v2Path = `${workspacePath}/opencode2/api`;
+  const createPath = `${v2Path}/session`;
+  const v2SessionPath = (threadId: string) => `${v2Path}/session/${encodeURIComponent(threadId)}`;
+  const V2_MESSAGE_PAGE_LIMIT = 200;
 
   function invalidCreatePayload(message: string): never {
-    const path = `${opencodePath}/session`;
     throw new HeadlessThreadError({
       code: "invalid_payload",
       message,
       method: "POST",
-      path,
+      path: createPath,
       status: 400,
       body: { code: "invalid_payload", message },
     });
@@ -165,66 +137,9 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     ...(options.hostToken === undefined ? {} : { "X-OpenWork-Host-Token": options.hostToken }),
   };
 
-  const sdkFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const request = input instanceof Request ? input : new Request(input, init);
-    const headers: Record<string, string> = {};
-    request.headers.forEach((value, key) => {
-      headers[key] = value;
-    });
-    const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.text();
-    return fetchImpl(request.url, {
-      method: request.method,
-      headers,
-      ...(body === "" ? {} : { body }),
-      redirect: "error",
-      signal: request.signal,
-    });
-  };
-  const opencode = createOpencodeClient({
-    baseUrl: `${baseUrl}${opencodePath}`,
-    headers: authHeaders,
-    redirect: "error",
-    fetch: Object.assign(sdkFetch, { preconnect: () => {} }),
-  });
-
-  type SdkResult<T> = {
-    data?: T;
-    error?: unknown;
-    response?: Response;
-  };
-
-  function sdkSuccess<T>(result: SdkResult<T>, method: string, path: string): T | undefined {
-    if (result.error === undefined) return result.data;
-    const detail = errorBodySchema.safeParse(result.error);
-    const message = detail.success ? detail.data.message ?? detail.data.data?.message : undefined;
-    throw new HeadlessThreadError({
-      code: detail.success ? detail.data.code ?? detail.data.name ?? "request_failed" : "request_failed",
-      message: message ?? (result.response
-        ? `OpenWork returned ${result.response.status} for ${method} ${path}`
-        : `OpenWork request failed for ${method} ${path}`),
-      method,
-      path,
-      ...(result.response === undefined ? {} : { status: result.response.status }),
-      body: result.error,
-    });
-  }
-
-  function sdkJson<T>(schema: z.ZodType<T>, result: SdkResult<unknown>, method: string, path: string): T {
-    const parsed = schema.safeParse(sdkSuccess(result, method, path));
-    if (parsed.success) return parsed.data;
-    throw new HeadlessThreadError({
-      code: "invalid_response",
-      message: `OpenWork returned an unexpected payload for ${method} ${path}`,
-      method,
-      path,
-      ...(result.response === undefined ? {} : { status: result.response.status }),
-      body: parsed.error.issues,
-    });
-  }
-
   type RawResult = { response: Response; payload: unknown };
 
-  /** Plain JSON calls for routes the OpenCode SDK does not model: engine status, default model, and v2. */
+  /** Plain JSON calls to the OpenWork server and its OpenCode mount. */
   async function send(method: string, path: string, input?: { body?: unknown; signal?: AbortSignal }): Promise<RawResult> {
     const body = input?.body;
     try {
@@ -277,7 +192,7 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     });
   }
 
-  function parsed<T>(schema: z.ZodType<T>, method: string, path: string, result: RawResult, retryable?: boolean): T {
+  function parsed<T>(schema: z.ZodType<T>, method: string, path: string, result: RawResult): T {
     const value = schema.safeParse(result.payload);
     if (value.success) return value.data;
     throw new HeadlessThreadError({
@@ -287,7 +202,6 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       path,
       status: result.response.status,
       body: value.error.issues,
-      ...(retryable === undefined ? {} : { retryable }),
     });
   }
 
@@ -295,32 +209,6 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     const result = await send(method, path, input);
     if (!result.response.ok) throw failure(method, path, result);
     return parsed(schema, method, path, result);
-  }
-
-  async function detectEngine(signal?: AbortSignal): Promise<HeadlessThreadEngine> {
-    const path = "/experimental/engine-v2-preview/status";
-    const result = await send("GET", path, { signal });
-    // Only a server that predates the v2 preview answers 404, and it can only run v1.
-    if (result.response.status === 404) return "v1";
-    // Anything else is unknown, not v1: guessing v1 would start the thread
-    // where the app does not look and on a model it does not show.
-    if (!result.response.ok) throw failure("GET", path, result, { code: "engine_unresolved", retryable: true });
-    const status = parsed(engineStatusSchema, "GET", path, result, true);
-    return status.enabled && status.chatRouting ? "v2" : "v1";
-  }
-
-  let enginePromise: Promise<HeadlessThreadEngine> | null =
-    options.engine === "v1" || options.engine === "v2" ? Promise.resolve(options.engine) : null;
-
-  /** Resolved once per client; a failed lookup is forgotten so the next call retries it. */
-  function resolveEngine(signal?: AbortSignal): Promise<HeadlessThreadEngine> {
-    if (enginePromise) return enginePromise;
-    const pending = detectEngine(signal);
-    enginePromise = pending;
-    pending.catch(() => {
-      if (enginePromise === pending) enginePromise = null;
-    });
-    return pending;
   }
 
   /** The workspace's chosen model. Servers without the route answer 404, which means none. */
@@ -345,111 +233,11 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     });
   }
 
-  /** One engine's session routes, in the v1 wire shapes `wire.ts` parses. */
-  interface Transport {
-    engine: HeadlessThreadEngine;
-    createPath: string;
-    createSession(title: string, model: HeadlessThreadModel | null, signal?: AbortSignal,
-      identity?: Pick<CreateThreadInput, "id" | "metadata">): Promise<SessionWire>;
-    /** `model` null keeps the session's current model. */
-    submit(threadId: string, prompt: string, model: HeadlessThreadModel | null, messageId: string | undefined, signal?: AbortSignal): Promise<void>;
-    messages(threadId: string, signal?: AbortSignal): Promise<MessageWire[]>;
-    snapshot(threadId: string, input?: { signal?: AbortSignal; limit?: number }): Promise<HeadlessThreadSnapshot>;
-    abort(threadId: string, signal?: AbortSignal): Promise<boolean>;
-    sessionModel(threadId: string, signal?: AbortSignal): Promise<HeadlessThreadModel | null>;
-    /** Pending permission and question requests, as two lists. */
-    pending(threadId: string, signal?: AbortSignal): Promise<{ permissions: number; questions: number }>;
-  }
-
-  const v1: Transport = {
-    engine: "v1",
-    createPath: `${opencodePath}/session`,
-    async createSession(title, _model, signal) {
-      return sdkJson(
-        sessionSchema,
-        await opencode.session.create({ title }, { signal: requestSignal(signal) }),
-        "POST",
-        `${opencodePath}/session`,
-      );
-    },
-    async submit(threadId, prompt, model, messageId, signal) {
-      const path = `${opencodePath}/session/${encodeURIComponent(threadId)}/prompt_async`;
-      const result = await opencode.session.promptAsync({
-        sessionID: threadId,
-        parts: [{ type: "text", text: prompt }],
-        ...(messageId === undefined ? {} : { messageID: messageId }),
-        ...(model === null ? {} : { model: { providerID: model.providerId, modelID: model.modelId } }),
-        ...(model?.variant === undefined ? {} : { variant: model.variant }),
-      }, { signal: requestSignal(signal) });
-      sdkSuccess(result, "POST", path);
-    },
-    async messages(threadId, signal) {
-      const path = `${opencodePath}/session/${encodeURIComponent(threadId)}/message`;
-      return sdkJson(
-        threadMessagesSchema,
-        await opencode.session.messages({ sessionID: threadId }, { signal: requestSignal(signal) }),
-        "GET",
-        path,
-      );
-    },
-    async snapshot(threadId, input) {
-      const encodedThreadId = encodeURIComponent(threadId);
-      const sessionPath = `${opencodePath}/session/${encodedThreadId}`;
-      const messagesPath = `${sessionPath}/message`;
-      const todosPath = `${sessionPath}/todo`;
-      const statusPath = `${opencodePath}/session/status`;
-      const [sessionResult, messagesResult, todosResult, statusResult] = await Promise.all([
-        opencode.session.get({ sessionID: threadId }, { signal: requestSignal(input?.signal) }),
-        opencode.session.messages({ sessionID: threadId, limit: input?.limit }, { signal: requestSignal(input?.signal) }),
-        opencode.session.todo({ sessionID: threadId }, { signal: requestSignal(input?.signal) }),
-        opencode.session.status(undefined, { signal: requestSignal(input?.signal) }),
-      ]);
-      const session = sdkJson(sessionSchema, sessionResult, "GET", sessionPath);
-      const messages = sdkJson(threadMessagesSchema, messagesResult, "GET", messagesPath);
-      const todos = sdkJson(threadTodosSchema, todosResult, "GET", todosPath);
-      const statuses = sdkJson(threadStatusesSchema, statusResult, "GET", statusPath);
-      return toSnapshot(threadSnapshotSchema.parse({
-        session,
-        messages,
-        todos,
-        status: statuses[threadId] ?? { type: "idle" },
-      }));
-    },
-    async abort(threadId, signal) {
-      const path = `${opencodePath}/session/${encodeURIComponent(threadId)}/abort`;
-      return sdkJson(
-        abortResultSchema,
-        await opencode.session.abort({ sessionID: threadId }, { signal: requestSignal(signal) }),
-        "POST",
-        path,
-      );
-    },
-    // v1 falls back to the engine's own default; there is nothing to read.
-    async sessionModel() {
-      return null;
-    },
-    // v1 lists pending requests for every session in the workspace.
-    async pending(threadId, signal) {
-      const [permissions, questions] = await Promise.all([
-        json(pendingRequestListSchema, "GET", `${opencodePath}/permission`, { signal }),
-        json(pendingRequestListSchema, "GET", `${opencodePath}/question`, { signal }),
-      ]);
-      return {
-        permissions: permissions.filter((row) => row.sessionID === threadId).length,
-        questions: questions.filter((row) => row.sessionID === threadId).length,
-      };
-    },
-  };
-
-  const v2Path = `${workspacePath}/opencode2/api`;
-  const v2SessionPath = (threadId: string) => `${v2Path}/session/${encodeURIComponent(threadId)}`;
-  const V2_MESSAGE_PAGE_LIMIT = 200;
-
   async function v2Session(threadId: string, signal?: AbortSignal) {
     return (await json(v2SessionSchema, "GET", v2SessionPath(threadId), { signal })).data;
   }
 
-  /** Pages v2 history (newest first) and returns it oldest first, like v1. */
+  /** Pages v2 history (newest first) and returns it oldest first. */
   async function v2Messages(threadId: string, input?: { signal?: AbortSignal; limit?: number }): Promise<MessageWire[]> {
     const limit = input?.limit === undefined ? undefined : Math.min(input.limit, V2_MESSAGE_PAGE_LIMIT);
     const path = `${v2SessionPath(threadId)}/message`;
@@ -472,118 +260,76 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     return fromV2Messages(rows.reverse());
   }
 
-  const v2: Transport = {
-    engine: "v2",
-    createPath: `${v2Path}/session`,
-    async createSession(title, model, signal, identity) {
-      // The server binds the session to this workspace's folder while forwarding
-      // native id/metadata intact. V2 deduplicates a repeated creation id.
-      const created = await json(v2SessionSchema, "POST", `${v2Path}/session`, {
-        body: {
-          title,
-          ...(identity?.id === undefined ? {} : { id: identity.id }),
-          ...(identity?.metadata === undefined ? {} : { metadata: identity.metadata }),
-          ...(model === null ? {} : { model: { providerID: model.providerId, id: model.modelId } }),
-        },
-        signal,
-      });
-      const expectedMetadata = identity?.metadata;
-      const matchesMetadata = expectedMetadata === undefined || Object.entries(expectedMetadata).every(([key, value]) => (
-        JSON.stringify(canonicalJson(created.data.metadata?.[key])) === JSON.stringify(canonicalJson(value))
-      ));
-      if ((identity?.id !== undefined && created.data.id !== identity.id) || !matchesMetadata) {
-        // An existing id is not authority to adopt its session. Fail before a
-        // prompt when its ownership metadata or native identity differs.
-        throw new HeadlessThreadError({ code: "creation_identity_mismatch", message: "The native session creation receipt did not match its requested identity and metadata.",
-          method: "POST", path: `${v2Path}/session` });
-      }
-      return fromV2Session(created.data);
-    },
-    // v2 takes a client-chosen prompt `id`, keeps it as the user message id,
-    // and admits a repeated id once, so a retried turn never runs twice.
-    async submit(threadId, prompt, model, messageId, signal) {
-      if (model !== null) {
-        const modelPath = `${v2SessionPath(threadId)}/model`;
-        const result = await send("POST", modelPath, {
-          body: { model: { providerID: model.providerId, id: model.modelId, ...(model.variant === undefined ? {} : { variant: model.variant }) } },
-          signal,
-        });
-        if (!result.response.ok) throw failure("POST", modelPath, result);
-      }
-      const promptPath = `${v2SessionPath(threadId)}/prompt`;
-      const result = await send("POST", promptPath, {
-        body: { text: prompt, ...(messageId === undefined ? {} : { id: messageId }) },
-        signal,
-      });
-      if (!result.response.ok) throw failure("POST", promptPath, result);
-    },
-    messages: (threadId, signal) => v2Messages(threadId, { signal }),
-    async snapshot(threadId, input) {
-      const [session, messages, active] = await Promise.all([
-        v2Session(threadId, input?.signal),
-        v2Messages(threadId, input),
-        json(v2ActiveSchema, "GET", `${v2Path}/session/active`, { signal: input?.signal }),
-      ]);
-      return toSnapshot(threadSnapshotSchema.parse({
-        session: fromV2Session(session),
-        messages,
-        // v2 has no todo list.
-        todos: [],
-        status: active.data[threadId]?.type === "running" ? { type: "busy" } : { type: "idle" },
-      }));
-    },
-    async abort(threadId, signal) {
-      const result = await json(v2InterruptSchema, "POST", `${v2SessionPath(threadId)}/interrupt`, { body: {}, signal });
-      return result.data.interrupted;
-    },
-    async sessionModel(threadId, signal) {
-      return v2SessionModel(await v2Session(threadId, signal));
-    },
-    // v2 scopes both lists to the session; questions are forms.
-    async pending(threadId, signal) {
-      const [permissions, forms] = await Promise.all([
-        json(pendingRequestListSchema, "GET", `${v2SessionPath(threadId)}/permission`, { signal }),
-        json(pendingRequestListSchema, "GET", `${v2SessionPath(threadId)}/form`, { signal }),
-      ]);
-      return { permissions: permissions.length, questions: forms.length };
-    },
-  };
+  async function createSession(title: string, model: HeadlessThreadModel, signal: AbortSignal | undefined,
+    identity: Pick<CreateThreadInput, "id" | "metadata">) {
+    // The server binds the session to this workspace's folder while forwarding
+    // native id/metadata intact. V2 deduplicates a repeated creation id.
+    const created = await json(v2SessionSchema, "POST", createPath, {
+      body: {
+        title,
+        ...(identity.id === undefined ? {} : { id: identity.id }),
+        ...(identity.metadata === undefined ? {} : { metadata: identity.metadata }),
+        model: { providerID: model.providerId, id: model.modelId },
+      },
+      signal,
+    });
+    const expectedMetadata = identity.metadata;
+    const matchesMetadata = expectedMetadata === undefined || Object.entries(expectedMetadata).every(([key, value]) => (
+      JSON.stringify(canonicalJson(created.data.metadata?.[key])) === JSON.stringify(canonicalJson(value))
+    ));
+    if ((identity.id !== undefined && created.data.id !== identity.id) || !matchesMetadata) {
+      // An existing id is not authority to adopt its session. Fail before a
+      // prompt when its ownership metadata or native identity differs.
+      throw new HeadlessThreadError({ code: "creation_identity_mismatch", message: "The native session creation receipt did not match its requested identity and metadata.",
+        method: "POST", path: createPath });
+    }
+    return fromV2Session(created.data);
+  }
 
-  async function transport(signal?: AbortSignal): Promise<Transport> {
-    return await resolveEngine(signal) === "v2" ? v2 : v1;
+  /**
+   * v2 takes a client-chosen prompt `id`, keeps it as the user message id,
+   * and admits a repeated id once, so a retried turn never runs twice.
+   * `model` null keeps the session's current model.
+   */
+  async function submit(threadId: string, prompt: string, model: HeadlessThreadModel | null, messageId: string | undefined, signal?: AbortSignal): Promise<void> {
+    if (model !== null) {
+      const modelPath = `${v2SessionPath(threadId)}/model`;
+      const result = await send("POST", modelPath, {
+        body: { model: { providerID: model.providerId, id: model.modelId, ...(model.variant === undefined ? {} : { variant: model.variant }) } },
+        signal,
+      });
+      if (!result.response.ok) throw failure("POST", modelPath, result);
+    }
+    const promptPath = `${v2SessionPath(threadId)}/prompt`;
+    const result = await send("POST", promptPath, {
+      body: { text: prompt, ...(messageId === undefined ? {} : { id: messageId }) },
+      signal,
+    });
+    if (!result.response.ok) throw failure("POST", promptPath, result);
   }
 
   async function getThreadSnapshot(threadId: string, input?: { signal?: AbortSignal; limit?: number }): Promise<HeadlessThreadSnapshot> {
-    return (await transport(input?.signal)).snapshot(threadId, input);
-  }
-
-  /** Whether the engine's effective catalog for this workspace lists the model. */
-  async function catalogHasModel(engine: HeadlessThreadEngine, model: HeadlessThreadModel, signal?: AbortSignal): Promise<{ path: string; available: boolean }> {
-    if (engine === "v2") {
-      const path = `${v2Path}/model`;
-      const catalog = await json(v2ModelCatalogSchema, "GET", path, { signal });
-      const entries = Array.isArray(catalog) ? catalog : catalog.data;
-      return { path, available: entries.some((entry) => entry.providerID === model.providerId && entry.id === model.modelId) };
-    }
-    const path = `${opencodePath}/config/providers`;
-    const catalog = sdkJson(
-      effectiveProvidersSchema,
-      await opencode.config.providers(undefined, { signal: requestSignal(signal) }),
-      "GET",
-      path,
-    );
-    const provider = catalog.providers.find((candidate) => candidate.id === model.providerId);
-    return { path, available: provider !== undefined && Object.hasOwn(provider.models, model.modelId) };
+    const [session, messages, active] = await Promise.all([
+      v2Session(threadId, input?.signal),
+      v2Messages(threadId, input),
+      json(v2ActiveSchema, "GET", `${v2Path}/session/active`, { signal: input?.signal }),
+    ]);
+    return toSnapshot(threadSnapshotSchema.parse({
+      session: fromV2Session(session),
+      messages,
+      // v2 has no todo list.
+      todos: [],
+      status: active.data[threadId]?.type === "running" ? { type: "busy" } : { type: "idle" },
+    }));
   }
 
   /** Opt-in preflight: refuse before creating or prompting anything when the model is not runnable here. */
-  async function requireAvailableModel(engine: Transport, model: HeadlessThreadModel | null, signal?: AbortSignal): Promise<void> {
+  async function requireAvailableModel(model: HeadlessThreadModel, signal?: AbortSignal): Promise<void> {
     if (!options.requireModelAvailability) return;
-    if (!model) {
-      throw new HeadlessThreadError({ code: "invalid_payload", message: "An explicit model is required.", method: "POST", path: engine.createPath });
-    }
-    const { path, available } = await catalogHasModel(engine.engine, model, signal);
-    if (!available) {
+    const path = `${v2Path}/model`;
+    const catalog = await json(v2ModelCatalogSchema, "GET", path, { signal });
+    const entries = Array.isArray(catalog) ? catalog : catalog.data;
+    if (!entries.some((entry) => entry.providerID === model.providerId && entry.id === model.modelId)) {
       throw new HeadlessThreadError({
         code: "model_access_lost",
         message: `The selected model ${model.providerId}/${model.modelId} is not available in this workspace. Choose a supported model to resume this Automation.`,
@@ -596,28 +342,21 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
   async function createThread(input: CreateThreadInput): Promise<HeadlessThread> {
     const prompt = initialPrompt(input.prompt);
     const title = createTitle(input.title);
-    const engine = await transport(input.signal);
-    if ((input.id !== undefined || input.metadata !== undefined) && engine.engine !== "v2") {
-      return invalidCreatePayload("Native creation id and metadata are supported only by OpenCode V2; nothing was created.");
-    }
     if (input.id !== undefined && (!/^ses_[a-zA-Z0-9]+$/.test(input.id) || input.id.length > 240)) {
       return invalidCreatePayload("id must be a native V2 session id");
     }
     if (input.metadata !== undefined && !z.record(z.string(), z.json()).safeParse(input.metadata).success) {
       return invalidCreatePayload("metadata must be a JSON object");
     }
-    let model = input.model ?? options.defaultModel ?? null;
-    // v1 only needs a model to run a prompt; v2 binds one to the session.
-    if (model === null && (engine.engine === "v2" || prompt !== undefined)) {
-      model = await workspaceDefaultModel(input.signal);
-    }
-    // Refuse before creating anything, so no empty session is left behind.
-    if (model === null && engine.engine === "v2") modelRequired("POST", engine.createPath);
-    await requireAvailableModel(engine, model, input.signal);
-    const session = await engine.createSession(title, model, input.signal, { id: input.id, metadata: input.metadata });
+    // v2 binds a model to the session. Refuse before creating anything, so
+    // no empty session is left behind.
+    const model = input.model ?? options.defaultModel ?? await workspaceDefaultModel(input.signal);
+    if (model === null) return modelRequired("POST", createPath);
+    await requireAvailableModel(model, input.signal);
+    const session = await createSession(title, model, input.signal, { id: input.id, metadata: input.metadata });
     if (prompt !== undefined) {
       try {
-        await engine.submit(session.id, prompt, model, undefined, input.signal);
+        await submit(session.id, prompt, model, undefined, input.signal);
       } catch (error) {
         // Keep the created thread's identity so a caller can link to and recover it.
         const contextualError = error instanceof Error ? error : new Error(String(error));
@@ -628,28 +367,22 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
         throw contextualError;
       }
     }
-    return {
-      ...toThread(session, workspaceId, prompt !== undefined),
-      engine: engine.engine,
-      ...(model === null ? {} : { model }),
-    };
+    return { ...toThread(session, workspaceId, prompt !== undefined), model };
   }
 
   async function sendTurn(threadId: string, input: HeadlessThreadTurnInput): Promise<HeadlessTurnAcceptance> {
-    const engine = await transport(input.signal);
-    const messages = await engine.messages(threadId, input.signal);
+    const messages = await v2Messages(threadId, { signal: input.signal });
     const messageCountBefore = messages.length;
     if (input.messageId && messages.some((message) => message.info.id === input.messageId && message.info.role === "user")) {
       return { threadId, acceptedAt: now(), messageCountBefore, messageId: input.messageId, alreadyPresent: true };
     }
     const model = input.model ?? options.defaultModel ?? await workspaceDefaultModel(input.signal);
     // A v2 session keeps the model it was given; reuse it rather than refuse.
-    const sessionModel = model === null && engine.engine === "v2" ? await engine.sessionModel(threadId, input.signal) : null;
-    if (model === null && engine.engine === "v2" && sessionModel === null) {
-      modelRequired("POST", `${v2SessionPath(threadId)}/prompt`);
-    }
-    await requireAvailableModel(engine, model ?? sessionModel, input.signal);
-    await engine.submit(threadId, input.prompt, model, input.messageId, input.signal);
+    const sessionModel = model === null ? v2SessionModel(await v2Session(threadId, input.signal)) : null;
+    const runModel = model ?? sessionModel;
+    if (runModel === null) return modelRequired("POST", `${v2SessionPath(threadId)}/prompt`);
+    await requireAvailableModel(runModel, input.signal);
+    await submit(threadId, input.prompt, model, input.messageId, input.signal);
     return {
       threadId,
       acceptedAt: now(),
@@ -727,14 +460,20 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
   }
 
   async function getThreadWaitingFor(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadWaitingFor> {
-    const pending = await (await transport(input?.signal)).pending(threadId, input?.signal);
+    const pendingRequestList = z.union([z.array(z.object({}).passthrough()), z.object({ data: z.array(z.object({}).passthrough()) })])
+      .transform((value) => Array.isArray(value) ? value : value.data);
+    const [permissions, questions] = await Promise.all([
+      json(pendingRequestList, "GET", `${v2SessionPath(threadId)}/permission`, { signal: input?.signal }),
+      json(pendingRequestList, "GET", `${v2SessionPath(threadId)}/form`, { signal: input?.signal }),
+    ]);
+    const pending = { permissions: permissions.length, questions: questions.length };
     // A permission blocks the run outright, so it is the one to surface.
     return pending.permissions > 0 ? "permission" : pending.questions > 0 ? "question" : null;
   }
 
   async function abortThread(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessAbortResult> {
-    const accepted = await (await transport(input?.signal)).abort(threadId, input?.signal);
-    return { threadId, accepted };
+    const result = await json(v2InterruptSchema, "POST", `${v2SessionPath(threadId)}/interrupt`, { body: {}, signal: input?.signal });
+    return { threadId, accepted: result.data.interrupted };
   }
 
   async function exportTranscript(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadTranscript> {

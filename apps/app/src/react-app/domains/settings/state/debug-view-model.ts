@@ -32,6 +32,7 @@ import { downloadTextAsFile } from "../../../../app/lib/download";
 
 import {
   writeOpenworkServerSettings,
+  type EngineStatus,
   type OpenworkRuntimeConfigStatus,
 } from "../../../../app/lib/openwork-server";
 import {
@@ -182,15 +183,16 @@ function auditStatusPill(status: "idle" | "loading" | "error"): {
   };
 }
 
-function describeEngine(info: EngineInfo | null) {
-  const running = Boolean(info?.running);
+/** The engine card: what the desktop shell reports, plus the engine's own status. */
+function describeEngine(info: EngineInfo | null, status: EngineStatus | null) {
+  const running = Boolean(info?.running || status?.running);
   return {
     ...statusPill(running),
     lines: [
       t("settings.debug_base_url", { url: info?.baseUrl ?? "—" }),
       t("settings.debug_runtime", { runtime: info?.runtime ?? "—" }),
-      t("settings.diag_opencode_binary", { binary: formatOpencodeBinary(info) }),
-      t("settings.debug_pid", { pid: info?.pid ? String(info.pid) : "—" }),
+      t("settings.diag_opencode_binary", { binary: status?.binSource ?? "—" }),
+      t("settings.debug_pid", { pid: status?.pid ? String(status.pid) : info?.pid ? String(info.pid) : "—" }),
       t("settings.debug_hostname", { hostname: info?.hostname ?? "—" }),
       t("settings.debug_port", { port: info?.port ? String(info.port) : "—" }),
     ],
@@ -199,10 +201,6 @@ function describeEngine(info: EngineInfo | null) {
     execution: info?.execution ?? null,
     error: null as string | null,
   };
-}
-
-function formatOpencodeBinary(info: EngineInfo | null) {
-  return formatBinaryWithSource(info?.opencodeBinPath, info?.opencodeBinSource);
 }
 
 function formatManagedOpencodeBinary(info: OpenworkServerInfo | null) {
@@ -264,6 +262,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   optionsRef.current = options;
 
   const [engineInfoState, setEngineInfoState] = useState<EngineInfo | null>(null);
+  const [engineStatus, setEngineStatus] = useState<EngineStatus | null>(null);
   const [appBuild, setAppBuild] = useState<AppBuildInfo | null>(null);
   const [bootstrapPrepared, setBootstrapPrepared] = useState<DesktopBootstrapConfig["prepared"]>(null);
   const [bootstrapConfigDebug, setBootstrapConfigDebug] = useState<unknown>(null);
@@ -309,7 +308,10 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const [electronAlphaUpdaterStatus, setElectronAlphaUpdaterStatus] = useState<string | null>(null);
   const [electronAlphaUpdaterChannel, setElectronAlphaUpdaterChannel] = useState<ReleaseChannel>("stable");
 
+  const engineStatusClient = openworkServerSnapshot.openworkServerClient;
   const refreshEngineInfo = useCallback(async () => {
+    void (engineStatusClient?.getEngineStatus() ?? Promise.resolve(null))
+      .then(setEngineStatus, () => setEngineStatus(null));
     if (!isDesktopRuntime()) return;
     try {
       const info = await engineInfoCmd() as EngineInfo | null;
@@ -317,7 +319,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     } catch {
       setEngineInfoState(null);
     }
-  }, []);
+  }, [engineStatusClient]);
 
   useEffect(() => {
     if (!developerMode) return;
@@ -416,13 +418,13 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     () => ({
       appVersionLabel: appBuild?.version ?? "—",
       appCommitLabel: appBuild?.gitSha ?? "—",
-      opencodeVersionLabel: engineInfoState?.baseUrl ? "managed" : "—",
+      opencodeVersionLabel: engineStatus?.version ?? "—",
       openworkServerVersionLabel: openworkServerSnapshot.openworkServerDiagnostics?.version ?? "—",
     }),
     [
       appBuild?.gitSha,
       appBuild?.version,
-      engineInfoState?.baseUrl,
+      engineStatus?.version,
       openworkServerSnapshot.openworkServerDiagnostics?.version,
     ],
   );
@@ -432,6 +434,15 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       collectedAt: new Date().toISOString(),
       app: appBuild ?? null,
       engine: engineInfoState,
+      engineStatus: engineStatus ? {
+        running: engineStatus.running,
+        version: engineStatus.version,
+        pid: engineStatus.pid,
+        binSource: engineStatus.binSource,
+        providers: engineStatus.mirroredProviderIds.length,
+        models: engineStatus.catalogModelIds.length,
+        importState: engineStatus.migration?.state,
+      } : null,
       openworkServer: {
         hostInfo: openworkServerSnapshot.openworkServerHostInfo,
         diagnostics: openworkServerSnapshot.openworkServerDiagnostics,
@@ -448,6 +459,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     appBuild,
     bootstrapPrepared,
     engineInfoState,
+    engineStatus,
     openworkServerSnapshot.openworkServerCapabilities,
     openworkServerSnapshot.openworkServerDiagnostics,
     openworkServerSnapshot.openworkServerHostInfo,
@@ -467,7 +479,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     [bootstrapConfigDebug],
   );
 
-  const engineCard = useMemo(() => describeEngine(engineInfoState), [engineInfoState]);
+  const engineCard = useMemo(() => describeEngine(engineInfoState, engineStatus), [engineInfoState, engineStatus]);
   const openworkCard = useMemo(
     () => describeOpenworkServer(openworkServerSnapshot.openworkServerHostInfo),
     [openworkServerSnapshot.openworkServerHostInfo],

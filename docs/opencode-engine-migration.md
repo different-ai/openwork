@@ -1,79 +1,28 @@
-# OpenCode engine selection and history migration
+# OpenCode v2 and earlier chat history
 
-On desktop, the command palette offers **Switch to OpenCode v1**, **Switch to OpenCode v2**,
-and **Migrate chats to OpenCode v2**. Advanced settings uses the same engine
-commands. Both hand off to one app-wide owner (`shell/engine-migration.tsx`)
-for the switch check, the migration consent, and migration progress, so a
-migration stays visible after the surface that started it closes. Switching
-engines never migrates history. V1 remains the default. Desktop packages include
-both pinned native executables; v2's download fallback remains available for
-standalone servers.
+OpenWork runs only OpenCode v2. Desktop packages and managed workers ship the
+pinned `opencode2` executable; standalone servers retain its verified download
+fallback. Earlier engine choices no longer change the runtime.
 
-## Organization-managed rollout
+## Bringing over earlier chats
 
-`engineV2ForceUpgrade` is off by default on cloud and self-hosted deployments.
-When an organization's resolved flag is on, desktop and web hosts reuse the
-same backup/copy migration in the background, wait for idle, and select v2
-without consent. Desktop shows only the existing non-blocking progress banner;
-web shows no engine upgrade UI. Fresh profiles select v2 without a history copy.
-The optional desktop `engineV2Upgrade` invitation still works when force is off.
-All app feature observers use the shared guarded `useOrgFeature` hook: cached
-organization data cannot bypass a desktop-only guard.
+When local v1 history has not been copied, OpenWork requires **Import chats**
+before continuing. The server blocks chat API access even if a client bypasses
+the dialog. Existing snooze preferences do not bypass this upgrade.
+The notice opens a consent dialog; copying starts only after its **Import chats**
+button is selected. `POST /engine/v1-history/import` requires the host token and
+explicit confirmation. `GET /engine/status` reports progress and the saved result.
+Existing v2 chats are kept. Chats pause while copying; closing OpenWork preserves
+progress, and startup resumes the interrupted copy before opening v2 history.
+A successful receipt survives restart and dismisses the one-time offer. At startup,
+OpenWork checks for v1 chats newer than that receipt and requires another copy
+when someone returned to v1 during the preview.
 
-Turning the flag off switches only force-owned instances back to v1, once idle.
-An explicit manual engine choice clears that ownership, so it is not reverted.
-Neither direction deletes history: v1 originals remain in place and new v2
-chats remain in v2 storage for a later switch back. Policy updates do not abort
-a copy or a running task. Failures keep v1 selected, retain a durable error and
-backup receipt, and retry only on a later boot with a one-minute-to-one-day
-bounded exponential backoff. Source chat changes during copying or v2 startup
-prevent the switch; a later attempt restores the pre-copy v2 baseline under
-the existing migration ownership lock before copying a fresh v1 snapshot.
-
-Hosted bootstrap sets `OPENWORK_ENGINE_FORCE_POLICY=1` and an explicit
-`OPENWORK_ENGINE_AUTO_UPGRADE=1` or `0`; registered runner inventory and worker
-activity responses refresh the same resolved policy. An absent policy on a
-standalone server does not mean an organization requested a revert. Web
-snapshots bake the pinned, integrity-checked v2 executable and set
-`OPENWORK_OPENCODE2_BIN`, so boot never downloads it. The sandbox's existing
-checkpoint policy retains three snapshots of runtime data and engine state
-as an additional safety net; there is no new restore UI.
-
-## Running tasks, switching, and migration progress
-
-Before switching, the app reads `GET /experimental/engine-v2-preview/activity`
-(counts only) for the engine being left. Running v1 tasks keep running unseen
-after a switch to v2, and switching to v1 stops the v2 sidecar, so either case
-asks first ("Switch anyway" / "Stop tasks and switch").
-
-Migration consent names running v1 tasks the same way: a chat copied mid-turn
-lands in v2 half-finished while v1 keeps running it. The server enforces this:
-`POST …/migrate` answers 409 `engine_migration_active_sessions` while v1 reports
-busy work, unless the request sets `allowActiveSessions: true` ("Migrate
-anyway"). Engine switches during a migration answer 409
-`engine_migration_running`.
-
-While a migration runs, a modal shows progress. The person can choose
-**Continue using OpenWork**, which leaves a top banner ("OpenWork may be
-unstable until this finishes") with **Show progress**. Status reports a
-`phase` (`starting`, `converting`, `copying`) and `startedAt`; the counts only
-move while copying, so the bar is indeterminate before that instead of
-showing a stalled "0 of N". A finished migration offers **Switch to OpenCode
-v2**; one finished in the background reports with a toast instead. A failure
-brings the dialog back with **Try again**, which skips chats already copied.
-
-Session sync keys run state by workspace and session, not by engine, and
-migrated chats keep their ids. A status read is therefore only adopted by the
-engine it came from, a released sync for the other engine is disposed when
-chats move to a new engine, and failed status reads back off instead of
-polling an unreachable engine at 4 Hz.
-
-Connect health and repair follow the active local engine. On v2, diagnostics
-read native `/api/mcp` connection status and `/api/model` tool capabilities;
-they do not look for the selected model in v1's catalog or require v1 plugin
-canary tools. Remote workspace diagnostics remain with their owning server.
-The connector parity proof checks health, repair, and real capability execution
-on both engines.
+The upgrade and progress dialogs cannot be dismissed until copying completes.
+Errors keep chat access blocked and offer **Try again**. A failed initial status
+read is retried so startup timing cannot hide the upgrade. Running v2 tasks
+must finish before copying begins. Diagnostics use passive registration evidence;
+they never query native MCP status, which can activate workspace connectors.
 
 ## What migration does
 
@@ -91,7 +40,7 @@ is trimmed, and no whole-chat export or import body is allocated in JavaScript.
 The v2 engine initializes its own schema and then closes before the transfer.
 Managed engine leases and a pending-copy fence keep other managed app instances
 from opening that database during an unfinished copy. Running v2 tasks prevent
-the copy from starting. V1 remains available; v2 chats pause until completion.
+the copy from starting. The original v1 data remains intact; v2 chats pause until completion.
 The projected schemas must match before target writes begin.
 
 Messages move in bounded row batches, including a single very large payload
@@ -126,14 +75,6 @@ normalizes interrupted activity. Review permissions before continuing migrated
 chats. V1 plugin implementations require v2-compatible replacements; migration
 does not rewrite configuration, skills, or plugin files.
 
-## Provider catalog ownership
-
-The optional `liveProviderSync` rollout gives the bundled OpenWork plugin
-ownership of the v2 AI Gateway catalog. V1 and the flag-off path retain the
-existing server materialization flow. See [live provider sync](live-provider-sync.md)
-for stream convergence, account isolation, credential hand-off and kill-switch
-semantics.
-
 ## Upstream contract reviewed
 
 Implementation was checked against the native engine at the repository pin,
@@ -164,9 +105,6 @@ The same integration can be bundled and run on Node with a small V8 heap to
 exercise the desktop database implementation. No production history, provider
 credentials, external records, or inference are needed.
 
-Design: P3 (details disclosure), P5 (existing ToggleGroup, Button, AlertDialog,
-Dialog, Progress and Alert), P9 (migration data and risks), P10 (desktop
-screenshots), P11 (no step labels; counts appear once they move), S2 (settings
-rows), S6 (one owner for palette and settings), C1 (verb-first actions), C2
-(Migrate → Migrated), C5 (running tasks are a warning, not an error), C6
-(retryable errors).
+Design: P3 (details disclosure), P5 (existing Button, AlertDialog,
+Dialog, Progress and Alert), P9 (migration data and risks), C1 (verb-first
+actions), and C6 (retryable errors).

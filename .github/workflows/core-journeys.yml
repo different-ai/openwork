@@ -64,11 +64,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(id -u)" -ne 0
-          if node evals/scripts/run-parity-proof.mjs --supports "$SPEC"; then
-            xvfb-run -a node evals/scripts/run-parity-proof.mjs "$SPEC"
-          else
-            xvfb-run -a node evals/bin/evals.mjs "${SPEC#evals/}" --local
-          fi
+          xvfb-run -a node evals/bin/evals.mjs "${SPEC#evals/}" --local
+
       - name: Save testkit and Vitest records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -73,7 +73,6 @@ declare global {
     __backgroundUpdateWitness: { checks: number; downloads: number; installs: number; offset: number; finishDownload: (() => void) | null; intervalCheck: (() => void) | null };
     __openworkAlphaUpdateEligibilityEvalState: { checks: (string | undefined)[]; currentVersion: string; latestVersion: string };
     __openworkUpdaterEvalState: { checks: (string | undefined)[]; setChannels: string[]; stableStarted: boolean; finishStable: (() => void) | null };
-    __issue3980NotificationProbe: { observer: MutationObserver; state: { rawSeen: boolean } };
     __libraryStability: { requests: string[]; denEvents: number; samples: { buttons: number; contentVisible: boolean }[]; sampler?: number };
     __libraryLifecycleReads: number;
     __librarySkillReads: number;

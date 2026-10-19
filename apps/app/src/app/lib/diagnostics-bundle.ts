@@ -12,7 +12,9 @@ import {
 import { readPerfLogs, type PerfLogRecord } from "./perf-log";
 import { sanitizeCloudMcpHealthDiagnostic } from "./diagnostic-sanitizer";
 import {
+  createOpenworkServerClient,
   readOpenworkServerSettings,
+  type EngineStatus,
   type OpenworkServerSettings,
   type OpenworkServerStatus,
 } from "./openwork-server";
@@ -37,6 +39,8 @@ export type DiagnosticsBundleInputs = {
   desktopRuntime: boolean;
   appInfo: AppBuildInfo | null;
   engineInfo: EngineInfo | null;
+  /** The engine's own status from the OpenWork server. */
+  engineStatus?: EngineStatus | null;
   openworkServerSettings: OpenworkServerSettings;
   hostInfo: OpenworkServerInfo | null;
   developerLogs: DevLogRecord[];
@@ -91,11 +95,24 @@ function pickEngineInfo(info: EngineInfo | null) {
     hostname: info.hostname,
     port: info.port,
     pid: info.pid,
-    opencodeBinPath: info.opencodeBinPath,
-    opencodeBinSource: info.opencodeBinSource,
     lastStdout: info.lastStdout,
     lastStderr: info.lastStderr,
     execution: pickExecution(info.execution),
+  };
+}
+
+function pickEngineStatus(status: EngineStatus | null | undefined) {
+  if (!status) return null;
+  return {
+    running: status.running,
+    version: status.version ?? null,
+    pid: status.pid ?? null,
+    binSource: status.binSource ?? null,
+    providers: status.mirroredProviderIds.length,
+    models: status.catalogModelIds.length,
+    lastError: status.lastError ?? null,
+    lastWarning: status.lastWarning ?? null,
+    chatImport: status.migration?.state ?? null,
   };
 }
 
@@ -126,7 +143,6 @@ function collectSecretValues(input: DiagnosticsBundleInputs) {
   addSecretValue(secrets, input.hostInfo?.clientToken);
   addSecretValue(secrets, input.hostInfo?.ownerToken);
   addSecretValue(secrets, input.hostInfo?.hostToken);
-  addSecretValue(secrets, input.engineInfo?.opencodePassword);
   return secrets;
 }
 
@@ -150,6 +166,7 @@ export function composeDiagnosticsBundleJson(input: DiagnosticsBundleInputs): st
     connectionHistory: connectionDiagnosticHistory.read(),
     app: pickAppInfo(input.appInfo),
     opencodeEngine: pickEngineInfo(input.engineInfo),
+    engineStatus: pickEngineStatus(input.engineStatus),
     runtime: {
       tauri: input.desktopRuntime,
       developerMode: context?.developerMode === true,
@@ -206,6 +223,16 @@ async function readEngineInfo(desktopRuntime: boolean) {
   }
 }
 
+async function readEngineStatus(settings: OpenworkServerSettings, serverUrl: string | undefined) {
+  const baseUrl = serverUrl?.trim() || settings.urlOverride?.trim() || "";
+  if (!baseUrl) return null;
+  try {
+    return await createOpenworkServerClient({ baseUrl, token: settings.token }).getEngineStatus();
+  } catch {
+    return null;
+  }
+}
+
 async function readHostInfo(desktopRuntime: boolean) {
   if (!desktopRuntime) return null;
   try {
@@ -222,12 +249,14 @@ export async function buildDiagnosticsBundleJson(context?: DiagnosticsBundleCont
   const engine = await readEngineInfo(desktopRuntime);
   const fetchedHostInfo = hasContextHostInfo ? null : await readHostInfo(desktopRuntime);
   const hostInfo = hasContextHostInfo && context ? context.hostInfo ?? null : fetchedHostInfo;
+  const openworkServerSettings = readOpenworkServerSettings();
   return composeDiagnosticsBundleJson({
     capturedAt: new Date().toISOString(),
     desktopRuntime,
     appInfo,
     engineInfo: engine,
-    openworkServerSettings: readOpenworkServerSettings(),
+    engineStatus: await readEngineStatus(openworkServerSettings, context?.openworkServerUrl),
+    openworkServerSettings,
     hostInfo,
     developerLogs: readDevLogs(80),
     perfLogs: readPerfLogs(80),

@@ -64,15 +64,8 @@ services:
 
         # --- Build the server plugins and install the pinned OpenCode binary ---
         pnpm --filter openwork-server build
-        OPENCODE_VERSION=$$(node -e 'const fs=require("fs"); const parsed=JSON.parse(fs.readFileSync("/app/constants.json", "utf8")); process.stdout.write(String(parsed.opencodeVersion || "").trim().replace(/^v/, ""));')
-        export OPENCODE_INSTALL_DIR="/root/.opencode/bin"
-        mkdir -p "$$OPENCODE_INSTALL_DIR"
-        if ! command -v opencode >/dev/null 2>&1; then
-          curl -fsSL https://opencode.ai/install | bash -s -- --version "$$OPENCODE_VERSION" --no-modify-path
-        fi
-        export PATH="$$OPENCODE_INSTALL_DIR:$$PATH"
-        export OPENWORK_MANAGE_OPENCODE=1
-        export OPENWORK_OPENCODE_BIN="$$(command -v opencode)"
+        node /app/scripts/install-opencode2.mjs --outdir /root/.opencode2/bin
+        export OPENWORK_OPENCODE2_BIN="/root/.opencode2/bin/opencode2"
         export OPENWORK_EXTENSIONS_PLUGIN_DIR="/app/apps/server/dist/opencode-plugins"
 
         # --- Resolve tokens ---

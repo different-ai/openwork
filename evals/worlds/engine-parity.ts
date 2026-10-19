@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { performance as nodePerformance } from "node:perf_hooks";
-import { resolveEvalEngine, type MockHandle, type Place, type Seed } from "@openwork/env";
+import type { MockHandle, Place, Seed } from "@openwork/env";
 import type { MockAgentToolStep, MockAgentWorkload } from "@openwork/labs";
 import { readHeadlessRuntimeManifest, resolveHeadlessWorldRuntimePaths } from "@openwork/world";
 import { fileURLToPath } from "node:url";
@@ -15,8 +15,7 @@ function record(value: unknown): value is Record<string, unknown> {
 
 /** Real app, server and pinned engine; only the paid model transport is synthetic. */
 export async function engineParity(seed: Seed, { place }: { place: Place }, options: { mock?: MockHandle; env?: Record<string, string> } = {}) {
-  const engine = resolveEvalEngine();
-  const binary = engine === "v1" ? process.env.OPENWORK_OPENCODE_BIN ?? "opencode" : process.env.OPENWORK_OPENCODE2_BIN ?? "opencode2";
+  const binary = process.env.OPENWORK_OPENCODE2_BIN ?? "opencode2";
   const { stdout } = await promisify(execFile)(binary, ["--version"], { timeout: 15_000 });
   const engineVersion = stdout.trim().replace(/^opencode2\s+/, "").replace(/^v/, "");
   const nonce = randomUUID();
@@ -24,7 +23,7 @@ export async function engineParity(seed: Seed, { place }: { place: Place }, opti
   const reply = `Your workspace is ready. ${nonce}`;
   const temporaryWorkspace = seed.tmpPath("engine-parity");
   await mkdir(temporaryWorkspace, { recursive: true });
-  // macOS aliases /tmp to /private/tmp; v1 instance disposal uses exact paths.
+  // macOS aliases /tmp to /private/tmp; the engine keys locations by exact paths.
   const workspacePath = await realpath(temporaryWorkspace);
   const mock = options.mock ?? (await seed.mock({ isolatedProcessEnv: true }).boot(place)).handle;
   try {
@@ -46,7 +45,6 @@ export async function engineParity(seed: Seed, { place }: { place: Place }, opti
     const app = await seed.appWeb({ name: "engine-parity", workspacePath, env: {
       OPENWORK_CLOUD_PROVIDER_SYNC_INTERVAL_MS: "1000",
       OPENWORK_LOG_FORMAT: "json",
-      ...(process.env.OPENWORK_OPENCODE_BIN ? { OPENWORK_OPENCODE_BIN: process.env.OPENWORK_OPENCODE_BIN } : {}),
       ...(process.env.OPENWORK_OPENCODE2_BIN ? { OPENWORK_OPENCODE2_BIN: process.env.OPENWORK_OPENCODE2_BIN } : {}),
       ...options.env,
     } });
@@ -70,7 +68,7 @@ export async function engineParity(seed: Seed, { place }: { place: Place }, opti
       return { status: response.status, body: value };
     };
     return {
-      app, engine, engineVersion, mock, prompt, reply, interactiveMs, startedAt, workspacePath, request,
+      app, engineVersion, mock, prompt, reply, interactiveMs, startedAt, workspacePath, request,
       documentIdentity: () => seed.evalIn(app, () => performance.timeOrigin),
       route: () => seed.evalIn(app, () => location.hash || `#${location.pathname}`),
       async reloadRequests() {
@@ -141,12 +139,6 @@ export async function engineParity(seed: Seed, { place }: { place: Place }, opti
           body: JSON.stringify({ workloads: [{ promptMarker, latestUserTurn: true, finalReply: chunks.join(""), steps: [], finalReplyChunks: chunks, finalReplyInitiallyReleasedChunks: 1 }] }),
         });
         if (!response.ok) throw new Error(`Streaming witness setup failed: ${response.status}`);
-      },
-      async runtime() {
-        const { status, body } = await request("/experimental/engine-v2-preview/status");
-        if (status !== 200 || !body || typeof body !== "object" || !("chatRouting" in body)) throw new Error("Missing runtime identity");
-        if (engine === "v2" && (!("pid" in body) || typeof body.pid !== "number")) throw new Error("V2 must report a real process identity");
-        return { chatRouting: body.chatRouting === true, pid: "pid" in body ? body.pid : null, version: "version" in body ? body.version : null };
       },
       async [Symbol.asyncDispose]() { if (!options.mock) await mock.stop(); },
     };

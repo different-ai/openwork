@@ -60,7 +60,7 @@ type OpeningHistoryInput = {
   ignoreCached?: boolean;
   metadataQueryKey?: readonly unknown[];
   snapshotQueryKey: readonly unknown[];
-  readSnapshot: (signal: AbortSignal, window?: OpeningHistoryWindow, options?: { desktopTransport: "main" }) => Promise<OpenworkSessionHistory>;
+  readSnapshot: (signal: AbortSignal, window?: OpeningHistoryWindow) => Promise<OpenworkSessionHistory>;
   readOpening?: (signal: AbortSignal, window: OpeningHistoryWindow) => Promise<OpenworkSessionHistory>;
 };
 
@@ -92,8 +92,7 @@ export function latestConfirmsFullHistory(
   if (full.session.id !== latest.session.id || full.messages.length < latest.messages.length) return false;
   if (full.pagination && (full.pagination.before !== undefined || full.pagination.nextCursor !== null)) return false;
   if ((full.session.revert?.messageID ?? null) !== (latest.session.revert?.messageID ?? null)) return false;
-  if (full.session.time.updated !== latest.session.time.updated
-    || Boolean(full.session.time.archived) !== Boolean(latest.session.time.archived)) return false;
+  if (full.session.time.updated !== latest.session.time.updated) return false;
   if (latest.messages.length < LATEST_HISTORY_WINDOW && full.messages.length !== latest.messages.length) return false;
   const tail = full.messages.slice(full.messages.length - latest.messages.length);
   const latestById = new Map(latest.messages.map((record) => [record.info.id, record]));
@@ -356,7 +355,7 @@ export function useSessionPrefetchIntent(intent: boolean, prefetch: () => void |
 
 export function useOpeningSessionHistory(input: OpeningHistoryInput & {
   transcriptQueryKey?: readonly unknown[];
-  readLatest?: (signal: AbortSignal, options?: { desktopTransport: "main" }) => Promise<Pick<OpenworkSessionHistory, "session" | "messages">>;
+  readLatest?: (signal: AbortSignal) => Promise<Pick<OpenworkSessionHistory, "session" | "messages">>;
 }) {
   const client = useQueryClient();
   const hasLegacyPosition = useSessionScrollStore((state) => Boolean(state.sessions[input.sessionId]));
@@ -440,12 +439,12 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
         && !hydratingTranscripts.has(client)) reconcile();
     });
   }, [client, entry, input.readLatest, input.transcriptQueryKey, latestKey, latestQuery.isSuccess, readSource]);
-  const readFullSnapshot = useCallback(async (signal: AbortSignal, options?: { desktopTransport: "main" }) => {
+  const readFullSnapshot = useCallback(async (signal: AbortSignal) => {
     const cached = client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey);
     const baseline = client.getQueryData<LatestSessionHistory>(latestKey)?.messages
       ?? (cached ? snapshotToUIMessages(cached) : EMPTY_HISTORY);
     const metadataBefore = input.metadataQueryKey ? client.getQueryData(input.metadataQueryKey) : undefined;
-    let snapshot = await input.readSnapshot(signal, undefined, options);
+    let snapshot = await input.readSnapshot(signal);
     signal.throwIfAborted();
     const metadataAfter = input.metadataQueryKey
       ? client.getQueryData<Pick<OpenworkSessionHistory["session"], "revert">>(input.metadataQueryKey) : undefined;
@@ -490,36 +489,6 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
       void client.cancelQueries({ queryKey: ["react-session-branch-history", input.owner, credential], exact: true });
     };
   }, [client, credential, entry, input.owner]);
-  const refreshFullSnapshot = useCallback(async (options?: { desktopTransport: "main" }) => {
-    if (activeOwner.current !== entry) throw new CancelledError();
-    if (pages.ready && !hasFullSnapshot) return pages.refreshForStop(options);
-    const filters = { queryKey: input.snapshotQueryKey, exact: true };
-    const query = client.getQueryCache().find<OpenworkSessionHistory>(filters);
-    if (!query) throw new CancelledError();
-    const assertCurrent = () => {
-      if (activeOwner.current !== entry || client.getQueryCache().find(filters) !== query) {
-        throw new CancelledError();
-      }
-    };
-    assertCurrent();
-    await client.cancelQueries(filters);
-    assertCurrent();
-    let requestSignal: AbortSignal | undefined;
-    const snapshot = await query.fetch({
-      ...query.options,
-      queryFn: async ({ signal }) => {
-        requestSignal = signal;
-        assertCurrent();
-        const snapshot = await fullReader(signal, options);
-        signal.throwIfAborted();
-        assertCurrent();
-        return snapshot;
-      },
-    });
-    requestSignal?.throwIfAborted();
-    assertCurrent();
-    return snapshot;
-  }, [client, entry, fullReader, hasFullSnapshot, input.snapshotQueryKey, pages.ready, pages.refreshForStop]);
   const ensureFullSnapshot = useCallback(async () => {
     if (activeOwner.current !== entry) throw new CancelledError();
     const options = {
@@ -552,14 +521,14 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
     if (activeOwner.current !== entry) throw new CancelledError();
     const cached = client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey);
     if (!input.ignoreCached && cached?.session.id === input.sessionId) return cached.messages;
-    if (options.revealLatest && pages.hasNewer) return pages.readLatestForSend({ desktopTransport: "main" });
+    if (options.revealLatest && pages.hasNewer) return pages.readLatestForSend();
     const readLatest = input.readLatest;
     if (!readLatest) return (await ensureFullSnapshot()).messages;
     const read = async (canRetry: boolean): Promise<OpenworkSessionHistory["messages"]> => {
       const controller = new AbortController();
       entry.readers.add(controller);
       try {
-        const latest = await readLatest(controller.signal, { desktopTransport: "main" });
+        const latest = await readLatest(controller.signal);
         controller.signal.throwIfAborted();
         if (activeOwner.current !== entry) throw new CancelledError();
         if (latest.session.id !== input.sessionId) throw new Error("Conversation history belongs to another session.");
@@ -660,7 +629,6 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
     pageMessages: !hasFullSnapshot && paginated ? needsRevertHistory ? EMPTY_HISTORY
       : pages.messages ?? (snapshot ? snapshotToUIMessages(snapshot) : EMPTY_HISTORY) : undefined,
     ensureFullSnapshot,
-    refreshFullSnapshot,
     readSendHistory,
     runWithFullSnapshot,
   };

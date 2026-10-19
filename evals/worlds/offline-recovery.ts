@@ -21,7 +21,6 @@ export const MCP_REPLY = "The report is saved; the note service timed out.";
 export const APP_CONNECTION_ERROR = "Streamable HTTP POST: connection or protocol negotiation failed";
 
 export async function offlineRecoveryWorld(seed: Seed) {
-  // This feature only applies to v2, including when CI's default lane is v1.
   const engine = "v2";
   const { den, webPort } = await denForAppWeb(seed);
   const organizationId = await seededOrganizationId(seed, den.admin);
@@ -42,7 +41,7 @@ export async function offlineRecoveryWorld(seed: Seed) {
     ] },
   ] });
   const { app, workspace } = await signedInAppWeb(seed, {
-    den, webPort, engine, env: process.env.OPENWORK_OPENCODE2_BIN ? { OPENWORK_OPENCODE2_BIN: process.env.OPENWORK_OPENCODE2_BIN } : {}, name: "offline-recovery", workspacePath: seed.tmpPath("offline-recovery"), mocks: { agent: mock },
+    den, webPort, env: process.env.OPENWORK_OPENCODE2_BIN ? { OPENWORK_OPENCODE2_BIN: process.env.OPENWORK_OPENCODE2_BIN } : {}, name: "offline-recovery", workspacePath: seed.tmpPath("offline-recovery"), mocks: { agent: mock },
   });
   const witness = app.mocks.agent;
   if (!witness) throw new Error("The report model witness did not start");

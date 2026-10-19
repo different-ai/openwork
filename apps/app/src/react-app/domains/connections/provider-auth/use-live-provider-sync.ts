@@ -12,7 +12,7 @@ export function useLiveProviderSync(client: OpenworkServerClient | null, baseUrl
   const v2 = isOpencodeV2BaseUrl(baseUrl);
   const status = useQuery({
     queryKey: liveProviderSyncStatusQueryKey(baseUrl),
-    queryFn: () => client?.getEngineV2PreviewStatus() ?? null,
+    queryFn: () => client?.getEngineStatus() ?? null,
     enabled: Boolean(client && v2),
     staleTime: 30_000,
     retry: false,

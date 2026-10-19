@@ -1,10 +1,7 @@
 import { createHash, webcrypto } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import type { createOpencodeClient, McpStatus, ToolIds, ToolList } from "@opencode-ai/sdk/v2/client";
 import { ApiError } from "./errors.js";
 import type { ConnectMcpCatalogDiagnostic } from "./connect-mcp-server-catalog.js";
 import { diagnoseMcpToolDenies, type McpToolDeny } from "./mcp.js";
-import { openworkPluginPath } from "./openwork-extensions-plugin-path.js";
 import { sanitizeDiagnosticString, sanitizeDiagnosticValue } from "./diagnostic-sanitizer.js";
 import {
   ENGINE_GLOBAL_RUNTIME_CONFIG_ID,
@@ -29,24 +26,23 @@ const OPENWORK_CLOUD_DIRECT_TOOL_NAMES = [
   "search_capabilities",
   "execute_capability",
 ] satisfies string[];
-export const OPENWORK_CLOUD_PLUGIN_CANARIES = [
-  "openwork_docs_search",
-  "openwork_query",
-] satisfies string[];
 
 const POLL_DELAYS_MS = [0, 250, 750, 1500, 3000];
 function engineProbeTimeoutMs(): number {
   return Number(process.env.OPENWORK_CLOUD_MCP_PROBE_TIMEOUT_MS ?? "") || 5_000;
 }
 
-type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
+/** One MCP connection's state as the engine reports it. */
+type McpStatus =
+  | { status: "connected" | "disabled" | "needs_auth" }
+  | { status: "failed" | "needs_client_registration"; error: string };
 
-/** Native v2 diagnostics must not consult the separately running v1 engine. */
+/** The OpenCode engine's native API, read in a workspace's location. */
 export type CloudMcpNativeEngine = {
   version: string;
   request: (path: string, directory: string | null, method?: "GET" | "POST") => Promise<unknown>;
 };
-export type CloudMcpNativeEngineResolver = (workspace: WorkspaceInfo) => CloudMcpNativeEngine | undefined;
+export type CloudMcpNativeEngineResolver = (workspace: WorkspaceInfo) => CloudMcpNativeEngine;
 
 export type CloudMcpProviderModelContext = {
   provider: string;
@@ -154,15 +150,6 @@ export type CloudMcpRuntimeRegistrar = (
   onlyNames?: string[],
   options?: { throwOnFailure?: boolean },
 ) => Promise<CloudMcpRuntimeRegistrationResult>;
-
-export type CloudMcpLiveStatusObserver = (
-  config: ServerConfig,
-  workspace: WorkspaceInfo,
-  name: string,
-  mcpConfig: Record<string, unknown>,
-  status: string,
-  errorSummary?: string | null,
-) => void;
 
 export type CloudMcpServerMetadata = {
   serverVersion?: string;
@@ -551,18 +538,6 @@ export class CloudMcpDeliveryStateStore {
       appliedRevision: entry.appliedRevision === desiredRevision ? entry.appliedRevision : undefined,
       appliedAt: entry.appliedRevision === desiredRevision ? entry.appliedAt : undefined,
     }));
-  }
-
-  markWorkspaceStale(workspace: WorkspaceInfo, directory: string | null): void {
-    const entry = this.entries.get(this.key(workspace.id, directory));
-    if (!entry) return;
-    this.entries.set(this.key(workspace.id, directory), {
-      ...entry,
-      state: "stale",
-      appliedRevision: undefined,
-      appliedAt: undefined,
-      updatedAt: Date.now(),
-    });
   }
 
   clear(): void {
@@ -1042,10 +1017,6 @@ export async function removeOpenworkCloudMcpDesiredConfig(
   return { changed, removedNames: [...removedNames].sort() };
 }
 
-function locationParams(directory: string | null): { directory?: string } {
-  return directory ? { directory } : {};
-}
-
 function expectedTools(): string[] {
   return [...OPENWORK_CLOUD_EXPECTED_TOOLS];
 }
@@ -1056,10 +1027,6 @@ function expectedDirectToolNames(): string[] {
 
 function prefixedCloudToolId(name: string): string {
   return `${OPENWORK_CLOUD_MCP_NAME}_${name}`;
-}
-
-function expectedCanaries(): string[] {
-  return [...OPENWORK_CLOUD_PLUGIN_CANARIES];
 }
 
 function splitPresentMissing(ids: string[], expected: string[]): ToolSnapshot {
@@ -1127,39 +1094,6 @@ function extractDiagnosticIds(value: unknown): { requestId?: string; referenceId
   return found;
 }
 
-function opencodeRequestFailure(stage: CloudMcpFailureStage, path: string, response: Response, error: unknown): CloudMcpFailure {
-  if (stage === "engine_delivery") {
-    return failure({
-      code: response.status >= 500 ? "opencode_engine_unreachable" : "opencode_mcp_sync_failed",
-      stage,
-      retryable: response.status >= 500,
-      recommendedAction: response.status >= 500 ? "Restart OpenCode or retry when the engine is reachable" : "Check OpenCode MCP status support",
-      message: "OpenCode request failed while checking MCP status.",
-      aliases: response.status >= 500 ? ["opencode_unreachable"] : ["cloud_connection_failed"],
-      details: { path, status: response.status, error },
-    });
-  }
-  if (stage === "tool_registration" && (response.status === 404 || response.status === 405)) {
-    return failure({
-      code: "opencode_tool_ids_unsupported",
-      stage,
-      retryable: false,
-      recommendedAction: "Update OpenWork",
-      message: "OpenCode does not support listing tool IDs.",
-      details: { path, status: response.status, error },
-    });
-  }
-  return failure({
-    code: stage === "provider_projection" ? "provider_tool_projection_missing" : "opencode_tool_ids_unavailable",
-    stage,
-    retryable: response.status >= 500,
-    recommendedAction: response.status >= 500 ? "Retry after OpenCode is healthy" : "Update OpenWork",
-    message: "OpenCode request failed while checking openwork-cloud MCP readiness.",
-    aliases: stage === "provider_projection" ? ["provider_projection_unavailable"] : undefined,
-    details: { path, status: response.status, error },
-  });
-}
-
 function thrownOpencodeFailure(stage: CloudMcpFailureStage, path: string, error: unknown): CloudMcpFailure {
   return failure({
     code: "opencode_engine_unreachable",
@@ -1169,18 +1103,6 @@ function thrownOpencodeFailure(stage: CloudMcpFailureStage, path: string, error:
     message: "OpenCode engine is not reachable.",
     aliases: ["opencode_unreachable"],
     details: { path, error: error instanceof Error ? error.message : String(error) },
-  });
-}
-
-async function withEngineProbeTimeout<T>(task: () => Promise<T>): Promise<T> {
-  return await new Promise<T>((resolve, reject) => {
-    const timeoutMs = engineProbeTimeoutMs();
-    const handle = setTimeout(() => {
-      reject(new Error(`OpenCode health probe timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    task()
-      .then(resolve, reject)
-      .finally(() => clearTimeout(handle));
   });
 }
 
@@ -1566,194 +1488,66 @@ async function readDirectCloudToolsSingleFlight(input: {
 }
 
 async function readMcpStatus(
-  opencode: WorkspaceOpencodeClient,
+  nativeEngine: CloudMcpNativeEngine,
   directory: string | null,
-  nativeEngine?: CloudMcpNativeEngine,
 ): Promise<{ data?: Record<string, McpStatus>; failure?: CloudMcpFailure }> {
   try {
-    if (nativeEngine) {
-      const payload = await nativeEngine.request("/api/mcp", directory);
-      if (!isRecord(payload) || !Array.isArray(payload.data)) throw new Error("Invalid native MCP catalog");
-      const data: Record<string, McpStatus> = {};
-      for (const entry of payload.data) {
-        if (!isRecord(entry) || typeof entry.name !== "string" || !isRecord(entry.status)) throw new Error("Invalid native MCP status");
-        const status = entry.status.status;
-        if (entry.name === OPENWORK_CLOUD_MCP_NAME && status === "pending") {
-          return { failure: failure({ code: "cloud_connection_failed", stage: "engine_delivery", retryable: true,
-            recommendedAction: "Wait for OpenWork Connect to finish connecting", message: "OpenCode v2 is still connecting to OpenWork Connect." }) };
-        }
-        if (status === "connected" || status === "disabled" || status === "needs_auth") data[entry.name] = { status };
-        else if (status === "failed" || status === "needs_client_registration") data[entry.name] = { status, error: typeof entry.status.error === "string" ? entry.status.error : "MCP connection failed" };
-        else data[entry.name] = { status: "failed", error: status === "pending" ? "MCP connection is still starting. Retry shortly." : "Unknown native MCP status" };
+    const payload = await nativeEngine.request("/api/mcp", directory);
+    if (!isRecord(payload) || !Array.isArray(payload.data)) throw new Error("Invalid native MCP catalog");
+    const data: Record<string, McpStatus> = {};
+    for (const entry of payload.data) {
+      if (!isRecord(entry) || typeof entry.name !== "string" || !isRecord(entry.status)) throw new Error("Invalid native MCP status");
+      const status = entry.status.status;
+      if (entry.name === OPENWORK_CLOUD_MCP_NAME && status === "pending") {
+        return { failure: failure({ code: "cloud_connection_failed", stage: "engine_delivery", retryable: true,
+          recommendedAction: "Wait for OpenWork Connect to finish connecting", message: "OpenCode is still connecting to OpenWork Connect." }) };
       }
-      return { data };
+      if (status === "connected" || status === "disabled" || status === "needs_auth") data[entry.name] = { status };
+      else if (status === "failed" || status === "needs_client_registration") data[entry.name] = { status, error: typeof entry.status.error === "string" ? entry.status.error : "MCP connection failed" };
+      else data[entry.name] = { status: "failed", error: status === "pending" ? "MCP connection is still starting. Retry shortly." : "Unknown native MCP status" };
     }
-    const result = await withEngineProbeTimeout(() => opencode.mcp.status(locationParams(directory)));
-    if (result.data) return { data: result.data };
-    return { failure: opencodeRequestFailure("engine_delivery", "/mcp", result.response, result.error) };
+    return { data };
   } catch (error) {
-    return { failure: thrownOpencodeFailure("engine_delivery", nativeEngine ? "/api/mcp" : "/mcp", error) };
+    return { failure: thrownOpencodeFailure("engine_delivery", "/api/mcp", error) };
   }
 }
 
-async function readToolIds(
-  opencode: WorkspaceOpencodeClient,
-  directory: string | null,
-): Promise<{ data?: ToolIds; failure?: CloudMcpFailure }> {
-  try {
-    const result = await withEngineProbeTimeout(() => opencode.tool.ids(locationParams(directory)));
-    if (result.data) return { data: result.data };
-    return { failure: opencodeRequestFailure("tool_registration", "/experimental/tool/ids", result.response, result.error) };
-  } catch (error) {
-    return { failure: thrownOpencodeFailure("tool_registration", "/experimental/tool/ids", error) };
-  }
-}
-
-async function readProviderProjection(input: {
-  opencode: WorkspaceOpencodeClient;
-  directory: string | null;
-  providerModel: CloudMcpProviderModelContext;
-  /** Kept for call-site compatibility; experimental MCP omissions always fall back. */
-  experimentalToolIdsIncludeMcpTools: boolean | null;
-}): Promise<ProviderProjectionSnapshot> {
-  // experimentalToolIdsIncludeMcpTools is intentionally unused: a global IDs hit
-  // must not hard-fail when the per-model experimental list omits MCP tools.
-  void input.experimentalToolIdsIncludeMcpTools;
-  let experimentalSplit: ToolSnapshot | null = null;
-  let experimentalError: unknown;
-  try {
-    const result = await withEngineProbeTimeout(() => input.opencode.tool.list({
-      ...locationParams(input.directory),
-      provider: input.providerModel.provider,
-      model: input.providerModel.model,
-    }));
-    if (!result.data) {
-      experimentalError = opencodeRequestFailure("provider_projection", "/experimental/tool", result.response, result.error).details;
-    } else {
-      experimentalSplit = splitPresentMissing(toolListIds(result.data), expectedTools());
-      if (experimentalSplit.missing.length === 0) {
-        return {
-          checked: true,
-          provider: input.providerModel.provider,
-          model: input.providerModel.model,
-          source: "experimental_tool",
-          present: experimentalSplit.present,
-          missing: experimentalSplit.missing,
-        };
-      }
-    }
-  } catch (error) {
-    experimentalError = thrownOpencodeFailure("provider_projection", "/experimental/tool", error).details;
-  }
-
-  // OpenCode's /experimental/tool enumerates ToolRegistry tools and often omits
-  // MCP tools that prompts still attach at runtime. Always fall back to
-  // /provider tool-call capability when the per-model experimental list is
-  // incomplete — even if global /experimental/tool/ids includes MCP tools.
-  return readProviderCapability({
-    opencode: input.opencode,
-    directory: input.directory,
-    providerModel: input.providerModel,
-    experimentalSplit,
-    experimentalError,
-  });
-}
-
+/** Whether the selected model can call tools, from the engine's model catalog. */
 async function readProviderCapability(input: {
-  opencode: WorkspaceOpencodeClient;
+  nativeEngine: CloudMcpNativeEngine;
   directory: string | null;
   providerModel: CloudMcpProviderModelContext;
-  experimentalSplit: ToolSnapshot | null;
-  experimentalError: unknown;
-  nativeEngine?: CloudMcpNativeEngine;
 }): Promise<ProviderProjectionSnapshot> {
   try {
-    if (input.nativeEngine) {
-      const payload = await input.nativeEngine.request("/api/model", input.directory);
-      if (!isRecord(payload) || !Array.isArray(payload.data)) throw new Error("Invalid native model catalog");
-      const model = payload.data.find((item) => isRecord(item) && item.providerID === input.providerModel.provider && item.id === input.providerModel.model);
-      const toolCalling = isRecord(model) && isRecord(model.capabilities) ? model.capabilities.tools === true : false;
-      return {
-        checked: true, ...input.providerModel, source: "provider_capability", modelExists: Boolean(model), toolCalling,
-        present: [], missing: expectedTools(),
-        limitation: "Using the active OpenCode v2 model catalog's native tool capability; v1 plugin canaries and experimental tool lists do not apply.",
-        ...(!toolCalling ? { failure: failure({
-          code: "provider_tool_projection_missing", stage: "provider_projection", retryable: false,
-          recommendedAction: "Choose a model that can use OpenWork Cloud tools",
-          message: model ? "The selected provider/model does not support tool calling." : "The selected provider/model was not found in the active OpenCode v2 model catalog.",
-          details: { ...input.providerModel, source: "native_v2_model", modelExists: Boolean(model), toolCalling },
-        }) } : {}),
-      };
-    }
-    const result = await withEngineProbeTimeout(() => input.opencode.provider.list(locationParams(input.directory)));
-    if (!result.data) {
-      const projectionFailure = opencodeRequestFailure("provider_projection", "/provider", result.response, result.error);
-      return {
-        checked: true,
-        provider: input.providerModel.provider,
-        model: input.providerModel.model,
-        source: "provider_capability",
-        limitation: "Experimental OpenCode tool projection did not enumerate MCP tools; provider catalog capability could not be read.",
-        present: input.experimentalSplit?.present ?? [],
-        missing: input.experimentalSplit?.missing ?? expectedTools(),
-        error: projectionFailure.details,
-        failure: projectionFailure,
-      };
-    }
-
-    const provider = result.data.all.find((item) => item.id === input.providerModel.provider);
-    const model = provider?.models[input.providerModel.model];
-    const modelExists = Boolean(model);
-    const toolCalling = model ? model.capabilities.toolcall === true : null;
-    const limitation = "OpenCode experimental tool APIs do not enumerate MCP tools on this engine; using provider/model tool-call capability from /provider.";
-    const projectionFailure = toolCalling
-      ? undefined
-      : failure({
-          code: "provider_tool_projection_missing",
-          stage: "provider_projection",
-          retryable: false,
-          recommendedAction: "Choose a model that can use OpenWork Cloud tools",
-          message: modelExists ? "The selected provider/model does not support tool calling." : "The selected provider/model was not found in OpenCode provider catalog.",
-          aliases: ["provider_projection_missing"],
-          details: {
-            provider: input.providerModel.provider,
-            model: input.providerModel.model,
-            source: "provider_capability",
-            modelExists,
-            toolCalling,
-          },
-        });
+    const payload = await input.nativeEngine.request("/api/model", input.directory);
+    if (!isRecord(payload) || !Array.isArray(payload.data)) throw new Error("Invalid native model catalog");
+    const model = payload.data.find((item) => isRecord(item) && item.providerID === input.providerModel.provider && item.id === input.providerModel.model);
+    const toolCalling = isRecord(model) && isRecord(model.capabilities) ? model.capabilities.tools === true : false;
     return {
-      checked: true,
-      provider: input.providerModel.provider,
-      model: input.providerModel.model,
-      source: "provider_capability",
-      limitation,
-      modelExists,
-      toolCalling,
-      present: input.experimentalSplit?.present ?? [],
-      missing: input.experimentalSplit?.missing ?? expectedTools(),
-      ...(input.experimentalError ? { error: input.experimentalError } : {}),
-      ...(projectionFailure ? { failure: projectionFailure } : {}),
+      checked: true, ...input.providerModel, source: "provider_capability", modelExists: Boolean(model), toolCalling,
+      present: [], missing: expectedTools(),
+      limitation: "Using the OpenCode model catalog's native tool capability.",
+      ...(!toolCalling ? { failure: failure({
+        code: "provider_tool_projection_missing", stage: "provider_projection", retryable: false,
+        recommendedAction: "Choose a model that can use OpenWork Cloud tools",
+        message: model ? "The selected provider/model does not support tool calling." : "The selected provider/model was not found in the OpenCode model catalog.",
+        details: { ...input.providerModel, source: "native_model", modelExists: Boolean(model), toolCalling },
+      }) } : {}),
     };
   } catch (error) {
-    const projectionFailure = thrownOpencodeFailure("provider_projection", input.nativeEngine ? "/api/model" : "/provider", error);
+    const projectionFailure = thrownOpencodeFailure("provider_projection", "/api/model", error);
     return {
       checked: true,
       provider: input.providerModel.provider,
       model: input.providerModel.model,
       source: "provider_capability",
-      limitation: "Experimental OpenCode tool projection did not enumerate MCP tools; provider catalog capability could not be read.",
-      present: input.experimentalSplit?.present ?? [],
-      missing: input.experimentalSplit?.missing ?? expectedTools(),
+      limitation: "The OpenCode model catalog could not be read.",
+      present: [],
+      missing: expectedTools(),
       error: projectionFailure.details,
       failure: projectionFailure,
     };
   }
-}
-
-function toolListIds(list: ToolList): string[] {
-  return list.map((tool) => tool.id).filter((id) => typeof id === "string");
 }
 
 function statusFailure(status: McpStatus | undefined): CloudMcpFailure {
@@ -1893,36 +1687,8 @@ function engineInspectionFromStatuses(statuses: Record<string, McpStatus>): Clou
   };
 }
 
-function readVersionFromHealthPayload(payload: unknown): string | null {
-  if (!isRecord(payload)) return null;
-  return typeof payload.version === "string" ? sanitizeDiagnosticString(payload.version) : null;
-}
-
-async function readOpencodeVersion(opencode: WorkspaceOpencodeClient): Promise<CloudMcpCompatibilitySnapshot["opencode"]> {
-  try {
-    const result = await withEngineProbeTimeout(() => opencode.global.health());
-    if (result.data) {
-      return { expectedVersion: null, actualVersion: readVersionFromHealthPayload(result.data), probe: "ok" };
-    }
-    return {
-      expectedVersion: null,
-      actualVersion: null,
-      probe: "unavailable",
-      error: sanitizeDiagnosticValue({ status: result.response?.status, error: result.error }),
-    };
-  } catch (error) {
-    return {
-      expectedVersion: null,
-      actualVersion: null,
-      probe: "unavailable",
-      error: sanitizeDiagnosticValue(error instanceof Error ? error.message : String(error)),
-    };
-  }
-}
-
 async function inspectOpenworkCloud(input: {
-  opencode: WorkspaceOpencodeClient;
-  nativeEngine?: CloudMcpNativeEngine;
+  nativeEngine: CloudMcpNativeEngine;
   config: ServerConfig;
   workspace: WorkspaceInfo;
   directory: string | null;
@@ -1931,18 +1697,17 @@ async function inspectOpenworkCloud(input: {
   directProbeReuse?: DirectProbeReuse;
   providerModel?: CloudMcpProviderModelContext;
   probe: boolean;
-  refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
 }): Promise<Inspection> {
   const failures: CloudMcpFailure[] = [];
   const emptyTools = splitPresentMissing([], expectedTools());
   const emptyDirectTools = directToolsNotChecked();
-  const emptyCanaries = splitPresentMissing([], input.nativeEngine ? [] : expectedCanaries());
+  const emptyCanaries = splitPresentMissing([], []);
   const uncheckedExperimentalToolIds = experimentalToolIdsNotChecked();
   const uncheckedExperimentalProviderTools = experimentalProviderToolsFromProjection(providerProjectionNotChecked(input.providerModel));
-  const opencodeVersion: CloudMcpCompatibilitySnapshot["opencode"] = input.nativeEngine
-    ? { expectedVersion: input.nativeEngine.version, actualVersion: null, probe: "not_checked" }
-    : await readOpencodeVersion(input.opencode);
-  const statusResult = await readMcpStatus(input.opencode, input.directory, input.nativeEngine);
+  const opencodeVersion: CloudMcpCompatibilitySnapshot["opencode"] = {
+    expectedVersion: input.nativeEngine.version, actualVersion: null, probe: "not_checked",
+  };
+  const statusResult = await readMcpStatus(input.nativeEngine, input.directory);
   if (statusResult.failure) {
     failures.push(statusResult.failure);
     return {
@@ -1961,16 +1726,6 @@ async function inspectOpenworkCloud(input: {
 
   const engineInspection = engineInspectionFromStatuses(statusResult.data ?? {});
   const cloudStatus = statusResult.data?.[OPENWORK_CLOUD_MCP_NAME];
-  if (cloudStatus && !input.nativeEngine) {
-    input.refreshRegistrationFromLiveStatus?.(
-      input.config,
-      input.workspace,
-      OPENWORK_CLOUD_MCP_NAME,
-      input.desiredConfig,
-      cloudStatus.status,
-      "error" in cloudStatus && typeof cloudStatus.error === "string" ? cloudStatus.error : null,
-    );
-  }
   const engine = engineStatusFromMcpStatus(cloudStatus);
   if (cloudStatus?.status !== "connected") {
     failures.push(statusFailure(cloudStatus));
@@ -1988,25 +1743,8 @@ async function inspectOpenworkCloud(input: {
     };
   }
 
-  const idsResult = input.nativeEngine ? { data: [] } : await readToolIds(input.opencode, input.directory);
-  if (idsResult.failure) {
-    failures.push(idsResult.failure);
-    return {
-      engine,
-      engineInspection,
-      tools: emptyTools,
-      directTools: emptyDirectTools,
-      providerProjection: providerProjectionNotChecked(input.providerModel),
-      pluginCanaries: emptyCanaries,
-      experimentalToolIds: experimentalToolIdsFromFailure(idsResult.failure),
-      experimentalProviderTools: uncheckedExperimentalProviderTools,
-      opencodeVersion,
-      failures,
-    };
-  }
-  const ids = idsResult.data ?? [];
-  const experimentalToolIds = input.nativeEngine ? experimentalToolIdsNotChecked() : experimentalToolIdsFromSplit(splitPresentMissing(ids, expectedTools()));
-  const pluginCanaries = splitPresentMissing(ids, input.nativeEngine ? [] : expectedCanaries());
+  const experimentalToolIds = experimentalToolIdsNotChecked();
+  const pluginCanaries = emptyCanaries;
   const reusableDirectTools = input.directProbeReuse?.desiredRevision === input.desiredRevision
     && successfulDirectCloudToolsProbe(input.directProbeReuse.value)
     ? input.directProbeReuse.value
@@ -2031,29 +1769,10 @@ async function inspectOpenworkCloud(input: {
   const tools = input.probe ? toolsFromDirectCloudTools(directTools) : toolsFromEngineAttestation();
 
   const providerProjection = input.providerModel
-    ? input.nativeEngine ? await readProviderCapability({
-        opencode: input.opencode, directory: input.directory, providerModel: input.providerModel,
-        experimentalSplit: null, experimentalError: undefined, nativeEngine: input.nativeEngine,
-      }) : await readProviderProjection({
-        opencode: input.opencode,
-        directory: input.directory,
-        providerModel: input.providerModel,
-        experimentalToolIdsIncludeMcpTools: experimentalToolIds.includesMcpTools,
-      })
+    ? await readProviderCapability({ nativeEngine: input.nativeEngine, directory: input.directory, providerModel: input.providerModel })
     : providerProjectionNotChecked(input.providerModel);
   const experimentalProviderTools = experimentalProviderToolsFromProjection(providerProjection);
   if (providerProjection.failure) failures.push(providerProjection.failure);
-
-  if (pluginCanaries.missing.length) {
-    failures.push(failure({
-      code: "extensions_plugin_missing",
-      stage: "plugin_load",
-      retryable: true,
-      recommendedAction: "Reload the OpenCode engine so OpenWork extensions are loaded",
-      message: "OpenWork extension plugin canary tools are missing.",
-      details: { missing: pluginCanaries.missing },
-    }));
-  }
 
   return { engine, engineInspection, tools, directTools, providerProjection, pluginCanaries, experimentalToolIds, experimentalProviderTools, opencodeVersion, failures };
 }
@@ -2074,29 +1793,6 @@ function experimentalToolIdsNotChecked(): CloudMcpExperimentalToolIdsSnapshot {
     present: [],
     missing: [],
     includesMcpTools: null,
-  };
-}
-
-function experimentalToolIdsFromSplit(split: ToolSnapshot): CloudMcpExperimentalToolIdsSnapshot {
-  const includesMcpTools = split.missing.length === 0;
-  return {
-    checked: true,
-    expected: split.expected,
-    present: split.present,
-    missing: split.missing,
-    includesMcpTools,
-    ...(includesMcpTools ? {} : { limitation: "This OpenCode engine's /experimental/tool/ids endpoint does not enumerate MCP tools; direct MCP tools/list is authoritative for Cloud readiness." }),
-  };
-}
-
-function experimentalToolIdsFromFailure(failureResult: CloudMcpFailure): CloudMcpExperimentalToolIdsSnapshot {
-  return {
-    checked: true,
-    expected: expectedTools(),
-    present: [],
-    missing: expectedTools(),
-    includesMcpTools: null,
-    error: failureResult.details,
   };
 }
 
@@ -2180,22 +1876,6 @@ function usableByModel(providerProjection: ProviderProjectionSnapshot, firstFail
   return providerProjection.missing.length === 0;
 }
 
-function baseUrlConfigured(config: ServerConfig, workspace: WorkspaceInfo): boolean {
-  return Boolean(workspace.baseUrl?.trim() || config.opencodeBaseUrl?.trim());
-}
-
-async function pluginFileHashes(): Promise<CloudMcpCompatibilitySnapshot["pluginFileHashes"]> {
-  const names = ["openwork-extensions-preview", "openwork-capabilities-knowledge"];
-  return Promise.all(names.map(async (name) => {
-    try {
-      return { name, sha256: hashString(await readFile(openworkPluginPath(name), "utf8")) };
-    } catch (error) {
-      const lastError = error instanceof Error ? error.message : String(error);
-      return { name, sha256: null, error: sanitizeDiagnosticString(lastError) };
-    }
-  }));
-}
-
 async function compatibilitySnapshot(input: {
   serverMetadata?: CloudMcpServerMetadata;
   appMetadata?: Record<string, string | number | boolean | null>;
@@ -2212,7 +1892,7 @@ async function compatibilitySnapshot(input: {
       app: input.appMetadata ?? null,
     },
     opencode,
-    pluginFileHashes: await pluginFileHashes(),
+    pluginFileHashes: [],
     supportedFeatures: {
       dynamicMcp: true,
       directoryScoping: input.directory !== null,
@@ -2232,9 +1912,7 @@ type ReadOpenworkCloudMcpHealthInput = {
   providerModel?: CloudMcpProviderModelContext;
   serverMetadata?: CloudMcpServerMetadata;
   probe?: boolean;
-  createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
-  nativeEngineForWorkspace?: CloudMcpNativeEngineResolver;
-  refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
+  nativeEngineForWorkspace: CloudMcpNativeEngineResolver;
 };
 
 type DirectProbeReuse = {
@@ -2285,15 +1963,6 @@ async function readOpenworkCloudMcpHealthInternal(
       message: "Workspace has no exact OpenCode directory, so Cloud MCP readiness cannot be claimed.",
     }));
   }
-  if (desired.present && input.directory && !baseUrlConfigured(input.config, input.workspace)) {
-    failures.push(failure({
-      code: "opencode_unconfigured",
-      stage: "prerequisites",
-      retryable: false,
-      recommendedAction: "Start or attach an OpenCode engine for this workspace",
-      message: "OpenCode base URL is missing for this workspace.",
-    }));
-  }
   const denyFailure = firstFailureFromDenies(toolDenies);
   if (denyFailure) failures.push(denyFailure);
 
@@ -2303,16 +1972,15 @@ async function readOpenworkCloudMcpHealthInternal(
     tools: splitPresentMissing([], expectedTools()),
     directTools: directToolsNotChecked(),
     providerProjection: providerProjectionNotChecked(input.providerModel),
-    pluginCanaries: splitPresentMissing([], expectedCanaries()),
+    pluginCanaries: splitPresentMissing([], []),
     experimentalToolIds: experimentalToolIdsNotChecked(),
     experimentalProviderTools: experimentalProviderToolsFromProjection(providerProjectionNotChecked(input.providerModel)),
     opencodeVersion: { expectedVersion: input.serverMetadata?.expectedOpencodeVersion ?? null, actualVersion: null, probe: "not_checked" },
     failures: [],
   };
-  if (desired.present && desired.config && desired.revision && !desired.validationProblem && input.directory && baseUrlConfigured(input.config, input.workspace)) {
+  if (desired.present && desired.config && desired.revision && !desired.validationProblem && input.directory) {
     inspection = await inspectOpenworkCloud({
-      opencode: input.createWorkspaceOpencodeClient(input.config, input.workspace),
-      nativeEngine: input.nativeEngineForWorkspace?.(input.workspace),
+      nativeEngine: input.nativeEngineForWorkspace(input.workspace),
       config: input.config,
       workspace: input.workspace,
       directory: input.directory,
@@ -2321,7 +1989,6 @@ async function readOpenworkCloudMcpHealthInternal(
       directProbeReuse: input.directProbeReuse,
       providerModel: input.providerModel,
       probe: input.probe === true,
-      refreshRegistrationFromLiveStatus: input.refreshRegistrationFromLiveStatus,
     });
     failures.push(...inspection.failures);
   }
@@ -2444,32 +2111,18 @@ async function wait(ms: number): Promise<void> {
 }
 
 async function pollConnected(input: {
-  opencode: WorkspaceOpencodeClient;
-  nativeEngine?: CloudMcpNativeEngine;
-  config: ServerConfig;
-  workspace: WorkspaceInfo;
+  nativeEngine: CloudMcpNativeEngine;
   directory: string | null;
-  desiredConfig: Record<string, unknown>;
-  refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
 }): Promise<CloudMcpFailure | null> {
   let lastFailure: CloudMcpFailure | null = null;
   for (const delay of POLL_DELAYS_MS) {
     await wait(delay);
-    const statusResult = await readMcpStatus(input.opencode, input.directory, input.nativeEngine);
+    const statusResult = await readMcpStatus(input.nativeEngine, input.directory);
     if (statusResult.failure) {
       lastFailure = statusResult.failure;
       continue;
     }
     const cloudStatus = statusResult.data?.[OPENWORK_CLOUD_MCP_NAME];
-    if (cloudStatus && !input.nativeEngine) {
-      input.refreshRegistrationFromLiveStatus?.(
-        input.config,
-        input.workspace,
-        OPENWORK_CLOUD_MCP_NAME,
-        input.desiredConfig,
-        cloudStatus.status,
-      );
-    }
     if (cloudStatus?.status === "connected") return null;
     lastFailure = statusFailure(cloudStatus);
     if (cloudStatus?.status === "disabled" || cloudStatus?.status === "needs_auth" || cloudStatus?.status === "needs_client_registration" || cloudStatus?.status === "failed") {
@@ -2495,23 +2148,18 @@ function reusableDirectProbeFromHealth(health: CloudMcpHealth): DirectProbeReuse
     : undefined;
 }
 
+// Removed Connect servers leave the runtime config here; the engine's MCP
+// mirror drops them from every folder it serves.
 async function reconcileConnectMcpCatalog(input: {
   config: ServerConfig;
   workspace: WorkspaceInfo;
-  directory: string;
   cloudMcp: Record<string, unknown>;
   appHostAuthorization?: string;
-  createWorkspaceOpencodeClient: ReadOpenworkCloudMcpHealthInput["createWorkspaceOpencodeClient"];
 }) {
   const { reconcileOpenWorkConnectMcpServers } = await import("./connect-mcp-server-catalog.js");
-  const servers = await reconcileOpenWorkConnectMcpServers(input).catch((): {
+  return reconcileOpenWorkConnectMcpServers(input).catch((): {
     diagnostic: ConnectMcpCatalogDiagnostic; directNames: string[]; removedNames: string[];
   } => ({ diagnostic: "discovery_unavailable", directNames: [], removedNames: [] }));
-  const opencode = input.createWorkspaceOpencodeClient(input.config, input.workspace);
-  for (const name of servers.removedNames) {
-    await opencode.mcp.disconnect({ name, ...locationParams(input.directory) }).catch(() => undefined);
-  }
-  return servers;
 }
 
 export async function refreshOpenworkCloudMcpCatalog(input: ReadOpenworkCloudMcpHealthInput & {
@@ -2521,7 +2169,7 @@ export async function refreshOpenworkCloudMcpCatalog(input: ReadOpenworkCloudMcp
   if (input.config.readOnly || !input.directory || !health.usable || health.appHostAuthorizationReady !== true) return health;
   const cloudMcp = await readPersistedDesiredConfig(input.config, input.workspace.id);
   if (!cloudMcp || cloudMcp.enabled === false) return health;
-  const servers = await reconcileConnectMcpCatalog({ ...input, directory: input.directory, cloudMcp });
+  const servers = await reconcileConnectMcpCatalog({ config: input.config, workspace: input.workspace, cloudMcp });
   if (servers.directNames.length > 0) {
     // Direct registration results and latency do not determine central Cloud health.
     void input.registerRuntimeMcp(input.config, input.workspace, servers.directNames, { throwOnFailure: false })
@@ -2537,10 +2185,8 @@ export async function reconcileOpenworkCloudMcp(input: {
   body: Record<string, unknown>;
   providerModel?: CloudMcpProviderModelContext;
   serverMetadata?: CloudMcpServerMetadata;
-  createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
-  nativeEngineForWorkspace?: CloudMcpNativeEngineResolver;
+  nativeEngineForWorkspace: CloudMcpNativeEngineResolver;
   registerRuntimeMcp: CloudMcpRuntimeRegistrar;
-  refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
   fanoutGlobalDesired?: boolean;
 }): Promise<CloudMcpHealth> {
   let connectCatalogDiagnostic: ConnectMcpCatalogDiagnostic | undefined;
@@ -2551,11 +2197,9 @@ export async function reconcileOpenworkCloudMcp(input: {
       directory: input.directory,
       providerModel: input.providerModel,
       serverMetadata: input.serverMetadata,
-      createWorkspaceOpencodeClient: input.createWorkspaceOpencodeClient,
       nativeEngineForWorkspace: input.nativeEngineForWorkspace,
       probe: true,
       directProbeReuse,
-      refreshRegistrationFromLiveStatus: input.refreshRegistrationFromLiveStatus,
     }),
     ...(connectCatalogDiagnostic === undefined ? {} : { connectCatalogDiagnostic }),
   });
@@ -2577,12 +2221,7 @@ export async function reconcileOpenworkCloudMcp(input: {
     await Promise.all(input.config.workspaces
       .filter((workspace) => workspace.id !== input.workspace.id)
       .map(async (workspace) => {
-        const directory = workspace.path || null;
-        if (!directory) return;
-        await input.createWorkspaceOpencodeClient(input.config, workspace).mcp.disconnect({
-          name: OPENWORK_CLOUD_MCP_NAME,
-          ...locationParams(directory),
-        }).catch(() => undefined);
+        if (!workspace.path) return;
         await input.registerRuntimeMcp(input.config, workspace, [OPENWORK_CLOUD_MCP_NAME], { throwOnFailure: false })
           .catch(() => undefined);
       }));
@@ -2600,31 +2239,17 @@ export async function reconcileOpenworkCloudMcp(input: {
     return healthWithFailure(await readHealth(), directoryFailure);
   }
 
-  if (!baseUrlConfigured(input.config, input.workspace)) {
-    const unconfiguredFailure = failure({
-      code: "opencode_unconfigured",
-      stage: "prerequisites",
-      retryable: false,
-      recommendedAction: "Start or attach an OpenCode engine for this workspace",
-      message: "OpenCode base URL is missing for this workspace.",
-    });
-    cloudMcpDeliveryState.markFailed(input.workspace, input.directory, desiredRevision, unconfiguredFailure);
-    return healthWithFailure(await readHealth(), unconfiguredFailure);
-  }
-
   // Provider descriptors are private App-host state. Fetch them only after
   // the normal engine prerequisites pass, then purge stale model-runtime
   // entries before registration. Independent projection filters keep stale
   // rows from ever reaching an engine while prerequisites are unavailable.
   const connectServers = await reconcileConnectMcpCatalog({
-    ...input,
-    directory: input.directory,
+    config: input.config,
+    workspace: input.workspace,
     cloudMcp: desiredConfig,
     appHostAuthorization: readString(input.body.appHostAuthorization) ?? undefined,
   });
   connectCatalogDiagnostic = connectServers.diagnostic;
-
-  const opencode = input.createWorkspaceOpencodeClient(input.config, input.workspace);
 
   cloudMcpDeliveryState.markRegistering(input.workspace, input.directory, desiredRevision);
   const registration = await input.registerRuntimeMcp(input.config, input.workspace, [OPENWORK_CLOUD_MCP_NAME], { throwOnFailure: false });
@@ -2641,13 +2266,8 @@ export async function reconcileOpenworkCloudMcp(input: {
   }
 
   const connectedFailure = await pollConnected({
-    opencode,
-    nativeEngine: input.nativeEngineForWorkspace?.(input.workspace),
-    config: input.config,
-    workspace: input.workspace,
+    nativeEngine: input.nativeEngineForWorkspace(input.workspace),
     directory: input.directory,
-    desiredConfig,
-    refreshRegistrationFromLiveStatus: input.refreshRegistrationFromLiveStatus,
   });
   if (connectedFailure) {
     cloudMcpDeliveryState.markFailed(input.workspace, input.directory, desiredRevision, connectedFailure);
@@ -2672,10 +2292,8 @@ export async function reconcilePersistedOpenworkCloudMcp(input: {
   directory: string | null;
   providerModel?: CloudMcpProviderModelContext;
   serverMetadata?: CloudMcpServerMetadata;
-  createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
-  nativeEngineForWorkspace?: CloudMcpNativeEngineResolver;
+  nativeEngineForWorkspace: CloudMcpNativeEngineResolver;
   registerRuntimeMcp: CloudMcpRuntimeRegistrar;
-  refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
   trigger?: string;
 }): Promise<CloudMcpHealth> {
   const migrated = await migrateOpenworkCloudMcpRuntimeConfig(input.config);
@@ -2692,10 +2310,6 @@ export async function reconcilePersistedOpenworkCloudMcp(input: {
     },
     fanoutGlobalDesired: false,
   });
-}
-
-export function markOpenworkCloudMcpStale(workspace: WorkspaceInfo, directory: string | null): void {
-  cloudMcpDeliveryState.markWorkspaceStale(workspace, directory);
 }
 
 export type CloudMcpEngineRefreshStep = {
@@ -2730,10 +2344,8 @@ export async function refreshOpenworkCloudMcpEngine(input: {
   directory: string | null;
   providerModel?: CloudMcpProviderModelContext;
   serverMetadata?: CloudMcpServerMetadata;
-  createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
-  nativeEngineForWorkspace?: CloudMcpNativeEngineResolver;
+  nativeEngineForWorkspace: CloudMcpNativeEngineResolver;
   registerRuntimeMcp: CloudMcpRuntimeRegistrar;
-  refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
   trigger?: string;
 }): Promise<CloudMcpEngineRefreshResult> {
   const trigger = input.trigger?.trim() || "engine-refresh";
@@ -2758,21 +2370,9 @@ export async function refreshOpenworkCloudMcpEngine(input: {
 
   const disconnectStarted = Date.now();
   try {
-    const opencode = input.createWorkspaceOpencodeClient(input.config, input.workspace);
-    const nativeEngine = input.nativeEngineForWorkspace?.(input.workspace);
-    const result = nativeEngine
-      ? await nativeEngine.request(`/api/experimental/mcp/${OPENWORK_CLOUD_MCP_NAME}/disconnect`, input.directory, "POST").then(() => ({ error: undefined, response: undefined }))
-      : await withEngineProbeTimeout(() => opencode.mcp.disconnect({
-          name: OPENWORK_CLOUD_MCP_NAME, ...locationParams(input.directory),
-        }));
-    steps.push({
-      step: "engine_disconnect",
-      ok: result.error === undefined,
-      latencyMs: Date.now() - disconnectStarted,
-      ...(result.error !== undefined
-        ? { detail: sanitizeDiagnosticValue({ status: result.response?.status, error: result.error }) }
-        : {}),
-    });
+    await input.nativeEngineForWorkspace(input.workspace)
+      .request(`/api/experimental/mcp/${OPENWORK_CLOUD_MCP_NAME}/disconnect`, input.directory, "POST");
+    steps.push({ step: "engine_disconnect", ok: true, latencyMs: Date.now() - disconnectStarted });
   } catch (error) {
     // A dynamically-registered entry can be gone after an engine state
     // rebuild, and the engine itself can be down; the reapply below is the
@@ -2792,10 +2392,8 @@ export async function refreshOpenworkCloudMcpEngine(input: {
     directory: input.directory,
     providerModel: input.providerModel,
     serverMetadata: input.serverMetadata,
-    createWorkspaceOpencodeClient: input.createWorkspaceOpencodeClient,
     nativeEngineForWorkspace: input.nativeEngineForWorkspace,
     registerRuntimeMcp: input.registerRuntimeMcp,
-    refreshRegistrationFromLiveStatus: input.refreshRegistrationFromLiveStatus,
     trigger,
   });
   steps.push({

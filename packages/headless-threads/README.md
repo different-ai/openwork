@@ -8,16 +8,17 @@ final state the desktop UI shows. A thread this package creates can be opened
 in the app afterwards, because there is no separate headless thread type.
 
 This is a client, not a runtime. It adds no chat engine, no session store, no
-model gateway, and no new server route — it is a typed workflow over the
-official OpenCode SDK through OpenWork's workspace-scoped proxy.
+model gateway, and no new server route — it is a typed workflow over OpenCode's
+native session routes through OpenWork's workspace-scoped proxy
+(`/workspace/:id/opencode2/api`).
 
 ## Why
 
 Anything that drives OpenWork without a UI — a load check, an automation
 harness, an agent-quality benchmark — currently re-implements the same
-sequence by hand against raw HTTP: create a session, submit `prompt_async`,
-poll `/session/status`, poll messages, work out when the turn actually
-finished, then dig text back out of message parts.
+sequence by hand against raw HTTP: create a session, submit a prompt, poll
+`/session/active`, poll messages, work out when the turn actually finished,
+then dig text back out of message parts.
 Legacy harnesses contained one such copy. This package is that sequence, typed
 and tested once.
 
@@ -63,19 +64,14 @@ if (waited.outcome === "settled") {
 `thread.id` is the native session id. Opening OpenWork on the same workspace
 shows this conversation in the sidebar.
 
-## Engine and model
+## Model
 
-By default (`engine: "auto"`) the client asks the server once which OpenCode
-engine its chats use (`GET /experimental/engine-v2-preview/status`), so a
-thread lands where the app reads it. A server without that route is v1; any
-other failed lookup throws a retryable `HeadlessThreadError` instead of
-guessing. Pass `engine: "v1"` or `"v2"` to skip the lookup.
-
-When a call names no model and there is no `defaultModel`, the client reads the
-workspace default (`GET /workspace/:id/default-model`). v1 without any model
-lets the engine choose; v2 throws `model_required` before creating anything.
-v2 assigns its own message ids, so a `messageId` cannot make a v2 turn
-idempotent: waits use the pre-turn message count instead.
+A thread always runs with a model. When a call names no model and there is no
+`defaultModel`, the client reads the workspace default
+(`GET /workspace/:id/default-model`); a follow-up turn falls back to the model
+the session already has. With no model at all the client throws
+`model_required` before creating or sending anything. A turn's `messageId` is
+the engine's prompt id, so a retried turn is admitted once.
 
 ## Contract
 

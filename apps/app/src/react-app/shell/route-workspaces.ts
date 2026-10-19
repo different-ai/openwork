@@ -2,12 +2,12 @@
 // settings-route). These were duplicated in both route files and had
 // drifted. One copy now.
 
-import type { Session } from "@opencode-ai/sdk/v2/client";
+import type { Session } from "@/app/lib/opencode-types";
 
-import { createClient, unwrap } from "@/app/lib/opencode";
-import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
+import { unwrap } from "@/app/lib/opencode";
+import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
 import { deleteNativeSession } from "@/app/lib/opencode-session-native";
-import { OpenworkServerError, type OpenworkWorkspaceInfo } from "@/app/lib/openwork-server";
+import type { OpenworkWorkspaceInfo } from "@/app/lib/openwork-server";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import type { WorkspaceInfo } from "@/app/lib/desktop-types";
 import type { WorkspaceSessionGroup } from "@/app/types";
@@ -23,7 +23,7 @@ export type RouteWorkspace = OpenworkWorkspaceInfo & {
 };
 
 /**
- * Sessions as the routes handle them: native SDK sessions, optionally enriched with run-status
+ * Sessions as the routes handle them: engine sessions, optionally enriched with run-status
  * fields that the sidebar probes defensively via getSessionStatus.
  */
 export type RouteSession = Session & {
@@ -33,7 +33,7 @@ export type RouteSession = Session & {
   slug?: string | null;
 };
 
-// Absent for v1 prefix reads; null means an exhausted v2 cursor traversal.
+// null means an exhausted cursor traversal.
 type RouteSessionListResult = { nextCursor?: string | null } & (
   | { data: RouteSession[]; error?: undefined; request: Request; response: Response }
   | { data?: undefined; error: unknown; request: Request; response: Response });
@@ -43,61 +43,25 @@ export type RouteSessionListTransport = (input: {
   cursor?: string;
 }) => Promise<RouteSessionListResult>;
 
-const nativeRouteSessionList: RouteSessionListTransport = async ({ endpoint, limit }) => {
-  const client = createClient(endpoint.opencodeBaseUrl, undefined, {
-    mode: "openwork",
+const nativeRouteSessionList: RouteSessionListTransport = async ({ endpoint, limit, cursor }) =>
+  createClientV2(endpoint.opencodeBaseUrl, undefined, {
     token: endpoint.token,
-  });
-  return client.session.list({ limit });
-};
-
-export const v2RouteSessionList: RouteSessionListTransport = async ({ endpoint, limit, cursor }) =>
-  createClientV2(`${endpoint.mountedBaseUrl}/opencode2`, undefined, {
-    token: endpoint.token,
-  }).listSessionsPage({ limit, cursor });
-
-/** Resolve the owning server's engine even when this workspace isn't selected. */
-export async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promise<ResolvedWorkspaceEndpoint> {
-  const status = await endpoint.client.getEngineV2PreviewStatus().catch((error: unknown) => {
-    // Servers predating the preview endpoint still use v1.
-    if (error instanceof OpenworkServerError && error.status === 404) return null;
-    throw error;
-  });
-  return status?.enabled && status.chatRouting
-    ? { ...endpoint, opencodeBaseUrl: `${endpoint.mountedBaseUrl}/opencode2` }
-    : endpoint;
-}
-
-/**
- * Create a session and report the engine endpoint that owns it. Callers that
- * key follow-up state by `opencodeBaseUrl` (the hero's one-step auto-send) must
- * use this endpoint, not the workspace's default v1 one, or the mounted
- * session surface never finds that state when chat is routed to v2.
- */
-export async function createRouteSessionOnEngine(
-  endpoint: ResolvedWorkspaceEndpoint,
-  directory?: string,
-): Promise<{ session: Session; endpoint: ResolvedWorkspaceEndpoint }> {
-  const native = await routeSessionEndpoint(endpoint);
-  const client = isOpencodeV2BaseUrl(native.opencodeBaseUrl)
-    ? createClientV2(native.opencodeBaseUrl, directory, { token: native.token })
-    : createClient(native.opencodeBaseUrl, directory, { token: native.token, mode: "openwork" });
-  return { session: unwrap(await client.session.create({ directory })), endpoint: native };
-}
+  }).session.list({ limit, cursor });
 
 export async function createRouteSession(endpoint: ResolvedWorkspaceEndpoint, directory?: string): Promise<Session> {
-  return (await createRouteSessionOnEngine(endpoint, directory)).session;
+  const client = createClientV2(endpoint.opencodeBaseUrl, directory, { token: endpoint.token });
+  return unwrap(await client.session.create({ directory }));
 }
 
 export async function deleteRouteSession(endpoint: ResolvedWorkspaceEndpoint, sessionId: string): Promise<boolean> {
-  return deleteNativeSession(await routeSessionEndpoint(endpoint), sessionId);
+  return deleteNativeSession(endpoint, sessionId);
 }
 
 export async function listRouteSessions(
   endpoint: ResolvedWorkspaceEndpoint,
   transport: RouteSessionListTransport = nativeRouteSessionList,
 ): Promise<RouteSession[]> {
-  let limit = 200;
+  const limit = 200;
   let cursor: string | undefined;
   const cursors = new Set<string>();
   const sessions = new Map<string, RouteSession>();
@@ -115,22 +79,15 @@ export async function listRouteSessions(
       }
       throw error;
     }
-    if (result.nextCursor !== undefined) {
-      // v2's workspace proxy can filter an entire page. Only its native cursor
-      // establishes exhaustion, never the number of visible rows.
-      for (const session of items) {
-        if (!sessions.has(session.id)) sessions.set(session.id, session);
-      }
-      if (result.nextCursor === null) return [...sessions.values()];
-      if (cursors.has(result.nextCursor)) throw new Error("Session list cursor did not advance.");
-      cursors.add(result.nextCursor);
-      cursor = result.nextCursor;
-    } else {
-      // v1 has no older-page cursor and defaults to 100 without an explicit
-      // limit. Replace the prefix on each read; do not append stale duplicates.
-      if (items.length < limit) return items;
-      limit *= 2;
+    // The workspace proxy can filter an entire page. Only the native cursor
+    // establishes exhaustion, never the number of visible rows.
+    for (const session of items) {
+      if (!sessions.has(session.id)) sessions.set(session.id, session);
     }
+    if (!result.nextCursor) return [...sessions.values()];
+    if (cursors.has(result.nextCursor)) throw new Error("Session list cursor did not advance.");
+    cursors.add(result.nextCursor);
+    cursor = result.nextCursor;
   }
 }
 

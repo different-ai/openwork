@@ -6,11 +6,11 @@ import type {
   QuestionRequest,
   ProviderListResponse,
   Session,
-} from "@opencode-ai/sdk/v2/client";
-import type { createClient } from "./lib/opencode";
+} from "./lib/opencode-types";
+import type { OpencodeV2Client } from "./lib/opencode-v2-adapter";
 import type { OpencodeConfigFile, WorkspaceInfo } from "./lib/desktop-types";
 
-export type Client = ReturnType<typeof createClient>;
+export type Client = OpencodeV2Client;
 
 export type ProviderListItem = ProviderListResponse["all"][number];
 
@@ -25,7 +25,6 @@ export type SidebarSessionItem = {
   time?: {
     updated?: number | null;
     created?: number | null;
-    archived?: number | null;
   };
   directory?: string | null;
 };

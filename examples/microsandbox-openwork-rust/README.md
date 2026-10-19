@@ -40,7 +40,7 @@ The crate includes an ignored end-to-end smoke test that:
 - waits for `/health`
 - verifies unauthenticated `/workspaces` returns `401`
 - verifies authenticated `/workspaces` returns `200`
-- creates an OpenCode session through `/w/:workspaceId/opencode/session`
+- creates an OpenCode session through `/workspace/:workspaceId/opencode2/api/session`
 - fetches the created session and its messages
 
 Run it explicitly:

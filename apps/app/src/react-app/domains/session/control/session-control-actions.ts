@@ -1,13 +1,14 @@
 /** @jsxImportSource react */
 import { useCallback, useMemo } from "react";
 
-import { createClient, unwrap } from "../../../../app/lib/opencode";
+import { unwrap } from "../../../../app/lib/opencode";
 import { normalizeDirectoryPath } from "../../../../app/utils";
 import { setSessionModel } from "../../../../app/lib/opencode-session";
-import { createClientV2, isOpencodeV2BaseUrl } from "../../../../app/lib/opencode-v2-adapter";
+import { createClientV2 } from "../../../../app/lib/opencode-v2-adapter";
 import { openworkCatalogModels, openworkModelsListArgsSchema, type OpenworkCatalogModel } from "@openwork/types/openwork-affordance";
 import type { OpenworkServerClient, OpenworkWorkspaceInfo } from "../../../../app/lib/openwork-server";
-import { deleteRouteSession, routeSessionEndpoint } from "../../../shell/route-workspaces";
+import type { Client } from "../../../../app/types";
+import { deleteRouteSession } from "../../../shell/route-workspaces";
 import type { ResolvedWorkspaceEndpoint } from "../../../../app/lib/workspace-endpoint";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider";
@@ -16,7 +17,6 @@ import { filterEntitledModelOptions } from "../../connections/provider-auth/prov
 import { filterCloudManagedModelOptions } from "../../connections/provider-auth/assigned-model-options";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import { useSessionModelStore } from "../surface/session-model-store";
-import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../sidebar/use-session-archive";
 import { useSessionActivityStore } from "../status/session-activity-store";
 import { selectSessionAttention } from "../status/session-attention";
 import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
@@ -34,19 +34,14 @@ type UseSessionControlActionsInput = {
   selectedSessionId: string | null;
   canCreateTask: boolean;
   openworkClient: OpenworkServerClient | null;
-  opencodeClient: ReturnType<typeof createClient> | null;
-  archiveDisabledReason?: string;
+  opencodeClient: Client | null;
   endpointForWorkspace: (workspace: SessionControlWorkspace | null | undefined) => ResolvedWorkspaceEndpoint | null;
   navigateToSession: (sessionId: string) => void;
   navigateToSessionRoot: () => void;
   createTaskInWorkspace: (workspaceId: string) => Promise<string | null> | string | null;
   openModelPicker: () => void;
   refreshRouteState: () => Promise<unknown> | unknown;
-  archiveSession: (sessionId: string, archived: boolean, options?: ArchiveSessionOptions) => Promise<ArchiveSessionOutcome>;
 };
-
-const ARCHIVE_TARGET_WORKING_HINT = "This session is still working. If the user wants it closed, ask them to stop it in the app (or wait until session.list_sessions reports working=false), then archive. If not, leave it running.";
-const SELF_ARCHIVE_WHILE_WORKING_HINT = "A working session cannot archive itself. Finish the turn so your conclusions can be reviewed; the reviewer archives.";
 
 function findSessionWorkspace(
   workspaces: SessionControlWorkspace[],
@@ -81,14 +76,12 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     openModelPicker,
     openworkClient,
     opencodeClient,
-    archiveDisabledReason,
     refreshRouteState,
     selectedSessionId,
     selectedWorkspaceId,
     selectedWorkspaceRoot,
     sessionsByWorkspaceId,
     workspaces,
-    archiveSession,
   } = input;
   const pinnedIds = useSessionManagementStore((s) => s.pinnedIds);
   const checkDesktopRestriction = useCheckDesktopRestriction();
@@ -113,12 +106,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const workspaceModels = useCallback(async (workspace: SessionControlWorkspace) => {
     const endpoint = endpointForWorkspace(workspace);
     if (!endpoint) throw new Error("Workspace runtime is not connected");
-    // Read the catalog from the engine chat runs on, as session creation does:
-    // v2's catalog can differ from v1's while both engines run.
-    const engine = await routeSessionEndpoint(endpoint);
-    const catalog = isOpencodeV2BaseUrl(engine.opencodeBaseUrl)
-      ? await createClientV2(engine.opencodeBaseUrl, workspace.path, { token: engine.token }).provider.list({ directory: workspace.path })
-      : await createClient(engine.opencodeBaseUrl, workspace.path, { mode: "openwork", token: engine.token }).provider.list({ directory: workspace.path });
+    const catalog = await createClientV2(endpoint.opencodeBaseUrl, workspace.path, { token: endpoint.token }).provider.list({ directory: workspace.path });
     return openworkCatalogModels(unwrap(catalog));
   }, [endpointForWorkspace]);
   useControlAction(useMemo<OpenworkControlAction>(() => ({
@@ -146,7 +134,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.list_sessions",
     label: "List available sessions",
-    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`, `status` (idle, thinking, responding, waiting, compacting, error), `working` (own work or known busy/waiting descendants), `descendantActivity` ({ busy, waiting, unknown } counts), `inventoryComplete` (false when referenced descendant activity is unreadable; unknown alone does not imply working) and `model` ({ providerId, modelId, variant, displayName?, providerName? }: the model and reasoning effort the session is bound to, null before any model is bound). Check `working` before session.archive. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
+    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`, `status` (idle, thinking, responding, waiting, compacting, error), `working` (own work or known busy/waiting descendants), `descendantActivity` ({ busy, waiting, unknown } counts), `inventoryComplete` (false when referenced descendant activity is unreadable; unknown alone does not imply working) and `model` ({ providerId, modelId, variant, displayName?, providerName? }: the model and reasoning effort the session is bound to, null before any model is bound). Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
     kind: "query",
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
@@ -335,16 +323,12 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       if (!targetWorkspace) return { ok: false, error: workspaceQuery ? "Workspace was not found; pass its exact id." : "Session was not found in the current session list; pass workspaceId." };
       const endpoint = endpointForWorkspace(targetWorkspace);
       if (!endpoint) return { ok: false, error: "Workspace runtime is not connected" };
-      const engine = await routeSessionEndpoint(endpoint);
-      if (!isOpencodeV2BaseUrl(engine.opencodeBaseUrl)) {
-        return { ok: false, error: "Session model reassignment requires the OpenCode v2 session API." };
-      }
+      const engine = endpoint;
       const client = createClientV2(engine.opencodeBaseUrl, targetWorkspace.path, { token: engine.token });
       const session = unwrap(await client.session.get({ sessionID: sessionId, directory: targetWorkspace.path }));
       if (normalizeDirectoryPath(session.directory) !== normalizeDirectoryPath(targetWorkspace.path)) {
         return { ok: false, error: "Session does not belong to the requested workspace." };
       }
-      if ((session.time?.archived ?? 0) > 0) return { ok: false, error: "Archived sessions cannot be reassigned." };
       const status = unwrap(await client.session.status({ directory: targetWorkspace.path }));
       if (status[sessionId]?.type === "busy") return { ok: false, error: "Working sessions cannot be reassigned. Wait until the session is idle." };
 
@@ -386,7 +370,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   useControlAction(sessionSetModelControlAction);
 
   // ---------------------------------------------------------------------------
-  // Session management control actions (pin, archive, groups)
+  // Session management control actions (pin, groups)
   // ---------------------------------------------------------------------------
 
   const store = useSessionManagementStore;
@@ -424,42 +408,6 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     },
   }), []);
   useControlAction(pinControlAction);
-
-  const archiveControlAction = useMemo<OpenworkControlAction>(() => ({
-    id: "session.archive",
-    label: "Archive or unarchive a session",
-    description: archiveDisabledReason ?? "Archive an idle session, preserving context. Check `working` in session.list_sessions first. A working session is not archived: the result is code target_working (if the user wants it closed, ask them to stop it in the app, then archive once working is false; otherwise leave it running). A session cannot archive itself or its parent during its own turn (code self_archive_while_working): finish the turn; the reviewer archives. Pass archived=false to restore without restarting work.",
-    sideEffect: "mutation",
-    requiresArgs: true,
-    args: [
-      { name: "sessionId", type: "string", required: true, description: "Session ID." },
-      { name: "archived", type: "boolean", required: true, description: "true to archive, false to unarchive." },
-    ],
-    disabled: !opencodeClient || Boolean(archiveDisabledReason),
-    execute: async (args, helpers) => {
-      const sessionId = stringArg(args, "sessionId");
-      const archived = booleanArg(args, "archived");
-      if (archiveDisabledReason) return { ok: false, error: archiveDisabledReason };
-      if (!sessionId) return { ok: false, error: "sessionId is required" };
-      const requestedBy = helpers.origin?.sessionId;
-      const outcome = await archiveSession(sessionId, archived, {
-        ...(requestedBy ? { requester: { sessionId: requestedBy } } : {}),
-        refuseWorking: helpers.bridged,
-      });
-      if (outcome.kind === "done") return { ok: true, sessionId, archived };
-      if (outcome.kind === "verification_failed" || outcome.kind === "archive_outcome_unknown") {
-        return { ok: false, code: outcome.kind, sessionId, error: outcome.message };
-      }
-      if (outcome.kind === "target_working") {
-        return { ok: false, code: outcome.kind, sessionId, title: outcome.title, error: `"${outcome.title}" is still working; it was not archived.`, hint: ARCHIVE_TARGET_WORKING_HINT };
-      }
-      if (outcome.kind === "self_archive_while_working") {
-        return { ok: false, code: outcome.kind, sessionId, title: outcome.title, error: "A working session cannot archive itself.", hint: SELF_ARCHIVE_WHILE_WORKING_HINT };
-      }
-      return { ok: false, sessionId, error: "Session archive was cancelled or could not be confirmed" };
-    },
-  }), [archiveDisabledReason, archiveSession, opencodeClient]);
-  useControlAction(archiveControlAction);
 
   const groupCreateControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.group.create",

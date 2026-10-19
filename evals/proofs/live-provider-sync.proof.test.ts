@@ -72,7 +72,7 @@ for (const repetition of [1, 2, 3]) {
       await user.click("Change model");
       await probe.eventually(() => world.runtime(), {
         within: 60_000, label: "the signed-in organization runs v2 chat with live provider sync",
-        until: (status) => status.chatRouting === true && status.liveProviderSync === true,
+        until: (status) => status.running === true && status.liveProviderSync === true,
       });
       const models = await world.catalog("riley", [baseline]);
       expect(models).toHaveLength(2);

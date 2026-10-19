@@ -1,6 +1,5 @@
 import { browserScript, locate } from "@openwork/cdp";
 import { fileURLToPath } from "node:url";
-import { resolveEvalEngine } from "@openwork/env";
 import type { Den, Seed } from "@openwork/env";
 import { evalIn as rawEvalIn } from "@openwork/behaviors";
 import type { DenFetchResult, DenSession } from "@openwork/behaviors";
@@ -86,7 +85,7 @@ export function mcpCallBody(id: number, name: string, args: Record<string, unkno
 }
 
 export async function connectorBranding(seed: Seed) {
-  const engine = resolveEvalEngine();
+  const engine = "v2";
   const proof = `Channel list ${crypto.randomUUID()}`;
   const prompt = "List three of my Slack channels.";
   const failurePrompt = "Read the three latest items in my Slack history.";
@@ -95,7 +94,7 @@ export async function connectorBranding(seed: Seed) {
   const toolArguments = { limit: 3 };
   const inputSchema = { type: "object", properties: { limit: { type: "integer" } }, required: ["limit"] };
   const search = (name: string) => ({ query: `Slack ${name}`, type: "mcp", limit: 1 });
-  const steps = (name: string) => engine === "v2" ? [{
+  const steps = (name: string) => [{
     tool: "execute",
     arguments: { code: `
       const found = await tools["openwork-cloud"].search_capabilities(${JSON.stringify(search(name))});
@@ -103,10 +102,7 @@ export async function connectorBranding(seed: Seed) {
       const catalog = result.matches ? result : JSON.parse(result.content[0].text);
       return await tools["openwork-cloud"].execute_capability({ name: catalog.matches[0].name, body: ${JSON.stringify(toolArguments)} });
     ` },
-  }] : [
-    { tool: "search_capabilities", arguments: search(name) },
-    { tool: "execute_capability", arguments: { body: toolArguments }, argumentsFrom: "capability-search" },
-  ];
+  }];
   const { den, webPort } = await denForAppWeb(seed, {
     org: { name: "Connector tool display", admin: { name: "Connector Admin" } },
     mocks: { connector: seed.mock({

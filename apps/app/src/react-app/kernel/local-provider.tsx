@@ -46,9 +46,6 @@ export type LocalPreferences = {
    * back to stable elsewhere.
    */
   releaseChannel: ReleaseChannel;
-  featureFlags: {
-    workspaceRunMode: boolean;
-  };
   /**
    * Set to true after the user completes the welcome/onboarding flow
    * (creates or connects their first workspace). When false and the
@@ -89,7 +86,6 @@ const INITIAL_PREFS: LocalPreferences = {
   defaultModel: null,
   selectedAgent: null,
   releaseChannel: "stable",
-  featureFlags: { workspaceRunMode: false },
   hasCompletedOnboarding: false,
   analyticsEnabled: true,
   desktopNotifications: DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,

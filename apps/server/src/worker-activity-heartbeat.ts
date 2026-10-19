@@ -1,5 +1,4 @@
-import { externalFetch } from "./server-fetch.js";
-import { createWorkspaceOpencodeClient } from "./server.js";
+import { externalFetch, loopbackFetch } from "./server-fetch.js";
 import type { ServerConfig } from "./types.js";
 
 const DEFAULT_ACTIVITY_WINDOW_MS = 5 * 60_000;
@@ -28,16 +27,6 @@ export type WorkerActivityHeartbeatPayload = {
   lastActivityAt: string | null;
   openSessionCount: number;
 };
-
-export type EngineForcePolicy = { upgrade: boolean };
-
-/** Missing policy means an older Den, not an instruction to clear local policy. */
-export function readEngineForcePolicy(response: unknown): EngineForcePolicy | undefined {
-  if (!isRecord(response) || !isRecord(response.enginePolicy)) return undefined;
-  const policy = response.enginePolicy;
-  if (typeof policy.upgrade !== "boolean") return undefined;
-  return { upgrade: policy.upgrade };
-}
 
 type HeartbeatEnv = Record<string, string | undefined>;
 type HeartbeatFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -129,7 +118,6 @@ export async function postWorkerActivityHeartbeat(input: {
   sessions: readonly unknown[];
   fetchImpl?: HeartbeatFetch;
   now?: () => number;
-  onEnginePolicy?: (policy: EngineForcePolicy) => void | Promise<void>;
 }): Promise<WorkerActivityHeartbeatPayload | null> {
   if (!input.config.enabled) return null;
 
@@ -149,23 +137,25 @@ export async function postWorkerActivityHeartbeat(input: {
   });
 
   if (!response.ok) throw new Error(`heartbeat_failed:${response.status}`);
-  // Older Dens may return an empty body. An explicit false clears forced
-  // upgrade policy; a missing policy leaves bootstrap flags unchanged.
-  const body: unknown = await response.json().catch(() => undefined);
-  const policy = readEngineForcePolicy(body);
-  if (policy) await input.onEnginePolicy?.(policy);
   return payload;
 }
 
+/** The active workspace's conversations, read through this server's own engine proxy. */
 async function listOpenSessions(config: ServerConfig): Promise<readonly unknown[]> {
   const workspace = config.workspaces[0];
   if (!workspace) return [];
-  const opencode = createWorkspaceOpencodeClient(config, workspace);
-  const result = await opencode.session.list({ limit: 200 });
-  if (result.data != null) return result.data;
-  if (result.error === undefined) throw new Error("opencode_empty_response");
-  const upstreamStatus = result.response?.status;
-  throw new Error(upstreamStatus === undefined ? "opencode_request_failed" : `opencode_request_failed:${upstreamStatus}`);
+  const host = config.host === "0.0.0.0" || config.host === "::" ? "127.0.0.1"
+    : config.host.includes(":") ? `[${config.host}]` : config.host;
+  const response = await loopbackFetch(
+    `http://${host}:${config.port}/workspace/${encodeURIComponent(workspace.id)}/opencode2/api/session?limit=200`,
+    { headers: { Authorization: `Bearer ${config.token}` }, signal: AbortSignal.timeout(10_000) },
+  );
+  if (!response.ok) throw new Error(`opencode_request_failed:${response.status}`);
+  const payload: unknown = await response.json();
+  const data = isRecord(payload) && "data" in payload ? payload.data : payload;
+  const items = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.items) ? data.items : null;
+  if (!items) throw new Error("opencode_empty_response");
+  return items;
 }
 
 function errorMessage(error: unknown): string {
@@ -180,7 +170,6 @@ export function startWorkerActivityHeartbeat(
     fetchImpl?: HeartbeatFetch;
     listSessions?: () => Promise<readonly unknown[]>;
     now?: () => number;
-    onEnginePolicy?: (policy: EngineForcePolicy) => void | Promise<void>;
   },
 ): WorkerActivityHeartbeatHandle | null {
   const heartbeatConfig = resolveWorkerActivityHeartbeatConfig(options?.env);
@@ -193,26 +182,20 @@ export function startWorkerActivityHeartbeat(
   });
 
   const listSessions = options?.listSessions ?? (() => listOpenSessions(config));
-  let inFlight: Promise<void> | undefined;
-  const runHeartbeat = (): Promise<void> => {
-    if (inFlight) return inFlight;
-    inFlight = Promise.resolve().then(listSessions)
+  const runHeartbeat = () => {
+    void listSessions()
       .then((sessions) => postWorkerActivityHeartbeat({
         config: heartbeatConfig,
         sessions,
         fetchImpl: options?.fetchImpl,
         now: options?.now,
-        onEnginePolicy: options?.onEnginePolicy,
       }))
-      .then(() => undefined)
       .catch((error) => {
         logger.log("warn", "Worker activity heartbeat failed", { error: errorMessage(error) });
-      })
-      .finally(() => { inFlight = undefined; });
-    return inFlight;
+      });
   };
 
-  void runHeartbeat();
-  const interval = setInterval(() => void runHeartbeat(), heartbeatConfig.intervalMs);
+  runHeartbeat();
+  const interval = setInterval(runHeartbeat, heartbeatConfig.intervalMs);
   return { stop: () => clearInterval(interval) };
 }

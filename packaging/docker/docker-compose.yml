@@ -6,7 +6,8 @@ services:
       args:
         # Keep this in sync with apps/server/package.json if you want a pinned release.
         OPENWORK_SERVER_VERSION: 0.18.4
-        OPENCODE_VERSION: 1.17.11
+        # Keep this equal to constants.json `opencodeV2Version`.
+        OPENCODE2_VERSION: 2.0.26
     ports:
       - "8787:8787"
     environment:

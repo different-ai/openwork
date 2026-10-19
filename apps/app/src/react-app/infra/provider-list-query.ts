@@ -6,13 +6,11 @@ import type { Client, ModelRef, ProviderListItem } from "../../app/types";
 import { unwrap } from "../../app/lib/opencode";
 import { dispatchNewProviders, subscribeProviderCatalogChanges, type ProviderCatalogScope } from "../../app/lib/provider-events";
 import { liveProviderSyncStatusQueryKey, usesLiveProviderSync, type LiveProviderSyncStatus } from "../domains/connections/provider-auth/live-provider-sync";
-import type { ConfigProvidersResponse, ProviderListResponse } from "@opencode-ai/sdk/v2/client";
+import type { ConfigProvidersResponse, ProviderListResponse } from "@/app/lib/opencode-types";
 
 export const PROVIDER_LIST_CACHE_MS = 5 * 60 * 1000;
 // Connected providers only: what pickers, availability checks and defaults read.
 const PROVIDER_LIST_QUERY_ROOT = ["opencode-provider-list"] as const;
-// Every provider the engine knows (~6 MB on v1), for connecting a new one.
-const PROVIDER_CATALOG_QUERY_ROOT = ["opencode-provider-catalog"] as const;
 const SAVED_PROVIDER_LIST_PREFIX = "openwork.providerList.v1:";
 
 export type ConnectedProviderSnapshot = Array<{
@@ -46,27 +44,14 @@ export function providerListQueryKey(input: {
   ] as const;
 }
 
-export function providerCatalogQueryKey(input: {
-  baseUrl?: string | null;
-  directory?: string | null;
-}) {
-  return [
-    ...PROVIDER_CATALOG_QUERY_ROOT,
-    input.baseUrl?.trim() ?? "",
-    input.directory?.trim() ?? "",
-  ] as const;
-}
-
 export async function refreshProviderListQueries(queryClient: QueryClient) {
   await queryClient.invalidateQueries({ queryKey: PROVIDER_LIST_QUERY_ROOT });
-  await queryClient.invalidateQueries({ queryKey: PROVIDER_CATALOG_QUERY_ROOT });
   await queryClient.refetchQueries({ queryKey: PROVIDER_LIST_QUERY_ROOT, type: "active" });
 }
 
 /** Drop account-sensitive provider snapshots when the Den session ends. */
 export function clearProviderListQueries(queryClient: QueryClient) {
   queryClient.removeQueries({ queryKey: PROVIDER_LIST_QUERY_ROOT });
-  queryClient.removeQueries({ queryKey: PROVIDER_CATALOG_QUERY_ROOT });
   connectedProviderSnapshots.clear();
   connectedProviderSnapshotChanges.clear();
   clearSavedProviderLists();
@@ -78,10 +63,7 @@ export function providerListFromConnected(value: ConfigProvidersResponse): Provi
   return { all, connected: all.map((provider) => provider.id), default: value.default ?? {} };
 }
 
-/**
- * Connected providers only. On v1 `/config/providers` answers in a few
- * milliseconds with ~30 KB, where `/provider` sends the whole ~6 MB catalog.
- */
+/** Connected providers only. */
 export async function fetchProviderList(input: {
   client: Client;
   baseUrl?: string | null;
@@ -95,43 +77,6 @@ export async function fetchProviderList(input: {
   recordConnectedProviderSnapshot(input, value);
   saveProviderList(input.directory, value);
   return value;
-}
-
-/** Every provider the engine knows, connected or not. Only for connecting a new provider. */
-export async function fetchProviderCatalog(input: {
-  client: Client;
-  directory?: string | null;
-}): Promise<ProviderListResponse> {
-  return unwrap(
-    await input.client.provider.list({
-      directory: input.directory?.trim() || undefined,
-    }),
-  );
-}
-
-export function ensureProviderCatalogQuery(
-  queryClient: QueryClient,
-  input: {
-    client: Client;
-    baseUrl?: string | null;
-    directory?: string | null;
-  },
-) {
-  const options = {
-    queryKey: providerCatalogQueryKey(input),
-    queryFn: () => fetchProviderCatalog(input),
-    gcTime: PROVIDER_LIST_CACHE_MS,
-  };
-  const state = queryClient.getQueryState(options.queryKey);
-  const baseUrl = input.baseUrl ?? "";
-  const liveProviderSync = usesLiveProviderSync({
-    baseUrl,
-    status: queryClient.getQueryData<LiveProviderSyncStatus>(liveProviderSyncStatusQueryKey(baseUrl)),
-  });
-  if (liveProviderSync && (state?.isInvalidated || state?.fetchStatus === "fetching")) {
-    return queryClient.fetchQuery({ ...options, staleTime: 0 });
-  }
-  return queryClient.ensureQueryData({ ...options, staleTime: PROVIDER_LIST_CACHE_MS });
 }
 
 const savedProviderSchema = z.custom<ProviderListItem>(
@@ -376,7 +321,6 @@ function invalidateProviderCatalogScope(queryClient: QueryClient, scope: {
   setTimeout(() => {
     pending.delete(key);
     void queryClient.invalidateQueries({ queryKey: providerListQueryKey(scope), exact: true });
-    void queryClient.invalidateQueries({ queryKey: providerCatalogQueryKey(scope), exact: true });
   }, 50);
 }
 

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { CloudProviderSync, type CloudProviderDenSession } from "../src/cloud-provider-sync.js";
 import { EnvService } from "../src/env-file.js";
-import { createEngineV2Preview, resolveLiveProviderSyncForEngineStart, shouldSyncLiveProviderOwnerTransition, shouldWaitForMirroredProviders, waitForEngineV2Catalog } from "../src/engine-v2-preview.js";
+import { createEngineV2Preview, resolveLiveProviderSyncForEngineStart, shouldWaitForMirroredProviders, waitForEngineV2Catalog } from "../src/engine-v2-preview.js";
 import { managedDesktopPolicy } from "../src/managed-desktop-policy.js";
 import { serve } from "../src/serve-node.js";
 import { renderOpencodeV2Config, type OpencodeV2ProviderSpec } from "../src/managed-opencode-v2.js";
@@ -148,8 +148,6 @@ test("late signed-in hydration activates once; runtime kill does not resume an o
     assert.equal(engine.status().liveProviderSync, true);
     await engine.setLiveProviderSync(false);
     assert.equal(engine.status().liveProviderSync, true, "effective owner is frozen despite a killed rollout");
-    await engine.setChatRouting(false);
-    assert.equal(engine.status().liveProviderSync, false, "v1 selection always uses the old path");
   } finally { await engine.stop(); await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -163,13 +161,6 @@ test("every next-engine start resolves the fresh rollout and fails closed", asyn
   assert.equal(reads, 2);
   assert.equal(await resolveLiveProviderSyncForEngineStart(async () => { throw new Error("Den unavailable"); }), false);
   assert.equal(await resolveLiveProviderSyncForEngineStart(), false);
-});
-
-test("flag-off engine switches do not trigger a new cloud sync pass", () => {
-  assert.equal(shouldSyncLiveProviderOwnerTransition(false, false, false), false);
-  assert.equal(shouldSyncLiveProviderOwnerTransition(true, false, false), true);
-  assert.equal(shouldSyncLiveProviderOwnerTransition(false, true, false), true);
-  assert.equal(shouldSyncLiveProviderOwnerTransition(false, false, true), true);
 });
 
 test("Gateway-only live mode performs no old catalog reads or push/readiness waits", async () => {

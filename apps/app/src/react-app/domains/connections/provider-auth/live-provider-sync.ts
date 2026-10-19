@@ -5,8 +5,9 @@ export function liveProviderSyncStatusQueryKey(baseUrl: string) {
 }
 
 export type LiveProviderSyncStatus = {
-  enabled: boolean;
-  chatRouting: boolean;
+  /** Older servers that could switch engines report their selection; v2-only servers omit it. */
+  enabled?: boolean;
+  chatRouting?: boolean;
   liveProviderSync?: boolean;
 };
 
@@ -17,7 +18,7 @@ export function usesLiveProviderSync(input: {
 }) {
   if (!isOpencodeV2BaseUrl(input.baseUrl)) return false;
   if (typeof input.status?.liveProviderSync === "boolean") {
-    return input.status.enabled && input.status.chatRouting && input.status.liveProviderSync;
+    return input.status.enabled !== false && input.status.chatRouting !== false && input.status.liveProviderSync;
   }
   return false;
 }

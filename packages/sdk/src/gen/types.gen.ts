@@ -748,7 +748,6 @@ export type AdminFeature = {
     | "workbotGuidedNavigation"
     | "automationCalendar"
     | "engineV2ForceUpgrade"
-    | "engineV2Upgrade"
     | "remoteSessionEvents"
     | "remoteSessionSubagents"
     | "headlessDurableTurns";
@@ -806,7 +805,6 @@ export type AdminOrganizationsPageResponse = {
       workbotGuidedNavigation: boolean;
       automationCalendar: boolean;
       engineV2ForceUpgrade: boolean;
-      engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       remoteSessionSubagents: boolean;
       headlessDurableTurns: boolean;
@@ -965,15 +963,6 @@ export type AdminOrganizationsPageResponse = {
         override: boolean | null;
         overrideApplies: boolean;
       };
-      engineV2Upgrade: {
-        enabled: boolean;
-        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
-        everyone: boolean;
-        killed: boolean;
-        lock: boolean | null;
-        override: boolean | null;
-        overrideApplies: boolean;
-      };
       remoteSessionEvents: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -1080,7 +1069,6 @@ export type AdminOverviewResponse = {
       workbotGuidedNavigation: boolean;
       automationCalendar: boolean;
       engineV2ForceUpgrade: boolean;
-      engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       remoteSessionSubagents: boolean;
       headlessDurableTurns: boolean;
@@ -1231,15 +1219,6 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       engineV2ForceUpgrade: {
-        enabled: boolean;
-        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
-        everyone: boolean;
-        killed: boolean;
-        lock: boolean | null;
-        override: boolean | null;
-        overrideApplies: boolean;
-      };
-      engineV2Upgrade: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -7481,7 +7460,6 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       workbotGuidedNavigation: boolean;
       automationCalendar: boolean;
       engineV2ForceUpgrade: boolean;
-      engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       remoteSessionSubagents: boolean;
       headlessDurableTurns: boolean;
@@ -7632,15 +7610,6 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       engineV2ForceUpgrade: {
-        enabled: boolean;
-        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
-        everyone: boolean;
-        killed: boolean;
-        lock: boolean | null;
-        override: boolean | null;
-        overrideApplies: boolean;
-      };
-      engineV2Upgrade: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -7743,7 +7712,6 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       workbotGuidedNavigation: boolean;
       automationCalendar: boolean;
       engineV2ForceUpgrade: boolean;
-      engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       remoteSessionSubagents: boolean;
       headlessDurableTurns: boolean;
@@ -7894,15 +7862,6 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       engineV2ForceUpgrade: {
-        enabled: boolean;
-        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
-        everyone: boolean;
-        killed: boolean;
-        lock: boolean | null;
-        override: boolean | null;
-        overrideApplies: boolean;
-      };
-      engineV2Upgrade: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;

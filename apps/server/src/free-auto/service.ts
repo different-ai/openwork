@@ -9,7 +9,6 @@ import type { DesktopFreeHost, ServerConfig } from "../types.js";
 import { ApiError } from "../errors.js";
 import { externalFetch } from "../server-fetch.js";
 import { managedDesktopPolicy } from "../managed-desktop-policy.js";
-import { writeOpenworkRuntimeConfigFile } from "../openwork-runtime-config.js";
 import {
   mergeRuntimeProviderUpdate, readGlobalRuntimeOpencodeConfig,
   runtimeDisabledProviderList, writeGlobalRuntimeOpencodeConfig,
@@ -201,7 +200,6 @@ export class AnonymousInferenceService {
       return changed ? { ...snapshot, provider: mergeRuntimeProviderUpdate(snapshot.provider, { [ANONYMOUS_INFERENCE_PROVIDER_ID]: provider }) } : snapshot;
     });
     if (reason) this.logger.log("warn", `Auto is not registered: ${reason}`);
-    if (changed || this.relayConfigFailed) await writeOpenworkRuntimeConfigFile(this.config);
     this.relayConfigFailed = false;
     return changed;
   }
@@ -233,7 +231,6 @@ export class AnonymousInferenceService {
         disabled_providers: [...new Set([...runtimeDisabledProviderList(runtime).filter((id) => id !== ANONYMOUS_INFERENCE_PROVIDER_ID), ...(enabled ? [] : [ANONYMOUS_INFERENCE_PROVIDER_ID])])],
       }));
       await this.initialize(this.boundPort ?? this.config.port);
-      await writeOpenworkRuntimeConfigFile(this.config);
       return this.preferences();
     });
     this.preferenceQueue = run.then(() => undefined, () => undefined);

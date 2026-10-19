@@ -343,33 +343,40 @@ export async function startCloudRuntimeWitness() {
         });
       }
       if (route === "/workspaces") return json(response, 200, { activeId: "workspace_witness", items: [] });
-      if (method === "POST" && route === "/workspace/workspace_witness/opencode/session") {
+      // OpenCode v2 binds a model to each session; the witness names a fixed one.
+      if (method === "GET" && route === "/workspace/workspace_witness/default-model") {
+        return json(response, 200, { model: { providerID: "witness", modelID: "witness" } });
+      }
+      if (method === "POST" && route === "/workspace/workspace_witness/opencode2/api/session") {
         if (sessionError) return json(response, 400, sessionError);
         const input = await body(request);
-        const session = { id: `ses_witness_${++nextSession}`, sandboxId, title: String(input.title), prompts: [] };
+        const session = { id: typeof input.id === "string" ? input.id : `ses_witness_${++nextSession}`, sandboxId, title: String(input.title), prompts: [] };
         sandbox.sessions.push(session);
         events.push({ sandboxId, operation: "session-create" });
-        return json(response, 200, { id: session.id, title: session.title, directory: "/workspace", time: { created: 1 } });
+        return json(response, 200, { data: { id: session.id, title: session.title, metadata: input.metadata ?? null,
+          location: { directory: "/workspace" }, time: { created: 1 } } });
       }
-      if (method === "GET" && route === "/workspace/workspace_witness/opencode/session/status") return json(response, 200, {});
-      const thread = route.match(/^\/workspace\/workspace_witness\/opencode\/session\/([^/]+)(.*)$/);
+      // v2 lists running sessions only; the witness never runs one.
+      if (method === "GET" && route === "/workspace/workspace_witness/opencode2/api/session/active") return json(response, 200, { data: {} });
+      const thread = route.match(/^\/workspace\/workspace_witness\/opencode2\/api\/session\/([^/]+)(.*)$/);
       if (thread) {
         const session = sandbox.sessions.find((entry) => entry.id === thread[1]);
         if (!session) return json(response, 404, { message: "Session not found" });
-        if (method === "POST" && thread[2] === "/prompt_async") {
+        if (method === "POST" && thread[2] === "/model") return json(response, 200, { data: { id: session.id } });
+        if (method === "POST" && thread[2] === "/prompt") {
           const input = await body(request);
-          for (const part of Array.isArray(input.parts) ? input.parts : []) session.prompts.push(String(record(part).text));
+          session.prompts.push(String(input.text));
           events.push({ sandboxId, operation: "prompt" });
-          return json(response, 200, {});
+          return json(response, 200, { data: {} });
         }
-        if (method === "GET" && thread[2] === "") return json(response, 200, { id: session.id, title: session.title });
-        if (method === "GET" && thread[2] === "/todo") return json(response, 200, []);
-        if (method === "GET" && thread[2] === "/message") return json(response, 200, session.prompts.map((text, index) => ({
-          info: { id: `msg_${index}`, role: "user" }, parts: [{ id: `part_${index}`, type: "text", text }],
-        })));
+        if (method === "GET" && thread[2] === "") return json(response, 200, { data: { id: session.id, title: session.title } });
+        if (method === "GET" && thread[2] === "/message") return json(response, 200, {
+          data: session.prompts.map((text, index) => ({ id: `msg_${index}`, type: "user", text })).reverse(),
+          cursor: { next: null },
+        });
       }
       // The isolated organization has no model providers to materialize.
-      if (route === "/opencode/config") return json(response, 200, {});
+      if (method === "GET" && route === "/runtime-config/providers") return json(response, 200, { provider: {} });
     }
     unexpected.push(`${method} ${path}`);
     json(response, 404, { message: `Unimplemented witness route: ${method} ${path}` });

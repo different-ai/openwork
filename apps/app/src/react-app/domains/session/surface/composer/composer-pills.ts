@@ -1,4 +1,4 @@
-import type { TextPartInput } from "@opencode-ai/sdk/v2/client";
+import type { TextPartInput } from "@/app/lib/opencode-types";
 
 import type { ComposerPart } from "@/app/types";
 import { computerMentionInstruction, isComputerTarget, type ComputerTarget } from "./computer-mentions";
@@ -135,8 +135,8 @@ export function composerPillPromptParts(pill: ComposerPill): [TextPartInput, Tex
     type: "text",
     text: composerPillInstruction(pill),
     synthetic: true,
-    // Preserve selection identity through every send path. v1 still receives
-    // the instruction; the v2 adapter replaces it with a native attachment.
+    // Preserve selection identity through every send path; the v2 adapter
+    // replaces the instruction with a native skill attachment.
     ...(pill.kind === "skill" ? { metadata: { openworkSelectedSkill: { name: pill.name } } } : {}),
   }];
 }

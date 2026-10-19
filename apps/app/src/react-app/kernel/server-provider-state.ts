@@ -1,20 +1,17 @@
 type ServerState = {
   list: string[];
   active: string;
-  healthy: boolean | undefined;
 };
 
 type ServerAction =
   | { type: "ready"; list: string[]; active: string }
   | { type: "active"; active: string }
   | { type: "add"; url: string }
-  | { type: "remove"; url: string }
-  | { type: "healthy"; healthy: boolean | undefined };
+  | { type: "remove"; url: string };
 
 export const initialServerState: ServerState = {
   list: [],
   active: "",
-  healthy: undefined,
 };
 
 function sameServerList(left: string[], right: string[]): boolean {
@@ -47,8 +44,5 @@ export function serverReducer(state: ServerState, action: ServerAction): ServerS
         active: state.active === action.url ? list[0] ?? "" : state.active,
       };
     }
-    case "healthy":
-      if (Object.is(state.healthy, action.healthy)) return state;
-      return { ...state, healthy: action.healthy };
   }
 }

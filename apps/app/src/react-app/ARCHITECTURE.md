@@ -180,5 +180,4 @@ an observable assertion there whenever a row changes.
 
 ## Testing
 
-- Smoke/e2e: `pnpm test:e2e` and `scripts/*.mjs` (health, sessions, events).
 - UI E2E tests: `pnpm evals:e2e` from the repo root drives the real app.

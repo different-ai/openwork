@@ -11,7 +11,7 @@ while (true) {
     const { items } = await list.json();
     if (!Array.isArray(items) || items.length === 0) throw new Error("Workspace missing");
     for (const workspace of items) {
-      const status = await fetch(`${services.engine}/workspace/${encodeURIComponent(workspace.id)}/opencode/session/status`, { headers, signal: AbortSignal.timeout(10_000) });
+      const status = await fetch(`${services.engine}/workspace/${encodeURIComponent(workspace.id)}/opencode2/api/session/active`, { headers, signal: AbortSignal.timeout(10_000) });
       if (!status.ok) throw new Error("Engine session API unavailable");
       await status.json();
     }

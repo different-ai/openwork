@@ -32,7 +32,7 @@ export function installCloudStartupFaults() {
       }
       // Keep the real instance ready while its workspace response is delayed.
       // This tests the distinct connection phase without falsifying boot time.
-      if (mode === "connecting" && ["/workspaces", "/workspace/", "/w/", "/opencode/"].some((prefix) => url.pathname.startsWith(prefix))) {
+      if (mode === "connecting" && ["/workspaces", "/workspace/", "/w/"].some((prefix) => url.pathname.startsWith(prefix))) {
         return holdBody(await originalFetch(input, init), mode);
       }
     }

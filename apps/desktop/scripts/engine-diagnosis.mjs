@@ -5,12 +5,12 @@ import { join, relative } from "node:path";
  * After a failed packaged smoke run: did the app's AI engine (OpenCode) answer?
  *
  * The desktop log records every engine request the OpenWork server proxies, as
- * `GET /workspace/<id>/opencode/<path> <status> <ms>ms (opencode)`. When the
+ * `GET /workspace/<id>/opencode2/<path> <status> <ms>ms (opencode)`. When the
  * engine never becomes ready, every one of them fails (499 cancelled, 5xx) and
  * the journey fails later with an unrelated-looking browser timeout. This turns
  * the kept logs into one plain sentence, plus the engine's own last errors.
  */
-const ENGINE_REQUEST = /^(GET|POST|PUT|PATCH|DELETE) \/workspace\/[^/\s]+\/opencode(\/\S*)? (\d{3}) (\d+)ms \(opencode\)/;
+const ENGINE_REQUEST = /^(GET|POST|PUT|PATCH|DELETE) \/workspace\/[^/\s]+\/opencode2(\/\S*)? (\d{3}) (\d+)ms \(opencode\)/;
 
 function logFiles(directory) {
   if (!existsSync(directory)) return [];

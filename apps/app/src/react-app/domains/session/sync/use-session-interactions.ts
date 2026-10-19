@@ -5,7 +5,6 @@ import { QueryObserver } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { unwrap } from "@/app/lib/opencode";
-import { isOpencodeV2Client } from "@/app/lib/opencode-v2-adapter";
 import type { Client, PendingPermission, PendingQuestion, TodoItem } from "@/app/types";
 import { t } from "@/i18n";
 import { useQueryCacheArrayState, useQueryCacheState } from "@/react-app/infra/query-cache-state";
@@ -95,7 +94,6 @@ type PermissionSnapshot = { startedAt: number; items?: PermissionSeeds };
 type PermissionHydration = {
   controller: AbortController;
   snapshot: PermissionSnapshot;
-  legacy?: { snapshot?: PermissionSnapshot };
   done: boolean;
   release?: () => void;
 };
@@ -113,86 +111,22 @@ function permissionSeed(permission: PendingPermission): PermissionSeeds[number] 
   return { ...permission, always: Array.isArray(permission.always) ? permission.always : [] };
 }
 
-function createInteractionHydration(client: Client, workspaceId: string, sessionId: string, workspaceRoot: string) {
-  const directory = workspaceRoot || undefined;
+function createInteractionHydration(client: Client, workspaceId: string, sessionId: string) {
   const children = new Map<string, PermissionHydration>();
   const queued = new Map<string, PermissionHydration>();
-  const native = isOpencodeV2Client(client) ? client : null;
   let disposed = false;
   let activeReads = 0;
-  let legacy: { controller: AbortController; pending: boolean; failed?: boolean; snapshot?: PermissionSnapshot } | undefined;
-  let questions: {
-    controller: AbortController;
-    pending: boolean;
-    failed?: boolean;
-    snapshot?: { startedAt: number; items: Parameters<typeof seedQuestionState>[2] };
-  } | undefined;
 
   const publishPermission = (id: string, child: PermissionHydration) => {
     if (disposed || child.controller.signal.aborted || children.get(id) !== child) return;
-    const snapshots = [child.legacy?.snapshot, child.snapshot].filter((snapshot) => snapshot?.items !== undefined);
-    if (snapshots.length === 0) return;
+    const snapshot = child.snapshot;
+    if (snapshot.items === undefined) return;
     const current = getReactQueryClient().getQueryData<PendingPermission[]>(permissionKey(workspaceId, id)) ?? [];
-    const retained = current.filter((permission) => {
-      const snapshot = permission.protocol === "v2" ? child.snapshot : child.legacy?.snapshot;
-      return snapshot?.items === undefined || permission.receivedAt >= snapshot.startedAt;
-    });
+    const retained = current.filter((permission) => permission.receivedAt >= snapshot.startedAt);
     const items = new Map<string, PermissionSeeds[number]>();
-    for (const snapshot of snapshots) {
-      for (const item of snapshot?.items ?? []) if (item.sessionID === id) items.set(item.id, item);
-    }
+    for (const item of snapshot.items) if (item.sessionID === id) items.set(item.id, item);
     for (const item of retained) if (!items.has(item.id)) items.set(item.id, permissionSeed(item));
-    const snapshotStartedAt = Math.max(...snapshots.map((snapshot) => snapshot?.startedAt ?? 0));
-    seedPermissionState(workspaceId, id, [...items.values()], { snapshotStartedAt });
-  };
-
-  const publishQuestions = (id: string) => {
-    if (disposed || !children.has(id) || !questions?.snapshot) return;
-    const { items, startedAt: snapshotStartedAt } = questions.snapshot;
-    const current = getReactQueryClient().getQueryData<PendingQuestion[]>(questionKey(workspaceId, id)) ?? [];
-    const ids = new Set(items.map((item) => item.id));
-    seedQuestionState(workspaceId, id, [
-      ...items,
-      ...current.filter((item) => item.receivedAt >= snapshotStartedAt && !ids.has(item.id)),
-    ], { snapshotStartedAt });
-  };
-
-  const refreshShared = (failedOnly = false) => {
-    if (!native && !legacy?.pending && (!failedOnly || legacy?.failed)) {
-      const startedAt = Date.now();
-      const read: NonNullable<typeof legacy> = { controller: new AbortController(), pending: true, snapshot: legacy?.snapshot };
-      legacy = read;
-      for (const child of children.values()) child.legacy = read;
-      void (async () => {
-        try {
-          const items = unwrap(await client.permission.list({ directory }, { signal: read.controller.signal }));
-          if (disposed || read.controller.signal.aborted) return;
-          read.snapshot = { items, startedAt };
-          for (const [id, child] of children) if (child.legacy === read) publishPermission(id, child);
-        } catch {
-          if (!disposed && !read.controller.signal.aborted) read.failed = true;
-        } finally {
-          read.pending = false;
-        }
-      })();
-    }
-    if (!native && !questions?.pending && (!failedOnly || questions?.failed)) {
-      const startedAt = Date.now();
-      const read: NonNullable<typeof questions> = { controller: new AbortController(), pending: true, snapshot: questions?.snapshot };
-      questions = read;
-      void (async () => {
-        try {
-          const items = unwrap(await client.question.list({ directory }, { signal: read.controller.signal }));
-          if (disposed || read.controller.signal.aborted) return;
-          read.snapshot = { items, startedAt };
-          for (const id of children.keys()) publishQuestions(id);
-        } catch {
-          if (!disposed && !read.controller.signal.aborted) read.failed = true;
-        } finally {
-          read.pending = false;
-        }
-      })();
-    }
+    seedPermissionState(workspaceId, id, [...items.values()], { snapshotStartedAt: snapshot.startedAt });
   };
 
   const drain = () => {
@@ -220,11 +154,11 @@ function createInteractionHydration(client: Client, workspaceId: string, session
               child.snapshot.items = items;
               publishPermission(id, child);
             })(),
-            ...(native ? [(async () => {
-              const items = unwrap(await native.listSessionQuestions({ sessionID: id }, { signal: child.controller.signal }));
+            (async () => {
+              const items = unwrap(await client.listSessionQuestions({ sessionID: id }, { signal: child.controller.signal }));
               if (disposed || child.controller.signal.aborted || children.get(id) !== child) return;
               seedQuestionState(workspaceId, id, items, { snapshotStartedAt: child.snapshot.startedAt });
-            })()] : []),
+            })(),
           ]);
         } catch {
         } finally {
@@ -237,22 +171,19 @@ function createInteractionHydration(client: Client, workspaceId: string, session
   };
 
   const newChild = (): PermissionHydration => ({
-    controller: new AbortController(), snapshot: { startedAt: 0 }, legacy, done: false,
+    controller: new AbortController(), snapshot: { startedAt: 0 }, done: false,
   });
   const refresh = () => {
     if (disposed) return;
-    refreshShared();
     for (const [id, child] of children) {
-      if (child.done) {
-        const next = newChild();
-        children.set(id, next);
-        queued.set(id, next);
-      } else child.legacy = legacy;
+      if (!child.done) continue;
+      const next = newChild();
+      children.set(id, next);
+      queued.set(id, next);
     }
     drain();
   };
   const onVisibilityChange = () => { if (document.visibilityState === "visible") refresh(); };
-  refreshShared();
   window.addEventListener("online", refresh);
   window.addEventListener("focus", refresh);
   document.addEventListener("visibilitychange", onVisibilityChange);
@@ -267,24 +198,17 @@ function createInteractionHydration(client: Client, workspaceId: string, session
         child.controller.abort();
         child.release?.();
       }
-      // A newly discovered child can already be waiting on a request whose
-      // event was missed. Recover failed shared reads, retaining successful
-      // snapshots and sharing any retry already in flight across additions.
-      if (ids.some((id) => !children.has(id))) refreshShared(true);
       for (const id of ids) {
         if (children.has(id)) continue;
         const child = newChild();
         children.set(id, child);
         queued.set(id, child);
         publishPermission(id, child);
-        publishQuestions(id);
       }
       drain();
     },
     dispose() {
       disposed = true;
-      legacy?.controller.abort();
-      questions?.controller.abort();
       for (const child of children.values()) child.controller.abort();
       children.clear();
       queued.clear();
@@ -352,10 +276,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
     return observeActivityRead(client, statusKey(workspaceId, sessionId), workspaceRoot, async (signal, snapshotStartedAt) => {
       const statuses = unwrap(await client.session.status({ directory: workspaceRoot || undefined }, { signal }));
       signal.throwIfAborted();
-      seedSessionStatus(workspaceId, sessionId, statuses[sessionId] ?? { type: "idle" }, {
-        snapshotStartedAt,
-        engine: isOpencodeV2Client(client) ? "v2" : "v1",
-      });
+      seedSessionStatus(workspaceId, sessionId, statuses[sessionId] ?? { type: "idle" }, { snapshotStartedAt });
     }, true);
   }, [client, workspaceId, sessionId, workspaceRoot]);
 
@@ -371,7 +292,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
   const hydrationRef = useRef<ReturnType<typeof createInteractionHydration> | null>(null);
   useEffect(() => {
     if (!client || !workspaceId || !sessionId) return;
-    const hydration = createInteractionHydration(client, workspaceId, sessionId, workspaceRoot);
+    const hydration = createInteractionHydration(client, workspaceId, sessionId);
     hydrationRef.current = hydration;
     return () => {
       hydrationRef.current = null;
@@ -436,9 +357,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
       setQuestionReplyBusy(true);
       try {
         unwrap(
-          await (isOpencodeV2Client(client)
-            ? client.replySessionQuestion({ sessionID: pendingQuestion.sessionID, requestID, answers })
-            : client.question.reply({ requestID, answers, directory: workspaceRoot || undefined })),
+          await client.replySessionQuestion({ sessionID: pendingQuestion.sessionID, requestID, answers }),
         );
         settleQuestionState(workspaceId, pendingQuestion.sessionID, requestID);
       } catch (error) {

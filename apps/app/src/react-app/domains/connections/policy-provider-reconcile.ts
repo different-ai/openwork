@@ -1,5 +1,4 @@
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
-import type { Client } from "@/app/types";
 import type { DesktopAppRestrictionChecker } from "@/app/cloud/desktop-app-restrictions";
 import { updateManagedDisabledProviders } from "./managed-engine-config";
 import { isProviderAllowedByDesktopPolicy } from "./provider-auth/provider-policy";
@@ -27,7 +26,6 @@ export type PolicyProviderReconcilePlan = {
 type PolicyDisabledProvidersStorage = Pick<Storage, "getItem" | "setItem">;
 
 export type ReconcilePolicyDisabledProvidersInput = {
-  opencodeClient: Client | null;
   openworkClient?: OpenworkServerClient | null;
   workspaceId?: string | null;
   workspaceType?: string | null;
@@ -165,12 +163,10 @@ export async function reconcilePolicyDisabledProviders(
   for (const providerId of initialPlan.toDisable) {
     if (disabledProviderIds.includes(providerId)) continue;
     const result = await updateManagedDisabledProviders({
-      opencodeClient: input.opencodeClient,
       openworkClient: input.openworkClient,
       workspaceId: input.workspaceId,
       workspaceType: input.workspaceType,
       disabledProviders: addProviderId(disabledProviderIds, providerId),
-      removeFallbackKeyWhenEmpty: true,
       markReloadRequired: input.markReloadRequired,
     });
     disabledProviderIds = result.disabledProviders;
@@ -187,12 +183,10 @@ export async function reconcilePolicyDisabledProviders(
       continue;
     }
     const result = await updateManagedDisabledProviders({
-      opencodeClient: input.opencodeClient,
       openworkClient: input.openworkClient,
       workspaceId: input.workspaceId,
       workspaceType: input.workspaceType,
       disabledProviders: removeProviderId(disabledProviderIds, providerId),
-      removeFallbackKeyWhenEmpty: true,
       markReloadRequired: input.markReloadRequired,
     });
     disabledProviderIds = result.disabledProviders;

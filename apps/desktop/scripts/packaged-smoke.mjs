@@ -48,7 +48,6 @@ async function bootPackagedDesktop(name, binary, timeout) {
       ...process.env,
       OPENWORK_EVAL_ELECTRON_BINARY: binary,
       OPENWORK_EVAL_ELECTRON_RESOURCES_PREPARED: "1",
-      OPENWORK_EVAL_ENGINE: "v1",
       OPENWORK_EVAL_SURFACES_DIR: join(output, "profiles", name),
       // Profiles are removed when a journey ends; keep each main-process log
       // outside them so CI can upload it.
@@ -74,7 +73,7 @@ try {
   const archive = join(resources, "app.asar");
   if (!existsSync(archive)) throw new Error(`Missing packaged archive: ${archive}`);
   accessSync(binary, constants.X_OK);
-  const sidecar = join(resources, "sidecars/opencode");
+  const sidecar = join(resources, "sidecars/opencode2");
   accessSync(sidecar, constants.X_OK);
   run("sidecar", sidecar, ["--version"], 10_000, {}, output);
   const embedded = pathToFileURL(join(archive, "server/dist/embedded.js")).href;

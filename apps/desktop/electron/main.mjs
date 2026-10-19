@@ -56,7 +56,6 @@ import {
   createLinuxDesktopIntegration,
 } from "./linux-desktop-integration.mjs";
 import { automationRunnerDisabledReason, createComputerDescriber, createDesktopAutomationRunner, normalizeRunnerBaseUrl } from "./automation-runner.mjs";
-import { applyDesktopEngineForcePolicy } from "./engine-force-policy.mjs";
 import {
   desktopActivationRequired,
   enterprisePreactivationCommandAllowed,
@@ -1042,7 +1041,6 @@ if (extraLaunchArgs) {
 }
 configureFakeMediaForTests(app, envFlagEnabled("OPENWORK_ELECTRON_FAKE_MEDIA"));
 const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
-const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
 const FORCE_DESKTOP_REQUIRE_SIGNIN =
   DESKTOP_DISTRIBUTION.requireSignin || envFlagEnabled("OPENWORK_FORCE_SIGNIN");
 const DEFAULT_DESKTOP_REQUIRE_SIGNIN = FORCE_DESKTOP_REQUIRE_SIGNIN;
@@ -1051,50 +1049,6 @@ function envFlagEnabled(name) {
   const value = process.env[name]?.trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
-
-const IDLE_ENGINE_INFO = Object.freeze({
-  running: false,
-  runtime: "direct",
-  managedByServer: false,
-  baseUrl: null,
-  projectDir: null,
-  hostname: null,
-  port: null,
-  opencodeUsername: null,
-  opencodePassword: null,
-  opencodeBinPath: null,
-  opencodeBinSource: null,
-  pid: null,
-  lastStdout: null,
-  lastStderr: null,
-});
-
-const IDLE_OPENWORK_SERVER_INFO = Object.freeze({
-  running: false,
-  host: null,
-  port: null,
-  baseUrl: null,
-  clientToken: null,
-  ownerToken: null,
-  hostToken: null,
-  managedOpencodeBinPath: null,
-  managedOpencodeBinSource: null,
-  logFilePath: null,
-  pid: null,
-  lastStdout: null,
-  lastStderr: null,
-});
-
-const IDLE_ROUTER_INFO = Object.freeze({
-  running: false,
-  version: null,
-  workspacePath: null,
-  opencodeUrl: null,
-  healthPort: null,
-  pid: null,
-  lastStdout: null,
-  lastStderr: null,
-});
 
 let mainWindow = null;
 const pendingDeepLinks = [];
@@ -1354,9 +1308,6 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
     const server = await runtimeManager.openworkServerInfo();
     return { baseUrl: server.baseUrl, token: server.clientToken ?? server.ownerToken };
   },
-  onEnginePolicy: (policy) => applyDesktopEngineForcePolicy(policy, {
-    getServerInfo: () => runtimeManager.openworkServerInfo(),
-  }),
   // Remote-session callers choose a computer by this label, then a workspace and model.
   describeComputer: createComputerDescriber({
     platform: process.platform,
@@ -1828,7 +1779,7 @@ const desktopCommandHandlers = {
       return runtimeManager.engineStop();
   },
   "engineRestart": async (event, ...args) => {
-      return runtimeManager.engineRestart(args[0] ?? {});
+      return runtimeManager.engineRestart();
   },
   "engineInfo": async (event, ...args) => {
       return runtimeManager.engineInfo();
@@ -2105,9 +2056,6 @@ const desktopCommandHandlers = {
   },
   "resetOpenworkState": async (event, ...args) => {
       return workspaceStore.resetOpenworkState();
-  },
-  "opencodeMcpAuth": async (event, ...args) => {
-      return runtimeManager.opencodeMcpAuth(String(args[0] ?? "").trim(), String(args[1] ?? "").trim());
   },
   "__openPath": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();

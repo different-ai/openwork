@@ -1,4 +1,4 @@
-import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
+import type { ProviderListResponse } from "../lib/opencode-types";
 
 const PINNED_PROVIDER_ORDER = ["opencode", "openai", "anthropic"] as const;
 

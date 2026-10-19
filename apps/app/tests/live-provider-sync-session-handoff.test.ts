@@ -27,8 +27,8 @@ test("live V2 delivers Den session before skipping legacy sync and provider read
     const path = new URL(request.url).pathname;
     requests.push(`${request.method} ${path}`);
     if (path === "/den-session") return Response.json({ ok: true });
-    if (path === "/experimental/engine-v2-preview/status") return Response.json({
-      enabled: true, running: true, chatRouting: true, liveProviderSync: true,
+    if (path === "/engine/status") return Response.json({
+      running: true, liveProviderSync: true,
       mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [],
     });
     return Response.json({});
@@ -51,8 +51,8 @@ test("live V2 delivers Den session before skipping legacy sync and provider read
   });
   try {
     expect(await store.runCloudProviderSync("sign_in")).toEqual({ outcome: "handled_live" });
-    expect(requests.filter((request) => request.includes("/den-session") || request.includes("/experimental/"))).toEqual([
-      "PUT /den-session", "GET /experimental/engine-v2-preview/status",
+    expect(requests.filter((request) => request.includes("/den-session") || request.includes("/engine/"))).toEqual([
+      "PUT /den-session", "GET /engine/status",
     ]);
     expect(requests.some((request) => request.includes("/cloud-provider-sync/run"))).toBe(false);
     expect(requests.some((request) => request.includes("/api/model") || request.includes("/api/provider"))).toBe(false);

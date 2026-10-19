@@ -1,7 +1,7 @@
 import { browserScript } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
 import { engineSessionProbe, evalIn } from "@openwork/behaviors";
-import { readBrowserFixtureState, resolveEvalEngine, startBrowserFixture } from "@openwork/env";
+import { readBrowserFixtureState, startBrowserFixture } from "@openwork/env";
 import type { Place, Seed } from "@openwork/env";
 import type { MockAgentToolStep } from "@openwork/labs";
 import { access, mkdir, writeFile } from "node:fs/promises";
@@ -268,7 +268,7 @@ export function agentPermissionsDesktopUnconfigured(seed: Seed, { place }: { pla
 async function desktopWorld(seed: Seed, place: Place, { configured }: { configured: boolean }) {
   const stack = new AsyncDisposableStack();
   try {
-    const engine = resolveEvalEngine();
+    const engine = "v2";
     const world = await agentPermissionsOrganization(seed, { web: true });
     if (configured) await world.saveContractors(contractorDesktopPermissions);
     // The witness model, and the MCP server the folder adds.
@@ -298,7 +298,7 @@ async function desktopWorld(seed: Seed, place: Place, { configured }: { configur
     const pages = await startBrowserFixture(app, { requireSignIn: false });
     stack.defer(() => pages[Symbol.asyncDispose]());
     const session = await createSession(seed, app, "Contractor work");
-    const native = engineSessionProbe({ engine, surface: app, workspaceId: app.workspaceId });
+    const native = engineSessionProbe({ surface: app, workspaceId: app.workspaceId });
 
     /** The engine's own records of the settled calls of `tool` whose input `matches`, oldest first. */
     const toolCalls = async (tool: string, matches: (input: Record<string, unknown>) => boolean) => {
@@ -310,11 +310,9 @@ async function desktopWorld(seed: Seed, place: Place, { configured }: { configur
     /** Every MCP server the engine has, by name, with its status. */
     const mcpServers = async (): Promise<Record<string, string>> => {
       const workspace = encodeURIComponent(app.workspaceId);
-      const { status, body } = await localServer(app, engine === "v2" ? `/workspace/${workspace}/opencode2/api/mcp` : `/workspace/${workspace}/opencode/mcp`);
+      const { status, body } = await localServer(app, `/workspace/${workspace}/opencode2/api/mcp`);
       if (status !== 200) throw new Error(`Listing engine MCP servers failed: HTTP ${status}`);
-      if (engine === "v1") {
-        return Object.fromEntries(Object.entries(isRecord(body) ? body : {}).map(([name, entry]) => [name, isRecord(entry) && typeof entry.status === "string" ? entry.status : "unknown"]));
-      }
+
       const entries = isRecord(body) && Array.isArray(body.data) ? records(body.data) : records(body);
       return Object.fromEntries(entries.flatMap((entry) => typeof entry.name === "string"
         ? [[entry.name, isRecord(entry.status) && typeof entry.status.status === "string" ? entry.status.status : "unknown"]]
@@ -323,7 +321,7 @@ async function desktopWorld(seed: Seed, place: Place, { configured }: { configur
 
     return {
       ...world, engine, app, session, mock, workspacePath,
-      shellTool: engine === "v2" ? "shell" : "bash",
+      shellTool: "shell",
       /** The briefing page Contractors may open, and a report they may not. */
       briefingUrl: `${pages.origin}/briefing`,
       reportUrl: `${pages.origin}/private-report`,
@@ -359,18 +357,15 @@ async function desktopWorld(seed: Seed, place: Place, { configured }: { configur
        * once the engine is running again, or with the reason it did not start.
        */
       async restartEngine(): Promise<{ running: boolean; error: string | null }> {
-        if (engine === "v1") {
-          const { status, body } = await localServer(app, `/workspace/${encodeURIComponent(app.workspaceId)}/engine/reload`, { method: "POST" });
-          return { running: status === 200, error: status === 200 ? null : `HTTP ${status} ${JSON.stringify(body)}` };
-        }
-        // Stop routing before stopping the process; start the process before routing to it.
-        const stopped = await localServer(app, "/experimental/engine-v2-preview", { method: "PUT", body: { enabled: false, chatRouting: false } });
-        if (stopped.status !== 200) return { running: false, error: `Stopping the engine failed: HTTP ${stopped.status}` };
-        const started = await localServer(app, "/experimental/engine-v2-preview", { method: "PUT", body: { enabled: true, chatRouting: true } });
-        if (started.status !== 200) return { running: false, error: `Starting the engine failed: HTTP ${started.status}` };
+
+        await seed.evalIn(app, browserScript(async () => {
+          if (!window.__OPENWORK_ELECTRON__?.invokeDesktop) throw new Error("The desktop restart bridge is unavailable");
+          await window.__OPENWORK_ELECTRON__.invokeDesktop("engineRestart", {});
+          return true;
+        }, []), { awaitPromise: true, timeoutMs: 120_000 });
         const deadline = Date.now() + 120_000;
         while (Date.now() < deadline) {
-          const { body } = await localServer(app, "/experimental/engine-v2-preview/status");
+          const { body } = await localServer(app, "/engine/status");
           const lastError = isRecord(body) && typeof body.lastError === "string" ? body.lastError : null;
           if (isRecord(body) && body.running === true) return { running: true, error: lastError };
           if (lastError) return { running: false, error: lastError };

@@ -1,12 +1,10 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 import {
   readOpenworkCloudMcpHealth,
   type CloudMcpHealth,
   type CloudMcpNativeEngineResolver,
-  type CloudMcpLiveStatusObserver,
   type CloudMcpProviderModelContext,
   type CloudMcpServerMetadata,
 } from "./cloud-mcp-health.js";
@@ -24,7 +22,6 @@ const CONNECT_STATE_FILE = "connect-state.json";
 const CONNECT_STATE_MAX_BYTES = 16 * 1024;
 const CONNECT_SNAPSHOT_MAX_RUNTIME_ROWS = 100;
 const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
-type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 
 type PersistedConnectState = {
   connectEnabled: boolean;
@@ -66,8 +63,6 @@ export type ConnectSnapshotOptions = {
   providerModel?: CloudMcpProviderModelContext;
   serverMetadata?: CloudMcpServerMetadata;
   resolveOpencodeDirectory?: (workspace: WorkspaceInfo) => string | null;
-  createWorkspaceOpencodeClient?: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
-  refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
 };
 
 export type ConnectSnapshotInspection = {
@@ -204,7 +199,7 @@ function normalizeDirectory(directory: string): string {
 }
 
 function workspaceDirectory(workspace: WorkspaceInfo, resolveOpencodeDirectory?: (workspace: WorkspaceInfo) => string | null): string | null {
-  return resolveOpencodeDirectory?.(workspace) ?? (workspace.workspaceType === "local" ? workspace.path : workspace.directory ?? null);
+  return resolveOpencodeDirectory?.(workspace) ?? workspace.path;
 }
 
 export function resolveConnectWorkspace(config: ServerConfig, options: ConnectSnapshotOptions): { workspace: WorkspaceInfo; directory: string | null } | { resolution: "unknown" | "ambiguous"; directory: string | null; reason: string } {
@@ -254,7 +249,7 @@ async function resolveCloudHealth(config: ServerConfig, options: ConnectSnapshot
       },
     };
   }
-  if (!options.createWorkspaceOpencodeClient) {
+  if (!options.nativeEngineForWorkspace) {
     return {
       cloudHealth: null,
       workspace: {
@@ -272,9 +267,7 @@ async function resolveCloudHealth(config: ServerConfig, options: ConnectSnapshot
     providerModel: options.providerModel,
     serverMetadata: options.serverMetadata,
     probe: false,
-    createWorkspaceOpencodeClient: options.createWorkspaceOpencodeClient,
     nativeEngineForWorkspace: options.nativeEngineForWorkspace,
-    refreshRegistrationFromLiveStatus: options.refreshRegistrationFromLiveStatus,
   });
   return {
     cloudHealth,

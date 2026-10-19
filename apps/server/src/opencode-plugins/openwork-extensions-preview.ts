@@ -1,7 +1,5 @@
-import { openworkReadTransport, type OpenworkEngine, type OpenworkEngineReader } from "./openwork-read-transport.js";
-import { assertSessionContinuation } from "./opencode-stop-fence-client.js";
+import { openworkReadTransport, type OpenworkEngineReader } from "./openwork-read-transport.js";
 import { createV2ReadAdapter, readV2SessionActivity } from "../opencode-v2-read-adapter.js";
-import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { ApiError } from "../errors.js";
 import { uiBridgeRequest } from "./openwork-ui-bridge.js";
@@ -10,7 +8,6 @@ import { createGmailAttachmentFulfillment, type GmailAttachmentDependencies } fr
 import { z } from "zod";
 import { sessionActivityFrom, type SessionActivity } from "./session-activity.js";
 import {
-  openworkSessionModelSchema,
   openworkAffordanceResultSchema,
   openworkModelsListResultSchema,
   openworkEngineProviderCatalogSchema,
@@ -107,8 +104,6 @@ const workspaceListEnvelopeSchema = z.object({
 const sessionTimeSchema = z.object({
   created: z.number().optional(),
   updated: z.number().optional(),
-  // Set by the engine when a session is archived; absent or 0 otherwise.
-  archived: z.number().nullish(),
 }).passthrough();
 
 // The engine's session-level model: set from `model` at creation and updated
@@ -178,14 +173,11 @@ type SessionSearchMatchMode = NonNullable<SessionSearchArgs["match"]>;
 type SessionSearchSnippet = { before: string; match: string; after: string };
 type SessionSearchResult = {
   workspaceId: string;
-  /** Engine that holds the session; session.read finds it on either one. */
-  engine: OpenworkEngine;
   workspace: string;
   sessionId: string;
   title: string;
   createdAt: number;
   updatedAt: number;
-  archived: boolean;
   parentId: string | null;
   kind: "title" | "message";
   /** The whole query text appeared contiguously (not just every term). */
@@ -538,21 +530,14 @@ function sessionCreatedAt(session: SessionInfo): number {
   return session.time?.created ?? session.time?.updated ?? 0;
 }
 
-function sessionArchived(session: SessionInfo): boolean {
-  const archived = session.time?.archived;
-  return typeof archived === "number" && archived > 0;
-}
-
-function sessionMetadata(workspace: OpenWorkWorkspace, session: SessionInfo, engine: OpenworkEngine) {
+function sessionMetadata(workspace: OpenWorkWorkspace, session: SessionInfo) {
   return {
     workspaceId: workspace.id,
-    engine,
     workspace: workspaceLabel(workspace),
     sessionId: session.id,
     title: sessionTitle(session),
     createdAt: sessionCreatedAt(session),
     updatedAt: sessionUpdatedAt(session),
-    archived: sessionArchived(session),
     parentId: session.parentID ?? null,
   };
 }
@@ -561,9 +546,6 @@ function sessionPassesFilters(session: SessionInfo, args: SessionSearchArgs): bo
   const createdAt = sessionCreatedAt(session);
   if (args.createdAfter !== undefined && createdAt < sessionTimestampMs(args.createdAfter)) return false;
   if (args.createdBefore !== undefined && createdAt > sessionTimestampMs(args.createdBefore)) return false;
-  const archived = args.archived ?? "include";
-  if (archived === "exclude" && sessionArchived(session)) return false;
-  if (archived === "only" && !sessionArchived(session)) return false;
   return true;
 }
 
@@ -617,19 +599,19 @@ function findTextMatch(text: string, queryLower: string, mode: SessionSearchMatc
   return Number.isFinite(firstIndex) ? { index: firstIndex, length: firstLength, phrase: false } : null;
 }
 
-function titleSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, engine: OpenworkEngine, queryLower: string, mode: SessionSearchMatchMode): SessionSearchResult | null {
+function titleSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, queryLower: string, mode: SessionSearchMatchMode): SessionSearchResult | null {
   const text = `${sessionTitle(session)} ${workspaceLabel(workspace)}`;
   const match = findTextMatch(text, queryLower, mode);
   if (!match) return null;
   return {
-    ...sessionMetadata(workspace, session, engine),
+    ...sessionMetadata(workspace, session),
     kind: "title",
     phrase: match.phrase,
     snippet: buildSessionSnippet(text, match.index, match.length),
   };
 }
 
-function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, engine: OpenworkEngine, messages: SessionMessage[], queryLower: string, mode: SessionSearchMatchMode): SessionSearchResult | null {
+function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, messages: SessionMessage[], queryLower: string, mode: SessionSearchMatchMode): SessionSearchResult | null {
   let fallback: SessionSearchResult | null = null;
   for (const [index, message] of messages.entries()) {
     const role = message.info.role;
@@ -639,7 +621,7 @@ function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo,
     const match = findTextMatch(text, queryLower, mode);
     if (!match) continue;
     const result: SessionSearchResult = {
-      ...sessionMetadata(workspace, session, engine),
+      ...sessionMetadata(workspace, session),
       kind: "message",
       phrase: match.phrase,
       role,
@@ -674,34 +656,18 @@ function filterWorkspaces(workspaces: OpenWorkWorkspace[], workspaceId?: string)
   });
 }
 
-/** The engine this affordance runs on: the read transport's, or v1 when v1 launched the plugin. */
-function ownEngineReader(): OpenworkEngineReader {
-  const transport = openworkReadTransport.getStore();
-  if (!transport) return { engine: "v1", get: serverGet };
-  const activity = transport.activity;
-  return {
-    engine: transport.engine ?? "v1",
-    get: (path) => transport.get(path),
-    ...(activity ? { activity: (workspaceId: string, sessionId: string) => activity(workspaceId, sessionId) } : {}),
-  };
-}
-
 /**
- * Both engines run while v1 is retired, and the v1 history import is
- * one-shot, so a session created on either engine afterwards exists only
- * there. Reads try this affordance's own engine first, then the other one.
- * Every read still passes through the host's engine mount, which keeps its
+ * The engine reader: the request's host transport, or the server's own
+ * engine mount. Every read passes through that mount, which keeps its
  * workspace ownership and session-home checks.
  */
-function engineReaders(): OpenworkEngineReader[] {
-  const own = ownEngineReader();
+function ownEngineReader(): OpenworkEngineReader {
   const transport = openworkReadTransport.getStore();
-  if (transport) return transport.other ? [own, transport.other] : [own];
-  return [own, {
-    engine: "v2",
+  if (transport) return transport;
+  return {
     get: createV2ReadAdapter(serverGet),
     activity: (workspaceId, sessionId) => readV2SessionActivity(serverGet, workspaceId, sessionId),
-  }];
+  };
 }
 
 async function listWorkspaceSessions(reader: OpenworkEngineReader, workspace: OpenWorkWorkspace, limit: number): Promise<SessionInfo[]> {
@@ -740,7 +706,6 @@ async function readWorkspaceSession(workspace: OpenWorkWorkspace, sessionId: str
 const MAX_SESSION_DESCENDANTS = 256;
 const sessionChildrenSchema = z.array(z.object({
   id: z.string().trim().min(1),
-  time: z.object({ archived: z.number().optional() }).optional(),
 }).passthrough());
 
 async function readSessionDescendantIds(get: (path: string) => Promise<unknown>, base: string, sessionId: string): Promise<{ ids: string[]; unknown: number }> {
@@ -760,7 +725,6 @@ async function readSessionDescendantIds(get: (path: string) => Promise<unknown>,
     for (const child of parsed.data) {
       if (seen.has(child.id)) continue;
       seen.add(child.id);
-      if (child.time?.archived) continue;
       if (queue.length >= MAX_SESSION_DESCENDANTS) {
         unknown += 1;
         continue;
@@ -778,7 +742,7 @@ async function readSessionActivity(reader: OpenworkEngineReader, workspace: Open
   const probe = (path: string) => reader.get(`${base}${path}`).catch(() => null);
   const [statuses, permissions, questions, descendants] = await Promise.all([
     probe("/session/status"), probe("/permission"), probe("/question"),
-    session.time?.archived ? { ids: [], unknown: 0 } : readSessionDescendantIds((path) => reader.get(path), base, session.id),
+    readSessionDescendantIds((path) => reader.get(path), base, session.id),
   ]);
   return sessionActivityFrom(statuses, permissions, questions, session.id, descendants.ids, descendants.unknown);
 }
@@ -818,28 +782,17 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
     return { ok: false, error: args.workspaceId ? `No workspace matched ${args.workspaceId}` : "No OpenWork workspaces are available" };
   }
 
-  const sessions: Array<{ workspace: OpenWorkWorkspace; session: SessionInfo; reader: OpenworkEngineReader }> = [];
+  const sessions: Array<{ workspace: OpenWorkWorkspace; session: SessionInfo }> = [];
   const workspaceErrors: Array<{ workspaceId: string; workspace: string; error: string }> = [];
-  const readers = engineReaders();
+  const reader = ownEngineReader();
   await Promise.all(workspaces.map(async (workspace) => {
-    const listed = await Promise.all(readers.map((reader, index) =>
-      listWorkspaceSessions(reader, workspace, SESSION_SEARCH_TITLE_LIST_LIMIT).catch((error: unknown) => {
-        // The other engine is best effort: it may be stopped or never used.
-        if (index === 0) workspaceErrors.push({ workspaceId: workspace.id, workspace: workspaceLabel(workspace), error: unknownErrorMessage(error) });
-        return [];
-      })));
-    // The v1 history import keeps session ids, so an imported chat is listed
-    // by both engines; the affordance's own engine wins.
-    const seen = new Set<string>();
-    listed.forEach((items, index) => {
-      const reader = readers[index];
-      if (!reader) return;
-      for (const session of items) {
-        if (seen.has(session.id)) continue;
-        seen.add(session.id);
-        if (sessionPassesFilters(session, args)) sessions.push({ workspace, session, reader });
-      }
+    const listed = await listWorkspaceSessions(reader, workspace, SESSION_SEARCH_TITLE_LIST_LIMIT).catch((error: unknown) => {
+      workspaceErrors.push({ workspaceId: workspace.id, workspace: workspaceLabel(workspace), error: unknownErrorMessage(error) });
+      return [];
     });
+    for (const session of listed) {
+      if (sessionPassesFilters(session, args)) sessions.push({ workspace, session });
+    }
   }));
 
   sessions.sort((left, right) => sessionUpdatedAt(right.session) - sessionUpdatedAt(left.session));
@@ -848,8 +801,8 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
   const titleMatched = new Set<string>();
 
   // Title phase: every filtered root session, one list call per workspace.
-  for (const { workspace, session, reader } of sessions.slice(scanLimit)) {
-    const titleMatch = titleSearchResult(workspace, session, reader.engine, queryLower, mode);
+  for (const { workspace, session } of sessions.slice(scanLimit)) {
+    const titleMatch = titleSearchResult(workspace, session, queryLower, mode);
     if (!titleMatch) continue;
     titleMatched.add(session.id);
     matches.push(titleMatch);
@@ -857,12 +810,12 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
 
   // Transcript phase: only the scanLimit newest sessions are read. A message
   // match wins the snippet, but the title match still owns the rank.
-  await forEachWithConcurrency(sessionsToScan, SESSION_SEARCH_CONCURRENCY, async ({ workspace, session, reader }) => {
-    const titleMatch = titleSearchResult(workspace, session, reader.engine, queryLower, mode);
+  await forEachWithConcurrency(sessionsToScan, SESSION_SEARCH_CONCURRENCY, async ({ workspace, session }) => {
+    const titleMatch = titleSearchResult(workspace, session, queryLower, mode);
     if (titleMatch) titleMatched.add(session.id);
     try {
       const messages = await readSessionMessages(reader, workspace, session.id, messageLimit);
-      const messageMatch = messageSearchResult(workspace, session, reader.engine, messages, queryLower, mode);
+      const messageMatch = messageSearchResult(workspace, session, messages, queryLower, mode);
       if (messageMatch) matches.push(messageMatch);
       else if (titleMatch) matches.push(titleMatch);
     } catch {
@@ -928,21 +881,6 @@ async function readWorkspaceModels(reader: OpenworkEngineReader, workspace: Open
   )));
 }
 
-async function readSessionOnEitherEngine(
-  workspace: OpenWorkWorkspace,
-  sessionId: string,
-  readers: OpenworkEngineReader[],
-): Promise<{ session: SessionInfo; reader: OpenworkEngineReader } | null> {
-  for (const reader of readers) {
-    try {
-      return { session: await readWorkspaceSession(workspace, sessionId, reader), reader };
-    } catch {
-      // Not on this engine, or not owned by this workspace there.
-    }
-  }
-  return null;
-}
-
 async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
   const parsed = sessionReadArgsSchema.safeParse(rawArgs);
   if (!parsed.success) return sessionArgumentError(parsed.error, rawArgs);
@@ -955,15 +893,10 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
     return { ok: false, error: args.workspaceId ? `No workspace matched ${args.workspaceId}` : "No OpenWork workspaces are available" };
   }
 
-  const readers = engineReaders();
+  const reader = ownEngineReader();
   for (const workspace of workspaces) {
     try {
-      const located = await readSessionOnEitherEngine(workspace, args.sessionId, readers);
-      if (!located) {
-        if (args.workspaceId) break;
-        continue;
-      }
-      const { session, reader } = located;
+      const session = await readWorkspaceSession(workspace, args.sessionId, reader);
       // Reading from the start or summarizing needs the whole transcript.
       const needsFullTranscript = summary || from === "start";
       const [messages, activity, catalog] = await Promise.all([
@@ -974,7 +907,7 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
       const lastError = lastAssistantError(messages);
       const readable = readableMessages(messages);
       const metadata = {
-        ...sessionMetadata(workspace, session, reader.engine),
+        ...sessionMetadata(workspace, session),
         ...activity,
         lastError,
       };
@@ -1029,14 +962,6 @@ async function locateOpenWorkSession(
   return { error: `Session ${sessionId} was not found in matching OpenWork workspaces` };
 }
 
-let lastSendMessageStamp = 0;
-
-/** Same shape the desktop composer uses (see app/lib/opencode.ts createPromptMessageID). */
-function createSendMessageId(): string {
-  lastSendMessageStamp = Math.max(Date.now() * 0x1000, lastSendMessageStamp + 1);
-  return `msg_${lastSendMessageStamp.toString(16).padStart(12, "0").slice(-12)}${randomUUID().replaceAll("-", "").slice(0, 14)}`;
-}
-
 type SendToOpenWorkSessionResult =
   | { ok: false; error: string }
   | {
@@ -1046,18 +971,23 @@ type SendToOpenWorkSessionResult =
     workspaceId: string;
     workspace: string;
     title: string;
-    messageId: string;
     revealed?: boolean;
   };
 
+/** A native engine session path under the workspace's engine mount. */
+function engineSessionPath(workspace: OpenWorkWorkspace, sessionId?: string, suffix = ""): string {
+  const base = `/workspace/${encodeURIComponent(workspace.id)}/opencode2/api/session`;
+  return sessionId ? `${base}/${encodeURIComponent(sessionId)}${suffix}` : base;
+}
+
 /**
- * Append a prompt to an existing session by id through the engine's
- * prompt_async, exactly as session.create starts a new one. The engine
- * persists the user message immediately and returns 204; when that session
- * is mid-turn its running loop picks the message up at the next step instead
- * of rejecting it. Nothing on screen changes unless `reveal` is true, in
- * which case the desktop is asked to open the session afterwards (best
- * effort: the message is already sent if that fails).
+ * Append a prompt to an existing session by id through the engine's prompt
+ * route, exactly as session.create starts a new one. The engine persists the
+ * user message immediately; when that session is mid-turn its running loop
+ * picks the message up at the next step instead of rejecting it. Nothing on
+ * screen changes unless `reveal` is true, in which case the desktop is asked
+ * to open the session afterwards (best effort: the message is already sent if
+ * that fails).
  */
 async function sendToOpenWorkSession(rawArgs: unknown, context: OpenCodeContext): Promise<SendToOpenWorkSessionResult> {
   const parsed = sessionSendArgsSchema.safeParse(rawArgs);
@@ -1066,11 +996,7 @@ async function sendToOpenWorkSession(rawArgs: unknown, context: OpenCodeContext)
   const located = await locateOpenWorkSession(args.sessionId, args.workspaceId);
   if ("error" in located) return { ok: false, error: located.error };
   const { workspace, session } = located;
-  const messageId = createSendMessageId();
-  await postJson(
-    `/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(session.id)}/prompt_async`,
-    { messageID: messageId, parts: [{ type: "text", text: args.text }] },
-  );
+  await postJson(engineSessionPath(workspace, session.id, "/prompt"), { text: args.text });
   const result: SendToOpenWorkSessionResult = {
     ok: true,
     accepted: true,
@@ -1078,7 +1004,6 @@ async function sendToOpenWorkSession(rawArgs: unknown, context: OpenCodeContext)
     workspaceId: workspace.id,
     workspace: workspaceLabel(workspace),
     title: sessionTitle(session),
-    messageId,
   };
   if (args.reveal !== true) return result;
   const opened = await uiControlRequest("command", {
@@ -1162,18 +1087,15 @@ async function resolveContextWorkspace(workspaceId: string | undefined, context:
   throw new Error(`Multiple OpenWork workspaces match; pass workspaceId. Available: ${workspaces.map((workspace) => workspaceLabel(workspace)).join(", ")}`);
 }
 
-/**
- * The engine takes the model in two shapes: `{ id, providerID, variant }` on
- * the session record at creation, and `{ providerID, modelID }` plus a
- * top-level `variant` on prompt_async. Both are sent so the session is bound
- * to the model before its first turn and that turn runs at the same effort.
- */
+/** The engine binds the model, with its reasoning effort, when the session is created. */
 function engineSessionCreateModel(model: OpenworkSessionModel) {
   return { providerID: model.providerId, id: model.modelId, ...(model.variant ? { variant: model.variant } : {}) };
 }
 
-function enginePromptModel(model: OpenworkSessionModel) {
-  return { model: { providerID: model.providerId, modelID: model.modelId }, ...(model.variant ? { variant: model.variant } : {}) };
+/** The native create response wraps the session in `data`, sometimes under `info`. */
+function createdSessionRecord(value: unknown): unknown {
+  const data = isRecord(value) && "data" in value ? value.data : value;
+  return isRecord(data) && isRecord(data.info) ? data.info : data;
 }
 
 function argumentAtPath(value: unknown, path: PropertyKey[]): unknown {
@@ -1226,15 +1148,14 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
     const titleTruncated = typeof inputTitle === "string" && inputTitle.trim().length > 120;
     const model = models[index];
     try {
-      const payload = sessionInfoSchema.parse(await postJson(
-        `/workspace/${encodeURIComponent(workspace.id)}/opencode/session`,
-        { title: session.title, ...(model ? { model: engineSessionCreateModel(model) } : {}) },
-      ));
+      // The native create binds the session's folder through the body.
+      const payload = sessionInfoSchema.parse(createdSessionRecord(await postJson(engineSessionPath(workspace), {
+        title: session.title,
+        ...(model ? { model: engineSessionCreateModel(model) } : {}),
+        ...(workspace.path ? { location: { directory: workspace.path } } : {}),
+      })));
       createdOnEngine = true;
-      await postJson(
-        `/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(payload.id)}/prompt_async`,
-        { ...(model ? enginePromptModel(model) : {}), parts: [{ type: "text", text: session.prompt }] },
-      );
+      await postJson(engineSessionPath(workspace, payload.id, "/prompt"), { text: session.prompt });
       return {
         ok: true,
         sessionId: payload.id,
@@ -1356,10 +1277,6 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown, _options
   "tool.execute.before": fulfillGmailAttachments.before,
   event: fulfillGmailAttachments.event,
   dispose: fulfillGmailAttachments.dispose,
-  "chat.params": async (input: { sessionID: string }) => {
-    if (!serverUrl() || !serverToken()) return;
-    await assertSessionContinuation(postJson, { directory: engineMcpStatusDirectory, sessionID: input.sessionID });
-  },
   "chat.headers": async (input: { sessionID: string; model: { providerID: string }; message: { id: string } }, output: { headers: Record<string, string> }) => {
     // OpenWork Models and free Auto: the desktop relay checks the session against the task the user started.
     if (input.model.providerID !== "openwork" && input.model.providerID !== "openwork-free") return;

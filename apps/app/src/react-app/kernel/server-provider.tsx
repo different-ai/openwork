@@ -9,13 +9,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
-
-import { desktopFetch } from "../../app/lib/desktop";
-import {
-  getOpenworkGatewayOrigin,
-  readOpenworkGatewayDenToken,
-} from "../../app/lib/gateway-runtime";
+import { getOpenworkGatewayOrigin } from "../../app/lib/gateway-runtime";
 import { isWebDeployment } from "../../app/lib/openwork-deployment";
 import { normalizeOpenworkServerUrl } from "../../app/lib/openwork-server";
 import { isDesktopRuntime } from "../../app/utils";
@@ -34,7 +28,6 @@ type ServerContextValue = {
   url: string;
   name: string;
   list: string[];
-  healthy: boolean | undefined;
   setActive: (url: string) => void;
   add: (url: string) => void;
   remove: (url: string) => void;
@@ -63,44 +56,13 @@ function readStoredActive(): string {
   }
 }
 
-function readOpenworkToken(): string {
-  if (getOpenworkGatewayOrigin()) return readOpenworkGatewayDenToken();
-
-  if (typeof window === "undefined") return "";
-  try {
-    return (window.localStorage.getItem("openwork.server.token") ?? "").trim();
-  } catch {
-    return "";
-  }
-}
-
-export function buildOpenworkHealthHeaders(url: string): Record<string, string> | undefined {
-  const token = readOpenworkToken();
-  return token && url.includes("/opencode") ? { Authorization: `Bearer ${token}` } : undefined;
-}
-
-async function checkHealth(url: string): Promise<boolean> {
-  if (!url) return false;
-  const headers = buildOpenworkHealthHeaders(url);
-  const client = createOpencodeClient({
-    baseUrl: url,
-    headers,
-    signal: AbortSignal.timeout(3000),
-    fetch: isDesktopRuntime() ? desktopFetch : undefined,
-  });
-  return client.global
-    .health()
-    .then((result) => result.data?.healthy === true)
-    .catch(() => false);
-}
-
 type ServerProviderProps = {
   children: ReactNode;
   defaultUrl: string;
 };
 
 export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
-  const [{ list, active, healthy }, dispatchServer] = useReducer(serverReducer, initialServerState);
+  const [{ list, active }, dispatchServer] = useReducer(serverReducer, initialServerState);
   const readyRef = useRef(false);
 
   useEffect(() => {
@@ -108,10 +70,10 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
     if (typeof window === "undefined") return;
 
     const gatewayOrigin = getOpenworkGatewayOrigin();
-    const fallback = normalizeServerUrl(gatewayOrigin ? `${gatewayOrigin}/opencode` : defaultUrl) ?? "";
+    const fallback = normalizeServerUrl(gatewayOrigin ?? defaultUrl) ?? "";
 
-    // Hosted web deployments served by OpenWork must reuse the OpenCode proxy
-    // rather than any persisted localhost target.
+    // Hosted web deployments served by OpenWork must reuse that server rather
+    // than any persisted localhost target.
     const forceProxy =
       Boolean(gatewayOrigin) ||
       (!isDesktopRuntime() &&
@@ -147,43 +109,6 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
     }
   }, [active, list]);
 
-  useEffect(() => {
-    if (!active) return;
-    if (isDesktopRuntime() && !active.includes("/opencode")) {
-      // Desktop React routes now talk to OpenWork server workspace-mounted
-      // `/opencode` URLs directly. Ignore old persisted raw OpenCode daemon
-      // URLs here; their ephemeral ports go stale across restarts and otherwise
-      // produce noisy `/global/health` connection-refused polling forever.
-      dispatchServer({ type: "healthy", healthy: undefined });
-      return;
-    }
-    dispatchServer({ type: "healthy", healthy: undefined });
-
-    let cancelled = false;
-    let busy = false;
-
-    const run = () => {
-      if (busy) return;
-      busy = true;
-      void checkHealth(active)
-        .then((next) => {
-          if (cancelled) return;
-          dispatchServer({ type: "healthy", healthy: next });
-        })
-        .finally(() => {
-          busy = false;
-        });
-    };
-
-    run();
-    const interval = window.setInterval(run, 10_000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [active]);
-
   const setActive = useCallback((input: string) => {
     const next = normalizeServerUrl(input);
     if (!next) return;
@@ -207,12 +132,11 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
       url: active,
       name: serverDisplayName(active),
       list,
-      healthy,
       setActive,
       add,
       remove,
     }),
-    [active, add, healthy, list, remove, setActive],
+    [active, add, list, remove, setActive],
   );
 
   return <ServerContext.Provider value={value}>{children}</ServerContext.Provider>;

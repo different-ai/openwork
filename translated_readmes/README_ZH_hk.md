@@ -84,7 +84,7 @@ OpenWork 的設計目標是：
 - Node.js + `pnpm`
 - Rust 工具鏈（用於 Tauri）：通過 `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` 安裝
 - Tauri CLI：`cargo install tauri-cli`
-- 已安裝 OpenCode CLI 且可在 PATH 中使用：`opencode`
+- 已安裝 OpenCode CLI 且可在 PATH 中使用：`opencode2`
 
 ### 安裝
 
@@ -109,19 +109,19 @@ pnpm dev:ui
 ### Arch 用戶：
 
 ```bash
-curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const fs=require('fs'); const parsed=JSON.parse(fs.readFileSync('constants.json','utf8')); process.stdout.write(String(parsed.opencodeVersion||'').trim().replace(/^v/,''));")" --no-modify-path
+node scripts/install-opencode2.mjs --outdir ~/.local/bin
 ```
 
 ## 架構（高級）
 
 - 在**主機模式**中，OpenWork 啟動：
-  - `opencode serve --hostname 127.0.0.1 --port <free-port>`
+  - `opencode2 serve --hostname 127.0.0.1 --port <free-port>`
   - 以您選擇的專案資料夾作為進程工作目錄。
 在主機模式下，OpenWork 直接在您的電腦後台啟動 OpenCode 伺服器。
 當您選擇專案資料夾時，OpenWork 使用該資料夾在本地運行 OpenCode 並將桌面 UI 連接到它。
 這允許您完全在您的機器上運行智能體工作流程、發送提示並查看進度，而無需依賴遠端伺服器。
 
-- UI 使用 `@opencode-ai/sdk/v2/client` 來：
+- UI 透過 OpenWork 伺服器的 `/workspace/:id/opencode2` 代理來：
   - 連接到伺服器
   - 列出/創建會話
   - 發送提示
@@ -160,7 +160,7 @@ pnpm dev:ui
 pnpm typecheck
 pnpm build
 pnpm build:ui
-pnpm test:e2e
+pnpm evals:e2e
 ```
 
 ## 故障排除
@@ -185,8 +185,8 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 ## 貢獻
 
 - 在進行更改之前，請查看 `AGENTS.md` 以及 `VISION.md`、`PRINCIPLES.md`、`PRODUCT.md` 和 `ARCHITECTURE.md` 以了解產品目標。
-- 在倉庫內工作之前，確保已安裝 Node.js、`pnpm`、Rust 工具鏈和 `opencode`。
-- 每次檢出後運行一次 `pnpm install`，然後在打開 PR 之前使用 `pnpm typecheck` 加上 `pnpm test:e2e`（或目標腳本子集）驗證您的更改。
+- 在倉庫內工作之前，確保已安裝 Node.js、`pnpm`、Rust 工具鏈和 `opencode2`。
+- 每次檢出後運行一次 `pnpm install`，然後在打開 PR 之前使用 `pnpm typecheck` 加上 `pnpm evals:e2e`（或目標腳本子集）驗證您的更改。
 - 按照 `AGENTS.md` 中描述的 `.opencode/skills/prd-conventions/SKILL.md` 約定，將新的 PRD 添加到 `packages/app/pr/<name>.md`。
 
 ## 面向團隊和企業

@@ -1,4 +1,4 @@
-import type { FilePartInput } from "@opencode-ai/sdk/v2/client";
+import type { FilePartInput } from "@/app/lib/opencode-types";
 
 const FIRST_LINE_LOCAL_PATH_RE = /(?:file:\/\/[^\s"'`<>]+|~\/[^\s"'`<>]+|[A-Za-z]:[\\/][^\s"'`<>]+|(?<![:/])\/[A-Za-z0-9._~+%/-]*[\/.][A-Za-z0-9._~+%/-]*)/g;
 const TRAILING_PUNCTUATION_RE = /[),.;:]+$/;

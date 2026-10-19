@@ -91,13 +91,12 @@ export type McpAppResource = {
   prefersBorder: boolean;
 };
 
-export type McpAppLaunchContext = { sessionId: string | null; readOnly: boolean; engine?: "v1" | "v2" };
+export type McpAppLaunchContext = { sessionId: string | null; readOnly: boolean };
 
 type McpAppLaunch = {
   workspaceId: string;
   workspaceRoot: string;
   sessionId: string | null;
-  engine: "v1" | "v2";
   serverName: string;
   toolName: string;
   resourceUri: string;
@@ -190,7 +189,6 @@ function bindLaunch(input: { serverConfig: ServerConfig; workspaceId: string; wo
     ? mcpAppResourceDigest(app) : undefined;
   launches.set(launchId, {
     workspaceId: input.workspaceId, workspaceRoot: input.workspaceRoot, sessionId: input.context.sessionId,
-    engine: input.context.engine ?? "v1",
     serverName: app.serverName, toolName: app.toolName, resourceUri: app.resourceUri,
     connectionId: typeof input.launch?.arguments?.connectionId === "string" ? input.launch.arguments.connectionId : undefined,
     fingerprint, resourceDigest, expiresAt,
@@ -1082,7 +1080,6 @@ export async function resolveSameServerMcpAppResource(input: {
 export async function callMcpAppTool(input: {
   launchId?: string;
   sessionId?: string | null;
-  engine?: "v1" | "v2";
   serverConfig: ServerConfig;
   workspaceId: string;
   workspaceRoot: string;
@@ -1104,7 +1101,6 @@ export async function callMcpAppTool(input: {
     if (input.serverConfig.readOnly || !launch || liveLaunches(input.serverConfig).get(launchId) !== launch
       || launch.workspaceId !== input.workspaceId || launch.workspaceRoot !== input.workspaceRoot
       || launch.sessionId !== input.sessionId || launch.serverName !== input.serverName
-      || launch.engine !== (input.engine ?? "v1")
       || launch.resourceUri !== input.resourceUri) throw staleLaunch();
   };
   assertLive();

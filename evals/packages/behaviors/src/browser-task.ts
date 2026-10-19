@@ -133,19 +133,31 @@ export async function readBrowserTabMetrics(app: Surface, targetId: string): Pro
   } finally { client.close(); }
 }
 
-/** Pure transcript decoding; pending tools have no output to disclose. */
+/** Text of a completed native tool result; running tools have none. */
+function toolResultText(state: Record<string, unknown>): string | undefined {
+  if (state.status !== "completed" || !Array.isArray(state.content)) return undefined;
+  const text = state.content.flatMap((item: unknown) => record(item) && item.type === "text" && typeof item.text === "string" ? [item.text] : []);
+  return text.length ? text.join("\n") : undefined;
+}
+
+/**
+ * Pure decoding of an OpenCode v2 message page (`{ data }`, newest first);
+ * pending tools have no output to disclose.
+ */
 export function browserConversation(value: unknown) {
-  if (!Array.isArray(value)) throw new Error("The engine returned no conversation.");
+  if (!record(value) || !Array.isArray(value.data)) throw new Error("The engine returned no conversation.");
   const calls: Array<{ name: string; status: string; output?: BrowserTaskReply }> = [];
   const answers: string[] = [];
-  for (const message of value) {
-    if (!record(message) || !record(message.info) || message.info.role !== "assistant" || !Array.isArray(message.parts)) continue;
-    for (const part of message.parts) {
+  for (const message of [...value.data].reverse()) {
+    if (!record(message) || (message.role ?? message.type) !== "assistant" || !Array.isArray(message.content)) continue;
+    for (const part of message.content) {
       if (!record(part)) continue;
       if (part.type === "text" && typeof part.text === "string") answers.push(part.text);
-      if (part.type !== "tool" || typeof part.tool !== "string" || !record(part.state)) continue;
-      calls.push({ name: part.tool, status: string(part.state.status),
-        ...(typeof part.state.output === "string" ? { output: parseBrowserTaskReply(JSON.parse(part.state.output)) } : {}) });
+      const name = typeof part.name === "string" ? part.name : part.tool;
+      if (part.type !== "tool" || typeof name !== "string" || !record(part.state)) continue;
+      const output = toolResultText(part.state);
+      calls.push({ name, status: string(part.state.status),
+        ...(output === undefined ? {} : { output: parseBrowserTaskReply(JSON.parse(output)) }) });
     }
   }
   return { calls, answer: answers.at(-1) };

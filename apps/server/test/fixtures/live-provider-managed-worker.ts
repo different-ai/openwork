@@ -332,12 +332,6 @@ try {
   assert.ok(flagReads >= 3, "rollout is freshly resolved for every child start");
   console.log("Passed managed 14B: fresh managed boot with Den rollout unavailable does NOT enable cached live rollout");
 
-  // This checks server ownership/routing only. It deliberately does not claim a V1 binary run.
-  await engine?.setChatRouting(false);
-  assert.equal(engine?.status().liveProviderSync, false);
-  assert.equal(engine?.status().chatRouting, false);
-  assert.ok((await readGlobalRuntimeOpencodeConfig(config)).provider?.[gatewayID]);
-  console.log("Passed managed 12 V1 routing regression: choosing V1 retains legacy materialized config (not a V1 engine execution)");
 } finally {
   await stop();
   for (const stream of streams) stream.end();

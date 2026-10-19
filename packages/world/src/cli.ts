@@ -582,7 +582,7 @@ the logins or keys each placement needs (with the fix), and ready-to-run command
 pnpm world plan <name> --place <place> checks those requirements without creating anything; world up checks them again.
 World scripts run in the foreground by default; use --detach for background lifecycle receipts.
 Use --env KEY only for nonsecret configuration whose value must match before reusing a running world. Never select credentials.
-Desktop previews on local and Daytona also pass the selected keys to the app (for example OPENWORK_ENGINE_V2_PREVIEW=1 ... --env OPENWORK_ENGINE_V2_PREVIEW).
+Desktop previews on local and Daytona also pass the selected keys to the app (for example OPENWORK_DEV_MODE=1 ... --env OPENWORK_DEV_MODE).
 --source composes ${composing.map(([name]) => name).join(", ")}; --seed composes ${composing.filter(([, guide]) => guideSeeds(guide).length > 0).map(([name]) => name).join(", ")}. Other worlds reject them.
 Available world scripts:
 ${worlds.join("\n") || "  (none)"}`;

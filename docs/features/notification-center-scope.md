@@ -14,7 +14,7 @@ Only these high-level changes, as on the Paper boards. Device notices (applied
 or pending engine reloads such as “Updates applied · Skill … is now active”,
 update checks, background failures) are not Activity: failures keep their
 toast with its action, and receipts stay silent. Confirmations of the user's
-own actions, such as archiving a session or installing a skill, remain
+own actions, such as installing a skill, remain
 toast-only. Task permission/question prompts and
 native OS notifications keep their separate delivery contracts. Activity does
 not collect all toasts, other people's activity, usage analytics or automation

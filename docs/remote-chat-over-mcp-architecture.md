@@ -47,7 +47,7 @@ Non-goals (v1):
 | MCP gateway | `ee/apps/den-api/src/mcp/agent.ts` | Hosts `search_capabilities` / `execute_capability`; new work plugs in behind them |
 | Capability registry | `ee/apps/den-api/src/mcp/capability-registry.ts` | Fan-out to capability sources — **the extension point** |
 | Worker resolution | den-api `/v1/cloud/gateway/resolve` (used by `ee/apps/den-gateway/src/app.ts`) | Maps a member to their cloud openwork-server instance + auth |
-| openwork-server session API | `apps/server` (`POST /workspace/:id/opencode/session`, native prompt/transcript/status routes) | The actual chat runtime on the worker |
+| openwork-server session API | `apps/server` (`POST /workspace/:id/opencode2/api/session`, native prompt/transcript/status routes) | The actual chat runtime on the worker |
 | Programmatic session client | `packages/headless-threads` | Typed client for driving native sessions from code |
 | Desktop → gateway attach | `apps/app/src/react-app/domains/connections/cloud-mcp-reconciler.ts` + `apps/server/src/routes/cloud-mcp.ts` (token mint: `POST /v1/mcp/token`) | Desktop engines already have `/mcp/agent`; zero desktop changes required for v1 |
 | MCP App cards | `ee/apps/den-api/src/mcp/plugin-flow-app.ts` pattern + `packages/mcp-apps` | Render an "Open in OpenWork Web" card |
@@ -60,8 +60,8 @@ Desktop chat (engine)                den-api (/mcp/agent)              Cloud wor
 agent calls                          capability-registry
 search_capabilities ───────────────▶  └─ remote-session source
 execute_capability                       │ resolve member worker
- "remoteSession.create" ───────────▶     │  (cloud/gateway/resolve) ──▶ POST /workspace/:id/opencode/session
- "remoteSession.send" ─────────────▶     │                        ───▶ POST /workspace/:id/opencode/session/:id/prompt_async
+ "remoteSession.create" ───────────▶     │  (cloud/gateway/resolve) ──▶ POST /workspace/:id/opencode2/api/session
+ "remoteSession.send" ─────────────▶     │                        ───▶ POST /workspace/:id/opencode2/api/session/:id/prompt
  "remoteSession.read" ─────────────▶     │                        ───▶ GET  native session/message/todo/status routes
                                          └ returns result + MCP App
                                            card linking to OpenWork Web
@@ -191,7 +191,7 @@ What ships today (all reused):
   the gateway capability only **enqueues tasks**; it never touches runner auth.
 - **Execution shape:** the assignment is already `{instructions, model,
   timeoutMs}` and `executeDesktopAutomation` runs it as a **normal visible
-  local session** (`POST /workspace/:id/opencode/session`), returning `sessionId` /
+  local session** (`POST /workspace/:id/opencode2/api/session`), returning `sessionId` /
   `workspaceId` into the Den receipt. Exactly the semantics we want: remote
   work on desktop is a real thread the human can watch and take over.
 - **Built-in extension points:** runner registration declares

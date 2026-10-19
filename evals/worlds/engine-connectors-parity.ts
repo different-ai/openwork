@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { Place, Seed } from "@openwork/env";
 import type { MockAgentToolStep } from "@openwork/labs";
 import { engineParity } from "./engine-parity.ts";
-import { parityRecord } from "./engine-gateway-parity.ts";
+
+function parityRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected a response object");
+  return Object.fromEntries(Object.entries(value));
+}
 
 /** Real capability search and execution in Den; external connector is an owned witness. */
 export async function engineConnectorsParity(seed: Seed, context: { place: Place }) {
@@ -69,9 +73,9 @@ export async function engineConnectorsParity(seed: Seed, context: { place: Place
     /** One turn that runs the Amber Reports capability by its exact name, without searching first. */
     async prepareDirectReport(prompt: string) {
       const call = { name: `mcp:${reports.id}:current_amber_report`, body: {} };
-      const steps: MockAgentToolStep[] = base.engine === "v2" ? [{ tool: "execute", arguments: { code: `
+      const steps: MockAgentToolStep[] = [{ tool: "execute", arguments: { code: `
         try { return await tools["openwork-cloud"].execute_capability(${JSON.stringify(call)}); } catch (error) { return String(error); }
-      ` } }] : [{ tool: "execute_capability", arguments: call }];
+      ` } }];
       await base.prepareTurn(prompt, "The report was not returned", steps, "last-tool-text");
     },
     async connectHealth(repair = false) {
@@ -81,15 +85,12 @@ export async function engineConnectorsParity(seed: Seed, context: { place: Place
     },
     async prepareReport(prompt: string, failed = false) {
       const search = { query: failed ? "unavailable_violet_status" : "current_amber_report", type: "mcp", limit: 1 };
-      const steps: MockAgentToolStep[] = base.engine === "v2" ? [{ tool: "execute", arguments: { code: `
+      const steps: MockAgentToolStep[] = [{ tool: "execute", arguments: { code: `
         const found = await tools["openwork-cloud"].search_capabilities(${JSON.stringify(search)});
         const result = typeof found === "string" ? JSON.parse(found) : found;
         const catalog = result.matches ? result : JSON.parse(result.content[0].text);
         return await tools["openwork-cloud"].execute_capability({ name: catalog.matches[0].name, body: {} });
-      ` } }] : [
-        { tool: "search_capabilities", arguments: search },
-        { tool: "execute_capability", arguments: { body: {} }, argumentsFrom: "capability-search" },
-      ];
+      ` } }];
       await base.prepareTurn(prompt, "The report was not returned", steps, "last-tool-text");
     },
     async [Symbol.asyncDispose]() { await resources.disposeAsync(); },
@@ -98,8 +99,8 @@ export async function engineConnectorsParity(seed: Seed, context: { place: Place
 
 /**
  * A per-member Notion connection the member has not connected yet. The model
- * finds it and tries to use it: v1 as two direct calls, v2 inside one Code Mode
- * `execute`. Den answers with the real `needs_connection` status either way.
+ * finds it and tries to use it inside one Code Mode `execute`. Den answers
+ * with the real `needs_connection` status.
  */
 export async function engineConnectorNeedsSignIn(seed: Seed, context: { place: Place }) {
   await using setup = new AsyncDisposableStack();
@@ -133,7 +134,7 @@ export async function engineConnectorNeedsSignIn(seed: Seed, context: { place: P
     ...base, den,
     async prepareNeedsSignIn(prompt: string, reply: string) {
       const search = { query: "Notion search pages", type: "mcp", limit: 1 };
-      const steps: MockAgentToolStep[] = base.engine === "v2" ? [{ tool: "execute", arguments: { code: `
+      const steps: MockAgentToolStep[] = [{ tool: "execute", arguments: { code: `
         const found = await tools["openwork-cloud"].search_capabilities(${JSON.stringify(search)});
         const result = typeof found === "string" ? JSON.parse(found) : found;
         const catalog = result.matches ? result : JSON.parse(result.content[0].text);
@@ -142,10 +143,7 @@ export async function engineConnectorNeedsSignIn(seed: Seed, context: { place: P
         } catch (error) {
           return String(error);
         }
-      ` } }] : [
-        { tool: "search_capabilities", arguments: search },
-        { tool: "execute_capability", arguments: { body: {} }, argumentsFrom: "capability-search" },
-      ];
+      ` } }];
       await base.prepareTurn(prompt, reply, steps);
     },
     async notionSignedIn() {

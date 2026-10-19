@@ -31,7 +31,6 @@ export const sessionSearchArgsSchema = z.object({
   match: z.enum(["all", "any", "phrase"]).optional().describe("all (default): every whitespace-separated term must appear; any: one term suffices; phrase: the exact query text must appear."),
   createdAfter: sessionTimestampArgSchema.optional().describe("Only sessions created at or after this time (epoch milliseconds or ISO-8601 string)."),
   createdBefore: sessionTimestampArgSchema.optional().describe("Only sessions created at or before this time (epoch milliseconds or ISO-8601 string)."),
-  archived: z.enum(["include", "exclude", "only"]).optional().describe("Archived sessions: include (default), exclude, or only."),
 });
 
 export const sessionReadArgsSchema = z.object({
@@ -152,7 +151,7 @@ function sessionContribution(): OpenworkFeatureContribution {
         id: "session.search",
         kind: "query",
         title: "Find sessions",
-        description: "Search session titles and transcripts without changing the visible workbench. Every root session's title is matched; transcripts are scanned for the `scanLimit` newest sessions only, so when the result's `truncated` is true, retry with a larger `scanLimit` (max 500). Title and phrase matches rank first, then newest `updatedAt`. Each result carries `createdAt`, `archived`, `parentId` and `engine` (v1 or v2, the engine that holds the session).",
+        description: "Search session titles and transcripts without changing the visible workbench. Every root session's title is matched; transcripts are scanned for the `scanLimit` newest sessions only, so when the result's `truncated` is true, retry with a larger `scanLimit` (max 500). Title and phrase matches rank first, then newest `updatedAt`. Each result carries `createdAt` and `parentId`.",
         provider,
         arguments: [
           argument("query", "string", true, "Text to find in session titles or messages."),
@@ -163,7 +162,6 @@ function sessionContribution(): OpenworkFeatureContribution {
           argument("match", "string", false, "all (default): every whitespace-separated term must appear; any: one term suffices; phrase: the exact query text must appear."),
           argument("createdAfter", "unknown", false, "Only sessions created at or after this time (epoch milliseconds or ISO-8601 string)."),
           argument("createdBefore", "unknown", false, "Only sessions created at or before this time (epoch milliseconds or ISO-8601 string)."),
-          argument("archived", "string", false, "Archived sessions: include (default), exclude, or only."),
         ],
         effects: readEffects,
       }),
@@ -171,7 +169,7 @@ function sessionContribution(): OpenworkFeatureContribution {
         id: "session.read",
         kind: "query",
         title: "Read a session transcript",
-        description: "Read messages from a session without opening it. Finds the session on either engine. The result also carries `engine` (v1 or v2), `createdAt`, `archived`, `parentId`, `status` (idle, busy, retry, waiting), `working` (check it before session.archive), and `model` ({ providerId, modelId, variant, displayName?, providerName? } the session is bound to, variant being its reasoning effort; null before a model is bound). Pass `summary: true` to get only the first user message and the last assistant message (what was asked, what was concluded) in one call. Both modes include `lastError` ({ code, message } or null) from the latest assistant info.error before text filtering: end reads inspect only the fetched newest `count` messages; start/summary inspect the whole transcript, even outside displayed text. Null means no assistant error observed in that window; a later assistant without an error clears it. Codes are allowlisted error names (otherwise UnknownError); messages are fixed labels under 160 characters, never arbitrary provider details. Snapshot errors only: event-only failures, including pre-assistant model-not-found, are not observable here.",
+        description: "Read messages from a session without opening it. The result also carries `createdAt`, `parentId`, `status` (idle, busy, retry, waiting), `working`, and `model` ({ providerId, modelId, variant, displayName?, providerName? } the session is bound to, variant being its reasoning effort; null before a model is bound). Pass `summary: true` to get only the first user message and the last assistant message (what was asked, what was concluded) in one call. Both modes include `lastError` ({ code, message } or null) from the latest assistant info.error before text filtering: end reads inspect only the fetched newest `count` messages; start/summary inspect the whole transcript, even outside displayed text. Null means no assistant error observed in that window; a later assistant without an error clears it. Codes are allowlisted error names (otherwise UnknownError); messages are fixed labels under 160 characters, never arbitrary provider details. Snapshot errors only: event-only failures, including pre-assistant model-not-found, are not observable here.",
         provider,
         arguments: [
           argument("sessionId", "string", true, "Session id returned by session.search."),

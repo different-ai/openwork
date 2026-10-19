@@ -824,8 +824,6 @@ export async function launchHeadlessWeb(options: HeadlessWebLaunchOptions): Prom
     OPENWORK_TOKEN: resolvedTokens.token,
     OPENWORK_HOST_TOKEN: resolvedTokens.hostToken,
     OPENWORK_SERVER_CONFIG: serverConfigPath,
-    OPENWORK_MANAGE_OPENCODE: "1",
-    OPENWORK_OPENCODE_BIN: env.OPENWORK_OPENCODE_BIN ?? "opencode",
   };
   const pnpmExecPath = env.npm_execpath?.trim();
   const pnpmCommand = pnpmExecPath ? env.npm_node_execpath?.trim() || "node" : "pnpm";

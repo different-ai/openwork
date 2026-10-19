@@ -55,64 +55,37 @@ export function createDesktopSessionAdapter(options) {
     }
     return local
   }
-  const engine = async (local, signal) => {
-    try {
-      const status = await requestJson(fetchImpl, local.baseUrl, local.token, "/experimental/engine-v2-preview/status", { signal })
-      if (typeof status?.enabled !== "boolean" || typeof status?.chatRouting !== "boolean") {
-        throw new Error("The local runtime did not identify its chat engine")
-      }
-      return status.enabled && status.chatRouting ? "v2" : "v1"
-    } catch (error) {
-      if (error?.status === 404) return "v1"
-      throw error
-    }
-  }
   // Credentials are read anew on every operation. Only native session identity
-  // is cached; after restart probe the actual owning engine, not just today's
-  // chat-routing setting, which might have changed since creation.
+  // is cached.
   const snapshotFor = async (receipt, signal, limit) => {
     const local = await runtime()
     const known = identities.get(key(receipt))
-    const selected = known?.engine ?? await engine(local, signal)
-    const read = async (selectedEngine) => {
-      const client = createWorkspaceSessionClient(local, receipt.workspaceId, fetchImpl, false, selectedEngine)
-      const snapshot = await client.getThreadSnapshot(receipt.sessionId, { signal, ...(limit ? { limit } : {}) })
-      identities.set(key(receipt), { ...known, engine: selectedEngine })
-      return { local, client, snapshot, engine: selectedEngine, model: known?.model, messageId: known?.messageId }
-    }
-    try {
-      return await read(selected)
-    } catch (error) {
-      // Only a missing session permits trying the other engine. Do not turn a
-      // temporarily unreachable engine into a different native target.
-      if (error?.status !== 404) throw error
-      return await read(selected === "v2" ? "v1" : "v2")
-    }
+    const client = createWorkspaceSessionClient(local, receipt.workspaceId, fetchImpl)
+    const snapshot = await client.getThreadSnapshot(receipt.sessionId, { signal, ...(limit ? { limit } : {}) })
+    return { local, client, snapshot, model: known?.model, messageId: known?.messageId }
   }
   const waitingFor = async (native, receipt, signal) => {
     const running = native.snapshot?.status?.type === "busy" || native.snapshot?.status?.type === "retry"
     return running
-      ? await readRemoteSessionWaitingFor(native.local, receipt.workspaceId, receipt.sessionId, native.engine, fetchImpl, signal)
+      ? await readRemoteSessionWaitingFor(native.local, receipt.workspaceId, receipt.sessionId, fetchImpl, signal)
       : null
   }
   return {
-    // Engine selection is dynamic per command. Do not claim V2's native create
-    // deduplication for a runner that can also receive V1 workspace commands.
+    // The native creation id below is derived from the creation owner, not the
+    // runner's own intended session id, so creation is not replayed.
     creation: "at_most_once",
-    // One adapter routes both engine versions. V1 has no atomic admission
-    // primitive, so an uncertain send must not be replayed automatically.
-    sendReplay: "at_most_once",
+    // OpenCode admits a repeated prompt id once, so an uncertain send may be
+    // replayed with the same stable message id.
+    sendReplay: "idempotent",
     async create(command, signal) {
       const operationSignal = bounded(signal)
       const local = await runtime()
       let listed
-      let selectedEngine
       try {
         listed = await requestJson(fetchImpl, local.baseUrl, local.token, "/workspaces", { signal: operationSignal })
-        selectedEngine = await engine(local, operationSignal)
       } catch (error) {
-        // These are read-only preflight probes: creation has not been attempted,
-        // so their failure is definitive, unlike a lost create response below.
+        // This is a read-only preflight probe: creation has not been attempted,
+        // so its failure is definitive, unlike a lost create response below.
         const classified = classifyRemoteSessionCommandError(error)
         throw new SessionRunnerError(classified.code, classified.message)
       }
@@ -123,12 +96,12 @@ export function createDesktopSessionAdapter(options) {
         throw new SessionRunnerError("workspace_unavailable", "The selected workspace is not available on this desktop.")
       }
       const workspaceId = String(workspace.id)
-      const client = createWorkspaceSessionClient(local, workspaceId, fetchImpl, false, selectedEngine)
+      const client = createWorkspaceSessionClient(local, workspaceId, fetchImpl)
       let created
       try {
         // Intentionally no prompt here: a durable native receipt must exist
         // before the core sends the initial stable message ID.
-        const identity = selectedEngine === "v2" && options.creationOwner ? {
+        const identity = options.creationOwner ? {
           id: `ses_${createHash("sha256").update(JSON.stringify([options.creationOwner, workspaceId, command.commandId])).digest("hex")}`,
           metadata: { openworkRemoteSessionOwner: options.creationOwner, openworkRemoteSessionCommand: command.commandId },
         } : {}
@@ -142,31 +115,20 @@ export function createDesktopSessionAdapter(options) {
         throw definitiveFailure(error, true)
       }
       const receipt = { sessionId: created.id, workspaceId }
-      identities.set(key(receipt), { engine: created.engine ?? selectedEngine, model: created.model ?? modelInput(command.model) })
+      identities.set(key(receipt), { model: created.model ?? modelInput(command.model) })
       return receipt
     },
     async send(receipt, input, signal) {
       const operationSignal = bounded(signal)
       try {
         const native = await snapshotFor(receipt, operationSignal, 50)
-        let accepted
-        try {
-          accepted = await native.client.sendTurn(receipt.sessionId, {
-            prompt: input.prompt,
-            messageId: input.messageId,
-            ...(input.model ? { model: modelInput(input.model) } : {}),
-            signal: operationSignal,
-          })
-        } catch (error) {
-          if (native.engine === "v1" && ![400, 401, 403, 404, 409, 422].includes(error?.status)) {
-            // V1 admission is check-then-send, not an atomic idempotency key.
-            // A lost prompt response cannot safely be retried as a new turn.
-            throw new SessionRunnerError("ambiguous_send", "OpenCode V1 did not confirm prompt admission. Inspect the local session; this turn must not be sent again automatically.")
-          }
-          throw error
-        }
+        const accepted = await native.client.sendTurn(receipt.sessionId, {
+          prompt: input.prompt,
+          messageId: input.messageId,
+          ...(input.model ? { model: modelInput(input.model) } : {}),
+          signal: operationSignal,
+        })
         identities.set(key(receipt), {
-          engine: native.engine,
           model: input.model ? modelInput(input.model) : native.model,
           messageId: accepted.messageId ?? input.messageId,
         })
@@ -223,7 +185,7 @@ export function createDesktopSessionAdapter(options) {
           status: observation.status === "silent" ? "running" : observation.status,
           waitingFor: observation.waitingFor ?? null,
           error: observation.error ?? null,
-          engine: native.engine,
+          engine: "v2",
           ...(native.model ? { model: native.model } : {}),
           observedAt: now(),
         })

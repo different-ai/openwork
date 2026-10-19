@@ -10,7 +10,6 @@ export type {
   HeadlessThread,
   HeadlessThreadClient,
   HeadlessThreadClientOptions,
-  HeadlessThreadEngine,
   HeadlessThreadMessage,
   HeadlessThreadMessageError,
   HeadlessThreadMessagePart,

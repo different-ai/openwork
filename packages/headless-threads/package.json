@@ -24,7 +24,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.18.15",
     "zod": "^4.3.6"
   },
   "devDependencies": {

@@ -2,7 +2,7 @@ import type {
   AgentPartInput,
   FilePartInput,
   TextPartInput,
-} from "@opencode-ai/sdk/v2/client";
+} from "@/app/lib/opencode-types";
 
 import type { ComposerDraft, ComposerPart } from "@/app/types";
 import {

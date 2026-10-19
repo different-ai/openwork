@@ -62,8 +62,7 @@
         ".github/scripts/**/*.mjs",
         ".opencode/skills/*/scripts/*.{mjs,js}",
         "worlds/*.ts",
-        "packaging/**/*.mjs",
-        "ee/apps/den-worker-runtime/scripts/*.mjs"
+        "packaging/**/*.mjs"
       ],
       "project": ["**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx}"]
     },

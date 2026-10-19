@@ -7,7 +7,6 @@ type AttentionSession = {
   id: string;
   parentID?: string | null;
   title?: string | null;
-  time?: { archived?: number | null };
 };
 
 export type SessionAttentionSource = {
@@ -42,18 +41,17 @@ export function selectSessionAttention(
   }
 
   const attention = new Map<string, SessionAttention>();
-  for (const [id, session] of inventory) {
+  for (const id of inventory.keys()) {
     if (!id) continue;
     const descendantActivity = { busy: 0, waiting: 0, unknown: 0 };
     let blockedBy: SessionAttentionSource | null = null;
     const visited = new Set([id]);
-    const queue = session.time?.archived ? [] : [...children.get(id) ?? []];
+    const queue = [...children.get(id) ?? []];
     for (let index = 0; index < queue.length; index += 1) {
       const childId = queue[index];
       if (visited.has(childId)) continue;
       visited.add(childId);
       const child = inventory.get(childId);
-      if (child?.time?.archived) continue;
       const status = ownStatus(childId);
       const kind = waitingKind(childId);
       if (!child || status === undefined && !kind) descendantActivity.unknown += 1;

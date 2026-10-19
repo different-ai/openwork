@@ -26,15 +26,11 @@ export function composerDiagnosticBlockers(input: ComposerDiagnosticInput): Send
 }
 
 export function sessionComposerDiagnosticReasons(input: {
-  archiveStateKnown: boolean;
-  archiveHeld: boolean;
   modelTransitioning: boolean;
   modelUnavailable: boolean;
   admissionUnknown: boolean;
 }): SendDiagnosticReason[] {
   const reasons: SendDiagnosticReason[] = [];
-  if (!input.archiveStateKnown) reasons.push("send_archive_unknown");
-  if (input.archiveHeld) reasons.push("send_archive_held");
   if (input.modelTransitioning) reasons.push("send_model_transition");
   if (input.modelUnavailable) reasons.push("send_model_unavailable");
   if (input.admissionUnknown) reasons.push("send_admission_unknown");
