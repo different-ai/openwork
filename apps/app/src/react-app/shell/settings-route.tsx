@@ -84,7 +84,8 @@ import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-a
 import ProviderAuthModal, { PROVIDER_LABELS } from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
 import { keylessProviderIds } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
-import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
+import { AiSettingsView, type ConnectedProvider } from "@/react-app/domains/settings/pages/ai-view";
+import { ProviderKeyShareDialog } from "@/react-app/domains/settings/pages/provider-key-share-dialog";
 // Side-effect imports: register extension config components into the registry.
 import { OllamaConfig } from "@/react-app/domains/settings/ollama-config";
 import "@/react-app/domains/settings/browser-extension-config";
@@ -996,6 +997,21 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     platform.openLink(denDashboardUrl(cloudSession.baseUrl, "gatewayProviders"));
   }, [cloudSession.baseUrl, platform]);
   const autoClient = isDesktopRuntime() && openworkServerSnapshot.openworkServerClient && isLoopbackOpenworkServerUrl(openworkServerSnapshot.openworkServerClient.baseUrl) ? openworkServerSnapshot.openworkServerClient : null;
+  const [sharingProvider, setSharingProvider] = useState<ConnectedProvider | null>(null);
+  const [recentProviderShares, setRecentProviderShares] = useState<Array<{ inferenceProviderId: string; name: string; sharedAt: number }>>([]);
+  useEffect(() => {
+    setSharingProvider(null);
+    setRecentProviderShares([]);
+  }, [cloudSession.baseUrl, cloudSession.authToken, cloudSession.activeOrganization?.id]);
+  const [localKeyMetadata, setLocalKeyMetadata] = useState<Record<string, number>>({});
+  useEffect(() => {
+    let current = true;
+    if (!autoClient) { setLocalKeyMetadata({}); return; }
+    void autoClient.localProviderKeyMetadata().then((value) => {
+      if (current) setLocalKeyMetadata(Object.fromEntries(value.providers.map((provider) => [provider.providerId, provider.savedAt])));
+    }).catch(() => { if (current) setLocalKeyMetadata({}); });
+    return () => { current = false; };
+  }, [autoClient, providerAuthSnapshot.providerAuthBusy, providerConnectedIds]);
   const [autoPreferences, setAutoPreferences] = useState<DesktopFreePreferences | null>(null);
   // Until an operator switches free Auto on, Settings shows no OpenWork Models row for it.
   // Settings has no workspace context: read status from the same local client as preferences.
@@ -1807,6 +1823,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           id: provider.id,
           name: provider.name ?? provider.id,
           source: provider.source,
+          savedAt: localKeyMetadata[provider.id],
         }]
       : [],
   );
@@ -2198,7 +2215,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               }
             }}
             canDisconnectProvider={(provider) =>
-              provider.id.trim().toLowerCase() === "opencode" || provider.source !== "env"
+              provider.id.trim().toLowerCase() === "opencode" || provider.source !== "env" || provider.savedAt !== undefined
             }
             disabledProviders={activeClient ? hiddenProviders : []}
             enablingProviderId={enablingProviderId}
@@ -2237,12 +2254,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onSetAutoEnabled={autoClient ? setAutoEnabled : undefined}
             organizationProviderIds={organizationProviderIds}
             onOpenDen={openProvidersInDen}
+            onShareProvider={setSharingProvider}
             cloudProvidersView={
               <CloudProvidersView
                 key={`${cloudSession.baseUrl}:${cloudSession.activeOrganization?.id ?? "signed-out"}`}
                 embedded
                 onOpenDen={openProvidersInDen}
                 onOpenModelConnections={() => { void platform.openLink(denDashboardUrl(readDenSettings().baseUrl, "modelConnections")); }}
+                recentShares={recentProviderShares}
                 gatewayConnectProviders={gatewayConnectProviders}
                 connectingGatewayProviderId={connectingGatewayProviderId}
                 onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
@@ -2639,6 +2658,21 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         extraItems={checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]}
       />
 
+      {sharingProvider ? <ProviderKeyShareDialog
+        key={`${cloudSession.baseUrl}:${cloudSession.activeOrganization?.id}:${sharingProvider.id}`}
+        provider={sharingProvider}
+        organizationId={cloudSession.isSignedIn ? cloudSession.activeOrganization?.id ?? null : null}
+        client={autoClient}
+        onOpenDen={openProvidersInDen}
+        onClose={() => setSharingProvider(null)}
+        onShared={(result) => {
+          const providerName = sharingProvider.name;
+          setRecentProviderShares((current) => [...current.filter((share) => share.inferenceProviderId !== result.share.inferenceProviderId), { inferenceProviderId: result.share.inferenceProviderId, name: providerName, sharedAt: Date.now() }]);
+          toast.success(`${providerName} is now shared with ${cloudSession.activeOrgName}`, { description: result.localRemoved ? "The stored local key was removed." : "A local copy was kept, or its removal could not be verified.", action: { label: "Open in Den", onClick: openProvidersInDen } });
+          void providerAuthStore.runCloudProviderSync("manual");
+          void providerAuthStore.refreshProviders({ force: true });
+        }}
+      /> : null}
       <ProviderAuthModal
         open={providerAuthSnapshot.providerAuthModalOpen}
         loading={false}

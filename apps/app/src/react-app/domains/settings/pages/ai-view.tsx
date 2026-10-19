@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import { Lock, Plus } from "lucide-react";
+import { Lock, Plus, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { DesktopFreePreferences } from "@/app/lib/openwork-server";
 import { t } from "@/i18n";
 import { gatewayConnectProviderKey, type GatewayConnectProvider, isCloudManagedProviderKey } from "../../connections/provider-auth/cloud-provider-config";
@@ -17,6 +18,7 @@ export type ConnectedProvider = {
   id: string;
   name: string;
   source?: "env" | "api" | "config" | "custom";
+  savedAt?: number;
 };
 
 export type AiSettingsViewProps = {
@@ -58,6 +60,7 @@ export type AiSettingsViewProps = {
   autoBusy?: boolean;
   autoError?: string | null;
   onSetAutoEnabled?: (enabled: boolean) => void | Promise<void>;
+  onShareProvider?: (provider: ConnectedProvider) => void;
   organizationProviderIds?: ReadonlySet<string>;
   onOpenDen?: () => void;
 };
@@ -158,7 +161,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           name={provider.name}
           status={<ProviderStatus tone="ready">Ready to use</ProviderStatus>}
           meta={<ProviderMeta id={provider.id} parts={[deviceSourceLabel(provider.source), props.organizationProviderIds?.has(provider.id) ? `also available from ${props.organizationName || "your organization"}` : null]} />}
-          actions={<Button variant="ghost" disabled={rowsBusy || !ready || !props.canDisconnectProvider(provider)} onClick={() => void props.onDisconnectProvider(provider.id)}>{props.disconnectingProviderId === provider.id ? t("settings.disconnecting") : props.canDisconnectProvider(provider) ? t("settings.disconnect") : t("settings.managed_by_env")}</Button>}
+          actions={<div className="flex shrink-0 items-center gap-1"><Button variant="ghost" disabled={rowsBusy || !ready || !props.canDisconnectProvider(provider)} onClick={() => void props.onDisconnectProvider(provider.id)}>{props.disconnectingProviderId === provider.id ? t("settings.disconnecting") : props.canDisconnectProvider(provider) ? t("settings.disconnect") : t("settings.managed_by_env")}</Button>{props.onShareProvider ? <DropdownMenu><DropdownMenuTrigger render={<Button size="icon" variant="ghost" aria-label={`${provider.name} actions`} />}><MoreHorizontal className="size-4" /></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem disabled={rowsBusy || !ready} onClick={() => props.onShareProvider?.(provider)}>Share with organization</DropdownMenuItem></DropdownMenuContent></DropdownMenu> : null}</div>}
         />)}
         {disabled.map((provider) => <ProviderRow
           key={`disabled:${provider.id}`}

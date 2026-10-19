@@ -60639,6 +60639,417 @@
         ]
       }
     },
+    "/v1/inference-providers/share-local-key/eligibility": {
+      "get": {
+        "operationId": "getV1InferenceProvidersShareLocalKeyEligibility",
+        "x-mcp": false,
+        "tags": [
+          "Inference Providers"
+        ],
+        "summary": "Check device API-key sharing eligibility",
+        "description": "Secret-free preflight for a genuine current user session and joined organization membership. Fresh owners/admins receive eligible=true and organization-scoped teams. Other current members, stale sessions, unsupported providers or disabled Gateway management receive the same direct object with eligible=false, an explicit reason and no teams. API keys are not user sessions.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Check device API-key sharing eligibility",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "organizationId": {
+                      "description": "Den TypeID with 'org_' prefix and a 26-character base32 suffix.",
+                      "format": "typeid",
+                      "type": "string",
+                      "minLength": 30,
+                      "maxLength": 30
+                    },
+                    "memberId": {
+                      "description": "Den TypeID with 'om_' prefix and a 26-character base32 suffix.",
+                      "format": "typeid",
+                      "type": "string",
+                      "minLength": 29,
+                      "maxLength": 29
+                    },
+                    "organizationName": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "teams": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "description": "Den TypeID with 'tem_' prefix and a 26-character base32 suffix.",
+                            "format": "typeid",
+                            "type": "string",
+                            "minLength": 30,
+                            "maxLength": 30
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name"
+                        ]
+                      }
+                    },
+                    "eligible": {
+                      "type": "boolean"
+                    },
+                    "reason": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "organizationId",
+                    "memberId",
+                    "organizationName",
+                    "teams",
+                    "eligible",
+                    "reason"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid sharing request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sign in required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Fresh session and current owner/admin membership required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Transfer conflicts with an earlier request or provider configuration.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Sharing unavailable or outcome unconfirmed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "providerId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "required": true
+          }
+        ]
+      }
+    },
+    "/v1/inference-providers/share-local-key": {
+      "post": {
+        "operationId": "postV1InferenceProvidersShareLocalKey",
+        "x-mcp": false,
+        "tags": [
+          "Inference Providers"
+        ],
+        "summary": "Share a device API key with an organization",
+        "description": "Requires a genuine fresh owner/admin user session; authorization, membership and team scope are re-read from storage. Stores the encrypted API key, provider, default model group, chosen grants and durable receipt in one transaction. Organization/member/requestId retries with matching contents return the same receipt; different contents return 409. Only trusted catalog metadata is read; no upstream credential probe or inference call is made. The receipt acknowledges the committed transfer, not ongoing provider availability.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Share a device API key with an organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "share": {
+                      "type": "object",
+                      "properties": {
+                        "requestId": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "organizationId": {
+                          "description": "Den TypeID with 'org_' prefix and a 26-character base32 suffix.",
+                          "format": "typeid",
+                          "type": "string",
+                          "minLength": 30,
+                          "maxLength": 30
+                        },
+                        "providerId": {
+                          "type": "string"
+                        },
+                        "inferenceProviderId": {
+                          "description": "Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.",
+                          "format": "typeid",
+                          "type": "string",
+                          "minLength": 30,
+                          "maxLength": 30
+                        }
+                      },
+                      "required": [
+                        "requestId",
+                        "organizationId",
+                        "providerId",
+                        "inferenceProviderId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "share"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid sharing request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sign in required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Fresh session and current owner/admin membership required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Transfer conflicts with an earlier request or provider configuration.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Sharing unavailable or outcome unconfirmed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "providerId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  },
+                  "credential": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "api_key"
+                      },
+                      "secret": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 65535
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "secret"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "allMembers": {
+                    "type": "boolean"
+                  },
+                  "teamIds": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "description": "Den TypeID with 'tem_' prefix and a 26-character base32 suffix.",
+                      "format": "typeid",
+                      "type": "string",
+                      "minLength": 30,
+                      "maxLength": 30
+                    }
+                  }
+                },
+                "required": [
+                  "requestId",
+                  "providerId",
+                  "name",
+                  "credential",
+                  "allMembers",
+                  "teamIds"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/inference-providers/inventory/revision": {
       "get": {
         "operationId": "getV1InferenceProvidersInventoryRevision",

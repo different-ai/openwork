@@ -199,6 +199,26 @@ export class EnvService {
     return this.variables.slice();
   }
 
+  async readSecret(key: string): Promise<EnvRecord | null> {
+    await this.ensureLoaded();
+    const entry = this.variables.find((record) => record.key === key);
+    return entry ? { ...entry } : null;
+  }
+
+  async deleteIfUnchanged(expected: EnvRecord, isCurrent: () => void = () => {}): Promise<boolean> {
+    return this.enqueueMutation(async () => {
+      await this.ensureLoaded();
+      isCurrent();
+      const current = this.variables.find((record) => record.key === expected.key);
+      if (!current || current.value !== expected.value || current.updatedAt !== expected.updatedAt) return false;
+      const next = this.variables.filter((record) => record.key !== expected.key);
+      await writeStore(this.path, next);
+      this.variables = next;
+      for (const listener of this.changeListeners) listener();
+      return true;
+    });
+  }
+
   async upsertMany(entries: EnvEntry[]): Promise<void> {
     return this.enqueueMutation(async () => {
       await this.ensureLoaded();
