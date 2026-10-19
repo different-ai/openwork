@@ -11,7 +11,6 @@ export const config = {
     "/pricing",
     "/enterprise",
     "/download",
-    "/trust",
     "/glm-5.2",
     "/alternatives/claude-cowork",
     "/alternatives/claude-cowork-3p",

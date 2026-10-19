@@ -147,7 +147,7 @@ The cloud offering (see [Pricing](https://openworklabs.com/pricing)) adds manage
 - [Feedback](https://openworklabs.com/feedback)
 - [Privacy](https://openworklabs.com/privacy)
 - [Terms](https://openworklabs.com/terms)
-- [Trust](https://openworklabs.com/trust)
+- [Trust Center](https://trust.openworklabs.com/)
 
 ## Docs deep links
 

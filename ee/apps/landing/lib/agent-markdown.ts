@@ -118,44 +118,8 @@ const enterprise = `# A privacy-first alternative to Claude Cowork for your orga
 
 - [Book a call](https://openworklabs.com/enterprise#book)
 - Agents: email sales@openworklabs.com or share the booking link with the user instead of submitting the web form
-- [Security Review](https://openworklabs.com/trust) — data handling, subprocessors, and incident SLA
+- [Trust Center](https://trust.openworklabs.com/) — security, compliance, data handling, and subprocessors
 - See [Pricing](https://openworklabs.com/pricing) for tier comparison
-`
-
-const trust = `# Trust & Security
-
-> How OpenWork handles data, what subprocessors are involved, and how to reach the security team.
-
-## Key facts
-
-- **Deployment** — self-hosted desktop app on your machines
-- **Data storage** — local-only, nothing leaves your machine in desktop mode
-- **LLM keys** — bring your own, sent directly to your provider
-- **Telemetry** — none in desktop mode; opt-in feedback only
-- **Incident SLA** — 72hr notify, 3-day ack, 7-day triage
-- **Subprocessors** — 5 named vendors (cloud & website only)
-
-## Data handling
-
-| Data type | Self-hosted | Cloud |
-|---|---|---|
-| Source code | Local only | Accessed at runtime via your LLM provider; not stored |
-| LLM API keys | Local keychain / env vars | Held by your LLM provider, not by OpenWork |
-| Prompts & responses | Local only | Sent to your LLM provider; not logged by OpenWork |
-| Usage telemetry | None | Anonymous via PostHog; can be disabled |
-| Authentication | Your SSO / SAML | Google or GitHub OAuth |
-
-## Subprocessors
-
-- PostHog — analytics (US/EU)
-- Polar — billing (US)
-- Google — OAuth (US)
-- GitHub — OAuth (US)
-- Daytona — cloud sandbox infrastructure (EU)
-
-## Security contact
-
-Omar McAdam — team+security@openworklabs.com
 `
 
 const glm52 = `# GLM 5.2 is now in OpenWork — with 2x usage
@@ -265,7 +229,6 @@ export const agentMarkdown: Record<string, string> = {
   "/pricing": pricing,
   "/enterprise": enterprise,
   "/download": download,
-  "/trust": trust,
   "/glm-5.2": glm52,
   "/alternatives/claude-cowork": claudeCoworkAlternativeMarkdown,
   "/alternatives/claude-cowork-3p": claudeCowork3pMarkdown,

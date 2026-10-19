@@ -13,6 +13,7 @@ import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
 import { SocTypeIIBadge } from "./soc-type-ii-badge";
 import { HeroDownloadButton } from "./hero-download-button";
+import { TRUST_CENTER_URL } from "../lib/trust-center";
 
 type Props = {
   stars: string;
@@ -113,7 +114,9 @@ export function LandingHome(props: Props) {
                 <span className="font-medium">Combinator</span>
                 </div>
                 <a
-                  href="/trust"
+                  href={TRUST_CENTER_URL}
+                  target="_blank"
+                  rel="noreferrer"
                   aria-label="SOC 2 Type II audit complete. View Trust Center"
                   className="flex shrink-0 items-center gap-3 border-l border-[var(--lp-border)] pl-4 transition-opacity hover:opacity-80"
                 >

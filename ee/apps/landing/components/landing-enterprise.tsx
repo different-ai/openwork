@@ -19,6 +19,7 @@ import { LpSectionHeader } from "./lp-primitives";
 import { LpSsoCard } from "./lp-sso-card";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
+import { TRUST_CENTER_URL } from "../lib/trust-center";
 
 type Props = {
   stars: string;
@@ -259,7 +260,7 @@ export function LandingEnterprise(props: Props) {
                 </div>
               ))}
             </div>
-            <a href="/trust" className="mt-6 inline-flex text-[14px] font-medium text-[var(--lp-ink)] underline underline-offset-4">SOC 2 status, DPA, and subprocessors live in the Trust Center →</a>
+            <a href={TRUST_CENTER_URL} target="_blank" rel="noreferrer" className="mt-6 inline-flex text-[14px] font-medium text-[var(--lp-ink)] underline underline-offset-4">SOC 2 status, DPA, and subprocessors live in the Trust Center →</a>
           </section>
 
           <div className="mt-[120px]"><BookCallForm /></div>
@@ -269,7 +270,7 @@ export function LandingEnterprise(props: Props) {
               heading="Own your AI stack."
               sub="Talk to us about a managed private instance — or self-host the whole thing. Migration from Claude Cowork included."
               primary={{ label: "Book a call →", href: calHref }}
-              secondary={{ label: "Read the security docs", href: "/trust" }}
+              secondary={{ label: "Visit the Trust Center", href: TRUST_CENTER_URL, external: true }}
               trust="Open source · SSO · Audit logs · Your models"
             />
           </div>

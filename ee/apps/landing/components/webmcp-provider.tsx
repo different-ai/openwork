@@ -2,6 +2,8 @@
 
 import { useEffect } from "react"
 
+import { TRUST_CENTER_URL } from "../lib/trust-center"
+
 type ModelContext = {
   provideContext: (context: { tools: Tool[] }) => void | Promise<void>
 }
@@ -20,7 +22,7 @@ const destinations: Record<string, string> = {
   enterprise: "/enterprise",
   cloud: "https://app.openworklabs.com",
   docs: "/docs",
-  trust: "/trust",
+  trust: TRUST_CENTER_URL,
   feedback: "/feedback",
 }
 
