@@ -168,6 +168,16 @@
               ],
               "description": "Calendar: desktop app: Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar. Renders DEN_FEATURE_AUTOMATION_CALENDAR."
             },
+            "workbotMobile": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: phone app: Members can sign in to the Workbot app on iPhone and Android and use Workbot there. Needs Workbot. Renders DEN_FEATURE_WORKBOT_MOBILE."
+            },
             "engineV2ForceUpgrade": {
               "enum": [
                 "",

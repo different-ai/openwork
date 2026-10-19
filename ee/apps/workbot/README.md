@@ -30,6 +30,27 @@ returns at once while their Den session lasts. Den is asked who the person is at
 30 seconds, so a revoked grant or membership signs them out quickly. Changes must come from this site's own origin.
 Signing out revokes the refresh token at Den.
 
+## The phone app
+
+The [Workbot app](../workbot-mobile) for iPhone and Android signs in through Workbot, so Den keeps one return address
+and the phone never holds Den tokens:
+
+1. The app opens `/auth/app/login` in the system's sign-in browser with its own PKCE challenge, its state and its
+   return address.
+2. Workbot sends the person to Den with that challenge. Den returns to Workbot's `/auth/callback`, which hands the
+   code to the app's return address: `/auth/app/callback` on Workbot itself, which iOS and Android open only in the
+   Workbot app they verified against `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json`.
+   Anyone can start a sign-in with a challenge of their own, so the code never goes to an address another app could
+   claim. Private-use schemes are rejected on every deployment, including localhost; phone sign-in requires
+   an HTTPS deployment with verified app links.
+3. The app trades the code and its verifier at `POST /auth/app/token` for a Workbot session, encrypted with
+   `WORKBOT_SESSION_SECRET` like the cookie, and sends it as `Authorization: Bearer`. When the Den tokens inside are refreshed, the response
+   carries the new session in `Workbot-Session`; `POST /auth/app/refresh` renews it before it expires, and
+   `POST /auth/logout` revokes it.
+
+The phone also needs the `workbotMobile` feature. Without it, `/v1/workbot/me` says so and every other request is
+refused with `workbot_mobile_not_enabled`.
+
 ## Configuration
 
 | Variable | | |
@@ -39,6 +60,8 @@ Signing out revokes the refresh token at Den.
 | `WORKBOT_DEN_WEB_URL` | sign-in origin | Den's web app, for the link back and app logos |
 | `WORKBOT_RUNNER_URL`, `WORKBOT_RUNNER_TOKEN` | required | The headless runner and its service token (`HEADLESS_API_TOKEN`) |
 | `WORKBOT_SESSION_SECRET` | required | ≥ 32 characters; encrypts the sign-in cookies. Changing it signs everyone out |
+| `WORKBOT_IOS_TEAM_ID` | unset | The Workbot app's Apple team ID, served in `apple-app-site-association` so iOS returns sign-in to the app. Unset: the iPhone app can't finish signing in |
+| `WORKBOT_ANDROID_CERT_SHA256` | unset | SHA-256 fingerprints of the Android app's signing certificates, comma-separated, served in `assetlinks.json`. Unset: the Android app can't finish signing in |
 | `PORT` / `WORKBOT_PORT` | `3020` | |
 | `WORKBOT_SENTRY_DSN` | unset | Optional Sentry error reports from the server: route errors, sign-in and token refresh failures, `den_unavailable`, runner unreachable or 5xx, live-event relay failures. Stable codes only, never messages, tokens or cookies. Unset sends nothing |
 | `WORKBOT_SENTRY_ENVIRONMENT`, `WORKBOT_SENTRY_RELEASE` | unset, `workbot@<WORKBOT_VERSION>` | Tags on those reports |

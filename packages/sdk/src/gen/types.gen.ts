@@ -747,6 +747,7 @@ export type AdminFeature = {
     | "workbotWorkspaceAssistant"
     | "workbotGuidedNavigation"
     | "automationCalendar"
+    | "workbotMobile"
     | "engineV2ForceUpgrade"
     | "engineV2Upgrade"
     | "remoteSessionEvents"
@@ -805,6 +806,7 @@ export type AdminOrganizationsPageResponse = {
       workbotWorkspaceAssistant: boolean;
       workbotGuidedNavigation: boolean;
       automationCalendar: boolean;
+      workbotMobile: boolean;
       engineV2ForceUpgrade: boolean;
       engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
@@ -956,6 +958,15 @@ export type AdminOrganizationsPageResponse = {
         override: boolean | null;
         overrideApplies: boolean;
       };
+      workbotMobile: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       engineV2ForceUpgrade: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -1079,6 +1090,7 @@ export type AdminOverviewResponse = {
       workbotWorkspaceAssistant: boolean;
       workbotGuidedNavigation: boolean;
       automationCalendar: boolean;
+      workbotMobile: boolean;
       engineV2ForceUpgrade: boolean;
       engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
@@ -1222,6 +1234,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       automationCalendar: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotMobile: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6503,6 +6524,7 @@ export type WorkbotSession = {
   model?: string | null;
   verifyModel?: boolean;
   gatewayModels?: boolean;
+  mobile: boolean;
 };
 
 export type WorkbotRunToken = {
@@ -7480,6 +7502,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       workbotWorkspaceAssistant: boolean;
       workbotGuidedNavigation: boolean;
       automationCalendar: boolean;
+      workbotMobile: boolean;
       engineV2ForceUpgrade: boolean;
       engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
@@ -7623,6 +7646,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       automationCalendar: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotMobile: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -7742,6 +7774,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       workbotWorkspaceAssistant: boolean;
       workbotGuidedNavigation: boolean;
       automationCalendar: boolean;
+      workbotMobile: boolean;
       engineV2ForceUpgrade: boolean;
       engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
@@ -7885,6 +7918,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       automationCalendar: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotMobile: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;

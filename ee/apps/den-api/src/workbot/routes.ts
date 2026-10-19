@@ -75,6 +75,8 @@ const sessionSchema = z.object({
   verifyModel: z.boolean().optional(),
   /** Den authorizes the member's AI Gateway model for every turn; no deployment catalog precheck. */
   gatewayModels: z.boolean().optional(),
+  /** The person can use Workbot from the Workbot phone app (the workbotMobile feature). */
+  mobile: z.boolean(),
 }).meta({ ref: "WorkbotSession" })
 
 const runTokenSchema = z.object({
@@ -333,6 +335,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         model,
         ...(verifyModel ? { verifyModel: true } : {}),
         ...(gatewayModels ? { gatewayModels: true } : {}),
+        mobile: features.workbotMobile,
       })
     },
   )

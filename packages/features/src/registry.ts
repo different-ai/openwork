@@ -158,6 +158,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotMobile: {
+    label: "Workbot: phone app",
+    description: "Members can sign in to the Workbot app on iPhone and Android and use Workbot there. Needs Workbot.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   engineV2ForceUpgrade: {
     label: "Upgrade everyone to OpenCode v2",
     description: "Desktop and web instances copy chats with a backup and switch to OpenCode v2 automatically when idle, without asking for consent.",

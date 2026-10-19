@@ -377,6 +377,7 @@ OpenWork Cloud. Don't change it on a customer install.
 | `workbotWorkspaceAssistant` | `DEN_FEATURE_WORKBOT_WORKSPACE_ASSISTANT` | default off | Members ask Workbot about the document or calendar view they have open, chat without leaving their work, and navigate from a compact sidebar. |
 | `workbotGuidedNavigation` | `DEN_FEATURE_WORKBOT_GUIDED_NAVIGATION` | default off | Workbot offers to open the documents it mentions, and the conversation stays open beside the document. Needs the workspace assistant. |
 | `automationCalendar` | `DEN_FEATURE_AUTOMATION_CALENDAR` | default off | Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar. |
+| `workbotMobile` | `DEN_FEATURE_WORKBOT_MOBILE` | default off | Members can sign in to the Workbot app on iPhone and Android and use Workbot there. Needs Workbot. |
 | `engineV2ForceUpgrade` | `DEN_FEATURE_ENGINE_V2_FORCE_UPGRADE` | default off | Desktop and web instances copy chats with a backup and switch to OpenCode v2 automatically when idle, without asking for consent. |
 | `engineV2Upgrade` | `DEN_FEATURE_ENGINE_V2_UPGRADE` | default off | Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines. |
 | `remoteSessionEvents` | `DEN_FEATURE_REMOTE_SESSION_EVENTS` | default off | MCP clients can subscribe to changes in their remote session receipts and read the current state after reconnecting. |
