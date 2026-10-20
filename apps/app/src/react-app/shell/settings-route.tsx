@@ -73,9 +73,9 @@ import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mc
 import { createOpenworkServerStore, useOpenworkServerStoreSnapshot } from "@/react-app/domains/connections/openwork-server-store";
 import {
   connectGatewayProvider,
+  GatewayModelVerificationError,
   GATEWAY_CONNECT_TIMEOUT_MESSAGE,
   gatewayConnectProviderKey,
-  isGatewaySetConnected,
   type GatewayConnectProvider,
   resolveGatewayConnectProviders,
   resolveGatewayProviderIds,
@@ -823,7 +823,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       window.removeEventListener(denSettingsChangedEvent, cancel);
     };
   }, []);
-  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model: ModelRef }) {
+  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model: ModelRef; verifyOnly?: boolean }) {
     gatewayConnectAbort.current?.abort();
     const controller = new AbortController();
     gatewayConnectAbort.current = controller;
@@ -831,6 +831,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     let synced = false;
     setConnectingGatewayProviderId(gatewayConnectProviderKey(provider));
     try {
+      if (request?.verifyOnly) return await providerAuthStore.confirmGatewayProviderConnection(provider, request.model, signal);
       const connected = await connectGatewayProvider({
         provider,
         signal,
@@ -838,12 +839,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         openUrl: (url) => platform.openLink(url),
         resync: async () => {
           synced = false;
-          const result = await providerAuthStore.runCloudProviderSync("manual");
-          synced = result?.outcome === "handled_server_side";
+          synced = await providerAuthStore.confirmGatewayProviderConnection(provider, request?.model, signal);
         },
-        isConnected: () => synced && (request
-          ? providerAuthStore.isGatewayModelAvailable(provider, request.model)
-          : isGatewaySetConnected(provider, providerAuthStore.getSnapshot().importedCloudProviders)),
+        isConnected: () => synced,
       });
       if (!connected && !signal.aborted && !request) {
         toast.error(GATEWAY_CONNECT_TIMEOUT_MESSAGE, { action: { label: "Retry sign-in", onClick: () => {
@@ -852,6 +850,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       }
       return connected && !signal.aborted;
     } catch (error) {
+      if (!signal.aborted && request && error instanceof GatewayModelVerificationError) throw error;
       if (!signal.aborted && !request) toast.error(describeRouteError(error));
       return false;
     } finally {
@@ -2568,7 +2567,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       providers={gatewayConnectProviders}
       disabledProviders={disabledProviders}
       scopeKey={JSON.stringify([selectedWorkspaceRoot, opencodeBaseUrl, cloudSession.activeOrganization?.id, cloudSession.isSignedIn])}
-      login={(provider, signal, model) => handleConnectGatewayProvider(provider, { signal, model })}
+      login={(provider, signal, model, options) => handleConnectGatewayProvider(provider, { signal, model, verifyOnly: options?.verifyOnly })}
     >
       {props.standaloneExtensions ? (
         <div data-extensions-main-surface className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">

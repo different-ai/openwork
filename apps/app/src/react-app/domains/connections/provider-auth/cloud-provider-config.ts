@@ -173,6 +173,13 @@ export function isGatewayModelReady(
     && snapshot.importedCloudProviders[provider.cloudProviderId]?.modelIds.includes(model.modelID) === true;
 }
 
+export class GatewayModelVerificationError extends Error {
+  constructor() {
+    super("Couldn't verify the current model list. Refresh models to check again.");
+    this.name = "GatewayModelVerificationError";
+  }
+}
+
 export const GATEWAY_CONNECT_POLL_INTERVAL_MS = 10_000;
 export const GATEWAY_CONNECT_POLL_ATTEMPTS = 60;
 export const GATEWAY_CONNECT_TIMEOUT_MESSAGE = "Sign-in has not been confirmed. Check the browser, then refresh AI Providers. If consent expired or was canceled, retry sign-in.";
@@ -212,7 +219,10 @@ export async function connectGatewayProvider(input: {
     if (input.signal.aborted) return false;
     try {
       await input.resync();
-    } catch {
+    } catch (error) {
+      // Reauthorizing cannot repair a failed native catalog read. Let the UI
+      // offer verification-only recovery instead of looping through Login.
+      if (error instanceof GatewayModelVerificationError) throw error;
       continue;
     }
     if (input.signal.aborted) return false;

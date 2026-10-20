@@ -27,7 +27,7 @@ export function shouldRefreshProvidersForReloadEvent(liveProviderSync: boolean) 
 }
 
 export function skipsLegacyProviderRefresh(reason: string, liveProviderSync: boolean) {
-  return liveProviderSync && (reason === "model_picker_open" || reason === "new_chat" || reason === "manual");
+  return liveProviderSync && (reason === "model_picker_open" || reason === "new_chat");
 }
 
 /**

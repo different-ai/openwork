@@ -206,7 +206,12 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     const result = await store.runCloudProviderSync(reason);
     // Native provider/model events invalidate the query in live mode. Never pin a
     // one-shot lifecycle snapshot over that event-driven query.
-    if (liveProviderSyncRef.current || result?.outcome === "handled_live") return null;
+    if (liveProviderSyncRef.current || result?.outcome === "handled_live") {
+      // Explicit Refresh still delivers the current account and rereads the
+      // native query. Only automatic picker/new-chat refreshes are redundant.
+      if (reason === "manual") await store.refreshProviders({ force: true });
+      return null;
+    }
     return store.refreshProviders({ force: true });
   }, [store]);
   const refreshCloudProviderSync = useCallback(async (reason: OrganizationModelsRefreshReason) => {

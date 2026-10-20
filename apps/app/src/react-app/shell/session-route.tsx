@@ -172,8 +172,8 @@ import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-works
 import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types";
 import {
   connectGatewayProvider,
+  GatewayModelVerificationError,
   GATEWAY_CONNECT_TIMEOUT_MESSAGE,
-  isGatewaySetConnected,
   type GatewayConnectProvider,
   isCloudManagedProviderKey,
   resolveGatewayConnectProviders,
@@ -1117,13 +1117,14 @@ export function SessionRoute() {
       window.removeEventListener(denSettingsChangedEvent, cancel);
     };
   }, []);
-  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model: ModelRef }) {
+  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model: ModelRef; verifyOnly?: boolean }) {
     gatewayConnectAbort.current?.abort();
     const controller = new AbortController();
     gatewayConnectAbort.current = controller;
     const signal = request ? AbortSignal.any([controller.signal, request.signal]) : controller.signal;
     let synced = false;
     try {
+      if (request?.verifyOnly) return await sessionProviderAuthStore.confirmGatewayProviderConnection(provider, request.model, signal);
       const connected = await connectGatewayProvider({
         provider,
         signal,
@@ -1131,12 +1132,9 @@ export function SessionRoute() {
         openUrl: (url) => platform.openLink(url),
         resync: async () => {
           synced = false;
-          await refreshCloudProviderSync("manual");
-          synced = sessionProviderAuthStore.getSnapshot().gatewayUsageProviderScope != null;
+          synced = await sessionProviderAuthStore.confirmGatewayProviderConnection(provider, request?.model, signal);
         },
-        isConnected: () => synced && (request
-          ? sessionProviderAuthStore.isGatewayModelAvailable(provider, request.model)
-          : isGatewaySetConnected(provider, sessionProviderAuthStore.getSnapshot().importedCloudProviders)),
+        isConnected: () => synced,
       });
       if (!connected && !signal.aborted && !request) {
         toast.error(GATEWAY_CONNECT_TIMEOUT_MESSAGE, { action: { label: "Retry sign-in", onClick: () => {
@@ -1145,10 +1143,11 @@ export function SessionRoute() {
       }
       return connected && !signal.aborted;
     } catch (error) {
+      if (!signal.aborted && request && error instanceof GatewayModelVerificationError) throw error;
       if (!signal.aborted && !request) toast.error(describeRouteError(error));
       return false;
     }
-  }, [platform, refreshCloudProviderSync, sessionProviderAuthStore]);
+  }, [platform, sessionProviderAuthStore]);
   const refreshOrganizationModelAccess = useCallback(async () => {
     await refreshCloudProviderSync("manual");
   }, [refreshCloudProviderSync]);
@@ -3806,7 +3805,7 @@ export function SessionRoute() {
       disabledProviders={disabledProviderIds}
       selectionRef={gatewayModelSelectionRef}
       scopeKey={JSON.stringify([gatewayProviderScopeKey, gatewayWorkbenchScope, selectedSessionId, modelPickerSessionId, local.prefs.defaultModel, local.prefs.modelVariant, selectedSessionModelSelection, modelPickerSelection])}
-      login={(provider, signal, model) => handleConnectGatewayProvider(provider, { signal, model })}
+      login={(provider, signal, model, options) => handleConnectGatewayProvider(provider, { signal, model, verifyOnly: options?.verifyOnly })}
     >
     {opencodeClient && selectedWorkspaceEndpoint && opencodeBaseUrl && selectedWorkspaceServerToken ? (
       <ReactSessionRuntime

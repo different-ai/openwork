@@ -16,11 +16,11 @@ describe("live provider sync ownership", () => {
         const live = usesLiveProviderSync({ baseUrl,
           status: { enabled: true, chatRouting: true, liveProviderSync } });
         expect(live).toBe(baseUrl === v2 && liveProviderSync);
-        for (const reason of ["model_picker_open", "new_chat", "manual"]) {
+        for (const reason of ["model_picker_open", "new_chat"]) {
           expect(skipsLegacyProviderRefresh(reason, live)).toBe(baseUrl === v2 && liveProviderSync);
         }
         expect(shouldRefreshProvidersForReloadEvent(live)).toBe(!(baseUrl === v2 && liveProviderSync));
-        for (const reason of ["app_launch", "sign_in", "app_resume"]) {
+        for (const reason of ["app_launch", "sign_in", "app_resume", "manual"]) {
           expect(skipsLegacyProviderRefresh(reason, live)).toBe(false);
         }
       });

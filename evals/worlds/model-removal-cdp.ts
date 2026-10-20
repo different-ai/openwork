@@ -4,8 +4,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** An explicit HTTP-edge reply, rather than an application-state override. */
+export class HttpFixtureReply {
+  readonly status: number;
+  readonly headers: Array<{ name: string; value: string }>;
+  readonly body: string;
+  constructor(status: number, headers: Array<{ name: string; value: string }>, body = "") {
+    this.status = status; this.headers = headers; this.body = body;
+  }
+}
+
 /** World-owned native HTTP fault fixture. It never evaluates renderer JavaScript. */
-export async function modelRemovalHttpFixture(app: AppWeb, patterns: string[], respond: (url: URL) => unknown | undefined) {
+export async function modelRemovalHttpFixture(app: Pick<AppWeb, "client" | "webUrl">, patterns: string[], respond: (url: URL) => unknown | Promise<unknown>, observe?: (request: { url: string; method: string }) => void) {
   const endpoint = app.client.webSocketDebuggerUrl;
   if (!endpoint) throw new Error("The model-removal fixture requires browser CDP.");
   const socket = new WebSocket(endpoint);
@@ -32,8 +42,13 @@ export async function modelRemovalHttpFixture(app: AppWeb, patterns: string[], r
   async function paused(params: Record<string, unknown>) {
     const { requestId, request } = params;
     if (typeof requestId !== "string" || !isRecord(request) || typeof request.url !== "string") throw new Error("Malformed Fetch.requestPaused event.");
-    const body = request.method === "GET" ? respond(new URL(request.url)) : undefined;
+    observe?.({ url: request.url, method: typeof request.method === "string" ? request.method : "GET" });
+    const body = request.method === "GET" ? await respond(new URL(request.url)) : undefined;
     if (body === undefined) return command("Fetch.continueRequest", { requestId });
+    if (body instanceof HttpFixtureReply) return command("Fetch.fulfillRequest", {
+      requestId, responseCode: body.status, responseHeaders: body.headers,
+      body: Buffer.from(body.body).toString("base64"),
+    });
     await command("Fetch.fulfillRequest", {
       requestId, responseCode: 200,
       responseHeaders: [

@@ -3,13 +3,13 @@ import type { ModelOption, ModelRef } from "@/app/types";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { gatewayConnectProviderKey, pendingGatewayModelOptions, type GatewayConnectProvider } from "./cloud-provider-config";
+import { GatewayModelVerificationError, gatewayConnectProviderKey, pendingGatewayModelOptions, type GatewayConnectProvider } from "./cloud-provider-config";
 import { beginPendingGatewayModelSelection } from "./pending-gateway-model-selection";
 import { markDisabledModelOptions } from "./assigned-model-options";
 
 const noDisabledProviders: readonly string[] = [];
 
-export type GatewayModelLogin = (provider: GatewayConnectProvider, signal: AbortSignal, model: ModelRef) => Promise<boolean>;
+export type GatewayModelLogin = (provider: GatewayConnectProvider, signal: AbortSignal, model: ModelRef, options?: { verifyOnly: boolean }) => Promise<boolean>;
 
 type Selection = {
   option: ModelOption;
@@ -48,6 +48,7 @@ export function GatewayModelAccessProvider(props: {
   const [selection, setSelection] = useState<Selection | null>(null);
   const selectionRef = useRef<Selection | null>(null);
   const [busy, setBusy] = useState(false);
+  const [verifyOnly, setVerifyOnly] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scope = useRef(props.scopeKey);
   scope.current = props.scopeKey;
@@ -61,6 +62,7 @@ export function GatewayModelAccessProvider(props: {
     selectionRef.current = null;
     setSelection(null);
     setBusy(false);
+    setVerifyOnly(false);
     setError(null);
   }, []);
 
@@ -110,21 +112,30 @@ export function GatewayModelAccessProvider(props: {
     if (!pending.isCurrent()) { cancel(); return; }
     const stillAssigned = props.providers.some((provider) => gatewayConnectProviderKey(provider) === gatewayConnectProviderKey(pending.provider)
       && provider.models?.some((model) => model.id === pending.option.modelID));
-    if (!stillAssigned) { cancel(); return; }
+    // Successful authorization can remove the pending row before a failed
+    // engine read recovers. Verification checks fresh access itself.
+    if (!verifyOnly && !stillAssigned) { cancel(); return; }
     setBusy(true);
     setError(null);
     try {
-      const connected = await props.login(pending.provider, pending.controller.signal, pending.option);
+      const connected = await props.login(pending.provider, pending.controller.signal, pending.option, { verifyOnly });
       if (pending.controller.signal.aborted || selectionRef.current !== pending) return;
       if (!pending.isCurrent()) { cancel(); return; }
       if (connected) {
         cancel();
         pending.commit();
       } else {
-        setError("Sign-in has not been confirmed. Retry Login or Cancel.");
+        setError(verifyOnly ? "This model is not available yet. Refresh models again or Cancel." : "Sign-in has not been confirmed. Retry Login or Cancel.");
       }
-    } catch {
-      if (!pending.controller.signal.aborted && pending.isCurrent()) setError("Sign-in failed. Retry Login or Cancel.");
+    } catch (error) {
+      if (!pending.controller.signal.aborted && pending.isCurrent()) {
+        if (error instanceof GatewayModelVerificationError) {
+          setVerifyOnly(true);
+          setError(error.message);
+        } else {
+          setError("Sign-in failed. Retry Login or Cancel.");
+        }
+      }
     } finally {
       if (selectionRef.current === pending) setBusy(false);
     }
@@ -135,11 +146,11 @@ export function GatewayModelAccessProvider(props: {
       {props.children}
       <Dialog open={selection !== null} onOpenChange={(open) => { if (!open) cancel(); }}>
         <DialogContent className="lg:max-w-sm" showCloseButton={false}>
-          <DialogHeader><DialogTitle>Log in to this provider to use the models</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{verifyOnly ? "Verify model access" : "Log in to this provider to use the models"}</DialogTitle></DialogHeader>
           {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
           <DialogFooter>
             <Button variant="outline" onClick={cancel}>Cancel</Button>
-            <Button disabled={busy} onClick={() => void login()}>Login</Button>
+            <Button disabled={busy} onClick={() => void login()}>{verifyOnly ? "Refresh models" : "Login"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
