@@ -1,6 +1,6 @@
 "use client"
 
-import { useId, useRef, useState, useSyncExternalStore } from "react"
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import type { DynamicToolUIPart } from "ai"
 import { Check, KeyRound, Loader2, Lock } from "lucide-react"
@@ -16,7 +16,7 @@ import { DenReauthNotice } from "@/react-app/domains/cloud/den-reauth-notice"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature"
 import { useOptionalMessageList } from "./message-list-provider"
-import { credentialPromptFromToolPart } from "./credential-prompt"
+import { credentialPromptCalls, credentialPromptFromToolPart } from "./credential-prompt"
 
 export const CREDENTIAL_SAVED_CONTINUE_PROMPT = "I've saved the key. Go ahead."
 
@@ -58,24 +58,51 @@ function failureState(error: unknown, name: string): { phase: Phase; message: st
   return { phase: "entry", message: "OpenWork couldn't confirm the key was saved. Try again." }
 }
 
+/** Resume the parent script once, only after all of its required targets are ready. */
+export function CredentialPromptCards({ part }: { part: DynamicToolUIPart }) {
+  const prompts = credentialPromptCalls(part)
+  const messageList = useOptionalMessageList()
+  const settings = readDenSettings()
+  const scope = JSON.stringify([settings.baseUrl, settings.activeOrgId, part.toolCallId])
+  const required = new Set(prompts.map(({ prompt }) => targetKey(prompt)))
+  const progress = useRef({ scope, required, ready: new Set<string>(), requested: false, resumed: false })
+  if (progress.current.scope !== scope) progress.current = { scope, required, ready: new Set(), requested: false, resumed: false }
+  progress.current.required = required
+  const fulfilled = (key: string, saved: boolean) => {
+    const current = progress.current
+    // A completion from a previous account must not resume the new account's task.
+    if (current.scope !== scope || !current.required.has(key)) return
+    current.ready.add(key)
+    current.requested ||= saved
+    if (!current.requested || current.resumed || ![...current.required].every((target) => current.ready.has(target))) return
+    current.resumed = true
+    messageList?.continueAfterConnection?.(part.toolCallId, CREDENTIAL_SAVED_CONTINUE_PROMPT)
+  }
+  return <>{prompts.map(({ part: call, prompt }) => <CredentialPromptCard key={JSON.stringify([scope, targetKey(prompt)])} part={call} prompt={prompt}
+    onFulfilled={(saved) => fulfilled(targetKey(prompt), saved)} />)}</>
+}
+
 /**
  * The private field an agent asks for, shown where the conversation is. The
  * key goes straight from this field to Den with the signed-in person's
  * session; the transcript, tool results and model only learn it was saved.
  */
-export function CredentialPromptCard({ part, continueToolCallId = part.toolCallId }: {
+export function CredentialPromptCard({ part, prompt: validatedPrompt, continueToolCallId = part.toolCallId, onFulfilled }: {
   part: DynamicToolUIPart
+  prompt?: CredentialPrompt
   /** The transcript's own tool call; a Code Mode script's inner call is not a turn part. */
   continueToolCallId?: string
+  onFulfilled?: (saved: boolean) => void
 }) {
-  const prompt = credentialPromptFromToolPart(part)
+  const prompt = validatedPrompt ?? credentialPromptFromToolPart(part)
   const messageList = useOptionalMessageList()
   const auth = useDenAuth()
   const queryClient = useQueryClient()
   const fieldId = useId()
   // One handle per field; values are read once at save and never kept.
   const fields = useRef(new Map<string, SecretFieldHandle>())
-  const identifiers = useRef(new Map<string, HTMLInputElement>())
+  // Identifiers are safe form data, unlike the private fields. Keep them on a failed check.
+  const [identifierValues, setIdentifierValues] = useState<Record<string, string>>({})
   const filled = useRef(new Set<string>())
   const verifiedClient = useRef<ReturnType<typeof createDenClient> | null>(null)
   const [phase, setPhase] = useState<Phase>("entry")
@@ -86,7 +113,7 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
   const organizationId = settings.activeOrgId?.trim() ?? ""
   const token = settings.authToken?.trim() ?? ""
   const signedIn = auth.isSignedIn && Boolean(token && organizationId)
-  const key = prompt ? targetKey(prompt) : ""
+  const key = JSON.stringify([settings.baseUrl, organizationId, prompt ? targetKey(prompt) : ""])
   const local = useSyncExternalStore(subscribe, () => savedHere.has(key), () => false)
   const enabled = useOrgFeatureState("secureSecretFields", { active: signedIn })
   // Den's own answer, so a reopened conversation shows what is true now.
@@ -105,6 +132,9 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
     staleTime: 30_000,
     retry: false,
   })
+  useEffect(() => {
+    if (local || stored.data === true) onFulfilled?.(false)
+  }, [local, stored.data, onFulfilled])
   if (!prompt) return null
 
   const name = prompt.name
@@ -119,7 +149,7 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
   const specs = promptFields(prompt.target)
   const clearAll = () => {
     for (const handle of fields.current.values()) handle.clear()
-    for (const input of identifiers.current.values()) input.value = ""
+    setIdentifierValues({})
     filled.current.clear()
     setHasValue(false)
   }
@@ -128,10 +158,10 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
     const run = readDenSettings()
     let values: Record<string, string> = {}
     for (const spec of specs) {
-      values[spec.id] = spec.kind === "identifier" ? identifiers.current.get(spec.id)?.value.trim() ?? "" : fields.current.get(spec.id)?.take() ?? ""
+      values[spec.id] = spec.kind === "identifier" ? identifierValues[spec.id]?.trim() ?? "" : fields.current.get(spec.id)?.take() ?? ""
     }
-    clearAll()
-    for (const input of identifiers.current.values()) input.value = ""
+    // Secret handles clear on take(), including failed local validation. Safe
+    // identifiers stay put, so recovery asks only for the private values again.
     const problem = promptFieldsProblem(prompt.target, values)
     if (problem) {
       values = {}
@@ -156,12 +186,14 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
       values = {}
       const current = readDenSettings()
       if (current.authToken !== run.authToken || current.activeOrgId !== run.activeOrgId) throw new Error("account_changed")
+      clearAll()
       setReplacing(false)
       setPhase("entry")
       markSaved(key)
       void queryClient.invalidateQueries({ queryKey: ["den", "credential-prompt", organizationId, key] })
       // Picks the task up as if the person said so; the message carries no key.
-      messageList?.continueAfterConnection?.(continueToolCallId, CREDENTIAL_SAVED_CONTINUE_PROMPT)
+      if (onFulfilled) onFulfilled(true)
+      else messageList?.continueAfterConnection?.(continueToolCallId, CREDENTIAL_SAVED_CONTINUE_PROMPT)
     } catch (cause) {
       values = {}
       const next = failureState(cause, name)
@@ -229,12 +261,15 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
           <p className="text-muted-foreground">{consent}</p>
           {specs.length > 1 || specs[0]?.kind !== "secret" ? (
             <div className="flex flex-col gap-3">
-              {specs.map((spec, index) => spec.kind === "identifier" ? (
+              {specs.map((spec) => spec.kind === "identifier" ? (
                 <Field key={spec.id}>
                   <FieldLabel htmlFor={`${fieldId}-${spec.id}`}>{spec.label}</FieldLabel>
-                  <Input id={`${fieldId}-${spec.id}`} autoComplete="off" spellCheck={false} disabled={phase === "saving"} autoFocus={index === 0}
-                    ref={(input) => { if (input) identifiers.current.set(spec.id, input); else identifiers.current.delete(spec.id) }}
-                    onChange={(event) => track(spec.id, event.currentTarget.value.length > 0)} />
+                  <Input id={`${fieldId}-${spec.id}`} autoComplete="off" spellCheck={false} disabled={phase === "saving"} value={identifierValues[spec.id] ?? ""}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value
+                      setIdentifierValues((current) => ({ ...current, [spec.id]: value }))
+                      track(spec.id, value.length > 0)
+                    }} />
                 </Field>
               ) : (
                 <SecretField key={spec.id} id={`${fieldId}-${spec.id}`} label={spec.label} revealable={confirmed} multiline={spec.kind === "json"}

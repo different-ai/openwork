@@ -103,8 +103,8 @@ import { Tool } from "@/components/ui/tool"
 import { CapabilityCallLine } from "@/components/chat/capability-call-line"
 import { CodeModeTool, isSilentCodeModePart } from "@/components/chat/code-mode-tool"
 import { ConnectionCard } from "@/components/chat/connection-card"
-import { CredentialPromptCard } from "@/components/chat/credential-prompt-card"
-import { credentialPromptCall } from "@/components/chat/credential-prompt"
+import { CredentialPromptCards } from "@/components/chat/credential-prompt-card"
+import { isCredentialPromptPart } from "@/components/chat/credential-prompt"
 import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
 import { isReservedConnectionQuestion, type ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
@@ -268,14 +268,14 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   const appPanelFold = React.useContext(AppPanelFoldContext)
   if (appCreationParts.has(part.toolCallId)) return null
   if (part.toolCallId === connectionQuestionToolCallId || isReservedConnectionQuestionPart(part)) return null
-  const promptCall = credentialPromptCall(part)
+  const hasCredentialPrompts = isCredentialPromptPart(part)
   const remoteStart = remoteThreads && part.type === "dynamic-tool" ? remoteThreadFromToolPart(part) : null
   const calls = part.type === "dynamic-tool" ? codeModeToolCalls(part) : null
   const remoteStarts = remoteThreads && calls && part.type === "dynamic-tool" ? (codeModeCallsWithResults(part) ?? []).flatMap((call) => {
     const start = remoteThreadFromToolPart(call)
     return start ? [{ start, call }] : []
   }) : []
-  const foldTool = appPanelFold && lifecycle !== "waiting" && !connectionCardParts.has(part.toolCallId) && !promptCall && !isTaskToolPart(part)
+  const foldTool = appPanelFold && lifecycle !== "waiting" && !connectionCardParts.has(part.toolCallId) && !hasCredentialPrompts && !isTaskToolPart(part)
   if (foldTool && !remoteStart && remoteStarts.length === 0) return null
 
   // Delegated work has its own lifecycle, even after a parent follow-up/error.
@@ -292,7 +292,7 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
       return (
         <div className="flex min-w-0 flex-col gap-1">
           {!foldTool && <CodeModeTool part={part} calls={calls.filter((call) => !started.has(call.toolCallId))} lifecycle={lifecycle} connectors={connectorIdentities} />}
-          {promptCall && <CredentialPromptCard part={promptCall} continueToolCallId={part.toolCallId} />}
+          {hasCredentialPrompts && <CredentialPromptCards part={part} />}
           {remoteStarts.filter(({ call }) => !pinnedRemoteThreads.has(call.toolCallId))
             .map(({ start, call }) => <RemoteThreadRunLine key={start.key} start={start} part={call} />)}
         </div>
@@ -301,7 +301,7 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     if (calls) {
       const script = <CodeModeTool part={part} calls={calls} lifecycle={lifecycle} connectors={connectorIdentities} />
       // A key the script's Den call asked for is entered in the host's private field.
-      return promptCall ? <>{script}<CredentialPromptCard part={promptCall} continueToolCallId={part.toolCallId} /></> : script
+      return hasCredentialPrompts ? <>{script}<CredentialPromptCards part={part} /></> : script
     }
   }
 
@@ -395,8 +395,8 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   }
 
   // A key an agent asked for is entered in the host's private field, never in chat.
-  if (part.type === "dynamic-tool" && promptCall) {
-    return <CredentialPromptCard part={promptCall} continueToolCallId={part.toolCallId} />
+  if (part.type === "dynamic-tool" && hasCredentialPrompts) {
+    return <CredentialPromptCards part={part} />
   }
 
   // Failed calls use the same sentence line with the "failures are

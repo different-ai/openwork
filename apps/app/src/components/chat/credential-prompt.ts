@@ -47,8 +47,8 @@ function isDenPromptCall(part: DynamicToolUIPart): boolean {
  * Only Den's own prompt-creating operations are read, and only the exact
  * schema is accepted, so another MCP server or a model cannot draw a key field.
  */
-export function credentialPromptFromToolPart(part: DynamicToolUIPart): CredentialPrompt | null {
-  if (part.state !== "output-available" || !isDenPromptCall(part)) return null
+export function credentialPromptsFromToolPart(part: DynamicToolUIPart): CredentialPrompt[] {
+  if (part.state !== "output-available" || !isDenPromptCall(part)) return []
   const metadata = isRecord(part.callProviderMetadata) && isRecord(part.callProviderMetadata.openwork)
     ? part.callProviderMetadata.openwork.mcpResult
     : undefined
@@ -60,7 +60,23 @@ export function credentialPromptFromToolPart(part: DynamicToolUIPart): Credentia
       if (parsed.success) found.set(JSON.stringify(parsed.data.target), parsed.data)
     }
   }
-  return found.size === 1 ? found.values().next().value ?? null : null
+  return [...found.values()]
+}
+
+/** Compatibility reader for consumers that explicitly require one target. */
+export function credentialPromptFromToolPart(part: DynamicToolUIPart): CredentialPrompt | null {
+  const prompts = credentialPromptsFromToolPart(part)
+  return prompts.length === 1 ? prompts[0] ?? null : null
+}
+
+/** Validated Den prompts, deduplicated by target across the script's calls. */
+export function credentialPromptCalls(part: ToolUIPart | DynamicToolUIPart): Array<{ part: DynamicToolUIPart; prompt: CredentialPrompt }> {
+  if (part.type !== "dynamic-tool") return []
+  const found = new Map<string, { part: DynamicToolUIPart; prompt: CredentialPrompt }>()
+  for (const call of [part, ...(codeModeToolCalls(part) ?? [])]) {
+    for (const prompt of credentialPromptsFromToolPart(call)) found.set(JSON.stringify(prompt.target), { part: call, prompt })
+  }
+  return [...found.values()]
 }
 
 /**
@@ -68,12 +84,10 @@ export function credentialPromptFromToolPart(part: DynamicToolUIPart): Credentia
  * one of the OpenWork Cloud calls its Code Mode script made.
  */
 export function credentialPromptCall(part: ToolUIPart | DynamicToolUIPart): DynamicToolUIPart | null {
-  if (part.type !== "dynamic-tool") return null
-  if (credentialPromptFromToolPart(part)) return part
-  const inner = (codeModeToolCalls(part) ?? []).filter(call => credentialPromptFromToolPart(call) !== null)
-  return inner.length === 1 ? inner[0] ?? null : null
+  const calls = credentialPromptCalls(part)
+  return calls.length === 1 ? calls[0]?.part ?? null : null
 }
 
 export function isCredentialPromptPart(part: ToolUIPart | DynamicToolUIPart): boolean {
-  return credentialPromptCall(part) !== null
+  return credentialPromptCalls(part).length > 0
 }
