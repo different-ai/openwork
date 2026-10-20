@@ -129,6 +129,17 @@ export const capabilityGroups: CapabilityGroup[] = [
         }
       },
       {
+        label: "Projects to group related chats and files",
+        cells: {
+          enterprise: yes(A.matrix),
+          thirdParty: yes(A.matrix),
+          openwork: partial(
+            "/docs/start-here/migrate-from-claude-cowork",
+            "Work is organized in workspaces and folders. Claude projects are not migrated automatically yet."
+          )
+        }
+      },
+      {
         label: "Memory across chats",
         cells: {
           enterprise: yes(A.matrix),

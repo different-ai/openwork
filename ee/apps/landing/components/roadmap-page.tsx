@@ -103,7 +103,7 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     items: {
       ready: ["Schedules on web and desktop", "Daily and weekly runs", "Missed and interrupted runs are shown"],
       building: ["Saved workflows from a chat that worked"],
-      soon: ["Custom schedules", "Team plan, no OpenWork Web needed", "Fine-grained automation control", "Approvals in the middle of a run"]
+      soon: ["Custom schedules", "Run in the cloud from GitHub events", "Team plan, no OpenWork Web needed", "Fine-grained automation control", "Approvals in the middle of a run"]
     }
   },
   {
