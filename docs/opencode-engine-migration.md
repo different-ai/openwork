@@ -5,7 +5,7 @@ and **Migrate chats to OpenCode v2**. Advanced settings uses the same engine
 commands. Both hand off to one app-wide owner (`shell/engine-migration.tsx`)
 for the switch check, the migration consent, and migration progress, so a
 migration stays visible after the surface that started it closes. Switching
-engines never migrates history. V1 remains the default. Desktop packages include
+engines never migrates history. Desktop packages include
 both pinned native executables; v2's download fallback remains available for
 standalone servers.
 
@@ -20,15 +20,59 @@ The optional desktop `engineV2Upgrade` invitation still works when force is off.
 All app feature observers use the shared guarded `useOrgFeature` hook: cached
 organization data cannot bypass a desktop-only guard.
 
-Turning the flag off switches only force-owned instances back to v1, once idle.
-An explicit manual engine choice clears that ownership, so it is not reverted.
-Neither direction deletes history: v1 originals remain in place and new v2
-chats remain in v2 storage for a later switch back. Policy updates do not abort
-a copy or a running task. Failures keep v1 selected, retain a durable error and
-backup receipt, and retry only on a later boot with a one-minute-to-one-day
-bounded exponential backoff. Source chat changes during copying or v2 startup
-prevent the switch; a later attempt restores the pre-copy v2 baseline under
-the existing migration ownership lock before copying a fresh v1 snapshot.
+Turning the flag off blocks future automatic upgrades, including an in-flight
+upgrade that has not selected v2 yet. It never rolls an already-selected v2
+instance back to v1: new chats and replies exist only in v2, and keeping their
+files on disk would not keep them readable on v1. V2 stays selected and starts
+normally on later boots while the rollout is off. A fresh forced selection can
+fall back on its first failed start only before a v2 database exists; an existing
+v2 database may contain new history and is never silently rerouted on a later
+startup failure. Explicit manual engine choices retain their ownership and
+consent semantics, including when a pending automatic attempt fails after a
+manual choice. A manual v2 selection also retires the automatic baseline, so a
+later boot cannot fence startup or restore an older target over its new history.
+An unfinished copy must be resumed before a v2 selection is accepted. Pending
+automatic attempts bind to a manual-choice generation: an explicit later choice
+supersedes their idle reads, cutover and failure receipts. Copy preparation and
+transfer hold the migration fence, and the shared state journal
+serializes writes so a late automatic rename cannot win after manual consent.
+Automatic cutover also binds to a separate policy epoch, checked after the final
+idle/history reads and again after preparing its journal. Eligibility, atomic
+journal rename and routing publication share one event-loop turn; policy-off
+cannot be acknowledged before a later automatic selection. Off/on never revives
+an attempt from the older epoch or resets a failed-start cooldown. Explicit manual
+selection and continued use of already-selected v2 are not gated by this check.
+Policy updates do not abort a copy or a running task. Failures retain the selected
+engine, durable error and backup receipt. Automatic retries
+only run on a later boot with a one-minute-to-one-day bounded exponential
+backoff; policy-off/status refreshes never restart a failed inactive sidecar.
+
+Desktop keeps a one-line **Chat upgrade paused** notice with the verified current
+engine, clear of conversation content. This is host-wide recovery, not a per-chat
+agent approval; it never replaces a draft or inserts a consent card into a turn.
+**Review upgrade** discloses diagnostics and the earliest automatic retry
+time; closing it keeps the notice and chat usable. **Migrate chats** opens the
+existing manual consent, including while automatic policy is off. Force policy
+can supersede an optional invitation, never a manually requested consent. Only confirming
+that consent starts a new manual operation: it retires automatic ownership while
+preserving the source, backup and resumable checkpoints. The host refuses a
+concurrent copy with 409 `engine_upgrade_host_managed` only while an automatic
+attempt is actually in flight, not after it has paused. **Restart OpenWork** is
+an explicit alternative, never an automatic global restart. Startup discovery
+restores a failed automatic receipt even when copying never started; host backoff
+and rollout policy still decide whether a later boot retries it automatically.
+Both automatic and manual failure dialogs keep raw errors under **Technical details**.
+A verified healthy manual v2 choice retires its obsolete automatic notice without
+opening another error dialog. Engine-selection provenance does not turn a later
+user-requested history copy into an automatic migration.
+Source chat changes during copying or v2 startup prevent the switch. The host
+never restores an older backup over the current v2 target: a saved backup cannot
+prove that target has remained unused. A completed stale copy stays on v1 for
+manual review; an attempt that failed before a transfer can retry a fresh source.
+Skipped/existing v2 chat IDs also require an explicit manual engine choice, even
+when checkpoints resume successfully, because their history may differ from v1.
+Both stores, backups and resumable checkpoints remain intact; no reverse merge or
+safe rollback of diverged histories is assumed.
 
 Hosted bootstrap sets `OPENWORK_ENGINE_FORCE_POLICY=1` and an explicit
 `OPENWORK_ENGINE_AUTO_UPGRADE=1` or `0`; registered runner inventory and worker

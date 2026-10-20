@@ -4,7 +4,19 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openHistoryDatabase } from "../src/opencode-v2-history-store.js";
-import { engineAutoUpgradeRetry, historyRevision, runEngineAutoUpgrade } from "../src/engine-auto-upgrade.js";
+import { automaticCopyNeedsReview, engineAutoUpgradeRetry, historyRevision, runEngineAutoUpgrade } from "../src/engine-auto-upgrade.js";
+
+test("automatic cutover requires a completed copy without skipped or unknown v2 history", () => {
+  const complete = { state: "completed", imported: 1, skipped: 0, total: 1 } satisfies Parameters<typeof automaticCopyNeedsReview>[0];
+  assert.equal(automaticCopyNeedsReview(complete), false);
+  assert.equal(automaticCopyNeedsReview({ ...complete, skipped: 1 }), true);
+  assert.equal(automaticCopyNeedsReview({ ...complete, skipped: Number.NaN }), true);
+  assert.equal(automaticCopyNeedsReview({ ...complete, imported: 0 }), true);
+  assert.equal(automaticCopyNeedsReview({ ...complete, state: "error" }), true);
+  assert.equal(automaticCopyNeedsReview({ ...complete, state: "running" }), true);
+  assert.equal(automaticCopyNeedsReview({ ...complete, notCopied: [{ id: "chat", title: "Retained in v1", reason: "rejected" }] }), true);
+  assert.equal(automaticCopyNeedsReview({ ...complete, trimmed: [{ id: "chat", title: "Retained in v1" }] }), true);
+});
 
 function fixture() {
   const calls: string[] = [];

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -104,6 +104,28 @@ test("a later healthy fresh retry clears the error receipt and keeps forced owne
       assert.equal(readEngineV2PreviewState(config).historyCopyResult, undefined);
       assert.equal(readEngineV2PreviewState(config).autoUpgradeRetry, undefined);
     } finally { await retried.stop(); }
+  });
+});
+
+test("a later startup failure cannot roll a used fresh v2 profile back to v1", async () => {
+  await profile(async config => {
+    const root = join(process.env.HOME ?? "", "opencode-v2", "state");
+    await mkdir(root, { recursive: true });
+    const database = join(root, "opencode.db");
+    const history = "existing v2-only history must remain selected";
+    await writeFile(database, history);
+    assert.equal(seedFreshInstallEngineState(config), true);
+    config.engineAutoUpgrade = false;
+    const engine = createEngineV2Preview({ config });
+    try {
+      const deadline = Date.now() + 10_000;
+      while (!engine.status().lastError && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+      assert.match(engine.status().lastError ?? "", /nonexistent-opencode2/);
+      assert.equal(engine.status().chatRouting, true);
+      assert.equal(engine.status().engineForced, true);
+      assert.equal(readEngineV2PreviewState(config).chatRouting, true);
+      assert.equal(await readFile(database, "utf8"), history);
+    } finally { await engine.stop(); }
   });
 });
 

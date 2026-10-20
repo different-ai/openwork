@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { importNodeSqlite } from "./runtime-db.js";
+import type { EngineV2MigrationStatus } from "./opencode-v2-migration.js";
 
 export interface EngineAutoUpgradeRetry {
   attempts: number;
@@ -10,6 +11,14 @@ export interface EngineAutoUpgradeRetry {
 export function engineAutoUpgradeRetry(attempts: number, now = Date.now()): EngineAutoUpgradeRetry {
   const next = Math.min(Math.max(0, attempts) + 1, 32);
   return { attempts: next, retryAt: now + Math.min(60_000 * 2 ** (next - 1), 86_400_000) };
+}
+
+/** Matching v2 IDs may contain a different branch of history, not the latest
+ * v1 messages. Keep both stores until an explicit manual choice resolves it. */
+export function automaticCopyNeedsReview(copy: Pick<EngineV2MigrationStatus, "state" | "imported" | "skipped" | "total" | "notCopied" | "trimmed">): boolean {
+  return copy.state !== "completed" || copy.skipped !== 0
+    || !Number.isSafeInteger(copy.imported) || copy.imported < 0 || copy.imported !== copy.total
+    || (copy.notCopied?.length ?? 0) > 0 || (copy.trimmed?.length ?? 0) > 0;
 }
 
 /** Hash chat content through SQLite (including the WAL), not file timestamps.

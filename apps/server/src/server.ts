@@ -827,10 +827,6 @@ export async function startServer(
   const engineV2Preview: EngineV2Preview = createEngineV2Preview({ config, env, deferStart: true,
     resolveLiveProviderSync,
     autoUpgradeIdle: async () => (await describeV1EngineActivity(config)).verdict === "idle",
-    autoRevertIdle: async () => {
-      if (!engineV2Preview.status().running) return true;
-      return (await describeV2EngineActivity(config, engineV2Preview.connection()))?.verdict === "idle";
-    },
     autoUpgradeError: (error) => logger.log("warn", "Automatic engine upgrade failed; keeping v1", { error }),
     providerSession: () => cloudProviderSync.currentSession(),
     hostReadRequest: async (path, init) => {

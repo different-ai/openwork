@@ -260,7 +260,7 @@ test("pending force upgrade shows only a banner before ownership moves, without 
 });
 
 for (const origin of ["forced", "manual"] satisfies Array<"forced" | "manual">) {
-  test(`off policy ${origin === "forced" ? "observes the host's forced-only revert" : "leaves manual engine selection alone"}`, async () => {
+  test(`off policy leaves the ${origin} v2 engine selected`, async () => {
     Reflect.set(window, "__OPENWORK_ELECTRON__", {});
     const client = engineClient();
     spyOn(client, "setEngineV2ForcePolicy").mockResolvedValue({
@@ -268,7 +268,8 @@ for (const origin of ["forced", "manual"] satisfies Array<"forced" | "manual">) 
       engineOrigin: origin, engineForced: origin === "forced",
     });
     spyOn(client, "getEngineV2PreviewStatus").mockResolvedValue({
-      ...status, engineOrigin: "reverted", engineForced: false,
+      ...status, enabled: true, running: true, chatRouting: true,
+      engineOrigin: origin, engineForced: origin === "forced",
     });
     const changed = mock(() => {});
     window.addEventListener("openwork-engine-changed", changed);
@@ -278,7 +279,7 @@ for (const origin of ["forced", "manual"] satisfies Array<"forced" | "manual">) 
       expect(client.setEngineV2ForcePolicy).toHaveBeenCalledWith({ upgrade: false });
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1_100)); });
       expect(client.getEngineV2PreviewStatus).toHaveBeenCalledTimes(origin === "forced" ? 1 : 0);
-      expect(changed).toHaveBeenCalledTimes(origin === "forced" ? 2 : 0);
+      expect(changed).toHaveBeenCalledTimes(origin === "forced" ? 1 : 0);
       expect(client.switchOpencodeEngine).not.toHaveBeenCalled();
       expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
       expect(document.body.textContent).toBe("");
@@ -288,7 +289,7 @@ for (const origin of ["forced", "manual"] satisfies Array<"forced" | "manual">) 
   });
 }
 
-test("force turning off is forwarded for host-owned revert and suppresses optional offers while on", async () => {
+test("force turning off blocks future upgrades and suppresses optional offers while on", async () => {
   Reflect.set(window, "__OPENWORK_ELECTRON__", {});
   const client = engineClient();
   await setFeatures(true, true);
@@ -310,10 +311,12 @@ for (const state of ["completed", "error"] satisfies Array<"completed" | "error"
       client, migration: { state: "running", imported: 1, skipped: 0, total: 2 },
       selected: "v1", view: "dialog", retrying: false, runningTasks: 0, switchWhenDone: true,
     } });
-    observeEngineMigration(client, {
+    const finished: EngineV2PreviewStatus = {
       ...status, engineOrigin: "manual", engineForced: false, forceUpgradePending: true,
       migration: { state, imported: state === "completed" ? 2 : 1, skipped: 0, total: 2 },
-    });
+    };
+    spyOn(client, "setEngineV2ForcePolicy").mockResolvedValue(finished);
+    observeEngineMigration(client, finished);
     expect(useEngineMigrationStore.getState().progress).toMatchObject({
       serverManaged: true, switchWhenDone: false, view: "banner",
     });
@@ -322,9 +325,140 @@ for (const state of ["completed", "error"] satisfies Array<"completed" | "error"
     expect(document.querySelector('[data-testid="engine-migration-consent"]')).toBeNull();
     expect(client.switchOpencodeEngine).not.toHaveBeenCalled();
     expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
-    expect(useEngineMigrationStore.getState().progress).toBeNull();
+    if (state === "completed") {
+      expect(useEngineMigrationStore.getState().progress).toBeNull();
+    } else {
+      expect(useEngineMigrationStore.getState().progress?.migration.state).toBe("error");
+      expect(document.querySelector('[data-testid="engine-migration-banner"]')?.textContent).toContain("Chat upgrade paused");
+      expect(document.querySelector('[data-testid="engine-migration-banner"]')?.textContent).toContain("Using OpenCode v1");
+    }
   });
 }
+
+test("a durable forced failure stays compact and never automatically retries in-process", async () => {
+  const relaunch = mock(async () => {});
+  Reflect.set(window, "__OPENWORK_ELECTRON__", { shell: { relaunch } });
+  const client = engineClient();
+  const failed: EngineV2PreviewStatus = {
+    ...status, forceUpgradePending: false, automaticRetryAt: Date.now() + 60_000,
+    migration: { state: "error", imported: 1, skipped: 0, total: 2, error: "A private conversion path could not be read" },
+  };
+  spyOn(client, "setEngineV2ForcePolicy").mockResolvedValue(failed);
+  spyOn(client, "getEngineV2PreviewStatus").mockResolvedValue(failed);
+  await setFeatures(false, false);
+  await renderOverlay();
+  const banner = document.querySelector('[data-testid="engine-migration-banner"]');
+  expect(banner?.textContent).toContain("Chat upgrade paused");
+  expect(banner?.textContent).toContain("Using OpenCode v1");
+  expect(banner?.querySelector(".animate-spin")).toBeNull();
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  const review = banner?.querySelector("button");
+  if (!(review instanceof HTMLButtonElement)) throw new Error("Missing recovery action");
+  await act(async () => review.click());
+  const dialog = document.querySelector('[data-testid="engine-migration-recovery"]');
+  expect(dialog?.textContent).toContain("on a later restart");
+  expect(dialog?.querySelector('[data-slot="dialog-title"]')?.textContent).toBe("Chat upgrade paused on OpenCode v1");
+  expect(dialog?.querySelector('[data-slot="dialog-description"]')).toBeNull();
+  expect(dialog?.querySelector("details")?.open).toBe(false);
+  expect(useEngineMigrationStore.getState().consent).toBeNull();
+  expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
+  expect(client.switchOpencodeEngine).not.toHaveBeenCalled();
+  expect(relaunch).not.toHaveBeenCalled();
+  const keepWorking = Array.from(dialog?.querySelectorAll("button") ?? []).find(button => button.textContent === "Keep working");
+  if (!(keepWorking instanceof HTMLButtonElement)) throw new Error("Missing keep-working action");
+  await act(async () => keepWorking.click());
+  expect(document.querySelector('[data-testid="engine-migration-recovery"]')).toBeNull();
+  expect(document.querySelector('[data-testid="engine-migration-banner"]')).not.toBeNull();
+  expect(useEngineMigrationStore.getState().progress?.migration.state).toBe("error");
+  const reviewAgain = document.querySelector('[data-testid="engine-migration-banner"] button');
+  if (!(reviewAgain instanceof HTMLButtonElement)) throw new Error("Missing retained recovery action");
+  await act(async () => reviewAgain.click());
+  const restart = Array.from(document.querySelectorAll('[data-testid="engine-migration-recovery"] button')).find(button => button.textContent === "Restart OpenWork");
+  if (!(restart instanceof HTMLButtonElement)) throw new Error("Missing explicit restart action");
+  await act(async () => restart.click());
+  expect(relaunch).toHaveBeenCalledTimes(1);
+  expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
+  expect(client.switchOpencodeEngine).not.toHaveBeenCalled();
+});
+
+test("a paused automatic failure can become an explicitly consented manual migration with policy off", async () => {
+  Reflect.set(window, "__OPENWORK_ELECTRON__", {});
+  const client = engineClient();
+  const failed: EngineV2PreviewStatus = {
+    ...status, automaticRetryAt: Date.now() + 60_000,
+    migration: { state: "error", imported: 1, skipped: 0, total: 2, error: "Automatic copy paused" },
+  };
+  spyOn(client, "setEngineV2ForcePolicy").mockResolvedValue(failed);
+  const read = spyOn(client, "getEngineV2PreviewStatus").mockResolvedValue(failed);
+  await setFeatures(false, false);
+  await renderOverlay();
+  const { requestEngineMigration, retryEngineMigration, cancelEngineMigration, confirmEngineMigration } = await import("../src/react-app/shell/engine-migration");
+  await act(async () => requestEngineMigration(client));
+  expect(document.querySelector('[data-testid="engine-migration-consent"]')).not.toBeNull();
+  expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
+  await act(async () => cancelEngineMigration());
+  expect(useEngineMigrationStore.getState().progress?.migration.state).toBe("error");
+  await act(async () => { await retryEngineMigration(); });
+  expect(document.querySelector('[data-testid="engine-migration-consent"]')).not.toBeNull();
+  expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
+  const manual: EngineV2PreviewStatus = { ...status, forceUpgradePending: false,
+    migration: { state: "running", phase: "copying", imported: 1, skipped: 0, total: 2 },
+  };
+  spyOn(client, "migrateOpencodeHistory").mockResolvedValue(manual);
+  read.mockResolvedValue(manual);
+  await act(async () => { await confirmEngineMigration(); observeEngineMigration(client, manual); });
+  expect(client.migrateOpencodeHistory).toHaveBeenCalledTimes(1);
+  expect(useEngineMigrationStore.getState().consent).toBeNull();
+  expect(useEngineMigrationStore.getState().progress).toMatchObject({ view: "dialog", serverManaged: false, switchWhenDone: false });
+  expect(document.querySelector('[data-testid="engine-migration-progress"]')).not.toBeNull();
+  expect(client.switchOpencodeEngine).not.toHaveBeenCalled();
+  await act(async () => observeEngineMigration(client, { ...manual,
+    migration: { state: "error", imported: 1, skipped: 0, total: 2, error: "private conversion diagnostics" },
+  }));
+  const failedDialog = document.querySelector('[data-testid="engine-migration-progress"]');
+  expect(failedDialog?.querySelector('[data-slot="dialog-title"]')?.textContent).toBe("Migration didn't finish on OpenCode v1");
+  expect(failedDialog?.querySelector('[data-slot="dialog-description"]')).toBeNull();
+  expect(Array.from(failedDialog?.querySelectorAll("button") ?? []).some(button => button.textContent === "Retry migration")).toBe(true);
+  expect(failedDialog?.querySelector("details")?.open).toBe(false);
+  expect(failedDialog?.querySelector("details")?.textContent).toContain("private conversion diagnostics");
+});
+
+test("manual history copying is not reclassified by a force-owned engine selection", async () => {
+  Reflect.set(window, "__OPENWORK_ELECTRON__", {});
+  const client = engineClient();
+  const manual: EngineV2PreviewStatus = { ...status, enabled: true, chatRouting: true, engineForced: true,
+    engineOrigin: "forced", forceUpgradePending: false,
+    migration: { state: "running", phase: "copying", imported: 1, skipped: 0, total: 2 },
+  };
+  spyOn(client, "setEngineV2ForcePolicy").mockResolvedValue(manual);
+  spyOn(client, "getEngineV2PreviewStatus").mockResolvedValue(manual);
+  await setFeatures(false, false);
+  observeEngineMigration(client, manual);
+  await renderOverlay();
+  expect(useEngineMigrationStore.getState().progress).toMatchObject({ view: "dialog", serverManaged: false });
+  expect(document.querySelector('[data-testid="engine-migration-progress"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="engine-migration-banner"]')).toBeNull();
+  expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
+});
+
+test("a healthy manual v2 choice retires the automatic notice without reopening a failure dialog", async () => {
+  Reflect.set(window, "__OPENWORK_ELECTRON__", {});
+  const client = engineClient();
+  const failed: EngineV2PreviewStatus = { ...status, automaticRetryAt: Date.now() + 60_000,
+    migration: { state: "error", imported: 1, skipped: 0, total: 2, error: "Previous automatic failure" },
+  };
+  spyOn(client, "setEngineV2ForcePolicy").mockResolvedValue(failed);
+  await setFeatures(false, false);
+  await renderOverlay();
+  expect(document.querySelector('[data-testid="engine-migration-banner"]')).not.toBeNull();
+  await act(async () => observeEngineMigration(client, { ...failed, automaticRetryAt: undefined,
+    enabled: true, running: true, chatRouting: true, engineOrigin: "manual", engineForced: false, forceUpgradePending: false,
+  }));
+  expect(useEngineMigrationStore.getState().progress).toBeNull();
+  expect(document.querySelector('[data-testid="engine-migration-recovery"]')).toBeNull();
+  expect(document.querySelector('[data-testid="engine-migration-progress"]')).toBeNull();
+  expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
+});
 
 test("a fresh forced v2 status refreshes routing without any migration UI or renderer switch", async () => {
   Reflect.set(window, "__OPENWORK_ELECTRON__", {});
@@ -397,12 +531,26 @@ test("enabling force removes an optional upgrade consent without confirming it",
   Reflect.set(window, "__OPENWORK_ELECTRON__", {});
   const client = engineClient();
   useEngineMigrationStore.setState({ consent: {
-    client, mode: "upgrade", runningTasks: 0, submitting: false, error: null,
+    client, mode: "upgrade", offered: true, runningTasks: 0, submitting: false, error: null,
   } });
   await setFeatures(true);
   await renderOverlay();
   expect(useEngineMigrationStore.getState().consent).toBeNull();
   expect(document.querySelector('[data-testid="engine-migration-consent"]')).toBeNull();
+  expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
+});
+
+test("force policy never hides an explicitly requested manual upgrade consent", async () => {
+  Reflect.set(window, "__OPENWORK_ELECTRON__", {});
+  const client = engineClient();
+  const { requestEngineMigration } = await import("../src/react-app/shell/engine-migration");
+  await setFeatures(false, false);
+  await renderOverlay();
+  await act(async () => requestEngineMigration(client, "upgrade"));
+  expect(document.querySelector('[data-testid="engine-migration-consent"]')).not.toBeNull();
+  await setFeatures(true, false);
+  expect(useEngineMigrationStore.getState().consent).toMatchObject({ mode: "upgrade", offered: false });
+  expect(document.querySelector('[data-testid="engine-migration-consent"]')).not.toBeNull();
   expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
 });
 
