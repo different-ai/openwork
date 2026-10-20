@@ -54,6 +54,7 @@ export type OpenWorkExtensionContributionType =
   | "composer-prompt"
   | "session-side-panel"
   | "session-rail-item"
+  | "composer-control"
   | "control-actions"
   | "server-route"
   | "native-capability"
@@ -208,5 +209,27 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
       { type: "provider-connected", ref: "ollama", label: "Ollama provider" },
     ],
     lifecycle: { reload: ["config"], detection: ["provider:ollama"] },
+  },
+  {
+    schemaVersion: 1,
+    id: "voice-dictation",
+    name: "Voice dictation",
+    description: "Dictate prompts with a speech model that runs on your computer. Your voice never leaves it.",
+    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
+    icon: { src: "/openwork-mark.svg" },
+    setup: {
+      instructions: "Turn it on, then click the mic in the composer. OpenWork downloads a speech model once (about 100 MB) and runs it on this computer. You can use your own transcription server instead.",
+    },
+    resources: [
+      { type: "local-service", id: "transcription-api", label: "Transcription server (optional)", description: "http://127.0.0.1:8080/v1/audio/transcriptions", required: false },
+    ],
+    contributions: [
+      { type: "settings-panel", ref: "openwork.dictation.settings", location: "settings-detail" },
+      { type: "composer-control", ref: "openwork.dictation.mic", label: "Microphone", location: "composer" },
+    ],
+    enablement: [
+      { type: "toggle-enabled", ref: "voice-dictation", label: "Enabled" },
+    ],
+    platform: ["darwin", "linux", "windows", "web"],
   },
 ];

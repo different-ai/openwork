@@ -10,6 +10,7 @@ import {
   FolderLock,
   Gauge,
   Keyboard,
+  Mic,
   Paintbrush,
   Puzzle,
   RefreshCcw,
@@ -66,6 +67,8 @@ export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
     case "ai":
       return Zap;
+    case "dictation":
+      return Mic;
     case "preferences":
       return SlidersHorizontal;
     case "permissions":
@@ -109,6 +112,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return "AI Providers";
     case "ollama":
       return "Ollama";
+    case "dictation":
+      return "Voice dictation";
     case "preferences":
       return "Preferences";
     case "permissions":
@@ -154,6 +159,8 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return "Connect OpenAI, Anthropic, local models and more";
     case "ollama":
       return "Connect to Ollama and manage local models";
+    case "dictation":
+      return "Dictate prompts with a speech-to-text model on your computer";
     case "preferences":
       return "Default model, reasoning, and compaction";
     case "permissions":
@@ -201,7 +208,7 @@ export function getGlobalSettingsTabs(
   developerMode: boolean,
   capabilities: Pick<PlatformCapabilities, "autoUpdate">,
 ): SettingsTab[] {
-  const tabs: SettingsTab[] = ["ai", "ollama", "appearance", "shortcuts", "environment"];
+  const tabs: SettingsTab[] = ["ai", "ollama", "dictation", "appearance", "shortcuts", "environment"];
   if (capabilities.autoUpdate) tabs.push("updates");
   if (developerMode) tabs.push("debug");
   return tabs;

@@ -88,6 +88,7 @@ import {
   runDetachedTask,
 } from "./process-resilience.mjs";
 import { createQuitSequencer } from "./quit-sequence.mjs";
+import { createDictationService } from "./dictation.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "../../..");
@@ -1160,6 +1161,11 @@ const workspaceStore = createWorkspaceStore({
 });
 
 const desktopTransfers = createDesktopTransferRegistry();
+
+const dictation = createDictationService({
+  modelsDir: path.join(app.getPath("userData"), "dictation-models"),
+  fetch: (input, init) => electronNet.fetch(input, init),
+});
 
 const connectLinkReplayGuard = createConnectLinkReplayGuard({
   filePath: path.join(app.getPath("userData"), "connect-link-seen.json"),
@@ -2298,6 +2304,21 @@ const desktopCommandHandlers = {
   },
   "__cancelTransfer": async (event, ...args) => {
       return desktopTransfers.cancel(event, args[0]);
+  },
+  "dictationModels": async () => {
+      return dictation.models();
+  },
+  "dictationModelStatus": async (event, ...args) => {
+      return dictation.status(String(args[0] ?? ""));
+  },
+  "dictationModelDownload": async (event, ...args) => {
+      return dictation.download(String(args[0] ?? ""));
+  },
+  "dictationModelRemove": async (event, ...args) => {
+      return dictation.remove(String(args[0] ?? ""));
+  },
+  "dictationTranscribe": async (event, ...args) => {
+      return dictation.transcribe(String(args[0] ?? ""), args[1]);
   },
   "__homeDir": async (event, ...args) => {
       return os.homedir();

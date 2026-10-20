@@ -51,6 +51,19 @@ export type EngineInfo = {
   execution: OpencodeExecutionSnapshot | null;
 };
 
+export type DictationModelInfo = {
+  id: string;
+  label: string;
+  description: string;
+  downloadBytes: number;
+};
+
+export type DictationModelStatus =
+  | { state: "missing"; totalBytes: number }
+  | { state: "downloading"; receivedBytes: number; totalBytes: number }
+  | { state: "ready" }
+  | { state: "failed"; error: string };
+
 export type DesktopNotificationInput = {
   title: string;
   body?: string;
@@ -471,6 +484,14 @@ export type DesktopCommandMap = {
    */
   resetOpenworkState: { args: [mode?: "onboarding" | "all"]; result: unknown };
   opencodeMcpAuth: { args: [action: string, name: string]; result: ExecResult };
+
+  // Voice dictation: speech models that run inside the desktop app
+  dictationModels: { args: []; result: DictationModelInfo[] };
+  dictationModelStatus: { args: [modelId: string]; result: DictationModelStatus };
+  dictationModelDownload: { args: [modelId: string]; result: DictationModelStatus };
+  dictationModelRemove: { args: [modelId: string]; result: DictationModelStatus };
+  /** `samples` are 16 kHz mono PCM in [-1, 1]. */
+  dictationTranscribe: { args: [modelId: string, samples: Float32Array]; result: { text: string } };
 
   // Window / OS utilities (dunder commands)
   __showContextMenu: { args: [request: NativeContextMenuRequest]; result: string | null };

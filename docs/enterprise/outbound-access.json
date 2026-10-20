@@ -82,6 +82,15 @@
       "override": "desktop base URL (self-hosted Den replaces this host)"
     },
     {
+      "host": "cdn.jsdelivr.net",
+      "kind": "fetched",
+      "components": ["renderer"],
+      "purpose": "ONNX Runtime WebAssembly files that run Voice dictation's speech model in the web client.",
+      "requirement": "opt-in",
+      "blockedEffect": "Voice dictation's built-in model can't run in the web client; members can use their own transcription server instead.",
+      "override": null
+    },
+    {
       "host": "cdn.simpleicons.org",
       "kind": "fetched",
       "components": ["renderer"],
@@ -121,9 +130,18 @@
       "host": "github.com",
       "kind": "fetched",
       "components": ["desktop", "installer", "renderer", "server"],
-      "purpose": "Desktop installer and updater release URLs, GitHub issue links, and GitHub plugin source URLs.",
+      "purpose": "Desktop installer and updater release URLs, Voice dictation speech model downloads, GitHub issue links, and GitHub plugin source URLs.",
       "requirement": "required-in-practice",
-      "blockedEffect": "Desktop install/update downloads cannot start; GitHub issue and plugin-source links may not open.",
+      "blockedEffect": "Desktop install/update downloads and Voice dictation model downloads cannot start; GitHub issue and plugin-source links may not open.",
+      "override": null
+    },
+    {
+      "host": "huggingface.co",
+      "kind": "fetched",
+      "components": ["renderer"],
+      "purpose": "Speech model files for Voice dictation in the web client, downloaded once when the member first uses the mic.",
+      "requirement": "opt-in",
+      "blockedEffect": "Voice dictation's built-in model can't download in the web client; members can use their own transcription server instead.",
       "override": null
     },
     {
