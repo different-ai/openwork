@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { constants, existsSync, openSync } from "node:fs";
-import { access, copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, copyFile, lstat, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { allocateFreePort, allocateFreePorts, listTargets, waitForCdp } from "@openwork/cdp";
@@ -83,6 +83,16 @@ interface SpawnDetachedOptions {
 }
 
 const liveProfileRoots = new Set<string>();
+// The exact launch handle is the ownership capability, not caller-supplied paths.
+const localChromeProfiles = new WeakMap<SurfaceHandle, {
+  pid: number;
+  profileRoot: string;
+  profileDir: string;
+  realProfileDir: string;
+  device: number;
+  inode: number;
+  disposed: boolean;
+}>();
 
 export function registerLiveProfileRoot(profileRoot: string): void {
   liveProfileRoots.add(resolve(profileRoot));
@@ -751,7 +761,103 @@ export async function preserveEngineLogs(handle: SurfaceHandle, logsDir: string)
   return kept;
 }
 
-export async function removeOwnedSurfaceFiles(handle: SurfaceHandle): Promise<void> {
+/** Only container mounts on other devices and outside the profile can be exempted. */
+export function unrelatedLinuxProfileMounts(mountinfo: string, profileDir: string, device: bigint): string[] {
+  const major = ((device >> 8n) & 0xfffn) | ((device >> 32n) & 0xfffff000n);
+  const minor = (device & 0xffn) | ((device >> 12n) & 0xffffff00n);
+  const profileDevice = `${major}:${minor}`;
+  const within = (path: string, parent: string) => parent === "/" || path === parent || path.startsWith(`${parent}/`);
+  const mounts = mountinfo.trim().split("\n").map(line => {
+    const fields = line.split(" ");
+    const separator = fields.indexOf("-");
+    const id = fields[2];
+    const encoded = fields[4];
+    const type = fields[separator + 1];
+    if (separator < 6 || !id || !/^\d+:\d+$/.test(id) || !encoded?.startsWith("/") || !type) {
+      throw new Error("Cannot scope Chrome profile inspection: invalid Linux mount information.");
+    }
+    const path = encoded.replace(/\\([0-7]{3})/g, (_match: string, octal: string) => String.fromCharCode(Number.parseInt(octal, 8)));
+    return { device: id, path, type };
+  });
+  if (!mounts.some(mount => mount.device === profileDevice && within(profileDir, mount.path))) {
+    throw new Error("Cannot scope Chrome profile inspection: profile filesystem is unconfirmed.");
+  }
+  return mounts.filter(mount => (mount.type === "overlay" || mount.type === "nsfs")
+    && mount.device !== profileDevice
+    && !within(profileDir, mount.path) && !within(mount.path, profileDir))
+    .map(mount => mount.path);
+}
+
+/** Final fixtures may release Chrome data; ordinary stop/restart must retain it. */
+export async function removeOwnedSurfaceFiles(
+  handle: SurfaceHandle,
+  options: { stoppedChrome?: boolean } = {},
+): Promise<void> {
+  if (options.stoppedChrome) {
+    const owned = localChromeProfiles.get(handle);
+    if (!owned || handle.kind !== "chrome" || handle.hostKind !== "local"
+      || handle.pid !== owned.pid || handle.profileDir !== owned.profileDir
+      || handle.meta?.profileOwner !== "host" || handle.meta.profileRoot !== owned.profileRoot
+      || handle.meta.log !== join(owned.profileRoot, "chrome.log")) {
+      throw new Error("Refusing Chrome profile cleanup: launch ownership or scope mismatch.");
+    }
+    if (!owned.disposed || pidIsAlive(owned.pid) || processGroupIsAlive(owned.pid)) {
+      throw new Error("Refusing Chrome profile cleanup: browser stop is unconfirmed or still active.");
+    }
+    const confirmIdentity = async () => {
+      const metadata = await lstat(owned.profileDir);
+      if (!metadata.isDirectory() || metadata.isSymbolicLink()
+        || metadata.dev !== owned.device || metadata.ino !== owned.inode
+        || await realpath(owned.profileDir) !== owned.realProfileDir
+        || (await readFile(join(owned.profileDir, "openwork-eval-chrome.pid"), "utf8")).trim() !== String(owned.pid)) {
+        throw new Error("Refusing Chrome profile cleanup: profile identity or scope mismatch.");
+      }
+    };
+    await confirmIdentity();
+    // Another process may have reattached to the profile after our browser quit.
+    // Unknown platforms/tools fail closed rather than deleting possibly active data.
+    if (process.platform !== "darwin" && process.platform !== "linux") {
+      console.warn("[openwork/evals] Chrome profile retained: open-file inspection is unavailable on this platform.");
+      return;
+    }
+    const inspectionArgs = ["+w", "+D", owned.profileDir];
+    if (process.platform === "linux") {
+      const profile = await stat(owned.profileDir, { bigint: true });
+      const mounts = unrelatedLinuxProfileMounts(await readFile("/proc/self/mountinfo", "utf8"), owned.realProfileDir, profile.dev);
+      for (const path of mounts) {
+        try { await lstat(path); } catch (error) {
+          // Linux lsof stats all mounts, even for +D. Docker's root-only mounts
+          // can be inaccessible to this user. Exempt only proven other devices
+          // outside this profile, never profile descendants or same-device aliases.
+          if (errorCode(error) === "EACCES" || errorCode(error) === "EPERM") inspectionArgs.push("-e", path);
+        }
+      }
+    }
+    await new Promise<void>((done, reject) => {
+      // -t implicitly suppresses warnings, including unreadable subtrees. Keep
+      // warnings enabled so an incomplete scan cannot masquerade as no open files.
+      execFile("lsof", inspectionArgs, { encoding: "utf8", timeout: 5_000 }, (error, stdout, stderr) => {
+        if (isRecord(error) && error.code === 1 && !stdout.trim() && !stderr.trim()) done();
+        else reject(new Error("Refusing Chrome profile cleanup: open files remain or the open-file check failed.", {
+          cause: new Error(`lsof inspection: ${JSON.stringify({
+            args: inspectionArgs,
+            code: error ? error.code ?? "unknown" : 0,
+            signal: error?.signal ?? null,
+            stdout,
+            stderr,
+          })}`),
+        }));
+      });
+    });
+    await confirmIdentity();
+    if (pidIsAlive(owned.pid) || processGroupIsAlive(owned.pid)) {
+      throw new Error("Refusing Chrome profile cleanup: browser is still active.");
+    }
+    // Only the data directory, never its sibling chrome.log or canonical reports.
+    await rm(owned.profileDir, { recursive: true });
+    localChromeProfiles.delete(handle);
+    return;
+  }
   for (const path of ownedSurfaceFilePaths(handle)) {
     await rm(path, { recursive: true, force: true });
   }
@@ -1041,8 +1147,14 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
         cdpUrl,
         pid: spawned.pid,
         profileDir,
-        meta: { cdpPort: String(cdpPort), log: logPath, profileRoot },
+        meta: { cdpPort: String(cdpPort), log: logPath, profileRoot, profileOwner: "host" },
       };
+      const metadata = await lstat(profileDir);
+      localChromeProfiles.set(handle, {
+        pid: spawned.pid, profileRoot, profileDir,
+        realProfileDir: await realpath(profileDir),
+        device: metadata.dev, inode: metadata.ino, disposed: false,
+      });
       spawnedSurfaces.add(handle);
       return handle;
     },
@@ -1088,6 +1200,8 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
           .catch((error: unknown) => log(`Could not keep ${handle.name} engine logs: ${messageText(error)}`));
       }
       await removeOwnedSurfaceFiles(handle);
+      const chromeProfile = localChromeProfiles.get(handle);
+      if (chromeProfile) chromeProfile.disposed = true;
       if (handle.meta?.profileOwner !== "caller" && handle.meta?.profileRoot) unregisterLiveProfileRoot(handle.meta.profileRoot);
       spawnedSurfaces.delete(handle);
     },

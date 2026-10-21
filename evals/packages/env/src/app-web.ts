@@ -6,11 +6,12 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { waitUntilInteractive } from "@openwork/behaviors";
 import { addInitScript, evaluate, navigate } from "@openwork/cdp";
-import type { AttachedSurface } from "@openwork/cdp";
+import type { AttachedSurface, SurfaceHandle } from "@openwork/cdp";
 import {
   chrome,
   prepareSandboxRepo,
   readSandboxRepoSourceReceipt,
+  removeOwnedSurfaceFiles,
   startMockOnSandbox,
 } from "@openwork/hosts";
 import type { SandboxRepoSourceReceipt } from "@openwork/hosts";
@@ -80,8 +81,10 @@ async function cleanupMocks(mocks: Record<string, MockHandle>, errors: Error[]):
   }
 }
 
-async function cleanupAppWeb(input: {
+/** @internal Final fixture teardown, never a browser restart or preview detach. */
+export async function cleanupAppWeb(input: {
   browserStop: (() => Promise<void>) | null;
+  browserHandle: SurfaceHandle | null;
   runtime: AppWebRuntime | null;
   mocks: Record<string, MockHandle>;
   remote: boolean;
@@ -106,7 +109,12 @@ async function cleanupAppWeb(input: {
     }
   } else {
     if (input.browserStop) {
-      await input.browserStop().catch((error: unknown) => errors.push(cleanupError("Chrome cleanup failed", error)));
+      try {
+        await input.browserStop();
+        if (input.browserHandle) await removeOwnedSurfaceFiles(input.browserHandle, { stoppedChrome: true });
+      } catch (error) {
+        errors.push(cleanupError("Chrome cleanup failed; profile preserved unless safely removed", error));
+      }
     }
     if (input.runtime) {
       try {
@@ -347,7 +355,7 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
     const stop = async (): Promise<void> => {
       if (stopped) return;
       stopped = true;
-      await cleanupAppWeb({ browserStop: originalBrowserStop, runtime, mocks, remote });
+      await cleanupAppWeb({ browserStop: originalBrowserStop, browserHandle: surface.handle, runtime, mocks, remote });
     };
     attachAppWebMetadata(browser, {
       webUrl: runtime.webUrl,
@@ -362,6 +370,7 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
     try {
       await cleanupAppWeb({
         browserStop: browser ? browser.stop.bind(browser) : null,
+        browserHandle: browser?.handle ?? null,
         runtime,
         mocks,
         remote,

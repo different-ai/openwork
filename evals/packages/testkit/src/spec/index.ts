@@ -64,21 +64,29 @@ function combinedNeeds(filepath: string, needs: TestNeeds | undefined): TestNeed
   };
 }
 
-async function buildWithTimeout<W>(worldFn: WorldFn<W>, seed: Seed, place: Place, stack: AsyncDisposableStack, timeout: number | undefined): Promise<W> {
+/** @internal Keep a failed world's original error ahead of secondary cleanup failures. */
+export async function buildWithTimeout<W>(worldFn: WorldFn<W>, seed: Seed, place: Place, stack: AsyncDisposableStack, timeout: number | undefined): Promise<W> {
   const build = async () => {
     const built = await worldFn(seed, { place });
     await registerWorldDisposable(stack, built);
     return built;
   };
-  if (timeout === undefined) return build();
   let timer: NodeJS.Timeout | undefined;
   try {
+    if (timeout === undefined) return await build();
     return await Promise.race([
       build(),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => reject(new Error(`World setup timed out after ${timeout}ms.`)), timeout);
       }),
     ]);
+  } catch (error) {
+    try {
+      await stack.disposeAsync();
+    } catch (cleanupFailure) {
+      throw new AggregateError([error, cleanupFailure], "World setup failed; cleanup also failed", { cause: error });
+    }
+    throw error;
   } finally {
     if (timer) clearTimeout(timer);
   }
