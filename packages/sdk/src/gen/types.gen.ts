@@ -822,6 +822,7 @@ export type AdminFeature = {
     | "computerUse"
     | "browserDemonstrations"
     | "browserFloatingView"
+    | "browserPhonePasskeys"
     | "remoteComputers"
     | "remoteSessionSubagents";
   label: string;
@@ -877,6 +878,7 @@ export type AdminOrganizationsPageResponse = {
       computerUse: boolean;
       browserDemonstrations: boolean;
       browserFloatingView: boolean;
+      browserPhonePasskeys: boolean;
       remoteComputers: boolean;
       remoteSessionSubagents: boolean;
       /**
@@ -1025,6 +1027,15 @@ export type AdminOrganizationsPageResponse = {
         override: boolean | null;
         overrideApplies: boolean;
       };
+      browserPhonePasskeys: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       remoteComputers: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
@@ -1121,6 +1132,7 @@ export type AdminOverviewResponse = {
       computerUse: boolean;
       browserDemonstrations: boolean;
       browserFloatingView: boolean;
+      browserPhonePasskeys: boolean;
       remoteComputers: boolean;
       remoteSessionSubagents: boolean;
       /**
@@ -1263,6 +1275,15 @@ export type AdminOverviewResponse = {
       browserFloatingView: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      browserPhonePasskeys: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
         killed: boolean;
         lock: boolean | null;
@@ -8765,6 +8786,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       computerUse: boolean;
       browserDemonstrations: boolean;
       browserFloatingView: boolean;
+      browserPhonePasskeys: boolean;
       remoteComputers: boolean;
       remoteSessionSubagents: boolean;
       /**
@@ -8907,6 +8929,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       browserFloatingView: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      browserPhonePasskeys: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
         killed: boolean;
         lock: boolean | null;
@@ -8997,6 +9028,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       computerUse: boolean;
       browserDemonstrations: boolean;
       browserFloatingView: boolean;
+      browserPhonePasskeys: boolean;
       remoteComputers: boolean;
       remoteSessionSubagents: boolean;
       /**
@@ -9139,6 +9171,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       browserFloatingView: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      browserPhonePasskeys: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
         killed: boolean;
         lock: boolean | null;

@@ -4,7 +4,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, WebContentsView, clipboard, dialog, session, shell } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, dialog, session, shell, webContents as electronWebContents } from "electron";
 import {
   BACKGROUND_TAB_VIEWPORT,
   backgroundTabEmulationCommands,
@@ -17,6 +17,8 @@ import { BrowserTaskError, createBrowserTaskHost } from "@openwork/computer-use/
 import { agentPermissionDenialMessage, decideAgentPermission, stricterAgentPermissionDecision } from "@openwork/types/den/agent-permissions-runtime";
 import { createWebMcpBroker } from "./webmcp-host.mjs";
 import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
+import { createBrowserPhonePasskeys } from "./browser-phone-passkeys.mjs";
+import { openPhonePasskeySheet } from "./phone-passkey-sheet.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
@@ -847,6 +849,28 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return !!tab && browserViewVisible && registry.onScreenTabId() === tabId
       && window()?.contentView.children.includes(tab.view) === true && tab.view.getVisible();
   }
+  // Passkeys from a phone (browserPhonePasskeys, off by default). Only the
+  // person sees the QR code, in a sheet over the tab that asked, and only while
+  // that tab is on screen. Nothing is sent to the app or to agents.
+  const phonePasskeys = createBrowserPhonePasskeys({
+    getSession: () => ensureBrowserSession(),
+    tabForFrame: (frame) => {
+      let contents = null;
+      try { contents = electronWebContents.fromFrame(/** @type {import("electron").WebFrameMain} */ (frame)); } catch { return null; }
+      if (!contents) return null;
+      return [...browserTabs.values()].find((tab) => !tab.suspending && tab.view.webContents === contents) ?? null;
+    },
+    ownerOf: (tabId) => (registry.has(tabId) ? registry.ownerOf(tabId) : undefined),
+    isTabOnScreen: (tabId) => {
+      const parent = window();
+      return !!parent && !parent.isDestroyed() && browserTabVisible(tabId) && registry.ownerOf(tabId) === registry.visibleSessionId();
+    },
+    openSheet: (view, actions) => {
+      const parent = window();
+      if (!parent || parent.isDestroyed()) return { update() {}, close() {} };
+      return openPhonePasskeySheet(BrowserWindow, parent, view, actions);
+    },
+  });
   const webMcpBroker = createWebMcpBroker({
     getTab: (tabId) => getBrowserTab(tabId),
     getActiveTabId: (sessionId) => registry.activeTabIdFor(sessionId),
@@ -1515,6 +1539,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = getBrowserTab(tabId);
     if (!registry.has(tabId)) return null;
     taskHost.invalidate(tabId, { closed: true, reason });
+    phonePasskeys.tabClosed(tabId);
     if (!preserve) suspendedTabs.delete(tabId);
     if (menuRequest?.tabId === tabId) hideContextMenu();
     const wasOnScreen = registry.onScreenTabId() === tabId;
@@ -1802,6 +1827,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   function sendBrowserState() {
     sendToRenderer("openwork:browser:state", browserStatePayload());
+    phonePasskeys.refresh();
   }
 
   /**
@@ -1834,6 +1860,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     hideContextMenu();
     browserViewVisible = false;
     invalidateBrowserBounds();
+    // A phone passkey code is shown only over its visible tab.
+    phonePasskeys.refresh();
   }
 
   function destroyBrowserView() {
@@ -2010,6 +2038,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       browserControlEnabled = enabled === true;
       if (!browserControlEnabled) for (const tab of browserTabs.values()) taskHost.pause(tab.tabId, "Browser control disabled");
       return browserControlEnabled;
+    });
+    ipcMain.handle("openwork:browser:setPhonePasskeysEnabled", (event, enabled) => {
+      if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame) return false;
+      return phonePasskeys.setEnabled(enabled === true);
     });
     ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
     ipcMain.handle("openwork:browser:chooseLinkDestination", (event, id, destination) => {

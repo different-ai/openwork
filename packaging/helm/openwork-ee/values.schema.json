@@ -168,6 +168,16 @@
               ],
               "description": "Desktop: floating and full-screen browser: The built-in browser can float as a small live card over the chat, sit beside it, or fill the window, with a Browser button in the chat header that shows when it needs the person. Renders DEN_FEATURE_BROWSER_FLOATING_VIEW."
             },
+            "browserPhonePasskeys": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: passkeys from a phone in the browser: Sign in to sites in the built-in browser with a passkey on a nearby phone or tablet by scanning a QR code, when the desktop app's browser engine supports it. Renders DEN_FEATURE_BROWSER_PHONE_PASSKEYS."
+            },
             "remoteComputers": {
               "enum": [
                 "",

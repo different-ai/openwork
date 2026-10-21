@@ -639,6 +639,13 @@ export function SessionPage(props: SessionPageProps) {
     setSidePanel: setCurrentSidePanel,
   });
   const { placeOpenedBrowser, handlePanelClosed: handleBrowserPanelClosed } = browserPresentation;
+  // Passkeys from a phone in the built-in browser, behind its feature flag.
+  // Off, the browser host registers nothing and WebAuthn is unchanged.
+  const browserPhonePasskeys = useDesktopFeature("browserPhonePasskeys");
+  useEffect(() => {
+    if (!isElectronRuntime()) return;
+    void (window as Window).__OPENWORK_ELECTRON__?.browser?.setPhonePasskeysEnabled?.(browserPhonePasskeys);
+  }, [browserPhonePasskeys]);
   // Computer use on this Mac, behind its feature flag: the header Computer
   // button, its floating view, in-chat requests and the hand-back at turn end.
   const computerUseFeature = useDesktopFeature("computerUse");

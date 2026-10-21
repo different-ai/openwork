@@ -1,0 +1,20 @@
+{
+  "electron": "43.7.7",
+  "chrome": "150.0.7871.250",
+  "platform": "darwin",
+  "sheetsOpened": [],
+  "enabled": true,
+  "listeners": 1,
+  "capabilities": {
+    "hybridTransport": true,
+    "passkeyPlatformAuthenticator": true
+  },
+  "request": {
+    "ok": false,
+    "name": "NotAllowedError",
+    "elapsedMs": 200005
+  },
+  "pendingAfter": [],
+  "hybridEventsAvailable": false,
+  "sheetLayout": "captured separately (placeholder payload, layout only)"
+}

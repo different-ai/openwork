@@ -161,6 +161,14 @@ export const FEATURES = defineFeatures({
     default: false,
   },
 
+  browserPhonePasskeys: {
+    label: "Desktop: passkeys from a phone in the browser",
+    description: "Sign in to sites in the built-in browser with a passkey on a nearby phone or tablet by scanning a QR code, when the desktop app's browser engine supports it.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+
   remoteComputers: {
     label: "Desktop: computer use on remote computers",
     description: "Use a Linux cloud computer with its browser and desktop in OpenWork Web, or connect a VM from Desktop. Configured and conversation-owned desktops open directly when enabled, including follow-ups and internal session renewal. Take over and Stop stay available.",

@@ -16,3 +16,10 @@ path = "ee/**"
 precedence = "closest"
 SPDX-FileCopyrightText = "2026-present Different AI, Inc."
 SPDX-License-Identifier = "LicenseRef-OpenWork-EE"
+
+# A proposed change to Electron, with context lines from Electron's sources.
+[[annotations]]
+path = "docs/browser-phone-passkeys/electron-*.patch"
+precedence = "override"
+SPDX-FileCopyrightText = ["Electron contributors", "2026-present Different AI, Inc."]
+SPDX-License-Identifier = "MIT"

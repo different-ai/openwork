@@ -41,6 +41,7 @@ config:
     computerUse: ""               # default off · Let agents use Mac apps or a managed cloud desktop with a live view and Take over and Stop controls. While enabled, requested apps and windows open directly without additional OpenWork approval prompts. GUI access is experimental and is not sandboxed by structured-tool permission rules.
     browserDemonstrations: ""     # default off · Demonstrate a browser task with explanations, save it as a private reusable skill, and run it with new inputs.
     browserFloatingView: ""       # default off · The built-in browser can float as a small live card over the chat, sit beside it, or fill the window, with a Browser button in the chat header that shows when it needs the person.
+    browserPhonePasskeys: ""      # default off · Sign in to sites in the built-in browser with a passkey on a nearby phone or tablet by scanning a QR code, when the desktop app's browser engine supports it.
     remoteComputers: ""           # default off · Use a Linux cloud computer with its browser and desktop in OpenWork Web, or connect a VM from Desktop. Configured and conversation-owned desktops open directly when enabled, including follow-ups and internal session renewal. Take over and Stop stay available.
     remoteSessionSubagents: ""    # default off · A task the agent starts on the cloud or another computer shows in the chat like a sub-agent: whether it is working, needs an answer or finished, and its conversation, which people can open, follow up on and stop.
   # END GENERATED features
