@@ -24,7 +24,7 @@
     "@openwork/sandbox-daytona": "workspace:*",
     "@openwork/sandbox-freestyle": "workspace:*",
     "freestyle": "0.2.13",
-    "ws": "8.18.3",
+    "ws": "8.21.0",
     "zod": "^4.3.6",
     "@openwork/computer-use": "workspace:*"
   },
