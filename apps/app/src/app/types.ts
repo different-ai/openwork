@@ -37,6 +37,18 @@ export type WorkspaceSessionGroup = {
   error?: string | null;
 };
 
+/** Provider-reported usage of one assistant message. `total` exists only on some engine versions. */
+export type MessageTokens = {
+  total?: number;
+  input: number;
+  output: number;
+  reasoning: number;
+  cache: {
+    read: number;
+    write: number;
+  };
+};
+
 export type PlaceholderMessageInfo = {
   id: string;
   sessionID: string;

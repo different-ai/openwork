@@ -39,6 +39,7 @@ config:
     browserFloatingView: ""       # default off · The built-in browser can float as a small live card over the chat, sit beside it, or fill the window, with a Browser button in the chat header that shows when it needs the person.
     remoteComputers: ""           # default off · Use a Linux cloud computer with its browser and desktop in OpenWork Web, or connect a VM from Desktop. Configured and conversation-owned desktops open directly when enabled, including follow-ups and internal session renewal. Take over and Stop stay available.
     remoteSessionSubagents: ""    # default off · A task the agent starts on the cloud or another computer shows in the chat like a sub-agent: whether it is working, needs an answer or finished, and its conversation, which people can open, follow up on and stop.
+    composerContextIndicators: "" # default off · Next to the model picker, people see how full the model's context is, with a breakdown of what fills it, and which connectors are connected.
   # END GENERATED features
   tenancy:
     mode: single_org

@@ -23,7 +23,7 @@ import { isMacPlatform } from "@/app/utils";
 import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { composerHighlightSegments } from "./composer-search";
-import { composerConnectorLogoUrls } from "./composer-connector-logos";
+import { ConnectorLogo } from "./connector-logo";
 import { loadComposerPlusMenuRecents, recordComposerPlusMenuRecent } from "./composer-plus-menu-recents";
 import {
   buildPlusMenuModel,
@@ -124,25 +124,6 @@ function HighlightedLabel(props: { label: string; highlights: number[] }) {
         ),
       )}
     </>
-  );
-}
-
-function ConnectorLogo(props: { connector: PlusMenuConnector }) {
-  const urls = useMemo(
-    () => composerConnectorLogoUrls({ name: props.connector.name, serviceUrl: props.connector.serviceUrl }),
-    [props.connector.name, props.connector.serviceUrl],
-  );
-  const [failed, setFailed] = useState(0);
-  const url = urls[failed];
-  if (!url) return <Plug className="size-4 text-gray-10" aria-hidden="true" />;
-  return (
-    <img
-      src={url}
-      alt=""
-      className="size-4 object-contain"
-      decoding="async"
-      onError={() => setFailed((current) => current + 1)}
-    />
   );
 }
 

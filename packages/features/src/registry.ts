@@ -146,6 +146,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  composerContextIndicators: {
+    label: "Desktop: context and connectors in the chat box",
+    description: "Next to the model picker, people see how full the model's context is, with a breakdown of what fills it, and which connectors are connected.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
 })
 
 export type FeatureKey = keyof typeof FEATURES

@@ -13,7 +13,7 @@ import { captureAnalyticsEvent } from "@/app/lib/analytics";
 import { abortSession } from "@/app/lib/opencode-session";
 import { createSessionInterruptionClient, hasTerminalSessionReply, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
 import { createClient, createPromptMessageID, isPromptAdmissionUnknown, promptAdmissionFailure, readPromptAdmission, unwrap } from "@/app/lib/opencode";
-import { createClientV2, isOpencodeV2BaseUrl, v2AcknowledgementText } from "@/app/lib/opencode-v2-adapter";
+import { createClientV2, isOpencodeV2BaseUrl, isOpencodeV2Client, v2AcknowledgementText } from "@/app/lib/opencode-v2-adapter";
 import * as opencodeSessionNative from "@/app/lib/opencode-session-native";
 import type { NativeSessionSnapshotTarget } from "@/app/lib/opencode-session-native";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
@@ -56,6 +56,10 @@ import type {
   CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
+import { useComposerContextIndicatorsFeature } from "./composer/use-composer-context-indicators-feature";
+import { useSessionContextUsage } from "./composer/use-session-context-usage";
+import { loadContextBreakdown } from "./composer/context-breakdown-source";
+import type { ContextBreakdownSource } from "./composer/context-usage-control";
 import { sessionComposerDiagnosticReasons } from "./composer/composer-diagnostics";
 import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
 import { useSessionModelSelection } from "./session-model-store";
@@ -1380,6 +1384,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
     enabled: false,
   });
   const statusState = statusQuery.data ?? currentSnapshot?.status ?? IDLE_STATUS;
+  const contextIndicatorsEnabled = useComposerContextIndicatorsFeature();
+  const contextUsage = useSessionContextUsage({
+    enabled: contextIndicatorsEnabled,
+    workspaceId: props.workspaceId,
+    sessionId: props.sessionId,
+    opencodeBaseUrl: props.opencodeBaseUrl,
+    workspaceRoot: props.workspaceRoot,
+    opencodeClient,
+    serverClient: props.client,
+    selectedModel: sessionModel.selectedModel,
+    messages: currentSnapshot?.messages,
+  });
   // The shared status entry is written only by the session-status stream and
   // its reconnect-time level reconciliation, so its presence marks the value
   // as a real observed level instead of a render fallback. Queue-drain
@@ -2912,7 +2928,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     return next;
   }, [props.client, props.workspaceId]);
 
-  const listMcp = useCallback(async (): Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }> => {
+  const listMcp = useCallback(async (options?: { passive?: boolean }): Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }> => {
     const pushId = ++mcpConnectPushRef.current;
     const scope = readCloudInventoryScope();
     const cachedConnect = (scope ? readCachedConnectCapabilities(scope) : null) ?? EMPTY_CONNECT_CAPABILITY_INVENTORY;
@@ -2953,7 +2969,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
       // show "Sign in needed" even though the stored refresh token still
       // works. `mcp.connect` retries the refresh grant on a fresh transport
       // without ever opening a browser; on success the badge flips live.
-      if (directory && localServers.length) {
+      // A passive read (the always-visible connectors count) only reports.
+      if (!options?.passive && directory && localServers.length) {
         void attemptSilentMcpReauth({
           client: opencodeClient,
           directory,
@@ -2981,6 +2998,31 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
     return { servers, statuses, status };
   }, [opencodeClient, props.client, props.workspaceId, props.workspaceRoot]);
+
+  // Read when the context popover opens: the rows are estimates from what the app already holds
+  // (the transcript, the skill list) plus the engine's own lists on loopback. No model is asked.
+  const contextBreakdown = useMemo<ContextBreakdownSource | undefined>(() => {
+    if (!contextUsage) return undefined;
+    const engine = isOpencodeV2BaseUrl(props.opencodeBaseUrl) ? "v2" : "v1";
+    const { providerID, modelID } = sessionModel.selectedModel;
+    const connectedMcpServers = Object.values(toolMcpStatuses).filter((status) => status.status === "connected").length;
+    const deps = {
+      engine,
+      transcript: () => renderedMessagesRef.current,
+      listSkills,
+      listTools: async () => isOpencodeV2Client(opencodeClient)
+        ? null
+        : unwrap(await opencodeClient.tool.list({ provider: providerID, model: modelID })),
+      listContext: async () => isOpencodeV2Client(opencodeClient)
+        ? unwrap(await opencodeClient.session.context({ sessionID: props.sessionId }))
+        : null,
+      connectedMcpServers,
+    } as const;
+    return {
+      queryKey: ["session-context-breakdown", props.workspaceId, props.sessionId, engine, providerID, modelID, contextUsage.used, contextUsage.window, contextUsage.ceiling, connectedMcpServers],
+      load: () => loadContextBreakdown(deps, contextUsage),
+    };
+  }, [contextUsage, listSkills, opencodeClient, props.opencodeBaseUrl, props.sessionId, props.workspaceId, sessionModel.selectedModel, toolMcpStatuses]);
 
   const listImportedPlugins = useCallback(async (): Promise<CloudImportedPlugin[]> => {
     const pushId = ++pluginConnectPushRef.current;
@@ -3676,6 +3718,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         listSkills={listSkills}
         skills={toolSkills}
         listMcp={listMcp}
+        contextUsage={contextUsage}
+        contextBreakdown={contextBreakdown}
         mcpServers={toolMcpServers}
         mcpStatus={toolMcpStatus}
         mcpStatuses={toolMcpStatuses}
