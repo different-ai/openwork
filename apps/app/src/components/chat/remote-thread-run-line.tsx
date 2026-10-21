@@ -12,6 +12,7 @@ import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-st
 import { stopRemoteThread } from "@/react-app/domains/session/remote-threads/remote-thread-actions"
 import { useFollowRemoteThread, useRemoteThread } from "@/react-app/domains/session/remote-threads/remote-thread-store"
 import { remoteThreadView } from "@/react-app/domains/session/remote-threads/remote-thread-view"
+import { RemoteThreadActionRecovery } from "@/react-app/domains/session/remote-threads/remote-thread-action-recovery"
 import { useUiStateStore } from "@/react-app/shell/ui-state-store"
 
 /** Opens a task's conversation beside the chat; it never opens by itself (DESIGN.md S5). */
@@ -37,16 +38,18 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
   const { workspaceId, sessionId, readOnly } = useMessageList()
   useFollowRemoteThread(start, { workspaceId, sessionId }, remoteToolCallStartedAt(part))
   const entry = useRemoteThread(start.key)
-  const [stopping, setStopping] = useState(false)
-  const [stoppedHere, setStoppedHere] = useState(false)
+  const stopping = entry?.stop?.phase === "requesting"
+  const stopPending = Boolean(entry?.stop && entry.stop.phase !== "failed")
   const [now, setNow] = useState(() => Date.now())
-  const view = remoteThreadView(start, entry, now, stoppedHere)
-  const ticking = view.state === "running" && !view.lastChecked
+  const view = remoteThreadView(start, entry, now)
+  const ticking = view.state === "running" && !view.lastChecked && !stopPending
+  const clockIntervalMs = ticking ? 1_000 : view.active || view.lastChecked ? 30_000 : null
   useEffect(() => {
-    if (!ticking) return
-    const interval = window.setInterval(() => setNow(Date.now()), 1_000)
+    if (clockIntervalMs === null) return
+    setNow(Date.now())
+    const interval = window.setInterval(() => setNow(Date.now()), clockIntervalMs)
     return () => window.clearInterval(interval)
-  }, [ticking])
+  }, [clockIntervalMs])
 
   return (
     <div
@@ -56,6 +59,7 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
       // The open button stays a direct child of the row, like a sub-agent row.
       className={cn("flex min-w-0 max-w-full items-start gap-2", className)}
     >
+      <div className="min-w-0">
       <button
         type="button"
         className="group flex min-w-0 max-w-full cursor-pointer flex-col gap-0.5 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
@@ -80,20 +84,17 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
           {view.lastChecked ? ` · ${view.lastChecked}` : ""}
         </span>
       </button>
+      {entry && !readOnly ? <RemoteThreadActionRecovery entry={entry} action={entry.stop} /> : null}
+      </div>
       {/* Stop just this task; the turn's own Stop stays in the composer. */}
       {view.active && view.started && entry && !readOnly ? (
         <button
           type="button"
           data-remote-thread-stop=""
-          disabled={stopping}
+          disabled={stopPending}
           aria-label={t(stopping ? "session.remote_task_stopping" : "session.remote_task_stop", { title: view.title })}
           className="mt-0.5 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-50"
-          onClick={() => {
-            setStopping(true)
-            void stopRemoteThread(entry).then((failure) => {
-              if (!failure) setStoppedHere(true)
-            }).finally(() => setStopping(false))
-          }}
+          onClick={() => void stopRemoteThread(entry)}
         >
           <Square className="size-2.5 fill-current" aria-hidden="true" />
         </button>

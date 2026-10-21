@@ -5,7 +5,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** World-owned native HTTP fault fixture. It never evaluates renderer JavaScript. */
-export async function modelRemovalHttpFixture(app: AppWeb, patterns: string[], respond: (url: URL) => unknown | undefined) {
+export async function modelRemovalHttpFixture(app: AppWeb, patterns: string[], respond: (url: URL, request: { method: string; body: unknown }) => unknown | Promise<unknown>, methods: readonly string[] = ["GET"]) {
   const endpoint = app.client.webSocketDebuggerUrl;
   if (!endpoint) throw new Error("The model-removal fixture requires browser CDP.");
   const socket = new WebSocket(endpoint);
@@ -32,17 +32,22 @@ export async function modelRemovalHttpFixture(app: AppWeb, patterns: string[], r
   async function paused(params: Record<string, unknown>) {
     const { requestId, request } = params;
     if (typeof requestId !== "string" || !isRecord(request) || typeof request.url !== "string") throw new Error("Malformed Fetch.requestPaused event.");
-    const body = request.method === "GET" ? respond(new URL(request.url)) : undefined;
+    let input: unknown;
+    if (typeof request.postData === "string") {
+      try { input = JSON.parse(request.postData); } catch { input = undefined; }
+    }
+    const body = typeof request.method === "string" && methods.includes(request.method) ? await respond(new URL(request.url), { method: request.method, body: input }) : undefined;
     if (body === undefined) return command("Fetch.continueRequest", { requestId });
+    const response = body instanceof Response ? body : Response.json(body);
     await command("Fetch.fulfillRequest", {
-      requestId, responseCode: 200,
+      requestId, responseCode: response.status,
       responseHeaders: [
         { name: "Content-Type", value: "application/json" },
         { name: "Access-Control-Allow-Origin", value: new URL(app.webUrl).origin },
         { name: "Access-Control-Allow-Credentials", value: "true" },
         { name: "Cache-Control", value: "no-store" },
       ],
-      body: Buffer.from(JSON.stringify(body)).toString("base64"),
+      body: Buffer.from(await response.text()).toString("base64"),
     });
   }
   socket.addEventListener("message", ({ data }) => {
@@ -53,7 +58,12 @@ export async function modelRemovalHttpFixture(app: AppWeb, patterns: string[], r
         if (message.error) pending.get(message.id)?.reject(new Error(JSON.stringify(message.error)));
         else pending.get(message.id)?.resolve();
       }
-      if (message.method === "Fetch.requestPaused" && isRecord(message.params)) void paused(message.params).catch(fail);
+      if (message.method === "Fetch.requestPaused" && isRecord(message.params)) void paused(message.params).catch((error: unknown) => {
+        // Navigation can cancel a held HTTP request before its fixture replies.
+        // The UI assertions still require the replacement request to succeed.
+        if (error instanceof Error && error.message.includes('"message":"Invalid InterceptionId."')) return;
+        fail(error);
+      });
     } catch (error) { fail(error); }
   });
   socket.addEventListener("error", () => fail(new Error("Model-removal CDP connection failed.")));

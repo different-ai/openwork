@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { CircleHelp, RotateCw, ShieldAlert, Square } from "lucide-react"
 
 import { MarkdownBlock } from "@/components/markdown/markdown"
@@ -10,7 +10,9 @@ import { latestUserMessageId, type RemoteTranscriptPage } from "@/lib/remote-ses
 import { cn } from "@/lib/utils"
 import type { RemoteThreadPanelTab } from "../panel/panel-tab-store"
 import { readRemoteThread, sendRemoteFollowUp, stopRemoteThread } from "./remote-thread-actions"
-import { useFollowRemoteThread, useRemoteThread, useRemoteThreadsEnabled, type RemoteThreadEntry } from "./remote-thread-store"
+import { useFollowRemoteThread, useRemoteThread, useRemoteThreadStore, useRemoteThreadsEnabled, type RemoteThreadEntry, type RemoteThreadOwner } from "./remote-thread-store"
+import { RemoteThreadActionRecovery } from "./remote-thread-action-recovery"
+import { formatRelativeTime } from "@/app/utils"
 import { remoteThreadView } from "./remote-thread-view"
 
 /**
@@ -38,40 +40,51 @@ export function RemoteThreadPanel({ tab }: { tab: RemoteThreadPanelTab }) {
   if (!entry) {
     return <div className="p-4 text-sm text-muted-foreground">{t("session.remote_task_read_failed")}</div>
   }
-  return <RemoteThreadConversation key={entry.start.key} entry={entry} />
+  return <RemoteThreadConversation key={entry.start.key} entry={entry} owner={tab.owner} />
 }
 
-type FollowUp = { id: string; text: string }
-
-function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
+function RemoteThreadConversation({ entry, owner }: { entry: RemoteThreadEntry; owner: RemoteThreadOwner }) {
   const [now, setNow] = useState(() => Date.now())
-  const [stoppedHere, setStoppedHere] = useState(false)
-  const view = remoteThreadView(entry.start, entry, now, stoppedHere)
+  const view = remoteThreadView(entry.start, entry, now)
   const [page, setPage] = useState<RemoteTranscriptPage | null>(null)
   const [readError, setReadError] = useState<string | null>(null)
+  const [readPending, setReadPending] = useState(false)
+  const [checkedAt, setCheckedAt] = useState<number | null>(null)
   const [limit, setLimit] = useState(PAGE_SIZE)
-  const [sent, setSent] = useState<FollowUp[]>([])
-  const [draft, setDraft] = useState("")
-  const [sending, setSending] = useState(false)
-  const [stopping, setStopping] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
+  const draftOwner = `${owner.workspaceId}:${owner.sessionId}`
+  const draft = entry.drafts[draftOwner] ?? ""
+  const setDraft = (text: string) => useRemoteThreadStore.getState().update(entry.start.key, (thread) => ({ ...thread, drafts: { ...thread.drafts, [draftOwner]: text } }))
+  const sending = entry.followUps.some((item) => item.phase === "requesting")
+  const stopping = entry.stop?.phase === "requesting"
+  const stopPending = Boolean(entry.stop && entry.stop.phase !== "failed")
   const latest = useRef({ entry, limit })
   latest.current = { entry, limit }
-  const reads = useRef({ inflight: false, again: false, lastAt: 0, mounted: true })
+  const reads = useRef<{ inflight: boolean; again: boolean; lastAt: number; mounted: boolean; requestId: string | null; timer: number | null }>({ inflight: false, again: false, lastAt: 0, mounted: true, requestId: null, timer: null })
+  const transcript = useRef<HTMLDivElement>(null)
+  const stickToBottom = useRef(true)
+  const earlierHeight = useRef<number | null>(null)
+  const appliedPage = useRef<RemoteTranscriptPage | null>(null)
 
   useEffect(() => {
     reads.current.mounted = true
-    return () => { reads.current.mounted = false }
+    return () => {
+      reads.current.mounted = false
+      if (reads.current.timer) window.clearTimeout(reads.current.timer)
+    }
   }, [])
 
+  const clockIntervalMs = view.state === "running" && !view.lastChecked && !stopPending ? 1_000 : view.active || view.lastChecked ? 30_000 : null
   useEffect(() => {
-    if (view.state !== "running") return
-    const interval = window.setInterval(() => setNow(Date.now()), 1_000)
+    if (clockIntervalMs === null) return
+    setNow(Date.now())
+    const interval = window.setInterval(() => setNow(Date.now()), clockIntervalMs)
     return () => window.clearInterval(interval)
-  }, [view.state])
+  }, [clockIntervalMs])
 
   const read = useCallback(async function read(): Promise<void> {
     const state = reads.current
+    if (state.timer) window.clearTimeout(state.timer)
+    state.timer = null
     if (state.inflight) {
       state.again = true
       return
@@ -79,21 +92,30 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
     state.inflight = true
     state.lastAt = Date.now()
     try {
-      const outcome = await readRemoteThread(latest.current.entry, { limit: latest.current.limit })
+      const outcome = await readRemoteThread(latest.current.entry, { limit: latest.current.limit, requestId: state.requestId })
       if (!state.mounted) return
       if (outcome.kind === "page") {
         setPage(outcome.page)
         setReadError(null)
-        // A follow-up stays shown as sent until the transcript has it.
-        setSent((current) => current.filter((followUp) => !outcome.page.messages.some((message) => message.role === "user" && message.text.trim() === followUp.text)))
+        setCheckedAt(Date.now())
+        setReadPending(false)
+        state.requestId = null
+        // Reconcile by identity, not text: identical follow-ups can be distinct turns.
+        const ids = new Set(outcome.page.messages.map((message) => message.id))
+        useRemoteThreadStore.getState().update(latest.current.entry.start.key, (thread) => ({ ...thread, followUps: thread.followUps.filter((item) => !ids.has(item.id)) }))
       } else if (outcome.kind === "error") {
         setReadError(outcome.message)
+        setReadPending(false)
+        state.requestId = outcome.requestId ?? null
+      } else {
+        state.requestId = outcome.requestId
+        setReadPending(true)
       }
     } finally {
       state.inflight = false
       if (state.again && state.mounted) {
         state.again = false
-        window.setTimeout(() => void read(), READ_GAP_MS)
+        state.timer = window.setTimeout(() => void read(), Math.max(0, state.lastAt + READ_GAP_MS - Date.now()))
       }
     }
   }, [])
@@ -106,32 +128,31 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
     return () => window.clearTimeout(timer)
   }, [entry.version, view.started, limit, read])
 
+  useLayoutEffect(() => {
+    const element = transcript.current
+    if (!element) return
+    if (earlierHeight.current !== null && page && page !== appliedPage.current) {
+      element.scrollTop += element.scrollHeight - earlierHeight.current
+      earlierHeight.current = null
+    } else if (stickToBottom.current) element.scrollTop = element.scrollHeight
+    appliedPage.current = page
+  }, [page, entry.followUps, view.status, readPending, readError])
+
   const messages = page?.messages ?? []
   const shownPrompt = !page && entry.start.prompt ? entry.start.prompt : null
-  const canFollowUp = view.started && !sending
+  const canFollowUp = view.started && !sending && !(view.active && stopPending)
 
-  async function sendFollowUp() {
+  function sendFollowUp() {
     const text = draft.trim()
     if (!text || !canFollowUp) return
-    setSending(true)
-    setActionError(null)
-    const failure = await sendRemoteFollowUp(entry, text)
-    setSending(false)
-    if (failure) {
-      setActionError(failure.message)
-      return
-    }
-    setDraft("")
-    setSent((current) => [...current, { id: `${Date.now()}`, text }])
+    // Admission moves only this owner's submitted draft onto the shared thread.
+    // A newer editable draft survives both the receipt and a panel remount.
+    stickToBottom.current = true
+    void sendRemoteFollowUp(entry, text, draftOwner)
   }
 
-  async function stop() {
-    setStopping(true)
-    setActionError(null)
-    const failure = await stopRemoteThread(entry, latestUserMessageId(messages))
-    setStopping(false)
-    if (failure) setActionError(failure.message)
-    else setStoppedHere(true)
+  function stop() {
+    void stopRemoteThread(entry, latestUserMessageId(messages))
   }
 
   return (
@@ -143,7 +164,7 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
           <Button
             variant="ghost"
             size="icon-xs"
-            disabled={stopping}
+            disabled={stopPending}
             aria-label={t(stopping ? "session.remote_task_stopping" : "session.remote_task_stop", { title: view.title })}
             onClick={() => void stop()}
           >
@@ -152,15 +173,23 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
         ) : null}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3" data-remote-thread-transcript="">
+      <RemoteThreadActionRecovery entry={entry} action={entry.stop} />
+      <div ref={transcript} className="min-h-0 flex-1 overflow-y-auto px-3 py-3 [overflow-anchor:none]" data-remote-thread-transcript=""
+        onScroll={(event) => {
+          const element = event.currentTarget
+          stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48
+        }}>
         <div className="flex flex-col gap-3">
           {page && messages.length >= limit && limit < PAGE_MAX ? (
-            <Button variant="ghost" size="xs" className="self-center" onClick={() => setLimit((current) => Math.min(PAGE_MAX, current + PAGE_SIZE))}>
+            <Button variant="ghost" size="xs" className="self-center" onClick={() => {
+              earlierHeight.current = transcript.current?.scrollHeight ?? null
+              setLimit((current) => Math.min(PAGE_MAX, current + PAGE_SIZE))
+            }}>
               {t("session.remote_task_earlier")}
             </Button>
           ) : null}
           {shownPrompt ? <UserTurn text={shownPrompt} /> : null}
-          {view.started && !page && !readError ? (
+          {view.started && !page && !readError && !readPending ? (
             <div className="flex flex-col gap-2" aria-hidden="true">
               <Skeleton className="ms-auto h-9 w-2/3 rounded-3xl" />
               <Skeleton className="h-4 w-11/12" />
@@ -178,7 +207,15 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
                 {message.error ? <span className="text-xs text-red-11">{message.error}</span> : null}
               </div>
             ))}
-          {sent.map((followUp) => <UserTurn key={followUp.id} text={followUp.text} />)}
+          {entry.followUps.map((followUp) => <div key={followUp.id} data-remote-follow-up={followUp.phase}>
+            <UserTurn text={followUp.text} />
+            {followUp.phase === "requesting" || followUp.phase === "accepted" ? <span className="text-xs text-muted-foreground" role="status">{followUp.phase === "requesting" ? "Sending…" : "Sent · waiting for the conversation"}</span> : null}
+            <RemoteThreadActionRecovery entry={entry} action={followUp} followUpId={followUp.id} />
+          </div>)}
+          {readPending ? <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
+            <span>Conversation not confirmed yet</span>
+            <Button variant="ghost" size="xs" onClick={() => void read()}>Check again</Button>
+          </div> : null}
           {readError ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
               <span className="min-w-0 truncate">{t("session.remote_task_read_failed")}: {readError}</span>
@@ -189,13 +226,14 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
             </div>
           ) : null}
           <span
-            className={cn("text-xs", view.waitingFor ? "font-medium text-amber-11" : "text-muted-foreground/70", view.state === "running" && "ow-text-shimmer")}
+            className={cn("text-xs", view.waitingFor ? "font-medium text-amber-11" : "text-muted-foreground/70", view.state === "running" && !view.lastChecked && !stopPending && "ow-text-shimmer")}
             role="status"
             data-remote-thread-status=""
           >
             {view.state === "idle" ? t("session.remote_task_completed") : view.status}
             {view.lastChecked ? ` · ${view.lastChecked}` : ""}
           </span>
+          {checkedAt ? <span className="text-xs text-muted-foreground/70" data-remote-transcript-freshness="">Conversation checked {formatRelativeTime(checkedAt)}</span> : null}
         </div>
       </div>
 
@@ -234,7 +272,6 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
             {t("session.remote_task_send")}
           </Button>
         </div>
-        {actionError ? <span className="px-1 text-xs text-red-11" role="alert">{actionError}</span> : null}
       </form>
     </div>
   )
