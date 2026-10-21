@@ -201,6 +201,11 @@ export function BrowserPanelContent({
   const urlInputRef = React.useRef<HTMLInputElement>(null);
   const [failure, setFailure] = React.useState<{ owner: string; title: string; details: string } | null>(null);
   const failureOwner = JSON.stringify([sessionId, tab.id]);
+  const ownerRef = React.useRef(failureOwner);
+  ownerRef.current = failureOwner;
+  const taskRequestRef = React.useRef(0);
+  const [taskRequest, setTaskRequest] = React.useState<{ owner: string; action: "pause" | "resume"; phase: "requesting" | "accepted" } | null>(null);
+  const pendingTaskRequest = taskRequest?.owner === failureOwner ? taskRequest : null;
   const reportFailure = React.useCallback((title: string, error: unknown) => {
     setFailure({ owner: failureOwner, title, details: error instanceof Error ? error.message : String(error) });
   }, [failureOwner]);
@@ -210,6 +215,32 @@ export function BrowserPanelContent({
       setUrlInput(tab.url);
     }
   }, [tab.id, tab.url]);
+
+  React.useEffect(() => {
+    if (!pendingTaskRequest) return;
+    const paused = tab.browserTask?.status === "paused";
+    if ((pendingTaskRequest.action === "pause" && paused) || (pendingTaskRequest.action === "resume" && !paused)) setTaskRequest(null);
+  }, [pendingTaskRequest, tab.browserTask?.status]);
+
+  const controlBrowserTask = async () => {
+    if (pendingTaskRequest) return;
+    const action = tab.browserTask?.status === "paused" ? "resume" : "pause";
+    const request = ++taskRequestRef.current;
+    setTaskRequest({ owner: failureOwner, action, phase: "requesting" });
+    setFailure(null);
+    try {
+      const control = getElectronBrowser()?.taskControl;
+      if (!control) throw new Error("Browser task control is unavailable.");
+      await control(tab.id, action);
+      if (taskRequestRef.current === request) setTaskRequest((current) => current?.owner === failureOwner ? { ...current, phase: "accepted" } : current);
+    } catch (error) {
+      if (taskRequestRef.current !== request) return;
+      // Settle the request even while its conversation is off screen. Leaving
+      // and returning must not revive a permanently pending, disabled control.
+      setTaskRequest((current) => current?.owner === failureOwner ? null : current);
+      if (ownerRef.current === failureOwner) reportFailure(action === "pause" ? "Could not take over this browser. Try again." : "Could not resume this browser. Try again.", error);
+    }
+  };
 
   const navigate = React.useCallback(() => {
     void getElectronBrowser()?.navigate?.(urlInput).catch((error: unknown) => {
@@ -330,10 +361,10 @@ export function BrowserPanelContent({
         <div data-browser-shortcut-tab={tab.id} className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-xs">
           <span className="shrink-0 font-medium">Built-in browser</span>
           <span role="status" className="min-w-0 flex-1 truncate text-muted-foreground">
-            {tab.browserTask?.status === "paused" ? "You have control · resume when finished" : tab.browserTask?.status === "running" ? browserOperationLabels[tab.browserTask.operation ?? ""] ?? "Working on this page" : tab.browserTask?.status === "needs_attention" ? browserOperationLabels[tab.browserTask.operation ?? ""] ?? "Review this page" : "This conversation's tab"}
+            {pendingTaskRequest ? pendingTaskRequest.phase === "requesting" ? pendingTaskRequest.action === "pause" ? "Requesting control…" : "Requesting browser resume…" : pendingTaskRequest.action === "pause" ? "Control requested · waiting for the browser" : "Resume requested · waiting for the browser" : tab.browserTask?.status === "paused" ? "You have control · resume when finished" : tab.browserTask?.status === "running" ? browserOperationLabels[tab.browserTask.operation ?? ""] ?? "Working on this page" : tab.browserTask?.status === "needs_attention" ? browserOperationLabels[tab.browserTask.operation ?? ""] ?? "Review this page" : "This conversation's tab"}
           </span>
-          <Button variant="outline" size="sm" className="h-6 px-2 text-xs"
-            onClick={() => { void window.__OPENWORK_ELECTRON__?.browser?.taskControl?.(tab.id, tab.browserTask?.status === "paused" ? "resume" : "pause"); }}>
+          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={Boolean(pendingTaskRequest)}
+            onClick={() => void controlBrowserTask()}>
             {tab.browserTask?.status === "paused" ? "Resume browser" : "Take over"}
           </Button>
         </div>
