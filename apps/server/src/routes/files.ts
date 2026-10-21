@@ -480,6 +480,14 @@ function normalizeResolvedRelativePath(input: string): string {
   return parts.join("/");
 }
 
+function isIgnorableStatError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if ("code" in error && (error.code === "ENOENT" || error.code === "EACCES" || error.code === "EPERM")) return true;
+  // Electron patches fs to intercept .asar paths; invalid archives throw a codeless "Invalid package <path>" error
+  if (error.message.startsWith("Invalid package ")) return true;
+  return false;
+}
+
 async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDirectories = false) {
   const rootResolved = resolve(workspaceRoot);
   const items: FileSessionCatalogEntry[] = [];
@@ -514,7 +522,7 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
         try {
           info = await stat(absPath);
         } catch (error: unknown) {
-          if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "EACCES" || error.code === "EPERM")) {
+          if (isIgnorableStatError(error)) {
             continue;
           }
           throw error;
@@ -535,7 +543,7 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
       try {
         info = await stat(absPath);
       } catch (error: unknown) {
-        if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "EACCES" || error.code === "EPERM")) {
+        if (isIgnorableStatError(error)) {
           continue;
         }
         throw error;
