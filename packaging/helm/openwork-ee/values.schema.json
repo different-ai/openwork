@@ -148,6 +148,16 @@
               ],
               "description": "Desktop: tasks on other computers as sub-agents: A task the agent starts on the cloud or another computer shows in the chat like a sub-agent: whether it is working, needs an answer or finished, and its conversation, which people can open, follow up on and stop. Renders DEN_FEATURE_REMOTE_SESSION_SUBAGENTS."
             },
+            "composerContextIndicators": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: context and connectors in the chat box: Next to the model picker, people see how full the model's context is, with a breakdown of what fills it, and which connectors are connected. Renders DEN_FEATURE_COMPOSER_CONTEXT_INDICATORS."
+            },
             "gatewayDashboard": {
               "enum": [
                 "",

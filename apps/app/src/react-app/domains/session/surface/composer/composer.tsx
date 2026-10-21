@@ -39,9 +39,13 @@ import { FILE_URL_RE, HTTP_URL_RE, type PastedTextChip } from "./pasted-text";
 import { loadSessionConnectCapabilities } from "@/react-app/domains/connections/cloud-inventory-cache";
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
 import {
-  composerConnectionSignIn,
+  composerConnectorEntries,
   mergeComposerConnectionInventory,
 } from "./composer-connections";
+import { ComposerConnectorsControl } from "./composer-connectors-control";
+import { ContextUsageControl, type ContextBreakdownSource } from "./context-usage-control";
+import type { ContextUsage } from "./context-usage";
+import { useComposerContextIndicatorsFeature } from "./use-composer-context-indicators-feature";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
 import { encodeConnectorToken } from "./connector-token";
 import { ComposerPlusMenu, type ComposerPlusMenuPick } from "./composer-plus-menu";
@@ -118,7 +122,8 @@ type ComposerProps = {
   listCommands: () => Promise<SlashCommandOption[]>;
   listSkills?: () => Promise<SkillCard[]>;
   skills?: SkillCard[];
-  listMcp?: () => Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }>;
+  /** `passive` reads the inventory only, without the silent sign-in repair of a normal read. */
+  listMcp?: (options?: { passive?: boolean }) => Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }>;
   mcpServers?: McpServerEntry[];
   mcpStatus?: string | null;
   mcpStatuses?: McpStatusMap;
@@ -142,6 +147,10 @@ type ComposerProps = {
   topAccessory?: ReactNode;
   runModeControl?: ReactNode;
   contextControl?: ReactNode;
+  /** How full the model's context is; set only while the context indicator is on and a reply has been measured. */
+  contextUsage?: ContextUsage | null;
+  /** Loads the breakdown shown when the context indicator opens. */
+  contextBreakdown?: ContextBreakdownSource;
 };
 
 const FLUSH_PROMPT_EVENT = "openwork:flushPromptDraft";
@@ -185,12 +194,6 @@ function parseClipboardUriList(clipboard: DataTransfer) {
 
 function isImageAttachment(attachment: ComposerAttachment) {
   return attachment.kind === "image" || attachment.mimeType.startsWith("image/");
-}
-
-function mcpEntryStatus(entry: McpServerEntry, statuses: McpStatusMap | undefined) {
-  if (!statuses) return undefined;
-  if (entry.id && statuses[entry.id]) return statuses[entry.id];
-  return statuses[entry.name];
 }
 
 function plusMenuConnectorNote(status: McpStatus | undefined) {
@@ -648,6 +651,18 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     void orgMcp.refresh();
   }, [orgMcp.refresh, toolMenuOpen]);
 
+  // The connectors indicator is always visible, so its inventory must not wait
+  // for the plus menu. The new-task screen reads no runtime status for local
+  // servers, so a count there would be too low: it stays without the indicator.
+  const showConnectorsIndicator = useComposerContextIndicatorsFeature() && !props.flush;
+  const refreshConnectors = useCallback(() => {
+    void listMcpRef.current?.({ passive: true }).catch(() => undefined);
+    void orgMcp.refresh();
+  }, [orgMcp.refresh]);
+  useEffect(() => {
+    if (showConnectorsIndicator) refreshConnectors();
+  }, [showConnectorsIndicator, refreshConnectors, props.sessionId]);
+
   const connectingId = orgMcp.connectingId;
   const connectingIdRef = useRef(connectingId);
   useEffect(() => {
@@ -761,23 +776,21 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     }),
     [orgMcp.connections, props.mcpServers, props.mcpStatuses],
   );
-  const plusMenuConnectors = useMemo<PlusMenuConnector[]>(
-    () => connectionInventory.servers.map((server) => {
-      const status = mcpEntryStatus(server, connectionInventory.statuses);
-      const connection = orgMcp.connections.find((entry) => entry.id === server.orgMcpConnectionId);
-      const signIn = composerConnectionSignIn({ server, status, connection });
-      const url = server.config.type === "remote" ? server.config.url : undefined;
-      return {
-        key: server.id ?? server.name,
-        name: server.name,
-        serviceUrl: url,
-        signIn,
-        connecting: Boolean(signIn && orgMcp.connectingId === signIn.connectionId),
-        note: signIn ? null : plusMenuConnectorNote(status),
-      };
+  const connectorEntries = useMemo(
+    () => composerConnectorEntries({
+      servers: connectionInventory.servers,
+      statuses: connectionInventory.statuses,
+      orgConnections: orgMcp.connections,
+      connectingId: orgMcp.connectingId,
+      noteFor: plusMenuConnectorNote,
     }),
     [connectionInventory, orgMcp.connectingId, orgMcp.connections],
   );
+  const plusMenuConnectors: PlusMenuConnector[] = connectorEntries;
+  const connectConnector = (connector: PlusMenuConnector) => {
+    if (!connector.signIn) return;
+    void orgMcp.connect(connector.signIn.connectionId, { forceFreshAuthorization: connector.signIn.reconnect });
+  };
   const plusMenuAgents = useMemo<PlusMenuAgent[]>(
     () => [
       { name: null, label: t("composer.default_agent"), selected: props.selectedAgent === null },
@@ -1446,10 +1459,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   attachmentsDisabledReason={props.attachmentsDisabledReason}
                   onAttach={openFilePicker}
                   onPick={handlePlusMenuPick}
-                  onConnect={(connector) => {
-                    if (!connector.signIn) return;
-                    void orgMcp.connect(connector.signIn.connectionId, { forceFreshAuthorization: connector.signIn.reconnect });
-                  }}
+                  onConnect={connectConnector}
                   onManage={handlePlusMenuManage}
                   onQueryChange={setPlusMenuQuery}
                   returnFocus={() => rootRef.current?.querySelector<HTMLElement>("[contenteditable='true']") ?? null}
@@ -1531,6 +1541,15 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     {props.modelUnavailableMessage ?? t("models.model_unavailable_short")}
                   </span>
                 ) : null}
+                {showConnectorsIndicator ? (
+                  <ComposerConnectorsControl
+                    connectors={connectorEntries}
+                    onOpenChange={(open) => { if (open) refreshConnectors(); }}
+                    onConnect={connectConnector}
+                    onManage={() => handlePlusMenuManage("connectors")}
+                  />
+                ) : null}
+                {props.contextUsage ? <ContextUsageControl usage={props.contextUsage} breakdown={props.contextBreakdown} /> : null}
                 {props.contextControl}
                 </div>
 
