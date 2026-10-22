@@ -511,7 +511,14 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
     try {
       connectionId = normalizeDenTypeId("externalMcpConnection", requestedId)
     } catch {
-      throw new McpError(ErrorCode.InvalidRequest, "The MCP connection id is invalid.")
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: await jsonRpcRequestId(c.req.raw),
+          error: { code: ErrorCode.InvalidRequest, message: "The MCP connection id is invalid." },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )
     }
     const member = await resolveMcpMemberIdentity({
       userId: principal.userId,
