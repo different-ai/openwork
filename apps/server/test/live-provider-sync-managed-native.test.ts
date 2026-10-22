@@ -58,7 +58,8 @@ test("real managed V2 owner transitions and fail-closed fresh rollout boot", { t
   child.stderr.on("data", chunk => { output += String(chunk); });
   const watchdog = setTimeout(() => child.kill("SIGKILL"), 150_000);
   try {
-    const [code] = await once(child, "exit");
+    // exit can precede the final stdout data events; close drains both pipes.
+    const [code] = await once(child, "close");
     assert.equal(code, 0, output);
     for (const line of output.split("\n").filter(line => line.startsWith("Passed managed"))) t.diagnostic(line);
     assert.equal(output.split("\n").filter(line => line.startsWith("Passed managed")).length, 9, output);
