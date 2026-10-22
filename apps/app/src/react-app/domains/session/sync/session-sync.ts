@@ -7,6 +7,7 @@ import { readGatewayUsageScope } from "@/app/lib/gateway-usage-scope";
 import { refreshGatewayUsageAfterCompletion } from "../../cloud/gateway-usage-refresh";
 import { gatewayUsageQueryPrefix } from "../../cloud/gateway-usage-state";
 import { mergeReplyMetadata, replyModelFromInfo } from "./reply-model";
+import { fileChangeUIPart } from "./file-change-part";
 import { closeSessionBrowserTabs } from "@/app/lib/desktop";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
@@ -978,6 +979,7 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
     };
   }
   if (part.type === "step-start") return { type: "step-start" };
+  if (part.type === "patch") return fileChangeUIPart(part);
   return null;
 }
 

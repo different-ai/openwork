@@ -1915,7 +1915,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useControlAction(props.isControlTarget ? seedImageLightboxControlAction : null);
   const openTargets = useMemo(() => deriveOpenTargets(renderedMessages), [renderedMessages]);
   const openTargetsFingerprint = useMemo(
-    () => openTargets.map((target) => `${target.kind}:${target.value}:${target.confidence}`).join("|"),
+    () => openTargets.map((target) => `${target.kind}:${target.value}:${target.confidence}:${target.sourceMessageId ?? ""}`).join("|"),
     [openTargets],
   );
   const handleOpenTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions) => {

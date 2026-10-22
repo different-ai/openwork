@@ -3,7 +3,7 @@ import type { McpAppOrigin } from "@/components/chat/mcp-app-origin";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { isCollectibleArtifactTarget, type OpenTarget, type OpenTargetPreview } from "../artifacts/open-target";
+import { isOpenableFileTarget, sameOpenTargets, type OpenTarget, type OpenTargetPreview } from "../artifacts/open-target";
 
 export const PERSISTED_PANEL_TAB_STORE_KEY = "openwork:panel-tabs:v1";
 
@@ -112,16 +112,6 @@ function reconcileOpenArtifactTabs(
     tabs,
     activeTabId: session.activeTabId === null ? null : resolveActiveTabId(tabs, session.activeTabId),
   };
-}
-
-function isSameTranscriptArtifactTargets(left: OpenTarget[], right: OpenTarget[]) {
-  return (
-    left.length === right.length &&
-    left.every((target, index) => {
-      const other = right[index];
-      return other && target.id === other.id && target.updatedAt === other.updatedAt;
-    })
-  );
 }
 
 function resolveActiveTabId<Tab extends { id: string }>(
@@ -351,15 +341,15 @@ export const usePanelTabStore = create<PanelTabStore>()(
       syncTranscriptArtifacts: (sessionId, targets) => set((state) => {
         const currentTranscript = state.transcriptArtifactTargets[sessionId] ?? [];
         const session = getWritableSession(state, sessionId);
-        const collectibleTargets = targets
-          .filter(isCollectibleArtifactTarget)
+        const referencedTargets = targets
+          .filter(isOpenableFileTarget)
           .map((target) => ({
             id: target.id,
             name: target.name,
             preview: target.preview,
           }));
-        const nextSession = reconcileOpenArtifactTabs(session, collectibleTargets);
-        const transcriptChanged = !isSameTranscriptArtifactTargets(currentTranscript, targets);
+        const nextSession = reconcileOpenArtifactTabs(session, referencedTargets);
+        const transcriptChanged = !sameOpenTargets(currentTranscript, targets);
         const sessionChanged = !isSameSessionPanelState(session, nextSession.tabs, nextSession.activeTabId);
 
         if (!transcriptChanged && !sessionChanged) {

@@ -1044,6 +1044,7 @@ export type OpenworkResolvedArtifactTarget = {
   size?: number;
   updatedAt?: number;
   contentType?: string;
+  sourceMessageId?: string;
 };
 
 export type OpenworkWorkspaceFileStat = {
@@ -2514,6 +2515,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         preview?: string;
         confidence?: number;
         reason?: string;
+        sourceMessageId?: string;
       }>,
       options?: { sessionId?: string },
     ) =>

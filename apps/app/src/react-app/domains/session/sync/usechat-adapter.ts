@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import type { UIMessage } from "ai";
 import { replyModelFromInfo } from "./reply-model";
+import { fileChangeUIPart } from "./file-change-part";
 import type { FilePart, Part, TextPart, ToolPart } from "@opencode-ai/sdk/v2/client";
 
 import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
@@ -220,6 +221,7 @@ export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "me
         if (part.type === "step-start") {
           return [{ type: "step-start", providerMetadata: { opencode: { partId: part.id } } }];
         }
+        if (part.type === "patch") return [fileChangeUIPart(part)];
         return [];
       }),
     };

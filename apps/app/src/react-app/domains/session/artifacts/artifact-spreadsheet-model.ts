@@ -4,6 +4,21 @@ import type { Data } from "./open-target";
 
 export type SpreadsheetRows = string[][];
 
+const binaryContentKeys = new WeakMap<ArrayBuffer, number>();
+let nextBinaryContentKey = 0;
+
+/** ArrayBuffer hashes as {} in JSON query keys; distinct workbook responses
+ * must never reuse another file/account's parsed values merely by filename. */
+export function spreadsheetContentKey(content: Data) {
+  if (content.kind === "text") return content.data;
+  let key = binaryContentKeys.get(content.data);
+  if (key === undefined) {
+    key = ++nextBinaryContentKey;
+    binaryContentKeys.set(content.data, key);
+  }
+  return key;
+}
+
 function extension(name: string) {
   const clean = name.toLowerCase().split(/[?#]/)[0] ?? name.toLowerCase();
   const index = clean.lastIndexOf(".");

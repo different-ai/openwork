@@ -4,7 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Loader2, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { parseSpreadsheet, serializeSpreadsheet, type SpreadsheetRows } from "./artifact-spreadsheet-model";
+import { parseSpreadsheet, serializeSpreadsheet, spreadsheetContentKey, type SpreadsheetRows } from "./artifact-spreadsheet-model";
 import { cn } from "@/lib/utils";
 import type { Data } from "./open-target";
 
@@ -34,11 +34,12 @@ interface UseSpreadsheetProps {
 
 function useSpreadsheet({ name, content, onSave }: UseSpreadsheetProps) {
   const { data, error, isLoading } = useQuery({
-    queryKey: ["artifact-spreadsheet", name, content] as const,
+    queryKey: ["artifact-spreadsheet", name, content.kind, spreadsheetContentKey(content)],
     queryFn: async () => normalizeShape(await parseSpreadsheet({ name, content })),
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
     staleTime: Infinity,
+    gcTime: 0,
   });
 
   const [rows, setRows] = useState<SpreadsheetRows>([[""]]);

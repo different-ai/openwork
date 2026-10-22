@@ -481,7 +481,7 @@ export function SessionPage(props: SessionPageProps) {
     () => transcriptTargets.filter((target) => isTrackableAccessibleTarget(target) && !hiddenAccessibleTargetIds.has(target.id)),
     [hiddenAccessibleTargetIds, transcriptTargets],
   );
-  const artifactFileTargets = useMemo(() => accessibleTargets.filter(isCollectibleArtifactTarget), [accessibleTargets]);
+  const artifactFileTargets = useMemo(() => accessibleTargets.filter(isOpenableFileTarget), [accessibleTargets]);
   const artifactTargetCount = artifactFileTargets.length;
   const hasArtifactTargets = artifactTargetCount > 0;
   const activeSidePanel = sessionSidePanel;
@@ -782,7 +782,7 @@ export function SessionPage(props: SessionPageProps) {
     }
 
     const openFileTarget = (fileTarget: OpenTarget) => {
-      if (!isCollectibleArtifactTarget(fileTarget)) {
+      if (!isCollectibleArtifactTarget(fileTarget) && !options?.previewOnly) {
         if (isOpenableFileTarget(fileTarget)) {
           if (canOpenLocally) openLocalFile(fileTarget);
         }
@@ -924,9 +924,9 @@ export function SessionPage(props: SessionPageProps) {
   useControlAction(setBrowserProxyControlAction);
   const openArtifactRailPane = useCallback(() => {
     if (!hasArtifactTargets) {
-      const documentTab = activePanelTab?.type !== "browser" && activePanelTab
+      const documentTab = activePanelTab?.type === "artifact"
         ? activePanelTab
-        : sessionPanelState.tabs.find((tab) => tab.type !== "browser");
+        : sessionPanelState.tabs.find((tab) => tab.type === "artifact");
       selectTab(sidePanelSessionKey, documentTab?.id ?? null);
       setCurrentSidePanel("panel");
       return;
@@ -1385,6 +1385,7 @@ export function SessionPage(props: SessionPageProps) {
       client={props.openworkServerClient}
       workspaceId={props.runtimeWorkspaceId}
       workspaceRoot={props.selectedWorkspaceRoot}
+      onOpenTarget={props.selectedSessionId ? (target) => openTarget(target, { previewOnly: true }) : undefined}
       onClose={closeRightPane}
       onOpenExtensions={props.settingsSlot ? () => setCurrentSidePanel("extensions") : undefined}
       browserPresentation={browserPresentation.enabled ? { onPresent: browserPresentation.present } : undefined}
@@ -2037,8 +2038,8 @@ export function SessionPage(props: SessionPageProps) {
                 filesRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
               )}
               onClick={filesRailActive ? closeRightPane : openArtifactRailPane}
-              title={`Files (${artifactTargetCount})`}
-              aria-label={`Files (${artifactTargetCount})`}
+              title={`Referenced files (${artifactTargetCount})`}
+              aria-label={`Referenced files (${artifactTargetCount})`}
               aria-pressed={filesRailActive}
             >
               <FileText size={15} />

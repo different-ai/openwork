@@ -326,7 +326,9 @@ export const OpenWorkSpreadsheets = async (factoryInput?: unknown) => {
             bytes: result.bytes.byteLength,
             sha256: sha256(result.bytes),
             sheets: result.sheets,
-            note: `Mention ${file.relativePath} in your reply so the user can open it from the artifact panel.`,
+            // Emitted only after the atomic, identity-checked write completes.
+            // The UI can discover this result without depending on model prose.
+            producedFiles: [{ path: file.relativePath, bytes: result.bytes.byteLength, sha256: sha256(result.bytes) }],
           }, null, 2);
         },
       },
