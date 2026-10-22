@@ -398,6 +398,16 @@
       "development": "./src/den/admin-free-auto.ts",
       "default": "./src/den/admin-free-auto.ts"
     },
+    "./den/connection-state": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/connection-state.d.ts",
+        "default": "./src/den/connection-state.ts"
+      },
+      "development": "./src/den/connection-state.ts",
+      "bun": "./src/den/connection-state.ts",
+      "browser": "./src/den/connection-state.ts",
+      "default": "./dist/den/connection-state.js"
+    },
     "./managed-provider-config": {
       "types": {
         "openwork-build": "./dist/types/src/managed-provider-config.d.ts",

@@ -1,3 +1,4 @@
+import { deriveConnectionState } from "@openwork/types/den/connection-state"
 import { and, asc, count, desc, eq, inArray, isNull, notExists, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
@@ -2484,27 +2485,6 @@ export async function listMeLibraryPluginItems(input: { context: PluginArchActor
   }))
 }
 
-function memberConnectionState(connection: MemberUsableConnectionFacts) {
-  if (
-    connection.setupRequired
-    || connection.issuerReviewRequired
-    || connection.reconnectActionOwner === "organization_admin"
-    || connection.authPolicyConfirmed === false
-    || connection.authTypeMismatch
-    || (connection.oauthClientRequired && !connection.oauthClientConfigured)
-    || (connection.credentialMode === "shared" && !connection.connectedForMe)
-  ) {
-    return "needs_admin_setup"
-  }
-  if (connection.credentialMode === "per_member" && (!connection.connectedForMe || connection.needsReconnect)) {
-    return "needs_signin"
-  }
-  if (connection.connectedForMe || (connection.credentialMode === "shared" && connection.connected)) {
-    return "connected"
-  }
-  return "available"
-}
-
 export async function listMeLibraryConnectionItems(input: {
   connections: MemberUsableConnectionFacts[]
   context: PluginArchActorContext
@@ -2580,7 +2560,7 @@ export async function listMeLibraryConnectionItems(input: {
       description: null,
       transport: connection.nativeProviderKey !== null ? "native" : "mcp",
       provider: connection.nativeProviderKey,
-      state: memberConnectionState(connection),
+      state: deriveConnectionState(connection).member,
       connectedAt: connection.connectedAt,
       edges,
     }
