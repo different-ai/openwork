@@ -15,12 +15,22 @@ function normalizeCommandFrontmatter(data: Record<string, unknown>): Record<stri
 }
 
 async function repairLegacyCommandFile(filePath: string, content: string): Promise<{ data: Record<string, unknown>; body: string; changed: boolean }> {
-  const parsed = parseFrontmatter(content);
+  let parsed: { data: Record<string, unknown>; body: string };
+  try {
+    parsed = parseFrontmatter(content);
+  } catch (error) {
+    console.warn("[openwork:commands] Found invalid command frontmatter, skipping repair", {
+      path: filePath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { data: {}, body: content, changed: false };
+  }
   if (parsed.data.model !== null) {
     return { ...parsed, changed: false };
   }
 
-  const nextContent = buildFrontmatter(normalizeCommandFrontmatter(parsed.data)) + parsed.body.replace(/^\n?/, "\n");
+  const bodyWithNewline = parsed.body.startsWith("\n") ? parsed.body : "\n" + parsed.body;
+  const nextContent = buildFrontmatter(normalizeCommandFrontmatter(parsed.data)) + bodyWithNewline;
   await writeFile(filePath, nextContent, "utf8");
   return {
     data: normalizeCommandFrontmatter(parsed.data),
@@ -38,7 +48,19 @@ async function listCommandsInDir(dir: string, scope: "workspace" | "global"): Pr
     if (!entry.name.endsWith(".md")) continue;
     const filePath = join(dir, entry.name);
     const content = await readFile(filePath, "utf8");
-    const { data, body } = await repairLegacyCommandFile(filePath, content);
+    let data: Record<string, unknown>;
+    let body: string;
+    try {
+      const result = await repairLegacyCommandFile(filePath, content);
+      data = result.data;
+      body = result.body;
+    } catch (error) {
+      console.warn("[openwork:commands] Skipping command file with invalid frontmatter", {
+        path: filePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
     const name = typeof data.name === "string" ? data.name : entry.name.replace(/\.md$/, "");
     try {
       validateCommandName(name);
@@ -113,8 +135,15 @@ export async function repairCommands(workspaceRoot: string): Promise<boolean> {
     if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
     const filePath = join(dir, entry.name);
     const content = await readFile(filePath, "utf8");
-    const result = await repairLegacyCommandFile(filePath, content);
-    changed ||= result.changed;
+    try {
+      const result = await repairLegacyCommandFile(filePath, content);
+      changed ||= result.changed;
+    } catch (error) {
+      console.warn("[openwork:commands] Skipping command file with invalid frontmatter during repair", {
+        path: filePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   return changed;
 }
