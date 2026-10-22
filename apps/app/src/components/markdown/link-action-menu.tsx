@@ -28,8 +28,12 @@ export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkAc
   const [appsLoading, setAppsLoading] = useState(false);
   const canOpenInPanel = target.kind === "file" && SUPPORTED_PANEL_PREVIEWS.has(target.preview);
   const { workspaceRoot, isLocalWorkspace } = useOpenTargets();
-  const native = isLocalWorkspace && platform.capabilities.revealInFileManager && target.kind === "file"
-    ? nativeFileAction(workspaceRoot, target.value) : null;
+  const native = target.kind === "file" ? nativeFileAction(workspaceRoot, target.value, {
+    isLocalWorkspace: isLocalWorkspace === true,
+    canUseDesktop: platform.capabilities.revealInFileManager,
+    os: platform.os,
+    exists: target.exists,
+  }) : null;
   const canOpenExternally = native !== null;
   const canLaunch = native?.action === "open";
   const nativePath = native?.path;

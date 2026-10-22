@@ -6,6 +6,9 @@ import { useOpenArtifactPath } from "@/lib/artifacts"
 import { ActionContextMenu } from "@/components/ui/action-context-menu"
 import { toast } from "@/components/ui/sonner"
 import { cn } from "@/lib/utils"
+import { useOpenTargets } from "@/lib/target-provider"
+import { usePlatform } from "@/react-app/kernel/platform"
+import { nativeFileAction, openTargetForHref } from "@/react-app/domains/session/artifacts/resolve-open-target"
 
 type FileChipProps = {
   /** Full (possibly absolute) file path; only the basename is shown. */
@@ -28,13 +31,23 @@ function baseName(path: string): string {
 export function FileChip({ path, className }: FileChipProps) {
   const openArtifactPath = useOpenArtifactPath()
   const name = baseName(path)
+  const platform = usePlatform()
+  const { workspaceRoot, isLocalWorkspace, openTargets } = useOpenTargets()
+  const target = openTargetForHref(path, openTargets, workspaceRoot)
+  const native = target?.kind === "file" ? nativeFileAction(workspaceRoot, target.value, {
+    isLocalWorkspace: isLocalWorkspace === true,
+    canUseDesktop: platform.capabilities.revealInFileManager,
+    os: platform.os,
+    exists: target.exists,
+  }) : null
+  const nativeLabel = native?.action === "reveal" ? "Show in folder" : "Open in default app"
 
   return (
     <ActionContextMenu
       render={<span />}
       actions={[
         { type: "item", id: "open", label: "Open file", onSelect: () => openArtifactPath(path) },
-        { type: "item", id: "open-external", label: "Open in default app", onSelect: () => openArtifactPath(path, { external: true }) },
+        ...(native ? [{ type: "item" as const, id: "open-external", label: nativeLabel, onSelect: () => openArtifactPath(path, { external: true, reveal: native.action === "reveal" }) }] : []),
         { type: "separator" },
         { type: "item", id: "copy-path", label: "Copy path", onSelect: async () => {
           try {
@@ -59,15 +72,15 @@ export function FileChip({ path, className }: FileChipProps) {
           {name}
         </span>
       </button>
-      <button
+      {native ? <button
         type="button"
-        onClick={() => openArtifactPath(path, { external: true })}
-        title={`Open ${name} in default app`}
-        aria-label={`Open ${name} in default app`}
+        onClick={() => openArtifactPath(path, { external: true, reveal: native.action === "reveal" })}
+        title={`${nativeLabel}: ${name}`}
+        aria-label={`${nativeLabel}: ${name}`}
         className="flex cursor-pointer items-center pr-1.5 text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover/chip:opacity-100 hover:text-foreground"
       >
         <ArrowUpRight aria-hidden="true" className="size-2.5" />
-      </button>
+      </button> : null}
     </ActionContextMenu>
   )
 }

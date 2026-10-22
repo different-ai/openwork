@@ -65,6 +65,7 @@ type SidePanelProps = {
   client: OpenworkServerClient | null;
   workspaceId: string | null;
   workspaceRoot: string;
+  isLocalWorkspace?: boolean;
   onClose: () => void;
   onOpenExtensions?: () => void;
   /** Floating browser presentation; undefined keeps the docked-only browser. */
@@ -582,6 +583,7 @@ export function SidePanel({
   client,
   workspaceId,
   workspaceRoot,
+  isLocalWorkspace = false,
   onClose,
   onOpenExtensions,
   browserPresentation,
@@ -856,6 +858,7 @@ export function SidePanel({
               client={client}
               workspaceId={workspaceId}
               workspaceRoot={workspaceRoot}
+              isLocalWorkspace={isLocalWorkspace}
               onClose={onClose}
             />
           </div>
