@@ -138,6 +138,11 @@ jobs:
           python3 ee/packages/headless-computer/scripts/vnc-stdio.test.py
           python3 packages/computer-use/computer-x11-worker.test.py
           pnpm --dir evals exec vitest run --config vitest.config.ts --project pr ../apps/server/test/computer-use-tools.vitest.test.ts ../apps/server/test/cloud-computer-lifecycle.vitest.test.ts
+      - name: Test desktop session recovery and journal shutdown
+        run: |
+          pnpm --filter @openwork/headless-threads build
+          pnpm --filter @openwork/remote-sessions build
+          pnpm --filter @openwork/desktop test:session-runner
       - name: Test default-setup CodeQL coverage accounting
         run: node --test scripts/ci/check-codeql-results.test.mjs
       - name: Test packaged smoke engine diagnosis and kept logs

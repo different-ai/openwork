@@ -39,9 +39,18 @@ async function eventually(predicate, message = "condition was not reached") {
   assert.fail(message)
 }
 
+const directoryRunners = new Map()
+
 async function privateDirectory(t) {
   const root = await mkdtemp(join(tmpdir(), "openwork-session-runner-"))
-  t.after(() => rm(root, { recursive: true, force: true }))
+  const runners = new Set()
+  directoryRunners.set(root, runners)
+  t.after(async () => {
+    // after hooks run in registration order: stop and drain writers before rm.
+    await Promise.all([...runners].map((runner) => runner.stop()))
+    directoryRunners.delete(root)
+    await rm(root, { recursive: true, force: true })
+  })
   return root
 }
 
@@ -138,13 +147,16 @@ function runnerFixture(native, assignment = command()) {
 }
 
 function desktopRunner(native, den, root) {
-  return createDesktopAutomationRunner({
+  const runner = createDesktopAutomationRunner({
     fetchImpl: den.fetchImpl, getLocalRuntime: native.getLocalRuntime, getJournalRoot: () => root,
     remoteSessionFirstTurnWindowMs: 0,
     remoteSessionWatch: { fastPollMs: 10, slowPollMs: 10 },
     remoteSessionRequestPoll: { pollMs: 10 },
-    waitBeforeReconnect: (_ms, signal) => new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true })),
+    waitBeforeReconnect: (_ms, signal) => signal.aborted ? Promise.resolve()
+      : new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true })),
   })
+  directoryRunners.get(root).add(runner)
+  return runner
 }
 
 function configure(runner, capabilities, nonce = "first", selectedAccount = account) {
@@ -315,7 +327,7 @@ test("modern desktop consumes the shared core and recovers reports through token
   native.active = false
   native.messages.push({ id: "msg_finalreply", role: "assistant", text: "durable final reply" })
   await eventually(() => den.calls.some((call) => call.body?.finalText === "durable final reply" && call.token === `Bearer ${token(recoveryCapabilities, "rotated")}`))
-  runner.stop()
+  await runner.stop()
   const before = den.calls.length
   const restarted = desktopRunner(native, den, root)
   t.after(() => restarted.stop())
@@ -327,6 +339,25 @@ test("modern desktop consumes the shared core and recovers reports through token
   assert.equal(disk.includes(token(recoveryCapabilities)), false)
 })
 
+test("stop drains recovery before journal removal and remains safe to repeat", async (t) => {
+  const root = await privateDirectory(t)
+  const native = nativeFixture()
+  const den = runnerFixture(native)
+  const runner = desktopRunner(native, den, root)
+  configure(runner, recoveryCapabilities)
+  await eventually(() => den.calls.some((call) => call.path.endsWith("/complete")))
+  // The completion response can arrive before its acknowledgement is on disk.
+  const stopping = runner.stop()
+  assert.equal(typeof stopping?.then, "function", "stop exposes a drain barrier")
+  await stopping
+  const path = join(root, desktopSessionRunnerPartition(denBaseUrl, account), "journal.json")
+  assert.equal(JSON.parse(await readFile(path, "utf8")).commands[0].completionAcknowledged, true)
+  await rm(root, { recursive: true })
+  await runner.stop()
+  await assert.rejects(readdir(root), { code: "ENOENT" }, "retired loops must not recreate the removed journal")
+  assert.equal(native.created, 1)
+})
+
 test("failed completion stays in the shared journal outbox and restart never duplicates native creation", async (t) => {
   const root = await privateDirectory(t)
   const native = nativeFixture()
@@ -335,7 +366,7 @@ test("failed completion stays in the shared journal outbox and restart never dup
   const runner = desktopRunner(native, den, root)
   configure(runner, recoveryCapabilities)
   await eventually(() => den.calls.some((call) => call.path.endsWith("/complete")))
-  runner.stop()
+  await runner.stop()
   const restarted = desktopRunner(native, den, root)
   t.after(() => restarted.stop())
   configure(restarted, recoveryCapabilities, "restart")
