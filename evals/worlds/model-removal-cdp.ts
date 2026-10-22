@@ -5,7 +5,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** World-owned native HTTP fault fixture. It never evaluates renderer JavaScript. */
-export async function modelRemovalHttpFixture(app: AppWeb, patterns: string[], respond: (url: URL) => unknown | undefined) {
+export async function modelRemovalHttpFixture(app: Pick<AppWeb, "client" | "webUrl">, patterns: string[], respond: (url: URL) => unknown | undefined) {
   const endpoint = app.client.webSocketDebuggerUrl;
   if (!endpoint) throw new Error("The model-removal fixture requires browser CDP.");
   const socket = new WebSocket(endpoint);
