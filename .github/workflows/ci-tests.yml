@@ -143,7 +143,7 @@ jobs:
       - name: Test packaged smoke engine diagnosis and kept logs
         run: |
           bun test apps/server/test/opencode-plugin-deps.test.ts
-          node --test apps/desktop/test/engine-diagnosis.test.mjs apps/server/scripts/build-opencode-plugin-deps.test.mjs apps/desktop/scripts/electron-after-sign.test.cjs
+          node --test apps/desktop/test/engine-diagnosis.test.mjs apps/desktop/test/engine-cold-start-prerequisites.test.mjs apps/server/scripts/build-opencode-plugin-deps.test.mjs apps/desktop/scripts/electron-after-sign.test.cjs
           pnpm --dir evals exec vitest run --config vitest.config.ts --project pr packages/hosts/src/local-surface-log.test.ts
       - name: Test the OpenCode engine new installs start on
         run: |

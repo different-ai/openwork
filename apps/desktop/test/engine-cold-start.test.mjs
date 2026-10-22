@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
@@ -13,6 +13,15 @@ const engineBin = process.env.OPENWORK_TEST_ENGINE_BIN
   || join(repo, "apps/desktop/resources/sidecars", process.platform === "win32" ? "opencode.exe" : "opencode");
 
 test("a fresh bundled engine lists sessions and loads OpenWork tools without npm access", { timeout: 30_000 }, async () => {
+  if (!process.env.OPENWORK_TEST_EMBEDDED_MODULE_URL) {
+    const { opencodeVersion } = JSON.parse(await readFile(join(repo, "constants.json"), "utf8"));
+    await assert.doesNotReject(async () => {
+      await access(fileURLToPath(embeddedUrl));
+      await access(join(repo, "apps/server/dist", `opencode-plugin-deps-${opencodeVersion.replace(/^v/, "")}.tgz`));
+    }, "Missing packaged server prerequisites. Run pnpm --filter openwork-server build and node apps/server/scripts/build-opencode-plugin-deps.mjs (see apps/desktop/test/README.md).");
+  }
+  await assert.doesNotReject(() => access(engineBin),
+    "Missing pinned engine. Run pnpm --filter @openwork/desktop prepare:sidecar (see apps/desktop/test/README.md).");
   const profile = await mkdtemp(join(tmpdir(), "openwork-cold-engine-"));
   const previousEnv = { ...process.env };
   const registryRequests = [];
