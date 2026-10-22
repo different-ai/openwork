@@ -2,13 +2,6 @@ directories:
   output: dist-electron
 toolsets:
   appimage: "1.0.3"
-files:
-  - electron/**/*
-  - server/**/*
-  - "!server/dist/opencode-plugins/**"
-  - package.json
-  - from: .electron-runtime/node_modules
-    to: node_modules
 extraResources:
   - from: .electron-runtime/openwork-sentry.json
     to: openwork-sentry.json
@@ -46,6 +39,18 @@ publish:
     repo: openwork
     releaseType: release
 mac:
+  # Filter both dependency-collector and explicitly staged runtime copies.
+  files:
+    - electron/**/*
+    - server/**/*
+    - "!server/dist/opencode-plugins/**"
+    - package.json
+    - &macSqlite "!**/better-sqlite3/prebuilds/!(darwin-${arch}).node"
+    - &macPty "!**/@lydell/node-pty-!(darwin-${arch}){,/**}"
+    - &macPnpmPty "!**/.pnpm/@lydell+node-pty-!(darwin-${arch})@*/**"
+    - from: .electron-runtime/node_modules
+      to: node_modules
+      filter: ["**/*", *macSqlite, *macPty, *macPnpmPty]
   icon: resources/icons/icon.icns
   category: public.app-category.developer-tools
   hardenedRuntime: true
@@ -77,6 +82,18 @@ mac:
     - dmg
     - zip
 linux:
+  files:
+    - electron/**/*
+    - server/**/*
+    - "!server/dist/opencode-plugins/**"
+    - package.json
+    # Preserve both libc variants; the SQLite loader selects at runtime.
+    - &linuxSqlite "!**/better-sqlite3/prebuilds/!(linux-${arch}|linuxmusl-${arch}).node"
+    - &linuxPty "!**/@lydell/node-pty-!(linux-${arch}){,/**}"
+    - &linuxPnpmPty "!**/.pnpm/@lydell+node-pty-!(linux-${arch})@*/**"
+    - from: .electron-runtime/node_modules
+      to: node_modules
+      filter: ["**/*", *linuxSqlite, *linuxPty, *linuxPnpmPty]
   icon: resources/icons/linux
   syncDesktopName: true
   extraResources:
@@ -100,6 +117,17 @@ linux:
     - AppImage
     - tar.gz
 win:
+  files:
+    - electron/**/*
+    - server/**/*
+    - "!server/dist/opencode-plugins/**"
+    - package.json
+    - &winSqlite "!**/better-sqlite3/prebuilds/!(win32-${arch}).node"
+    - &winPty "!**/@lydell/node-pty-!(win32-${arch}){,/**}"
+    - &winPnpmPty "!**/.pnpm/@lydell+node-pty-!(win32-${arch})@*/**"
+    - from: .electron-runtime/node_modules
+      to: node_modules
+      filter: ["**/*", *winSqlite, *winPty, *winPnpmPty]
   icon: resources/icons/icon.ico
   signExts: [".dll", ".node"]
   signtoolOptions:
