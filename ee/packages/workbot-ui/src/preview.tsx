@@ -1,10 +1,11 @@
 "use client";
 
-import { extractOfficeText, openXlsxWorkbook, sheetGridRows, type XlsxWorkbook } from "@openwork/workbook";
+import { extractOfficeText, MAX_OFFICE_TEXT_CHARS, officeKindFromMimeOrFilename, openXlsxWorkbook, sheetGridRows, type XlsxWorkbook } from "@openwork/workbook";
+import { documentType } from "@openwork/documents";
 import { Download, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { downloadWorkbotFile, useWorkbotChat, useWorkbotFileBytes, useWorkbotFileUrl, useWorkbotImageUrl, useWorkbotPreview, useWorkbotPreviewPage, type WorkbotAttachment, type WorkbotPreview } from "./data";
-import { FileBadge, formatSize, isImage, kindLabel } from "./files";
+import { FileBadge, formatSize, isImage } from "./files";
 import { WorkbotMarkdown } from "./markdown";
 
 /**
@@ -26,9 +27,10 @@ function kindOf(file: WorkbotAttachment): Kind {
   if (type.startsWith("audio/") || ["mp3", "wav", "m4a", "ogg"].includes(extension)) return "audio";
   if (["md", "markdown"].includes(extension)) return "markdown";
   if (["csv", "tsv"].includes(extension)) return "csv";
-  if (extension === "xlsx") return "sheet";
-  if (extension === "pptx") return "slides";
-  if (extension === "docx") return "document";
+  const office = officeKindFromMimeOrFilename(type, file.name);
+  if (office === "xlsx") return "sheet";
+  if (office === "pptx") return "slides";
+  if (office === "docx") return "document";
   if (["html", "htm"].includes(extension)) return "html";
   if (type.startsWith("text/") || ["txt", "json", "yaml", "yml", "xml", "log", "py", "js", "ts", "sql"].includes(extension)) return "text";
   return "other";
@@ -49,7 +51,7 @@ function useJustUpdated(version: number | undefined) {
 
 export function PreviewPanel({ file, onClose }: { file: WorkbotAttachment; onClose: () => void }) {
   const justUpdated = useJustUpdated(file.updatedAt);
-  const chat = useWorkbotChat();
+  const typeLabel = documentType({ id: file.id, name: file.name, mimeType: file.mediaType, kind: "file", modifiedTime: null, size: file.size, openUrl: null });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -67,17 +69,10 @@ export function PreviewPanel({ file, onClose }: { file: WorkbotAttachment; onClo
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-[14px] font-semibold leading-5 tracking-[-0.01em] text-[var(--wb-text)]">{file.name}</span>
           <span className="text-[12px] leading-4 text-[var(--wb-muted)]" aria-live="polite">
-            {justUpdated ? <span className="workbot-subtitle-enter inline-block text-[var(--wb-text)]">Updated just now</span> : `${kindLabel(file.name, file.mediaType)}, ${formatSize(file.size)}`}
+            {justUpdated ? <span className="workbot-subtitle-enter inline-block text-[var(--wb-text)]">Updated just now</span> : `${typeLabel}, ${formatSize(file.size)}`}
           </span>
         </span>
-        <button
-          type="button"
-          onClick={() => void downloadWorkbotFile(file, chat)}
-          className="flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-[var(--wb-text)] transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
-        >
-          <Download size={14} strokeWidth={1.75} aria-hidden />
-          Download
-        </button>
+        <DownloadFile file={file} />
         <button
           type="button"
           onClick={onClose}
@@ -114,20 +109,33 @@ function Loading() {
 }
 
 function NoPreview({ file, reason }: { file: WorkbotAttachment; reason?: string }) {
-  const chat = useWorkbotChat();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
       <FileBadge name={file.name} mediaType={file.mediaType} />
       <p className="text-[13px] leading-5 text-[var(--wb-muted)]">{reason ?? "This kind of file can't be shown here."}</p>
-      <button
-        type="button"
-        onClick={() => void downloadWorkbotFile(file, chat)}
-        className="rounded-full bg-[var(--wb-ink)] px-4 py-2 text-[13px] font-medium text-[var(--wb-on-ink)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
-      >
-        Download
-      </button>
+      <DownloadFile file={file} />
     </div>
   );
+}
+
+/** Downloads the original bytes, not the visible excerpt. Failure stays beside the action. */
+function DownloadFile({ file }: { file: WorkbotAttachment }) {
+  const chat = useWorkbotChat();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState(false);
+  return <span className="flex flex-col items-end gap-1">
+    <button type="button" disabled={pending} onClick={() => {
+      setPending(true); setError(false);
+      void downloadWorkbotFile(file, chat).catch(() => setError(true)).finally(() => setPending(false));
+    }} className="flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-[var(--wb-text)] transition-colors duration-150 hover:bg-[var(--wb-chip)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
+      <Download size={14} strokeWidth={1.75} aria-hidden />{pending ? "Downloading" : "Download original"}
+    </button>
+    {error ? <span role="status" className="text-[12px] text-[var(--wb-danger)]">Couldn't download. Try again.</span> : null}
+  </span>;
+}
+
+function PreviewNotice({ children }: { children: ReactNode }) {
+  return <p role="status" className="border-b border-[var(--wb-hairline)] px-6 py-3 text-[12px] leading-5 text-[var(--wb-muted)]">{children}</p>;
 }
 
 function ImagePreview({ file }: { file: WorkbotAttachment }) {
@@ -152,6 +160,7 @@ function PdfPreview({ file }: { file: WorkbotAttachment }) {
   const preview = useWorkbotPreview(file.id, file.updatedAt);
   const url = useWorkbotFileUrl(preview.isSuccess && !preview.data ? file.id : null, file.updatedAt);
   if (preview.data) return <Pages file={file} preview={preview.data} kind="document" />;
+  if (preview.isError) return <NoPreview file={file} reason="The preview couldn't load. Download the original to open it." />;
   if (url.isError) return <NoPreview file={file} reason="This file couldn't load." />;
   if (!url.data) return <Loading />;
   return <PdfFrame url={url.data} title={file.name} />;
@@ -177,6 +186,8 @@ function OfficePreview({ file, kind }: { file: WorkbotAttachment; kind: "slides"
   useEffect(() => {
     if (!bytes.data) return;
     let cancelled = false;
+    setText(null);
+    setFailed(false);
     extractOfficeText(kind === "slides" ? "pptx" : "docx", bytes.data)
       .then((value) => !cancelled && setText(value))
       .catch(() => !cancelled && setFailed(true));
@@ -185,9 +196,9 @@ function OfficePreview({ file, kind }: { file: WorkbotAttachment; kind: "slides"
     };
   }, [bytes.data, kind]);
   if (preview.data) return <Pages file={file} preview={preview.data} kind={kind} />;
-  if (failed || bytes.isError) return <NoPreview file={file} reason="This file is too large to show here." />;
+  if (preview.isError || failed || bytes.isError) return <NoPreview file={file} reason="The preview couldn't load. Download the original to open it." />;
   if (text === null) return <Loading />;
-  return kind === "slides" ? <SlidesOutline text={text} /> : <DocumentText text={text} />;
+  return <><PreviewNotice>Extracted text excerpt, up to {MAX_OFFICE_TEXT_CHARS.toLocaleString()} characters. Layout and images aren't shown{kind === "slides" ? "; speaker notes may be omitted" : ""}. Download the original for the complete file.</PreviewNotice>{kind === "slides" ? <SlidesOutline text={text} /> : <DocumentText text={text} />}</>;
 }
 
 /** Rendered pages, one under the other like a deck in presenter view, each at its true proportions. */
@@ -234,22 +245,12 @@ function SlidesOutline({ text }: { text: string }) {
   if (slides.length === 0) return <DocumentText text={text} />;
   return (
     <ol className="flex flex-col gap-4 p-6">
-      {slides.map((slide, index) => {
-        const [title = "", ...lines] = slide.body.split("\n").map((line) => line.trim()).filter(Boolean);
-        return (
-          <li key={slide.part} className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-medium tabular-nums text-[var(--wb-faint)]">{index + 1}</span>
-            <div className="flex aspect-video flex-col gap-2 overflow-hidden rounded-xl bg-[var(--wb-surface)] p-[6%] shadow-[var(--wb-card-shadow)]">
-              <p className="text-[17px] font-semibold leading-6 tracking-[-0.01em] text-[var(--wb-text)]">{title}</p>
-              <ul className="flex flex-col gap-1">
-                {lines.slice(0, 8).map((line, lineIndex) => (
-                  <li key={lineIndex} className="text-[13px] leading-5 text-[var(--wb-muted)]">{line}</li>
-                ))}
-              </ul>
-            </div>
-          </li>
-        );
-      })}
+      {slides.map((slide) => (
+        <li key={slide.part} className="flex flex-col gap-1.5 border-b border-[var(--wb-hairline)] pb-4">
+          <span className="text-[11px] font-medium text-[var(--wb-muted)]">Extracted slide text</span>
+          <p className="whitespace-pre-wrap break-words text-[14px] leading-6 text-[var(--wb-text)]">{slide.body}</p>
+        </li>
+      ))}
     </ol>
   );
 }
@@ -267,24 +268,24 @@ function BytesPreview({ file, kind }: { file: WorkbotAttachment; kind: Exclude<K
   if (bytes.isError) return <NoPreview file={file} reason="This file couldn't load." />;
   if (!bytes.data) return <Loading />;
   if (kind === "sheet") return <SheetPreview file={file} bytes={bytes.data} />;
-  const text = new TextDecoder().decode(bytes.data.subarray(0, 2_000_000));
-  if (kind === "markdown") {
-    return (
-      <div className="mx-auto max-w-[680px] p-8">
-        <WorkbotMarkdown text={text} />
-      </div>
-    );
-  }
-  if (kind === "csv") return <Grid rows={parseDelimited(text, extensionOf(file.name) === "tsv" ? "\t" : ",")} />;
-  // Untrusted HTML runs only in an opaque-origin frame: scripts, but no access to this page (never allow-same-origin).
-  if (kind === "html") return <iframe srcDoc={text} sandbox="allow-scripts" title={file.name} className="block h-full min-h-[70vh] w-full border-0 bg-white" />;
-  return <pre className="whitespace-pre-wrap break-words p-6 font-mono text-[12px] leading-5 text-[var(--wb-text)]">{text}</pre>;
+  const limit = 2_000_000;
+  const truncated = bytes.data.byteLength > limit;
+  // Stream decoding drops an incomplete final UTF-8 character from a bounded excerpt.
+  const text = new TextDecoder().decode(bytes.data.subarray(0, limit), { stream: truncated });
+  const notice = truncated ? <PreviewNotice>Excerpt: first {limit.toLocaleString()} of {bytes.data.byteLength.toLocaleString()} bytes.{kind === "csv" ? " The final row may be incomplete." : ""} Download the original for the complete file.</PreviewNotice> : null;
+  if (kind === "markdown") return <>{notice}<div className="mx-auto max-w-[680px] p-8"><WorkbotMarkdown text={text} /></div></>;
+  if (kind === "csv") return <>{notice}<Grid rows={parseDelimited(text, extensionOf(file.name) === "tsv" ? "\t" : ",")} excerpt={truncated} /></>;
+  // An incomplete HTML document is not a faithful preview; keep its source excerpt readable instead.
+  // Untrusted complete HTML runs in an opaque-origin frame, never allow-same-origin.
+  if (kind === "html" && !truncated) return <iframe srcDoc={text} sandbox="allow-scripts" title={file.name} className="block h-full min-h-[70vh] w-full border-0 bg-[var(--wb-surface)]" />;
+  return <>{notice}<pre className="whitespace-pre-wrap break-words p-6 font-mono text-[12px] leading-5 text-[var(--wb-text)]">{text}</pre></>;
 }
 
 function SheetPreview({ file, bytes }: { file: WorkbotAttachment; bytes: Uint8Array }) {
   const [workbook, setWorkbook] = useState<XlsxWorkbook | null>(null);
   const [sheetIndex, setSheetIndex] = useState(0);
   const [rows, setRows] = useState<string[][] | null>(null);
+  const [omittedCells, setOmittedCells] = useState(0);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -303,16 +304,17 @@ function SheetPreview({ file, bytes }: { file: WorkbotAttachment; bytes: Uint8Ar
     setRows(null);
     workbook
       .readSheet(sheet)
-      .then((data) => !cancelled && setRows(sheetGridRows(data)))
+      .then((data) => { if (!cancelled) { setRows(sheetGridRows(data)); setOmittedCells(data.omittedCells); } })
       .catch(() => !cancelled && setFailed(true));
     return () => {
       cancelled = true;
     };
   }, [workbook, visible, sheetIndex]);
-  if (failed) return <NoPreview file={file} reason="This workbook is too large to show here." />;
+  if (failed) return <NoPreview file={file} reason="This workbook couldn't be previewed. Download the original to open it." />;
   if (!rows) return <Loading />;
   return (
     <div className="flex min-h-full flex-col">
+      <PreviewNotice>Read-only values preview. Formatting and charts aren't reproduced; formula results may be cached.{omittedCells ? ` ${omittedCells.toLocaleString()} cells aren't shown.` : ""}{workbook?.omittedSheets ? ` ${workbook.omittedSheets} sheets aren't shown.` : ""}{workbook && workbook.sheets.length > visible.length ? " Hidden sheets aren't shown." : ""} Download the original for the complete workbook.</PreviewNotice>
       {visible.length > 1 ? (
         <div className="flex shrink-0 gap-1 px-5 pt-4" role="tablist" aria-label="Sheets">
           {visible.map((sheet, index) => (
@@ -335,11 +337,12 @@ function SheetPreview({ file, bytes }: { file: WorkbotAttachment; bytes: Uint8Ar
 }
 
 /** A read-only grid: a sticky header row, hairlines, tabular numbers, and a row cap so huge sheets stay quick. */
-function Grid({ rows }: { rows: string[][] }) {
+function Grid({ rows, excerpt = false }: { rows: string[][]; excerpt?: boolean }) {
   const [header = [], ...body] = rows.slice(0, 1_000);
   const columns = Math.max(header.length, ...body.map((row) => row.length));
   return (
     <div className="overflow-auto p-5">
+      <p role="status" className="pb-3 text-[12px] leading-5 text-[var(--wb-muted)]">Read-only preview. {rows.length > 1_000 ? `Showing the first 1,000 of ${rows.length.toLocaleString()} rows${excerpt ? " in this excerpt" : ""}, including the header. Download the original for all rows.` : `${rows.length.toLocaleString()} rows${excerpt ? " in this excerpt" : ""}, including the header.`}</p>
       <table className="min-w-full border-separate border-spacing-0 overflow-hidden rounded-xl bg-[var(--wb-surface)] text-left text-[12.5px] leading-5 shadow-[var(--wb-card-shadow)]">
         <thead className="sticky top-0">
           <tr>
