@@ -6,7 +6,7 @@ import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { DenNotice } from "../../_components/ui/notice";
-import { getOrgAccessFlags } from "../../_lib/den-org";
+import { getDesktopPolicyAssignmentsRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { parseDesktopPolicyList, createDesktopPolicy, updateDesktopPolicy, useOrgDesktopPolicies, type DenDesktopPolicy } from "./desktop-policy-data";
@@ -18,7 +18,7 @@ const suggestionsFor = (policy: DenDesktopPolicy | undefined): Suggestion[] => (
 
 /** Suggestion fields alone change; assignments, priority and all other policy fields survive. */
 export function DesktopSuggestionsPanel({ team }: { team: { id: string; name: string } | null }) {
-  const { orgContext, orgId, runReauthableAction } = useOrgDashboard();
+  const { orgContext, orgId, orgSlug, runReauthableAction } = useOrgDashboard();
   const access = orgContext ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions) : null;
   const canView = access?.canViewDesktopPolicies ?? false;
   const { desktopPolicies, busy, error, reloadPolicies } = useOrgDesktopPolicies(canView ? orgId : null);
@@ -95,7 +95,7 @@ export function DesktopSuggestionsPanel({ team }: { team: { id: string; name: st
   return (
     <div className="flex flex-col gap-4" data-testid="desktop-suggestions">
       <ItemSection title="Prompt suggestions" meta={team ? inherited ? "Inherit from Everyone" : "Changed for team" : undefined}>
-        {blocked ? <DenNotice tone="neutral" message="Suggestions have shared or overlapping policy assignments. Editing is locked to preserve other teams and members. Ask an organization owner to separate these assignments before changing suggestions." /> : null}
+        {blocked ? <DenNotice tone="neutral" message="Suggestions have shared or overlapping policy assignments. Editing is locked to preserve other teams and members." action={<DenButton variant="secondary" href={getDesktopPolicyAssignmentsRoute(orgSlug)}>Review policy assignments</DenButton>} /> : null}
         {!access?.canManageDesktopPolicies ? <DenNotice tone="neutral" message="Read only. Ask an organization owner or admin for permission to manage desktop policies." /> : !orgContext?.entitlements.desktopPolicies ? <DenNotice tone="neutral" message="Changing prompt suggestions requires an Enterprise plan. Ask an organization owner." /> : null}
         <ItemPanel>
           {shown.length === 0 ? <div className="px-5 py-4 text-[13px] text-gray-500">Built-in desktop suggestions</div> : shown.map((entry, index) => (
@@ -134,6 +134,7 @@ export function DesktopSuggestionsPanel({ team }: { team: { id: string; name: st
             {retained.map((policy) => (
               <ItemSection key={policy.id} title={policy.policyName} meta={`${policy.isEnabled ? "Enabled" : "Disabled"} · Priority ${policy.priority}`}>
                 <ItemPanel>{suggestionsFor(policy).map((entry, index) => <ItemRow key={index} title={entry.prompt} description={entry.description} />)}</ItemPanel>
+                <DenButton variant="secondary" href={getDesktopPolicyAssignmentsRoute(orgSlug, policy.id)}>Review assignments for {policy.policyName}</DenButton>
               </ItemSection>
             ))}
           </div>
