@@ -6,10 +6,12 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { DenButton } from "../../_components/ui/button";
 import { DenSecretInput } from "../../_components/ui/secret-input";
 import { DenNotice } from "../../_components/ui/notice";
-import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
-import { getBillingRoute, getOrgAccessFlags, parseOrgSsoPayload, type DenOrgSsoConnection, permissionLockReason } from "../../_lib/den-org";
+import { isReauthRequiredError, requestJson } from "../../_lib/den-flow";
+import { getBillingRoute, getOrgAccessFlags, parseOrgSsoPayload, type DenOrgSsoConnection, permissionLockReason, roleIncludesCanonicalRole } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
+import { SsoProviderValues } from "./sso-provider-values";
+import { getEmailDomain, getSsoDomainWarning, getSsoRequestError, SsoAdvancedAudience, SsoDomainField, SsoEnableWarning, SsoOidcIssuerHint, SsoSamlNotice } from "./sso-form-guidance";
 
 function formatDateTime(value: string | null) {
   if (!value) return "Not configured";
@@ -33,6 +35,7 @@ export function SsoScreen() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [domainWarning, setDomainWarning] = useState<string | null>(null);
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [domainVerificationToken, setDomainVerificationToken] = useState<string | null>(null);
   const [requestingDomainToken, setRequestingDomainToken] = useState(false);
@@ -81,7 +84,7 @@ export function SsoScreen() {
     try {
       const { response, payload } = await requestJson("/v1/sso", { method: "GET", headers: getOrgScopedHeaders() }, 12000);
       if (!response.ok) {
-        throw getRequestError(payload, response, `Failed to load SSO settings (${response.status}).`);
+        throw getSsoRequestError(payload, response, `Failed to load SSO settings (${response.status}).`);
       }
 
       const parsed = parseOrgSsoPayload(payload);
@@ -117,6 +120,8 @@ export function SsoScreen() {
 
   function syncFormFromConnection(nextConnection: DenOrgSsoConnection | null) {
     if (!nextConnection) {
+      const ownerDomain = getEmailDomain(orgContext?.organization.owner?.email);
+      if (ownerDomain) setDomain(current => current || ownerDomain);
       return;
     }
 
@@ -213,6 +218,14 @@ export function SsoScreen() {
     }
   }
 
+  function updateDomainWarning() {
+    const adminEmails = [
+      orgContext?.organization.owner?.email,
+      ...(orgContext?.members.filter(member => member.isOwner || roleIncludesCanonicalRole(member.effectiveRole, "admin") || member.adminTeams.length > 0).map(member => member.user.email) ?? []),
+    ].filter((email): email is string => typeof email === "string");
+    setDomainWarning(getSsoDomainWarning(domain, issuer, adminEmails));
+  }
+
   async function handleSave() {
     if (!orgId) {
       setError("Organization not found.");
@@ -253,11 +266,12 @@ export function SsoScreen() {
 
           const { response, payload } = await requestJson(path, { method: "POST", headers: getOrgScopedHeaders(), body: JSON.stringify(body) }, 20000);
           if (!response.ok) {
-            throw getRequestError(payload, response, `Failed to save SSO settings (${response.status}).`);
+            throw getSsoRequestError(payload, response, `Failed to save SSO settings (${response.status}).`);
           }
 
           const parsed = parseOrgSsoPayload(payload);
           setConnection(parsed.connection);
+          updateDomainWarning();
           syncFormFromConnection(parsed.connection);
           setDomainVerificationToken(parsed.domainVerificationToken);
           setEditing(false);
@@ -287,9 +301,10 @@ export function SsoScreen() {
         try {
           const { response, payload } = await requestJson("/v1/sso", { method: "DELETE", headers: getOrgScopedHeaders() }, 12000);
           if (response.status !== 204 && !response.ok) {
-            throw getRequestError(payload, response, `Failed to delete SSO settings (${response.status}).`);
+            throw getSsoRequestError(payload, response, `Failed to delete SSO settings (${response.status}).`);
           }
           setConnection(null);
+          setDomainWarning(null);
           setEditing(false);
           await loadSsoConfig();
         } finally {
@@ -314,7 +329,7 @@ export function SsoScreen() {
         try {
           const { response, payload } = await requestJson("/v1/sso/request-domain-verification", { method: "POST", headers: getOrgScopedHeaders(), body: JSON.stringify({}) }, 12000);
           if (!response.ok) {
-            throw getRequestError(payload, response, `Failed to request domain verification (${response.status}).`);
+            throw getSsoRequestError(payload, response, `Failed to request domain verification (${response.status}).`);
           }
 
           const token = typeof (payload as { domainVerificationToken?: unknown } | null)?.domainVerificationToken === "string"
@@ -346,7 +361,7 @@ export function SsoScreen() {
         try {
           const { response, payload } = await requestJson("/v1/sso/verify-domain", { method: "POST", headers: getOrgScopedHeaders(), body: JSON.stringify({}) }, 12000);
           if (response.status !== 204 && !response.ok) {
-            throw getRequestError(payload, response, `Failed to verify domain (${response.status}).`);
+            throw getSsoRequestError(payload, response, `Failed to verify domain (${response.status}).`);
           }
           setDomainVerificationToken(null);
           await loadSsoConfig();
@@ -377,7 +392,7 @@ export function SsoScreen() {
           headers: getOrgScopedHeaders(),
           body: JSON.stringify({}),
         }, 12000);
-        if (!response.ok) throw getRequestError(payload, response, `Failed to start the SSO test (${response.status}).`);
+        if (!response.ok) throw getSsoRequestError(payload, response, `Failed to start the SSO test (${response.status}).`);
         const intentId = typeof payload === "object" && payload !== null && "intentId" in payload && typeof payload.intentId === "string"
           ? payload.intentId
           : "";
@@ -415,7 +430,7 @@ export function SsoScreen() {
           headers: getOrgScopedHeaders(),
           body: JSON.stringify({}),
         }, 12000);
-        if (response.status !== 204 && !response.ok) throw getRequestError(payload, response, `Failed to enable SSO (${response.status}).`);
+        if (response.status !== 204 && !response.ok) throw getSsoRequestError(payload, response, `Failed to enable SSO (${response.status}).`);
         setTestDialogOpen(false);
         setTestIntentId(null);
         await loadSsoConfig();
@@ -438,7 +453,7 @@ export function SsoScreen() {
           headers: getOrgScopedHeaders(),
           body: JSON.stringify({}),
         }, 12000);
-        if (response.status !== 204 && !response.ok) throw getRequestError(payload, response, `Failed to disable SSO (${response.status}).`);
+        if (response.status !== 204 && !response.ok) throw getSsoRequestError(payload, response, `Failed to disable SSO (${response.status}).`);
         await loadSsoConfig();
       });
     } catch (nextError) {
@@ -486,6 +501,7 @@ export function SsoScreen() {
             <EnterprisePlanNotice feature="SSO" plan="team" billingHref={getBillingRoute(orgContext.organization.slug)} />
           ) : null}
           {error ? <DenNotice message={error} className="mb-6" /> : null}
+          {domainWarning ? <DenNotice message={domainWarning} tone="warning" className="mb-6" /> : null}
           {!access.canManageSso ? (
             <div className="mb-6 rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-4 text-[14px] text-[var(--dls-text-primary)]">
               {`Read only. ${permissionLockReason("sso.manage")}`}
@@ -502,33 +518,29 @@ export function SsoScreen() {
                 {connection && editing ? <DenButton variant="secondary" onClick={handleCancelEdit}>Cancel edit</DenButton> : null}
               </div>
 
-              <div className="mt-6 grid gap-4 md:grid-cols-2">
+              <p className="mt-6 text-[16px] font-semibold tracking-[-0.03em] text-gray-900">Paste the values from your identity provider</p>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <SsoDomainField value={domain} onChange={setDomain} onBlur={updateDomainWarning} disabled={ssoFormDisabled} />
                 <label className="block text-[14px] text-gray-700">
                   <span className="mb-2 block font-medium">{formMode === "saml" ? "IdP Issuer URL" : "Issuer URL"}</span>
                   <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={issuer} onChange={(event) => setIssuer(event.target.value)} placeholder="https://idp.example.com" disabled={ssoFormDisabled} />
-                </label>
-                <label className="block text-[14px] text-gray-700">
-                  <span className="mb-2 block font-medium">Domain</span>
-                  <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="example.com" disabled={ssoFormDisabled} />
+                  {formMode === "saml" ? <span className="mt-1 block text-[12px] text-gray-500">Your identity provider&apos;s own identifier (for example Microsoft Entra Identifier or Identity Provider Issuer). Not the Entity ID you give to your identity provider.</span> : <SsoOidcIssuerHint />}
                 </label>
                 {formMode === "saml" ? (
                   <>
                     <label className="block text-[14px] text-gray-700 md:col-span-2">
                       <span className="mb-2 block font-medium">SAML Entry Point</span>
                       <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={entryPoint} onChange={(event) => setEntryPoint(event.target.value)} placeholder="https://idp.example.com/sso" disabled={ssoFormDisabled} />
-                    </label>
-                    <label className="block text-[14px] text-gray-700 md:col-span-2">
-                      <span className="mb-2 block font-medium">Audience URL</span>
-                      <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="Defaults to the OpenWork auth URL" disabled={ssoFormDisabled} />
+                      <span className="mt-1 block text-[12px] text-gray-500">Your identity provider&apos;s login address (for example Login URL, Identity Provider Single Sign-On URL or SSO URL).</span>
                     </label>
                     <label className="block text-[14px] text-gray-700 md:col-span-2">
                       <span className="mb-2 block font-medium">IdP Certificate</span>
                       <textarea className="min-h-[140px] w-full rounded-[18px] border border-gray-200 px-4 py-3" value={cert} onChange={(event) => setCert(event.target.value)} placeholder="Certificate is not returned after save" disabled={ssoFormDisabled} />
+                      <span className="mt-1 block text-[12px] text-gray-500">The signing certificate (Base64 / X.509), with or without the BEGIN/END lines.</span>
                       <span className="mt-1 block text-[12px] text-gray-500">Certificates are not returned after save; enter a replacement only when editing.</span>
                     </label>
-                    <div className="rounded-[18px] border border-gray-200 px-4 py-3 text-[14px] leading-6 text-gray-600 md:col-span-2">
-                      OpenWork always requires signed SAML assertions, timestamps, and SP-initiated responses for organization SAML connections.
-                    </div>
+                    <SsoAdvancedAudience value={audience} onChange={setAudience} disabled={ssoFormDisabled} />
+                    <SsoSamlNotice />
                   </>
                 ) : (
                   <>
@@ -539,11 +551,12 @@ export function SsoScreen() {
                     <label className="block text-[14px] text-gray-700">
                       <span className="mb-2 block font-medium">Client Secret</span>
                       <DenSecretInput autoComplete="new-password" value={clientSecret} onChange={setClientSecret} placeholder="Secret is not returned after save" disabled={ssoFormDisabled} />
-                      <span className="mt-1 block text-[12px] text-gray-500">Client secrets are never returned by Den.</span>
+                      <span className="mt-1 block text-[12px] text-gray-500">OpenWork doesn&apos;t return the saved secret.</span>
                     </label>
                     <label className="block text-[14px] text-gray-700 md:col-span-2">
                       <span className="mb-2 block font-medium">Scopes</span>
                       <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={scopes} onChange={(event) => setScopes(event.target.value)} placeholder="openid email profile" disabled={ssoFormDisabled} />
+                      <span className="mt-1 block text-[12px] text-gray-500">Keep openid email profile. Each user needs an email address at your identity provider.</span>
                     </label>
                     <label className="block text-[14px] text-gray-700 md:col-span-2">
                       <span className="mb-2 block font-medium">Token endpoint auth method</span>
@@ -613,6 +626,7 @@ export function SsoScreen() {
 
             {connection ? (
               <div className="mt-5 space-y-4">
+                <SsoProviderValues connection={connection} copiedValue={copiedValue} onCopy={(value, key) => void copyValue(value, key)} />
                 {!connection.domainVerified ? (
                   <section data-testid="sso-domain-verification" className="overflow-hidden rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-surface)] text-[14px] text-[var(--dls-text-primary)]">
                     <div className="flex flex-col gap-4 border-b border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
@@ -665,7 +679,7 @@ export function SsoScreen() {
                     </div>
                   </section>
                 ) : (
-                  <div className="flex items-start gap-3 rounded-[20px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-900">
+                  <div data-testid="sso-domain-verified" className="flex items-start gap-3 rounded-[20px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-900">
                     <CheckCircle2 className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
                     <div>
                       <p className="font-semibold">Domain verified{connection.status === "enabled" ? " · SSO enabled" : ""}</p>
@@ -673,23 +687,6 @@ export function SsoScreen() {
                     </div>
                   </div>
                 )}
-
-                <div data-testid="sso-provider-setup" className="space-y-4">
-                  {[
-                    ["Sign-in URL", connection.signInUrl, "signin"],
-                    ["Redirect URL", connection.redirectUrl, "redirect"],
-                    ["ACS URL", connection.acsUrl, "acs"],
-                    ["Metadata URL", connection.metadataUrl, "metadata"],
-                  ].map(([label, value, key]) => (
-                    <div key={key as string} className="rounded-[20px] border border-gray-200 bg-gray-50 p-4">
-                      <div className="mb-2 flex items-center justify-between gap-3">
-                        <p className="text-[13px] font-semibold uppercase tracking-[0.12em] text-gray-500">{label as string}</p>
-                        <DenButton variant="secondary" icon={Copy} onClick={() => void copyValue((value as string | null) ?? null, key as string)} disabled={!value}>{copiedValue === key ? "Copied" : "Copy"}</DenButton>
-                      </div>
-                      <code className="block break-all text-[13px] leading-6 text-gray-700">{(value as string | null) ?? "Not applicable"}</code>
-                    </div>
-                  ))}
-                </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="rounded-[20px] border border-gray-200 bg-gray-50 p-4 text-[14px] text-gray-700">
@@ -722,6 +719,7 @@ export function SsoScreen() {
                   <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Enable configuration</p>
                   <h2 id="sso-test-dialog-title" className="mt-2 text-[22px] font-semibold tracking-[-0.03em] text-slate-950">Test SSO before enabling it</h2>
                   <p className="mt-2 pr-8 text-[14px] leading-6 text-slate-600">A separate window performs real authentication with the saved {connection.kind.toUpperCase()} configuration. SSO stays disabled until you explicitly enable it.</p>
+                  <SsoEnableWarning />
                 </div>
                 <div className="space-y-4 px-6 py-5">
                   {connection.testStatus === "testing" ? (

@@ -1,4 +1,5 @@
 import { createHash, createHmac } from "node:crypto"
+import { MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_STRENGTH_SCORE, PASSWORD_COMPOSITION_RULES } from "@openwork/types/den/password-policy"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
@@ -8,13 +9,12 @@ import { dictionary as englishPasswordDictionary, translations as englishPasswor
 import { db } from "./db.js"
 import { env } from "./env.js"
 
+export { MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_STRENGTH_SCORE } from "@openwork/types/den/password-policy"
+
 export const EMAIL_PASSWORD_SIGN_IN_PATH = "/api/auth/sign-in/email"
 export const EMAIL_PASSWORD_SIGN_UP_PATH = "/api/auth/sign-up/email"
 export const CHANGE_PASSWORD_PATH = "/api/auth/change-password"
 export const RESET_PASSWORD_PATH = "/api/auth/reset-password"
-export const MIN_PASSWORD_LENGTH = 8
-export const MAX_PASSWORD_LENGTH = 32
-export const MIN_PASSWORD_STRENGTH_SCORE = 3
 export const LOGIN_LOCKOUT_FAILURE_THRESHOLD = 5
 export const LOGIN_LOCKOUT_FAILURE_WINDOW_MS = 60 * 60 * 1000
 export const LOGIN_LOCKOUT_BASE_MS = 5 * 60 * 1000
@@ -268,28 +268,28 @@ function getPasswordPolicyViolation(password: string): PasswordPolicyViolation |
     }
   }
 
-  if (!/[A-Z]/u.test(password)) {
+  if (PASSWORD_COMPOSITION_RULES.uppercase.required && !PASSWORD_COMPOSITION_RULES.uppercase.pattern.test(password)) {
     return {
       error: "password_missing_uppercase",
       message: "Password must include at least one uppercase letter.",
     }
   }
 
-  if (!/[a-z]/u.test(password)) {
+  if (PASSWORD_COMPOSITION_RULES.lowercase.required && !PASSWORD_COMPOSITION_RULES.lowercase.pattern.test(password)) {
     return {
       error: "password_missing_lowercase",
       message: "Password must include at least one lowercase letter.",
     }
   }
 
-  if (!/[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/u.test(password)) {
+  if (PASSWORD_COMPOSITION_RULES.special.required && !PASSWORD_COMPOSITION_RULES.special.pattern.test(password)) {
     return {
       error: "password_missing_special_character",
       message: "Password must include at least one special character.",
     }
   }
 
-  if (!/[0-9]/u.test(password)) {
+  if (PASSWORD_COMPOSITION_RULES.digit.required && !PASSWORD_COMPOSITION_RULES.digit.pattern.test(password)) {
     return {
       error: "password_missing_digit",
       message: "Password must include at least one digit.",

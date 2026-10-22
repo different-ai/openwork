@@ -155,6 +155,14 @@
       "development": "./src/den/desktop-app-restrictions.ts",
       "default": "./src/den/desktop-app-restrictions.ts"
     },
+    "./den/password-policy": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/password-policy.d.ts",
+        "default": "./src/den/password-policy.ts"
+      },
+      "development": "./src/den/password-policy.ts",
+      "default": "./src/den/password-policy.ts"
+    },
     "./den/permissions": {
       "types": {
         "openwork-build": "./dist/types/src/den/permissions.d.ts",
