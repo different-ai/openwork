@@ -978,7 +978,7 @@ export async function startServer(
             recoverySignal: taskRecovery?.owns(request) ? request.signal : undefined });
           const response = await sendWithOwnershipProof(ownership,
             () => taskRecovery ? taskRecovery.forward(workspace, "v1", mount.restPath, request, send) : send());
-          if (response.ok && engineV2Preview.status().chatRouting
+          if (response.ok && engineV2Preview.status().chatRouting && engineV2Preview.status().running
             && ["PUT", "DELETE"].includes(request.method)
             && /^\/opencode\/auth\/[^/]+$/.test(mount.restPath)) {
             // The ordinary local-provider form writes v1's credential store.
