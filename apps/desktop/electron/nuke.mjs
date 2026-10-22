@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawned } from "@openwork/child-process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
@@ -465,6 +465,7 @@ export async function scheduleNukeCleanupWorker({ app, input, plan, spawnFn, exe
       stdio: "ignore",
       windowsHide: true,
     });
+    if (!spawnFn) await spawned(child);
     child.unref();
     return { pid: child.pid ?? null, payloadPath };
   } catch (error) {

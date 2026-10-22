@@ -12,7 +12,7 @@ import { agentPermissionEngineMcpDenial, agentPermissionRulesOf } from "./agent-
 import { registeredOrganizationMcpServers } from "./connect-mcp-server-catalog.js";
 import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
 import { MCP_READINESS_RPC_ID } from "./opencode-v2-mcp-readiness.js";
-import { execFile } from "node:child_process";
+import { probeEngineV2Path } from "./engine-v2-version-probe.js";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
@@ -21,6 +21,7 @@ import { join } from "node:path";
 import constants from "../../../constants.json" with { type: "json" };
 import {
   createManagedOpencodeV2Server,
+  EngineV2StartupTimeoutError,
   engineListsModel,
   installOpencodeV2Binary,
   type ManagedOpencodeV2Server,
@@ -310,15 +311,6 @@ export async function writeEngineV2PreviewState(
   await rename(temporary, path);
 }
 
-function exec(file: string, args: string[], options: { cwd?: string; timeout?: number } = {}): Promise<void> {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, options, (error) => {
-      if (error) reject(error);
-      else resolve();
-    });
-  });
-}
-
 async function resolveBinary(config: ServerConfig): Promise<ResolvedBinary> {
   return startupPhase("engine.v2.resolve", () => resolveBinaryInner(config));
 }
@@ -329,9 +321,12 @@ async function resolveBinaryInner(config: ServerConfig): Promise<ResolvedBinary>
 
   let pathError = "not found";
   try {
-    await startupPhase("engine.v2.version-probe", () => exec("opencode2", ["--version"]));
+    await startupPhase("engine.v2.version-probe", () => probeEngineV2Path());
     return { bin: "opencode2", source: "path" };
   } catch (error) {
+    // A slow admitted image is not a missing executable. Do not download and
+    // admit another copy just because its version command took too long.
+    if (error instanceof EngineV2StartupTimeoutError) throw error;
     pathError = errorMessage(error);
   }
 
@@ -1032,6 +1027,10 @@ export function createEngineV2Preview(options: {
       version = health.version;
       pid = health.pid;
       running = health.healthy;
+      startupTimeouts = 0;
+      clearTimeout(startupRetry);
+      startupRetry = undefined;
+      lastError = undefined;
       const unsubscribeConfig = onRuntimeOpencodeConfigWrite((_writeConfig, workspaceId) => {
         const global = isEngineGlobalRuntimeConfigId(workspaceId);
         if (global) scheduleMirror();
@@ -1081,8 +1080,21 @@ export function createEngineV2Preview(options: {
   }
 
   let startFailureJob: Promise<void> | undefined;
+  let startupRetry: ReturnType<typeof setTimeout> | undefined;
+  let startupTimeouts = 0;
   function recordStartError(error: unknown): void {
     running = false;
+    if (error instanceof EngineV2StartupTimeoutError && enabled && allowRunning && !stopping) {
+      const retryMs = Math.min(60_000, 5_000 * 2 ** Math.min(startupTimeouts++, 4));
+      lastError = `OpenCode v2 is taking longer to start. Retrying in ${retryMs / 1_000} seconds.`;
+      clearTimeout(startupRetry);
+      startupRetry = setTimeout(() => {
+        startupRetry = undefined;
+        if (enabled && allowRunning && !stopping) void start().catch(recordStartError);
+      }, retryMs);
+      startupRetry.unref?.();
+      return;
+    }
     lastError = `${errorMessage(error)} Set OPENWORK_OPENCODE2_BIN to a working opencode2 binary to override resolution.`;
     if (!engineForced || engineOrigin !== "fresh") return;
     // Fresh selection is saved before startup, just like the desktop default.
@@ -1098,6 +1110,8 @@ export function createEngineV2Preview(options: {
   }
 
   async function stopRuntime(): Promise<void> {
+    clearTimeout(startupRetry);
+    startupRetry = undefined;
     allowRunning = false;
     unsubscribe?.();
     unsubscribe = undefined;

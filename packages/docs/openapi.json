@@ -4796,6 +4796,7 @@
           "key": {
             "type": "string",
             "enum": [
+              "desktopLaunchBroker",
               "nativeDictation",
               "organizationGrants",
               "connectionMcpServers",
@@ -4989,6 +4990,9 @@
                 "capabilities": {
                   "type": "object",
                   "properties": {
+                    "desktopLaunchBroker": {
+                      "type": "boolean"
+                    },
                     "nativeDictation": {
                       "type": "boolean"
                     },
@@ -5054,6 +5058,7 @@
                     }
                   },
                   "required": [
+                    "desktopLaunchBroker",
                     "nativeDictation",
                     "organizationGrants",
                     "connectionMcpServers",
@@ -5079,6 +5084,63 @@
                 "featureStates": {
                   "type": "object",
                   "properties": {
+                    "desktopLaunchBroker": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "member",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "nativeDictation": {
                       "type": "object",
                       "properties": {
@@ -6164,6 +6226,7 @@
                     }
                   },
                   "required": [
+                    "desktopLaunchBroker",
                     "nativeDictation",
                     "organizationGrants",
                     "connectionMcpServers",
@@ -6552,6 +6615,9 @@
                 "capabilities": {
                   "type": "object",
                   "properties": {
+                    "desktopLaunchBroker": {
+                      "type": "boolean"
+                    },
                     "nativeDictation": {
                       "type": "boolean"
                     },
@@ -6617,6 +6683,7 @@
                     }
                   },
                   "required": [
+                    "desktopLaunchBroker",
                     "nativeDictation",
                     "organizationGrants",
                     "connectionMcpServers",
@@ -6642,6 +6709,63 @@
                 "featureStates": {
                   "type": "object",
                   "properties": {
+                    "desktopLaunchBroker": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "member",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "nativeDictation": {
                       "type": "object",
                       "properties": {
@@ -7727,6 +7851,7 @@
                     }
                   },
                   "required": [
+                    "desktopLaunchBroker",
                     "nativeDictation",
                     "organizationGrants",
                     "connectionMcpServers",
@@ -32740,6 +32865,63 @@
                     "featureStates": {
                       "type": "object",
                       "properties": {
+                        "desktopLaunchBroker": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "member",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "nativeDictation": {
                           "type": "object",
                           "properties": {
@@ -33825,6 +34007,7 @@
                         }
                       },
                       "required": [
+                        "desktopLaunchBroker",
                         "nativeDictation",
                         "organizationGrants",
                         "connectionMcpServers",
@@ -33940,6 +34123,63 @@
                     "featureStates": {
                       "type": "object",
                       "properties": {
+                        "desktopLaunchBroker": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "member",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "nativeDictation": {
                           "type": "object",
                           "properties": {
@@ -35025,6 +35265,7 @@
                         }
                       },
                       "required": [
+                        "desktopLaunchBroker",
                         "nativeDictation",
                         "organizationGrants",
                         "connectionMcpServers",
@@ -35105,6 +35346,16 @@
                   "capabilities": {
                     "type": "object",
                     "properties": {
+                      "desktopLaunchBroker": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "nativeDictation": {
                         "anyOf": [
                           {
@@ -38364,6 +38615,9 @@
                     "capabilities": {
                       "type": "object",
                       "properties": {
+                        "desktopLaunchBroker": {
+                          "type": "boolean"
+                        },
                         "nativeDictation": {
                           "type": "boolean"
                         },
@@ -38429,6 +38683,7 @@
                         }
                       },
                       "required": [
+                        "desktopLaunchBroker",
                         "nativeDictation",
                         "organizationGrants",
                         "connectionMcpServers",
@@ -38454,6 +38709,63 @@
                     "featureStates": {
                       "type": "object",
                       "properties": {
+                        "desktopLaunchBroker": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "member",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "nativeDictation": {
                           "type": "object",
                           "properties": {
@@ -39539,6 +39851,7 @@
                         }
                       },
                       "required": [
+                        "desktopLaunchBroker",
                         "nativeDictation",
                         "organizationGrants",
                         "connectionMcpServers",
@@ -39676,6 +39989,9 @@
                     "capabilities": {
                       "type": "object",
                       "properties": {
+                        "desktopLaunchBroker": {
+                          "type": "boolean"
+                        },
                         "nativeDictation": {
                           "type": "boolean"
                         },
@@ -39741,6 +40057,7 @@
                         }
                       },
                       "required": [
+                        "desktopLaunchBroker",
                         "nativeDictation",
                         "organizationGrants",
                         "connectionMcpServers",
@@ -39766,6 +40083,63 @@
                     "featureStates": {
                       "type": "object",
                       "properties": {
+                        "desktopLaunchBroker": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "member",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "nativeDictation": {
                           "type": "object",
                           "properties": {
@@ -40851,6 +41225,7 @@
                         }
                       },
                       "required": [
+                        "desktopLaunchBroker",
                         "nativeDictation",
                         "organizationGrants",
                         "connectionMcpServers",

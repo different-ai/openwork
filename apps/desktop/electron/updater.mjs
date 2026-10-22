@@ -1,6 +1,6 @@
 import { readFile, mkdir, writeFile, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import { execFile } from "node:child_process";
+import { execFile } from "@openwork/child-process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {

@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawn, spawned } from "@openwork/child-process";
 import net from "node:net";
 import { startupPhase } from "./startup-phase.js";
 import { randomUUID } from "node:crypto";
@@ -191,6 +192,9 @@ async function startManagedOpencodeServer(
     stdio: ["ignore", "pipe", "pipe"],
   });
 
+  // Native admission may take minutes under endpoint security. The readiness
+  // timer measures a running engine, not time queued in the launch broker.
+  await spawned(child);
   const processLifecycle = createManagedProcessClose(child);
 
   let url: string;

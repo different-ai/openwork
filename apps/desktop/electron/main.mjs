@@ -1,6 +1,8 @@
 import { processBlankSlateProfile, resolveBlankSlateLaunch } from "./blank-slate-profile.mjs";
 import { DESKTOP_POLICY_ENFORCEMENT_ENABLED } from "@openwork/types/den/desktop-policies-runtime";
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, runFile, spawn } from "@openwork/child-process";
+import { FEATURES } from "@openwork/features/runtime";
+import { startDesktopLaunchBroker } from "./launch-broker.mjs";
 import { createServer } from "node:http";
 import net from "node:net";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -136,7 +138,9 @@ const {
   Notification: ElectronNotification,
   session,
   shell,
+  utilityProcess,
 } = require("electron");
+let launchBroker = null;
 const startNativeDictation = createNativeDictation({
   platform: process.platform, menu: Menu, processId: process.pid, systemRoot: process.env.SystemRoot,
 });
@@ -391,15 +395,7 @@ function normalizeRuntimeArch(value) {
 }
 
 function isMacRunningUnderRosetta() {
-  if (process.platform !== "darwin" || process.arch !== "x64") return false;
-  try {
-    return execFileSync("/usr/sbin/sysctl", ["-in", "sysctl.proc_translated"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim() === "1";
-  } catch {
-    return false;
-  }
+  return process.platform === "darwin" && process.arch === "x64" && app.runningUnderARM64Translation;
 }
 
 function resolveSystemArch() {
@@ -1546,9 +1542,10 @@ const quitSequencer = createQuitSequencer({
       uiControlServer.stop(),
       computerControl.reset(true),
     ]);
+    scheduleBlankSlateProfileCleanup();
+    await launchBroker?.stop();
   },
   quit: () => {
-    scheduleBlankSlateProfileCleanup();
     app.quit();
   },
   exit: () => app.exit(0),
@@ -2413,7 +2410,7 @@ const desktopCommandHandlers = {
       const platform = process.platform;
       try {
         if (platform === "darwin") {
-          execFileSync("open", ["-a", appPath, target]);
+          await runFile("open", ["-a", appPath, target]);
         } else if (platform === "linux") {
           const child = spawn(appPath, [target], { detached: true, stdio: "ignore" });
           child.unref();
@@ -2934,6 +2931,7 @@ or use: pnpm dev:worktree`);
 
   app.whenReady().then(() => withStartupPhase("bootstrap.apply", async () => {
     endAppReady();
+    launchBroker = startDesktopLaunchBroker({ utilityProcess, enabled: FEATURES.desktopLaunchBroker.default });
     holdSpellcheckerUntilActivation(workspaceStore.readDesktopBootstrapConfigSync());
     const systemCaCertificates = await runtimeManager.systemCaCertificates();
     session.defaultSession.setCertificateVerifyProc(createSystemCaCertificateVerifyProc(systemCaCertificates));

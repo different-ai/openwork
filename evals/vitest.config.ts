@@ -25,7 +25,7 @@ const appResolve = {
 const attachedDen = Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());
 const managedStack = parallelSuite(process.argv) && !attachedDen;
 const e2eWorkers = managedStack ? suiteWorkerCount(process.argv, process.env) : 1;
-const namedLiveSpec = process.argv.some((argument) => argument.endsWith(".live.test.ts") || argument.endsWith("/live.test.ts"));
+const namedLiveSpec = process.argv.some((argument) => argument.endsWith(".live.test.ts") || argument.endsWith(".live.vitest.test.ts") || argument.endsWith("/live.test.ts"));
 
 export default defineConfig({
   test: {
@@ -43,7 +43,7 @@ export default defineConfig({
           // Custom excludes replace Vitest's defaults, so keep dependencies out explicitly.
           // "**" does not match "../", so ../scenarios needs its own patterns.
           exclude: ["**/node_modules/**", "**/*.e2e.test.ts", "**/e2e.test.ts", "../**/node_modules/**", "../**/*.e2e.test.ts", "../**/e2e.test.ts",
-            ...(namedLiveSpec ? [] : ["**/*.live.test.ts", "**/live.test.ts", "../**/*.live.test.ts", "../**/live.test.ts"])],
+            ...(namedLiveSpec ? [] : ["**/*.live.test.ts", "**/*.live.vitest.test.ts", "**/live.test.ts", "../**/*.live.test.ts", "../**/*.live.vitest.test.ts", "../**/live.test.ts"])],
         },
       },
       {

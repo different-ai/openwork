@@ -13,7 +13,7 @@
  * spawned (command match), and the recorded per-spawn credentials do not
  * prove the port now belongs to someone else.
  */
-import { spawnSync } from "node:child_process";
+import { runFileResult } from "@openwork/child-process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -186,17 +186,17 @@ function processAlive(pid: number): boolean {
  * Best-effort command line for a pid. Returns null when it cannot be read —
  * callers must treat null as "unknown", never as "not the engine".
  */
-function processCommand(pid: number): string | null {
+async function processCommand(pid: number): Promise<string | null> {
   try {
     if (process.platform === "win32") {
-      const result = spawnSync("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], { encoding: "utf8" });
+      const result = await runFileResult("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], { encoding: "utf8" });
       if (result.status !== 0) return null;
       const row = String(result.stdout ?? "").split(/\r?\n/).find((line) => line.includes(`"${pid}"`));
       if (!row) return null;
       const command = row.split('","')[0]?.replace(/^"/, "");
       return command?.trim() || null;
     }
-    const result = spawnSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
+    const result = await runFileResult("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
     if (result.status !== 0) return null;
     const command = String(result.stdout ?? "").trim();
     return command || null;
@@ -234,10 +234,10 @@ async function probeEngineIdentity(entry: EngineInstanceRecord, timeoutMs: numbe
   }
 }
 
-function killEngineProcess(pid: number): void {
+async function killEngineProcess(pid: number): Promise<void> {
   if (process.platform === "win32") {
     // /T kills the tree so engine-spawned children (stdio MCPs, LSPs) go too.
-    spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { encoding: "utf8" });
+    await runFileResult("taskkill", ["/PID", String(pid), "/T", "/F"], { encoding: "utf8" });
     return;
   }
   try {
@@ -281,7 +281,7 @@ export async function reapOrphanEngineInstances(
       result.dropped.push(entry.pid);
       continue;
     }
-    const command = processCommand(entry.pid);
+    const command = await processCommand(entry.pid);
     if (command !== null && !commandMatchesEngine(command, entry.bin)) {
       // Pid was reused by an unrelated process.
       result.dropped.push(entry.pid);
@@ -303,7 +303,7 @@ export async function reapOrphanEngineInstances(
   }
 
   for (const entry of toKill) {
-    killEngineProcess(entry.pid);
+    await killEngineProcess(entry.pid);
   }
   if (toKill.length > 0 && process.platform !== "win32") {
     await delay(killWaitMs);

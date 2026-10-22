@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile } from "@openwork/child-process";
 import { constants as fsConstants } from "node:fs";
 import {
   access,

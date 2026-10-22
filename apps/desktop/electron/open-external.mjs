@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn } from "@openwork/child-process";
 import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
 

@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile } from "@openwork/child-process";
 import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";

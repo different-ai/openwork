@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn } from "@openwork/child-process";
 
 const COMMAND_TIMEOUT_MS = 10_000;
 const OUTPUT_LIMIT_CHARS = 8 * 1024 * 1024;

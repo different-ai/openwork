@@ -8,7 +8,7 @@ import { openworkAgentPermissionsV2PluginPath, openworkContextV2PluginPath, open
 import { pathToFileURL } from "node:url";
 // Parallel v2 lane prototype: provider injection is a watched-config write. This module
 // deliberately has no reload/dispose call, unlike managed-opencode.ts and server.ts reloadOpencodeEngine.
-import { spawn } from "node:child_process";
+import { spawn, spawned } from "@openwork/child-process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -183,6 +183,14 @@ async function readBoundedText(response: Response, limit: number): Promise<strin
     chunks.push(value);
   }
   return Buffer.concat(chunks, bytes).toString("utf8");
+}
+
+/** A live engine did not become healthy; a later attempt may recover. */
+export class EngineV2StartupTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EngineV2StartupTimeoutError";
+  }
 }
 
 function diagnostics(exitCode: number | null, stdout: string, stderr: string): Error {
@@ -465,7 +473,12 @@ async function createManagedOpencodeV2ServerInner(
   child.on("error", (error) => {
     spawnError = error;
   });
-  try { await historyLease.child(child.pid); }
+  try {
+    // The request id is never an engine pid. Only start health's deadline after
+    // native creation, and record the actual pid in the history lease.
+    await spawned(child);
+    await historyLease.child(child.pid);
+  }
   catch (error) { child.kill(); await historyLease.release(); throw error; }
 
   async function fetchJson(path: string, init: OpencodeV2RequestInit = {}): Promise<{ status: number; json: unknown }> {
@@ -635,5 +648,5 @@ async function createManagedOpencodeV2ServerInner(
   const exited = child.exitCode !== null || child.signalCode !== null;
   await close();
   if (exited) throw diagnostics(child.exitCode, stdout, stderr);
-  throw new Error(`Timed out waiting ${bootTimeoutMs}ms for OpenCode v2 health\nstdout:\n${stdout.slice(-4_000)}\nstderr:\n${stderr.slice(-4_000)}`);
+  throw new EngineV2StartupTimeoutError(`Timed out waiting ${bootTimeoutMs}ms for OpenCode v2 health\nstdout:\n${stdout.slice(-4_000)}\nstderr:\n${stderr.slice(-4_000)}`);
 }

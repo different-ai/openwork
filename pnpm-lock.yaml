@@ -338,12 +338,18 @@ importers:
       '@openwork/browser-tabs':
         specifier: workspace:*
         version: link:../../packages/browser-tabs
+      '@openwork/child-process':
+        specifier: workspace:*
+        version: link:../../packages/child-process
       '@openwork/computer-use':
         specifier: workspace:*
         version: link:../../packages/computer-use
       '@openwork/enterprise-mcp-client':
         specifier: workspace:*
         version: link:../../packages/enterprise-mcp-client
+      '@openwork/features':
+        specifier: workspace:*
+        version: link:../../packages/features
       '@openwork/free-auto':
         specifier: workspace:*
         version: link:../../packages/free-auto
@@ -472,6 +478,9 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.18.15
         version: 1.18.18
+      '@openwork/child-process':
+        specifier: workspace:*
+        version: link:../../packages/child-process
       '@openwork/computer-use':
         specifier: workspace:*
         version: link:../../packages/computer-use
@@ -1522,6 +1531,8 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+
+  packages/child-process: {}
 
   packages/codemode:
     dependencies:

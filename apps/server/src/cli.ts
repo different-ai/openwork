@@ -176,7 +176,7 @@ if (manageEngine) {
     env: engineEnv,
   });
   if (!readInstalledOpencodeVersion()) {
-    setInstalledOpencodeVersion(readBinaryVersion(process.env.OPENWORK_OPENCODE_BIN?.trim() || "opencode"));
+    setInstalledOpencodeVersion(await readBinaryVersion(process.env.OPENWORK_OPENCODE_BIN?.trim() || "opencode"));
   }
   config.opencodeBaseUrl = managedOpencode.url;
   config.opencodeUsername = managedOpencode.username;

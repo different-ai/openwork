@@ -1,5 +1,5 @@
 import { externalFetch } from "./server-fetch.js";
-import { execFile } from "node:child_process";
+import { execFile } from "@openwork/child-process";
 import { createHash } from "node:crypto";
 import { access, chmod, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";

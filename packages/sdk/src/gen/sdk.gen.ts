@@ -1282,6 +1282,7 @@ export class DenClient extends HeyApiClient {
       organizationId: string;
       memberId: string;
       capabilities: {
+        desktopLaunchBroker?: boolean | null;
         nativeDictation?: boolean | null;
         organizationGrants?: boolean | null;
         connectionMcpServers?: boolean | null;

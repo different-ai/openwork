@@ -6,6 +6,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const dirnameHere = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(dirnameHere, "..");
 const requiredRoots = [{
+  name: "@openwork/child-process",
+}, {
+  name: "@openwork/features", resolveTarget: "@openwork/features/runtime",
+}, {
   name: "@openwork/computer-use", resolveTarget: "@openwork/computer-use/computer-control",
 }, {
   name: "@modelcontextprotocol/sdk",

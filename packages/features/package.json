@@ -5,6 +5,10 @@
   "type": "module",
   "description": "OpenWork feature registry: declare a feature once, resolve it per deployment and organization.",
   "exports": {
+    "./runtime": {
+      "types": "./src/registry.ts",
+      "default": "./dist/registry.js"
+    },
     ".": {
       "types": {
         "openwork-build": "./dist/types/src/index.d.ts",
@@ -31,7 +35,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && tsc src/registry.ts --outDir dist --target ES2022 --module NodeNext --skipLibCheck",
     "test": "node --test src/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

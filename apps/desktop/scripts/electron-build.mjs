@@ -49,6 +49,7 @@ function writeSentryBuildConfig() {
 run(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], desktopRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], desktopRoot);
 // Build before staging: the runtime copy must contain this checkout's ESM.
+run(pnpmCmd, ["--filter", "@openwork/features", "build"], repoRoot);
 run(pnpmCmd, ["--filter", "@openwork/remote-sessions", "build"], repoRoot);
 run(pnpmCmd, ["--filter", "@openwork/computer-use", "build"], repoRoot);
 // Remote computers for computer use load these lazily from their builds.

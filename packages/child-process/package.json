@@ -1,0 +1,12 @@
+{
+  "name": "@openwork/child-process",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": { "types": "./index.d.mts", "default": "./index.mjs" },
+    "./broker": "./broker.mjs",
+    "./reaper": "./reaper.mjs",
+    "./client": "./client.mjs"
+  }
+}

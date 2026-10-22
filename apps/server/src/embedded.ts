@@ -246,7 +246,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
       `./opencode-plugin-deps-${constants.opencodeVersion.replace(/^v/, "")}.tgz`, import.meta.url,
     )).replace(/([\\/])app\.asar([\\/])/, "$1app.asar.unpacked$2");
     if (!config.readOnly && existsSync(pluginDepsArchive) && opencodeBin
-      && readBinaryVersion(opencodeBin) === constants.opencodeVersion.replace(/^v/, "")) {
+      && await readBinaryVersion(opencodeBin) === constants.opencodeVersion.replace(/^v/, "")) {
       const seeded = await duringStartup(() => seedManagedOpencodePluginDeps({
         archive: pluginDepsArchive, cwd, env: process.env,
         // Desktop deliberately spawns in a scratch cwd, separate from the

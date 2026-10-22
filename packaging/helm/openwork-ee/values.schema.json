@@ -18,6 +18,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "desktopLaunchBroker": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop launch broker: Keep the desktop responsive while operating-system security checks delay engine and helper process creation. Renders DEN_FEATURE_DESKTOP_LAUNCH_BROKER."
+            },
             "nativeDictation": {
               "enum": [
                 "",

@@ -3,7 +3,7 @@
 // runs as OpenWork's child, so System Settings lists OpenWork (or, in a
 // development checkout, the terminal or editor that launched it). Setup
 // guidance names exactly that entry instead of asking people to guess.
-import { execFile } from "node:child_process";
+import { execFile } from "@openwork/child-process";
 import path from "node:path";
 import { promisify } from "node:util";
 

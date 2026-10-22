@@ -1,7 +1,7 @@
 // This Mac as a Computer Use placement: probes the native helper's macOS
 // permissions, runs its floating permission guide, and opens one embedded MCP
 // connection per session. Main process only; the renderer never sees the helper.
-import { spawn } from "node:child_process";
+import { spawn } from "@openwork/child-process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { release } from "node:os";

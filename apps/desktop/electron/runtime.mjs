@@ -1,6 +1,6 @@
 import { startupPhase, withStartupPhase } from "./startup-log.mjs";
 import { randomUUID, X509Certificate } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { runFileResult } from "@openwork/child-process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
@@ -373,8 +373,18 @@ export function orphanedPackagedSidecarPids(rows, { sidecarDirs = [], appExecuta
   const liveInstances = new Set(
     rows.filter((row) => row.pid !== selfPid && isAppInstance(row.command)).map((row) => row.pid),
   );
+  const byPid = new Map(rows.map((row) => [row.pid, row]));
+  const hasLiveAppAncestor = (pid) => {
+    const seen = new Set();
+    for (let current = pid; current > 0 && !seen.has(current);) {
+      if (liveInstances.has(current)) return true;
+      seen.add(current);
+      current = byPid.get(current)?.ppid ?? 0;
+    }
+    return false;
+  };
   return rows
-    .filter((row) => commandMatchesPackagedSidecar(row.command, sidecarDirs) && !liveInstances.has(row.ppid))
+    .filter((row) => commandMatchesPackagedSidecar(row.command, sidecarDirs) && !hasLiveAppAncestor(row.ppid))
     .map((row) => row.pid);
 }
 
@@ -643,11 +653,11 @@ function nvmVersionBinPaths(home) {
   }
 }
 
-function pathHelperEntries() {
+async function pathHelperEntries() {
   if (process.platform !== "darwin") return [];
-  const result = spawnSync("/usr/libexec/path_helper", ["-s"], {
+  const result = await runFileResult("/usr/libexec/path_helper", ["-s"], {
     encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 10_000,
   });
   if (result.status !== 0) return [];
   const stdout = String(result.stdout ?? "");
@@ -655,13 +665,13 @@ function pathHelperEntries() {
   return match?.[1]?.split(path.delimiter).filter(Boolean) ?? [];
 }
 
-function extraPathEntries() {
+async function extraPathEntries() {
   const home = os.homedir();
   const candidates = [];
 
   if (process.platform === "darwin") {
     candidates.push(
-      ...pathHelperEntries(),
+      ...await pathHelperEntries(),
       "/opt/homebrew/bin",
       "/opt/homebrew/sbin",
       "/usr/local/bin",
@@ -707,10 +717,10 @@ function extraPathEntries() {
   return candidates.filter((entry) => entry && isDirectory(entry));
 }
 
-function enrichedPath(sidecarDirs, currentPath) {
+async function enrichedPath(sidecarDirs, currentPath) {
   const entries = [
     ...sidecarDirs.filter(isDirectory),
-    ...extraPathEntries(),
+    ...await extraPathEntries(),
     ...String(currentPath ?? "").split(path.delimiter).filter(Boolean),
   ];
   const deduped = entries.filter((entry, index) => entries.indexOf(entry) === index);
@@ -1633,7 +1643,7 @@ export function createRuntimeManager({
       !Object.prototype.hasOwnProperty.call(env, "Path")
         ? "PATH"
         : "Path";
-    const pathEnv = enrichedPath(sidecarDirs, env[pathKey]);
+    const pathEnv = await enrichedPath(sidecarDirs, env[pathKey]);
     if (pathEnv) {
       env[pathKey] = pathEnv;
     }
@@ -1651,7 +1661,7 @@ export function createRuntimeManager({
     return env;
   }
 
-  function resolveBinaryInfo(baseName, extraPaths = []) {
+  async function resolveBinaryInfo(baseName, extraPaths = []) {
     for (const directory of [...sidecarDirs, ...extraPaths]) {
       for (const fileName of binaryFileNames(baseName)) {
         const candidate = path.join(directory, fileName);
@@ -1661,7 +1671,7 @@ export function createRuntimeManager({
       }
     }
 
-    const pathEntries = (enrichedPath([], process.env.PATH) ?? "")
+    const pathEntries = (await enrichedPath([], process.env.PATH) ?? "")
       .split(path.delimiter)
       .filter(Boolean);
     for (const entry of pathEntries) {
@@ -1689,13 +1699,13 @@ export function createRuntimeManager({
     return null;
   }
 
-  function resolveBinary(baseName, extraPaths = []) {
-    return resolveBinaryInfo(baseName, extraPaths)?.path ?? null;
+  async function resolveBinary(baseName, extraPaths = []) {
+    return (await resolveBinaryInfo(baseName, extraPaths))?.path ?? null;
   }
 
-  function resolveOpencodeBinary(opencodeBinPath) {
+  async function resolveOpencodeBinary(opencodeBinPath) {
     const end = startupPhase("engine.v1.resolve");
-    try { const result = resolveOpencodeBinaryInner(opencodeBinPath); end(); return result; }
+    try { const result = await resolveOpencodeBinaryInner(opencodeBinPath); end(); return result; }
     catch (error) { end(true); throw error; }
   }
 
@@ -1738,13 +1748,13 @@ export function createRuntimeManager({
     return candidates.filter((candidate) => existsSync(candidate));
   }
 
-  function runDockerCommandDetailed(args, timeoutMs = 8000) {
+  async function runDockerCommandDetailed(args, timeoutMs = 8000) {
     const tried = [...resolveDockerCandidates(), process.platform === "win32" ? "docker.exe" : "docker"];
     const errors = [];
 
     for (const program of tried) {
       try {
-        const result = spawnSync(program, args, {
+        const result = await runFileResult(program, args, {
           encoding: "utf8",
           timeout: timeoutMs,
           windowsHide: true,
@@ -1768,7 +1778,7 @@ export function createRuntimeManager({
   const legacyOpenworkContainerPrefix = `${["openwork", "orchestrator"].join("-")}-`;
 
   async function listOpenworkManagedContainers() {
-    const result = runDockerCommandDetailed(["ps", "-a", "--format", "{{.Names}}"], 8000);
+    const result = await runDockerCommandDetailed(["ps", "-a", "--format", "{{.Names}}"], 8000);
     if (result.status !== 0) {
       const combined = `${result.stdout.trim()}\n${result.stderr.trim()}`.trim();
       throw new Error(combined || `docker ps -a failed (status ${result.status})`);
@@ -1781,7 +1791,7 @@ export function createRuntimeManager({
   }
 
   async function runShellCommand(program, args, options = {}) {
-    const result = spawnSync(program, args, {
+    const result = await runFileResult(program, args, {
       encoding: "utf8",
       cwd: options.cwd,
       env: options.env,
@@ -1811,7 +1821,7 @@ export function createRuntimeManager({
     // Safety net: an unclean Electron quit can orphan sidecars. Packaged builds
     // should always own a fresh runtime per app launch, so remove any leftover
     // sidecars from this app bundle before choosing ports for the new runtime.
-    const result = spawnSync("ps", ["-Ao", "pid=,ppid=,command="], { encoding: "utf8" });
+    const result = await runFileResult("ps", ["-Ao", "pid=,ppid=,command="], { encoding: "utf8" });
     const rows = [];
     for (const row of String(result.stdout ?? "").split(/\r?\n/)) {
       const match = row.match(/^\s*(\d+)\s+(\d+)\s+(.+)$/);
@@ -1913,7 +1923,7 @@ export function createRuntimeManager({
 
     const host = "127.0.0.1";
 
-    const managedOpencode = options.manageOpencode ? resolveOpencodeBinary(options.opencodeBinPath) : null;
+    const managedOpencode = options.manageOpencode ? await resolveOpencodeBinary(options.opencodeBinPath) : null;
     openworkServerState.managedOpencodeBinPath = managedOpencode?.path ?? null;
     openworkServerState.managedOpencodeBinSource = managedOpencode?.source ?? null;
     if (options.manageOpencode) {
@@ -2295,7 +2305,7 @@ export function createRuntimeManager({
       throw new Error("server_name is required");
     }
 
-    const program = resolveBinary("opencode");
+    const program = await resolveBinary("opencode");
     if (!program) {
       throw new Error("Failed to locate opencode.");
     }
@@ -2322,7 +2332,7 @@ export function createRuntimeManager({
 
     for (const name of candidates) {
       try {
-        const result = runDockerCommandDetailed(["rm", "-f", name], 20_000);
+        const result = await runDockerCommandDetailed(["rm", "-f", name], 20_000);
         if (result.status === 0) {
           removed.push(name);
         } else {

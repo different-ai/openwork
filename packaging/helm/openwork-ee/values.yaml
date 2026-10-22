@@ -26,6 +26,7 @@ config:
   #   "false" off for everyone; /admin shows "Set by deployment config"
   # The /admin kill switch still turns a feature off, even when locked on.
   features:
+    desktopLaunchBroker: ""       # default off · Keep the desktop responsive while operating-system security checks delay engine and helper process creation.
     nativeDictation: ""           # default off · Dictate editable prompts in OpenWork and Workbot using native desktop dictation or live browser speech recognition.
     organizationGrants: ""        # default off · Platform admins control complimentary access and grant organizations extra or unlimited Free Auto usage, with optional expiration.
     connectionMcpServers: ""      # default off · Members can add one connected service, such as Gmail or Linear, to an agent like Claude Code as its own MCP server that lists only that service's tools.

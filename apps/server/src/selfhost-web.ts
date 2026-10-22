@@ -3,14 +3,15 @@
  * one origin, with a server-managed OpenCode engine. This is the self-host
  * path (`npm i -g openwork-server && openwork-server web`).
  */
-import { spawn, spawnSync, type ChildProcess, type SpawnOptions } from "node:child_process";
+import type { ChildProcess, SpawnOptions } from "node:child_process";
+import { spawn, runFileResult } from "@openwork/child-process";
 import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { openworkServerDataDir } from "@openwork/paths";
-import { startupPhase, startupPhaseSync } from "./startup-phase.js";
+import { startupPhase } from "./startup-phase.js";
 
 export const OPENCODE_GITHUB_REPO = "anomalyco/opencode";
 const NPM_PACKAGE = "openwork-server";
@@ -85,13 +86,13 @@ export function opencodeReleaseUrl(version: string, asset: string, repo = OPENCO
   return `https://github.com/${repo}/releases/download/v${version.replace(/^v/, "")}/${asset}`;
 }
 
-export function readBinaryVersion(bin: string): string | null {
-  return startupPhaseSync("engine.version-probe", () => readBinaryVersionInner(bin));
+export function readBinaryVersion(bin: string): Promise<string | null> {
+  return startupPhase("engine.version-probe", () => readBinaryVersionInner(bin));
 }
 
-function readBinaryVersionInner(bin: string): string | null {
+async function readBinaryVersionInner(bin: string): Promise<string | null> {
   try {
-    const result = spawnSync(bin, ["--version"], { encoding: "utf8", timeout: 10_000 });
+    const result = await runFileResult(bin, ["--version"], { encoding: "utf8", timeout: 10_000 });
     if (result.status !== 0 || !result.stdout) return null;
     const match = /(\d+\.\d+\.\d+[^\s]*)/.exec(result.stdout);
     return match?.[1] ?? result.stdout.trim();
@@ -227,7 +228,7 @@ export async function ensureManagedEngine(input: {
 }): Promise<{ bin: string; installedVersion: string | null; source: "env" | "installed" | "downloaded" }> {
   const explicit = input.env.OPENWORK_OPENCODE_BIN?.trim();
   if (explicit) {
-    return { bin: explicit, installedVersion: readBinaryVersion(explicit), source: "env" };
+    return { bin: explicit, installedVersion: await readBinaryVersion(explicit), source: "env" };
   }
   const version = input.expectedVersion.replace(/^v/, "");
   const dataDir = input.dataDir ?? openworkServerDataDir({ env: input.env });
@@ -235,7 +236,7 @@ export async function ensureManagedEngine(input: {
   const binaryName = (input.platform ?? process.platform) === "win32" ? "opencode.exe" : "opencode";
   const bin = join(installDir, binaryName);
   if (await isFile(bin)) {
-    const installedVersion = readBinaryVersion(bin);
+    const installedVersion = await readBinaryVersion(bin);
     if (installedVersion === version) return { bin, installedVersion, source: "installed" };
     input.log(`Installed engine at ${bin} reports ${installedVersion ?? "unknown"}; expected ${version}. Reinstalling.`);
     await rm(installDir, { recursive: true, force: true });
@@ -267,7 +268,7 @@ export async function ensureManagedEngine(input: {
     const partial = `${bin}.partial`;
     await renameWithRetry(extracted, partial, { platform });
     if (platform !== "win32") await chmod(partial, 0o755);
-    const downloadedVersion = readBinaryVersion(partial);
+    const downloadedVersion = await readBinaryVersion(partial);
     if (downloadedVersion !== version) {
       await rm(partial, { force: true });
       throw new Error(`Downloaded OpenCode reports ${downloadedVersion ?? "no version"}; expected ${version}.`);

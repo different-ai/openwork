@@ -53,6 +53,13 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  desktopLaunchBroker: {
+    label: "Desktop launch broker",
+    description: "Keep the desktop responsive while operating-system security checks delay engine and helper process creation.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   nativeDictation: {
     label: "Native dictation",
     description: "Dictate editable prompts in OpenWork and Workbot using native desktop dictation or live browser speech recognition.",

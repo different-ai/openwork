@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawned } from "@openwork/child-process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { access, chmod, mkdir, readdir, readFile, rename, rm, stat, statfs, writeFile } from "node:fs/promises";
@@ -420,6 +420,7 @@ export async function runOpencodeV1HistoryMigration(options: MigrationRequest & 
   });
   const stop = () => { child.kill("SIGTERM"); };
   signal?.addEventListener("abort", stop, { once: true });
+  await spawned(child);
   child.send(request);
   await ended;
   signal?.removeEventListener("abort", stop);
