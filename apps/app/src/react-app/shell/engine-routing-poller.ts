@@ -1,6 +1,13 @@
 type RoutingSource = { key: string; read: () => Promise<boolean> };
 type Poll = { refresh: () => void; dispose: () => void };
 
+const STEADY_DELAY_MS = 15_000;
+const MAX_FAILURE_DELAY_MS = 120_000;
+/** Until a scope's first answer, chat has no client, so retry quickly (about 12s
+ * in total) while the server starts instead of backing off to 30s after one
+ * failure. After that, an unreachable server falls back to the normal backoff. */
+const STARTUP_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 2_000, 2_000, 2_000, 2_000];
+
 /** One request per server scope, with completion-based polling. Settings changes
  * coalesce into one follow-up read so an older in-flight snapshot cannot win. */
 export function createEngineRoutingPoller(options: {
@@ -13,20 +20,26 @@ export function createEngineRoutingPoller(options: {
     let disposed = false;
     let inFlight = false;
     let pending = false;
-    let delay = 15_000;
+    let delay = STEADY_DELAY_MS;
+    let answered = false;
+    let startupFailures = 0;
     let cancelTimer: (() => void) | undefined;
     const run = async () => {
       if (disposed || inFlight) return;
       inFlight = true;
+      let startupDelay: number | undefined;
       try {
         const routing = await source.read();
         if (!disposed && !pending) {
-          delay = 15_000;
+          answered = true;
+          delay = STEADY_DELAY_MS;
           options.publish(source.key, routing);
         }
       } catch (error) {
         if (!disposed && !pending) {
-          delay = Math.min(delay * 2, 120_000);
+          startupDelay = answered ? undefined : STARTUP_RETRY_DELAYS_MS[startupFailures];
+          if (startupDelay === undefined) delay = Math.min(delay * 2, MAX_FAILURE_DELAY_MS);
+          else startupFailures += 1;
           options.onError(error);
         }
       } finally {
@@ -39,7 +52,7 @@ export function createEngineRoutingPoller(options: {
             cancelTimer = options.schedule(() => {
               cancelTimer = undefined;
               void run();
-            }, delay);
+            }, startupDelay ?? delay);
           }
         }
       }
@@ -50,7 +63,7 @@ export function createEngineRoutingPoller(options: {
         if (disposed) return;
         cancelTimer?.();
         cancelTimer = undefined;
-        delay = 15_000;
+        delay = STEADY_DELAY_MS;
         if (inFlight) pending = true;
         else void run();
       },
