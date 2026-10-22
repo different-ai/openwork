@@ -1,160 +1,270 @@
 ---
 title: "Microsoft Entra SAML SSO"
-description: "Connect Microsoft Entra ID to OpenWork Cloud with SAML"
+description: "Connect Microsoft Entra ID to OpenWork Cloud or a self-hosted deployment with SAML"
 ---
 
-Use this guide when an organization wants members to sign in to OpenWork with
-Microsoft Entra ID.
-
-After SAML sign-in works, use
-[Microsoft Entra SCIM provisioning](/cloud/scim-microsoft-entra) to synchronize
-members and groups automatically.
+Use this guide to let members sign in to OpenWork through a Microsoft Entra
+enterprise application. After sign-in works, configure
+[Microsoft Entra SCIM provisioning](/cloud/scim-microsoft-entra) if you want to
+synchronize members and groups.
 
 ## Before you start
 
 You need:
 
-- An OpenWork organization on the Team or Enterprise plan.
-- Owner access in that OpenWork organization.
-- Admin access to a Microsoft Entra enterprise application.
-- The final OpenWork auth origin, for example `https://app.openworklabs.com`.
+- An OpenWork organization with SSO available (Team or Enterprise on OpenWork Cloud).
+- The OpenWork owner, or a member with **Manage single sign-on** permission.
+- An Entra administrator who can create and assign enterprise applications.
+- Your users' work email domain, for example `example.com`, and DNS access if
+  OpenWork asks you to verify it.
+- A recovery plan prepared **before** enabling SSO; see [Recovery](#recovery).
 
-OpenWork keeps a new SSO configuration disabled until you verify the domain,
-complete a real authentication test, and explicitly enable SSO. Keep password or
-existing recovery access available during setup.
+Creating an ordinary app registration does not establish permission to create
+or manage a non-gallery enterprise application. Confirm those Entra rights
+before starting. Keep Entra and OpenWork open in separate tabs.
 
-## 1. Create the Entra enterprise app
+A saved OpenWork configuration stays disabled until domain verification, a real
+authentication test, and explicit enablement are complete.
 
-In the Microsoft Azure portal, open **Microsoft Entra ID** and create a new
-enterprise application for OpenWork. Choose **SAML** as the single sign-on
-method.
+<Note>
+For self-hosted deployments, use the URLs shown in **Settings → SSO**. SAML uses
+the OpenWork web/auth origin, for example `https://ow.ai.example.test`, never
+the separate API host. Keep `/api/auth` reachable through that web/auth origin.
+</Note>
 
-## 2. Configure Basic SAML Configuration
+## Setup order
 
-In Entra, open **Single sign-on** and edit **Basic SAML Configuration**.
+Follow these steps in order. The mapping tables below are **reference**, not a
+second sequence of setup steps.
 
-Set:
+1. **Create the IdP app and pause.** In the Entra admin center, open **Entra ID →
+   Enterprise apps**, create a non-gallery application for OpenWork, and select
+   **Single sign-on → SAML**. Pause before completing **Basic SAML Configuration**.
+2. **Copy the IdP values.** Obtain **Microsoft Entra Identifier**, **Login URL**,
+   and the active **Certificate (Base64)** using the [Entra reference](#what-you-need-from-microsoft-entra).
+3. **Save in OpenWork.** Open **Settings → SSO**, choose **SAML**, enter those IdP
+   values and your users' email domain, leave **Audience URL** blank unless you
+   need an override, then save. SSO is still disabled.
+4. **Copy OpenWork's generated values back into Entra.** Edit **Basic SAML
+   Configuration** using the [OpenWork reference](#what-openwork-gives-you):
+   Entity ID → Identifier, ACS URL → Reply URL, Sign-in URL → Sign on URL. Save in Entra.
+5. **Configure claims, signing and assignment.** Follow [Claims and Name ID](#claims-and-name-id)
+   and [Assign users](#assign-users), including the same administrator who will test.
+6. **Verify the domain.** Follow [Set and verify the email domain](#set-and-verify-the-email-domain);
+   skip TXT only if OpenWork already shows the domain verified.
+7. **Test.** Complete [Test SSO](#test-sso) as the existing OpenWork administrator.
+8. **Enable.** Prepare [recovery](#recovery), then follow [Enable SSO](#enable-sso).
+   Do not treat saving or a successful test as enablement.
 
-| Entra field | Value |
+## What OpenWork gives you
+
+Reference for **step 4**, after the first OpenWork save: copy these generated
+values into Entra **Basic SAML Configuration**. Newer OpenWork versions group
+them under **Give these values to your identity provider**.
+
+| OpenWork value | Entra field | What to enter |
+| --- | --- | --- |
+| **Entity ID** | **Identifier (Entity ID)** | The OpenWork web/auth origin, for example `https://ow.ai.example.test`, unless you set **Audience URL**; then use that exact audience |
+| **ACS URL** | **Reply URL (Assertion Consumer Service URL)** | The complete generated ACS URL, including its organization-specific path |
+| **Sign-in URL** | **Sign on URL** | The generated organization sign-in URL, for example `https://ow.ai.example.test/sso/<org-slug>` |
+| **Metadata URL** | No manual field required | Optional service-provider metadata for import or checking the configuration |
+
+Use the **ACS URL** card (labelled **ACS URL (REPLY URL)** in newer versions).
+**Entity ID** is shown as its own value in newer versions. In older versions,
+use the web/auth origin unless **Audience URL** is set; as a fallback, confirm
+`EntityDescriptor entityID` in the **Metadata URL** XML. Do not use the Entra
+issuer `https://sts.windows.net/<tenant-guid>/` as OpenWork's Entity ID.
+Leave Entra **Relay State** blank.
+
+<Warning>
+Redirect URL is for OIDC only. For SAML, the Reply URL / Single sign-on URL / ACS
+URL in your identity provider must be OpenWork's ACS URL. Older OpenWork versions
+also display a Redirect URL card for SAML; do not copy it into Entra.
+</Warning>
+
+## What you need from Microsoft Entra
+
+Reference for **steps 2–3**: under **Set up** your application, copy the two
+URLs below. Under **SAML Certificates**, download the active **Certificate (Base64)**.
+
+In OpenWork **Settings → SSO**, choose **SAML** and enter:
+
+| Entra value | OpenWork field |
 | --- | --- |
-| Identifier (Entity ID) | The OpenWork auth origin, for example `https://app.openworklabs.com` |
-| Reply URL (Assertion Consumer Service URL) | The ACS URL OpenWork shows after saving SAML, for example `https://app.openworklabs.com/api/auth/sso/saml2/sp/acs/openwork-sso-<org-id>` |
-| Sign on URL | The org-specific OpenWork **Sign-in URL** shown after saving SAML, for example `https://app.openworklabs.com/sso/<org-slug>` |
-| Relay State | Leave blank |
+| **Microsoft Entra Identifier**, for example `https://sts.windows.net/<tenant-guid>/` | **IdP Issuer URL** |
+| **Login URL**, for example `https://login.microsoftonline.com/<tenant-guid>/saml2` | **SAML Entry Point** |
+| Active **Certificate (Base64)** | **IdP Certificate** |
 
-The Entity ID must be the OpenWork auth origin. Do not use the Entra tenant
-identifier, `https://sts.windows.net/<tenant-id>/`, as the Entity ID.
+Set **Domain** (labelled **Users' email domain** in newer versions) to your
+users' email domain, for example `example.com` for `admin@example.com`.
+Leave **Audience URL** blank to use the OpenWork web/auth origin; newer versions
+place it under **Advanced**. Save, then copy the generated OpenWork values back
+into Entra using the table above. Compare the ACS URL character for character.
 
-OpenWork SAML connections are organization-scoped. If a user belongs to
-multiple OpenWork organizations, the Entra app, ACS URL, and Sign-in URL select
-which organization they are entering.
+Entra's **Microsoft Entra Identifier** identifies the identity provider;
+OpenWork's **Entity ID** identifies the service provider. They are not interchangeable.
+The ACS URL and Sign-in URL select the OpenWork organization, including for
+people who belong to more than one organization.
 
-## 3. Configure SAML signing
+## Claims and Name ID
 
-Open **SAML Certificates** and edit the token signing certificate settings.
+In Entra **Attributes & Claims**, set the name identifier to the user's stable
+work email, with **Email address** format. Use `user.mail` when it contains that
+email; use `user.userprincipalname` only if it matches the email in OpenWork.
+Do not assume the tenant UPN, a guest `#EXT#` identifier, and the user's email
+are the same. If you send a separate `email` attribute, keep it aligned with
+NameID and the existing OpenWork account.
 
-Set:
+For the first authentication test, Entra must return the **same email as the
+OpenWork administrator who started the test**, not a different test account.
+
+### Signing
+
+Open **SAML Certificates** and edit the token signing certificate settings:
 
 - **Signing Option**: `Sign SAML assertion`
 - **Signing Algorithm**: `SHA-256`
 
-OpenWork requires signed SAML assertions. If Entra signs only the response, the
-callback fails with `saml_error` and `Invalid SAML response`.
+After a certificate change, copy the active certificate into OpenWork again.
+Entra can activate a new certificate while you edit settings. Save and retest
+after updating OpenWork's certificate.
 
-After any certificate change, copy the active certificate again. Entra can
-create or activate a new signing certificate while you are editing SAML
-settings, and OpenWork must store the certificate that is currently active.
+## Assign users
 
-## 4. Copy Entra values into OpenWork
+In the enterprise application's **Users and groups** page, assign the OpenWork
+administrator who will run the test. For external users, assign the guest
+identity in this tenant and check the email it will send in SAML. Expand
+assignments only after the first end-to-end sign-in works.
 
-In OpenWork, open the organization dashboard, then **SSO**. Choose **SAML** and
-enter:
+## Set and verify the email domain
 
-| OpenWork field | Entra value |
-| --- | --- |
-| IdP Issuer URL | **Microsoft Entra Identifier**, for example `https://sts.windows.net/<tenant-id>/` |
-| Domain | The Entra-managed email domain, for example `example.onmicrosoft.com` |
-| SAML Entry Point | **Login URL**, for example `https://login.microsoftonline.com/<tenant-id>/saml2` |
-| Audience URL | Leave blank so OpenWork uses the auth origin, unless support gives you a different audience |
-| IdP Certificate | The active **Certificate (Base64)** from Entra |
+**Domain / Users' email domain** means the part after `@` in the users' actual
+email addresses. For `admin@example.com`, enter `example.com`, not the identity
+provider's tenant domain such as `<tenant>.onmicrosoft.com`. Only use an
+`onmicrosoft.com` suffix if it really is the suffix of the users' email addresses.
+Domain verification does not correct an email or NameID mismatch.
 
-Save the SSO connection. OpenWork then shows setup values including
-**Sign-in URL**, **Redirect URL**, **ACS URL**, and **Metadata URL**. Copy the
-generated **ACS URL** back into Entra's **Reply URL** if it was not available
-before the first save. Copy the OpenWork **Sign-in URL** into Entra's
-**Sign on URL** so the Entra tile can launch the same organization-scoped flow.
+<Note>
+In OpenWork **v0.18.58**, saving an Entra issuer on `sts.windows.net` or
+`login.microsoftonline.com` with a tenant GUID as the first path segment
+marks the SSO domain verified automatically. This does not require the email
+domain to end in `onmicrosoft.com`. If OpenWork already shows **Domain verified:
+Yes**, skip the TXT step. On other versions or when the connection remains
+unverified, follow the DNS proof OpenWork displays instead.
+</Note>
 
-The saved configuration is still disabled at this point.
+If verification is required:
 
-## 5. Verify the email domain
+1. Select **Request token** under domain verification in **Settings → SSO**.
+2. Create a DNS `TXT` record using the exact **Host / name** and token shown.
+   Use the short host if your DNS console appends the zone; otherwise use the
+   full DNS name.
+3. Once the record resolves publicly, select **Verify domain**.
 
-In OpenWork **Settings → SSO**, select **Request token** under domain
-verification. Create a DNS TXT record for the email domain:
+The token expires after seven days. After verification succeeds, you may remove
+the TXT record.
 
-| DNS field | Value |
-| --- | --- |
-| Type | `TXT` |
-| Host / name | The **Host / name** value OpenWork displays |
-| Value | The token OpenWork displays |
+## Test SSO
 
-Use the host value when your DNS provider appends the domain automatically. Use
-the full DNS name when your provider expects the complete record name. After the
-TXT record resolves publicly, select **Verify domain** in OpenWork.
+After assignments and domain verification are complete:
 
-The token is a one-time proof and expires after seven days. After verification
-succeeds, you may remove the TXT record.
+1. In **Settings → SSO**, select **Enable Config** or **Enable SSO** to open
+   **Test SSO before enabling it**.
+2. Select **SSO Login** and complete Entra authentication in the separate window
+   as the same OpenWork administrator.
+3. Return to OpenWork and confirm **Authentication test successful**. Check
+   that the intended organization and existing administrator account are used.
 
-## 6. Assign test users
+Test links expire after five minutes. The test uses the saved provider and ACS
+URL, not a separate test ACS URL. If you edit the configuration, test it again.
+Do not enable SSO while a test is failing.
 
-In Entra, open the enterprise application's **Users and groups** page and assign
-the users who should be allowed to sign in.
+After a failure, correct the cause and select **Try SSO login again** once.
+If the dialog still shows **Authentication test in progress**, finish the
+existing popup or wait for that test's five-minute expiry. Closing or reloading
+the administrator browser can leave that intent in progress until it expires.
+Do not click repeatedly or resave a configuration that already passed.
 
-For external users, assign the guest identity shown by Entra, not only the
-original external email address.
+OpenWork allows **IdP-initiated SAML** sign-in. Use OpenWork's built-in test
+above before enabling: launching an Entra tile alone does not record the
+required administrator test result.
 
-## 7. Test and enable SSO in OpenWork
+## Enable SSO
 
-After the Entra assignment and domain verification are complete:
+Prepare [recovery access](#recovery), then select **Enable SSO** after the
+successful test. Saving or testing alone does not enable member sign-in.
 
-1. In OpenWork **Settings → SSO**, select **Enable Config** or **Enable SSO**.
-2. In the **Test SSO before enabling it** dialog, select **SSO Login**.
-3. Complete Microsoft authentication in the separate window.
-4. Return to OpenWork and confirm **Authentication test successful**.
-5. Select **Enable SSO**.
+<Warning>
+On a single-organization self-hosted deployment, enabling SSO stops
+email/password sign-in for **everyone, including the owner and the initial
+administrator**. The owner's password is not a break-glass bypass. Keep the
+current administrator session open while you verify a new SSO sign-in in a
+separate browser profile.
+</Warning>
 
-SSO is not offered to organization members until you explicitly enable it after
-the successful test. If you edit the SSO configuration after a successful test,
-test it again before enabling. Test links expire after five minutes.
+In the standard sign-in flow, users with the verified email domain are directed
+to organization SSO. This domain routing is separate from the deployment-wide
+password block in single-organization mode.
 
-## Just-in-time provisioning and password signup
+## Recovery
 
-After Entra SAML SSO is enabled for a verified domain, OpenWork's standard
-sign-in flow routes users with that email domain to the organization SSO flow.
-When a user completes SAML sign-in successfully, OpenWork can create their
-organization membership just in time with the default `Member` role.
+Before enabling SSO, prepare both a recent administrator session and, if your
+recovery policy allows it, an organization-scoped API key. The administrator or
+key's member must have **Manage single sign-on** (`sso.manage`) permission;
+being an Admin without that permission is not enough.
 
-JIT provisioning happens only after successful SAML authentication. Creating an
-email/password account with the same email domain does not add the user to the
-organization or create a SCIM-managed identity. If that user later completes
-SSO, OpenWork can link the matching account and provision the organization
-membership through SSO.
+- **Recent session:** use **Settings → SSO** to disable SSO from an authorized
+  session signed in within the last **two hours**. Keeping a tab open does not
+  extend that window. After it expires, re-authentication is required, which
+  may be impossible while the identity provider is unavailable.
+- **Pre-created API key:** an authorized organization API key can call
+  `POST /v1/sso/disable` on your Den API, using the `x-api-key` header. API keys
+  skip the recent-sign-in check, not the permission check. Create and securely
+  store the key before rollout; do not put its value in a URL, screenshot, or
+  shared notes.
 
-OpenWork does not convert SAML attributes such as `role`, `groups`, or `admin`
-into elevated organization roles. The owner assigns roles in
-OpenWork; ownership changes require ownership transfer. For group-based Admin,
-first configure [Entra SCIM provisioning](/cloud/scim-microsoft-entra), then
-explicitly approve the synchronized team using
-[Team Admin access](/cloud/members-and-rbac#team-admin-access).
+Disabling SSO keeps its configuration and removes the single-organization SSO
+password block. Existing password accounts can then sign in, subject to the
+normal account and password protections. Fix the configuration, retest, and
+explicitly re-enable it. If neither recovery path is available, escalate to
+your deployment operator; a forgotten password or the bootstrap setup code
+does not bypass enabled SSO.
+
+## Provisioning and roles
+
+Successful SAML sign-in can create organization membership just in time with
+the default `Member` role. Password signup alone does not add a user to the
+organization or create a SCIM identity. A matching existing account can be
+linked through SSO when its identity and email domain match the configuration.
+
+SAML `role`, `groups`, or `admin` attributes do not grant elevated roles. The
+owner assigns roles; ownership changes require ownership transfer. For
+synchronized groups, configure [Entra SCIM](/cloud/scim-microsoft-entra), then
+explicitly approve [Team Admin access](/cloud/members-and-rbac#team-admin-access).
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-| --- | --- | --- |
-| `AADSTS700016: Application with identifier 'https://app.openworklabs.com' was not found` | Entra's Entity ID does not match OpenWork's SAML issuer | Set **Identifier (Entity ID)** to the OpenWork auth origin |
-| `/?error=saml_error&error_description=Invalid%20SAML%20response` | Entra is signing with a different certificate than the one saved in OpenWork, or assertions are not signed | Confirm **Signing Option** is `Sign SAML assertion`, then paste Entra's active **Certificate (Base64)** into OpenWork and save |
-| `/?error=unsolicited_response&error_description=IdP-initiated+SSO+not+allowed` | The deployment is running an older OpenWork version that rejects IdP-initiated SAML | Upgrade OpenWork, or launch from the org-specific OpenWork **Sign-in URL** |
-| User reaches Microsoft but cannot continue | The user is not assigned to the enterprise application | Add the user under **Users and groups** |
-| Reply URL mismatch | Entra's Reply URL does not match the OpenWork ACS URL exactly | Copy the ACS URL from OpenWork and paste it into Entra |
-| OpenWork shows **Verify the SSO domain before testing this configuration** | The DNS TXT proof has not passed yet | Create the TXT record shown by OpenWork, wait for DNS propagation, then select **Verify domain** |
-| The test dialog shows **The SSO authentication window was closed before the test completed** | The popup was closed or redirected away before OpenWork received the test result | Start a new test and keep the authentication window open until it returns or closes itself |
-| OpenWork will not enable SSO after editing settings | The current configuration has not been tested successfully | Run **SSO Login** again, then select **Enable SSO** after the successful test |
+Match the message or error code, then fix the configuration before retrying.
+Do not repeatedly submit a failing login.
+
+| Message / code | Check and action |
+| --- | --- |
+| `AADSTS50011` | Reply URL mismatch. Set Entra **Reply URL (Assertion Consumer Service URL)** to OpenWork's complete **ACS URL**, not its OIDC Redirect URL or separate API host. Match scheme, host, path, and trailing slash exactly. |
+| `AADSTS700016` / `Application with identifier … was not found` | Identifier mismatch or wrong Entra tenant. Set **Identifier (Entity ID)** to OpenWork's Entity ID (web/auth origin unless Audience is set); do not use the Entra issuer. Confirm you configured the enterprise app in the tenant used for sign-in. |
+| `AADSTS50105` / user not assigned | Assign the test administrator under **Users and groups**. For a guest, check the assigned tenant identity and emitted email. |
+| `Invalid SAML response` / `saml_error` | Check the active **Certificate (Base64)** matches OpenWork, sign the assertion with SHA-256, and compare Entity ID and ACS values. Save and retest after changes. |
+| `account_not_linked` / `SSO authentication did not complete successfully. Check the provider configuration and try again.` | First check **Domain / Users' email domain**, SAML email / NameID, and the existing OpenWork account email. Use `example.com` for `admin@example.com`, not a tenant-only suffix. These errors can have other causes; inspect server diagnostics if the values match. |
+| `SSO authenticated a different account. Sign in at the identity provider with the same administrator account and try again.` | Use the same administrator email that started the test. Switch the account in Entra, not the OpenWork organization. |
+| `This deployment is configured for one organization. Additional organization changes are disabled.` | A stale session can hold the wrong active organization. Sign out and sign in again through this deployment's organization **Sign-in URL**. Keep any separate recovery session open. |
+| `Verify the SSO domain before testing this configuration.` | Check whether Entra automatic verification applied. If not, complete the displayed DNS TXT proof; do not change the domain to `onmicrosoft.com` just to obtain verification. |
+| `The SSO authentication test expired. Start a new test and complete it within five minutes.` | Create a fresh test link and complete it within five minutes. |
+| `The SSO authentication window was closed before the test completed.` | Start a new test; keep the authentication window open until it returns or closes itself. |
+| `For security, confirm it's you before changing workspace settings.` / `fresh_auth_required` | The two-hour privileged-session window ended. Re-authenticate before changing SSO; if SSO is broken, use the pre-created authorized organization API key. |
+| HTTP `429` | Stop retries and honor `Retry-After` when present. Production auth defaults to 20 requests per 60 seconds; email/password sign-in is limited to 5 requests per 5 minutes and can also have failed-password lockouts. Do not confuse the password limit with the SSO test's five-minute expiry. |
+| `This deployment uses organization SSO. Continue with SSO to sign in.` | Password sign-in is blocked in single-organization mode, including for the owner. Use the organization **Sign-in URL**, or an existing recovery path to disable SSO. |
+| `unsolicited_response` / `IdP-initiated SSO not allowed` | Current OpenWork SAML policy allows IdP-initiated sign-in. Check the running version and provider configuration rather than assuming all IdP-initiated responses are rejected; start from OpenWork's organization **Sign-in URL** while diagnosing. |
+
+For Entra's field definitions, see Microsoft's
+[SAML setup guide](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/add-application-portal-setup-sso),
+[claims reference](https://learn.microsoft.com/en-us/entra/identity-platform/saml-claims-customization),
+and [certificate guide](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/tutorial-manage-certificates-for-federated-single-sign-on).

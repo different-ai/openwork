@@ -42,8 +42,12 @@ Then open `http://localhost:3005/setup` and continue with [Complete setup](#comp
 1. Wait until Den web, Den API, and the migration Job are healthy.
 2. Open `/setup` on the Den web hostname.
 3. Enter the configured administrator email and the one-time setup code.
-4. Choose the administrator's name and password.
-5. Confirm that OpenWork signs the administrator in and opens the singleton organization.
+4. Choose the administrator's name and a password of **8–32 characters**. The
+   maximum is **32 characters**, including for a generated password. Include
+   uppercase and lowercase letters, a number, and a special character; normal
+   password-strength and compromised-password checks still apply.
+5. Confirm that OpenWork opens the **installation/onboarding page** (`/install`)
+   with the administrator signed in to the singleton organization.
 
 The setup flow uses the existing Better Auth password and session protections. Successful setup creates the first account, creates or claims the singleton organization, grants the configured owner and platform-admin roles, and makes setup unavailable because the deployment now has a user.
 
@@ -54,11 +58,54 @@ After setup:
 - revisiting `/setup` reports that setup is complete or unavailable;
 - the one-time code cannot create another administrator;
 - unknown users still cannot sign up;
-- the administrator can sign out and use normal password sign-in;
+- before SSO is enabled, the administrator can sign out and use normal password sign-in;
 - restarting or scaling Den API does not re-enable setup.
 
-If the deployment already contains a user, bootstrap remains unavailable even if its setup Secret still exists. Rotating or restoring the Secret does not reopen setup unless an operator deliberately changes the database outside OpenWork.
+If the deployment already contains a user, bootstrap remains unavailable even if its setup Secret still exists. Rotating or restoring the Secret does not reopen setup and is not an SSO recovery method.
 
 ## Configure SSO next
 
-Use the first owner as a break-glass account, then configure SAML or OIDC SSO and SCIM for normal workforce access. Protect the break-glass identity and recovery material according to your organization's access-control policy.
+Configure SAML or OIDC SSO for workforce access, test it as the existing owner,
+then configure SCIM if needed. For SAML, follow the
+[Microsoft Entra](/cloud/sso-microsoft-entra),
+[Google Workspace](/cloud/sso-google-workspace), or [Okta](/cloud/sso-okta) guide.
+For an OpenID Connect client, use the [OIDC SSO guide](/cloud/sso-oidc).
+Use the URLs shown in **Settings → SSO**: SAML's ACS URL uses the web/auth origin,
+not a separate API host. Set **Domain** (labelled **Users' email domain** in newer
+versions) to the part after `@` in the owner's and users' actual email addresses,
+not the identity provider's tenant domain.
+
+<Warning>
+On a single-organization deployment, enabling SSO stops email/password sign-in
+for **everyone, including the initial administrator and the owner**. The first
+owner is not a password break-glass account after enablement. Password reset,
+the owner allowlist, and the one-time bootstrap code do not bypass enabled SSO.
+</Warning>
+
+## Prepare recovery before enabling SSO
+
+1. Confirm the first owner's SSO identity returns the **same email** as their
+   existing OpenWork account. Complete OpenWork's authentication test before
+   selecting **Enable SSO**. A test link expires after five minutes.
+2. Keep an authorized administrator session open while you verify a fresh SSO
+   sign-in in a separate browser profile. Disabling SSO requires **Manage single
+   sign-on** (`sso.manage`) permission and a session signed in within the last
+   **two hours**. An open tab does not extend that window; after it expires,
+   OpenWork requires re-authentication.
+3. If your recovery policy allows it, create and securely store an
+   organization-scoped API key **before** rollout. The key's member must have
+   **Manage single sign-on** permission. An Admin role alone does not guarantee
+   that permission. API keys bypass the recent-sign-in check, not authorization.
+
+If SSO fails, disable it in **Settings → SSO** using the recent authorized
+session, or call `POST /v1/sso/disable` on your Den API with the pre-created,
+authorized organization API key in the `x-api-key` header. Disabling keeps the
+configuration and removes the single-organization password block, so existing
+password accounts can sign
+in subject to normal account and password protections. Correct the settings,
+retest, and explicitly re-enable SSO.
+
+If neither path is available, escalate to your deployment operator. Do not rely
+on being able to create a recovery key after you are locked out. Protect
+recovery credentials according to your organization's access-control policy;
+never put API-key values in URLs, screenshots, or shared notes.
