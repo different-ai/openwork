@@ -40,6 +40,8 @@ import {
   getMembersRoute,
   getToolTesterRoute,
   getYourConnectionsRoute,
+  getYourEnvironmentVariablesRoute,
+  getEnvironmentVariablesRoute,
   getOrgDashboardRoute,
   getOrgSettingsRoute,
   getMarketplacesRoute,
@@ -303,6 +305,12 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getYourConnectionsRoute(orgSlug))) {
     return "Your Connections";
   }
+  if (pathname.startsWith(getYourEnvironmentVariablesRoute(orgSlug))) {
+    return "My Variables";
+  }
+  if (pathname.startsWith(getEnvironmentVariablesRoute(orgSlug))) {
+    return "Environment Variables";
+  }
   if (pathname.startsWith(getWorkflowRunsRoute(orgSlug))) {
     return "Workflow Runs";
   }
@@ -464,6 +472,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     runtimeConfigLoaded,
 
     managedDeployments: orgFeatureEnabled(orgContext, "managedDeployments"),
+    environmentVariables: orgFeatureEnabled(orgContext, "environmentVariables"),
     canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
 
     desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),

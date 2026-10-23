@@ -239,6 +239,13 @@ export const FEATURES = defineFeatures({
     deployments: ["cloud"],
     default: false,
   },
+  environmentVariables: {
+    label: "Environment variables",
+    description: "Admins deploy environment variables to people's desktop agents: a value for everyone, a team or one person, or a value each person sets for themselves.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   orgPrompts: {
     label: "Prompts",
     description: "Admins write a system prompt for everyone and for each team on the team's Prompts tab. Desktops add the prompts that apply to a member to every agent's instructions: Everyone's first, then each team's by team name. Turning this off stops desktops adding them at their next sync; saved prompts are kept.",

@@ -183,7 +183,7 @@ export function AutoAccessNotice(props: { wall: AutoAccessWall; sessionId: strin
   return <AutoAccessWallNotice {...props} />;
 }
 
-function AutoAccessWallNotice({ wall, sessionId, recovery }: { wall: AutoAccessWall; sessionId: string; workspaceId?: string; recovery?: { owner: RejectedTurnOwner; id: string } }) {
+function AutoAccessWallNotice({ wall, sessionId, workspaceId, recovery }: { wall: AutoAccessWall; sessionId: string; workspaceId?: string; recovery?: { owner: RejectedTurnOwner; id: string } }) {
   const auth = useDenAuth();
   const signIn = useCloudSignIn();
   const copy = autoWallCopy(wall, auth.isSignedIn);

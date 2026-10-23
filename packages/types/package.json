@@ -302,6 +302,16 @@
       "development": "./src/den/default-model.ts",
       "default": "./src/den/default-model.ts"
     },
+    "./den/environment-variables": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/environment-variables.d.ts",
+        "default": "./src/den/environment-variables.ts"
+      },
+      "development": "./src/den/environment-variables.ts",
+      "bun": "./src/den/environment-variables.ts",
+      "browser": "./src/den/environment-variables.ts",
+      "default": "./dist/den/environment-variables.js"
+    },
     "./den/prompts": {
       "types": {
         "openwork-build": "./dist/types/src/den/prompts.d.ts",

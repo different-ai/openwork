@@ -52,6 +52,7 @@ config:
     connectStandardTools: ""      # default off · Supported clients, including OpenWork Desktop, OpenCode and Claude Code, discover connected actions, Workflows and Apps as individual tools. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas.
     teamPlan: ""                  # default off (cloud only) · Going past 5 people moves the workspace to the Team plan at $10 per person per month, and paying sets the plan.
     selfServeEnterprise: ""       # default off (cloud only) · Owners can buy Enterprise by card at the planned per-person price.
+    environmentVariables: ""      # default off · Admins deploy environment variables to people's desktop agents: a value for everyone, a team or one person, or a value each person sets for themselves.
     orgPrompts: ""                # default off · Admins write a system prompt for everyone and for each team on the team's Prompts tab. Desktops add the prompts that apply to a member to every agent's instructions: Everyone's first, then each team's by team name. Turning this off stops desktops adding them at their next sync; saved prompts are kept.
   # END GENERATED features
   tenancy:

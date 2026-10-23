@@ -132,6 +132,9 @@ export const idTypesMapNameToPrefix = {
   headlessResumeGrant: "hrsg",
   desktopStartupReport: "dsr",
   accountFollowUpAction: "afa",
+  environmentVariable: "evr",
+  environmentVariableAccess: "eva",
+  environmentVariableMemberSetting: "evm",
   orgPrompt: "osp",
   orgPromptAccess: "ospa",
 } as const

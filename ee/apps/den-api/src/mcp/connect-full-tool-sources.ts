@@ -108,6 +108,16 @@ async function connectionTools(
   }
 }
 
+/** Den operations every member may call, listed as full-view tools. */
+const MEMBER_DEN_CAPABILITIES: ReadonlySet<string> = new Set([
+  CONNECTION_KEY_REQUEST_CAPABILITY,
+  "getEnvironmentVariablesMine",
+  "postEnvironmentVariablesValuePrompt",
+  "putEnvironmentVariablesMyValue",
+  "deleteEnvironmentVariablesMyValue",
+  "putEnvironmentVariablesMyAssignment",
+])
+
 /**
  * Every capability the calling member may use, as full-view tools, built from
  * the capability registry's own sources: native Google/Microsoft operations
@@ -130,11 +140,13 @@ export async function loadConnectFullTools(input: {
   const candidates: ConnectFullToolCandidate[] = []
 
   // OpenWork's own API operations stay in search: whether a member may call one
-  // depends on per-route roles a list cannot check. The exception is the key
-  // request a connection card tells the agent to run.
+  // depends on per-route roles a list cannot check. The exceptions are the key
+  // request a connection card tells the agent to run, and the member's own
+  // environment variables (any member may list theirs, set their own value
+  // after confirming, and choose an assignment; values are never readable).
   if (scope !== "status") {
     if (wants("den")) {
-      const keyRequest = ctx.catalog.filter((operation) => operation.name === CONNECTION_KEY_REQUEST_CAPABILITY)
+      const keyRequest = ctx.catalog.filter((operation) => MEMBER_DEN_CAPABILITIES.has(operation.name))
       candidates.push(...leafCandidates(await enumerated({ ...ctx, catalog: keyRequest }, "catalog")))
     }
     if (wants("admin")) candidates.push(...leafCandidates(await enumerated(ctx, "admin")))

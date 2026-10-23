@@ -11,7 +11,8 @@
  * network and never throw (a throwing transform disables the plugin).
  */
 import { createHash } from "node:crypto"
-import { createDesktopProviderPlugin } from "./desktop.ts"
+import { createDesktopProviderPlugin, isDesktopSessionEndpoint } from "./desktop.ts"
+import { setupDesktopEnvironment } from "./desktop-environment.ts"
 import {
   INTEGRATION_ID,
   INTEGRATION_NAME,
@@ -162,9 +163,18 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
     id: PLUGIN_ID,
     async setup(ctx: PluginContext): Promise<Cleanup> {
       if (ctx.options.desktopSession !== undefined) {
+        // Organization environment variables apply whether or not live
+        // provider sync is on; both use the desktop's loopback session bridge.
+        const stopEnvironment = isDesktopSessionEndpoint(ctx.options.desktopSession)
+          ? await setupDesktopEnvironment(ctx, ctx.options.desktopSession, { fetch: fetcher })
+          : () => {}
         // Keep provider-only setup in the entry graph; its credential broker is
         // additionally shared through native require across Location-scoped graphs.
-        return (await createDesktopProviderPlugin({ fetch: fetcher, now, retryMs: deps.retryMs }).setup(ctx)) ?? (() => {})
+        const stopProviders = (await createDesktopProviderPlugin({ fetch: fetcher, now, retryMs: deps.retryMs }).setup(ctx)) ?? (() => {})
+        return async () => {
+          stopEnvironment()
+          await stopProviders()
+        }
       }
       if (typeof ctx.integration?.transform !== "function"
         || typeof ctx.integration?.connection?.active !== "function"

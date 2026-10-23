@@ -46,3 +46,18 @@ test("managed deployments remain off unless explicitly enabled", () => {
   }).flatMap((section) => section.items);
   assert.ok(!items.some((item) => item.label === "Deployments"));
 });
+
+test("environment variables appear only with the rollout, the admin page only with its permission", () => {
+  const withFeature = (permissions: Parameters<typeof getOrgAccessFlags>[2], environmentVariables: boolean) => buildDashboardNavSections({
+    orgSlug: "workspace", access: getOrgAccessFlags("member", false, permissions),
+    capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, environmentVariables,
+  }).flatMap((section) => section.items);
+  const admin = withFeature(["environment_variables.view"], true);
+  assert.ok(admin.some((item) => item.testId === "dashboard-nav-environment-variables"));
+  assert.ok(admin.some((item) => item.testId === "dashboard-nav-my-variables"));
+  const member = withFeature([], true);
+  assert.ok(!member.some((item) => item.testId === "dashboard-nav-environment-variables"));
+  assert.ok(member.some((item) => item.testId === "dashboard-nav-my-variables"));
+  const off = withFeature(["environment_variables.view"], false);
+  assert.ok(!off.some((item) => item.testId === "dashboard-nav-environment-variables" || item.testId === "dashboard-nav-my-variables"));
+});

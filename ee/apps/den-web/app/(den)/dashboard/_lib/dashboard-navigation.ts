@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Box,
+  Braces,
   CalendarClock,
   Globe,
   Laptop,
@@ -27,6 +28,7 @@ import {
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
   getDeploymentsRoute,
+  getEnvironmentVariablesRoute,
   getLibraryRoute,
   getMarketplacesRoute,
   getMcpConnectionsRoute,
@@ -39,6 +41,7 @@ import {
   getToolTesterRoute,
   getWebRoute,
   getWorkbotSettingsRoute,
+  getYourEnvironmentVariablesRoute,
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
 import { canOpenAdminRoute } from "./admin-route-access";
@@ -90,6 +93,8 @@ export type BuildDashboardNavSectionsInput = {
   libraryNeedsSignIn?: number;
   /** The managedDeployments feature is on for this organization. */
   managedDeployments?: boolean;
+  /** The environmentVariables feature is on for this organization. */
+  environmentVariables?: boolean;
   desktopPolicyScreenRemoved?: boolean;
   /** Explicit server capability, independent of organization role permissions. */
   canManageDeploymentServices?: boolean;
@@ -104,6 +109,7 @@ export function buildDashboardNavSections({
   runtimeConfigLoaded,
   libraryNeedsSignIn = 0,
   managedDeployments = false,
+  environmentVariables = false,
   desktopPolicyScreenRemoved = false,
   canManageDeploymentServices = false,
   workbotEntry = { kind: "open" },
@@ -125,6 +131,9 @@ export function buildDashboardNavSections({
     ...(workflowsEnabled && orgSlug
       ? [{ href: getAutomationsRoute(orgSlug), label: "My Automations", icon: CalendarClock }]
       : []),
+    ...(environmentVariables && orgSlug
+      ? [{ href: getYourEnvironmentVariablesRoute(orgSlug), label: "My Variables", icon: Braces, testId: "dashboard-nav-my-variables" }]
+      : []),
     ...(showWeb
       ? [{ href: orgSlug ? getWebRoute(orgSlug) : "#", label: "OpenWork Web", icon: Globe }]
       : []),
@@ -138,6 +147,7 @@ export function buildDashboardNavSections({
         { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug, badge: "MCPs" },
         { href: getAiGatewayRoute(orgSlug), label: "AI Gateway", icon: Sparkles },
         ...(!desktopPolicyScreenRemoved ? [{ href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop }] : []),
+        ...(environmentVariables ? [{ href: getEnvironmentVariablesRoute(orgSlug), label: "Environment Variables", icon: Braces, testId: "dashboard-nav-environment-variables" }] : []),
         { href: getWorkbotSettingsRoute(orgSlug), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot-settings" },
         ...(managedDeployments ? [{ href: getDeploymentsRoute(orgSlug), label: "Deployments", icon: Server }] : []),
       ].filter((item) => canOpen(item.href))
@@ -206,6 +216,8 @@ function permissionsNavChildren(orgSlug: string, access: DenOrgAccessFlags, memb
 const PAGE_KEYWORDS: Record<string, string[]> = {
   Advanced: ["marketplace", "collections", "branding", "brand appearance"],
   "AI Gateway": ["llm", "provider", "gateway", "inference", "usage"],
+  "Environment Variables": ["env", "environment", "secrets", "variables", "api key", "token"],
+  "My Variables": ["env", "environment variables", "my secrets", "personal token"],
   Analytics: ["usage", "stats", "workflow runs", "history"],
   "Audit logs": ["audit", "history", "operations", "changes", "security"],
   "API Keys": ["token", "secret"],

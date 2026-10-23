@@ -3,6 +3,7 @@ import net from "node:net";
 import { startupPhase } from "./startup-phase.js";
 import { randomUUID } from "node:crypto";
 import { appendEngineOutputTail, createEngineStartupLineReader } from "./engine-output.js";
+import { cloudEnvironmentOverlay } from "./cloud-environment-overlay.js";
 
 export type ManagedChildProcess = {
   exitCode: number | null;
@@ -166,6 +167,8 @@ async function startManagedOpencodeServer(
     ...process.env,
     ...engineEnvDefaults,
     ...options.env,
+    // Organization environment variables win over local ones: admins provision them.
+    ...cloudEnvironmentOverlay(),
     OPENCODE_SERVER_USERNAME: username,
     OPENCODE_SERVER_PASSWORD: password,
   };

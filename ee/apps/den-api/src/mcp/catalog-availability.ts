@@ -5,6 +5,8 @@ export type CatalogAvailabilityContext = {
   managedDeploymentsEnabled: boolean
   /** Removing an organization connection on the user's explicit request: agent connection removal enabled. */
   agentConnectionRemovalEnabled: boolean
+  /** Organization environment variables: environment variables enabled. Hidden when left out. */
+  environmentVariablesEnabled?: boolean
   /**
    * What started these capability calls. Removal is offered only to a person's
    * own agent, never to saved Workflows, Automations or Apps that run unattended.
@@ -23,6 +25,10 @@ export function catalogOperationAvailableToCapabilities(
   // the managed deployments rollout; the routes themselves still enforce permissions and features.
   if (operation.path === "/v1/managed-deployments" || operation.path.startsWith("/v1/managed-deployments/")) {
     return context.managedDeploymentsEnabled
+  }
+  // Hidden until the organization has the rollout; the routes also refuse while it is off.
+  if (operation.path === "/v1/environment-variables" || operation.path.startsWith("/v1/environment-variables/")) {
+    return context.environmentVariablesEnabled === true
   }
   // Hidden until the organization has the rollout; the route also refuses while it is off.
   if (operation.path === AGENT_CONNECTION_REMOVAL_PATH) {

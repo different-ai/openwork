@@ -9,6 +9,7 @@ import {
 import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
 import { readOpenWorkConnectSkillContent, readOpenWorkConnectSkillContents, readOpenWorkConnectSkillIndex, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
 import { readOpenWorkAutomationCatalog, renderOpenWorkAutomationInstruction } from "../connect-automation-catalog.js";
+import { cloudEnvironmentOverlay } from "../cloud-environment-overlay.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { syncManagedProviderAuth, type ManagedProviderAuthResult } from "../managed-provider-auth.js";
 import { ApiError } from "../errors.js";
@@ -446,7 +447,9 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
 
   addRoute(routes, "GET", "/env/keys", "host-token", async () => {
     const items = await env.list().catch(rethrowEnvStoreReadError);
-    return jsonResponse({ keys: items.map((item) => item.key) });
+    // Names only: the agent also learns which organization variables it has.
+    const keys = new Set([...items.map((item) => item.key), ...Object.keys(cloudEnvironmentOverlay())])
+    return jsonResponse({ keys: [...keys] });
   });
 
   function envRuntimeKeyFromUrl(url: URL): string {

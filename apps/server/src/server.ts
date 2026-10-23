@@ -163,6 +163,8 @@ import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeO
 import { findManagedEngineWorkspace, managedEngineRootWorkspace } from "./workspaces.js";
 import { startThreadApprovalReplayer, type ThreadApprovalReplayer } from "./thread-approvals.js";
 import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
+import { CloudEnvironmentSync } from "./cloud-environment-sync.js";
+import { cloudEnvironmentSnapshot } from "./cloud-environment-overlay.js";
 import { createEngineV2Preview, shouldSyncLiveProviderOwnerTransition, type EngineV2Preview } from "./engine-v2-preview.js";
 import { MACHINE_PROVIDER_TEMPLATE_OWNERSHIP, providerConfigFingerprint } from "./provider-config-templates.js";
 import pkg from "../package.json" with { type: "json" };
@@ -392,6 +394,9 @@ const envServicesByConfig = new WeakMap<ServerConfig, EnvService>();
 export function envServiceForConfig(config: ServerConfig): EnvService | null {
   return envServicesByConfig.get(config) ?? null;
 }
+
+/** Organization environment variables delivered to a running server's engine. */
+const cloudEnvironmentServices = new WeakMap<ServerConfig, CloudEnvironmentSync>();
 
 type LogLevel = "info" | "warn" | "error";
 
@@ -831,6 +836,7 @@ export async function startServer(
     autoUpgradeIdle: async () => (await describeV1EngineActivity(config)).verdict === "idle",
     autoUpgradeError: (error) => logger.log("warn", "Automatic engine upgrade failed; keeping v1", { error }),
     providerSession: () => cloudProviderSync.currentSession(),
+    environment: cloudEnvironmentSnapshot,
     hostReadRequest: async (path, init) => {
       // Internal dispatch retains the host credential in this process. The
       // native plugin receives only the context bridge's restricted token.
@@ -868,6 +874,24 @@ export async function startServer(
     },
     logger: toManagedProviderAuthLogger(logger),
   });
+  const cloudEnvironmentSync = new CloudEnvironmentSync({
+    // Like providers: v2 takes the change live (its plugin fetches the overlay
+    // over the session bridge). v1 reads environment once at spawn, so a
+    // standby takes new conversations while running ones finish.
+    reloadEngine: async (digest) => {
+      if (engineV2Preview.status().chatRouting) {
+        return await engineV2Preview.awaitEnvironment(digest) ? { action: "updated_live" } : { action: "coalesced" };
+      }
+      if (!enginePoolForConfig(config)) return null;
+      return reloadOpencodeEngine(config, resolveEngineRuntimeWorkspace(config), engineMcpServerState,
+        { forceStandby: true, reason: "cloud_environment_sync" });
+    },
+    logger: {
+      info: (message, attributes) => logger.log("info", message, attributes as LogAttributes | undefined),
+      warn: (message, attributes) => logger.log("warn", message, attributes as LogAttributes | undefined),
+    },
+  });
+  cloudEnvironmentServices.set(config, cloudEnvironmentSync);
   const anonymousInference = new AnonymousInferenceService(config, logger);
   anonymousInference.onEngineConfigChanged = () => { if (config.workspaces.length > 0 || enginePoolForConfig(config)) cloudProviderSync.markReloadPending(); };
   managedDesktopPolicy(config).onChange = () => {
@@ -1214,6 +1238,7 @@ export async function startServer(
     captureServerException(error, { method: "START", route: "startServer" });
     anonymousInference.stop();
     cloudProviderSync.stop();
+    cloudEnvironmentSync.stop();
     await engineV2Preview.stop().catch(() => undefined);
     await stopCloudComputer();
     engineInstanceReaper.close();
@@ -1332,6 +1357,7 @@ export async function startServer(
       managedDesktopPolicy(config).onChange = undefined;
       anonymousInference.stop();
       cloudProviderSync.stop();
+      cloudEnvironmentSync.stop();
       await engineV2Preview.stop().catch(() => undefined);
       engineInstanceReaper.close();
       clearEngineInstanceReaperForConfig(config);
@@ -2717,6 +2743,8 @@ function createRoutes(
   liveProviderSyncAvailable: () => boolean,
 ): Route[] {
   const routes: Route[] = [];
+  // Registered by startServer before routes are created.
+  const cloudEnvironmentSync = cloudEnvironmentServices.get(config) ?? null;
   addRoute(routes, "GET", "/anonymous-inference/status", "client", async () =>
     jsonResponse(await anonymousInference.status()));
   for (const action of ["preflight", "refresh"]) {
@@ -3319,6 +3347,8 @@ function createRoutes(
       await suspended;
     }
     await cloudProviderSync.setSession(session);
+    // Not awaited: Den being slow must not hold up sign-in.
+    void cloudEnvironmentSync?.setSession(session).catch(() => undefined);
     return new Response(null, { status: 204 });
   });
 
@@ -3326,10 +3356,12 @@ function createRoutes(
     ensureWritable(config);
     anonymousInference.setMemberSession(null);
     const clearing = cloudProviderSync.clearSession();
+    const clearingEnvironment = cloudEnvironmentSync?.clearSession();
     try {
       await managedDesktopPolicy(config).clearSession();
     } finally {
       await clearing;
+      await clearingEnvironment;
     }
     await anonymousInference.initialize(config.port);
     return new Response(null, { status: 204 });
@@ -3402,6 +3434,23 @@ function createRoutes(
 
   addRoute(routes, "GET", "/cloud-provider-sync/status", "client", async () => {
     return jsonResponse(cloudProviderSync.status());
+  });
+
+  // Organization environment variables. Admin-provisioned values are never
+  // returned; the member's own values are, since they set them.
+  addRoute(routes, "GET", "/cloud-environment", "host-token", async () => {
+    if (!cloudEnvironmentSync) throw new ApiError(503, "cloud_environment_unavailable", "Organization environment variables are not available");
+    const response = jsonResponse(cloudEnvironmentSync.status());
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  });
+
+  addRoute(routes, "POST", "/cloud-environment/sync", "host-token", async () => {
+    ensureWritable(config);
+    if (!cloudEnvironmentSync) throw new ApiError(503, "cloud_environment_unavailable", "Organization environment variables are not available");
+    const response = jsonResponse(await cloudEnvironmentSync.run("requested"));
+    response.headers.set("Cache-Control", "no-store");
+    return response;
   });
 
   addRoute(routes, "GET", "/experimental/engine-v2-preview/status", "client", async () => {

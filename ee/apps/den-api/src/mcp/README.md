@@ -72,6 +72,7 @@ Every tagged Den API product surface is allowed unless it is listed under blocke
 - `Config Objects`
 - `Connectors`
 - `Desktop Policies`
+- `Environment Variables`
 - `GitHub`
 - `Invitations`
 - `LLM Providers`
@@ -119,6 +120,29 @@ These individual operations are blocked even though their tags may otherwise be 
 - `deleteV1OrgsByOrgId`: defensive block for organization deletion if a route is added.
 - `postOauthProvidersByProviderIdDisconnect`: removing a connected OAuth credential is a mutation that should stay behind explicit UI/API flows, not an agent-callable tool.
 - `postV1OauthProvidersByProviderIdDisconnect`: generated OpenAPI ID for disconnecting an OAuth provider.
+
+## Environment variables
+
+Agents can write values but never read them; values are read only by the
+desktop while it syncs (`GET /v1/environment-variables/resolved` is
+`x-mcp: false` and refuses agents and API keys).
+
+- Members' agents list their variables (`getEnvironmentVariablesMine`: names,
+  sources, assignments by name, whether a value is set), set their own value
+  (`putEnvironmentVariablesMyValue`, only with `confirmed: true`; replacing a
+  stored value answers 409 `confirmation_required` until the person agrees and
+  the agent sends `replaceExisting: true`), clear it (`confirmed=true`), choose
+  which assignment applies (`putEnvironmentVariablesMyAssignment`), or show the
+  person a private field (`postEnvironmentVariablesValuePrompt`). These are
+  full-view tools too.
+- Admin create/update accept values from agents only with `confirmed: true`
+  (otherwise 409 `confirmation_required`, with `affected`). An update that would
+  replace or remove a stored value also needs `replaceExisting: true`.
+- Keys that make programs run commands or weaken TLS (Git, loader, shell,
+  interpreter, package-manager and editor configuration, `NODE_TLS_*`, `SSL_*`,
+  `SSLKEYLOGFILE`, …) are refused, and dropped again by the desktop.
+- Every change is audited (`audit/domain/environment-variables.ts`) without values.
+- All of it is hidden unless the organization has `environmentVariables`.
 
 ## Removing connections
 

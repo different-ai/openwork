@@ -55,6 +55,9 @@ import {
   GatewayUsageRollupTable,
   InstallLinkTable,
   InvitationTable,
+  EnvironmentVariableAccessTable,
+  EnvironmentVariableTable,
+  EnvironmentVariableMemberSettingTable,
   LlmProviderAccessTable,
   LlmProviderMemberCredentialTable,
   LlmProviderModelTable,
@@ -510,6 +513,17 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(GatewayUsageRollupTable).where(eq(GatewayUsageRollupTable.organization_id, organizationId))
         await tx.delete(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, organizationId))
         await tx.delete(GatewayKeyTable).where(eq(GatewayKeyTable.organization_id, organizationId))
+
+        const environmentVariableIds = (await tx
+          .select({ id: EnvironmentVariableTable.id })
+          .from(EnvironmentVariableTable)
+          .where(eq(EnvironmentVariableTable.organizationId, organizationId)))
+          .map((row) => row.id)
+        if (environmentVariableIds.length > 0) {
+          await tx.delete(EnvironmentVariableAccessTable).where(inArray(EnvironmentVariableAccessTable.environmentVariableId, environmentVariableIds))
+        }
+        await tx.delete(EnvironmentVariableMemberSettingTable).where(eq(EnvironmentVariableMemberSettingTable.organizationId, organizationId))
+        await tx.delete(EnvironmentVariableTable).where(eq(EnvironmentVariableTable.organizationId, organizationId))
 
         const llmProviderIds = (await tx
           .select({ id: LlmProviderTable.id })

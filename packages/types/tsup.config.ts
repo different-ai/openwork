@@ -15,6 +15,7 @@ export default defineConfig({
     "den/inference": "src/den/inference.ts",
     "den/gateway": "src/den/gateway.ts",
     "den/gateway-usage-limits": "src/den/gateway-usage-limits.ts",
+    "den/environment-variables": "src/den/environment-variables.ts",
     "den/prompts": "src/den/prompts.ts",
   },
   tsconfig: "./tsconfig.json",

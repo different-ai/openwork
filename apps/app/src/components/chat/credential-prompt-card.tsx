@@ -16,6 +16,7 @@ import { DenReauthNotice } from "@/react-app/domains/cloud/den-reauth-notice"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { useOptionalMessageList } from "./message-list-provider"
 import { credentialPromptFromToolPart } from "./credential-prompt"
+import { requestCloudEnvironmentRefresh } from "@/app/lib/cloud-environment-refresh"
 
 export const CREDENTIAL_SAVED_CONTINUE_PROMPT = "I've saved the key. Go ahead."
 
@@ -36,6 +37,8 @@ function denDashboardUrl(baseUrl: string, prompt: CredentialPrompt): string | nu
     const target = prompt.target
     const path = target.type === "gateway_provider_key" || target.type === "gateway_provider_credential"
       ? DEN_DASHBOARD_LINKS.gatewayProviders
+      : target.type === "environment_variable_member_value"
+        ? "/dashboard/your-environment-variables"
       : target.type === "mcp_connection_member_key"
         ? `/dashboard/your-connections?connectionId=${encodeURIComponent(target.connectionId)}`
         : `/dashboard/mcp-connections/${encodeURIComponent(target.connectionId)}`
@@ -49,7 +52,7 @@ function denDashboardUrl(baseUrl: string, prompt: CredentialPrompt): string | nu
 /** Who will use the key, from fixed text; the audience counts come from Den, never the agent. */
 function audienceLine(prompt: CredentialPrompt): string {
   const target = prompt.target
-  if (target.type === "mcp_connection_member_key") return "Only for you"
+  if (target.type === "mcp_connection_member_key" || target.type === "environment_variable_member_value") return "Only for you"
   if (target.type !== "mcp_connection_shared_switch") return `Shared with people who can use ${prompt.name}`
   const { orgWide, memberCount, teamCount } = target.audience
   const who = orgWide ? "everyone in your organization" : [
@@ -112,6 +115,10 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
       if (prompt.target.type === "gateway_provider_key" || prompt.target.type === "gateway_provider_credential") {
         return client.gatewayCredentialSetReady(organizationId, prompt.target.inferenceProviderId, prompt.target.credentialSetId)
       }
+      if (prompt.target.type === "environment_variable_member_value") {
+        const id = prompt.target.environmentVariableId
+        return (await client.listMyEnvironmentVariables(organizationId)).some((variable) => variable.id === id && variable.hasValue)
+      }
       const target = prompt.target
       return (await client.listMcpConnections(organizationId, "usable")).some((connection) => connection.id === target.connectionId && (
         target.type === "mcp_connection_member_key" ? connection.connectedForMe
@@ -167,6 +174,10 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
         await client.saveMcpConnectionSharedKey(organizationId, prompt.target.connectionId, value, { expectedUpdatedAt: prompt.target.expectedUpdatedAt })
       } else if (prompt.target.type === "mcp_connection_member_key") {
         await client.setMyMcpCredential(organizationId, prompt.target.connectionId, value)
+      } else if (prompt.target.type === "environment_variable_member_value") {
+        await client.setMyEnvironmentVariableValue(organizationId, prompt.target.environmentVariableId, value)
+        // The desktop adds the new value to the agent's environment on its next refresh.
+        requestCloudEnvironmentRefresh()
       } else if (prompt.target.type === "plugin_connection_key") {
         const { pluginId, configObjectId, serverName } = prompt.target
         await client.savePluginConnectionKey(organizationId, { pluginId, configObjectId, serverName, apiKey: value })
@@ -197,18 +208,19 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
   }
   const plural = specs.length > 1 || prompt.target.type === "gateway_provider_credential"
   const settled = saved && !replacing
-  const what = plural ? "credentials" : "API key"
-  const title = settled ? `${name}: ${plural ? "credentials" : "key"} saved`
+  const envValue = prompt.target.type === "environment_variable_member_value"
+  const what = plural ? "credentials" : envValue ? "value" : "API key"
+  const title = settled ? `${name}: ${plural ? "credentials" : envValue ? "value" : "key"} saved`
     : blocked === "denied" ? `An admin must add the ${what} for ${name}`
     : blocked === "gone" ? `${name} is no longer available`
-    : blocked ? `${plural ? "Credentials" : "API key"} for ${name}`
+    : blocked ? `${plural ? "Credentials" : envValue ? "Value" : "API key"} for ${name}`
     : replacing ? `Replace the ${what} for ${name}`
     : prompt.target.type === "mcp_connection_shared_switch" ? `Use one shared key for ${name}`
-    : prompt.target.type === "mcp_connection_member_key" ? `Add your ${what} for ${name}`
+    : prompt.target.type === "mcp_connection_member_key" || envValue ? `Add your ${what} for ${name}`
     : `Add the ${what} for ${name}`
   const blockedLine = blocked === "read_only" ? "This conversation is read-only."
-    : blocked === "signed_out" ? "Sign in to OpenWork Cloud to add this key here."
-    : blocked === "denied" ? "You can't change this key. Ask an organization admin."
+    : blocked === "signed_out" ? `Sign in to OpenWork Cloud to add this ${envValue ? "value" : "key"} here.`
+    : blocked === "denied" ? `You can't change this ${envValue ? "value" : "key"}. Ask an organization admin.`
     : blocked === "gone" ? "Ask the agent to set it up again."
     : null
   // One state line: who uses the key and where it goes (P9).
@@ -216,15 +228,15 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
   const Icon = settled ? Check : blocked ? Lock : KeyRound
 
   return (
-    <section data-testid="credential-prompt-card" data-credential-prompt={prompt.target.type} aria-label={`${name} API key`}
+    <section data-testid="credential-prompt-card" data-credential-prompt={prompt.target.type} aria-label={`${name} ${envValue ? "value" : "API key"}`}
       className="w-full max-w-full self-start text-sm text-foreground">
       <div className="flex min-h-10 min-w-0 flex-wrap items-center gap-3 px-3 py-1">
         <span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
           <Icon className="size-4" strokeWidth={1.5} />
         </span>
         <p role="status" className="min-w-0 flex-1 font-medium">{title}</p>
-        {settled ? <span aria-label="Saved key, hidden" className="shrink-0 font-mono text-muted-foreground">••••••••</span> : null}
-        {settled && !blocked ? <Button variant="ghost" size="sm" onClick={() => { setReplacing(true); setError(null) }}>{plural ? "Replace" : "Replace key"}</Button> : null}
+        {settled ? <span aria-label={envValue ? "Saved value, hidden" : "Saved key, hidden"} className="shrink-0 font-mono text-muted-foreground">••••••••</span> : null}
+        {settled && !blocked ? <Button variant="ghost" size="sm" onClick={() => { setReplacing(true); setError(null) }}>{plural ? "Replace" : envValue ? "Replace value" : "Replace key"}</Button> : null}
         {blocked && blocked !== "read_only" && blocked !== "gone" && dashboardUrl ? (
           <a className={buttonVariants({ variant: "ghost", size: "sm" })} href={dashboardUrl} target="_blank" rel="noopener noreferrer">Open in OpenWork Cloud</a>
         ) : null}
@@ -268,14 +280,14 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
           <div className="flex items-start gap-2">
             {specs.length === 1 && specs[0]?.kind === "secret" ? (
               <div className="min-w-0 flex-1">
-                <SecretField id={fieldId} label="API key" labelHidden error={error} disabled={phase === "saving"}
+                <SecretField id={fieldId} label={envValue ? specs[0]?.label ?? "Value" : "API key"} labelHidden error={error} disabled={phase === "saving"}
                   handleRef={(handle) => { if (handle) fields.current.set("apiKey", handle); else fields.current.delete("apiKey") }}
                   onSubmit={() => void save()} onValueChange={(has) => track("apiKey", has)} />
               </div>
             ) : <div className="flex-1" />}
             <Button type="submit" size="sm" disabled={phase === "saving" || !hasValue}>
               {phase === "saving" ? <Loader2 data-icon="inline-start" aria-hidden="true" className="animate-spin" strokeWidth={1.5} /> : null}
-              {phase === "saving" ? (plural ? "Saving…" : "Checking key…") : plural ? "Save credentials" : "Save key"}
+              {phase === "saving" ? (plural || envValue ? "Saving…" : "Checking key…") : plural ? "Save credentials" : envValue ? "Save value" : "Save key"}
             </Button>
             {replacing ? <Button type="button" variant="ghost" size="sm" disabled={phase === "saving"}
               onClick={() => { clearAll(); setReplacing(false); setError(null) }}>Cancel</Button> : null}

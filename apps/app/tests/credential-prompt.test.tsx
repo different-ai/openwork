@@ -169,3 +169,20 @@ test("a key-file field is never drawn unmasked: a password input until the brows
   expect(html).toContain('type="password"')
   expect(html).not.toContain("<textarea")
 })
+
+test("an environment variable value prompt comes only from Den's value prompt and takes any non-empty value", () => {
+  const envPrompt = {
+    schemaVersion: "1", kind: "credential_prompt",
+    target: { type: "environment_variable_member_value", environmentVariableId: "evr_fixture", key: "PERSONAL_TOKEN" },
+    name: "Personal token", destination: null,
+  }
+  const body = JSON.stringify({ environmentVariableId: "evr_fixture", credentialPrompt: envPrompt, nextStep: "End your turn." })
+  expect(credentialPromptFromToolPart(toolPart("openwork-cloud_execute_capability", body, "postEnvironmentVariablesValuePrompt"))?.target).toEqual(envPrompt.target)
+  // Another operation can't draw this field.
+  expect(credentialPromptFromToolPart(toolPart("openwork-cloud_execute_capability", body, "postMcpConnectionsCredentialPrompt"))).toBeNull()
+
+  const target = { type: "environment_variable_member_value" as const, environmentVariableId: "evr_fixture", key: "PERSONAL_TOKEN" }
+  expect(promptFields(target)).toEqual([{ id: "apiKey", label: "PERSONAL_TOKEN", kind: "secret" }])
+  expect(promptFieldsProblem(target, { apiKey: "has spaces and = signs" })).toBeNull()
+  expect(promptFieldsProblem(target, { apiKey: "" })).toBe("Enter a value.")
+})

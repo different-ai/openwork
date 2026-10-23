@@ -55,6 +55,7 @@ import {
   LayoutStack,
 } from "@/react-app/domains/settings/settings-layout";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
+import { CloudEnvironmentSection, useCloudEnvironment } from "./cloud-environment-section";
 
 type EnvItem = EnvironmentVariableItem;
 type EnvironmentEditorState = EnvironmentEditorDraft | null;
@@ -97,6 +98,7 @@ function EnvironmentViewContent(props: EnvironmentViewProps) {
 
   return (
     <LayoutStack>
+      <CloudEnvironmentSection client={client} runtimeKey={props.runtimeKey} />
       <EnvironmentSettingsPanel
         client={client}
         canEdit={canEdit}
@@ -129,6 +131,9 @@ function EnvironmentSettingsPanel(props: EnvironmentSettingsPanelProps) {
     client: props.client,
     runtimeKey: props.runtimeKey,
   });
+  const cloud = useCloudEnvironment(props.client, props.runtimeKey).data;
+  // Keys the organization deploys: its value wins, and only an admin changes it.
+  const organizationKeys = new Set(cloud?.signedIn && cloud.available ? cloud.variables.map((variable) => variable.key) : []);
 
   const readEnvironmentValue = async (item: EnvItem) => {
     if (typeof item.value === "string") return item.value;
@@ -224,6 +229,7 @@ function EnvironmentSettingsPanel(props: EnvironmentSettingsPanelProps) {
         onAdd={openAdd}
         onEdit={openEdit}
         onRevealValue={readEnvironmentValue}
+        organizationKeys={organizationKeys}
       />
 
       <LayoutSectionItemFootnote>{t("settings.environment.footer_hint")}</LayoutSectionItemFootnote>
@@ -234,6 +240,7 @@ function EnvironmentSettingsPanel(props: EnvironmentSettingsPanelProps) {
           editor={props.editor}
           onClose={() => props.onEditorChange(null)}
           onChange={props.onEditorChange}
+          organizationKeys={organizationKeys}
         />
       ) : null}
     </LayoutSection>
@@ -302,6 +309,7 @@ type EnvironmentItemsTableProps = {
   onAdd: () => void;
   onEdit: (item: EnvItem) => void;
   onRevealValue: (item: EnvItem) => Promise<string>;
+  organizationKeys: ReadonlySet<string>;
 };
 
 function EnvironmentItemsTable(props: EnvironmentItemsTableProps) {
@@ -350,6 +358,7 @@ function EnvironmentItemsTable(props: EnvironmentItemsTableProps) {
               onEdit={props.onEdit}
               onToggleReveal={(key) => void toggleReveal(key)}
               onDelete={setDeleteCandidate}
+              replacedByOrganization={props.organizationKeys.has(item.key)}
             />
           ))}
         </EnvironmentVariableTableBody>
@@ -368,6 +377,7 @@ type EnvironmentEditorModalProps = {
   editor: EnvironmentEditorDraft;
   onClose: () => void;
   onChange: (value: SetStateAction<EnvironmentEditorState>) => void;
+  organizationKeys: ReadonlySet<string>;
 };
 
 type EnvironmentEditorFieldsProps = {
@@ -424,7 +434,9 @@ export function EnvironmentEditorFields(props: EnvironmentEditorFieldsProps) {
 }
 
 function EnvironmentEditorModal(props: EnvironmentEditorModalProps) {
-  const { modifyAsync, isModifying, error } = useEnvironmentVariableModify();
+  const { modifyAsync, isModifying, error: modifyError } = useEnvironmentVariableModify();
+  const [organizationKeyError, setOrganizationKeyError] = useState<Error | null>(null);
+  const error = organizationKeyError ?? modifyError;
   const titleId = useId();
 
   useEffect(() => {
@@ -441,6 +453,11 @@ function EnvironmentEditorModal(props: EnvironmentEditorModalProps) {
     if (isModifying) {
       return;
     }
+    if (props.editor.mode === "add" && props.organizationKeys.has(props.editor.key.trim())) {
+      setOrganizationKeyError(new Error(t("settings.environment.validation_organization_key")));
+      return;
+    }
+    setOrganizationKeyError(null);
 
     void modifyAsync(props.editor, { onSuccess: props.onClose });
   };
@@ -464,6 +481,7 @@ function EnvironmentEditorModal(props: EnvironmentEditorModalProps) {
         <EnvironmentEditorFields
           editor={props.editor}
           onChange={(value) => {
+            setOrganizationKeyError(null);
             props.onChange((current) => {
               if (!current) return current;
               return typeof value === "function" ? value(current) : value;

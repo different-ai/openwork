@@ -11,6 +11,7 @@ export type PromptField = {
 
 /** The fields the host draws for a target. Fixed per kind, never taken from a tool result. */
 export function promptFields(target: CredentialPromptTarget): PromptField[] {
+  if (target.type === "environment_variable_member_value") return [{ id: "apiKey", label: target.key, kind: "secret" }]
   if (target.type !== "gateway_provider_credential") return [{ id: "apiKey", label: "API key", kind: "secret" }]
   if (target.credentialKind === "aws_keys") {
     return [
@@ -27,6 +28,8 @@ export function promptFields(target: CredentialPromptTarget): PromptField[] {
 /** Plain, value-free direction when what was entered can't be right. */
 export function promptFieldsProblem(target: CredentialPromptTarget, values: Record<string, string>): string | null {
   const fields = promptFields(target)
+  // Environment variable values are free text: anything but an empty value.
+  if (target.type === "environment_variable_member_value") return values.apiKey ? null : "Enter a value."
   if (target.type === "gateway_provider_credential" && target.credentialKind === "api_key_map") {
     const entered = fields.filter((field) => values[field.id])
     if (!entered.length) return "Enter at least one key."

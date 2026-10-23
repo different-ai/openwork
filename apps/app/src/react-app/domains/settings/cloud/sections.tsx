@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { ManagedInDenBadge } from "./managed-in-den-badge";
 import { formatRelativeTime } from "@/app/utils";
 import type { CloudImportedPlugin, CloudImportedProvider } from "../../../../app/cloud/import-state";
 import type {
@@ -264,7 +265,7 @@ export function CloudProvidersSection({ actionError, actionId, busy, rows, onRef
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
           {activeOrgName ? <OrganizationMark name={activeOrgName} /> : null}
           <h2 id="ai-providers-organization" className="min-w-0 truncate text-base font-medium text-dls-text">From {organizationName}</h2>
-          <span className="shrink-0 rounded-full bg-blue-3 px-2 py-0.5 text-xs font-medium text-blue-11">Managed in Den</span>
+          <ManagedInDenBadge />
         </div>
         <div className="-mr-2 flex shrink-0 items-center gap-1">
           {onOpenModelConnections ? <Button variant="ghost" size="sm" onClick={onOpenModelConnections}>My model connections</Button> : null}

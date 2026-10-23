@@ -267,6 +267,16 @@ export interface NativePermissionDomain {
 
 // ---- Plugin ----
 
+/** A shell the engine is about to start; hooks may change its environment in place. */
+export interface ShellCreateEvent {
+  readonly command: string
+  env: Record<string, string | undefined>
+}
+
+export interface ShellDomain {
+  hook(name: "create.before", callback: (event: ShellCreateEvent) => void | Promise<void>): Promise<unknown>
+}
+
 export interface PluginContext {
   readonly app: { readonly version: string }
   readonly location: { readonly directory: string }
@@ -280,6 +290,8 @@ export interface PluginContext {
   readonly session?: NativeSessionDomain
   readonly model?: NativeModelDomain
   readonly permission?: NativePermissionDomain
+  /** OpenCode V2 shell hooks (2.0.26 and later). */
+  readonly shell?: ShellDomain
 }
 
 export interface NativePluginContext extends PluginContext {

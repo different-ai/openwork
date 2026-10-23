@@ -1195,6 +1195,7 @@ export type AdminFeature = {
     | "connectStandardTools"
     | "teamPlan"
     | "selfServeEnterprise"
+    | "environmentVariables"
     | "orgPrompts";
   label: string;
   description: string;
@@ -1260,6 +1261,7 @@ export type AdminOrganizationsPageResponse = {
       connectStandardTools: boolean;
       teamPlan: boolean;
       selfServeEnterprise: boolean;
+      environmentVariables: boolean;
       orgPrompts: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -1506,6 +1508,15 @@ export type AdminOrganizationsPageResponse = {
         override: boolean | null;
         overrideApplies: boolean;
       };
+      environmentVariables: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       orgPrompts: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
@@ -1604,6 +1615,7 @@ export type AdminOverviewResponse = {
       connectStandardTools: boolean;
       teamPlan: boolean;
       selfServeEnterprise: boolean;
+      environmentVariables: boolean;
       orgPrompts: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -1842,6 +1854,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       selfServeEnterprise: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      environmentVariables: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
         everyone: boolean;
@@ -2613,6 +2634,8 @@ export type OrganizationContextResponse = {
       | "gateway_usage.view"
       | "gateway_limits.view"
       | "gateway_limits.manage"
+      | "environment_variables.view"
+      | "environment_variables.manage"
       | "connections.view"
       | "connections.manage"
       | "connections.update"
@@ -3704,6 +3727,189 @@ export type LlmProviderCredentialVersionConflictError = {
 export type ConflictError = {
   error: string;
   message?: string;
+};
+
+export type EnvironmentVariable = {
+  id: string;
+  name: string;
+  key: string;
+  description: string | null;
+  valueMode: "admin" | "per_member";
+  assignments: Array<{
+    accessId: string;
+    type: "everyone" | "team" | "member";
+    teamId: string | null;
+    orgMembershipId: string | null;
+    label: string;
+    email: string | null;
+    hasValue: boolean;
+    updatedAt: string;
+  }>;
+  memberValueCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EnvironmentVariableList = {
+  environmentVariables: Array<EnvironmentVariable>;
+  canManage: boolean;
+};
+
+export type MemberEnvironmentVariable = {
+  id: string;
+  name: string;
+  key: string;
+  description: string | null;
+  valueMode: "admin" | "per_member";
+  source: "everyone" | "team" | "direct" | "own" | null;
+  hasValue: boolean;
+  editable: boolean;
+  assignments: Array<{
+    accessId: string;
+    kind: "everyone" | "team" | "direct";
+    label: string;
+  }>;
+  selectedAccessId: string | null;
+  updatedAt: string;
+};
+
+export type MemberEnvironmentVariableList = {
+  environmentVariables: Array<MemberEnvironmentVariable>;
+};
+
+export type EnvironmentVariableResponse = {
+  environmentVariable: EnvironmentVariable;
+};
+
+export type EnvironmentVariableConflict = {
+  error: string;
+  message?: string;
+  affected?: Array<string>;
+};
+
+export type EnvironmentVariableCreate = {
+  name: string;
+  key: string;
+  description?: string | null;
+  valueMode: "admin" | "per_member";
+  assignments?: Array<
+    | {
+        type: "everyone";
+        value?: string | null;
+      }
+    | {
+        type: "team";
+        /**
+         * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+         */
+        teamId: string;
+        value?: string | null;
+      }
+    | {
+        type: "member";
+        /**
+         * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+         */
+        orgMembershipId: string;
+        value?: string | null;
+      }
+  >;
+  confirmed?: boolean;
+};
+
+export type EnvironmentVariableUpdate = {
+  name?: string;
+  key?: string;
+  description?: string | null;
+  valueMode?: "admin" | "per_member";
+  assignments?: Array<
+    | {
+        type: "everyone";
+        value?: string | null;
+      }
+    | {
+        type: "team";
+        /**
+         * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+         */
+        teamId: string;
+        value?: string | null;
+      }
+    | {
+        type: "member";
+        /**
+         * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+         */
+        orgMembershipId: string;
+        value?: string | null;
+      }
+  >;
+  confirmed?: boolean;
+  replaceExisting?: boolean;
+};
+
+export type EnvironmentVariableValuePromptResponse = {
+  environmentVariableId: string;
+  credentialPrompt: {
+    schemaVersion: "1";
+    kind: "credential_prompt";
+    target:
+      | {
+          type: "mcp_connection_key";
+          connectionId: string;
+        }
+      | {
+          type: "mcp_connection_member_key";
+          connectionId: string;
+        }
+      | {
+          type: "mcp_connection_shared_switch";
+          connectionId: string;
+          expectedUpdatedAt: string;
+          audience: {
+            orgWide: boolean;
+            memberCount: number;
+            teamCount: number;
+          };
+        }
+      | {
+          type: "plugin_connection_key";
+          pluginId: string;
+          configObjectId: string;
+          serverName: string;
+          connectionId: string;
+        }
+      | {
+          type: "gateway_provider_key";
+          inferenceProviderId: string;
+          credentialSetId: string;
+        }
+      | {
+          type: "gateway_provider_credential";
+          inferenceProviderId: string;
+          credentialSetId: string;
+          credentialKind: "aws_keys" | "gcp_service_account" | "api_key_map";
+          envNames?: Array<string>;
+        }
+      | {
+          type: "environment_variable_member_value";
+          environmentVariableId: string;
+          key: string;
+        };
+    name: string;
+    destination: string | null;
+  };
+  nextStep: string;
+};
+
+export type EnvironmentVariableMyValueWrite = {
+  value: string;
+  confirmed?: boolean;
+  replaceExisting?: boolean;
+};
+
+export type EnvironmentVariableMyAssignmentWrite = {
+  accessId: string | null;
 };
 
 export type GatewayLiteLlmStatus = {
@@ -5641,6 +5847,11 @@ export type ExternalMcpConnectionCreatedResponse = {
           credentialSetId: string;
           credentialKind: "aws_keys" | "gcp_service_account" | "api_key_map";
           envNames?: Array<string>;
+        }
+      | {
+          type: "environment_variable_member_value";
+          environmentVariableId: string;
+          key: string;
         };
     name: string;
     destination: string | null;
@@ -5775,6 +5986,11 @@ export type ExternalMcpConnectionUpdatedResponse = {
           credentialSetId: string;
           credentialKind: "aws_keys" | "gcp_service_account" | "api_key_map";
           envNames?: Array<string>;
+        }
+      | {
+          type: "environment_variable_member_value";
+          environmentVariableId: string;
+          key: string;
         };
     name: string;
     destination: string | null;
@@ -5901,6 +6117,11 @@ export type ExternalMcpConnectionCredentialPromptResponse = {
           credentialSetId: string;
           credentialKind: "aws_keys" | "gcp_service_account" | "api_key_map";
           envNames?: Array<string>;
+        }
+      | {
+          type: "environment_variable_member_value";
+          environmentVariableId: string;
+          key: string;
         };
     name: string;
     destination: string | null;
@@ -6367,6 +6588,11 @@ export type PluginArchPluginMcpRequirementConfigureResponse = {
           credentialSetId: string;
           credentialKind: "aws_keys" | "gcp_service_account" | "api_key_map";
           envNames?: Array<string>;
+        }
+      | {
+          type: "environment_variable_member_value";
+          environmentVariableId: string;
+          key: string;
         };
     name: string;
     destination: string | null;
@@ -8274,6 +8500,15 @@ export type GetV1AdminOrganizationsByOrganizationIdMembersByMemberIdCapabilities
         override: boolean | null;
         overrideApplies: boolean;
       };
+      environmentVariables: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       orgPrompts: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
@@ -8319,6 +8554,7 @@ export type PutV1AdminOrganizationsByOrganizationIdMembersByMemberIdCapabilities
       connectStandardTools?: boolean | null;
       teamPlan?: boolean | null;
       selfServeEnterprise?: boolean | null;
+      environmentVariables?: boolean | null;
       orgPrompts?: boolean | null;
     };
   };
@@ -8584,6 +8820,15 @@ export type PutV1AdminOrganizationsByOrganizationIdMembersByMemberIdCapabilities
         overrideApplies: boolean;
       };
       selfServeEnterprise: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      environmentVariables: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
         everyone: boolean;
@@ -10083,6 +10328,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       connectStandardTools: boolean;
       teamPlan: boolean;
       selfServeEnterprise: boolean;
+      environmentVariables: boolean;
       orgPrompts: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -10321,6 +10567,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       selfServeEnterprise: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      environmentVariables: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
         everyone: boolean;
@@ -10415,6 +10670,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       connectStandardTools: boolean;
       teamPlan: boolean;
       selfServeEnterprise: boolean;
+      environmentVariables: boolean;
       orgPrompts: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -10653,6 +10909,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       selfServeEnterprise: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      environmentVariables: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "member" | "everyone";
         everyone: boolean;
@@ -20256,6 +20521,480 @@ export type DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponses = {
 export type DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponse =
   DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponses[keyof DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponses];
 
+export type GetV1EnvironmentVariablesData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/environment-variables";
+};
+
+export type GetV1EnvironmentVariablesErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The caller needs the environment_variables.view permission.
+   */
+  403: ForbiddenError;
+  /**
+   * Environment variables are not turned on for this organization.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1EnvironmentVariablesError = GetV1EnvironmentVariablesErrors[keyof GetV1EnvironmentVariablesErrors];
+
+export type GetV1EnvironmentVariablesResponses = {
+  /**
+   * Environment variables returned.
+   */
+  200: EnvironmentVariableList;
+};
+
+export type GetV1EnvironmentVariablesResponse =
+  GetV1EnvironmentVariablesResponses[keyof GetV1EnvironmentVariablesResponses];
+
+export type PostV1EnvironmentVariablesData = {
+  body: EnvironmentVariableCreate;
+  path?: never;
+  query?: never;
+  url: "/v1/environment-variables";
+};
+
+export type PostV1EnvironmentVariablesErrors = {
+  /**
+   * The request was invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The caller needs the environment_variables.manage permission.
+   */
+  403: ForbiddenError;
+  /**
+   * A member or team was not found.
+   */
+  404: NotFoundError;
+  /**
+   * Another environment variable already uses this key.
+   */
+  409: EnvironmentVariableConflict;
+};
+
+export type PostV1EnvironmentVariablesError = PostV1EnvironmentVariablesErrors[keyof PostV1EnvironmentVariablesErrors];
+
+export type PostV1EnvironmentVariablesResponses = {
+  /**
+   * Environment variable created.
+   */
+  201: EnvironmentVariableResponse;
+};
+
+export type PostV1EnvironmentVariablesResponse =
+  PostV1EnvironmentVariablesResponses[keyof PostV1EnvironmentVariablesResponses];
+
+export type GetV1EnvironmentVariablesMineData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/environment-variables/mine";
+};
+
+export type GetV1EnvironmentVariablesMineErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Environment variables are not turned on for this organization.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1EnvironmentVariablesMineError =
+  GetV1EnvironmentVariablesMineErrors[keyof GetV1EnvironmentVariablesMineErrors];
+
+export type GetV1EnvironmentVariablesMineResponses = {
+  /**
+   * The caller's environment variables returned.
+   */
+  200: MemberEnvironmentVariableList;
+};
+
+export type GetV1EnvironmentVariablesMineResponse =
+  GetV1EnvironmentVariablesMineResponses[keyof GetV1EnvironmentVariablesMineResponses];
+
+export type GetV1EnvironmentVariablesResolvedData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/environment-variables/resolved";
+};
+
+export type GetV1EnvironmentVariablesResolvedErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Agents and API keys cannot read values.
+   */
+  403: ForbiddenError;
+  /**
+   * Environment variables are not turned on for this organization.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1EnvironmentVariablesResolvedError =
+  GetV1EnvironmentVariablesResolvedErrors[keyof GetV1EnvironmentVariablesResolvedErrors];
+
+export type GetV1EnvironmentVariablesResolvedResponses = {
+  /**
+   * Resolved environment variables returned.
+   */
+  200: {
+    environmentVariables: Array<{
+      id: string;
+      key: string;
+      name: string;
+      description: string | null;
+      valueMode: "admin" | "per_member";
+      source: "everyone" | "team" | "direct" | "own" | null;
+      editable: boolean;
+      assignments: Array<{
+        accessId: string;
+        kind: "everyone" | "team" | "direct";
+        label: string;
+      }>;
+      selectedAccessId: string | null;
+      value: string | null;
+      updatedAt: string;
+    }>;
+  };
+};
+
+export type GetV1EnvironmentVariablesResolvedResponse =
+  GetV1EnvironmentVariablesResolvedResponses[keyof GetV1EnvironmentVariablesResolvedResponses];
+
+export type DeleteV1EnvironmentVariablesByEnvironmentVariableIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'evr_' prefix and a 26-character base32 suffix.
+     */
+    environmentVariableId: string;
+  };
+  query?: never;
+  url: "/v1/environment-variables/{environmentVariableId}";
+};
+
+export type DeleteV1EnvironmentVariablesByEnvironmentVariableIdErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The caller needs the environment_variables.manage permission.
+   */
+  403: ForbiddenError;
+  /**
+   * The environment variable was not found.
+   */
+  404: NotFoundError;
+};
+
+export type DeleteV1EnvironmentVariablesByEnvironmentVariableIdError =
+  DeleteV1EnvironmentVariablesByEnvironmentVariableIdErrors[keyof DeleteV1EnvironmentVariablesByEnvironmentVariableIdErrors];
+
+export type DeleteV1EnvironmentVariablesByEnvironmentVariableIdResponses = {
+  /**
+   * Environment variable deleted.
+   */
+  204: void;
+};
+
+export type DeleteV1EnvironmentVariablesByEnvironmentVariableIdResponse =
+  DeleteV1EnvironmentVariablesByEnvironmentVariableIdResponses[keyof DeleteV1EnvironmentVariablesByEnvironmentVariableIdResponses];
+
+export type GetV1EnvironmentVariablesByEnvironmentVariableIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'evr_' prefix and a 26-character base32 suffix.
+     */
+    environmentVariableId: string;
+  };
+  query?: never;
+  url: "/v1/environment-variables/{environmentVariableId}";
+};
+
+export type GetV1EnvironmentVariablesByEnvironmentVariableIdErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The caller needs the environment_variables.view permission.
+   */
+  403: ForbiddenError;
+  /**
+   * The environment variable was not found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1EnvironmentVariablesByEnvironmentVariableIdError =
+  GetV1EnvironmentVariablesByEnvironmentVariableIdErrors[keyof GetV1EnvironmentVariablesByEnvironmentVariableIdErrors];
+
+export type GetV1EnvironmentVariablesByEnvironmentVariableIdResponses = {
+  /**
+   * Environment variable returned.
+   */
+  200: EnvironmentVariableResponse;
+};
+
+export type GetV1EnvironmentVariablesByEnvironmentVariableIdResponse =
+  GetV1EnvironmentVariablesByEnvironmentVariableIdResponses[keyof GetV1EnvironmentVariablesByEnvironmentVariableIdResponses];
+
+export type PatchV1EnvironmentVariablesByEnvironmentVariableIdData = {
+  body: EnvironmentVariableUpdate;
+  path: {
+    /**
+     * Den TypeID with 'evr_' prefix and a 26-character base32 suffix.
+     */
+    environmentVariableId: string;
+  };
+  query?: never;
+  url: "/v1/environment-variables/{environmentVariableId}";
+};
+
+export type PatchV1EnvironmentVariablesByEnvironmentVariableIdErrors = {
+  /**
+   * The request was invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The caller needs the environment_variables.manage permission.
+   */
+  403: ForbiddenError;
+  /**
+   * The environment variable, a member or a team was not found.
+   */
+  404: NotFoundError;
+  /**
+   * Another environment variable uses this key, or values would be replaced without confirmation.
+   */
+  409: EnvironmentVariableConflict;
+};
+
+export type PatchV1EnvironmentVariablesByEnvironmentVariableIdError =
+  PatchV1EnvironmentVariablesByEnvironmentVariableIdErrors[keyof PatchV1EnvironmentVariablesByEnvironmentVariableIdErrors];
+
+export type PatchV1EnvironmentVariablesByEnvironmentVariableIdResponses = {
+  /**
+   * Environment variable updated.
+   */
+  200: EnvironmentVariableResponse;
+};
+
+export type PatchV1EnvironmentVariablesByEnvironmentVariableIdResponse =
+  PatchV1EnvironmentVariablesByEnvironmentVariableIdResponses[keyof PatchV1EnvironmentVariablesByEnvironmentVariableIdResponses];
+
+export type PostV1EnvironmentVariablesByEnvironmentVariableIdValuePromptData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'evr_' prefix and a 26-character base32 suffix.
+     */
+    environmentVariableId: string;
+  };
+  query?: never;
+  url: "/v1/environment-variables/{environmentVariableId}/value-prompt";
+};
+
+export type PostV1EnvironmentVariablesByEnvironmentVariableIdValuePromptErrors = {
+  /**
+   * An admin sets this variable's value.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The variable is not deployed to the caller.
+   */
+  403: ForbiddenError;
+  /**
+   * The environment variable was not found.
+   */
+  404: NotFoundError;
+};
+
+export type PostV1EnvironmentVariablesByEnvironmentVariableIdValuePromptError =
+  PostV1EnvironmentVariablesByEnvironmentVariableIdValuePromptErrors[keyof PostV1EnvironmentVariablesByEnvironmentVariableIdValuePromptErrors];
+
+export type PostV1EnvironmentVariablesByEnvironmentVariableIdValuePromptResponses = {
+  /**
+   * A private field is shown to the person.
+   */
+  200: EnvironmentVariableValuePromptResponse;
+};
+
+export type PostV1EnvironmentVariablesByEnvironmentVariableIdValuePromptResponse =
+  PostV1EnvironmentVariablesByEnvironmentVariableIdValuePromptResponses[keyof PostV1EnvironmentVariablesByEnvironmentVariableIdValuePromptResponses];
+
+export type DeleteV1EnvironmentVariablesByEnvironmentVariableIdMyValueData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'evr_' prefix and a 26-character base32 suffix.
+     */
+    environmentVariableId: string;
+  };
+  query?: never;
+  url: "/v1/environment-variables/{environmentVariableId}/my-value";
+};
+
+export type DeleteV1EnvironmentVariablesByEnvironmentVariableIdMyValueErrors = {
+  /**
+   * An agent did not confirm.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * An admin manages this value.
+   */
+  403: ForbiddenError;
+  /**
+   * The environment variable was not found.
+   */
+  404: NotFoundError;
+};
+
+export type DeleteV1EnvironmentVariablesByEnvironmentVariableIdMyValueError =
+  DeleteV1EnvironmentVariablesByEnvironmentVariableIdMyValueErrors[keyof DeleteV1EnvironmentVariablesByEnvironmentVariableIdMyValueErrors];
+
+export type DeleteV1EnvironmentVariablesByEnvironmentVariableIdMyValueResponses = {
+  /**
+   * The caller's value was removed.
+   */
+  200: {
+    ok: true;
+  };
+};
+
+export type DeleteV1EnvironmentVariablesByEnvironmentVariableIdMyValueResponse =
+  DeleteV1EnvironmentVariablesByEnvironmentVariableIdMyValueResponses[keyof DeleteV1EnvironmentVariablesByEnvironmentVariableIdMyValueResponses];
+
+export type PutV1EnvironmentVariablesByEnvironmentVariableIdMyValueData = {
+  body: EnvironmentVariableMyValueWrite;
+  path: {
+    /**
+     * Den TypeID with 'evr_' prefix and a 26-character base32 suffix.
+     */
+    environmentVariableId: string;
+  };
+  query?: never;
+  url: "/v1/environment-variables/{environmentVariableId}/my-value";
+};
+
+export type PutV1EnvironmentVariablesByEnvironmentVariableIdMyValueErrors = {
+  /**
+   * The request was invalid, or an agent did not confirm.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * An admin sets this value, or it is not deployed to the caller.
+   */
+  403: ForbiddenError;
+  /**
+   * The environment variable was not found.
+   */
+  404: NotFoundError;
+  /**
+   * A value is already set; replacing it needs replaceExisting true.
+   */
+  409: EnvironmentVariableConflict;
+};
+
+export type PutV1EnvironmentVariablesByEnvironmentVariableIdMyValueError =
+  PutV1EnvironmentVariablesByEnvironmentVariableIdMyValueErrors[keyof PutV1EnvironmentVariablesByEnvironmentVariableIdMyValueErrors];
+
+export type PutV1EnvironmentVariablesByEnvironmentVariableIdMyValueResponses = {
+  /**
+   * The caller's value was saved.
+   */
+  200: {
+    ok: true;
+  };
+};
+
+export type PutV1EnvironmentVariablesByEnvironmentVariableIdMyValueResponse =
+  PutV1EnvironmentVariablesByEnvironmentVariableIdMyValueResponses[keyof PutV1EnvironmentVariablesByEnvironmentVariableIdMyValueResponses];
+
+export type PutV1EnvironmentVariablesByEnvironmentVariableIdMyAssignmentData = {
+  body: EnvironmentVariableMyAssignmentWrite;
+  path: {
+    /**
+     * Den TypeID with 'evr_' prefix and a 26-character base32 suffix.
+     */
+    environmentVariableId: string;
+  };
+  query?: never;
+  url: "/v1/environment-variables/{environmentVariableId}/my-assignment";
+};
+
+export type PutV1EnvironmentVariablesByEnvironmentVariableIdMyAssignmentErrors = {
+  /**
+   * The assignment does not give the caller a value.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The variable is not deployed to the caller.
+   */
+  403: ForbiddenError;
+  /**
+   * The environment variable was not found.
+   */
+  404: NotFoundError;
+};
+
+export type PutV1EnvironmentVariablesByEnvironmentVariableIdMyAssignmentError =
+  PutV1EnvironmentVariablesByEnvironmentVariableIdMyAssignmentErrors[keyof PutV1EnvironmentVariablesByEnvironmentVariableIdMyAssignmentErrors];
+
+export type PutV1EnvironmentVariablesByEnvironmentVariableIdMyAssignmentResponses = {
+  /**
+   * The choice was saved.
+   */
+  200: {
+    ok: true;
+  };
+};
+
+export type PutV1EnvironmentVariablesByEnvironmentVariableIdMyAssignmentResponse =
+  PutV1EnvironmentVariablesByEnvironmentVariableIdMyAssignmentResponses[keyof PutV1EnvironmentVariablesByEnvironmentVariableIdMyAssignmentResponses];
+
 export type GetV1InferenceProvidersInventoryRevisionData = {
   body?: never;
   path?: never;
@@ -22479,6 +23218,11 @@ export type PostV1InferenceProvidersResponses = {
             credentialSetId: string;
             credentialKind: "aws_keys" | "gcp_service_account" | "api_key_map";
             envNames?: Array<string>;
+          }
+        | {
+            type: "environment_variable_member_value";
+            environmentVariableId: string;
+            key: string;
           };
       name: string;
       destination: string | null;

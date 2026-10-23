@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { builtMcpAppCatalogSchema, type BuiltMcpAppCatalogEntry } from "./built-mcp-app-catalog";
 import {
   normalizeDesktopConfig,
@@ -16,6 +17,7 @@ import {
 export type { ModelRemovalInventory } from "../../react-app/domains/session/surface/model-removal-inventory";
 import { workbotSettingsSchema } from "@openwork/types/den/workbot-settings";
 import { activationStateSchema, type ActivationEventRequest, type ActivationState } from "@openwork/types/den/activation";
+import { environmentVariableAssignmentOptionSchema, environmentVariableValueModeSchema, environmentVariableValueSourceSchema } from "@openwork/types/den/environment-variables";
 import {
   remoteSessionStatusResultSchema,
   type RemoteSessionStatusRequest,
@@ -2227,6 +2229,30 @@ function parseDenExternalMcpPreset(value: unknown): DenExternalMcpPreset | null 
   };
 }
 
+const denMemberEnvironmentVariableSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  key: z.string(),
+  description: z.string().nullable(),
+  valueMode: environmentVariableValueModeSchema,
+  source: environmentVariableValueSourceSchema.nullable(),
+  hasValue: z.boolean(),
+  editable: z.boolean(),
+  assignments: z.array(environmentVariableAssignmentOptionSchema),
+  selectedAccessId: z.string().nullable(),
+  updatedAt: z.string(),
+});
+
+export type DenMemberEnvironmentVariable = z.infer<typeof denMemberEnvironmentVariableSchema>;
+
+function getDenMemberEnvironmentVariables(payload: unknown): DenMemberEnvironmentVariable[] {
+  if (!isRecord(payload) || !Array.isArray(payload.environmentVariables)) return [];
+  return payload.environmentVariables.flatMap((entry) => {
+    const parsed = denMemberEnvironmentVariableSchema.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
 function getDenExternalMcpPresets(payload: unknown): DenExternalMcpPreset[] {
   if (!isRecord(payload) || !Array.isArray(payload.presets)) {
     return [];
@@ -3700,6 +3726,42 @@ export function createDenClient(options: {
         baseUrls,
         `/v1/mcp-connections/${encodeURIComponent(connectionId)}/my-credential`,
         { method: "PUT", token, organizationId: orgId, body: { apiKey } },
+      );
+    },
+
+    /** Organization environment variables deployed to this person, without values. */
+    async listMyEnvironmentVariables(orgId: string): Promise<DenMemberEnvironmentVariable[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        "/v1/environment-variables/mine",
+        { method: "GET", token, organizationId: orgId },
+      );
+      return getDenMemberEnvironmentVariables(payload);
+    },
+
+    /** Saves this person's own value for an environment variable each person sets. Admin-set values refuse with 403. */
+    async setMyEnvironmentVariableValue(orgId: string, environmentVariableId: string, value: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/environment-variables/${encodeURIComponent(environmentVariableId)}/my-value`,
+        { method: "PUT", token, organizationId: orgId, body: { value } },
+      );
+    },
+
+    /** Picks which assignment's value this person's agent uses; null goes back to the default. */
+    async selectMyEnvironmentVariableAssignment(orgId: string, environmentVariableId: string, accessId: string | null): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/environment-variables/${encodeURIComponent(environmentVariableId)}/my-assignment`,
+        { method: "PUT", token, organizationId: orgId, body: { accessId } },
+      );
+    },
+
+    async clearMyEnvironmentVariableValue(orgId: string, environmentVariableId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/environment-variables/${encodeURIComponent(environmentVariableId)}/my-value`,
+        { method: "DELETE", token, organizationId: orgId },
       );
     },
 

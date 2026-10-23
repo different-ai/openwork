@@ -42,6 +42,7 @@ const DEN_PROMPT_OPERATIONS = new Map<string, ReadonlySet<PromptTargetType>>([
   ["postMcpConnectionsCredentialPrompt", new Set(["mcp_connection_key", "mcp_connection_member_key", "mcp_connection_shared_switch"])],
   ["postPluginsMcpConnections", new Set(["plugin_connection_key"])],
   ["postInferenceProviders", new Set(["gateway_provider_key", "gateway_provider_credential"])],
+  ["postEnvironmentVariablesValuePrompt", new Set(["environment_variable_member_value"])],
 ])
 
 function denPromptTargets(part: DynamicToolUIPart): ReadonlySet<PromptTargetType> | null {

@@ -8,6 +8,7 @@ import {
   InvitationTable,
   GatewayProviderAccessTable,
   GatewayUsageAssignmentTable,
+  EnvironmentVariableAccessTable,
   LlmProviderAccessTable,
   MarketplaceAccessGrantTable,
   MemberTable,
@@ -452,6 +453,7 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     await deleteTeamPrompts(tx, team.id)
     await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.teamId, team.id))
     await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.teamId, team.id))
+    await tx.delete(EnvironmentVariableAccessTable).where(eq(EnvironmentVariableAccessTable.teamId, team.id))
     // Usage-limit assignments have no removed_at; unassigning deletes them. This
     // runs inside the usage entitlement mutation, which re-evaluates the team's members.
     await tx.delete(GatewayUsageAssignmentTable).where(and(

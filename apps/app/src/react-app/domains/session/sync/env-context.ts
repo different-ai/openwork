@@ -1,6 +1,7 @@
 import { sideChatSystemContext } from "../chat/workbench-store";
 import type { OpenworkServerClient } from "../../../../app/lib/openwork-server";
 import { readOpenworkEnvPendingChanges } from "../../../../app/lib/openwork-env-runtime";
+import { readDenSettings } from "../../../../app/lib/den";
 import { readOpenworkRuntimeFacts, renderOpenworkRuntimeContext } from "./runtime-context";
 
 const DEFAULT_CACHE_KEY = "__openwork_env_default__";
@@ -10,6 +11,23 @@ const envSystemContextCache = new Map<string, string | undefined>();
 
 export function clearOpenworkEnvSystemContextCache(): void {
   envSystemContextCache.clear();
+}
+
+/**
+ * The signed-in Den organization and account, so names an organization
+ * deploys are never reused after switching accounts or organizations. A short
+ * non-reversible fingerprint of the token, not the token itself.
+ */
+function denIdentityCacheKey(): string {
+  const settings = readDenSettings();
+  const token = settings.authToken?.trim() ?? "";
+  if (!token) return "signed-out";
+  let hash = 2166136261;
+  for (let index = 0; index < token.length; index += 1) {
+    hash ^= token.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return `${settings.activeOrgId ?? "no-org"}:${hash.toString(36)}`;
 }
 
 function normalizeEnvKeys(keys: string[]): string[] {
@@ -37,7 +55,7 @@ export async function buildOpenworkEnvSystemContext(
     (() => readOpenworkEnvPendingChanges(options.runtimeKey));
   if (readPendingChanges()) return undefined;
 
-  const cacheKey = `${client.baseUrl}:${options.cacheKey ?? DEFAULT_CACHE_KEY}`;
+  const cacheKey = `${client.baseUrl}:${denIdentityCacheKey()}:${options.cacheKey ?? DEFAULT_CACHE_KEY}`;
   if (envSystemContextCache.has(cacheKey)) {
     return envSystemContextCache.get(cacheKey);
   }

@@ -168,6 +168,8 @@ export type EnvironmentVariableTableItemProps = {
   onEdit: (item: EnvironmentVariableItem) => void;
   onToggleReveal: (key: string) => void;
   onDelete: (item: EnvironmentVariableItem) => void;
+  /** The organization deploys this key, so its value is used instead. */
+  replacedByOrganization?: boolean;
 };
 
 export function EnvironmentVariableTableItem(props: EnvironmentVariableTableItemProps) {
@@ -188,7 +190,11 @@ export function EnvironmentVariableTableItem(props: EnvironmentVariableTableItem
           ) : (
             <span className="truncate font-mono text-sm font-medium">{props.item.key}</span>
           )}
-          {updatedLabel ? (
+          {props.replacedByOrganization ? (
+            <span className="text-xs text-muted-foreground" data-testid="environment-replaced-by-organization">
+              {t("settings.environment.replaced_by_organization")}
+            </span>
+          ) : updatedLabel ? (
             <span className="text-xs text-muted-foreground">
               {t("settings.environment.updated_at").replace("{date}", updatedLabel)}
             </span>

@@ -32,12 +32,23 @@ function json(value: unknown, status = 200): Response {
  * leave the OpenWork server, even to another engine plugin. No catalog owner,
  * provider state/cache/writer, or background inventory polling.
  */
-export async function createV2ProviderSessionBridge(current: () => CloudProviderDenSession | null, options: { fetch?: InventoryFetch } = {}) {
+export type V2EnvironmentSnapshot = { digest: string; env: Readonly<Record<string, string>> };
+
+export async function createV2ProviderSessionBridge(current: () => CloudProviderDenSession | null, options: {
+  fetch?: InventoryFetch
+  /**
+   * Organization environment variables for the engine's shells and tools. The
+   * engine plugin polls this with the fd-delivered capability, so values only
+   * travel over loopback: never on disk, in config or in arguments.
+   */
+  environment?: () => V2EnvironmentSnapshot
+} = {}) {
   const token = randomBytes(32).toString("base64url");
   const inferenceSecret = randomBytes(32);
   const inferenceKey = (identity: string) => `ow_local_${createHmac("sha256", inferenceSecret).update(identity).digest("hex")}`;
   const fetcher = options.fetch ?? externalFetch;
   const active = new Set<AbortController>();
+  let servedEnvironmentDigest: string | null = null;
   const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
     const url = new URL(request.url);
     const session = current();
@@ -55,6 +66,11 @@ export async function createV2ProviderSessionBridge(current: () => CloudProvider
     // Do not forward caller methods, headers, URLs, request bodies, or redirects.
     if (request.headers.has("origin") || request.method !== "GET") return json(null, 404);
     const path = url.pathname + url.search;
+    if (path === "/environment" && options.environment) {
+      const snapshot = options.environment();
+      servedEnvironmentDigest = snapshot.digest;
+      return json(snapshot);
+    }
     if (path === "/session") return json(session ? {
       apiBaseUrl: session.baseUrl.replace(/\/+$/, ""), orgId: session.orgId, identity,
       inferenceOrigin: url.origin, inferenceKey: inferenceKey(identity),
@@ -174,7 +190,10 @@ export async function createV2ProviderSessionBridge(current: () => CloudProvider
       return json({ error: "provider_inventory_unavailable" }, 502);
     }
   } });
-  return { url: `http://127.0.0.1:${server.port}/session`, token, close: async () => {
+  return { url: `http://127.0.0.1:${server.port}/session`, token,
+    /** The environment digest the engine last fetched, to confirm delivery. */
+    servedEnvironmentDigest: () => servedEnvironmentDigest,
+    close: async () => {
     for (const controller of active) controller.abort();
     await server.stop();
   } };

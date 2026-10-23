@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { onCloudEnvironmentRefreshRequested } from "@/app/lib/cloud-environment-refresh";
 import { liveProviderSyncStatusQueryKey, usesLiveProviderSync, type LiveProviderSyncStatus } from "./live-provider-sync";
 import { isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import { CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
@@ -2974,9 +2975,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     emitChange();
   };
 
+  // A value saved in a chat prompt or settings reaches the agent on the next sync.
+  const stopCloudEnvironmentRefresh = onCloudEnvironmentRefreshRequested(() => {
+    if (disposed) return;
+    void options.openworkServer.getSnapshot().openworkServerClient?.syncCloudEnvironment().catch(() => undefined);
+  });
+
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    stopCloudEnvironmentRefresh();
     invalidateDenSessionDelivery();
     started = false;
     denSessionCleanup?.();

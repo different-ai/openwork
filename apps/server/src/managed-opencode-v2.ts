@@ -19,6 +19,7 @@ import { providerCredentialBrokerSource } from "./opencode-v2-provider-channel.j
 export { installOpencodeV2Binary } from "./opencode-v2-binary.js";
 
 import { loopbackFetch } from "./server-fetch.js";
+import { cloudEnvironmentOverlay } from "./cloud-environment-overlay.js";
 
 export interface OpencodeV2ModelSpec {
   id: string;
@@ -416,6 +417,10 @@ async function createManagedOpencodeV2ServerInner(
   const child = spawn(options.bin, ["serve", "--hostname", hostname, "--port", String(port)], {
     env: {
       ...inherited,
+      // Organization environment variables: explicitly granted by an admin or
+      // the person. The plugin owns these keys and updates them live.
+      ...cloudEnvironmentOverlay(),
+      OPENWORK_CLOUD_ENV_KEYS: Object.keys(cloudEnvironmentOverlay()).join(","),
       ...(options.env?.OPENCODE_DISABLE_MODELS_FETCH ? { OPENCODE_DISABLE_MODELS_FETCH: options.env.OPENCODE_DISABLE_MODELS_FETCH } : {}),
       ...(options.providerSession ? { OPENWORK_PROVIDER_SESSION_FD: "3", OPENWORK_PROVIDER_SESSION_BROKER: providerCredentialBrokerPath } : {}),
       OPENCODE_PASSWORD: password,

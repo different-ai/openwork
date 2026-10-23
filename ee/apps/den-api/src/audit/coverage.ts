@@ -171,6 +171,7 @@ export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>
   "delete-organization.ts": routes("Organization purge is existing behavior, not pilot retention; it deletes the organization's audit tables in one transaction."),
   "desktop-policies.ts": routes("Desktop policy administration."),
   "egress-diagnostics.ts": routes("Egress diagnostic execution."),
+  "environment-variables.ts": routes("Environment variable administration, members' own values and assignment choices, and value delivery to the desktop."),
   "gateway-usage-limits.ts": routes("Gateway limit policy and usage administration."),
   "gateway-usage.ts": routes("Gateway usage reads."),
   "gmail-management.ts": routes("Gmail operations, including external effects."),

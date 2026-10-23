@@ -9,6 +9,7 @@ const SAFE_INCLUDED_TAGS = new Set([
   "Teams",
   "Templates",
   "LLM Providers",
+  "Environment Variables",
   "Workers",
   "Worker Activity",
   "Config Objects",

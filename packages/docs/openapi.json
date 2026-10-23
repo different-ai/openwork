@@ -93,6 +93,10 @@
       "description": "Organization LLM provider catalog, configuration, and access routes."
     },
     {
+      "name": "Environment Variables",
+      "description": "Organization environment variables deployed to members' desktop agents, members' own values and assignment choices."
+    },
+    {
       "name": "Inference",
       "description": "Organization inference settings."
     },
@@ -4877,6 +4881,7 @@
               "connectStandardTools",
               "teamPlan",
               "selfServeEnterprise",
+              "environmentVariables",
               "orgPrompts"
             ]
           },
@@ -5130,6 +5135,9 @@
                     "selfServeEnterprise": {
                       "type": "boolean"
                     },
+                    "environmentVariables": {
+                      "type": "boolean"
+                    },
                     "orgPrompts": {
                       "type": "boolean"
                     },
@@ -5167,6 +5175,7 @@
                     "connectStandardTools",
                     "teamPlan",
                     "selfServeEnterprise",
+                    "environmentVariables",
                     "orgPrompts",
                     "gatewayDashboard"
                   ]
@@ -6656,6 +6665,63 @@
                         "overrideApplies"
                       ]
                     },
+                    "environmentVariables": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "member",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "orgPrompts": {
                       "type": "object",
                       "properties": {
@@ -6741,6 +6807,7 @@
                     "connectStandardTools",
                     "teamPlan",
                     "selfServeEnterprise",
+                    "environmentVariables",
                     "orgPrompts"
                   ],
                   "description": "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect."
@@ -7189,6 +7256,9 @@
                     "selfServeEnterprise": {
                       "type": "boolean"
                     },
+                    "environmentVariables": {
+                      "type": "boolean"
+                    },
                     "orgPrompts": {
                       "type": "boolean"
                     },
@@ -7226,6 +7296,7 @@
                     "connectStandardTools",
                     "teamPlan",
                     "selfServeEnterprise",
+                    "environmentVariables",
                     "orgPrompts",
                     "gatewayDashboard"
                   ]
@@ -8715,6 +8786,63 @@
                         "overrideApplies"
                       ]
                     },
+                    "environmentVariables": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "member",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "orgPrompts": {
                       "type": "object",
                       "properties": {
@@ -8800,6 +8928,7 @@
                     "connectStandardTools",
                     "teamPlan",
                     "selfServeEnterprise",
+                    "environmentVariables",
                     "orgPrompts"
                   ],
                   "description": "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect."
@@ -11939,6 +12068,8 @@
                     "gateway_usage.view",
                     "gateway_limits.view",
                     "gateway_limits.manage",
+                    "environment_variables.view",
+                    "environment_variables.manage",
                     "connections.view",
                     "connections.manage",
                     "connections.update",
@@ -16847,6 +16978,895 @@
         "required": [
           "error"
         ]
+      },
+      "EnvironmentVariable": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "valueMode": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "per_member"
+            ]
+          },
+          "assignments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "accessId": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "everyone",
+                    "team",
+                    "member"
+                  ]
+                },
+                "teamId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "orgMembershipId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "email": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "hasValue": {
+                  "type": "boolean"
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                }
+              },
+              "required": [
+                "accessId",
+                "type",
+                "teamId",
+                "orgMembershipId",
+                "label",
+                "email",
+                "hasValue",
+                "updatedAt"
+              ]
+            }
+          },
+          "memberValueCount": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "key",
+          "description",
+          "valueMode",
+          "assignments",
+          "memberValueCount",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "EnvironmentVariableList": {
+        "type": "object",
+        "properties": {
+          "environmentVariables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentVariable"
+            }
+          },
+          "canManage": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "environmentVariables",
+          "canManage"
+        ]
+      },
+      "MemberEnvironmentVariable": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "valueMode": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "per_member"
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "everyone",
+                  "team",
+                  "direct",
+                  "own"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hasValue": {
+            "type": "boolean"
+          },
+          "editable": {
+            "type": "boolean"
+          },
+          "assignments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "accessId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "everyone",
+                    "team",
+                    "direct"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "accessId",
+                "kind",
+                "label"
+              ]
+            }
+          },
+          "selectedAccessId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "key",
+          "description",
+          "valueMode",
+          "source",
+          "hasValue",
+          "editable",
+          "assignments",
+          "selectedAccessId",
+          "updatedAt"
+        ]
+      },
+      "MemberEnvironmentVariableList": {
+        "type": "object",
+        "properties": {
+          "environmentVariables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemberEnvironmentVariable"
+            }
+          }
+        },
+        "required": [
+          "environmentVariables"
+        ]
+      },
+      "EnvironmentVariableResponse": {
+        "type": "object",
+        "properties": {
+          "environmentVariable": {
+            "$ref": "#/components/schemas/EnvironmentVariable"
+          }
+        },
+        "required": [
+          "environmentVariable"
+        ]
+      },
+      "EnvironmentVariableConflict": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "affected": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "EnvironmentVariableCreate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "key": {
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "valueMode": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "per_member"
+            ]
+          },
+          "assignments": {
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "everyone"
+                    },
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 32768
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "team"
+                    },
+                    "teamId": {
+                      "description": "Den TypeID with 'tem_' prefix and a 26-character base32 suffix.",
+                      "format": "typeid",
+                      "type": "string",
+                      "minLength": 30,
+                      "maxLength": 30
+                    },
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 32768
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "teamId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "member"
+                    },
+                    "orgMembershipId": {
+                      "description": "Den TypeID with 'om_' prefix and a 26-character base32 suffix.",
+                      "format": "typeid",
+                      "type": "string",
+                      "minLength": 29,
+                      "maxLength": 29
+                    },
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 32768
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "orgMembershipId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "confirmed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "key",
+          "valueMode"
+        ],
+        "additionalProperties": false
+      },
+      "EnvironmentVariableUpdate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "key": {
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "valueMode": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "per_member"
+            ]
+          },
+          "assignments": {
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "everyone"
+                    },
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 32768
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "team"
+                    },
+                    "teamId": {
+                      "description": "Den TypeID with 'tem_' prefix and a 26-character base32 suffix.",
+                      "format": "typeid",
+                      "type": "string",
+                      "minLength": 30,
+                      "maxLength": 30
+                    },
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 32768
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "teamId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "member"
+                    },
+                    "orgMembershipId": {
+                      "description": "Den TypeID with 'om_' prefix and a 26-character base32 suffix.",
+                      "format": "typeid",
+                      "type": "string",
+                      "minLength": 29,
+                      "maxLength": 29
+                    },
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 32768
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "orgMembershipId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "confirmed": {
+            "type": "boolean"
+          },
+          "replaceExisting": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentVariableValuePromptResponse": {
+        "type": "object",
+        "properties": {
+          "environmentVariableId": {
+            "type": "string"
+          },
+          "credentialPrompt": {
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "type": "string",
+                "const": "1"
+              },
+              "kind": {
+                "type": "string",
+                "const": "credential_prompt"
+              },
+              "target": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "mcp_connection_key"
+                      },
+                      "connectionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "connectionId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "mcp_connection_member_key"
+                      },
+                      "connectionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "connectionId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "mcp_connection_shared_switch"
+                      },
+                      "connectionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      },
+                      "expectedUpdatedAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                      },
+                      "audience": {
+                        "type": "object",
+                        "properties": {
+                          "orgWide": {
+                            "type": "boolean"
+                          },
+                          "memberCount": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 100000
+                          },
+                          "teamCount": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 100000
+                          }
+                        },
+                        "required": [
+                          "orgWide",
+                          "memberCount",
+                          "teamCount"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "connectionId",
+                      "expectedUpdatedAt",
+                      "audience"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "plugin_connection_key"
+                      },
+                      "pluginId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      },
+                      "configObjectId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      },
+                      "serverName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 255
+                      },
+                      "connectionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "pluginId",
+                      "configObjectId",
+                      "serverName",
+                      "connectionId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "gateway_provider_key"
+                      },
+                      "inferenceProviderId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      },
+                      "credentialSetId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "inferenceProviderId",
+                      "credentialSetId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "gateway_provider_credential"
+                      },
+                      "inferenceProviderId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      },
+                      "credentialSetId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      },
+                      "credentialKind": {
+                        "type": "string",
+                        "enum": [
+                          "aws_keys",
+                          "gcp_service_account",
+                          "api_key_map"
+                        ]
+                      },
+                      "envNames": {
+                        "minItems": 1,
+                        "maxItems": 6,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+                        }
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "inferenceProviderId",
+                      "credentialSetId",
+                      "credentialKind"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "environment_variable_member_value"
+                      },
+                      "environmentVariableId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      },
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "environmentVariableId",
+                      "key"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              "destination": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 2048
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "kind",
+              "target",
+              "name",
+              "destination"
+            ],
+            "additionalProperties": false
+          },
+          "nextStep": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "environmentVariableId",
+          "credentialPrompt",
+          "nextStep"
+        ]
+      },
+      "EnvironmentVariableMyValueWrite": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32768
+          },
+          "confirmed": {
+            "type": "boolean"
+          },
+          "replaceExisting": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "EnvironmentVariableMyAssignmentWrite": {
+        "type": "object",
+        "properties": {
+          "accessId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "accessId"
+        ],
+        "additionalProperties": false
       },
       "GatewayLiteLlmStatus": {
         "type": "object",
@@ -24301,6 +25321,30 @@
                       "credentialKind"
                     ],
                     "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "environment_variable_member_value"
+                      },
+                      "environmentVariableId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      },
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "environmentVariableId",
+                      "key"
+                    ],
+                    "additionalProperties": false
                   }
                 ]
               },
@@ -24999,6 +26043,30 @@
                       "credentialKind"
                     ],
                     "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "environment_variable_member_value"
+                      },
+                      "environmentVariableId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      },
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "environmentVariableId",
+                      "key"
+                    ],
+                    "additionalProperties": false
                   }
                 ]
               },
@@ -25563,6 +26631,30 @@
                       "inferenceProviderId",
                       "credentialSetId",
                       "credentialKind"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "environment_variable_member_value"
+                      },
+                      "environmentVariableId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      },
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "environmentVariableId",
+                      "key"
                     ],
                     "additionalProperties": false
                   }
@@ -27537,6 +28629,30 @@
                       "inferenceProviderId",
                       "credentialSetId",
                       "credentialKind"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "environment_variable_member_value"
+                      },
+                      "environmentVariableId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      },
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "environmentVariableId",
+                      "key"
                     ],
                     "additionalProperties": false
                   }
@@ -35754,6 +36870,63 @@
                             "overrideApplies"
                           ]
                         },
+                        "environmentVariables": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "member",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "orgPrompts": {
                           "type": "object",
                           "properties": {
@@ -35839,6 +37012,7 @@
                         "connectStandardTools",
                         "teamPlan",
                         "selfServeEnterprise",
+                        "environmentVariables",
                         "orgPrompts"
                       ]
                     }
@@ -37418,6 +38592,63 @@
                             "overrideApplies"
                           ]
                         },
+                        "environmentVariables": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "member",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "orgPrompts": {
                           "type": "object",
                           "properties": {
@@ -37503,6 +38734,7 @@
                         "connectStandardTools",
                         "teamPlan",
                         "selfServeEnterprise",
+                        "environmentVariables",
                         "orgPrompts"
                       ]
                     }
@@ -37816,6 +39048,16 @@
                         ]
                       },
                       "selfServeEnterprise": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "environmentVariables": {
                         "anyOf": [
                           {
                             "type": "boolean"
@@ -41483,6 +42725,9 @@
                         "selfServeEnterprise": {
                           "type": "boolean"
                         },
+                        "environmentVariables": {
+                          "type": "boolean"
+                        },
                         "orgPrompts": {
                           "type": "boolean"
                         },
@@ -41520,6 +42765,7 @@
                         "connectStandardTools",
                         "teamPlan",
                         "selfServeEnterprise",
+                        "environmentVariables",
                         "orgPrompts",
                         "gatewayDashboard"
                       ]
@@ -43009,6 +44255,63 @@
                             "overrideApplies"
                           ]
                         },
+                        "environmentVariables": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "member",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "orgPrompts": {
                           "type": "object",
                           "properties": {
@@ -43094,6 +44397,7 @@
                         "connectStandardTools",
                         "teamPlan",
                         "selfServeEnterprise",
+                        "environmentVariables",
                         "orgPrompts"
                       ],
                       "description": "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect."
@@ -43291,6 +44595,9 @@
                         "selfServeEnterprise": {
                           "type": "boolean"
                         },
+                        "environmentVariables": {
+                          "type": "boolean"
+                        },
                         "orgPrompts": {
                           "type": "boolean"
                         },
@@ -43328,6 +44635,7 @@
                         "connectStandardTools",
                         "teamPlan",
                         "selfServeEnterprise",
+                        "environmentVariables",
                         "orgPrompts",
                         "gatewayDashboard"
                       ]
@@ -44817,6 +46125,63 @@
                             "overrideApplies"
                           ]
                         },
+                        "environmentVariables": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "member",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "orgPrompts": {
                           "type": "object",
                           "properties": {
@@ -44902,6 +46267,7 @@
                         "connectStandardTools",
                         "teamPlan",
                         "selfServeEnterprise",
+                        "environmentVariables",
                         "orgPrompts"
                       ],
                       "description": "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect."
@@ -72866,6 +74232,1030 @@
         ]
       }
     },
+    "/v1/environment-variables": {
+      "get": {
+        "operationId": "getV1EnvironmentVariables",
+        "tags": [
+          "Environment Variables"
+        ],
+        "summary": "List organization environment variables",
+        "description": "Lists every environment variable the organization deploys to desktops, with each assignment (everyone, a team or a person) and whether it holds a value. Values are never returned. Requires the environment_variables.view permission.",
+        "responses": {
+          "200": {
+            "description": "Environment variables returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentVariableList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller needs the environment_variables.view permission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Environment variables are not turned on for this organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "postV1EnvironmentVariables",
+        "tags": [
+          "Environment Variables"
+        ],
+        "summary": "Create an environment variable",
+        "description": "Creates an environment variable for the agents of everyone, chosen teams or chosen people. With valueMode admin each assignment carries its own value (a person in several gets the most specific: directly to them, then their teams, then everyone; they can choose another). With valueMode per_member each person sets their own value. Agents: only send values the person explicitly asked to deploy, with confirmed true (409 confirmation_required otherwise). Requires the environment_variables.manage permission and a recent sign-in.",
+        "responses": {
+          "201": {
+            "description": "Environment variable created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentVariableResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller needs the environment_variables.manage permission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "A member or team was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Another environment variable already uses this key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentVariableConflict"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentVariableCreate"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/environment-variables/mine": {
+      "get": {
+        "operationId": "getV1EnvironmentVariablesMine",
+        "tags": [
+          "Environment Variables"
+        ],
+        "summary": "List my environment variables",
+        "description": "Lists the environment variables deployed to the caller's desktop agent, where each value comes from and whether one is set. Values are never returned. editable true means the person sets the value themselves (my-value, or the value prompt for a private field). assignments names every assignment giving the person a value; they can pick one with my-assignment.",
+        "responses": {
+          "200": {
+            "description": "The caller's environment variables returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberEnvironmentVariableList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Environment variables are not turned on for this organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/environment-variables/resolved": {
+      "get": {
+        "operationId": "getV1EnvironmentVariablesResolved",
+        "tags": [
+          "Environment Variables"
+        ],
+        "summary": "Resolve my environment variable values",
+        "description": "Returns the caller's environment variables with their effective values, for the desktop to add to the agent's environment. Not available to agents or API keys.",
+        "x-mcp": false,
+        "responses": {
+          "200": {
+            "description": "Resolved environment variables returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "environmentVariables": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "key": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "valueMode": {
+                            "type": "string",
+                            "enum": [
+                              "admin",
+                              "per_member"
+                            ]
+                          },
+                          "source": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "everyone",
+                                  "team",
+                                  "direct",
+                                  "own"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "editable": {
+                            "type": "boolean"
+                          },
+                          "assignments": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "accessId": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "everyone",
+                                    "team",
+                                    "direct"
+                                  ]
+                                },
+                                "label": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "accessId",
+                                "kind",
+                                "label"
+                              ]
+                            }
+                          },
+                          "selectedAccessId": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "value": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "updatedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "key",
+                          "name",
+                          "description",
+                          "valueMode",
+                          "source",
+                          "editable",
+                          "assignments",
+                          "selectedAccessId",
+                          "value",
+                          "updatedAt"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "environmentVariables"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Agents and API keys cannot read values.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Environment variables are not turned on for this organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/environment-variables/{environmentVariableId}": {
+      "get": {
+        "operationId": "getV1EnvironmentVariablesByEnvironmentVariableId",
+        "tags": [
+          "Environment Variables"
+        ],
+        "summary": "Get an environment variable",
+        "description": "Returns one environment variable with its assignments and whether each holds a value. Values are never returned. Requires the environment_variables.view permission.",
+        "responses": {
+          "200": {
+            "description": "Environment variable returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentVariableResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller needs the environment_variables.view permission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The environment variable was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "environmentVariableId",
+            "schema": {
+              "format": "typeid",
+              "type": "string",
+              "minLength": 30,
+              "maxLength": 30
+            },
+            "required": true,
+            "description": "Den TypeID with 'evr_' prefix and a 26-character base32 suffix."
+          }
+        ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "patchV1EnvironmentVariablesByEnvironmentVariableId",
+        "tags": [
+          "Environment Variables"
+        ],
+        "summary": "Update an environment variable",
+        "description": "Changes an environment variable's name, key, description, how it gets its value, or its assignments (send assignments to replace them; an assignment without value keeps its stored value). Values the new state no longer uses are removed. Agents and API keys get 409 confirmation_required when the change sets new values (send confirmed true once the person asked for them) or replaces or removes a value that is already set (ask the person, then send replaceExisting true). Requires the environment_variables.manage permission and a recent sign-in.",
+        "responses": {
+          "200": {
+            "description": "Environment variable updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentVariableResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller needs the environment_variables.manage permission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The environment variable, a member or a team was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Another environment variable uses this key, or values would be replaced without confirmation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentVariableConflict"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "environmentVariableId",
+            "schema": {
+              "format": "typeid",
+              "type": "string",
+              "minLength": 30,
+              "maxLength": 30
+            },
+            "required": true,
+            "description": "Den TypeID with 'evr_' prefix and a 26-character base32 suffix."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentVariableUpdate"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteV1EnvironmentVariablesByEnvironmentVariableId",
+        "tags": [
+          "Environment Variables"
+        ],
+        "summary": "Delete an environment variable",
+        "description": "Deletes an environment variable and every value stored for it. Desktops remove it from the agent's environment the next time they refresh. Requires the environment_variables.manage permission and a recent sign-in.",
+        "responses": {
+          "204": {
+            "description": "Environment variable deleted."
+          },
+          "401": {
+            "description": "The caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller needs the environment_variables.manage permission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The environment variable was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "environmentVariableId",
+            "schema": {
+              "format": "typeid",
+              "type": "string",
+              "minLength": 30,
+              "maxLength": 30
+            },
+            "required": true,
+            "description": "Den TypeID with 'evr_' prefix and a 26-character base32 suffix."
+          }
+        ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/environment-variables/{environmentVariableId}/value-prompt": {
+      "post": {
+        "operationId": "postV1EnvironmentVariablesByEnvironmentVariableIdValuePrompt",
+        "tags": [
+          "Environment Variables"
+        ],
+        "summary": "Ask a person to enter their own environment variable value",
+        "x-mcp-search-aliases": [
+          "set my environment variable privately",
+          "enter environment variable value privately",
+          "missing environment variable value"
+        ],
+        "description": "Shows the person a private field in OpenWork for their own value of an environment variable each person sets themselves. Prefer this when the person hasn't given you the value. Changes nothing by itself.",
+        "responses": {
+          "200": {
+            "description": "A private field is shown to the person.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentVariableValuePromptResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An admin sets this variable's value.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The variable is not deployed to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The environment variable was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "environmentVariableId",
+            "schema": {
+              "format": "typeid",
+              "type": "string",
+              "minLength": 30,
+              "maxLength": 30
+            },
+            "required": true,
+            "description": "Den TypeID with 'evr_' prefix and a 26-character base32 suffix."
+          }
+        ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/environment-variables/{environmentVariableId}/my-value": {
+      "put": {
+        "operationId": "putV1EnvironmentVariablesByEnvironmentVariableIdMyValue",
+        "tags": [
+          "Environment Variables"
+        ],
+        "summary": "Set my environment variable value",
+        "x-mcp-search-aliases": [
+          "set my environment variable",
+          "save my env var",
+          "update my token variable"
+        ],
+        "description": "Saves the caller's own value for an environment variable each person sets themselves. Agents: only send a value the person explicitly asked you to save, with confirmed true. If they already have a value you get 409 confirmation_required: ask whether to replace it, then send again with replaceExisting true. You can never read values back.",
+        "responses": {
+          "200": {
+            "description": "The caller's value was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was invalid, or an agent did not confirm.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "An admin sets this value, or it is not deployed to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The environment variable was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A value is already set; replacing it needs replaceExisting true.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentVariableConflict"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "environmentVariableId",
+            "schema": {
+              "format": "typeid",
+              "type": "string",
+              "minLength": 30,
+              "maxLength": 30
+            },
+            "required": true,
+            "description": "Den TypeID with 'evr_' prefix and a 26-character base32 suffix."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentVariableMyValueWrite"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteV1EnvironmentVariablesByEnvironmentVariableIdMyValue",
+        "tags": [
+          "Environment Variables"
+        ],
+        "summary": "Clear my environment variable value",
+        "description": "Removes the caller's own value for an environment variable each person sets themselves. Answers 200 even when no value was stored. Agents: only when the person asked, with confirmed=true in the query.",
+        "responses": {
+          "200": {
+            "description": "The caller's value was removed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An agent did not confirm.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "An admin manages this value.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The environment variable was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "environmentVariableId",
+            "schema": {
+              "format": "typeid",
+              "type": "string",
+              "minLength": 30,
+              "maxLength": 30
+            },
+            "required": true,
+            "description": "Den TypeID with 'evr_' prefix and a 26-character base32 suffix."
+          }
+        ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/environment-variables/{environmentVariableId}/my-assignment": {
+      "put": {
+        "operationId": "putV1EnvironmentVariablesByEnvironmentVariableIdMyAssignment",
+        "tags": [
+          "Environment Variables"
+        ],
+        "summary": "Choose which assignment gives me a value",
+        "description": "When several assignments (for example everyone, a team and directly to the caller) give the caller a value, picks the one their agent uses. accessId comes from the variable's assignments in GET /v1/environment-variables/mine; null goes back to the default (the most specific).",
+        "responses": {
+          "200": {
+            "description": "The choice was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The assignment does not give the caller a value.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The variable is not deployed to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The environment variable was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "environmentVariableId",
+            "schema": {
+              "format": "typeid",
+              "type": "string",
+              "minLength": 30,
+              "maxLength": 30
+            },
+            "required": true,
+            "description": "Den TypeID with 'evr_' prefix and a 26-character base32 suffix."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentVariableMyAssignmentWrite"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/inference-providers/inventory/revision": {
       "get": {
         "operationId": "getV1InferenceProvidersInventoryRevision",
@@ -80355,6 +82745,30 @@
                                 "inferenceProviderId",
                                 "credentialSetId",
                                 "credentialKind"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "type": {
+                                  "type": "string",
+                                  "const": "environment_variable_member_value"
+                                },
+                                "environmentVariableId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 160
+                                },
+                                "key": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$"
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "environmentVariableId",
+                                "key"
                               ],
                               "additionalProperties": false
                             }

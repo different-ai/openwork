@@ -3,7 +3,7 @@ import { withEngineSwitchFence } from "./engine-switch-fence.js";
 import { acquireHistoryCopyLock } from "./opencode-v2-history-lock.js";
 import { engineAutoUpgradeRetry, historyRevision, runEngineAutoUpgrade, waitForEngineIdle, type EngineAutoUpgradeRetry } from "./engine-auto-upgrade.js";
 import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
-import { createV2ProviderSessionBridge } from "./opencode-v2-provider-session.js";
+import { createV2ProviderSessionBridge, type V2EnvironmentSnapshot } from "./opencode-v2-provider-session.js";
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
 import { ApiError } from "./errors.js";
 import { hasV1Chat, hasV1ChatsSince, opencodeV1DatabasePath, readMigrationSessions, runOpencodeV1HistoryMigration, snapshotV1Database, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
@@ -137,6 +137,12 @@ export interface EngineV2Preview {
   connection(): { url: string; username: string; password: string } | undefined;
   ensureWorkspaceReady(directory: string): Promise<void>;
   refreshProviders(): Promise<void>;
+  /**
+   * Waits until the running engine fetched the environment with `digest`
+   * (its plugin polls every few seconds). False when it didn't in time or
+   * no engine is running; the caller keeps the change owed.
+   */
+  awaitEnvironment(digest: string, timeoutMs?: number): Promise<boolean>;
   setLiveProviderSync(enabled: boolean): Promise<void>;
   /**
    * Reconcile a folder's MCP connections with the engine: register new or
@@ -590,6 +596,8 @@ export function createEngineV2Preview(options: {
   deferStart?: boolean;
   hostReadRequest?: (path: string, init?: RequestInit) => Promise<unknown>;
   providerSession?: () => CloudProviderDenSession | null;
+  /** Organization environment variables, delivered live to the running engine's shells and tools. */
+  environment?: () => V2EnvironmentSnapshot;
   /** Fresh Den resolution on every child start, independent of the cloud sync timer. */
   resolveLiveProviderSync?: () => Promise<boolean>;
   waits?: Partial<typeof ENGINE_V2_UPKEEP_WAITS>;
@@ -946,6 +954,17 @@ export function createEngineV2Preview(options: {
     if (mirrorError) throw new Error(mirrorError);
   }
 
+  async function awaitEnvironment(digest: string, timeoutMs = 10_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const bridge = providerSessionBridge;
+      if (!running || !bridge) return false;
+      if (bridge.servedEnvironmentDigest() === digest) return true;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return false;
+  }
+
   async function setLiveProviderSync(next: boolean): Promise<void> {
     // Signed-in cold boot delivers identity after the child starts. Activation
     // is one-way for this lifetime: one watched-config write removes the old
@@ -998,7 +1017,7 @@ export function createEngineV2Preview(options: {
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
     contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest) : undefined;
     providerSessionBridge = options.providerSession ? await createV2ProviderSessionBridge(() =>
-      ownsGateway() ? options.providerSession?.() ?? null : null) : undefined;
+      ownsGateway() ? options.providerSession?.() ?? null : null, { environment: options.environment }) : undefined;
     const globalSkills = globalSkillDirectories();
     const managed = await createManagedOpencodeV2Server({
       contextTools: contextBridge,
@@ -1432,5 +1451,5 @@ export function createEngineV2Preview(options: {
     } else if (enabled && !automaticHistoryCopy && engineOrigin !== "reverted" && !(autoUpgradeEnabled && !chatRouting && !chosenV1Manually())) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, setForcePolicy, migrateHistory, status, setEnabled, setChatRouting, requireV1HistoryCopied, describeUncopiedChat, connection, ensureWorkspaceReady, refreshProviders, setLiveProviderSync, syncWorkspaceMcp, settleWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
+  return { start: startWhenReady, setForcePolicy, migrateHistory, status, setEnabled, setChatRouting, requireV1HistoryCopied, describeUncopiedChat, connection, ensureWorkspaceReady, refreshProviders, awaitEnvironment, setLiveProviderSync, syncWorkspaceMcp, settleWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
 }

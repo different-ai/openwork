@@ -61,6 +61,8 @@ const ADMIN_SCOPE_KEYS = [
   "deployments.view",
   "desktop_policies.view",
   "egress_diagnostics.view",
+  "environment_variables.manage",
+  "environment_variables.view",
   "gateway_limits.manage",
   "gateway_limits.view",
   "gateway_providers.manage",

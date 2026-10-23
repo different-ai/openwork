@@ -70,6 +70,10 @@ import type {
   DeleteV1DesktopPoliciesByDesktopPolicyIdErrors,
   DeleteV1DesktopPoliciesByDesktopPolicyIdResponses,
   DeleteV1DesktopPoliciesByKeyByExternalKeyResponses,
+  DeleteV1EnvironmentVariablesByEnvironmentVariableIdErrors,
+  DeleteV1EnvironmentVariablesByEnvironmentVariableIdMyValueErrors,
+  DeleteV1EnvironmentVariablesByEnvironmentVariableIdMyValueResponses,
+  DeleteV1EnvironmentVariablesByEnvironmentVariableIdResponses,
   DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentIdErrors,
   DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentIdResponses,
   DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdErrors,
@@ -141,6 +145,10 @@ import type {
   DownloadGoogleDriveFileByLinkResponses,
   DownloadHostGoogleDriveFileErrors,
   DownloadHostGoogleDriveFileResponses,
+  EnvironmentVariableCreate,
+  EnvironmentVariableMyAssignmentWrite,
+  EnvironmentVariableMyValueWrite,
+  EnvironmentVariableUpdate,
   ExternalMcpConnectionAccessInput,
   ExternalMcpConnectionByKeyUpsertInput,
   ExternalMcpConnectionRemovalRequestBody,
@@ -345,6 +353,14 @@ import type {
   GetV1DesktopPoliciesResponses,
   GetV1DiagnosticsEgressErrors,
   GetV1DiagnosticsEgressResponses,
+  GetV1EnvironmentVariablesByEnvironmentVariableIdErrors,
+  GetV1EnvironmentVariablesByEnvironmentVariableIdResponses,
+  GetV1EnvironmentVariablesErrors,
+  GetV1EnvironmentVariablesMineErrors,
+  GetV1EnvironmentVariablesMineResponses,
+  GetV1EnvironmentVariablesResolvedErrors,
+  GetV1EnvironmentVariablesResolvedResponses,
+  GetV1EnvironmentVariablesResponses,
   GetV1FeaturesResponses,
   GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsErrors,
   GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses,
@@ -665,6 +681,8 @@ import type {
   PatchV1ConnectorTargetsByConnectorTargetIdResponses,
   PatchV1DesktopPoliciesByDesktopPolicyIdErrors,
   PatchV1DesktopPoliciesByDesktopPolicyIdResponses,
+  PatchV1EnvironmentVariablesByEnvironmentVariableIdErrors,
+  PatchV1EnvironmentVariablesByEnvironmentVariableIdResponses,
   PatchV1GatewayUsageLimitPoliciesByPolicyIdErrors,
   PatchV1GatewayUsageLimitPoliciesByPolicyIdResponses,
   PatchV1InferenceErrors,
@@ -818,6 +836,10 @@ import type {
   PostV1DirectUploadsGoogleWorkspaceDriveFilesResponses,
   PostV1DirectUploadsGoogleWorkspaceGmailDraftsErrors,
   PostV1DirectUploadsGoogleWorkspaceGmailDraftsResponses,
+  PostV1EnvironmentVariablesByEnvironmentVariableIdValuePromptErrors,
+  PostV1EnvironmentVariablesByEnvironmentVariableIdValuePromptResponses,
+  PostV1EnvironmentVariablesErrors,
+  PostV1EnvironmentVariablesResponses,
   PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveErrors,
   PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponses,
   PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsErrors,
@@ -1038,6 +1060,10 @@ import type {
   PutV1DesktopPoliciesByKeyByExternalKeyResponses,
   PutV1DiagnosticsEgressTokenErrors,
   PutV1DiagnosticsEgressTokenResponses,
+  PutV1EnvironmentVariablesByEnvironmentVariableIdMyAssignmentErrors,
+  PutV1EnvironmentVariablesByEnvironmentVariableIdMyAssignmentResponses,
+  PutV1EnvironmentVariablesByEnvironmentVariableIdMyValueErrors,
+  PutV1EnvironmentVariablesByEnvironmentVariableIdMyValueResponses,
   PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyErrors,
   PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyResponses,
   PutV1LlmProvidersByKeyByExternalKeyErrors,
@@ -1342,6 +1368,7 @@ export class DenClient extends HeyApiClient {
         connectStandardTools?: boolean | null;
         teamPlan?: boolean | null;
         selfServeEnterprise?: boolean | null;
+        environmentVariables?: boolean | null;
         orgPrompts?: boolean | null;
       };
     },
@@ -7267,6 +7294,284 @@ export class DenClient extends HeyApiClient {
       url: "/v1/llm-providers/{llmProviderId}/access/{accessId}",
       ...options,
       ...params,
+    });
+  }
+
+  /**
+   * List organization environment variables
+   *
+   * Lists every environment variable the organization deploys to desktops, with each assignment (everyone, a team or a person) and whether it holds a value. Values are never returned. Requires the environment_variables.view permission.
+   */
+  public getV1EnvironmentVariables<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1EnvironmentVariablesResponses,
+      GetV1EnvironmentVariablesErrors,
+      ThrowOnError
+    >({ url: "/v1/environment-variables", ...options });
+  }
+
+  /**
+   * Create an environment variable
+   *
+   * Creates an environment variable for the agents of everyone, chosen teams or chosen people. With valueMode admin each assignment carries its own value (a person in several gets the most specific: directly to them, then their teams, then everyone; they can choose another). With valueMode per_member each person sets their own value. Agents: only send values the person explicitly asked to deploy, with confirmed true (409 confirmation_required otherwise). Requires the environment_variables.manage permission and a recent sign-in.
+   */
+  public postV1EnvironmentVariables<ThrowOnError extends boolean = false>(
+    parameters: {
+      environmentVariableCreate: EnvironmentVariableCreate;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ key: "environmentVariableCreate", map: "body" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1EnvironmentVariablesResponses,
+      PostV1EnvironmentVariablesErrors,
+      ThrowOnError
+    >({
+      url: "/v1/environment-variables",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * List my environment variables
+   *
+   * Lists the environment variables deployed to the caller's desktop agent, where each value comes from and whether one is set. Values are never returned. editable true means the person sets the value themselves (my-value, or the value prompt for a private field). assignments names every assignment giving the person a value; they can pick one with my-assignment.
+   */
+  public getV1EnvironmentVariablesMine<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1EnvironmentVariablesMineResponses,
+      GetV1EnvironmentVariablesMineErrors,
+      ThrowOnError
+    >({ url: "/v1/environment-variables/mine", ...options });
+  }
+
+  /**
+   * Resolve my environment variable values
+   *
+   * Returns the caller's environment variables with their effective values, for the desktop to add to the agent's environment. Not available to agents or API keys.
+   */
+  public getV1EnvironmentVariablesResolved<ThrowOnError extends boolean = false>(
+    options?: Options<never, ThrowOnError>,
+  ) {
+    return (options?.client ?? this.client).get<
+      GetV1EnvironmentVariablesResolvedResponses,
+      GetV1EnvironmentVariablesResolvedErrors,
+      ThrowOnError
+    >({ url: "/v1/environment-variables/resolved", ...options });
+  }
+
+  /**
+   * Delete an environment variable
+   *
+   * Deletes an environment variable and every value stored for it. Desktops remove it from the agent's environment the next time they refresh. Requires the environment_variables.manage permission and a recent sign-in.
+   */
+  public deleteV1EnvironmentVariablesByEnvironmentVariableId<ThrowOnError extends boolean = false>(
+    parameters: {
+      environmentVariableId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "environmentVariableId" }] }]);
+    return (options?.client ?? this.client).delete<
+      DeleteV1EnvironmentVariablesByEnvironmentVariableIdResponses,
+      DeleteV1EnvironmentVariablesByEnvironmentVariableIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/environment-variables/{environmentVariableId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Get an environment variable
+   *
+   * Returns one environment variable with its assignments and whether each holds a value. Values are never returned. Requires the environment_variables.view permission.
+   */
+  public getV1EnvironmentVariablesByEnvironmentVariableId<ThrowOnError extends boolean = false>(
+    parameters: {
+      environmentVariableId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "environmentVariableId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1EnvironmentVariablesByEnvironmentVariableIdResponses,
+      GetV1EnvironmentVariablesByEnvironmentVariableIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/environment-variables/{environmentVariableId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Update an environment variable
+   *
+   * Changes an environment variable's name, key, description, how it gets its value, or its assignments (send assignments to replace them; an assignment without value keeps its stored value). Values the new state no longer uses are removed. Agents and API keys get 409 confirmation_required when the change sets new values (send confirmed true once the person asked for them) or replaces or removes a value that is already set (ask the person, then send replaceExisting true). Requires the environment_variables.manage permission and a recent sign-in.
+   */
+  public patchV1EnvironmentVariablesByEnvironmentVariableId<ThrowOnError extends boolean = false>(
+    parameters: {
+      environmentVariableId: string;
+      environmentVariableUpdate: EnvironmentVariableUpdate;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "environmentVariableId" },
+            { key: "environmentVariableUpdate", map: "body" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1EnvironmentVariablesByEnvironmentVariableIdResponses,
+      PatchV1EnvironmentVariablesByEnvironmentVariableIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/environment-variables/{environmentVariableId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Ask a person to enter their own environment variable value
+   *
+   * Shows the person a private field in OpenWork for their own value of an environment variable each person sets themselves. Prefer this when the person hasn't given you the value. Changes nothing by itself.
+   */
+  public postV1EnvironmentVariablesByEnvironmentVariableIdValuePrompt<ThrowOnError extends boolean = false>(
+    parameters: {
+      environmentVariableId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "environmentVariableId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1EnvironmentVariablesByEnvironmentVariableIdValuePromptResponses,
+      PostV1EnvironmentVariablesByEnvironmentVariableIdValuePromptErrors,
+      ThrowOnError
+    >({
+      url: "/v1/environment-variables/{environmentVariableId}/value-prompt",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Clear my environment variable value
+   *
+   * Removes the caller's own value for an environment variable each person sets themselves. Answers 200 even when no value was stored. Agents: only when the person asked, with confirmed=true in the query.
+   */
+  public deleteV1EnvironmentVariablesByEnvironmentVariableIdMyValue<ThrowOnError extends boolean = false>(
+    parameters: {
+      environmentVariableId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "environmentVariableId" }] }]);
+    return (options?.client ?? this.client).delete<
+      DeleteV1EnvironmentVariablesByEnvironmentVariableIdMyValueResponses,
+      DeleteV1EnvironmentVariablesByEnvironmentVariableIdMyValueErrors,
+      ThrowOnError
+    >({
+      url: "/v1/environment-variables/{environmentVariableId}/my-value",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Set my environment variable value
+   *
+   * Saves the caller's own value for an environment variable each person sets themselves. Agents: only send a value the person explicitly asked you to save, with confirmed true. If they already have a value you get 409 confirmation_required: ask whether to replace it, then send again with replaceExisting true. You can never read values back.
+   */
+  public putV1EnvironmentVariablesByEnvironmentVariableIdMyValue<ThrowOnError extends boolean = false>(
+    parameters: {
+      environmentVariableId: string;
+      environmentVariableMyValueWrite: EnvironmentVariableMyValueWrite;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "environmentVariableId" },
+            { key: "environmentVariableMyValueWrite", map: "body" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).put<
+      PutV1EnvironmentVariablesByEnvironmentVariableIdMyValueResponses,
+      PutV1EnvironmentVariablesByEnvironmentVariableIdMyValueErrors,
+      ThrowOnError
+    >({
+      url: "/v1/environment-variables/{environmentVariableId}/my-value",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Choose which assignment gives me a value
+   *
+   * When several assignments (for example everyone, a team and directly to the caller) give the caller a value, picks the one their agent uses. accessId comes from the variable's assignments in GET /v1/environment-variables/mine; null goes back to the default (the most specific).
+   */
+  public putV1EnvironmentVariablesByEnvironmentVariableIdMyAssignment<ThrowOnError extends boolean = false>(
+    parameters: {
+      environmentVariableId: string;
+      environmentVariableMyAssignmentWrite: EnvironmentVariableMyAssignmentWrite;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "environmentVariableId" },
+            { key: "environmentVariableMyAssignmentWrite", map: "body" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).put<
+      PutV1EnvironmentVariablesByEnvironmentVariableIdMyAssignmentResponses,
+      PutV1EnvironmentVariablesByEnvironmentVariableIdMyAssignmentErrors,
+      ThrowOnError
+    >({
+      url: "/v1/environment-variables/{environmentVariableId}/my-assignment",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 

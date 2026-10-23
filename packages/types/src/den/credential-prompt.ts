@@ -48,6 +48,15 @@ export const credentialPromptTargetSchema = z.discriminatedUnion("type", [
     credentialKind: z.enum(["aws_keys", "gcp_service_account", "api_key_map"]),
     envNames: z.array(z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/)).min(1).max(6).optional(),
   }).strict().refine((target) => (target.credentialKind === "api_key_map") === (target.envNames !== undefined), "envNames is required for api_key_map only"),
+  /**
+   * The signed-in person's own value for an organization environment variable
+   * that each person sets themselves. `key` is the variable name, for display.
+   */
+  z.object({
+    type: z.literal("environment_variable_member_value"),
+    environmentVariableId: id,
+    key: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,254}$/),
+  }).strict(),
 ])
 
 export const credentialPromptSchema = z.object({

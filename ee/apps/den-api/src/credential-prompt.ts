@@ -143,10 +143,24 @@ export function gatewayProviderKeyPrompt(input: { inferenceProviderId: string; c
   })
 }
 
+/** The signed-in person's own value for an environment variable each person sets themselves. */
+export function environmentVariableMemberValuePrompt(variable: { id: string; name: string; key: string }): CredentialPrompt {
+  return credentialPromptSchema.parse({
+    schemaVersion: "1",
+    kind: "credential_prompt",
+    target: { type: "environment_variable_member_value", environmentVariableId: variable.id, key: variable.key },
+    name: variable.name,
+    destination: null,
+  })
+}
+
 /** The dashboard page where a person can add the same key outside OpenWork chat. */
 export function credentialPromptManageUrl(prompt: CredentialPrompt): string | null {
   try {
     if (prompt.target.type === "mcp_connection_member_key") return openworkYourConnectionsUrl(prompt.target.connectionId)
+    if (prompt.target.type === "environment_variable_member_value") {
+      return new URL("/dashboard/your-environment-variables", env.betterAuthUrl).toString()
+    }
     if (prompt.target.type === "gateway_provider_key" || prompt.target.type === "gateway_provider_credential") {
       return new URL("/dashboard/ai-gateway?tab=ai-providers", env.betterAuthUrl).toString()
     }

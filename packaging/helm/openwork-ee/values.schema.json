@@ -278,6 +278,16 @@
               ],
               "description": "Self-serve Enterprise: Owners can buy Enterprise by card at the planned per-person price. Renders DEN_FEATURE_SELF_SERVE_ENTERPRISE."
             },
+            "environmentVariables": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Environment variables: Admins deploy environment variables to people's desktop agents: a value for everyone, a team or one person, or a value each person sets for themselves. Renders DEN_FEATURE_ENVIRONMENT_VARIABLES."
+            },
             "orgPrompts": {
               "enum": [
                 "",

@@ -52,6 +52,32 @@ export type OpenworkServerCapabilities = {
   };
 };
 
+export type OpenworkCloudEnvironmentVariable = {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  valueMode: "admin" | "per_member";
+  source: "everyone" | "team" | "direct" | "own" | null;
+  /** Only variables each person sets themselves are editable. */
+  editable: boolean;
+  /** Assignments that give this person a value, by name; they may choose one. Never values. */
+  assignments: Array<{ accessId: string; kind: "everyone" | "team" | "direct"; label: string }>;
+  selectedAccessId: string | null;
+  hasValue: boolean;
+  /** Present only for editable variables: the person's own value. */
+  value?: string | null;
+  updatedAt: string;
+};
+
+export type OpenworkCloudEnvironmentStatus = {
+  signedIn: boolean;
+  available: boolean;
+  variables: OpenworkCloudEnvironmentVariable[];
+  lastRun: { at: number; ok: boolean; error?: string } | null;
+  applied: boolean;
+};
+
 export type OpenworkCloudProviderSyncRun = {
   status: "applied" | "noop" | "failed" | "no_session";
   message?: string;
@@ -2527,6 +2553,22 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
     // User-level env vars (host-auth only — desktop shell is the sole caller).
     // See apps/server/src/env-file.ts and apps/app/pr/environment-variables.md.
+    /** Organization environment variables delivered to the agent. Admin-provisioned values are never included. */
+    getCloudEnvironment: () =>
+      requestJson<OpenworkCloudEnvironmentStatus>(
+        baseUrl,
+        "/cloud-environment",
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+
+    /** Asks Den for the latest values now, and starts an engine with them when they changed. */
+    syncCloudEnvironment: () =>
+      requestJson<OpenworkCloudEnvironmentStatus>(
+        baseUrl,
+        "/cloud-environment/sync",
+        { token, hostToken, method: "POST", body: {}, timeoutMs: timeouts.config },
+      ),
+
     listUserEnvKeys: (options?: { desktopTransport?: "main" }) =>
       requestJson<{ keys: string[] }>(
         baseUrl,

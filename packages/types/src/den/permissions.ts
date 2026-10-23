@@ -32,6 +32,7 @@ export const PERMISSION_AREAS = {
   models: { label: "Models and providers" },
   gateway: { label: "AI Gateway" },
   connections: { label: "Connections" },
+  environment: { label: "Environment variables" },
   library: { label: "Plugins and marketplaces" },
 } as const satisfies Record<string, { label: string }>
 
@@ -389,6 +390,21 @@ export const PERMISSIONS = {
     label: "Manage usage limits",
     description: "Change usage limit policies and assignments, and approve or deny reset requests.",
     defaultOn: ADMIN,
+  },
+
+  // Environment variables
+  "environment_variables.view": {
+    area: "environment",
+    label: "View environment variables",
+    description: "See every environment variable deployed to desktops and who receives it. Values stay hidden.",
+    defaultOn: ADMIN,
+  },
+  "environment_variables.manage": {
+    area: "environment",
+    label: "Manage environment variables",
+    description: "Create, change and delete environment variables, set their values and choose who receives them.",
+    defaultOn: ADMIN,
+    sensitive: true,
   },
 
   // Connections

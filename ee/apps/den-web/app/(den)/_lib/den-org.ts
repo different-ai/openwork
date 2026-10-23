@@ -193,6 +193,10 @@ export type DenOrgAccessFlags = {
   canViewGatewayLimits: boolean;
   /** `gateway_limits.manage` */
   canManageGatewayLimits: boolean;
+  /** `environment_variables.view` */
+  canViewEnvironmentVariables: boolean;
+  /** `environment_variables.manage` */
+  canManageEnvironmentVariables: boolean;
   /** `connections.view`: every connection, its tools and tool policy. */
   canViewAllConnections: boolean;
   /** `connections.manage`: organization connections, who can use any connection, tool policies, shared accounts. */
@@ -632,6 +636,8 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
     canViewGatewayUsage: can("gateway_usage.view"),
     canViewGatewayLimits: can("gateway_limits.view"),
     canManageGatewayLimits: can("gateway_limits.manage"),
+    canViewEnvironmentVariables: can("environment_variables.view"),
+    canManageEnvironmentVariables: can("environment_variables.manage"),
     canViewAllConnections: can("connections.view"),
     canManageConnections: can("connections.manage"),
     canEditAnyConnection: can("connections.update"),
@@ -951,6 +957,22 @@ export function getMcpConnectionRoute(orgSlug: string | null | undefined, connec
 
 export function getYourConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/your-connections`;
+}
+
+export function getEnvironmentVariablesRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/environment-variables`;
+}
+
+export function getNewEnvironmentVariableRoute(orgSlug?: string | null): string {
+  return `${getEnvironmentVariablesRoute(orgSlug)}/new`;
+}
+
+export function getEnvironmentVariableRoute(orgSlug: string | null | undefined, environmentVariableId: string): string {
+  return `${getEnvironmentVariablesRoute(orgSlug)}/${encodeURIComponent(environmentVariableId)}`;
+}
+
+export function getYourEnvironmentVariablesRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/your-environment-variables`;
 }
 
 export function getToolTesterRoute(orgSlug?: string | null): string {

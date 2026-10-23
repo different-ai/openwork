@@ -26,6 +26,9 @@ export const domainChangeEmitters: Readonly<Record<string, string>> = {
   "permission_set.created": "audit/domain/permissions.ts", "permission_set.permissions_changed": "audit/domain/permissions.ts", "permission_set.archived": "audit/domain/permissions.ts",
   "permission_set.renamed": "audit/domain/permissions.ts", "permission_set.teams_changed": "audit/domain/permissions.ts",
   "agent_permission_policy.updated": "audit/domain/agent-permissions.ts", "agent_permission_policy.removed": "audit/domain/agent-permissions.ts",
+  "environment_variable.created": "audit/domain/environment-variables.ts", "environment_variable.updated": "audit/domain/environment-variables.ts",
+  "environment_variable.deleted": "audit/domain/environment-variables.ts", "environment_variable.own_value_set": "audit/domain/environment-variables.ts",
+  "environment_variable.own_value_cleared": "audit/domain/environment-variables.ts", "environment_variable.assignment_selected": "audit/domain/environment-variables.ts",
   // Organization-bound MCP OAuth tokens (consent referenceId; src/audit/better-auth.ts).
   "oauth_token.issued": "audit/domain/oauth-tokens.ts", "oauth_token.revoked": "audit/domain/oauth-tokens.ts",
   // User-scoped events (attribution user_memberships, src/audit/fanout.ts).

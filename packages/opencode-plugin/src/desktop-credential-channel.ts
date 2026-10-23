@@ -5,6 +5,8 @@ interface CredentialBroker {
   initialize(): Promise<void>
   fetchSession(fetcher: Fetch, endpoint: string, signal?: AbortSignal): Promise<Response | null>
   fetchInventory(fetcher: Fetch, endpoint: string, path: string, identity: string, signal?: AbortSignal): Promise<Response | null>
+  /** Organization environment variables; absent on brokers written by older servers. */
+  fetchEnvironment?(fetcher: Fetch, endpoint: string, signal?: AbortSignal): Promise<Response | null>
 }
 function isBroker(value: unknown): value is CredentialBroker {
   return typeof value === "object" && value !== null
@@ -30,6 +32,10 @@ export async function initializeDesktopCredentialChannel(): Promise<void> {
 /** Shared by every Location/reload; deliberately never exports the capability. */
 export async function fetchDesktopSession(fetcher: Fetch, endpoint: string, signal?: AbortSignal): Promise<Response | null> {
   return broker ? broker.fetchSession(fetcher, endpoint, signal) : null
+}
+
+export async function fetchDesktopEnvironment(fetcher: Fetch, endpoint: string, signal?: AbortSignal): Promise<Response | null> {
+  return broker?.fetchEnvironment ? broker.fetchEnvironment(fetcher, endpoint, signal) : null
 }
 
 export async function fetchDesktopInventory(fetcher: Fetch, endpoint: string, path: string, identity: string, signal?: AbortSignal): Promise<Response | null> {

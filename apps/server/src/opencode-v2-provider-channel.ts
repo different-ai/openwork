@@ -38,6 +38,15 @@ module.exports = Object.freeze({
       redirect: "error", signal,
     });
   },
+  fetchEnvironment: async (fetcher, endpoint, signal) => {
+    const value = await credential;
+    if (!value || endpoint !== value.endpoint) return null;
+    return fetcher(new URL(value.endpoint).origin + "/environment", {
+      headers: { accept: "application/json", authorization: "Bearer " + value.token },
+      redirect: "error",
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(1500)]) : AbortSignal.timeout(1500),
+    });
+  },
   fetchSession: async (fetcher, endpoint, signal) => {
     const value = await credential;
     if (!value || endpoint !== value.endpoint) return null;

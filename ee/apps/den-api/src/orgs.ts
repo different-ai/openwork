@@ -10,6 +10,8 @@ import {
   DesktopPolicyMemberTable,
   ExternalMcpConnectionAccessGrantTable,
   InvitationTable,
+  EnvironmentVariableAccessTable,
+  EnvironmentVariableMemberSettingTable,
   LlmProviderAccessTable,
   LlmProviderMemberCredentialTable,
   MarketplaceAccessGrantTable,
@@ -2110,6 +2112,14 @@ export async function removeOrganizationMember(input: {
     await tx
       .delete(LlmProviderAccessTable)
       .where(eq(LlmProviderAccessTable.orgMembershipId, member.id))
+
+    await tx
+      .delete(EnvironmentVariableAccessTable)
+      .where(eq(EnvironmentVariableAccessTable.orgMembershipId, member.id))
+
+    await tx
+      .delete(EnvironmentVariableMemberSettingTable)
+      .where(eq(EnvironmentVariableMemberSettingTable.orgMembershipId, member.id))
 
     await tx
       .delete(DesktopPolicyMemberTable)
