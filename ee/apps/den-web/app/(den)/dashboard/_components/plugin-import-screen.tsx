@@ -8,7 +8,7 @@ import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
-import { getNewPluginRoute } from "../../_lib/den-org";
+import { getImportedPluginCreateRoute, getNewPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   normalizePublicGitHubPluginUrl,
@@ -112,7 +112,7 @@ export function PluginImportScreen() {
       setError(draftError instanceof Error ? draftError.message : "This plugin import cannot be saved safely.");
       return;
     }
-    router.push(getNewPluginRoute(orgSlug));
+    router.push(getImportedPluginCreateRoute(orgSlug));
   }
 
   const selectedMcpCount = selectedServerKeys.length;

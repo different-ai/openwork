@@ -254,6 +254,35 @@ export function savePluginImportDraft(draft: PluginImportDraft): void {
   }));
 }
 
+/** Body for `POST /v1/plugins/import-mcps-from-github-url`: the draft's selected skills and MCP servers plus the form fields. */
+export function importedPluginCreateBody(draft: PluginImportDraft, form: {
+  name: string;
+  description: string;
+  marketplaceId: string;
+  access: { orgWide: boolean; memberIds: string[]; teamIds: string[] };
+}) {
+  return {
+    access: form.access,
+    authType: draft.authType,
+    credentialMode: draft.credentialMode,
+    description: form.description.trim() || null,
+    githubUrl: draft.githubUrl,
+    marketplaceId: form.marketplaceId || undefined,
+    name: form.name.trim(),
+    selectedSkillKeys: draft.selectedSkillKeys,
+    selectedServerKeys: draft.selectedServerKeys,
+  };
+}
+
+/**
+ * `/plugins/new` shows the full plugin editor (which consumes the GitHub import
+ * draft and can publish to a collection) when opened from a collection or from
+ * an import; otherwise it shows the plain create form.
+ */
+export function newPluginPageUsesEditor(params: Record<string, string | string[] | undefined>): boolean {
+  return Boolean(params.marketplaceId) || params.source === "github-import";
+}
+
 export function clearPluginImportDraft(): void {
   if (typeof window !== "undefined") window.sessionStorage.removeItem(STORAGE_KEY);
 }

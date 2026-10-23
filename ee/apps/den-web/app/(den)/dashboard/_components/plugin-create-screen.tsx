@@ -1,16 +1,20 @@
 "use client";
 
+import { Download } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getAddConnectorRoute,
+  getImportPluginRoute,
   getLibraryAddConnectorRoute,
   getLibraryPluginRoute,
   getLibraryRoute,
   getPluginRoute,
   getPluginsRoute,
+  getOrgAccessFlags,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage } from "./item-header";
+import { LinkButton } from "./item-list";
 import { useMcpConnections } from "./mcp-connections-data";
 import { PluginCreateForm } from "./plugin-create-form";
 
@@ -41,13 +45,21 @@ export function LibraryPluginCreateScreen() {
 /** D2: an admin makes a plugin, then chooses which teams get it. */
 export function AdminPluginCreateScreen() {
   const router = useRouter();
-  const { orgSlug } = useOrgDashboard();
+  const { orgContext, orgSlug } = useOrgDashboard();
   const manageable = useMcpConnections("manageable");
   const connections = (manageable.data ?? []).filter((connection) => !connection.nativeProviderKey);
+  const { canImportPlugins } = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.currentMember.permissions,
+  );
+  const importAction = canImportPlugins
+    ? <LinkButton size="sm" href={getImportPluginRoute(orgSlug)} data-testid="plugin-create-import-github"><Download className="h-4 w-4" aria-hidden />Import from GitHub</LinkButton>
+    : undefined;
 
   return (
     <ItemPage testId="plugin-create">
-      <ItemHeader compact back={{ href: getPluginsRoute(orgSlug), label: "Plugins" }} title="Create a plugin" />
+      <ItemHeader compact back={{ href: getPluginsRoute(orgSlug), label: "Plugins" }} title="Create a plugin" actions={importAction} />
       <PluginCreateForm
         connections={connections}
         cancelHref={getPluginsRoute(orgSlug)}

@@ -916,6 +916,11 @@ export function getNewPluginRoute(orgSlug?: string | null): string {
   return `${getPluginsRoute(orgSlug)}/new`;
 }
 
+/** Where "Continue to create" lands after a GitHub import preview: the editor that reads the saved import draft. */
+export function getImportedPluginCreateRoute(orgSlug?: string | null): string {
+  return `${getNewPluginRoute(orgSlug)}?source=github-import`;
+}
+
 export function getImportPluginRoute(orgSlug?: string | null): string {
   return `${getPluginsRoute(orgSlug)}/import`;
 }

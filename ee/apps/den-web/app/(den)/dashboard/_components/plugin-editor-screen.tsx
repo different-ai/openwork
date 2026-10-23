@@ -18,6 +18,7 @@ import { type ExternalMcpConnection, useMcpConnections } from "./mcp-connections
 import { pluginQueryKeys } from "./plugin-data";
 import {
   clearPluginImportDraft,
+  importedPluginCreateBody,
   loadPluginImportDraft,
   pluginImportSourceLabel,
   pluginImportSuggestedName,
@@ -284,21 +285,16 @@ export function PluginEditorScreen() {
           "/v1/plugins/import-mcps-from-github-url",
           {
             method: "POST",
-            body: JSON.stringify({
+            body: JSON.stringify(importedPluginCreateBody(draft, {
               access: {
                 orgWide: shareOrgWide,
                 memberIds: shareOrgWide || !orgContext ? [] : [orgContext.currentMember.id],
                 teamIds: [],
               },
-              authType: draft.authType,
-              credentialMode: draft.credentialMode,
-              description: description.trim() || null,
-              githubUrl: draft.githubUrl,
-              marketplaceId: marketplaceId || undefined,
-              name: name.trim(),
-              selectedSkillKeys: draft.selectedSkillKeys,
-              selectedServerKeys: draft.selectedServerKeys,
-            }),
+              description,
+              marketplaceId,
+              name,
+            })),
           },
           30000,
         );

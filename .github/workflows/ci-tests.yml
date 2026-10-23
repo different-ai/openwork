@@ -169,7 +169,7 @@ jobs:
           pnpm --filter @openwork-ee/utils test
           pnpm --filter @openwork/automations test
           pnpm --filter @openwork-ee/den-api test
-          pnpm --filter @openwork-ee/den-api exec node --conditions=development --import tsx --test "../den-web/app/(den)/dashboard/_components/manual-oauth-draft.test.ts" "../den-web/app/(den)/dashboard/_components/connector-readiness.test.ts" "../den-web/app/(den)/dashboard/_components/mcp-account-authorization-state.test.ts" "../den-web/app/(den)/dashboard/_lib/workbot-entry.test.ts" "../den-web/app/(den)/_lib/billing-checkout.test.ts"
+          pnpm --filter @openwork-ee/den-api exec node --conditions=development --import tsx --test "../den-web/app/(den)/dashboard/_components/manual-oauth-draft.test.ts" "../den-web/app/(den)/dashboard/_components/plugin-import-draft.test.ts" "../den-web/app/(den)/dashboard/_components/connector-readiness.test.ts" "../den-web/app/(den)/dashboard/_components/mcp-account-authorization-state.test.ts" "../den-web/app/(den)/dashboard/_lib/workbot-entry.test.ts" "../den-web/app/(den)/_lib/billing-checkout.test.ts"
           pnpm --filter @openwork-ee/workbot test:model
       # Security rules (roles, tenants, keys, OAuth, audit) against the real
       # den-api app and a throwaway database on MySQL (root:password).
