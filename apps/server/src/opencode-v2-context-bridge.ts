@@ -6,10 +6,11 @@ import { openworkReadTransport, type OpenworkReadTransport } from "./opencode-pl
 import { createV2ReadAdapter, readV2SessionActivity } from "./opencode-v2-read-adapter.js";
 import { isRecord } from "./workspace-kv-store.js";
 import { createV2BrowserBridge } from "./opencode-v2-browser-bridge.js";
+import { OPENWORK_CLOUD_UPLOADS_EXTENSION_ID } from "./extensions/cloud-upload-constants.js";
 import { SESSION_GROUP_COMMAND_IDS } from "./opencode-plugins/openwork-session-groups.js";
 
 const requestSchema = z.object({
-  name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read"]),
+  name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read", "openwork_drive_upload"]),
   input: z.unknown(),
   sessionId: z.string().max(256).optional(),
 });
@@ -25,6 +26,7 @@ export function isSessionGroupWritePath(path: string): boolean {
   if (rawQuery !== undefined && [...url.searchParams.keys()].some(key => key !== "destinationGroupId")) return false;
   return sessionGroupRoute.test(rawPath);
 }
+const driveUploadSchema = z.object({ path: z.string().min(1), folderId: z.string().optional(), connectionId: z.string().optional() }).strict();
 // Advertise only what this bridge executes. Native MCP discovery owns remote
 // tool names; v1 executor spellings and unregistered commands do not belong here.
 function bridgeAffordances(value: unknown): unknown {
@@ -52,7 +54,8 @@ export async function createV2ContextBridge(hostRequest: (path: string, init?: R
       const text = await request.text();
       if (text.length > 64_000) return new Response(null, { status: 413 });
       const call = requestSchema.parse(JSON.parse(text));
-      const deadline = AbortSignal.timeout(60_000);
+      // Uploads share the host extension call's own transfer budget.
+      const deadline = AbortSignal.timeout(call.name === "openwork_drive_upload" ? 130_000 : 60_000);
       const read = (path: string, init?: RequestInit) => {
         const signal = AbortSignal.any([request.signal, deadline, ...(init?.signal ? [init.signal] : [])]);
         signal.throwIfAborted();
@@ -71,6 +74,13 @@ export async function createV2ContextBridge(hostRequest: (path: string, init?: R
           z.object({ urls: z.array(url).min(1).max(150), use: z.boolean().optional() }).strict(),
         ]).parse(call.input);
         return Response.json(await read("/experimental/connect/skills/read", { method: "POST", body: JSON.stringify(input) }));
+      }
+      // The Drive upload uses the same authorized-root file transport
+      // v1 reaches through extension.call, never arbitrary extension actions.
+      if (call.name === "openwork_drive_upload") {
+        return Response.json(await read("/experimental/extensions/call", { method: "POST", body: JSON.stringify({
+          extensionId: OPENWORK_CLOUD_UPLOADS_EXTENSION_ID, action: "drive_upload_file", args: driveUploadSchema.parse(call.input), context: {},
+        }) }));
       }
       const transport: OpenworkReadTransport = {
         engine: "v2",
