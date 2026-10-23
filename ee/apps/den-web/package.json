@@ -34,16 +34,16 @@
     "@openwork/types": "workspace:*",
     "@openwork/ui": "workspace:*",
     "@paper-design/shaders-react": "0.0.72",
-    "@sentry/nextjs": "10.64.0",
+    "@sentry/nextjs": "10.75.2",
     "@tanstack/react-query": "^5.96.2",
     "cmdk": "^1.1.1",
     "lucide-react": "^0.577.0",
-    "next": "16.3.8",
+    "next": "16.4.1",
     "posthog-js": "1.430.2",
     "react": "catalog:",
     "react-dom": "catalog:",
     "recharts": "3.10.1",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
