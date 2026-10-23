@@ -23,6 +23,7 @@ COPY scripts/build-workspace-dependencies.mjs /app/scripts/build-workspace-depen
 # unused unless this pruned install opts out of that check.
 RUN node -e "const fs = require('node:fs'); fs.appendFileSync('/app/pnpm-workspace.yaml', '\nallowUnusedPatches: true\n')"
 
+COPY packages/sdk/package.json /app/packages/sdk/package.json
 COPY packages/types/package.json /app/packages/types/package.json
 COPY packages/managed-deployments/package.json /app/packages/managed-deployments/package.json
 COPY packages/free-auto/package.json /app/packages/free-auto/package.json
@@ -38,6 +39,7 @@ COPY apps/app/package.json /app/apps/app/package.json
 
 RUN pnpm install --frozen-lockfile --trust-lockfile
 
+COPY packages/sdk /app/packages/sdk
 COPY packages/types /app/packages/types
 COPY packages/managed-deployments /app/packages/managed-deployments
 COPY packages/free-auto /app/packages/free-auto

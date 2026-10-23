@@ -72,3 +72,7 @@ The journey test needs MySQL and Redis for an isolated Den. It checks public and
 authenticated calls, session and API-key identity, session organization selection
 across two organizations, typed team mutations, per-request organization and
 credential overrides, and failure responses.
+
+Browser bundlers that require `.js` files for ESM specifiers can import
+`@openwork/sdk/browser` after running `pnpm --filter @openwork/sdk build`.
+This entry uses the compiled SDK in both development and production.

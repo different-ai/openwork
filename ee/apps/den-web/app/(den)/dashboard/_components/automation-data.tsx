@@ -9,6 +9,7 @@ import {
 } from "@openwork/types/automations";
 import { workflowArtifactSnapshotSchema } from "@openwork/types/workflows";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { createDenBrowserClient, denBrowserData } from "../../_lib/den-sdk";
 
 const ACTIVE_RUN_STATUSES = ["queued", "claimed", "running"];
 
@@ -22,14 +23,14 @@ export function useAutomations({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     enabled,
     queryKey: ["automations", "list"],
-    queryFn: async () => automationListSchema.parse(await payload("/v1/automations?limit=100")),
+    queryFn: async () => automationListSchema.parse(await denBrowserData(createDenBrowserClient({ timeoutMs: 170_000 }).listAutomations({ limit: 100 }))),
   });
 }
 
 export function useAutomation(automationId: string | null) {
   return useQuery({
     queryKey: ["automations", "detail", automationId],
-    queryFn: async () => automationDetailSchema.parse(await payload(`/v1/automations/${encodeURIComponent(automationId ?? "")}`)),
+    queryFn: async () => automationDetailSchema.parse(await denBrowserData(createDenBrowserClient({ timeoutMs: 170_000 }).getAutomation({ id: automationId ?? "" }))),
     enabled: Boolean(automationId),
   });
 }
@@ -38,7 +39,7 @@ export function useAutomationRuns(automationId: string | null) {
   return useQuery({
     queryKey: ["automations", "runs", automationId],
     queryFn: async () => {
-      const value = await payload(`/v1/automations/${encodeURIComponent(automationId ?? "")}/runs?limit=100`);
+      const value = await denBrowserData(createDenBrowserClient({ timeoutMs: 170_000 }).listAutomationRuns({ id: automationId ?? "", limit: 100 }));
       if (typeof value !== "object" || value === null || !("items" in value) || !Array.isArray(value.items)) throw new Error("Automation run history was invalid.");
       return value.items.map((item) => automationRunSchema.parse(item));
     },
@@ -52,7 +53,7 @@ export function useAutomationRuns(automationId: string | null) {
 export function useAutomationRun(runId: string | null) {
   return useQuery({
     queryKey: ["automations", "run", runId],
-    queryFn: async () => automationRunReceiptSchema.parse(await payload(`/v1/automation-runs/${encodeURIComponent(runId ?? "")}`)),
+    queryFn: async () => automationRunReceiptSchema.parse(await denBrowserData(createDenBrowserClient({ timeoutMs: 170_000 }).getAutomationRun({ id: runId ?? "" }))),
     enabled: Boolean(runId),
     refetchInterval: (query) => {
       const status = query.state.data?.run.status;
@@ -80,7 +81,7 @@ function useAutomationMutation<TInput, TResult>(mutationFn: (input: TInput) => P
 export function useCancelAutomationRun() {
   return useAutomationMutation<string, ReturnType<typeof automationRunSchema.parse>>(
     async (runId) => {
-      const value = await payload(`/v1/automation-runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+      const value = await denBrowserData(createDenBrowserClient({ timeoutMs: 170_000 }).cancelAutomationRun({ id: runId }));
       if (typeof value !== "object" || value === null || !("run" in value)) throw new Error("Automation cancellation response was invalid.");
       return automationRunSchema.parse(value.run);
     },
