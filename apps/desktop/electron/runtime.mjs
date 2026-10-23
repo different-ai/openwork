@@ -9,6 +9,7 @@ import path from "node:path";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
+import { mergeRuntimeEnv, reconcileInjectedUserEnv } from "./runtime-env.mjs";
 import {
   desktopBootstrapPath,
   normalizeWorkspaceRootPath,
@@ -22,6 +23,8 @@ import {
   summarizeSystemCaSources,
   systemPlatformCertificateLoader,
 } from "./system-ca.mjs";
+
+export { reconcileInjectedUserEnv } from "./runtime-env.mjs";
 
 const __runtimeDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -316,33 +319,6 @@ export function selectStickyOpenworkPortWorkspace(requestedWorkspacePaths = [], 
 export function resolveEvalLocalServerDelayMs(env = process.env) {
   const delayMs = Number(env.OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS);
   return Number.isFinite(delayMs) && delayMs > 0 ? delayMs : 0;
-}
-
-export function reconcileInjectedUserEnv({
-  processEnv,
-  inheritedEnv,
-  userEnv,
-  previouslyInjectedKeys = new Set(),
-}) {
-  for (const key of previouslyInjectedKeys) {
-    if (Object.prototype.hasOwnProperty.call(userEnv, key)) continue;
-    if (Object.prototype.hasOwnProperty.call(inheritedEnv, key)) {
-      processEnv[key] = inheritedEnv[key];
-    } else {
-      delete processEnv[key];
-    }
-  }
-
-  for (const [key, value] of Object.entries(userEnv)) {
-    if (Object.prototype.hasOwnProperty.call(inheritedEnv, key)) continue;
-    processEnv[key] = value;
-  }
-
-  return new Set(
-    Object.keys(userEnv).filter(
-      (key) => !Object.prototype.hasOwnProperty.call(inheritedEnv, key),
-    ),
-  );
 }
 
 export function commandMatchesPackagedSidecar(command, sidecarDirs = []) {
@@ -1616,15 +1592,13 @@ export function createRuntimeManager({
       userEnv,
       previouslyInjectedKeys: injectedUserEnvKeys,
     });
-    const baseEnv = {
-      ...userEnv,
-      ...process.env,
+    const baseEnv = mergeRuntimeEnv(process.platform, userEnv, process.env, {
       BUN_CONFIG_DNS_RESULT_ORDER: "verbatim",
-    };
+    });
     const caEnv = Object.prototype.hasOwnProperty.call(baseEnv, "NODE_EXTRA_CA_CERTS") ? {} : (await systemCa()).childEnv;
     // Bun honors Node's NODE_EXTRA_CA_CERTS, so bundled Bun sidecars inherit
     // the exported OS trust store through the same child env variable.
-    const env = mergeSystemCaChildEnv(baseEnv, caEnv, extra);
+    const env = mergeRuntimeEnv(process.platform, mergeSystemCaChildEnv(baseEnv, caEnv), extra);
     const pathKey =
       Object.prototype.hasOwnProperty.call(env, "PATH") ||
       !Object.prototype.hasOwnProperty.call(env, "Path")
