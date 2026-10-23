@@ -80,6 +80,7 @@ type ComposerProps = {
   onQueue: () => void | Promise<void>;
   onStop: () => void | Promise<void>;
   busy: boolean;
+  childConversation?: boolean;
   editing?: boolean;
   stopping?: boolean;
   steering: boolean;
@@ -383,13 +384,14 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       void current.onSend();
       return;
     }
+    if (current.childConversation) { void current.onSend(); return; }
     if (current.busy && !current.editing) {
       if (options.queue) void current.onSteer();
       else void current.onQueue();
       return;
     }
     void current.onSend();
-  }, [props.busy, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
+  }, [props.childConversation, props.busy, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
 
   const showStop = props.busy && !props.editing;
 
@@ -1122,7 +1124,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     // Escape can still close menus. First press arms a confirmation prompt
     // for 3s; a second Escape within that window stops the agent.
     const anyMenuOpen = agentMenuOpen || toolMenuOpen || props.modelPickerOpen || Boolean(activeMenu);
-    if (event.key === "Escape" && props.busy && !anyMenuOpen) {
+    if (event.key === "Escape" && props.busy && !props.childConversation && !anyMenuOpen) {
       event.preventDefault();
       if (props.stopping) return;
       if (escapeArmed) {
@@ -1200,10 +1202,12 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       }
     }
 
-    // The task list also shows "no match", so Escape closes it even when empty.
-    if (activeMenu === "session" && event.key === "Escape") {
+    // Escape closes even an empty menu without navigating out of the child.
+    if (activeMenu && event.key === "Escape") {
       event.preventDefault();
-      dismissSessionMenu();
+      if (activeMenu === "session") dismissSessionMenu();
+      setSlashOpen(false);
+      setMentionOpen(false);
       return;
     }
     if (!activeMenu || !activeItems.length) return;
@@ -1222,11 +1226,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       event.stopPropagation();
       void acceptActiveItem();
       return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      setSlashOpen(false);
-      setMentionOpen(false);
     }
   };
 
@@ -1408,6 +1407,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     <div
       ref={rootRef}
       onFocusCapture={() => { lastFocusedComposerRoot = rootRef.current; }}
+      data-composer-menu-open={agentMenuOpen || toolMenuOpen || props.modelPickerOpen || Boolean(activeMenu) ? "true" : undefined}
       className={props.flush ? `relative ${toolMenuOpen ? "z-50" : "z-20"}` : `sticky bottom-0 shrink-0 ${toolMenuOpen ? "z-50" : "z-20"} bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-[max(0.5rem,env(safe-area-inset-bottom))] max-lg:px-3 lg:px-8 ${props.compactTopSpacing ? "pt-0" : "pt-1"}`}
       style={{ contain: "layout style" }}
       onKeyDownCapture={handleKeyDownCapture}
