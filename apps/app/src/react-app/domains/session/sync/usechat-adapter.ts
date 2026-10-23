@@ -1,5 +1,7 @@
 /** @jsxImportSource react */
 import type { UIMessage } from "ai";
+import { projectedMessageMetadata, reasoningProviderMetadata, sessionNotice } from "../../../../lib/session-run";
+import { orderMessageParents } from "./message-merge";
 import { replyModelFromInfo } from "./reply-model";
 import type { FilePart, Part, TextPart, ToolPart } from "@opencode-ai/sdk/v2/client";
 
@@ -146,7 +148,8 @@ export function attachmentNoteToUIParts(part: TextPart): UIMessage["parts"] {
 }
 
 export function textPartToUIPart(part: TextPart): UIMessage["parts"][number] | null {
-  if (part.synthetic || part.ignored) return null;
+  const notice = part.synthetic ? sessionNotice(part.metadata, part.messageID, typeof part.metadata?.openworkNoticeTimestamp === "number" ? part.metadata.openworkNoticeTimestamp : part.time?.start ?? 0) : null;
+  if ((part.synthetic && !notice) || part.ignored) return null;
   const composerToken = part.metadata?.openworkComposerToken;
   const composerPill = readComposerPill(part.metadata?.openworkComposerPill);
   const backgroundShell = readBackgroundShellNotice(part.metadata?.[BACKGROUND_SHELL_NOTICE_KEY]);
@@ -156,6 +159,7 @@ export function textPartToUIPart(part: TextPart): UIMessage["parts"][number] | n
     state: "done",
     providerMetadata: { opencode: {
       partId: part.id,
+      ...(notice ? { notice } : {}),
       ...(typeof composerToken === "string" ? { composerToken } : {}),
       ...(composerPill ? { composerPill } : {}),
       ...(backgroundShell ? { backgroundShell } : {}),
@@ -184,12 +188,7 @@ export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "me
     const uiMessage = {
       id: message.info.id,
       role: message.info.role,
-      metadata: { opencode: {
-        ...(typeof created === "number" ? { created } : {}),
-        ...(typeof completed === "number" ? { completed } : {}),
-        ...(typeof parentID === "string" ? { parentID } : {}),
-        ...(replyModelFromInfo(message.info) ? { replyModel: replyModelFromInfo(message.info) } : {}),
-      } },
+      metadata: projectedMessageMetadata({ ...message.info, replyModel: replyModelFromInfo(message.info) }),
       parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
         if (part.type === "text") {
           const mapped = textPartToUIPart(part);
@@ -200,7 +199,7 @@ export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "me
             type: "reasoning",
             text: getTextPartValue(part),
             state: "done" as const,
-            providerMetadata: { opencode: { partId: part.id } },
+            providerMetadata: reasoningProviderMetadata(part),
           }];
         }
         if (part.type === "file") {
@@ -239,6 +238,7 @@ export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "me
     snapshotMessageCache.set(message, result);
     return result;
   });
-  snapshotMessagesCache.set(snapshot.messages, messages);
-  return messages;
+  const ordered = orderMessageParents(messages);
+  snapshotMessagesCache.set(snapshot.messages, ordered);
+  return ordered;
 }
