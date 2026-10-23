@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@openwork/types": "workspace:*",
-    "next": "16.3.8",
+    "next": "15.5.28",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

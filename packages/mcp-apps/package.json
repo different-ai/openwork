@@ -21,7 +21,7 @@
     "@openwork/types": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/react": "19.2.14",

@@ -42,7 +42,7 @@
     "@openwork/workbook": "workspace:*",
     "aws4fetch": "1.0.20",
     "hono": "4.13.11",
-    "zod": "^4.3.6",
+    "zod": "^4.6.6",
     "axios": "1.20.0"
   },
   "devDependencies": {

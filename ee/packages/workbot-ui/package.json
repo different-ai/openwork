@@ -26,7 +26,7 @@
     "@openwork/workbook": "workspace:*",
     "lucide-react": "^0.577.0",
     "marked": "^17.0.1",
-    "zod": "^4.3.6",
+    "zod": "^4.6.6",
     "@openwork/documents": "workspace:*"
   },
   "peerDependencies": {
