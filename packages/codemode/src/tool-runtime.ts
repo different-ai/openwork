@@ -78,6 +78,7 @@ export type ToolDescription = {
   readonly path: string
   readonly description: string
   readonly signature: string
+  readonly metadata?: Readonly<Record<string, Schema.Json>>
 }
 
 export type SafeObject = Record<string, unknown>
@@ -97,6 +98,7 @@ const SearchItem = Schema.Struct({
   path: Schema.String,
   description: Schema.String,
   signature: Schema.String,
+  metadata: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
 })
 const SearchOutput = Schema.Struct({
   items: Schema.Array(SearchItem),
@@ -125,6 +127,7 @@ export class ToolRuntimeError extends Error {
   constructor(
     readonly kind:
       | "UnknownTool"
+      | "ToolUnavailable"
       | "InvalidToolInput"
       | "InvalidToolOutput"
       | "InvalidDataValue"
@@ -330,6 +333,7 @@ const describeDefinition = <R>(path: string, definition: Definition<R>): ToolDes
   path,
   description: definition.description,
   signature: `${toolExpression(path)}(input: ${inputTypeScript(definition, true)}): Promise<${outputTypeScript(definition, true)}>`,
+  ...(definition.metadata ? { metadata: definition.metadata } : {}),
 })
 
 const visibleDefinitions = <R>(tools: HostTools<R>) =>
@@ -692,6 +696,10 @@ const resolve = <R>(tools: HostTools<R>, path: ReadonlyArray<string>): HostTool<
 
   if (typeof value !== "function" && !isDefinition(value)) {
     throw new ToolRuntimeError("UnknownTool", `Tool '${path.join(".")}' is not callable.`)
+  }
+
+  if (isDefinition(value) && value.unavailableReason !== undefined) {
+    throw new ToolRuntimeError("ToolUnavailable", value.unavailableReason)
   }
 
   return value
