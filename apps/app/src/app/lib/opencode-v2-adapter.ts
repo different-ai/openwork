@@ -40,6 +40,7 @@ import {
   type BackgroundShellNotice,
   type EngineShell,
 } from "./background-shell-tasks";
+import { forgetV2LiveToolProgress, rememberV2LiveToolProgress, restoreV2LiveToolProgress } from "./v2-live-tool-progress";
 
 type RequestOptions = {
   signal?: AbortSignal;
@@ -734,7 +735,12 @@ function mapV2ToolPart(
   const start = readNumber(time, "ran") ?? created;
   const end = readNumber(time, "completed") ?? start;
   const title = readString(state, "title") ?? tool;
-  const metadata = toolMetadata(sourceTool, readRecord(state, "metadata") ?? {}, sessionID, messageID, callID, taskSessions);
+  // The pinned runtime omits running metadata from history. Restore only an
+  // exact observed invocation; terminal/native metadata remains authoritative.
+  const identity = { scope: taskSessions.scope, sessionID, messageID, callID };
+  const restored = sourceTool === "execute" && status === "running" ? restoreV2LiveToolProgress(identity) : {};
+  if (sourceTool === "execute" && (status === "completed" || status === "error")) forgetV2LiveToolProgress(identity);
+  const metadata = toolMetadata(sourceTool, { ...restored, ...readRecord(state, "metadata") }, sessionID, messageID, callID, taskSessions);
   // SDK compatibility requires a numeric time pair. Do not present its
   // fallback as an observed duration when old history lacks native timing.
   if (readNumber(time, "ran") === undefined || ((status === "completed" || status === "error") && readNumber(time, "completed") === undefined)) {
@@ -1313,6 +1319,8 @@ function pendingToolPart(stream: ToolStream): ToolPart {
 }
 
 function runningToolPart(stream: ToolStream, start: number, taskSessions: TaskSessionAssociations): ToolPart {
+  if (stream.tool === "execute") rememberV2LiveToolProgress({ scope: taskSessions.scope,
+    sessionID: stream.sessionID, messageID: stream.messageID, callID: stream.callID }, stream.metadata);
   return {
     id: stream.partID,
     messageID: stream.messageID,
@@ -1851,6 +1859,7 @@ function translateV2EventInternal(
       const refresh = refreshMissingV2Message(value, properties, state, "tool") ?? [];
       return background.length || refresh.length ? [...refresh, ...background] : null;
     }
+    forgetV2LiveToolProgress({ scope: state.taskSessions.scope, sessionID: stream.sessionID, messageID: stream.messageID, callID: stream.callID });
     updateToolStreamMetadata(stream, properties);
     const part = completedToolPart(stream, properties, toolEventTimestamp(value, properties), state.taskSessions);
     state.tools.set(toolStreamKey(stream.sessionID, stream.callID), null);
@@ -1864,6 +1873,7 @@ function translateV2EventInternal(
   if (type === "session.tool.failed" || type === "session.next.tool.failed") {
     const stream = resolveToolStream(properties, state);
     if (!stream) return refreshMissingV2Message(value, properties, state, "tool");
+    forgetV2LiveToolProgress({ scope: state.taskSessions.scope, sessionID: stream.sessionID, messageID: stream.messageID, callID: stream.callID });
     updateToolStreamMetadata(stream, properties);
     const part = failedToolPart(stream, properties, toolEventTimestamp(value, properties), state.taskSessions);
     state.tools.set(toolStreamKey(stream.sessionID, stream.callID), null);
