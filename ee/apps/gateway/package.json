@@ -25,7 +25,7 @@
     "@sentry/node": "^10.65.0",
     "dotenv": "^16.4.5",
     "hono": "4.13.11",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@ai-sdk/mistral": "3.0.51",

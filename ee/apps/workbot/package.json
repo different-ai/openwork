@@ -33,7 +33,7 @@
     "hono": "4.13.11",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "zod": "^4.3.6",
+    "zod": "^4.6.6",
     "@modelcontextprotocol/sdk": "^1.31.0"
   },
   "devDependencies": {

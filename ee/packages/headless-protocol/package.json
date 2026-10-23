@@ -29,7 +29,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "zod": "^4.3.6",
+    "zod": "^4.6.6",
     "@openwork/types": "workspace:*"
   },
   "devDependencies": {
