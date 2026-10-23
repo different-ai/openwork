@@ -11,6 +11,7 @@ export async function denSignInOrganizationDelay(seed: Seed) {
   let revoked = false;
   let sessionRequests = 0;
   let organizationRequests = 0;
+  let appOrigin: string | undefined;
   const pendingSessions = new Set<ServerResponse>();
   const pendingOrganizations = new Set<ServerResponse>();
   const organization = { id: "org_startup", slug: "startup", name: "Recovered workspace", role: "member" };
@@ -25,8 +26,10 @@ export async function denSignInOrganizationDelay(seed: Seed) {
     orgs: [organization], activeOrgId: organization.id, activeOrgSlug: organization.slug,
   });
   const server = createServer((request, response) => {
-    response.setHeader("access-control-allow-origin", request.headers.origin ?? "http://fixture");
-    response.setHeader("access-control-allow-credentials", "true");
+    if (appOrigin && request.headers.origin === appOrigin) {
+      response.setHeader("access-control-allow-origin", appOrigin);
+      response.setHeader("access-control-allow-credentials", "true");
+    }
     response.setHeader("access-control-allow-headers", "authorization, content-type, x-openwork-org-id, x-openwork-legacy-org-id");
     response.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
     if (request.method === "OPTIONS") { response.writeHead(204); response.end(); return; }
@@ -67,6 +70,7 @@ export async function denSignInOrganizationDelay(seed: Seed) {
       },
       den: { apiUrl: origin, webUrl: origin },
     });
+    appOrigin = new URL(app.webUrl).origin;
     let registration: Awaited<ReturnType<typeof addInitScript>> | undefined;
     resources.defer(async () => { await registration?.[Symbol.asyncDispose](); });
     return {
