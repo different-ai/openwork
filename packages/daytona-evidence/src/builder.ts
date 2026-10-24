@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
 import { EVIDENCE_KIND } from "./kinds.ts";
 import { readAsset } from "@openwork/freestyle/assets";
 import { checkoutRecipe } from "@openwork/freestyle/build-recipes";
@@ -11,6 +10,7 @@ import {
 import { DaytonaApi, DaytonaApiError, type Sandbox } from "./api.ts";
 import { LOCALHOST_RECIPE } from "./localhost.ts";
 import { boundedDiagnostic, inspectGuest, requireLocalEvidenceReady } from "./health.ts";
+import { buildBudget, builderIsStale, describeBuilder, minutes, progressReporter, type BuildBudget, type BuildClock, type BuildProgress } from "./build-budget.ts";
 
 /**
  * Daytona builds the same evidence world as Freestyle, with the same steps inside
@@ -59,6 +59,16 @@ export interface DaytonaBuildOptions {
   diagnostic?: (stage: string, log: string) => Promise<void>;
   /** The dev commit whose warm image to start from; defaults to the dev head. */
   imageSha?: string;
+  /**
+   * When this whole preparation must be over (clock ms), usually just inside
+   * the CI step's limit. Every wait stops early enough to print why and fail,
+   * instead of being cancelled with no output. Unset: each layer gets
+   * `BUILD_TIMING.defaultBudgetMs`.
+   */
+  deadline?: number;
+  clock?: BuildClock;
+  /** "Still waiting" lines: which layer, on what (builder, snapshot, script), and how long is left. */
+  progress?: (event: BuildProgress) => void;
 }
 
 export interface DaytonaEvidenceTemplate { name: string; runtimeFingerprint: string }
@@ -66,6 +76,9 @@ export interface DaytonaEvidenceTemplate { name: string; runtimeFingerprint: str
 /** Runs a build script as a transient systemd unit and polls its marker files; exec calls are short. */
 export async function runScript(api: DaytonaApi, sandbox: Sandbox, stage: string, script: string, options: DaytonaBuildOptions, deadlineMs = 25 * 60_000) {
   if (!/^[a-z-]+$/.test(stage)) throw new Error("Invalid build stage");
+  const budget = buildBudget(options);
+  const limitMs = budget.cap(deadlineMs);
+  const progress = progressReporter(budget, options.progress);
   const root = `${ROOT}/${stage}`;
   await api.execChecked(sandbox, `mkdir -p ${ROOT}`);
   await api.writeFile(sandbox, `${root}.sh`, `#!/bin/bash
@@ -79,18 +92,22 @@ ${script}
 touch ${root}.ready
 `);
   await api.execChecked(sandbox, `systemd-run --collect --unit=openwork-${stage} /bin/bash ${root}.sh`);
-  const deadline = Date.now() + deadlineMs;
-  while (Date.now() < deadline) {
-    const state = (await api.exec(sandbox, `if test -f ${root}.failed; then echo failed; elif test -f ${root}.ready; then echo ready; else echo building; fi`)).output.trim();
+  const deadline = budget.clock.now() + limitMs;
+  while (budget.clock.now() < deadline) {
+    // A short exec timeout keeps one stalled poll from running past the deadline.
+    const state = (await api.exec(sandbox, `if test -f ${root}.failed; then echo failed; elif test -f ${root}.ready; then echo ready; else echo building; fi`, 20)).output.trim();
     if (state === "ready") return;
     if (state === "failed") {
       await reportBuildFailure(api, sandbox, stage, options);
       throw new Error(`Daytona ${stage} failed. Private builder log: ${root}.log`);
     }
-    await delay(3_000);
+    progress({ stage, waiting: "script" });
+    await budget.clock.sleep(3_000);
   }
   await reportBuildFailure(api, sandbox, stage, options);
-  throw new Error(`Daytona ${stage} exceeded ${Math.round(deadlineMs / 60_000)} minutes`);
+  throw new Error(limitMs < deadlineMs
+    ? `Daytona ${stage} was still building when this job's preparation budget ran out (${minutes(limitMs)} of its ${minutes(deadlineMs)} limit)`
+    : `Daytona ${stage} exceeded ${Math.round(deadlineMs / 60_000)} minutes`);
 }
 
 async function reportBuildFailure(api: DaytonaApi, sandbox: Sandbox, stage: string, options: DaytonaBuildOptions) {
@@ -117,43 +134,63 @@ interface LayerInput {
   /** Save memory too (running processes). Otherwise files only, from a stopped VM. */
   withMemory: boolean;
   observe: ObserveBuild; labels?: Record<string, string>;
+  /** Deadline, clock, progress and diagnostic sink shared by the whole preparation. */
+  options?: DaytonaBuildOptions;
+  /** The build script's stage, whose private log a diagnosis classifies; defaults to `stage`. */
+  logStage?: string;
 }
 
 export async function ensureLayer(api: DaytonaApi, input: LayerInput): Promise<string> {
+  const options = input.options ?? {};
+  const budget = buildBudget(options);
+  const { clock } = budget;
+  const progress = progressReporter(budget, options.progress);
   const start = performance.now();
   const builderName = `ow-dy-build-${digest(input.name).slice(0, 24)}`;
-  const deadline = Date.now() + 45 * 60_000;
-  while (Date.now() < deadline) {
+  let waitingOn: { builder?: Sandbox; snapshot?: { name: string; state: string } } = {};
+  while (clock.now() < budget.waitUntil) {
     const existing = await api.getSnapshot(input.name);
     if (existing?.state === "active") {
       input.observe({ stage: input.stage, durationMs: Math.round(performance.now() - start), cacheHit: true });
       return existing.name;
     }
-    if (existing && !/error|fail/.test(existing.state)) { await api.waitForSnapshot(input.name); continue; }
+    if (existing && !/error|fail/.test(existing.state)) {
+      waitingOn = { snapshot: { name: existing.name, state: existing.state } };
+      progress({ stage: input.stage, waiting: "snapshot", snapshot: waitingOn.snapshot });
+      await clock.sleep(Math.min(3_000, budget.remaining()));
+      continue;
+    }
     if (existing) await api.deleteSnapshot(existing.id);
     const owner = await api.getSandbox(builderName);
     if (owner) {
       // Another build of this layer is running; wait for it. A stuck or dead builder is replaced.
-      const age = owner.createdAt ? Date.now() - Date.parse(owner.createdAt) : 0;
       if (owner.labels.kind !== BUILDER_KIND) throw new Error(`Refusing to reuse unrelated sandbox ${builderName}`);
-      if (["error", "build_failed", "stopped", "archived"].includes(owner.state) || age > 60 * 60_000) await api.deleteSandbox(owner.id);
-      else await delay(5_000);
+      if (builderIsStale(owner, clock.now())) await api.deleteSandbox(owner.id);
+      else {
+        waitingOn = { builder: owner };
+        progress({ stage: input.stage, waiting: "builder", builder: describeBuilder(owner, clock.now()) });
+        await clock.sleep(Math.min(5_000, budget.remaining()));
+      }
       continue;
     }
+    waitingOn = {};
     const parent = await input.parent();
+    if (clock.now() >= budget.waitUntil) break;
     let created: Sandbox;
     try {
-      created = await api.createSandbox({ name: builderName, snapshot: parent, labels: { ...input.labels, kind: BUILDER_KIND, layer: digest(input.name).slice(0, 24) },
+      created = await api.createSandbox({ name: builderName, snapshot: parent,
+        // The deadline tells other controllers when this one will have given up and deleted the builder.
+        labels: { ...input.labels, kind: BUILDER_KIND, layer: digest(input.name).slice(0, 24), deadline: String(budget.deadline) },
         // Polling keeps a live build active; a dead controller's builder stops, then is deleted.
         autoStopMinutes: 30, autoDeleteMinutes: 60 });
     } catch (error) {
       // Lost the race for the builder name; loop to wait for the winner.
-      if (error instanceof DaytonaApiError && (error.status === 409 || /already exists/i.test(error.message))) { await delay(2_000); continue; }
+      if (error instanceof DaytonaApiError && (error.status === 409 || /already exists/i.test(error.message))) { await clock.sleep(2_000); continue; }
       throw error;
     }
     let diagnosticSandbox = created;
     try {
-      const sandbox = await api.waitForSandbox(created.id, ["started"]);
+      const sandbox = await api.waitForSandbox(created.id, ["started"], budget.cap(5 * 60_000));
       diagnosticSandbox = sandbox;
       const prepareStart = performance.now();
       await input.prepare(sandbox);
@@ -162,10 +199,11 @@ export async function ensureLayer(api: DaytonaApi, input: LayerInput): Promise<s
       const snapshotStart = performance.now();
       if (!input.withMemory) {
         await api.stopSandbox(sandbox.id);
-        await api.waitForSandbox(sandbox.id, ["stopped"]);
+        await api.waitForSandbox(sandbox.id, ["stopped"], budget.cap(5 * 60_000));
       }
-      await api.snapshotSandbox(sandbox.id, input.name, input.withMemory);
-      await api.waitForSnapshot(input.name);
+      await api.snapshotSandbox(sandbox.id, input.name, input.withMemory, { timeoutMs: budget.cap(16 * 60_000),
+        now: () => clock.now(), sleep: (ms) => clock.sleep(ms) });
+      await waitForSnapshot(api, input.name, budget, input.stage, progress);
       input.observe({ stage: `${input.stage}-snapshot`, durationMs: Math.round(performance.now() - snapshotStart) });
       input.observe({ stage: input.stage, durationMs: Math.round(performance.now() - start), cacheHit: false });
       return input.name;
@@ -177,18 +215,53 @@ export async function ensureLayer(api: DaytonaApi, input: LayerInput): Promise<s
       await api.deleteSandbox(created.id).catch(() => undefined);
     }
   }
-  throw new Error(`Daytona ${input.stage} build timed out`);
+  // Out of budget while another controller held this layer: say on what, before the step is cancelled.
+  const message = await describeLayerTimeout(api, input, budget, waitingOn);
+  throw new Error(message);
+}
+
+/** Waits for a snapshot within the budget, reporting its state while it is saved. */
+async function waitForSnapshot(api: DaytonaApi, name: string, budget: BuildBudget, stage: string,
+  progress: ReturnType<typeof progressReporter>): Promise<void> {
+  await api.waitForSnapshot(name, budget.cap(20 * 60_000),
+    (snapshot) => progress({ stage, waiting: "snapshot", snapshot: { name, state: snapshot?.state ?? "missing" } }));
+}
+
+/**
+ * A bounded account of what this layer waited on when the budget ran out: the
+ * builder holding the lock (state, age, its controller's deadline, the commit
+ * it builds) and the classified tail of its private log, or the snapshot state.
+ */
+async function describeLayerTimeout(api: DaytonaApi, input: LayerInput, budget: BuildBudget,
+  waitingOn: { builder?: Sandbox; snapshot?: { name: string; state: string } }): Promise<string> {
+  const now = budget.clock.now();
+  const builder = waitingOn.builder ? describeBuilder(waitingOn.builder, now) : undefined;
+  const summary = { stage: input.stage, waitedMs: now - budget.started, budgetMs: budget.deadline - budget.started,
+    ...(builder ? { builder } : {}), ...(waitingOn.snapshot ? { snapshot: waitingOn.snapshot } : {}) };
+  const diagnostic = input.options?.diagnostic;
+  if (diagnostic) {
+    await boundedDiagnostic(async () => {
+      await diagnostic(`${input.stage}-wait`, JSON.stringify(summary));
+      if (waitingOn.builder) await reportBuildFailure(api, waitingOn.builder, input.logStage ?? input.stage, input.options ?? {});
+    });
+  }
+  const on = builder
+    ? `builder ${builder.name} (state ${builder.state}, ${builder.ageMs === null ? "age unknown" : `created ${minutes(builder.ageMs)} ago`}${builder.labels.devSha ?? builder.labels.sourceSha ? `, building ${(builder.labels.devSha ?? builder.labels.sourceSha ?? "").slice(0, 9)}` : ""}${builder.ownerDeadlineInMs === null ? "" : `, its controller gives up in ${minutes(builder.ownerDeadlineInMs)}`})`
+    : waitingOn.snapshot ? `snapshot ${waitingOn.snapshot.name} (${waitingOn.snapshot.state})` : "the provider";
+  return `Daytona ${input.stage} was not ready within this job's ${minutes(budget.deadline - budget.started)} preparation budget; still waiting on ${on}. The other build continues; rerun once it finishes.`;
 }
 
 /** Plain Ubuntu at our largest VM size, with Node 24. Built once. */
 export async function ensureBase(api: DaytonaApi, options: DaytonaBuildOptions = {}): Promise<string> {
   const observe = options.observe ?? (() => {});
   const plain = `${DAYTONA_BASE_SNAPSHOT}-plain`;
-  return ensureLayer(api, { name: DAYTONA_BASE_SNAPSHOT, stage: "daytona-base", observe, withMemory: false,
+  return ensureLayer(api, { name: DAYTONA_BASE_SNAPSHOT, stage: "daytona-base", observe, withMemory: false, options,
     parent: async () => {
       const existing = await api.getSnapshot(plain);
-      if (!existing) await api.createImageSnapshot({ name: plain, image: "ubuntu:24.04", ...VM_SIZE });
-      await api.waitForSnapshot(plain);
+      const budget = buildBudget(options);
+      if (!existing) await api.createImageSnapshot({ name: plain, image: "ubuntu:24.04", ...VM_SIZE },
+        { timeoutMs: budget.cap(16 * 60_000), now: () => budget.clock.now(), sleep: (ms) => budget.clock.sleep(ms) });
+      await waitForSnapshot(api, plain, budget, "daytona-base", progressReporter(budget, options.progress));
       return plain;
     },
     prepare: (sandbox) => runScript(api, sandbox, "daytona-base", `${BASE_RECIPE}\n${SLIM_RECIPE}`, options),
@@ -201,7 +274,7 @@ export async function ensureImage(api: DaytonaApi, devSha: string, options: Dayt
   const entries = devEntries ?? await sourceTree(devSha, options.sourceFetch);
   return ensureLayer(api, {
     name: `${DAYTONA_IMAGE_PREFIX}${digest(BASE_RECIPE + EVIDENCE_TOOLS_RECIPE + EVIDENCE_DEPENDENCIES_RECIPE + LOCALHOST_RECIPE + dependencyFingerprint(entries))}`,
-    stage: "daytona-image", observe: options.observe ?? (() => {}), withMemory: false, labels: { devSha },
+    stage: "daytona-image", observe: options.observe ?? (() => {}), withMemory: false, labels: { devSha }, options,
     parent: () => ensureBase(api, options),
     prepare: (sandbox) => runScript(api, sandbox, "daytona-image", `${EVIDENCE_TOOLS_RECIPE}\n${checkoutRecipe(devSha)}\n${EVIDENCE_DEPENDENCIES_RECIPE}\n${SLIM_RECIPE}\n${LOCALHOST_RECIPE}\ndf -h /`, options),
   });
@@ -249,6 +322,7 @@ async function buildEvidenceWorld<Result>(sha: string, api: DaytonaApi, options:
   const state: { mode: "fast" | "full"; restart: string[] } = { mode: "full", restart: [] };
   let allowFast = true;
   const build = () => buildLayer({ name: templateName(runtimeFingerprint), stage: "daytona-world", observe, withMemory: true, labels: { sourceSha: sha },
+    options, get logStage() { return state.mode === "fast" ? "evidence-world-fast" : "evidence-world"; },
     parent: async () => {
       const devSha = await devShaPromise;
       const devEntries = (await devEntriesPromise) ?? entries;
@@ -349,7 +423,7 @@ export async function prepareWorldLayer(api: DaytonaApi, input: LayerInput, sour
     labels: { kind: EVIDENCE_KIND, sourceSha }, autoStopMinutes: 30, autoDeleteMinutes: 0 });
   let diagnosticSandbox = created;
   try {
-    const sandbox = await api.waitForSandbox(created.id, ["started"]);
+    const sandbox = await api.waitForSandbox(created.id, ["started"], buildBudget(input.options ?? {}).cap(5 * 60_000));
     diagnosticSandbox = sandbox;
     const prepareStart = performance.now();
     await input.prepare(sandbox);

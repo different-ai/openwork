@@ -229,14 +229,16 @@ export class DaytonaApi {
     catch (error) { if (error instanceof DaytonaApiError && error.status === 404) return null; throw error; }
   }
 
-  async waitForSnapshot(name: string, timeoutMs = 20 * 60_000): Promise<Snapshot> {
+  /** `onPending` sees each poll that is not done yet, for progress output. */
+  async waitForSnapshot(name: string, timeoutMs = 20 * 60_000, onPending?: (snapshot: Snapshot | null) => void): Promise<Snapshot> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const snapshot = await this.getSnapshot(name);
       if (snapshot?.state === "active") return snapshot;
       if (snapshot && /error|fail/.test(snapshot.state)) throw new Error(`Daytona snapshot ${name} is ${snapshot.state}: ${snapshot.errorReason ?? "no reason given"}`);
-      if (Date.now() > deadline) throw new Error(`Daytona snapshot ${name} is still ${snapshot?.state ?? "missing"}`);
-      await delay(3_000);
+      if (Date.now() > deadline) throw new Error(`Daytona snapshot ${name} is still ${snapshot?.state ?? "missing"} after ${Math.round(timeoutMs / 1000)}s`);
+      onPending?.(snapshot);
+      await delay(Math.max(0, Math.min(3_000, deadline - Date.now())));
     }
   }
 
