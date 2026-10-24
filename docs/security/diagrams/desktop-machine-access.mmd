@@ -1,0 +1,30 @@
+flowchart TB
+  PERSON["User + administrator\nWorkspace, approvals, managed policy"]
+  subgraph PC["User PC · same OS user / filesystem / kernel · NO VM isolation"]
+    SHELL["Electron shell\nRenderer isolation is NOT\nan agent sandbox"]
+    POLICY["Harness + effective org rules\nV2 engine permission hook; v1 differs\nLEGACY feature-policy enforcement OFF"]
+    ENGINE["OpenCode agent / tools\nReads, edits, executes, uses network\nWith effective policy / approvals"]
+    ROOT["Selected workspace\nFile-route root / path checks\nFiles + session state on local disk"]
+    OUTSIDE["Other user-accessible files\nOutside-folder permission depends\non engine / effective configuration"]
+    PROC["Allowed shell / plugins / local MCP\nNative code as logged-in user\nApproval is NOT OS containment"]
+    BROWSER["Built-in browser · separate native checks\nVerified navigation / host rules\nNOT a machine-wide firewall"]
+    OS["Independent endpoint controls\nOS ACLs · EDR · executable allowlist\nCorporate firewall / proxy / CA"]
+  end
+  NET["External hosts\nInference context · MCP / SaaS · web\nCommand-dependent egress"]
+
+  PERSON -->|"Configure"| SHELL
+  SHELL -->|"Effective rules"| POLICY
+  POLICY -->|"Native rules + v2 org allow / ask / deny\nNot a universal lockdown"| ENGINE
+  ENGINE -->|"Read / edit tools"| ROOT
+  ENGINE -.->|"Configured permission\nNOT always a prompt"| OUTSIDE
+  ENGINE -->|"If allowed"| PROC
+  ENGINE -->|"If allowed"| BROWSER
+  PROC -.->|"OS-user reach"| OUTSIDE
+  PROC -->|"Tool-dependent traffic"| NET
+  BROWSER -->|"Allowed web requests"| NET
+  ENGINE -->|"Inference / MCP"| NET
+  OS ---|"Separate enforcement"| PROC
+  OS --- BROWSER
+
+  classDef caution fill:#fff5dc,stroke:#a66b00,color:#513700;
+  class OUTSIDE,PROC caution;
