@@ -845,6 +845,25 @@ export function AuthPanel({
               {formBusy ? "Working..." : "Sign in"}
               {!formBusy ? <ArrowRight className="h-4 w-4" /> : null}
             </button>
+            {showSocialAuth && socialProviders.length > 0 ? (
+              <>
+                <div className="den-divider" aria-hidden="true">
+                  <span>or</span>
+                </div>
+                {socialProviders.includes("google") ? (
+                  <SocialButton onClick={() => void beginSocialAuth("google")} disabled={formBusy}>
+                    <GoogleLogo />
+                    <span>Sign in with Google</span>
+                  </SocialButton>
+                ) : null}
+                {socialProviders.includes("github") ? (
+                  <SocialButton onClick={() => void beginSocialAuth("github")} disabled={formBusy}>
+                    <GitHubLogo />
+                    <span>Sign in with GitHub</span>
+                  </SocialButton>
+                ) : null}
+              </>
+            ) : null}
           </form>
         ) : null}
 
