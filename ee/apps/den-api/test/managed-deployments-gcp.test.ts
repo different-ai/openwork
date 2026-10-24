@@ -4,6 +4,7 @@ import { createHash } from "node:crypto"
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { test } from "node:test"
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose"
 import { cloudShellCommand, enrollmentAudience, gcpBundleUrlSchema, heartbeatAudience, serviceAccountEmail, serviceAccountName, verifyGcpIdentity, type GcpLaunch } from "@openwork/managed-deployments/gcp"
@@ -92,6 +93,30 @@ test("challenge, deployment, run, origin and exact health body are cryptographic
   await assert.rejects(verify(healthToken, healthAudience, email))
 })
 
+test("distinct valid heartbeat proofs can share an iat second; replay ordering stays strict", async () => {
+  const healthEmail = serviceAccountEmail(deploymentId, target.projectId, "health")
+  async function measured(nonce: string, iat: number, at = now) {
+    const raw = JSON.stringify({ nonce, checks: [{ id: "api_health", status: "ok" }] })
+    const aud = heartbeatAudience(origin, deploymentId, createHash("sha256").update(raw).digest("hex"))
+    const idToken = await token({ aud, email: healthEmail, iat, exp: iat + 3600 })
+    const signedAt = await verifyGcpIdentity({ idToken, audience: aud, email: healthEmail, now: at, keyResolver })
+    return { idToken, aud, signedAt }
+  }
+  const first = await measured("a".repeat(32), issued)
+  const simultaneous = await measured("b".repeat(32), issued)
+  assert.notEqual(first.idToken, simultaneous.idToken)
+  assert.notEqual(first.aud, simultaneous.aud)
+  assert.equal(first.signedAt.getTime(), simultaneous.signedAt.getTime())
+  // The server transaction deliberately rejects >=, including identical proof
+  // replays and genuinely distinct same-second measurements. Do not weaken it.
+  const stale = (incoming: Date) => first.signedAt >= incoming
+  assert.equal(stale(simultaneous.signedAt), true)
+  assert.equal(stale(first.signedAt), true)
+  assert.equal(stale((await measured("c".repeat(32), issued - 1)).signedAt), true)
+  const fresh = await measured("d".repeat(32), issued + 1, new Date(now.getTime() + 1000))
+  assert.equal(stale(fresh.signedAt), false)
+})
+
 test("health nonce is optional for AWS compatibility but bounded to exactly 32 lowercase hex characters", () => {
   const report = { checks: [{ id: "api_health", status: "ok" }] }
   assert.equal(healthReportSchema.safeParse(report).success, true)
@@ -145,7 +170,7 @@ process.exit(crypto.createHash("sha256").update(fs.readFileSync(match[2])).diges
 `, { mode: 0o700 })
 }
 
-type ArchiveMutation = { name?: string; type?: string; link?: string; manifest?: string }
+type ArchiveMutation = { name?: string; type?: string; link?: string; manifest?: string; sharedModule?: boolean; extraFile?: string; omittedModuleFile?: string }
 const fixtureArchive = String.raw`
 import hashlib, io, json, sys, tarfile
 mutation = json.loads(sys.argv[2])
@@ -154,6 +179,13 @@ files = {"infra/managed-deployments/gcp/" + name: data for name, data in {
     "runner/install.py": installer, "runner/runner.py": b"# runner\n",
     "health/health_agent.py": b"# health\n", "terraform/main.tf": b"# terraform\n",
     "terraform/.terraform.lock.hcl": b"# lock\n"}.items()}
+module = "infra/terraform/modules/openwork-gcp-cloud-run/"
+if mutation.get("sharedModule"):
+    files.update({module + name: b"# shared fixture\\n" for name in ("main.tf", "cloudrun.tf", "database.tf", "lb.tf", "variables.tf", "versions.tf", "outputs.tf")})
+if mutation.get("extraFile"):
+    files[mutation["extraFile"]] = b"# not allowed\\n"
+if mutation.get("omittedModuleFile"):
+    files.pop(module + mutation["omittedModuleFile"])
 manifest = {"provider": "gcp", "version": "1.0.0", "protocolVersion": 1,
             "files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
 if mutation.get("manifest") == "hash":
@@ -200,6 +232,54 @@ test("valid checked Cloud Shell bundle executes the actual packaged installer pa
     assert.ok(executed.installer.endsWith("/infra/managed-deployments/gcp/runner/install.py"))
     assert.throws(() => readFileSync(executed.installer), "temporary bundle is cleaned up after successful execution")
   })
+})
+
+test("Den's trusted extraction accepts the real shared-module installer bundle", () => {
+  const dir = mkdtempSync(join(tmpdir(), "openwork-gcp-real-bundle-"))
+  try {
+    const bin = join(dir, "bin")
+    mkdirSync(bin)
+    // Registry metadata alone is mocked. The production builder packages the
+    // real source bytes, and the unmodified Den-generated extractor checks them.
+    writeFileSync(join(bin, "docker"), `#!${process.execPath}
+const ref = process.argv.at(-1);
+const digest = "sha256:" + (ref.includes("openwork-den-api") ? "a" : ref.includes("openwork-den-web") ? "b" : "c").repeat(64);
+console.log(JSON.stringify({ Descriptor: { digest, platform: { os: "linux", architecture: "amd64" } }, SchemaV2Manifest: { config: { digest: "sha256:" + "d".repeat(64) } } }));
+`, { mode: 0o700 })
+    const pins = join(dir, "pins.json")
+    writeFileSync(pins, JSON.stringify({ den_api: "ghcr.io/different-ai/openwork-den-api@sha256:" + "a".repeat(64), den_web: "ghcr.io/different-ai/openwork-den-web@sha256:" + "b".repeat(64) }))
+    const root = fileURLToPath(new URL("../../../../", import.meta.url))
+    execFileSync(process.execPath, [join(root, "infra/managed-deployments/tools/build-release.mjs"), "gcp", "1.0.0", dir, "--image-pins", pins], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, stdio: "pipe",
+    })
+    const bundle = join(dir, "bundle.tar.gz")
+    const fixture = { ...launch, release: { ...launch.release, bundleSha256: createHash("sha256").update(readFileSync(bundle)).digest("hex") } }
+    const command = cloudShellCommand(fixture)
+    const extraction = /<<'OPENWORK_SAFE_EXTRACT'\n([\s\S]*?)\nOPENWORK_SAFE_EXTRACT\n/.exec(command)?.[1]
+    assert.ok(extraction)
+    const destination = join(dir, "extracted")
+    execFileSync("python3", ["-c", extraction, bundle, destination, fixture.release.version], { stdio: "pipe" })
+    const module = "infra/terraform/modules/openwork-gcp-cloud-run"
+    for (const name of ["main.tf", "cloudrun.tf", "database.tf", "lb.tf", "variables.tf", "versions.tf", "outputs.tf"]) {
+      assert.deepEqual(readFileSync(join(destination, module, name)), readFileSync(join(root, module, name)))
+    }
+    assert.deepEqual(readFileSync(join(destination, "infra/managed-deployments/gcp/terraform/moved.tf")), readFileSync(join(root, "infra/managed-deployments/gcp/terraform/moved.tf")))
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test("trusted extraction refuses other modules, nested executables and incomplete shared modules", () => {
+  for (const mutation of [
+    { sharedModule: true, extraFile: "infra/terraform/modules/openwork-aws-ecs/main.tf" },
+    { sharedModule: true, extraFile: "infra/terraform/modules/openwork-gcp-cloud-run-evil/main.tf" },
+    { sharedModule: true, extraFile: "infra/terraform/modules/openwork-gcp-cloud-run/tests/main.tf" },
+    { sharedModule: true, extraFile: "infra/terraform/modules/openwork-gcp-cloud-run/execute.py" },
+    { sharedModule: true, omittedModuleFile: "database.tf" },
+  ]) {
+    withCommandFixture(mutation, (command, env, marker) => {
+      assert.throws(() => execFileSync("bash", ["-c", command], { env, stdio: "pipe" }), /unexpected executable|incomplete shared GCP module/)
+      assert.throws(() => readFileSync(marker))
+    })
+  }
 })
 
 test("digest-matching malicious archives fail before executing their installer", () => {

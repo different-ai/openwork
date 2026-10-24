@@ -5,6 +5,7 @@ on:
     paths:
       - "infra/managed-deployments/**"
       - "infra/terraform/modules/openwork-aws-ecs/**"
+      - "infra/terraform/modules/openwork-gcp-cloud-run/**"
       - "packages/managed-deployments/**"
   workflow_dispatch:
     inputs:

@@ -15,7 +15,7 @@ resource "google_compute_global_address" "lb" {
   count = local.create_lb_address ? 1 : 0
 
   project = var.project_id
-  name    = "${var.name}-den-lb"
+  name    = var.managed_legacy ? "${var.name}-ip" : "${var.name}-den-lb"
   labels  = var.labels
 }
 
@@ -23,7 +23,7 @@ resource "google_compute_region_network_endpoint_group" "run" {
   for_each = local.lb_services
 
   project               = var.project_id
-  name                  = "${var.name}-den-${each.key}"
+  name                  = var.managed_legacy ? "${var.name}-${each.key}-neg" : "${var.name}-den-${each.key}"
   region                = var.region
   network_endpoint_type = "SERVERLESS"
 
@@ -36,9 +36,9 @@ resource "google_compute_backend_service" "run" {
   for_each = local.lb_services
 
   project               = var.project_id
-  name                  = "${var.name}-den-${each.key}"
+  name                  = var.managed_legacy ? "${var.name}-${each.key}-backend" : "${var.name}-den-${each.key}"
   load_balancing_scheme = "EXTERNAL_MANAGED"
-  protocol              = "HTTPS"
+  protocol              = var.managed_legacy ? "HTTP" : "HTTPS"
 
   backend {
     group = google_compute_region_network_endpoint_group.run[each.key].id
@@ -49,7 +49,7 @@ resource "google_compute_url_map" "https" {
   count = local.create_lb ? 1 : 0
 
   project         = var.project_id
-  name            = "${var.name}-den"
+  name            = var.managed_legacy ? "${var.name}-routes" : "${var.name}-den"
   default_service = google_compute_backend_service.run["web"].id
 
   host_rule {
@@ -77,7 +77,7 @@ resource "google_compute_managed_ssl_certificate" "this" {
   count = local.create_lb_cert ? 1 : 0
 
   project = var.project_id
-  name    = "${var.name}-den"
+  name    = var.managed_legacy ? "${var.name}-tls" : "${var.name}-den"
 
   managed {
     domains = [var.domain_name, local.api_host]
@@ -88,7 +88,7 @@ resource "google_compute_target_https_proxy" "this" {
   count = local.create_lb ? 1 : 0
 
   project          = var.project_id
-  name             = "${var.name}-den"
+  name             = var.managed_legacy ? "${var.name}-https" : "${var.name}-den"
   url_map          = google_compute_url_map.https[0].id
   ssl_certificates = local.create_lb_cert ? [google_compute_managed_ssl_certificate.this[0].id] : var.ssl_certificate_ids
 }
@@ -97,7 +97,7 @@ resource "google_compute_global_forwarding_rule" "https" {
   count = local.create_lb ? 1 : 0
 
   project               = var.project_id
-  name                  = "${var.name}-den-https"
+  name                  = var.managed_legacy ? "${var.name}-https" : "${var.name}-den-https"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   ip_address            = local.lb_ip
   port_range            = "443"

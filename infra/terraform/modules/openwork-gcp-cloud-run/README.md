@@ -75,6 +75,7 @@ Get the setup code directly from Secret Manager, without logging it, using the `
 | `create_image_mirror` | `true` (not used when both custom images are supplied) |
 | `allow_mutable_image_tags` | `false`: digest pinning is the only default; explicit tag opt-in is not recommended or contract-conformant |
 | `service_account_email`, `grant_iam_roles` | Empty creates an identity; grants default `true` |
+| `managed_legacy`, `managed_maintenance`, `web_service_account_email` | Managed installer only: defaults `false`, `false`, empty; preserve legacy names/generators and a separate unprivileged web identity; keep disabled until verified API-only promotion |
 | `deletion_protection` | `true` for database, services and job; explicitly disable for disposable tests |
 | `domain_name`, `api_domain_name` | Empty: HTTPS run.app; custom API default `api.<domain_name>` |
 | `ssl_certificate_ids`, `load_balancer_ip_address` | `[]`, empty: create managed cert and global IP |
@@ -120,6 +121,19 @@ Existing Cloud SQL: `create_database = false`, `cloud_sql_connection_name = "PRO
 Existing `network`/`subnetwork` enable Direct VPC egress for services and job; `ALL_TRAFFIC` needs Cloud NAT. Existing certificates and a reserved global IP can be reused. Custom domain certificates become active after both hostnames resolve to `load_balancer_ip`; HTTP redirects to HTTPS. `restrict_ingress_to_load_balancer = true` disables direct run.app ingress.
 
 ## Upgrade notes
+
+The managed Google Cloud installer consumes this module with an explicit
+`managed_legacy` profile: old physical names, 48-character generators,
+state-backed secrets, bootstrap-owned Cloud SQL IAM, and a separate web identity
+without database/secret access. It passes MySQL 8.0 explicitly; this does not
+change the direct 8.4/write-only defaults. `managed_maintenance` holds services at
+manual zero through migration and API-only revision preparation, before the
+managed runner verifies traffic and separately restores autoscaling. Direct
+users should leave both flags off. Managed compatibility requires explicit
+legacy secrets and a web identity; new optional generated SMTP/Resend secrets
+are not part of that profile. See the [managed installer guide](../../../managed-deployments/gcp/README.md)
+for address moves, customer re-approval, grant scope, maintenance and live gates.
+The offline managed checks are not a new live certification of this module.
 
 **Database disk default: 10 → 20 GB.** Existing direct users who omitted
 `database.disk_size_gb` will see an in-place storage increase in their next plan.

@@ -155,6 +155,24 @@ changes require explicit operator approval.
 
 ## Google Cloud (GCP)
 
+The managed installer uses the shared Cloud Run module with explicit legacy
+naming and state-backed secrets. Existing and fresh managed installs stay on
+**MySQL 8.0**; the direct module default remains 8.4. No major database upgrade or
+secret rotation is part of adoption. Google provider 6→8 compatibility still
+requires the real isolated update proof.
+
+**Updates require customer re-approval and a maintenance window.** Bootstrap adds
+one deployment-specific custom role containing only `monitoring.timeSeries.list`
+(the approving administrator needs custom-role creation permission). The runner
+clears traffic tags, disables and observes the drain of only the two owned
+services, runs one native migration, prepares API-only revisions while disabled,
+then verifies actual latest-ready traffic before separately restoring autoscaling.
+Missing/stale drain evidence or a failed/unknown migration leaves maintenance in
+place; inspect before retrying. No legacy revision/tag rollback is automatic.
+This path and its metric/readiness observations need a live test and review by
+the managed-deployments owners before merge or publication. Use a genuinely newer
+isolated test installer for Den Update; same-version protection stays unchanged.
+
 Use a dedicated billing-enabled project, a supported region, and an already
 public authoritative Cloud DNS zone for the chosen address. The form requires
 both project ID and number, zone name, domain, first administrator email, and

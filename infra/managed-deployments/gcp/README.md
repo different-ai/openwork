@@ -11,8 +11,11 @@ secret values, or the administrator bootstrap code.
 ## Release and launch contract
 
 Package `runner/install.py`, `runner/runner.py`, `health/health_agent.py`,
-`terraform/**/*.tf`, `terraform/.terraform.lock.hcl`, and the existing
-`../contract/*.tf` in the checksummed release bundle, preserving repository paths.
+`terraform/*.tf`, `terraform/.terraform.lock.hcl`, `../contract/*.tf`, and every
+operational `.tf` in `infra/terraform/modules/openwork-gcp-cloud-run` in the
+checksummed release bundle, preserving repository paths. Tests/examples, state,
+plans and credentials are never packaged. The builder checks module-local file
+references against the payload, and extraction requires the complete module.
 `release.json` must contain `provider: "gcp"`, `version`, `protocolVersion: 1`,
 a `files` map of path to SHA-256, and an `images` inventory with exactly
 `den_api`, `den_web`, and `health`. Every image is a Linux/amd64 manifest pinned as
@@ -106,6 +109,40 @@ The health identity has read-only Cloud Run/SQL/certificate visibility and no
 secret accessor, DNS write, IAM write, or Terraform state access. Cloud Scheduler
 uses a separate identity scoped to invoke the health job.
 
+### Approving operator permissions (before bootstrap)
+
+The **signed-in Cloud Shell operator**, not the runner, performs bootstrap IAM
+changes. Project IAM Admin plus Role Administrator is **not sufficient**:
+project IAM policy and a service account's own IAM policy are different resources.
+The operator also needs `iam.serviceAccounts.setIamPolicy` (and
+`iam.serviceAccounts.getIamPolicy`) on the five deployment-owned service accounts,
+including the runner. Bootstrap grants the runner `roles/iam.serviceAccountUser`
+on runtime/web/health/scheduler and grants the approving operator
+`roles/iam.serviceAccountTokenCreator` on the runner. Those grants cannot be
+created merely with project-level `resourcemanager.projects.setIamPolicy`.
+
+Have the customer's administrator approve the following capabilities before
+running the command; use equivalent scoped custom grants where appropriate:
+
+| Operator operation | Required permission boundary / example role |
+| --- | --- |
+| Verify project and public DNS zone | Project read and `dns.managedZones.get` on the selected project/zone |
+| Enable the listed APIs | `serviceusage.services.enable` and supporting service/operation reads; Service Usage Admin (`roles/serviceusage.serviceUsageAdmin`) |
+| Create/list the five deployment service accounts | `iam.serviceAccounts.create` and `iam.serviceAccounts.list` on the project |
+| Set/read policies on those service accounts | **`iam.serviceAccounts.setIamPolicy` and `iam.serviceAccounts.getIamPolicy`**; Service Account Admin (`roles/iam.serviceAccountAdmin`) is an administrative example, scoped to the deployment accounts where possible |
+| Grant the documented project roles | `resourcemanager.projects.getIamPolicy` / `setIamPolicy`; Project IAM Admin (`roles/resourcemanager.projectIamAdmin`) |
+| Create or verify the one-permission drain role | `iam.roles.create`, `iam.roles.list`, `iam.roles.get`; Role Administrator (`roles/iam.roleAdmin`) is an administrative example; bootstrap does not update an existing role |
+| Create/verify the versioned private state bucket and grant object access | Bucket create/list/get/update and bucket get/set IAM-policy permissions on the selected project/bucket; Storage Admin (`roles/storage.admin`) is an administrative example |
+
+These are **operator prerequisites, not additional runner permissions**. Do not
+add Service Account Admin, Role Administrator or Project IAM Admin to the runner
+to recover an operator's failed bootstrap. An administrator must explicitly
+authorize any temporary operator grant; remove temporary grants after the
+approved work, preserving pre-existing access. A denial before ADC enrollment is
+not proof of a Terraform/runtime permission failure. Inspect the exact denied
+service-account resource and operator permissions before retrying normal approval;
+never patch service-account policies outside the approved bootstrap as a bypass.
+
 ## Runtime
 
 Cloud SQL MySQL 8 with backups and deletion protection; Secret Manager;
@@ -119,9 +156,63 @@ tags. After each pinned pull it verifies the local Linux/amd64 image and reposit
 digest, tags the inspected immutable local image ID, and pushes it. The resulting
 Artifact Registry manifest digest must equal the release's source digest before
 it can become a Terraform/Cloud Run input; mismatch fails closed, with no tag
-fallback. The API migration job runs **before** new service
-revisions are applied. Plans reject deletion/replacement of data-bearing
-resources, and Terraform lifecycle guards protect the database and secrets.
+fallback. The shared module's native `run_execution_token` runs the API
+migration job **once before** new service revisions are applied; the runner does
+not execute the job a second time. Failed/unknown migration outcomes block
+rollout; inspect the execution before any deliberate retry. Plans reject
+protected resource deletion/replacement, existing secret-version/generator
+updates, database-password changes and database-version changes. Cloud SQL keeps
+both deletion protections. Use the installer, not an unguarded raw apply/destroy.
+
+### Shared-module adoption and existing installs
+
+The managed root consumes `infra/terraform/modules/openwork-gcp-cloud-run` with
+explicit `managed_legacy=true` and `write_only_secrets=false`. **Managed secrets
+remain state-backed**, including fresh managed installs; protect historical and
+current GCS state. Direct module users retain their write-only defaults. Address
+moves preserve the database, user, secret containers/versions, services and load
+balancer; compatibility settings preserve their physical names and the existing
+48-character generators. Web retains its separate identity, without DB access or
+secret environment values. Bootstrap, DNS and health monitoring stay managed-only.
+
+**MySQL stays on 8.0 for existing and fresh managed installs in this adoption.**
+The direct module default remains 8.4. A managed major upgrade requires a separate
+owner-approved plan; this installer never silently upgrades an existing instance.
+The managed lock upgrades Google 6.49.0 to 8.7.0 and random 3.7.2 to 3.9.1, with
+Linux amd64 and macOS amd64/arm64 checksums. Synthetic state tests are not proof of
+a real Google 6→8 state refresh; the isolated live update must verify that.
+
+**Customer re-approval and maintenance are required.** The approving principal
+must be able to create the deployment's custom IAM role (`iam.roles.create`,
+and list/get roles on reuse). The runner's only additional grant is that custom
+role's single `monitoring.timeSeries.list` permission on the dedicated project;
+no monitoring viewer/admin, project-IAM administration or new web privileges.
+Cloud Monitoring does not scope this read to one service; the observer filters
+it to the two owned services. The existing Cloud Shell project-ID approval names
+this grant; do not silently update customer IAM outside that handoff.
+
+Under the retained deployment mutex, the runner clears traffic tags (tag-only
+revisions are not disabled by scale zero), disables both owned services and
+requires fresh explicit zero active **and idle** instance observations for every
+previously observed/routed revision. Missing, stale or incomplete observations
+are unknown, not zero. A timeout leaves maintenance enabled for inspection.
+Then it applies the migration and API-only revisions **still at manual zero**,
+verifies latest-created/latest-ready and all actual traffic belong to the new
+pinned revision, and only then separately restores autoscaling. Failed checks
+never automatically restore old revisions or tags. Manual jobs, independent
+controllers/deployers and manual rollback are unsupported while this installer
+owns the schema. The fence's real metric emission and disabled-revision readiness
+behavior are explicit live-test gates, not certified by mocks.
+
+Updates and retries remove Cloud Run revision tags on the OpenWork services;
+recreate any you need afterwards on the new API-only revisions.
+
+Before merging/rollout, the managed-deployments owners must review the grant and
+maintenance behavior, and an isolated Den must exercise a published legacy
+install → genuinely newer test installer Update → fresh install → destroy.
+Use reviewed `--image-pins` if testing a new installer label with existing
+application digests; never bypass Den's same-version rejection or publish mocked
+registry artifacts.
 
 The runner enrolls using `{"provider":"gcp","idToken":"..."}` with audience
 `API_ORIGIN/v1/managed-deployments/DEPLOYMENT/runs/RUN/enroll#CHALLENGE`.
@@ -141,16 +232,18 @@ and `email_verified`; no opaque self-reported identity is trusted.
 
 ## Limits / operator checks
 
-This is new infrastructure, not an existing GCP module (none exists in this
-checkout). It follows `packaging/cloud-run` rather than inventing a parallel app
-configuration. Gateway and automations are disabled in the initial profile.
+The installer adopts the shared GCP module's connector and migration contract,
+while explicitly retaining the managed naming, IAM and database compatibility
+profile. Gateway and automations are disabled in the initial profile.
 A published release must include Cloud SQL Unix-socket support. Public Cloud Run
 invocation is needed behind the external load balancer; ingress is restricted to
 `INTERNAL_LOAD_BALANCER`. Org policies may forbid public invocation or APIs,
 service-agent creation, IAM grants, or public IP Cloud SQL. Resolve those with
 customer administrators, never weaken policy automatically. Cloud SQL uses the
 authenticated connector and no authorized networks. DNS must already be
-authoritative, and CAA must allow Google's certificates. Certificate issuance
+authoritative. If your domain or a parent domain has CAA records, allow
+`pki.goog` (Google Trust Services) in the closest non-empty CAA record set,
+or the managed HTTPS certificate will not be issued. Certificate issuance
 can take 60 minutes; a failed run can be retried after correcting DNS/CAA.
 
 No cloud resources have been provisioned or releases published as part of
