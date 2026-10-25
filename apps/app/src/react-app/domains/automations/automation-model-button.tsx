@@ -41,6 +41,7 @@ export function AutomationModelButton(props: {
   model: AutomationModel
   options: readonly AutomationModelOption[]
   size?: "sm" | "default"
+  disabled?: boolean
   onClick: () => void
 }) {
   return (
@@ -48,6 +49,7 @@ export function AutomationModelButton(props: {
       id={props.id}
       type="button"
       variant="outline"
+      disabled={props.disabled}
       className={cn("w-full justify-between gap-2 font-normal", props.size === "sm" ? "h-8 px-2" : "h-10 px-2.5")}
       onClick={props.onClick}
     >
