@@ -8,6 +8,10 @@ import { projectCommandsDir } from "./workspace-files.js";
 import { validateCommandName, sanitizeCommandName } from "./validators.js";
 import { ApiError } from "./errors.js";
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function normalizeCommandFrontmatter(data: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(data).filter(([, value]) => value !== null && value !== undefined),
@@ -38,7 +42,17 @@ async function listCommandsInDir(dir: string, scope: "workspace" | "global"): Pr
     if (!entry.name.endsWith(".md")) continue;
     const filePath = join(dir, entry.name);
     const content = await readFile(filePath, "utf8");
-    const { data, body } = await repairLegacyCommandFile(filePath, content);
+    let data: Record<string, unknown>;
+    let body: string;
+    try {
+      ({ data, body } = await repairLegacyCommandFile(filePath, content));
+    } catch (error) {
+      console.warn("[openwork:commands] Skipping command file with invalid frontmatter", {
+        filePath,
+        error: errorMessage(error),
+      });
+      continue;
+    }
     const name = typeof data.name === "string" ? data.name : entry.name.replace(/\.md$/, "");
     try {
       validateCommandName(name);
