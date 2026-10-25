@@ -1100,6 +1100,13 @@
       "when": 1792782314399,
       "tag": "0157_sandbox_organizations",
       "breakpoints": true
+    },
+    {
+      "idx": 158,
+      "version": "5",
+      "when": 1792792725163,
+      "tag": "0158_restore_admin_permissions",
+      "breakpoints": true
     }
   ]
 }
