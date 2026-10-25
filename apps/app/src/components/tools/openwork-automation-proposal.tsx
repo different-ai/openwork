@@ -115,15 +115,17 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
   const modelLookupPending = providersQuery.data === undefined
     || (placement === "desktop" && runtimeProviders.data === undefined)
   const modelOptions = automationModelOptions(providers, availability)
-  const modelForSelection = selectedModel ?? proposal?.model ?? {
+  // Keep "no model proposed" undefined through resolution: Cloud and restricted
+  // Desktop placements must choose from models the member can actually run.
+  const modelForSelection = selectedModel ?? proposal?.model
+  const resolved = modelLookupFailed || modelLookupPending || !proposal
+    ? null
+    : resolveProposalModel(modelForSelection, providers, availability)
+  const pickerCurrentModel = resolved?.model ?? modelForSelection ?? {
     providerId: AUTOMATION_FREE_MODEL.providerId,
     modelId: AUTOMATION_FREE_MODEL.modelId,
     variant: null,
   }
-  const resolved = modelLookupFailed || modelLookupPending || !proposal
-    ? null
-    : resolveProposalModel(modelForSelection, providers, availability)
-  const pickerCurrentModel = resolved?.model ?? modelForSelection
   const pickerOptions = automationPickerOptions({
     options: modelOptions,
     catalog: availability.catalog ?? {},
