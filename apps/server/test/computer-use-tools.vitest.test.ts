@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { z } from "zod";
 import { server } from "../src/opencode-plugins/openwork-computer-use.js";
 
 test("the agent can discover computer tools on every desktop platform, including Linux VM clients", async () => {
@@ -26,4 +27,15 @@ test("a Windows PC is not offered app scripting", async () => {
     expect("computer_script" in plugin.tool).toBe(false);
     expect(plugin.tool.computer_open.description).toContain("Windows PC");
   } finally { Object.defineProperty(process, "platform", platform); }
+});
+
+test("no computer tool schema serializes $ref for providers", async () => {
+  // `z.json()` emits `{"$ref":"#/$defs/__schema0"}`, and model providers reject the dangling
+  // pointer; every tool in this plugin must serialize to a plain nested schema.
+  const plugin = await server();
+  const tools: Record<string, { args: z.ZodRawShape }> = plugin.tool;
+  for (const [name, def] of Object.entries(tools)) {
+    const schema = z.toJSONSchema(z.object(def.args));
+    expect(JSON.stringify(schema), `${name} emits $ref`).not.toContain("$ref");
+  }
 });

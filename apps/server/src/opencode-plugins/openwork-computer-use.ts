@@ -23,6 +23,9 @@ const action = z.discriminatedUnion("type", [
   z.object({ type: z.literal("drag"), path: z.array(point).min(2).max(32) }).strict(),
 ]);
 const intent = z.string().min(1).max(120).optional().describe("A few words the person watching sees on your cursor, such as 'opening the Export menu'.");
+// Any JSON value, spelled out: `z.json()` serializes to `{"$ref":"#/$defs/__schema0"}`, and model
+// providers reject the dangling pointer when the engine sends them this tool's schema.
+const jsonValue = z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.unknown()), z.record(z.string(), z.unknown())]);
 const contextSchema = z.object({ sessionID: z.string().min(1), abort: z.instanceof(AbortSignal).optional() });
 const nativeResult = z.object({
   isError: z.boolean().optional(),
@@ -75,10 +78,10 @@ const scriptResult = z.object({ ok: z.boolean().optional() }).passthrough();
 export const server = async () => ({ tool: {
   computer_run: {
     description: `Run a short JavaScript program against this chat's computer or built-in browser. The computerUse rollout enables the tools. Personal app windows require the person's choice in the Computer view; dedicated conversation cloud VM windows open automatically. Use tools.ui methods with object arguments: open({appId,mode?,purpose?}) or open({url}); observe({screenshot?}); exists({target}); find({target}); act({action}); click({target}); fill({target,text,append?}); fillForm({fields:[{target,text}]}); setChecked({target,checked}); select({target,option}); key({key,modifiers?}); findText({text}); menu({path:[names]}); waitFor({target,state?:"visible"|"hidden"|"enabled",timeoutMs?}); scroll({container?,direction?:"up"|"down",pages?}); scrollUntil({target,container?,direction?,maxPages?}). Targets contain role/name/text, exact=false for substring matching, and nth for ambiguity. Programs use await, if, loops, and return; input contains your supplied JSON. Each action re-resolves its target; waits and scrolling run locally. Return a concise result and call observe({screenshot:true}) when visual judgment is needed. Screenshots are attached automatically. Do not replay a stopped/partial program; inspect its receipts and current view. Keep one program to a bounded task stage. Example: await tools.ui.fill({target:{role:"textbox",name:"Search"},text:"release notes"}); return await tools.ui.observe({screenshot:true});`,
-    args: { surface: z.enum(["computer", "browser"]), code: z.string().min(1).max(32_000), tabId: z.string().optional(), input: z.json().optional(), timeoutMs: z.number().int().min(1000).max(60000).optional() },
+    args: { surface: z.enum(["computer", "browser"]), code: z.string().min(1).max(32_000), tabId: z.string().optional(), input: jsonValue.optional(), timeoutMs: z.number().int().min(1000).max(60000).optional() },
     async execute(raw: unknown, context: unknown) {
       const caller = contextSchema.parse(context);
-      const args = z.object({ surface: z.enum(["computer", "browser"]), code: z.string().min(1).max(32_000), tabId: z.string().optional(), input: z.json().optional(), timeoutMs: z.number().int().min(1000).max(60000).optional() }).strict().parse(raw);
+      const args = z.object({ surface: z.enum(["computer", "browser"]), code: z.string().min(1).max(32_000), tabId: z.string().optional(), input: jsonValue.optional(), timeoutMs: z.number().int().min(1000).max(60000).optional() }).strict().parse(raw);
       const rawResult = await uiBridgeRequest("/computer/program", { method: "POST", body: { ...args, sessionId: caller.sessionID }, signal: caller.abort, timeoutMs: (args.timeoutMs ?? 30000) + 5000 });
       const result = z.object({ images: z.array(z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string() })).optional() }).passthrough().parse(rawResult);
       const { images = [], ...state } = result;
