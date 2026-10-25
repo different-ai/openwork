@@ -1,4 +1,5 @@
 import type { UIMessage } from "ai";
+import { codeModeToolCalls } from "@/lib/code-mode-tools";
 
 type OpenTargetKind = "url" | "file";
 export type OpenTargetPreview = "browser" | "markdown" | "code" | "sheet" | "slides" | "document" | "image" | "pdf" | "html" | "text" | "external";
@@ -26,6 +27,8 @@ export type OpenTarget = {
   exists?: boolean;
   size?: number;
   updatedAt?: number;
+  /** The assistant message whose observed tool result produced this file. */
+  sourceMessageId?: string;
 };
 
 /** Explicit links preserve the full address, unlike URLs extracted from prose. */
@@ -55,7 +58,8 @@ export function sameOpenTargets(left: OpenTarget[], right: OpenTarget[]): boolea
       && target.reason === other.reason
       && target.exists === other.exists
       && target.size === other.size
-      && target.updatedAt === other.updatedAt;
+      && target.updatedAt === other.updatedAt
+      && target.sourceMessageId === other.sourceMessageId;
   });
 }
 
@@ -73,9 +77,9 @@ const CODE_EXTENSIONS = new Set([
   ".json", ".jsonc", ".toml", ".xml", ".yaml", ".yml",
 ]);
 const MARKDOWN_LINK_PATTERN = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
-const ASSISTANT_ARTIFACT_MENTION_PATTERN = /\b(?:artifact|created|deck|deliverable|exported|file|generated|opened|presentation|saved|slides?|updated|wrote)\b/i;
 const DISCOVERY_TOOL_NAMES = new Set(["glob", "grep", "search", "find"]);
 const ARTIFACT_METADATA_TOOL_NAMES = new Set(["openwork_extension_call"]);
+const PRODUCED_FILE_TOOL_NAMES = new Set(["spreadsheet_write", "openwork_extension_call", "openwork_execute"]);
 const WRITE_TOOL_NAMES = new Set([
   "apply_patch",
   "edit",
@@ -137,10 +141,6 @@ export function openTargetFromWorkspaceFile(
 ): OpenTarget | null {
   const target = targetFromFile(path, 100, "workspace tree");
   return target ? { ...target, exists: true, ...metadata } : null;
-}
-
-function shouldScanAssistantFileMentions(text: string) {
-  return ASSISTANT_ARTIFACT_MENTION_PATTERN.test(text);
 }
 
 function textWithoutRedundantMarkdownLinkLabels(text: string) {
@@ -336,9 +336,52 @@ function collectFileMetadataValues(value: unknown) {
   return values;
 }
 
+function resultObject(value: unknown): Record<string, unknown> | null {
+  if (typeof value === "string") {
+    if (value.length > 1_048_576) return null;
+    try { return resultObject(JSON.parse(value)); } catch { return null; }
+  }
+  return isObject(value) && !Array.isArray(value) ? value : null;
+}
+
 function collectNestedFileMetadataValues(value: unknown) {
-  if (!isObject(value)) return [];
-  return [value, value.result].flatMap(collectFileMetadataValues);
+  const result = resultObject(value);
+  if (!result || result.ok !== true) return [];
+  return [result, result.result].flatMap(collectFileMetadataValues);
+}
+
+/** Only shipping server file writers define this signal, after a successful write.
+ * It is a candidate, never an existence claim: resolveArtifacts still verifies it.
+ * Never treat arbitrary output paths, shell text, or script source as write evidence. */
+function collectProducedFileValues(toolName: string, output: unknown, input: unknown) {
+  const tool = normalizedToolName(toolName);
+  if (!PRODUCED_FILE_TOOL_NAMES.has(tool)) return [];
+  let result = resultObject(output);
+  if (!result || result.ok !== true) return [];
+  if (tool === "openwork_execute") {
+    // The registered image action is an affordance result around the extension
+    // response. Validate both envelopes against the actual submitted action;
+    // never interpret an arbitrary OpenWork command's nested paths as outputs.
+    const request = resultObject(input);
+    const args = request && resultObject(request.args);
+    const extension = resultObject(result.result);
+    if (request?.id !== "extension.call" || result.id !== "extension.call"
+      || args?.extensionId !== "openai-image-generation" || args.action !== "image_generate"
+      || extension?.ok !== true || extension.extensionId !== args.extensionId || extension.action !== args.action) return [];
+    result = extension;
+  }
+  const files = [result, result.result].flatMap(value => {
+    if (!isObject(value) || !Array.isArray(value.producedFiles)) return [];
+    return value.producedFiles.slice(0, 100).flatMap(file => isObject(file)
+      && typeof file.path === "string" && typeof file.bytes === "number" && Number.isSafeInteger(file.bytes) && file.bytes >= 0
+      ? [file.path] : []);
+  });
+  // Older workers already return this atomic-write receipt, without the new
+  // explicit list. Accept only that writer's complete receipt, not a bare path.
+  if (tool === "spreadsheet_write" && typeof result.path === "string"
+    && typeof result.sha256 === "string" && /^[a-f0-9]{64}$/.test(result.sha256)
+    && typeof result.bytes === "number" && Number.isSafeInteger(result.bytes) && result.bytes >= 0) files.push(result.path);
+  return files;
 }
 
 function collectPatchFileValues(value: unknown) {
@@ -376,7 +419,10 @@ function extractPartOpenTargets(part: UIMessage["parts"][number], confidence: nu
   const targets = new Map<string, OpenTarget>();
   if (part.type === "text" && typeof part.text === "string") {
     scanText(targets, part.text, confidence, "message", {
-      includeFiles: includeFileMentions || (confidence === 65 && shouldScanAssistantFileMentions(part.text)),
+      // Literal assistant references are language-independent candidates, not
+      // production evidence. The server must still verify every file on disk;
+      // observed changes/receipts outrank prose and retain their producing turn.
+      includeFiles: includeFileMentions || confidence === 65,
     });
   } else if (part.type === "file") {
     const path = filePathFromFileUrl(part.url);
@@ -393,12 +439,25 @@ function extractPartOpenTargets(part: UIMessage["parts"][number], confidence: nu
           ? targetFromUrl(part.title, 95, "attachment source")
           : targetFromFile(part.title, 95, "attachment source"),
     );
+  } else if (part.type === "data-openwork-file-change" && isObject(part.data) && Array.isArray(part.data.files)) {
+    addFileValues(targets, part.data.files.filter((file): file is string => typeof file === "string"), 100, "workspace change");
   } else if (part.type === "dynamic-tool") {
     const discoveryTool = isDiscoveryTool(part.toolName);
     const writeTool = isWriteTool(part.toolName);
     const artifactMetadataTool = isArtifactMetadataTool(part.toolName);
 
-    if (writeTool) {
+    const completed = part.state === "output-available";
+    if (completed) {
+      addFileValues(targets, collectProducedFileValues(part.toolName, part.output, part.input), 100, "server-produced file");
+    }
+    // Code Mode's server-captured calls retain their own success/error and result.
+    // Reuse the same extraction for each delivery route, including partial success
+    // when the surrounding script later fails. No source-code path inference.
+    for (const call of codeModeToolCalls(part) ?? []) {
+      for (const target of extractPartOpenTargets(call, confidence, includeFileMentions)) addTarget(targets, target);
+    }
+
+    if (writeTool && completed) {
       addFileValues(
         targets,
         [part.input, part.output].flatMap(collectFileMetadataValues),
@@ -411,10 +470,10 @@ function extractPartOpenTargets(part: UIMessage["parts"][number], confidence: nu
       }
     }
 
-    if (artifactMetadataTool) {
+    if (artifactMetadataTool && completed) {
       addFileValues(
         targets,
-        [part.input, part.output].flatMap(collectNestedFileMetadataValues),
+        collectNestedFileMetadataValues(part.output),
         95,
         "artifact tool metadata",
       );
@@ -442,7 +501,9 @@ export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTarg
     const confidence = message.role === "assistant" ? 65 : 40;
     for (const part of message.parts) {
       for (const target of extractPartOpenTargets(part, confidence, includeFileMentions)) {
-        addTarget(targets, target);
+        const observedFile = target.reason === "server-produced file" || target.reason === "workspace change";
+        if (observedFile && message.role !== "assistant") continue;
+        addTarget(targets, observedFile ? { ...target, sourceMessageId: message.id } : target);
       }
     }
   }

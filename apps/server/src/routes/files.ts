@@ -240,6 +240,7 @@ type ArtifactTargetInput = {
   preview?: unknown;
   confidence?: unknown;
   reason?: unknown;
+  sourceMessageId?: unknown;
 };
 
 function artifactPreviewForPath(path: string): string {
@@ -363,6 +364,7 @@ export async function resolveWorkspaceArtifactTargets(
       size,
       updatedAt,
       contentType: contentTypeForPath(relativePath),
+      ...(typeof target.sourceMessageId === "string" && target.sourceMessageId.length <= 128 ? { sourceMessageId: target.sourceMessageId } : {}),
     };
     const previous = results.get(key);
     if (!previous || confidence >= Number(previous.confidence ?? 0)) results.set(key, next);

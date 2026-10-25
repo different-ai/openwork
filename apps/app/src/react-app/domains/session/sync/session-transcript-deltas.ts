@@ -16,6 +16,7 @@ type TranscriptMessageDraft = {
 };
 
 export function getPartMetadataId(part: UIMessage["parts"][number]) {
+  if (part.type === "data-openwork-file-change") return part.id ?? null;
   if (part.type === "dynamic-tool") {
     const metadata = part.callProviderMetadata?.opencode;
     if (!metadata || typeof metadata !== "object") return null;

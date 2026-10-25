@@ -18,9 +18,10 @@ import {
 import { useDragControls } from "motion/react";
 import { AGENT_VIEWPORTS, type AgentViewportKey } from "@openwork/browser-tabs";
 
-import type { OpenworkServerClient } from "@/app/lib/openwork-server";
+import type { OpenworkServerClient, OpenworkWorkspaceCatalogEntry } from "@/app/lib/openwork-server";
 import { PanelTab, PanelTabClose, PanelTabItem, PanelTabList } from "@/components/panel-tabs";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { TaskRecovery } from "@/components/chat/task-recovery";
 import {
   InputGroup,
@@ -42,7 +43,7 @@ import {
   useSessionPanelState,
 } from "./panel-tab-store";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
-import type { OpenTarget } from "../artifacts/open-target";
+import { openTargetFromWorkspaceFile, type OpenTarget } from "../artifacts/open-target";
 import { useSidePanelTabs } from "./use-side-panel-tabs";
 import { handlePanelEscape, PanelEmpty } from "./panel-empty";
 import {
@@ -60,11 +61,14 @@ export type BrowserPresentationControls = {
   onPresent: (mode: BrowserPresentationMode) => void;
 };
 
+const WorkspaceFileTree = React.lazy(() => import("../artifacts/workspace-file-tree").then(module => ({ default: module.WorkspaceFileTree })));
+
 type SidePanelProps = {
   sessionId: string;
   client: OpenworkServerClient | null;
   workspaceId: string | null;
   workspaceRoot: string;
+  onOpenTarget?: (target: OpenTarget) => void;
   onClose: () => void;
   onOpenExtensions?: () => void;
   /** Floating browser presentation; undefined keeps the docked-only browser. */
@@ -582,6 +586,7 @@ export function SidePanel({
   client,
   workspaceId,
   workspaceRoot,
+  onOpenTarget,
   onClose,
   onOpenExtensions,
   browserPresentation,
@@ -590,6 +595,15 @@ export function SidePanel({
   const { tabs } = useSessionPanelState(sessionId);
   const activeTab = useActivePanelTab(sessionId);
   const isBrowserAvailable = Boolean(getElectronBrowser());
+  const [browsingWorkspace, setBrowsingWorkspace] = React.useState(false);
+  const workspaceName = workspaceRoot.split(/[/\\]/).filter(Boolean).pop() ?? "Workspace";
+  React.useEffect(() => setBrowsingWorkspace(false), [sessionId, workspaceId, client]);
+  const openWorkspaceFile = (entry: OpenworkWorkspaceCatalogEntry) => {
+    const target = openTargetFromWorkspaceFile(entry.path, { size: entry.size, updatedAt: entry.mtimeMs });
+    if (!target || !onOpenTarget) return;
+    setBrowsingWorkspace(false);
+    onOpenTarget(target);
+  };
 
   const { createTab, closeTab, selectTab, reorderTabs } = useSidePanelTabs(sessionId);
 
@@ -827,10 +841,22 @@ export function SidePanel({
             ) : null}
           </div>
         </div> : null}
-        {!activeTab ? (
-          <PanelEmpty
+        {!activeTab ? browsingWorkspace && client && workspaceId && onOpenTarget ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="shrink-0 border-b border-border p-2">
+              <Button variant="ghost" size="sm" onClick={() => setBrowsingWorkspace(false)}><ArrowLeft /> Back to referenced files</Button>
+            </div>
+            <React.Suspense fallback={<Skeleton className="m-3 h-8" />}>
+              <WorkspaceFileTree client={client} workspaceId={workspaceId} workspaceName={workspaceName} selectedPath=""
+                onOpenFile={openWorkspaceFile} className="w-full flex-1 border-r-0" />
+            </React.Suspense>
+          </div>
+        ) : (
+          <PanelEmpty initialDestination="files"
             onOpenBrowser={isBrowserAvailable ? createTab : undefined}
             onOpenExtensions={onOpenExtensions}
+            onBrowseWorkspaceFiles={client && workspaceId && onOpenTarget ? () => setBrowsingWorkspace(true) : undefined}
+            browseUnavailableReason={client && workspaceId && !onOpenTarget ? "Open a conversation to browse workspace files." : undefined}
           />
         ) : null}
         {activeTab?.type === "browser" ? (

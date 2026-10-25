@@ -15,8 +15,9 @@ import {
 import { TaskRecovery } from "@/components/chat/task-recovery";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usePlatform } from "@/react-app/kernel/platform";
+import { sessionHistoryCredential } from "../sync/session-sync";
 import { type ArtifactPanelTab, usePanelTabStore } from "../panel/panel-tab-store";
-import { isCollectibleArtifactTarget, openTargetFromWorkspaceFile, type BinaryData, type Data, type OpenTarget, type TextData } from "./open-target";
+import { isOpenableFileTarget, openTargetFromWorkspaceFile, type BinaryData, type Data, type OpenTarget, type TextData } from "./open-target";
 import { HTMLPreview, ImagePreview, MarkdownPreview, PdfPreview, PlainText, PreviewError, PreviewLoading, PreviewUnavailable } from "./preview";
 
 const ArtifactTextEditor = lazy(() =>
@@ -43,6 +44,7 @@ type ArtifactPanelProps = {
 };
 
 type ArtifactPanelViewProps = {
+  scope: string;
   sessionId: string;
   client: OpenworkServerClient;
   workspaceId: string;
@@ -70,15 +72,18 @@ function isTextContent(target: OpenTarget): boolean {
 
 export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRoot, onClose }: ArtifactPanelProps) {
   const transcriptTargets = usePanelTabStore((state) => state.transcriptArtifactTargets[sessionId] ?? EMPTY_TRANSCRIPT_TARGETS);
-  const artifactTargets = useMemo(() => transcriptTargets.filter(isCollectibleArtifactTarget), [transcriptTargets]);
+  const artifactTargets = useMemo(() => transcriptTargets.filter(isOpenableFileTarget), [transcriptTargets]);
   const target = tab.target ?? artifactTargets.find((item) => item.id === tab.id) ?? null;
 
   if (!target || !client || !workspaceId) {
     return null;
   }
 
+  const scope = JSON.stringify([client.baseUrl, sessionHistoryCredential(client.token), workspaceId]);
   return (
     <ArtifactPanelView
+      key={scope}
+      scope={scope}
       sessionId={sessionId}
       client={client}
       workspaceId={workspaceId}
@@ -89,9 +94,10 @@ export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRo
   );
 }
 
-function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, target, onClose }: ArtifactPanelViewProps) {
+function ArtifactPanelView({ scope, sessionId, client, workspaceId, workspaceRoot, target, onClose }: ArtifactPanelViewProps) {
   const [failure, setFailure] = useState<{ owner: string; title: string; details: string } | null>(null);
-  const owner = JSON.stringify([sessionId, workspaceId, target.id]);
+  const owner = JSON.stringify([scope, sessionId, target.id]);
+  const artifactQueryKey = ["artifact-panel", scope, target.id, target.updatedAt ?? null];
   const reportFailure = (title: string, error: unknown) => setFailure({ owner, title, details: error instanceof Error ? error.message : String(error) });
   const platform = usePlatform();
   const queryClient = useQueryClient();
@@ -122,7 +128,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
   };
 
   const { data, error, isError, isLoading } = useQuery<ArtifactQueryState>({
-    queryKey: ["artifact-panel", workspaceId, target.id, target.updatedAt ?? null] as const,
+    queryKey: artifactQueryKey,
     queryFn: async () => {
       if (target.kind === "url") {
         throw new Error("URLs open in browser tabs.");
@@ -195,7 +201,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
       if (context?.owner !== owner) return;
       setFailure((current) => current?.owner === owner ? null : current);
       queryClient.setQueryData<ArtifactQueryState>(
-        ["artifact-panel", workspaceId, target.id, target.updatedAt ?? null] as const,
+        artifactQueryKey,
         input.kind === "text"
           ? { kind: "text", data: input.data, updatedAt: result.updatedAt ?? null }
           : { kind: "binary", data: input.data, contentType: data?.kind === "binary" ? data.contentType : null, updatedAt: result.updatedAt ?? null },

@@ -6,6 +6,8 @@ import { RefreshCw, Search } from "lucide-react";
 
 import type { OpenworkServerClient, OpenworkWorkspaceCatalogEntry } from "@/app/lib/openwork-server";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { sessionHistoryCredential } from "../sync/session-sync";
 import { useNativeContextMenu } from "@/components/ui/action-context-menu";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { cn } from "@/lib/utils";
@@ -35,6 +37,7 @@ type WorkspaceFileTreeProps = {
   selectedPath: string;
   onOpenFile: (entry: OpenworkWorkspaceCatalogEntry) => void;
   fileActions?: readonly WorkspaceFileAction[];
+  className?: string;
 };
 
 /**
@@ -69,14 +72,27 @@ function treePath(entry: OpenworkWorkspaceCatalogEntry) {
   return entry.kind === "dir" ? `${entry.path}/` : entry.path;
 }
 
-export function WorkspaceFileTree({ client, workspaceId, workspaceName, selectedPath, onOpenFile, fileActions }: WorkspaceFileTreeProps) {
+export function workspaceFileTreeScope(client: Pick<OpenworkServerClient, "baseUrl" | "token">, workspaceId: string) {
+  return [client.baseUrl, sessionHistoryCredential(client.token), workspaceId];
+}
+
+export function WorkspaceFileTree(props: WorkspaceFileTreeProps) {
+  // Reset the tree model as well as the query when account/server ownership
+  // changes, so a previous connection's rows cannot flash before the next read.
+  return <WorkspaceFileTreeView key={JSON.stringify(workspaceFileTreeScope(props.client, props.workspaceId))} {...props} />;
+}
+
+function WorkspaceFileTreeView({ client, workspaceId, workspaceName, selectedPath, onOpenFile, fileActions, className }: WorkspaceFileTreeProps) {
   const showNativeMenu = useNativeContextMenu();
   const showNativeMenuRef = useRef(showNativeMenu);
   showNativeMenuRef.current = showNativeMenu;
   const query = useQuery({
-    queryKey: ["workspace-file-tree", workspaceId] as const,
+    queryKey: ["workspace-file-tree", ...workspaceFileTreeScope(client, workspaceId)],
     queryFn: () => client.listWorkspaceFiles(workspaceId),
     staleTime: 30_000,
+    // Explicit browsing must find newly written files, including files the
+    // engine did not report. Do not rely on another pane's cached catalog.
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
   });
   const entries = query.data?.items ?? [];
@@ -85,6 +101,8 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
   entriesByPathRef.current = entriesByPath;
   const fileActionsRef = useRef(fileActions);
   fileActionsRef.current = fileActions;
+  const onOpenFileRef = useRef(onOpenFile);
+  onOpenFileRef.current = onOpenFile;
   const paths = useMemo(() => entries.map(treePath), [entries]);
   const { model } = useFileTree({
     // useFileTree captures options on first render, so callbacks read refs.
@@ -122,7 +140,7 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
     onSelectionChange: (selectedPaths) => {
       const path = selectedPaths.at(-1)?.replace(/\/$/, "");
       const entry = path ? entriesByPathRef.current.get(path) : undefined;
-      if (entry?.kind === "file") onOpenFile(entry);
+      if (entry?.kind === "file") onOpenFileRef.current(entry);
     },
     paths: [],
     search: false,
@@ -141,7 +159,7 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
 
   return (
     <aside
-      className="flex h-full min-h-0 w-40 shrink-0 flex-col border-r border-border bg-muted/20"
+      className={cn("flex h-full min-h-0 w-40 shrink-0 flex-col border-r border-border bg-muted/20", className)}
       data-workspace-file-tree
       data-workspace-file-count={entries.length}
     >
@@ -170,6 +188,10 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
       </div>
       {query.isError ? (
         <p role="alert" className="p-3 text-xs text-dls-secondary">Could not load workspace files. Use Refresh to try again.</p>
+      ) : query.isPending || (query.isFetching && entries.length === 0) ? (
+        <div className="space-y-2 p-2"><Skeleton className="h-7" /><Skeleton className="h-7" /><Skeleton className="h-7" /></div>
+      ) : entries.length === 0 ? (
+        <p className="p-3 text-xs text-muted-foreground">No workspace files available.</p>
       ) : (
         <FileTree
           model={model}
@@ -178,8 +200,17 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
           style={{ ["--trees-fg-override" as string]: "var(--foreground)" }}
         />
       )}
+      {query.data?.truncated ? (
+        <p role="status" className="border-t border-border px-2 py-1 text-xs text-muted-foreground">
+          Showing {entries.length.toLocaleString()} of {query.data.total.toLocaleString()} items. Search covers the shown items.
+        </p>
+      ) : null}
+      {query.data ? <details className="border-t border-border px-2 py-1 text-xs text-muted-foreground">
+        <summary className="cursor-pointer">Browser limits</summary>
+        <p>Repository history (.git) and dependencies (node_modules) are excluded.</p>
+      </details> : null}
       {query.data?.incomplete ? (
-        <p role="status" className="border-t border-border px-2 py-1 text-[10px] text-muted-foreground">Some folders could not be read. Check their permissions and refresh.</p>
+        <p role="status" className="border-t border-border px-2 py-1 text-xs text-muted-foreground">Some folders could not be read. Check their permissions and refresh.</p>
       ) : null}
     </aside>
   );

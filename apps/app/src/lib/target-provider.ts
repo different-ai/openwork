@@ -6,6 +6,8 @@ import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-targ
 export type OpenTargetOptions = {
   external?: boolean;
   reveal?: boolean;
+  /** A workspace-browser selection previews/downloads; it must never launch an app. */
+  previewOnly?: boolean;
 };
 
 type OpenTargetHandler = (target: OpenTarget, options?: OpenTargetOptions) => void;

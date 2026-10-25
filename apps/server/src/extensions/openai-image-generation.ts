@@ -174,6 +174,7 @@ async function generateOpenAiImageArtifact(config: ServerConfig, env: EnvService
   return {
     path: relativePath,
     bytes: bytes.byteLength,
+    producedFiles: [{ path: relativePath, bytes: bytes.byteLength }],
     model: OPENAI_IMAGE_MODEL,
     workspaceId: workspace.id,
   };

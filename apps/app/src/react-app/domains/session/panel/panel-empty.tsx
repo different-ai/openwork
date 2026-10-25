@@ -8,6 +8,9 @@ import { cn } from "@/lib/utils";
 export type PanelEmptyActions = {
   onOpenBrowser?: () => void;
   onOpenExtensions?: () => void;
+  onBrowseWorkspaceFiles?: () => void;
+  browseUnavailableReason?: string;
+  initialDestination?: "chooser" | "files";
 };
 
 export function handlePanelEscape(key: string, onClose: () => void) {
@@ -42,8 +45,8 @@ export function getPanelDestinations(
 
   destinations.push({
     id: "files",
-    label: "Files & artifacts",
-    description: "View files and artifacts created in this session.",
+    label: "Referenced files",
+    description: "File references from this conversation.",
     icon: <FileText aria-hidden="true" />,
     activate: onOpenFiles,
   });
@@ -61,8 +64,8 @@ export function getPanelDestinations(
   return destinations;
 }
 
-export function PanelEmpty({ onOpenBrowser, onOpenExtensions }: PanelEmptyActions) {
-  const [destination, setDestination] = React.useState<"chooser" | "files">("chooser");
+export function PanelEmpty({ onOpenBrowser, onOpenExtensions, onBrowseWorkspaceFiles, browseUnavailableReason, initialDestination = "chooser" }: PanelEmptyActions) {
+  const [destination, setDestination] = React.useState<"chooser" | "files">(initialDestination);
 
   if (destination === "files") {
     return (
@@ -80,10 +83,11 @@ export function PanelEmpty({ onOpenBrowser, onOpenExtensions }: PanelEmptyAction
           <span className="mx-auto mb-4 flex size-11 items-center justify-center rounded-xl bg-muted text-muted-foreground">
             <FileText aria-hidden="true" />
           </span>
-          <h2 className="text-base font-medium text-foreground">No files or artifacts yet</h2>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            Files and artifacts created in this session will appear here automatically.
-          </p>
+          <h2 className="text-base font-medium text-foreground">No referenced files available</h2>
+          <Button className="mt-4" variant="outline" onClick={onBrowseWorkspaceFiles} disabled={!onBrowseWorkspaceFiles}
+            title={onBrowseWorkspaceFiles ? undefined : browseUnavailableReason ?? "Connect to this workspace to browse its files."}>
+            Browse workspace files
+          </Button>
         </div>
       </div>
     );
