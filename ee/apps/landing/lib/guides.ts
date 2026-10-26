@@ -538,7 +538,157 @@ export const guides: Guide[] = [
       secondary: { label: "AI Gateway docs", href: "/docs/ai-gateway/overview" }
     }
   },
-
+  {
+    slug: "openwork-and-litellm",
+    label: "OpenWork and LiteLLM",
+    title: "OpenWork and LiteLLM: when to use both",
+    description:
+      "Keep LiteLLM for model routing and budgets, and add OpenWork for an agent workspace, shared skills, and connected tools.",
+    heading: "Should you use OpenWork, LiteLLM, or both?",
+    answer:
+      "They do different jobs. LiteLLM routes model calls for your apps. OpenWork gives people an agent workspace with your company's models, skills, and tools. If you already run LiteLLM, keep it and connect OpenWork to it.",
+    updated: "2026-10-11",
+    keyFacts: [
+      "LiteLLM integration: in preview",
+      "Three key modes: shared, per person, or created by OpenWork",
+      "OpenWork spend limits: shared-key mode only",
+      "Skills and tools: through the OpenWork MCP gateway"
+    ],
+    sections: [
+      {
+        id: "different-layers",
+        heading: "Different jobs",
+        paragraphs: [
+          "LiteLLM is a Python SDK and a self-hosted proxy that calls 100+ model providers through one API. It handles routing, fallbacks, virtual keys, budgets, and logging, and it has its own MCP features.",
+          "OpenWork is where people do the work: a desktop app and an OpenCode plugin with your company's approved models, shared skills, and connected tools."
+        ],
+        table: {
+          caption: "Which tool covers which need",
+          columns: ["You need", "LiteLLM", "OpenWork"],
+          rows: [
+            ["One model API for your apps", "Yes", "No, use LiteLLM"],
+            ["Routing, fallbacks, and virtual-key budgets", "Yes", "Keeps using LiteLLM's"],
+            ["An agent workspace for non-engineers", "No", "Desktop app"],
+            ["Company models and tools inside OpenCode", "No", "OpenCode plugin"],
+            ["Shared skills and tools across agents", "Its own MCP features", "OpenWork MCP gateway"]
+          ]
+        }
+      },
+      {
+        id: "choose-litellm",
+        heading: "When LiteLLM alone is enough",
+        bullets: [
+          "You need one model API for your own apps.",
+          "Your team already has the interface it needs.",
+          "Routing, fallbacks, and budgets are the whole requirement."
+        ]
+      },
+      {
+        id: "choose-openwork",
+        heading: "When to add OpenWork",
+        bullets: [
+          "People need an agent workspace for their files and tools, not just an API.",
+          "You want approved models, skills, and tools in OpenCode, with one sign-in.",
+          "You already run LiteLLM: keep it for routing and budgets, and point OpenWork at it."
+        ]
+      },
+      {
+        id: "key-modes",
+        heading: "Pick a key mode",
+        table: {
+          caption: "How keys and budgets work in each mode",
+          columns: ["Mode", "Admin adds", "Each person", "Budgets"],
+          rows: [
+            ["One shared key", "A LiteLLM virtual key", "Does nothing", "LiteLLM's key budget, plus OpenWork spend limits"],
+            ["Each person's own key", "A LiteLLM admin key", "Connects their key once", "LiteLLM only; OpenWork counts tokens, not cost"],
+            ["OpenWork creates keys", "A LiteLLM admin key", "Does nothing", "LiteLLM only; OpenWork counts tokens, not cost"]
+          ]
+        },
+        paragraphs: [
+          "When OpenWork creates keys, it finds each person in LiteLLM by email. It never creates LiteLLM users, so add people in LiteLLM first.",
+          "OpenWork can create one key per LiteLLM team, or copy each person's existing key. Copies keep the team and models but not key-level budgets, so the allowance isn't doubled."
+        ]
+      },
+      {
+        id: "prerequisites",
+        heading: "Before you start",
+        badge: "In preview",
+        bullets: [
+          "On OpenWork Cloud, ask the OpenWork team to turn on the LiteLLM preview. Self-hosted: a platform admin turns it on in /admin.",
+          "Your proxy must be reachable over HTTPS. For a private proxy, your operator allows its address in OpenWork.",
+          "Have the proxy URL, the right key for your mode, and at least one chat model ready."
+        ]
+      },
+      {
+        id: "walkthrough",
+        heading: "Connect your proxy",
+        steps: [
+          {
+            title: "Add the provider",
+            body: "In the OpenWork admin panel, open AI Gateway › AI Providers › Add a provider › LiteLLM, and enter your proxy URL."
+          },
+          {
+            title: "Paste the key",
+            body: "Use a virtual key for one shared key, or an admin key for the other two modes. OpenWork checks it with your proxy before saving and never shows it again."
+          },
+          {
+            title: "Choose who gets access",
+            body: "Pick people or teams. With per-person keys, they connect their own key in the app."
+          },
+          {
+            title: "Try it as a member",
+            body: "Sign in to the OpenWork app or the OpenCode plugin, pick a LiteLLM model, and send a short prompt. People only ever hold an OpenWork key, never a LiteLLM key.",
+            code: "OpenWork or OpenCode\n  → OpenWork AI Gateway\n  → your LiteLLM proxy\n  → the model"
+          },
+          {
+            title: "Sync after changes",
+            body: "When you change models, teams, or keys in LiteLLM, select Sync models on the provider page."
+          }
+        ]
+      },
+      {
+        id: "costs",
+        heading: "Costs",
+        paragraphs: [
+          "You keep paying for inference and for running your proxy. OpenWork adds its seat price. Each request is billed once, by your model provider, even though both tools show a cost estimate."
+        ]
+      }
+    ],
+    cards: [
+      { icon: "key", title: "Set up the LiteLLM integration", link: { label: "Integration docs", href: "https://openworklabs.com/docs/ai-gateway/litellm" } },
+      { icon: "route", title: "How a request reaches a model", link: { label: "Request flow", href: "https://openworklabs.com/docs/ai-gateway/how-requests-flow" } },
+      { icon: "cpu", title: "LiteLLM SDK and proxy", link: { label: "LiteLLM docs", href: "https://docs.litellm.ai/docs/" } },
+      { icon: "users", title: "LiteLLM virtual keys and budgets", link: { label: "LiteLLM key docs", href: "https://docs.litellm.ai/docs/proxy/virtual_keys" } }
+    ],
+    faq: [
+      {
+        question: "Do I need to replace LiteLLM to use OpenWork?",
+        answer: "No. Keep your proxy and connect OpenWork to it. The LiteLLM integration is in preview and needs to be turned on for your organization first."
+      },
+      {
+        question: "Does LiteLLM support MCP?",
+        answer: "Yes, LiteLLM has its own MCP features. OpenWork adds a workspace and shares your organization's skills and tools across agents."
+      },
+      {
+        question: "Do OpenWork spend limits work with LiteLLM?",
+        answer: "With one shared key, yes. With per-person keys or keys OpenWork creates, LiteLLM's budgets apply and OpenWork counts tokens, not cost."
+      },
+      {
+        question: "Why don't I see LiteLLM under Add a provider?",
+        answer: "The integration is in preview and off by default. On OpenWork Cloud, ask the OpenWork team; self-hosted, a platform admin turns it on in /admin."
+      },
+      {
+        question: "Does connecting models also share skills and tools?",
+        answer: "No. Models go through the AI Gateway; skills and tools go through the MCP gateway. The OpenCode plugin brings in both with one sign-in."
+      }
+    ],
+    cta: {
+      heading: "Keep your proxy. Add a workspace.",
+      sub: "Connect LiteLLM to OpenWork in a few minutes.",
+      primary: { label: "Read the integration docs", href: "/docs/ai-gateway/litellm" },
+      secondary: { label: "OpenWork and OpenCode", href: "/guides/openwork-and-opencode" }
+    }
+  }
 ];
 
 export function guidePath(guide: Guide): string {
