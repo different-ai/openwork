@@ -49,6 +49,18 @@ Produce one complete \`SKILL.md\` with:
 - non-empty Markdown instruction body
 - no secrets
 
+## Make it replayable
+
+When the skill captures work you just finished in this conversation, write it so the next run can go straight to the result instead of rediscovering it:
+
+- **Inputs:** the few values that change per use (for example customer, use case, recipient) and how to read them from a short request.
+- **Sources:** the exact pages, files or records you used (titles plus IDs or links). Tell the next run to read them directly instead of searching.
+- **Steps:** the shortest sequence of calls that worked, in order.
+- **Assets:** if you wrote a script or template that produced the output, save it in the workspace (for example \`tools/<skill-name>.py\`) and include a verbatim copy in a fenced code block, with how to run it on new inputs. The next run reuses the workspace file when it exists.
+- **Output:** file name pattern, location and format, any reply or draft template, and the one check to run before reporting.
+
+Keep it general: don't present one customer's results as facts for another.
+
 ## Workflow
 
 1. Draft the complete \`SKILL.md\`.
@@ -207,12 +219,13 @@ The recipient is the named person or team. NEVER invent ids. Resolve a person or
 const DRIVE_FILES_SOURCE = `---
 name: drive-files
 description: |
-  Read, analyze or edit whole Google Drive files (Excel, Word, PowerPoint, PDF, CSV, images,
-  and Docs, Sheets or Slides as Office files) without loading them into the conversation.
+  Read, analyze or edit whole Google Drive, OneDrive and SharePoint files (Excel, Word,
+  PowerPoint, PDF, CSV, images, and Docs, Sheets or Slides as Office files) without loading
+  them into the conversation.
 
   Triggers when the user wants to:
-  - open, analyze or summarize a Drive file that is not short plain text
-  - change an .xlsx, .docx, .pptx, .csv or other Drive file and save it back
+  - open, analyze or summarize a Drive, OneDrive or SharePoint file that is not short plain text
+  - change an .xlsx, .docx, .pptx, .csv or other such file and save it back
 ---
 
 # Drive files
@@ -223,18 +236,27 @@ Work on a local copy with shell tools; never paste file bytes or base64 into a t
 
 | Need | Use |
 |---|---|
-| Summarize a short Google Doc or text file | The Drive file read capability (small inline text) |
+| Find a OneDrive, SharePoint or Teams file | Microsoft 365 file search, folder listing, SharePoint site and link capabilities; each result has driveId and id |
+| Summarize a short Google Doc or text file | The Drive or OneDrive file read capability (small inline text) |
 | Analyze or edit Office, PDF, CSV, images, or any large file | Pull it, then work on it with bash |
 | Change a few cells in a native Google Sheet | The Sheets values capabilities (keeps formulas, comments, history) |
 | Create a new file | Make it locally, then upload it |
 
 ## In OpenWork (the drive_pull_file, drive_file_status and drive_push_file tools)
 
-1. \`drive_pull_file\` with the Drive file ID or link. Desktop confirms the file's Drive identity and download before transferring bytes. Docs, Sheets and Slides arrive as docx, xlsx and pptx unless you choose a format (csv holds only a Sheet's first tab; md, txt, pdf...). The result is a workspace path plus metadata, never content.
+1. \`drive_pull_file\` with the Drive file ID or link, or a OneDrive, SharePoint or Teams file link (or an item id with its driveId). Desktop confirms the file's Drive identity and download before transferring bytes. Docs, Sheets and Slides arrive as docx, xlsx and pptx unless you choose a format (csv holds only a Sheet's first tab; md, txt, pdf...). The result is a workspace path plus metadata, never content.
 2. Inspect and edit the file with bash (recipes below). Load only the part you need.
 3. \`drive_file_status\` shows what changed locally and in Drive.
-4. Only when the user asked to save to Drive: \`drive_push_file\`, which the person approves. A stored file is replaced in place: same link and sharing, with the previous version in Drive's version history for 30 days. A Google Docs, Sheets or Slides file is saved as a new Google file next to the original unless the user asked for something else.
-5. On \`drive_conflict\`, someone changed the file in Drive. Pull it again (\`overwrite: true\` replaces only your local copy) and reapply your edits, or save as a copy. Newer Drive changes are never overwritten.
+4. Only when the user asked to save it: \`drive_push_file\`, which the person approves. A stored file, including Office files in OneDrive and SharePoint, is replaced in place: same link and sharing, with the previous version in the version history. A Google Docs, Sheets or Slides file (or a PDF converted from an Office file) is saved as a new file next to the original unless the user asked for something else.
+5. On \`drive_conflict\`, someone changed the file since the pull. Pull it again (\`overwrite: true\` replaces only your local copy) and reapply your edits, or save as a copy. Newer Drive changes are never overwritten.
+
+## With a shell but no OpenWork tools (Workbot computer, coding agents)
+
+1. Execute \`createGoogleDriveDownloadLink\` with the file ID. It returns a \`downloadUrl\` (also as an MCP resource link) that works for five minutes: save it with \`curl -fsSL -o <file> '<downloadUrl>'\` and check the size and md5. Never print or share the URL.
+2. Edit with bash as below.
+3. Only when asked to save: execute \`createGoogleDriveUploadSession\` with \`fileId\`, \`baseRevision\` (the link result's revision), \`name\`, \`size\` and \`mimeType\`, then upload with \`curl -fsS -X PUT -H 'Content-Type: <mimeType>' --data-binary @<file> '<uploadUrl>'\`. For a new file or a copy, omit \`fileId\`; \`convertTo\` keeps a copy as a Google file.
+
+For OneDrive and SharePoint files use \`createMicrosoft365DriveDownloadLink\` (\`driveId\`, \`itemId\`) and \`createMicrosoft365DriveUploadSession\` (\`driveId\`, \`itemId\`, \`baseRevision\`, \`size\`, or \`name\` and \`folderId\` for a new file); follow the upload instructions it returns, which send a Content-Range header and never an Authorization header.
 
 ## Bash recipes
 
@@ -319,12 +341,12 @@ export const BUILTIN_SKILLS: BuiltinSkillDefinition[] = [
     descriptor: {
       name: "drive-files",
       title: "Drive Files",
-      description: "Pull Google Drive files into a local copy, edit them with shell tools, and save them back without loading them into context.",
+      description: "Pull Google Drive, OneDrive and SharePoint files into a local copy, edit them with shell tools, and save them back without loading them into context.",
       capability: BUILTIN_DRIVE_FILES_CAPABILITY,
       location: "skill://drive-files/SKILL.md",
     },
     source: DRIVE_FILES_SOURCE,
-    searchExtraTokens: "google drive file files download pull push sync edit excel xlsx docx pptx pdf csv spreadsheet bash shell workspace",
+    searchExtraTokens: "google drive onedrive sharepoint microsoft 365 teams file files download pull push sync edit excel xlsx docx pptx pdf csv spreadsheet bash shell workspace",
   },
 ]
 

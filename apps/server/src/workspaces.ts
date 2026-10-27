@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { basename, resolve } from "node:path";
-import type { WorkspaceConfig, WorkspaceInfo } from "./types.js";
+import type { ServerConfig, WorkspaceConfig, WorkspaceInfo } from "./types.js";
+
+/** Prefer the bootstrap snapshot: managed startup later fills these same URL fields. */
+export function hasExternalOpencode(config: Pick<ServerConfig, "externalOpencode" | "opencodeBaseUrl"> & Partial<Pick<ServerConfig, "workspaces">>): boolean {
+  return config.externalOpencode ?? Boolean(config.opencodeBaseUrl || config.workspaces?.some((workspace) => workspace.baseUrl));
+}
 
 function workspaceIdForKey(key: string): string {
   const hash = createHash("sha256").update(key).digest("hex");

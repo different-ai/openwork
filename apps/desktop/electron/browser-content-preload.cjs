@@ -307,6 +307,14 @@ function installDismissListeners() {
   window.addEventListener("pointerdown", dismissMenuOverlay, { capture: true });
   window.addEventListener("wheel", dismissMenuOverlay, { capture: true, passive: true });
   window.addEventListener("keydown", dismissMenuOverlay, { capture: true });
+  // Browser-native and CDP key delivery take different paths in Chromium.
+  // This isolated-world fallback only asks to leave full screen, never for
+  // browser control or Resume; the host checks the exact foreground page.
+  window.addEventListener("keydown", (event) => {
+    if (event.isTrusted && event.key === "Escape" && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      ipcRenderer?.send("openwork:browser:escape");
+    }
+  }, { capture: true });
 }
 
 function installToolChangeRelay() {

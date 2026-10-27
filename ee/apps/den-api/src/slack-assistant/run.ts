@@ -33,7 +33,7 @@ export const checkpointSchema = z.object({
   live: z.boolean().default(true),
   /** Times the thread's runner session was found missing and replaced; once at most per message. */
   sessionResets: z.number().default(0),
-  /** Answered like Workbot (`slackWorkbotReplies`, set per message when it starts): text streams as it is written. */
+  /** New messages always answer like Workbot. False only preserves older in-flight checkpoints. */
   workbot: z.boolean().default(false),
   /** The person's message, to react to; unset when a reaction would show in a channel the reply avoids. */
   reactTo: z.object({ channel: z.string(), ts: z.string() }).optional(),

@@ -42,6 +42,8 @@ import { OrganizationMark, ProviderList, ProviderMeta, ProviderRow, ProviderStat
 
 export type CloudProviderRowStatus =
   | "connected"
+  | "credential_unverified"
+  | "credential_rejected"
   | "syncing"
   | "error"
   | "conflict"
@@ -103,6 +105,10 @@ function resourceStatusTone(status: string) {
 
 function cloudProviderStatusLabel(status: CloudProviderRowStatus) {
   switch (status) {
+    case "credential_unverified":
+      return "Not checked yet";
+    case "credential_rejected":
+      return "Key not accepted";
     case "connected":
       return t("den.cloud_provider_connected");
     case "syncing":
@@ -202,6 +208,7 @@ function cloudProviderRowStatus(status: CloudProviderRowStatus) {
     case "error":
     case "conflict":
       return <ProviderStatus tone="error">{cloudProviderStatusLabel(status)}</ProviderStatus>;
+    case "credential_rejected":
     case "needs_credential":
     case "needs_server":
       return <ProviderStatus tone="attention">{cloudProviderStatusLabel(status)}</ProviderStatus>;
@@ -223,7 +230,7 @@ function CloudProviderListItem({ actionId, row, onRetry }: CloudProviderListItem
       status={cloudProviderRowStatus(status)}
       meta={<ProviderMeta id={row.metaId} parts={[row.detail]} />}
       aside={row.access ? <><Users className="size-3.5" aria-hidden />{row.access}</> : null}
-      actions={row.status === "error" && row.provider ? (
+      actions={status === "credential_rejected" ? <span className="text-xs text-muted-foreground">Contact your admin</span> : row.status === "error" && row.provider ? (
         <Button
           variant="outline"
           size="sm"

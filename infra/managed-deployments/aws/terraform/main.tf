@@ -7,9 +7,10 @@ terraform {
   # Configured by the runner: customer-owned bucket, S3-native state locking.
   backend "s3" {}
   required_providers {
-    aws     = { source = "hashicorp/aws", version = "= 5.100.0" }
-    random  = { source = "hashicorp/random", version = "= 3.7.2" }
+    aws     = { source = "hashicorp/aws", version = "~> 6.69" }
+    random  = { source = "hashicorp/random", version = "~> 3.9" }
     archive = { source = "hashicorp/archive", version = "= 2.8.1" }
+    http    = { source = "hashicorp/http", version = "~> 3.5" }
   }
 }
 
@@ -18,10 +19,25 @@ variable "deployment_id" { type = string }
 variable "domain_name" { type = string }
 variable "owner_email" { type = string }
 variable "openwork_version" { type = string }
+variable "den_api_image" {
+  type    = string
+  default = ""
+}
+variable "den_web_image" {
+  type    = string
+  default = ""
+}
 variable "control_plane_origin" { type = string }
 variable "size" {
   type    = string
   default = "small"
+}
+
+# Non-secret revision marker for controlled installer update proofs. Production
+# callers leave it empty; it changes task definitions, never database inputs.
+variable "tls_task_revision" {
+  type    = string
+  default = ""
 }
 
 # ---- AWS inputs ----
@@ -125,8 +141,15 @@ module "network" {
 module "platform" {
   source = "../../../terraform/modules/openwork-aws-ecs"
 
+  # Managed installs deliberately preserve their existing keys and state mode.
+  # Write-only conversion is a separate, explicit operation, never an upgrade.
+  write_only_secrets     = false
+  managed_legacy_secrets = true
+
   name             = module.contract.name
   openwork_version = var.openwork_version
+  den_api_image    = var.den_api_image
+  den_web_image    = var.den_web_image
   owner_emails     = [var.owner_email]
   org_name         = "OpenWork"
 
@@ -149,6 +172,9 @@ module "platform" {
 
   den_api = local.profile.den_api
   den_web = local.profile.den_web
+  extra_environment = {
+    OPENWORK_MANAGED_TASK_REVISION = var.tls_task_revision
+  }
   database = merge(local.profile.database, {
     backup_retention_days = 7
     deletion_protection   = !var.test_disposable
@@ -184,3 +210,4 @@ output "health_agent" { value = module.health_agent.function_name }
 output "cluster_name" { value = module.platform.cluster_name }
 output "service_names" { value = module.platform.service_names }
 output "secret_arn" { value = module.platform.secret_arn }
+output "task_definition_arns" { value = module.platform.task_definition_arns }

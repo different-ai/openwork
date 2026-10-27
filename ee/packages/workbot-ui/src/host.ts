@@ -1,5 +1,7 @@
 "use client";
 
+import { createContext, useContext, type CSSProperties } from "react";
+
 /**
  * What the page needs from the app that hosts it (Den today): signed-in requests to the Workbot API, the person,
  * their connected apps, and where app logos come from. Workbot itself knows nothing about the host's sign-in.
@@ -21,14 +23,51 @@ export type WorkbotHost = {
   homeHref: string
   /** Workbot's Calendar tab is on for this person (on while Workbot is on). */
   calendar?: boolean
+  /** Documents browsing is enabled for this organization; omitted means off. */
+  documents?: boolean
+  /** Shared browser and computer desktop, enabled by the organization flags. */
+  computer?: boolean
+  /** Teach browser tasks and save private Cloud skills; omitted means off. */
+  browserDemonstrations?: boolean
+  /** The Browser view streams the page with Chromium's screencast instead of VNC; omitted means off. */
+  browserLiveView?: boolean
+  /** Explicit document editing is enabled; omitted means preview only. */
+  documentEditing?: boolean
+  /** Native dictation entry point; omitted means off. Speech stays with the OS. */
+  nativeDictation?: boolean
+  /** Contextual chat and workspace navigation. Omitted means off. */
+  workspaceAssistant?: boolean
+  /** Offers to open documents a reply mentions and keeps the chat open beside them. Needs workspaceAssistant. */
+  guidedNavigation?: boolean
+  /** Signed-in model-limit recovery; never offers anonymous access or starts a payment. */
+  usageRecovery?: { denUrl: string; organizationId: string }
+  /** The Get set up checklist in the header, and the Den pages its steps open. Omitted means off. */
+  activation?: { denUrl: string; organizationId: string }
   /** The organization runs Automations in the cloud, so the Calendar can create them. Off when unset. */
   canSchedule?: boolean
   /** Where the person connects their own Google or Microsoft account, for the Calendar's connect links. */
   connectionsHref?: string | null
+  /** Existing sign-in URL, used without replacing a document with retained changes. */
+  signInHref?: string | null
+  /** Fresh sign-in identity check before revealing a retained document draft. */
+  verifyDocumentIdentity?(): Promise<boolean>
+  /** The retained owner remains mounted, but this host authorization fact masks it. */
+  documentAuthorization?: "signin" | "blocked" | "disabled"
   /** The person can start side chats next to their main chat (on while Workbot is on). Off when unset. */
   sideChats?: boolean
   /** Authenticated identity for permission-protected model-setting caches; absent on older hosts. */
   identity?: { principalId: string; organizationId: string }
+}
+
+const AuthorizationContext = createContext<WorkbotHost["documentAuthorization"]>(undefined)
+export const WorkbotAuthorizationProvider = AuthorizationContext.Provider
+
+/** Portals are outside the owner's DOM. Suspend their interaction/focus while
+ * retaining an already-open form's DOM and state for the same owner. */
+export function useRetainedSurface(open: boolean) {
+  const blocked = useContext(AuthorizationContext) !== undefined
+  const style: CSSProperties | undefined = blocked ? { display: "none" } : undefined
+  return { blocked, open: open && !blocked, portal: { keepMounted: open && blocked, hidden: blocked, inert: blocked, style } }
 }
 
 let current: WorkbotHost | null = null
@@ -45,12 +84,20 @@ export function workbotHost(): WorkbotHost {
 
 /** A raw request to a Workbot API path, signed in (streams and files). */
 export async function hostFetch(path: string, init: RequestInit = {}) {
-  const { url, headers, credentials } = await workbotHost().prepare(path)
+  const host = workbotHost()
+  const { url, headers, credentials } = await host.prepare(path)
   new Headers(init.headers).forEach((value, key) => headers.set(key, value))
+  if (host.identity) {
+    headers.set("x-openwork-client-user", host.identity.principalId)
+    headers.set("x-openwork-client-organization", host.identity.organizationId)
+  }
   return fetch(url, { ...init, headers, credentials })
 }
 
 export function errorMessage(payload: unknown, fallback: string) {
+  if (typeof payload === "object" && payload !== null && "error" in payload && payload.error === "workbot_model_unavailable") {
+    return "I can't answer with your workspace's model right now. Ask your workspace admin to check Workbot's model."
+  }
   const host = workbotHost()
   if (host.errorMessage) return host.errorMessage(payload, fallback)
   if (typeof payload === "object" && payload !== null && "message" in payload && typeof payload.message === "string") return payload.message

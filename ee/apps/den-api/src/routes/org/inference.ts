@@ -7,10 +7,9 @@ import { allowFreeInferenceOffer, getInferenceStatus, setInferenceEnabled, getMe
 import { INFERENCE_ACCESS_REASONS, freeInferenceProviderSummarySchema, withFreeInferenceDefaultPinned, freeInferenceDefaultPinned } from "@openwork/types/den/inference"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
-import { requireFeature } from "../../features.js"
-import { organizationHasActiveInferenceSubscription } from "../../stripe-billing.js"
+import { isBillingProductConfigured, organizationHasActiveInferenceSubscription } from "../../stripe-billing.js"
 import { jsonValidator, orgMemberRoute, orgPermissionRoute } from "../../middleware/index.js"
-import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const inferenceSettingsSchema = z.object({
@@ -33,6 +32,7 @@ const inferenceStatusSchema = z.object({
   proxyBaseUrl: z.string(),
   upstreamProviderConfigured: z.boolean(),
   subscribed: z.boolean().optional(),
+  billingConfigured: z.boolean().optional().describe("Whether this deployment sells OpenWork Models (Stripe key and price configured). False: there is no checkout; teams add their own providers instead."),
   buckets: z.array(inferenceUsageBucketSchema),
 }).meta({ ref: "InferenceStatus" })
 
@@ -60,17 +60,6 @@ const freeAccessSchema = z.object({
 const freeCredentialSchema = z.object({ credential: z.object({ apiKey: z.string(), baseURL: z.string(), statusURL: z.string(), modelID: z.string() }) })
 
 export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
-  // The analytics dashboard has its own gate; Models settings and inference
-  // access remain available when the dashboard is hidden.
-  app.get("/v1/inference/analytics/usage", describeRoute({
-    tags: ["Inference"], summary: "Read Models analytics usage limits",
-    description: "Returns Models usage limits for the analytics dashboard. Requires View OpenWork Models settings and the Models analytics surface feature.",
-    responses: { 200: jsonResponse("Models usage limits.", inferenceStatusResponseSchema),
-      404: jsonResponse("Models analytics surface is disabled.", notFoundSchema) },
-  }), orgPermissionRoute("inference.view"), requireFeature("modelsAnalyticsUi"), async (c) => {
-    const orgId = c.get("organizationContext").organization.id
-    return c.json({ inference: { ...await getInferenceStatus(orgId), subscribed: await organizationHasActiveInferenceSubscription(orgId) } })
-  })
   app.get("/v1/inference/free/provider", describeRoute({ tags: ["Inference"], summary: "Get organization Free provider summary",
     description: "Requires the View OpenWork Models settings permission. Returns the organization's Auto pin policy, joined-member allowance counts and recorded free usage attributed to this organization. Allowances are person-wide; usage totals exclude other organizations, anonymous devices and paid inference. No individual balances or identities are returned.",
     responses: { 200: jsonResponse("Free provider summary returned.", z.object({ provider: freeInferenceProviderSummarySchema })),
@@ -157,6 +146,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
         inference: {
           ...await getInferenceStatus(payload.organization.id),
           subscribed: await organizationHasActiveInferenceSubscription(payload.organization.id),
+          billingConfigured: isBillingProductConfigured("inference"),
         },
       })
     },
@@ -192,6 +182,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
               inference: {
                 ...await getInferenceStatus(payload.organization.id),
                 subscribed: false,
+                billingConfigured: isBillingProductConfigured("inference"),
               },
             })
           }
@@ -203,7 +194,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
           tier: input.tier,
           source: "admin",
         })
-        return c.json({ inference: { ...inference, subscribed: await organizationHasActiveInferenceSubscription(payload.organization.id) } })
+        return c.json({ inference: { ...inference, subscribed: await organizationHasActiveInferenceSubscription(payload.organization.id), billingConfigured: isBillingProductConfigured("inference") } })
       } catch (error) {
         if (error instanceof ManagedModelsPolicyError) {
           return c.json({ error: error.code, message: error.message }, error.status)

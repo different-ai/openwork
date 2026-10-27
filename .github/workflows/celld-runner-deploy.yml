@@ -5,9 +5,10 @@ name: Deploy runner to celld
 # workflow does that on every dev push that changes the runner or a package bundled into it, so the runner never
 # falls behind Workbot and den-api (which Render deploys from the same push).
 #
-# Each run first deploys the bundle to a throwaway bucket prefix, starts a local node on it and runs a real turn;
-# only then does it deploy to the fleet and wait until every node has adopted the new version. See
-# ee/apps/headless-runner/OWNER-CELLS.md.
+# Each run first checks that the live runner and this one can serve each other during the switch, then deploys the
+# bundle to a throwaway bucket prefix, starts a local node on it and runs a real turn; only then does it deploy to the
+# fleet, wait until every node has adopted the new version and tell Slack. Approval and batching are settings of the
+# celld-production environment. See "Deploying the runner" in ee/apps/headless-runner/OWNER-CELLS.md.
 
 on:
   push:
@@ -21,6 +22,17 @@ on:
       - "pnpm-lock.yaml"
       - ".github/workflows/celld-runner-deploy.yml"
   workflow_dispatch:
+    inputs:
+      compat_base:
+        description: "Commit or ref to check compatibility against (default: the commit behind the live fleet version)"
+        required: false
+        type: string
+        default: ""
+      skip_compat_check:
+        description: "Deploy even if the live runner and this one can't serve each other during the switch"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -45,7 +57,12 @@ jobs:
       S3_ENDPOINT: https://5abbcca46f2a1399566cab3a8f8bd2c6.r2.cloudflarestorage.com
       FLEET_BUCKET: s3://openwork-celld/fleet
       PREFLIGHT_BUCKET: s3://openwork-celld/ci/${{ github.run_id }}-${{ github.run_attempt }}
+      # Which commit produced the live fleet version ({version, commit}), written after each green deploy. Outside the
+      # fleet prefix: celld never reads it.
+      DEPLOY_RECORD: s3://openwork-celld/ci/fleet-deployed.json
       RUNNER_VARS: ${{ secrets.CELLD_RUNNER_VARS }}
+      # Optional plain override so snapshot rotations don't require rewriting the secret JSON blob.
+      HEADLESS_COMPUTER_SNAPSHOT: ${{ vars.HEADLESS_COMPUTER_SNAPSHOT }}
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       RENDER_OWNER_ID: tea-cspud29u0jms7384itk0
       RENDER_SERVICE_ID: srv-db3upfjbc2fs73c1ii70
@@ -66,10 +83,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Read the live fleet version
+        id: live
+        run: |
+          set -euo pipefail
+          live="$(aws s3 cp "$FLEET_BUCKET/deploy/current.json" - --endpoint-url "$S3_ENDPOINT" --region auto 2>/dev/null | jq -r '.version // empty' || true)"
+          echo "version=$live" >> "$GITHUB_OUTPUT"
+          echo "The fleet runs ${live:-nothing yet}"
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -81,6 +106,37 @@ jobs:
           pnpm install --filter "@openwork-ee/headless-runner..." --frozen-lockfile
           pnpm --filter "@openwork-ee/headless-runner^..." --if-present run build
 
+      # The runner only accepts a computer whose desktop guest has its identity (dist/desktop-guest.version), and
+      # rebuilding a computer starts it again from the configured snapshot. A runner whose guest changed (its code, or a
+      # package it bundles, such as a lockfile bump) would turn every computer "out of date" until a new snapshot exists,
+      # so stop before the fleet changes. Build the snapshot with snapshot:build:freestyle-desktop at this commit, set
+      # HEADLESS_COMPUTER_SNAPSHOT in CELLD_RUNNER_VARS, then rerun this run.
+      - name: Check the computer snapshot was built for this runner
+        id: snapshot
+        run: |
+          set -euo pipefail
+          computer="$(printf '%s' "$RUNNER_VARS" | jq -r '.HEADLESS_COMPUTER // ""')"
+          desktop="$(printf '%s' "$RUNNER_VARS" | jq -r '.HEADLESS_COMPUTER_DESKTOP // ""')"
+          snapshot="$(printf '%s' "$RUNNER_VARS" | jq -r '.HEADLESS_COMPUTER_SNAPSHOT // ""')"
+          if [ -n "${HEADLESS_COMPUTER_SNAPSHOT:-}" ]; then snapshot="$HEADLESS_COMPUTER_SNAPSHOT"; fi
+          if [ "$computer" != "freestyle" ] || [ "$desktop" != "true" ]; then
+            echo "No Freestyle desktop computers configured; nothing to check."
+            exit 0
+          fi
+          identity="$(head -c 16 ee/packages/headless-computer/dist/desktop-guest.version)"
+          if ! [[ "$snapshot" =~ ^workbot-desktop-freestyle-([0-9a-f]{16})$ ]]; then
+            echo "::warning title=Computer snapshot not checked::$snapshot isn't named by snapshot:build:freestyle-desktop, so its desktop can't be compared with this runner's ($identity)."
+            exit 0
+          fi
+          if [ "${BASH_REMATCH[1]}" != "$identity" ]; then
+            echo "::error title=Computer snapshot is out of date::$snapshot was built for desktop ${BASH_REMATCH[1]}, but this runner's desktop is $identity. Build workbot-desktop-freestyle-$identity with snapshot:build:freestyle-desktop at this commit, set it as HEADLESS_COMPUTER_SNAPSHOT in CELLD_RUNNER_VARS, then rerun."
+            exit 1
+          fi
+          echo "$snapshot was built for this runner's desktop."
+
+      - name: Check model and smoke result boundaries
+        run: pnpm --filter @openwork-ee/headless-runner exec tsx --test scripts/model-responses.test.ts scripts/celld-smoke-result.test.ts
+
       - name: Install celld
         run: |
           set -euo pipefail
@@ -88,14 +144,108 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/celld" --version
 
+      # During the switch a request on the new deployment can reach a cell still on the old one, and the other way
+      # round (OWNER-CELLS.md, "Deploying the runner"). Compare with the commit behind the live fleet version, else the
+      # previous push. A real incompatibility stops the deploy; an old version that can't be fetched or built here is
+      # only a warning. Uses a mock model and no secrets.
+      - name: Check the live runner and this one can serve each other
+        id: compat
+        if: ${{ !inputs.skip_compat_check }}
+        timeout-minutes: 10
+        env:
+          COMPAT_BASE: ${{ inputs.compat_base }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          LIVE_VERSION: ${{ steps.live.outputs.version }}
+        run: |
+          set -euo pipefail
+          base="$COMPAT_BASE"
+          if [ -z "$base" ]; then
+            record="$(aws s3 cp "$DEPLOY_RECORD" - --endpoint-url "$S3_ENDPOINT" --region auto 2>/dev/null || true)"
+            recorded_version="$(printf '%s' "$record" | jq -r '.version // empty' 2>/dev/null || true)"
+            if [ -n "$LIVE_VERSION" ] && [ "$recorded_version" = "$LIVE_VERSION" ]; then
+              base="$(printf '%s' "$record" | jq -r '.commit // empty')"
+              echo "Comparing with $base, which produced the live version $LIVE_VERSION"
+            elif [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+              base="$PUSH_BEFORE"
+              echo "No record of the commit behind the live version; comparing with the previous dev push $base"
+            fi
+          fi
+          if [ -z "$base" ] || ! git fetch --no-tags --depth=1 origin "$base"; then
+            echo "::warning title=Runner compatibility check skipped::no earlier runner commit could be fetched (${base:-none found})"
+            exit 0
+          fi
+          cd ee/apps/headless-runner
+          # The check runs on celld dev's local store: keep the fleet's credentials away from it.
+          env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u S3_ENDPOINT -u RUNNER_VARS -u RENDER_API_KEY \
+            pnpm exec tsx scripts/compat-check.ts --base FETCH_HEAD --runtime celld
+
       # CELLD_RUNNER_VARS is one JSON object of the runner's HEADLESS_* settings (secrets included). Mask every value:
       # GitHub masks the whole secret, not the values inside it.
       - name: Bundle the runner
+        env:
+          HEADLESS_SENTRY_DSN: ${{ secrets.HEADLESS_SENTRY_DSN }}
+          HEADLESS_DEN_API_URL: ${{ vars.HEADLESS_DEN_API_URL }}
+          HEADLESS_DEN_CALLBACK_TOKEN: ${{ secrets.HEADLESS_DEN_CALLBACK_TOKEN }}
+          HEADLESS_GRANT_KEY: ${{ secrets.HEADLESS_GRANT_KEY }}
+          # Session storage (sealing and large outputs, OWNER-CELLS.md): plain variables, not secrets, so they can be
+          # turned on or off without rewriting CELLD_RUNNER_VARS. Unset keeps whatever CELLD_RUNNER_VARS says (default off).
+          HEADLESS_SEGMENTS: ${{ vars.HEADLESS_SEGMENTS }}
+          HEADLESS_HOT_LIMIT_BYTES: ${{ vars.HEADLESS_HOT_LIMIT_BYTES }}
+          HEADLESS_SEGMENT_TARGET_BYTES: ${{ vars.HEADLESS_SEGMENT_TARGET_BYTES }}
+          HEADLESS_LARGE_BODY_BYTES: ${{ vars.HEADLESS_LARGE_BODY_BYTES }}
         run: |
           set -euo pipefail
           umask 077
           printf '%s' "$RUNNER_VARS" > "$RUNNER_TEMP/vars.json"
+          # Snapshot rotation is a plain environment variable; when unset, keep the secret's existing value.
+          if [ -n "${HEADLESS_COMPUTER_SNAPSHOT:-}" ]; then
+            jq --arg snapshot "$HEADLESS_COMPUTER_SNAPSHOT" '. + { HEADLESS_COMPUTER_SNAPSHOT: $snapshot }' \
+              "$RUNNER_TEMP/vars.json" > "$RUNNER_TEMP/vars.merged.json"
+            mv "$RUNNER_TEMP/vars.merged.json" "$RUNNER_TEMP/vars.json"
+          fi
+          # Error reporting (opt-in): the DSN lives in its own secret so it can change without rewriting
+          # CELLD_RUNNER_VARS. The version is the runner's source tree hash, not the commit, so an unchanged runner
+          # still bundles to the same content hash and nodes don't re-adopt it.
+          runner_version="$(git rev-parse --short=12 HEAD:ee/apps/headless-runner)"
+          jq --arg dsn "${HEADLESS_SENTRY_DSN:-}" --arg version "$runner_version" '
+            . + (if $dsn != "" then { HEADLESS_SENTRY_DSN: $dsn, HEADLESS_SENTRY_ENVIRONMENT: (.HEADLESS_SENTRY_ENVIRONMENT // "production") } else {} end)
+              + { HEADLESS_RUNNER_VERSION: (.HEADLESS_RUNNER_VERSION // $version) }
+          ' "$RUNNER_TEMP/vars.json" > "$RUNNER_TEMP/vars.merged.json"
+          mv "$RUNNER_TEMP/vars.merged.json" "$RUNNER_TEMP/vars.json"
+          # Self-resume (saved step turns): the runner refuses a partial set, so merge all three or none.
+          if [ -n "${HEADLESS_DEN_API_URL:-}" ] && [ -n "${HEADLESS_DEN_CALLBACK_TOKEN:-}" ] && [ -n "${HEADLESS_GRANT_KEY:-}" ]; then
+            jq --arg url "$HEADLESS_DEN_API_URL" --arg token "$HEADLESS_DEN_CALLBACK_TOKEN" --arg key "$HEADLESS_GRANT_KEY" \
+              '. + { HEADLESS_DEN_API_URL: $url, HEADLESS_DEN_CALLBACK_TOKEN: $token, HEADLESS_GRANT_KEY: $key }' \
+              "$RUNNER_TEMP/vars.json" > "$RUNNER_TEMP/vars.merged.json"
+            mv "$RUNNER_TEMP/vars.merged.json" "$RUNNER_TEMP/vars.json"
+          elif [ -n "${HEADLESS_DEN_API_URL:-}${HEADLESS_DEN_CALLBACK_TOKEN:-}${HEADLESS_GRANT_KEY:-}" ]; then
+            echo "::warning title=Self-resume not configured::set all of HEADLESS_DEN_API_URL (variable), HEADLESS_DEN_CALLBACK_TOKEN and HEADLESS_GRANT_KEY (secrets) on celld-production, or none"
+          fi
           jq -r '.[]' "$RUNNER_TEMP/vars.json" | while IFS= read -r value; do [ -n "$value" ] && echo "::add-mask::$value"; done
+          # Storage settings are merged after masking: they are not secret, and masking a value like "on" would hide that
+          # text in every later log line. Checked here so a typo fails before anything is bundled.
+          if [ -n "${HEADLESS_SEGMENTS:-}" ] && [ "$HEADLESS_SEGMENTS" != "on" ] && [ "$HEADLESS_SEGMENTS" != "off" ]; then
+            echo "::error::HEADLESS_SEGMENTS must be on or off"; exit 1
+          fi
+          for name in HEADLESS_HOT_LIMIT_BYTES HEADLESS_SEGMENT_TARGET_BYTES HEADLESS_LARGE_BODY_BYTES; do
+            value="${!name:-}"
+            if [ -n "$value" ] && ! [[ "$value" =~ ^[0-9]+$ ]]; then echo "::error::$name must be a whole number of bytes"; exit 1; fi
+          done
+          jq --arg segments "${HEADLESS_SEGMENTS:-}" --arg hot "${HEADLESS_HOT_LIMIT_BYTES:-}" \
+            --arg target "${HEADLESS_SEGMENT_TARGET_BYTES:-}" --arg body "${HEADLESS_LARGE_BODY_BYTES:-}" '
+            . + (if $segments != "" then { HEADLESS_SEGMENTS: $segments } else {} end)
+              + (if $hot != "" then { HEADLESS_HOT_LIMIT_BYTES: $hot } else {} end)
+              + (if $target != "" then { HEADLESS_SEGMENT_TARGET_BYTES: $target } else {} end)
+              + (if $body != "" then { HEADLESS_LARGE_BODY_BYTES: $body } else {} end)
+          ' "$RUNNER_TEMP/vars.json" > "$RUNNER_TEMP/vars.merged.json"
+          mv "$RUNNER_TEMP/vars.merged.json" "$RUNNER_TEMP/vars.json"
+          # What the bundle is configured with, without any value: every value above is masked, so settings are named,
+          # and a few that decide behaviour are described in words that are never a value.
+          echo "Runner settings in the bundle: $(jq -r 'keys | join(", ")' "$RUNNER_TEMP/vars.json")"
+          jq -r '
+            def state(k): if (.[k] // "") == "" or .[k] == "off" then "disabled" else "enabled" end;
+            "computer: \(state("HEADLESS_COMPUTER")); saved files: \(state("HEADLESS_FILES")); error reporting: \(state("HEADLESS_SENTRY_DSN")); self-resume: \(if (.HEADLESS_DEN_API_URL and .HEADLESS_DEN_CALLBACK_TOKEN and .HEADLESS_GRANT_KEY) then "enabled" else "disabled" end); sealing: \(state("HEADLESS_SEGMENTS"))"
+          ' "$RUNNER_TEMP/vars.json"
           cd ee/apps/headless-runner
           pnpm exec tsx scripts/celld-bundle.ts "$RUNNER_TEMP/celld" "$RUNNER_TEMP/vars.json"
           echo "CELLD_ESBUILD=$PWD/node_modules/.bin/esbuild" >> "$GITHUB_ENV"
@@ -115,9 +265,11 @@ jobs:
 
       - name: Deploy to the fleet
         id: fleet
+        env:
+          LIVE_VERSION: ${{ steps.live.outputs.version }}
         run: |
           set -euo pipefail
-          live="$(aws s3 cp "$FLEET_BUCKET/deploy/current.json" - --endpoint-url "$S3_ENDPOINT" --region auto 2>/dev/null | jq -r '.version // empty' || true)"
+          live="$LIVE_VERSION"
           version="$(celld deploy "$RUNNER_TEMP/celld/wrangler.json" --bucket "$FLEET_BUCKET" --json | jq -r '.version')"
           if [ -z "$version" ] || [ "$version" = "null" ]; then echo "::error::celld deploy reported no version"; exit 1; fi
           # The version is a content hash: an unchanged bundle redeploys the live version, which nodes don't re-adopt.
@@ -127,6 +279,7 @@ jobs:
 
       # Nodes poll the pointer every 30 seconds. Every running instance must report adopting this version.
       - name: Wait for every node to adopt it
+        id: adopt
         if: steps.fleet.outputs.unchanged != 'true'
         env:
           VERSION: ${{ steps.fleet.outputs.version }}
@@ -134,20 +287,94 @@ jobs:
           set -euo pipefail
           started="$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)"
           instances="$(curl -sf -H "Authorization: Bearer $RENDER_API_KEY" "https://api.render.com/v1/services/$RENDER_SERVICE_ID" | jq -r '.serviceDetails.numInstances')"
-          for _ in $(seq 1 30); do
+          echo "instances=$instances" >> "$GITHUB_OUTPUT"
+          adopted=0
+          for attempt in $(seq 1 30); do
+            # A failed log read counts as no progress this round rather than ending the wait.
             adopted="$(curl -sf -G -H "Authorization: Bearer $RENDER_API_KEY" https://api.render.com/v1/logs \
               --data-urlencode "ownerId=$RENDER_OWNER_ID" --data-urlencode "resource=$RENDER_SERVICE_ID" \
               --data-urlencode "text=deployment_adopted" --data-urlencode "startTime=$started" --data-urlencode "limit=100" \
-              | jq --arg v "$VERSION" '[.logs[] | select(.message | contains("version=" + $v)) | (.labels[] | select(.name == "instance") | .value)] | unique | length')"
+              | jq --arg v "$VERSION" '[.logs[] | select(.message | contains("version=" + $v)) | (.labels[] | select(.name == "instance") | .value)] | unique | length' \
+              || echo "$adopted")"
             echo "adopted on $adopted of $instances nodes"
-            [ "$adopted" -ge "$instances" ] && exit 0
-            sleep 10
+            [ "$adopted" -ge "$instances" ] && break
+            [ "$attempt" -lt 30 ] && sleep 10
           done
-          echo "::error::Not every node adopted $VERSION within 5 minutes; check the headless-cells logs."
-          exit 1
+          echo "adopted=$adopted" >> "$GITHUB_OUTPUT"
+          if [ "$adopted" -lt "$instances" ]; then
+            echo "::error::Not every node adopted $VERSION within 5 minutes; check the headless-cells logs."
+            exit 1
+          fi
+
+      # The compatibility check of the next run compares with this commit.
+      - name: Record the commit behind the live version
+        if: steps.fleet.outcome == 'success' && (steps.fleet.outputs.unchanged == 'true' || steps.adopt.outcome == 'success')
+        continue-on-error: true
+        env:
+          VERSION: ${{ steps.fleet.outputs.version }}
+        run: |
+          set -euo pipefail
+          jq -n --arg version "$VERSION" --arg commit "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" '{version: $version, commit: $commit, run: $run}' \
+            | aws s3 cp - "$DEPLOY_RECORD" --endpoint-url "$S3_ENDPOINT" --region auto --content-type application/json --only-show-errors
 
       - name: Clean up
         if: always()
         run: |
           rm -rf "$RUNNER_TEMP/celld" "$RUNNER_TEMP/vars.json" "$RUNNER_TEMP/watch"
           aws s3 rm --recursive "$PREFLIGHT_BUCKET/" --endpoint-url "$S3_ENDPOINT" --region auto --only-show-errors || true
+
+      # Posts only when CELLD_DEPLOY_SLACK_WEBHOOK_URL (a Slack incoming webhook) is set on the celld-production
+      # environment. A failed post is a warning: the deploy has already happened or failed by now.
+      # TODO: add "cells switched" and "cells force-cancelled". celld v0.6.2 logs `generation_swap_out` per switched
+      # cell (with a per-node generation number, not the version) and nothing distinct when CELLD_DEPLOY_MAX_AGE_S
+      # forces a busy cell, so Render's logs can't give the forced count yet. Count it here, the way the wait step
+      # counts deployment_adopted, once celld logs a forced swap.
+      - name: Tell Slack
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.CELLD_DEPLOY_SLACK_WEBHOOK_URL }}
+          JOB_STATUS: ${{ job.status }}
+          FLEET_OUTCOME: ${{ steps.fleet.outcome }}
+          COMPAT_OUTCOME: ${{ steps.compat.outcome }}
+          SNAPSHOT_OUTCOME: ${{ steps.snapshot.outcome }}
+          UNCHANGED: ${{ steps.fleet.outputs.unchanged }}
+          VERSION: ${{ steps.fleet.outputs.version }}
+          PREVIOUS: ${{ steps.live.outputs.version }}
+          ADOPTED: ${{ steps.adopt.outputs.adopted }}
+          INSTANCES: ${{ steps.adopt.outputs.instances }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "CELLD_DEPLOY_SLACK_WEBHOOK_URL is not set; no Slack message."
+            exit 0
+          fi
+          previous="${PREVIOUS:-unknown}"
+          ended="$([ "$JOB_STATUS" = "cancelled" ] && echo "was cancelled" || echo "failed")"
+          if [ "$JOB_STATUS" = "success" ] && [ "$UNCHANGED" = "true" ]; then
+            outcome="unchanged"
+            summary=":white_circle: Runner unchanged: the fleet already runs \`$VERSION\`."
+          elif [ "$JOB_STATUS" = "success" ]; then
+            outcome="deployed"
+            summary=":large_green_circle: Runner deployed: \`$VERSION\` (was \`$previous\`), adopted on ${ADOPTED:-?} of ${INSTANCES:-?} nodes."
+          elif [ "$FLEET_OUTCOME" = "success" ]; then
+            outcome="failed"
+            summary=":red_circle: Runner \`$VERSION\` is in the fleet bucket but only ${ADOPTED:-?} of ${INSTANCES:-?} nodes adopted it (was \`$previous\`)."
+          elif [ "$SNAPSHOT_OUTCOME" = "failure" ]; then
+            outcome="failed"
+            summary=":red_circle: Runner deploy stopped: its computer desktop changed and the configured snapshot was built for the old one. Build a new snapshot, set it in CELLD_RUNNER_VARS and rerun. The fleet stays on \`$previous\`."
+          elif [ "$COMPAT_OUTCOME" = "failure" ]; then
+            outcome="failed"
+            summary=":red_circle: Runner deploy stopped: the live runner and this one can't serve each other during a switch. The fleet stays on \`$previous\`."
+          else
+            outcome="failed"
+            summary=":red_circle: Runner deploy $ended before the fleet changed. The fleet stays on \`$previous\`."
+          fi
+          text="$summary"$'\n'"Commit <$COMMIT_URL|${GITHUB_SHA:0:12}> · <$RUN_URL|run $GITHUB_RUN_ID>"
+          if ! jq -n --arg text "$text" '{text: $text, unfurl_links: false}' \
+            | curl -sS --fail --max-time 20 -X POST -H 'Content-Type: application/json' --data-binary @- "$SLACK_WEBHOOK_URL" > /dev/null; then
+            echo "::warning::Could not post the $outcome deploy message to Slack."
+          else
+            echo "Posted the $outcome deploy message to Slack."
+          fi

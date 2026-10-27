@@ -1,4 +1,5 @@
 import type { Context, Hono } from "hono"
+import { freeAutoJourneyHash } from "@openwork-ee/den-db"
 import { FreeAutoBusyError } from "../shared/capacity.js"
 import { z } from "zod"
 import {
@@ -100,7 +101,8 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
         versionError: { code: "desktop_build_unverified", currentVersion: "", minimumVersion: null, message: "The OpenWork free model is currently unavailable." } }
       if (!address) return { error: desktopFreeGateError(503, "anonymous_unavailable") }
       const ipHash = anonymousIpHash(address, config)
-      return { principal: { kind: "installation", id: freeIdentityHash("open-ip", ipHash), untaggedIpHash: ipHash, deviceless: true },
+      return { principal: { kind: "installation", id: freeIdentityHash("open-ip", ipHash), untaggedIpHash: ipHash, deviceless: true,
+        journeyHash: freeAutoJourneyHash(c.req.header("x-openwork-free-journey")) ?? undefined, observationRateHash: ipHash },
         versionError: null, minimumVersion: null, currentVersion: "" }
     }
     const guest = token && address ? verifyAnonymousToken(token, address, config) : null
@@ -111,6 +113,8 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     const principal: GuestPrincipal = gate.proof.version === 2
       ? { kind: "installation", id: guest.installationHash, untaggedIpHash: guest.ipHash }
       : { kind: "installation", id: guest.installationHash }
+    principal.journeyHash = freeAutoJourneyHash(c.req.header("x-openwork-free-journey")) ?? undefined
+    principal.observationRateHash = guest.ipHash
     return { principal, versionError: gate.versionError, minimumVersion: gate.minimumVersion, currentVersion: gate.proof.appVersion }
   }
 

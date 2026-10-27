@@ -129,6 +129,17 @@ export const capabilityGroups: CapabilityGroup[] = [
         }
       },
       {
+        label: "Projects to group related chats and files",
+        cells: {
+          enterprise: yes(A.matrix),
+          thirdParty: yes(A.matrix),
+          openwork: partial(
+            "/docs/start-here/migrate-from-claude-cowork",
+            "Work is organized in workspaces and folders. Claude projects are not migrated automatically yet."
+          )
+        }
+      },
+      {
         label: "Memory across chats",
         cells: {
           enterprise: yes(A.matrix),
@@ -284,14 +295,14 @@ export function totalsText(totals: SupportTotals): string {
   return totals.partial > 0 ? `${totals.yes} (+${totals.partial} partial)` : `${totals.yes}`;
 }
 
-export function capabilitySubtitle(): string {
-  return `${capabilityRows.length} capabilities, checked against each vendor's own docs. Yes, Partial, or No for what ships today.`;
+export function capabilitySubtitle(rows: CapabilityRow[] = capabilityRows): string {
+  return `${rows.length} capabilities, checked against each vendor's own docs. Yes, Partial, or No for what ships today.`;
 }
 
 /** Footnote numbers for cells with a note, in reading order. */
-export function capabilityFootnotes(): { id: string; number: number; note: string; source: string }[] {
+export function capabilityFootnotes(rows: CapabilityRow[] = capabilityRows): { id: string; number: number; note: string; source: string }[] {
   const notes: { id: string; number: number; note: string; source: string }[] = [];
-  for (const row of capabilityRows) {
+  for (const row of rows) {
     for (const column of capabilityColumns) {
       const cell = row.cells[column.key];
       if (cell.note) notes.push({ id: footnoteId(row, column.key), number: notes.length + 1, note: cell.note, source: cell.source });

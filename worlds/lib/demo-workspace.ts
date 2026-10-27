@@ -22,9 +22,9 @@ export const DEMO_WORKSPACE_SERVICES = [
   { key: "gmail", name: "Gmail" },
 ] as const;
 
-const SCRIPT_URL = new URL("../../evals/packages/labs/src/demo-workspace-mcp.mjs", import.meta.url);
-/** Fixed port inside a Daytona Den sandbox; locally a free port is allocated. */
-const DAYTONA_PORT = 3990;
+const WORKSPACE_SCRIPT = { url: new URL("../../evals/packages/labs/src/demo-workspace-mcp.mjs", import.meta.url), label: "demo-workspace-mcp", daytonaPort: 3990 };
+/** A self-contained Node script started next to Den API: a local child process, or uploaded into the Den sandbox. */
+export type DemoScript = { url: URL; label: string; daytonaPort: number; localPort?: number };
 
 export type DemoWorkspace = {
   /** Where Den API reaches the servers: `${baseUrl}/<service>/mcp`. */
@@ -33,33 +33,33 @@ export type DemoWorkspace = {
   stateUrl: string | null;
 };
 
-async function waitForHealth(baseUrl: string, failed: () => string | null): Promise<void> {
+async function waitForHealth(baseUrl: string, label: string, failed: () => string | null): Promise<void> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     const failure = failed();
-    if (failure) throw new Error(`Demo workspace MCP failed to start: ${failure}`);
+    if (failure) throw new Error(`${label} failed to start: ${failure}`);
     if (await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(2000) }).then((response) => response.ok).catch(() => false)) return;
     await delay(250);
   }
-  throw new Error(`Demo workspace MCP did not become healthy at ${baseUrl}/health.`);
+  throw new Error(`${label} did not become healthy at ${baseUrl}/health.`);
 }
 
-/** Starts the demo servers next to Den API: a child process locally, or inside the Den sandbox on Daytona. */
-export async function bootDemoWorkspace(stack: AsyncDisposableStack, den: Den): Promise<DemoWorkspace> {
+/** Starts a self-contained demo script next to Den API: a child process locally, or inside the Den sandbox on Daytona. */
+export async function startDemoScript(stack: AsyncDisposableStack, den: Den, script: DemoScript, env: Record<string, string> = {}): Promise<DemoWorkspace> {
   if (den.placement?.kind === "daytona") {
-    const script = await startScriptOnSandbox({
-      sandbox: den.placement.sandboxId, label: "demo-workspace-mcp", port: DAYTONA_PORT,
-      scriptSource: await readFile(fileURLToPath(SCRIPT_URL), "utf8"),
-      log: (line) => console.error(`[demo-workspace] ${line}`),
+    const running = await startScriptOnSandbox({
+      sandbox: den.placement.sandboxId, label: script.label, port: script.daytonaPort,
+      scriptSource: await readFile(fileURLToPath(script.url), "utf8"), env,
+      log: (line) => console.error(`[${script.label}] ${line}`),
     });
     // The Den disposer may already have deleted the sandbox; then there is nothing left to stop.
-    stack.defer(() => script.stop().catch(() => undefined));
-    return { baseUrl: script.loopbackUrl, stateUrl: null };
+    stack.defer(() => running.stop().catch(() => undefined));
+    return { baseUrl: running.loopbackUrl, stateUrl: null };
   }
-  const port = await allocateFreePort();
+  const port = script.localPort ?? await allocateFreePort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const child = spawn(process.execPath, [fileURLToPath(SCRIPT_URL)], {
-    env: { PATH: process.env.PATH, HOST: "127.0.0.1", PORT: String(port) },
+  const child = spawn(process.execPath, [fileURLToPath(script.url)], {
+    env: { PATH: process.env.PATH, HOST: "127.0.0.1", PORT: String(port), ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let logs = "";
@@ -76,23 +76,30 @@ export async function bootDemoWorkspace(stack: AsyncDisposableStack, den: Den): 
       child.kill("SIGTERM");
     });
   });
-  if (child.pid) await trackResource({ kind: "process", id: String(child.pid), label: "demo-workspace-mcp", match: "demo-workspace-mcp.mjs" });
-  await waitForHealth(baseUrl, () => spawnError?.message ?? (child.exitCode !== null ? logs || `exited ${child.exitCode}` : null));
+  const file = fileURLToPath(script.url).split("/").at(-1) ?? script.label;
+  if (child.pid) await trackResource({ kind: "process", id: String(child.pid), label: script.label, match: file });
+  await waitForHealth(baseUrl, script.label, () => spawnError?.message ?? (child.exitCode !== null ? logs || `exited ${child.exitCode}` : null));
   return { baseUrl, stateUrl: `${baseUrl}/state` };
+}
+
+/** Adds one shared, no-auth MCP connection every member can use, with its tools exposed directly. */
+export async function connectDemoServer(den: Den, key: string, name: string, url: string): Promise<void> {
+  const result = await denFetch(den.ref, `/v1/mcp-connections/by-key/demo-${key}`, {
+    method: "PUT", headers: { authorization: `Bearer ${den.admin.token}` },
+    body: JSON.stringify({
+      name, url, authType: "none", credentialMode: "shared", exposeDirectly: true,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    }),
+  });
+  if (!result.response.ok) throw new Error(`Could not add the demo ${name} connection: HTTP ${result.response.status} ${JSON.stringify(result.body)}`);
+}
+
+/** Starts the demo Slack, Notion, Linear, Google Calendar and Gmail servers. */
+export async function bootDemoWorkspace(stack: AsyncDisposableStack, den: Den): Promise<DemoWorkspace> {
+  return startDemoScript(stack, den, WORKSPACE_SCRIPT);
 }
 
 /** Adds each demo server to the org as a shared connection every member can use, with its tools exposed directly. */
 export async function connectDemoWorkspace(den: Den, workspace: DemoWorkspace): Promise<void> {
-  const headers = { authorization: `Bearer ${den.admin.token}` };
-  for (const service of DEMO_WORKSPACE_SERVICES) {
-    const result = await denFetch(den.ref, `/v1/mcp-connections/by-key/demo-${service.key}`, {
-      method: "PUT", headers,
-      body: JSON.stringify({
-        name: service.name, url: `${workspace.baseUrl}/${service.key}/mcp`,
-        authType: "none", credentialMode: "shared", exposeDirectly: true,
-        access: { orgWide: true, memberIds: [], teamIds: [] },
-      }),
-    });
-    if (!result.response.ok) throw new Error(`Could not add the demo ${service.name} connection: HTTP ${result.response.status} ${JSON.stringify(result.body)}`);
-  }
+  for (const service of DEMO_WORKSPACE_SERVICES) await connectDemoServer(den, service.key, service.name, `${workspace.baseUrl}/${service.key}/mcp`);
 }

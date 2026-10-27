@@ -4,6 +4,7 @@ import {
   appBuildInfo,
   engineInfo,
   openworkServerInfo,
+  runtimeStatus,
   type AppBuildInfo,
   type EngineInfo,
   type OpencodeExecutionSnapshot,
@@ -36,6 +37,7 @@ export type DiagnosticsBundleInputs = {
   capturedAt: string;
   desktopRuntime: boolean;
   appInfo: AppBuildInfo | null;
+  desktopStartupLog?: unknown;
   engineInfo: EngineInfo | null;
   openworkServerSettings: OpenworkServerSettings;
   hostInfo: OpenworkServerInfo | null;
@@ -149,6 +151,7 @@ export function composeDiagnosticsBundleJson(input: DiagnosticsBundleInputs): st
     capturedAt: input.capturedAt,
     connectionHistory: connectionDiagnosticHistory.read(),
     app: pickAppInfo(input.appInfo),
+    desktopStartupLog: input.desktopStartupLog ?? null,
     opencodeEngine: pickEngineInfo(input.engineInfo),
     runtime: {
       tauri: input.desktopRuntime,
@@ -215,6 +218,16 @@ async function readHostInfo(desktopRuntime: boolean) {
   }
 }
 
+async function readDesktopStartupLog(desktopRuntime: boolean) {
+  if (!desktopRuntime) return null;
+  try {
+    const status = await runtimeStatus();
+    return status && typeof status === "object" && "desktopStartupLog" in status ? status.desktopStartupLog : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function buildDiagnosticsBundleJson(context?: DiagnosticsBundleContext): Promise<string> {
   const desktopRuntime = isDesktopRuntime();
   const hasContextHostInfo = context !== undefined && "hostInfo" in context;
@@ -226,6 +239,7 @@ export async function buildDiagnosticsBundleJson(context?: DiagnosticsBundleCont
     capturedAt: new Date().toISOString(),
     desktopRuntime,
     appInfo,
+    desktopStartupLog: await readDesktopStartupLog(desktopRuntime),
     engineInfo: engine,
     openworkServerSettings: readOpenworkServerSettings(),
     hostInfo,

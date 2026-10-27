@@ -1,7 +1,11 @@
 .terraform/
+.openwork-migration.zip
+__pycache__/
 *.tfstate
 *.tfstate.*
 terraform.tfvars
 .terraform.lock.hcl
 *.tfplan
 tfplan
+*.auto.tfvars
+*.auto.tfvars.json

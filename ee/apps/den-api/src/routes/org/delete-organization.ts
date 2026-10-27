@@ -3,6 +3,8 @@ import { deleteGatewayUsageForOrganization } from "@openwork-ee/den-db/gateway-u
 import {
   AuthApiKeyTable,
   AuthSessionTable,
+  FreeAutoLimitEventTable,
+  FreeAutoPurchaseTable,
   AuditEventTable,
   AuditEventResourceTable,
   AuditOperationTable,
@@ -29,6 +31,7 @@ import {
   DesktopConnectGrantTable,
   DesktopPolicyMemberTable,
   DesktopPolicyTable,
+  DesktopStartupReportTable,
   ExternalIdentityTable,
   ExternalMcpConnectionAccessGrantTable,
   ExternalMcpConnectionTable,
@@ -91,6 +94,8 @@ import {
   WorkerTokenTable,
   WorkspaceBootstrapTable,
   WorkspaceClaimTable,
+  HeadlessResumeGrantTable,
+  HeadlessResumeRevocationTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { deleteModelsAnalyticsForOrganization } from "@openwork-ee/telemetry"
@@ -99,6 +104,9 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { deleteOrganizationAgentPermissions } from "../../agent-permissions.js"
 import { deleteOrganizationDefaultModels } from "../../default-model.js"
+import { deleteOrganizationPrompts } from "../../prompts.js"
+import { deleteHeadlessSessionIndexForOrganization } from "../../headless-runner/session-index.js"
+import { unlessResumeTableMissing } from "../../headless-runner/resume-grant-revocation.js"
 import { addAuditRequestResource } from "../../audit/request-capture.js"
 import { cache } from "../../cache.js"
 import { db } from "../../db.js"
@@ -550,9 +558,15 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(TelemetrySessionDimensionTable).where(eq(TelemetrySessionDimensionTable.org_id, organizationId))
         await tx.delete(CapabilityUsageEventTable).where(eq(CapabilityUsageEventTable.organization_id, organizationId))
         await tx.delete(CapabilityUsageRollupTable).where(eq(CapabilityUsageRollupTable.organization_id, organizationId))
+        await deleteHeadlessSessionIndexForOrganization(tx, organizationId)
+        // Resume grants are useless once the members are gone (the exchange needs an active member); delete them too.
+        await unlessResumeTableMissing("headless_resume_grant", () => tx.delete(HeadlessResumeGrantTable).where(eq(HeadlessResumeGrantTable.organizationId, organizationId)))
+        await unlessResumeTableMissing("headless_resume_revocation", () => tx.delete(HeadlessResumeRevocationTable).where(eq(HeadlessResumeRevocationTable.organizationId, organizationId)))
         await tx.delete(TeamTable).where(eq(TeamTable.organizationId, organizationId))
 
         await tx.delete(OrgSubscriptionTable).where(eq(OrgSubscriptionTable.organization_id, organizationId))
+        await tx.delete(FreeAutoLimitEventTable).where(eq(FreeAutoLimitEventTable.organization_id, organizationId))
+        await tx.delete(FreeAutoPurchaseTable).where(eq(FreeAutoPurchaseTable.organization_id, organizationId))
         await tx.delete(ScimUserTombstoneTable).where(eq(ScimUserTombstoneTable.organizationId, organizationId))
         await tx.delete(ScimGroupTable).where(eq(ScimGroupTable.organizationId, organizationId))
 
@@ -565,9 +579,11 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.organizationId, organizationId))
         await deleteOrganizationAgentPermissions(tx, organizationId)
         await deleteOrganizationDefaultModels(tx, organizationId)
+        await deleteOrganizationPrompts(tx, organizationId)
         await tx.delete(DesktopPolicyTable).where(eq(DesktopPolicyTable.organizationId, organizationId))
 
         await tx.delete(OrganizationDiagnosticCredentialTable).where(eq(OrganizationDiagnosticCredentialTable.organizationId, organizationId))
+        await tx.delete(DesktopStartupReportTable).where(eq(DesktopStartupReportTable.organizationId, organizationId))
         await tx.delete(OrganizationWebOriginTable).where(eq(OrganizationWebOriginTable.organizationId, organizationId))
 
         await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.organizationId, organizationId))

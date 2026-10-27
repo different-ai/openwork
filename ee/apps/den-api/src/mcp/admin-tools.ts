@@ -1,18 +1,18 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { eq, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable } from "@openwork-ee/den-db/schema"
-import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
 import { z } from "zod"
 import { db } from "../db.js"
 import { getDesktopReleaseMetadata } from "../desktop-releases.js"
 import { env } from "../env.js"
-import { parseOrganizationPlan, type PlanTier } from "../entitlements.js"
-import { normalizeOrganizationMetadata } from "../organization-limits.js"
+import { adminOrganizationPlanInputSchema, setOrganizationPlanByAdmin } from "../admin-organization-plan.js"
 import { readFeatureRollouts } from "@openwork-ee/den-db/organization-features"
 import { updateFeatureRollout, updateOrganizationFeatureOverrides } from "../features.js"
-import { FEATURE_KEYS, featureAvailableOn, featureDefinition, featureKeySchema, featureRollout, resolveFeature } from "@openwork/features"
-import { updateOrganizationMetadata } from "../organization-metadata.js"
+import { FEATURE_KEYS, featureAvailableOn, featureDefinition, featureDocsUrl, featureKeySchema, featureRollout, resolveFeature } from "@openwork/features"
 import { runPlatformAdminPlatformAction, runPlatformAdminServiceAction, type PlatformAdminAuditActor } from "../audit/mcp-service-audit.js"
+import { readWorkbotAdoptionReport, workbotAdoptionInputSchema } from "../workbot/adoption-report.js"
+import { assertReadOnlySql, isDatabaseTimeLimitError, withDatabaseTimeLimit } from "./admin-query-limit.js"
+import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 
 /**
  * den-admin MCP toolset: read-only Den analytics for allowlisted platform
@@ -23,14 +23,19 @@ import { runPlatformAdminPlatformAction, runPlatformAdminServiceAction, type Pla
  * payloads are kept compatible; bump DEN_ADMIN_MCP_VERSION when they change
  * so `den_admin_version` can be used to spot stale deploys.
  *
- * Hardening: every statement goes through the shared read-only guard, raw
- * `den_query` results are row-capped, and all queries race a wall-clock
- * timeout so one expensive SELECT cannot pin an API worker indefinitely.
+ * Hardening: every statement goes through the shared read-only guard, which
+ * also refuses credential tables, raw `den_query` results are row-capped, and
+ * all queries race a wall-clock timeout so one expensive SELECT cannot pin an
+ * API worker indefinitely. Raw `den_query` SELECTs also carry the limit to the
+ * database, which stops the statement itself (admin-query-limit.ts). Admin
+ * write tools need the caller's mcp:write scope, like connection writes.
  */
 
-export const DEN_ADMIN_MCP_VERSION = "0.7.0"
+export const DEN_ADMIN_MCP_VERSION = "0.9.0"
 
 const QUERY_TIMEOUT_MS = 15_000
+// Slightly under Den's own timer, so the database stops the statement first.
+const DATABASE_TIME_LIMIT_MS = QUERY_TIMEOUT_MS - 1_000
 const DEFAULT_ROW_LIMIT = 200
 const MAX_ROW_LIMIT = 1000
 
@@ -154,14 +159,6 @@ async function resolveOrganization(org: string): Promise<
   }
 
   throw new Error(`No organization matching "${org}"`)
-}
-
-function manualPlan(tier: PlanTier) {
-  return {
-    tier,
-    source: "manual" as const,
-    ...(tier === "enterprise" ? { grantedAt: new Date().toISOString() } : {}),
-  }
 }
 
 function toTime(value: unknown): number | null {
@@ -338,23 +335,6 @@ async function describeUsers(userRows: Row[]) {
   }))
 }
 
-// --- read-only guard for den_query ---
-
-const FORBIDDEN_SQL =
-  /\b(insert|update|delete|drop|alter|create|truncate|rename|replace|grant|revoke|call|load|handler|lock|unlock|set|use|outfile|dumpfile|for\s+update)\b/i
-
-export function assertReadOnlySql(input: string): string {
-  const sqlText = input.trim().replace(/;+\s*$/, "")
-  if (sqlText.includes(";")) throw new Error("Only a single SQL statement is allowed")
-  if (!/^(select|with|show|describe|explain)\b/i.test(sqlText)) {
-    throw new Error("Only SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statements are allowed")
-  }
-  if (FORBIDDEN_SQL.test(sqlText)) {
-    throw new Error("Statement contains a forbidden keyword (read-only access)")
-  }
-  return sqlText
-}
-
 /** Append a LIMIT to bare SELECT/WITH statements and clamp the cap. */
 export function applyDefaultRowLimit(sqlText: string, limit?: number): { sql: string; cap: number } {
   const cap = Math.max(1, Math.min(limit ?? DEFAULT_ROW_LIMIT, MAX_ROW_LIMIT))
@@ -378,15 +358,24 @@ export async function buildAdminMcpVersionInfo() {
 
 // --- tool registration ---
 
+/** The verified platform admin calling the tools, with the scopes of the token they called with. */
+export type AdminToolCaller = PlatformAdminAuditActor & Readonly<{ scopes: ReadonlySet<string> }>
+
 /**
  * `admin` is the verified platform admin calling the tools; org-mutating tools
- * are audited for it (src/audit/service-actions.ts) and refuse without it.
- * Pass null only for catalog listing.
+ * are audited for it (src/audit/service-actions.ts) and refuse without it or
+ * without its mcp:write scope. Pass null only for catalog listing.
  */
-export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAuditActor | null) {
+export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller | null) {
   const requireAdmin = () => {
     if (!admin) throw new Error("Admin write tools require an authenticated platform admin.")
     return admin
+  }
+  // The same refusal connection writes give a token without the write scope.
+  const writeScopeMissing = (toolName: string): ToolResult | null => {
+    if (!admin || admin.scopes.has(DEN_MCP_WRITE_SCOPE)) return null
+    const refusal = { error: "insufficient_mcp_scope", requiredScope: DEN_MCP_WRITE_SCOPE, message: `${toolName} requires the ${DEN_MCP_WRITE_SCOPE} scope.` }
+    return { content: [{ type: "text", text: JSON.stringify(refusal) }], isError: true }
   }
 
   server.registerTool(
@@ -447,21 +436,26 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
     "den_update_org_plan",
     {
       description:
-        "Admin write tool: grant or remove organization plan access and set the member seat limit. Use tier='enterprise' to grant enterprise access.",
+        "Admin write tool: set an organization's plan (free, team or enterprise) and how many users it allows, counting pending invitations, the same control as /admin › Billing. Invitations, SSO sign-up and SCIM all enforce it unless a paid Stripe plan bills every user. Team and Enterprise may carry a display-only end date (endsAt, YYYY-MM-DD; null clears it). Never changes Stripe. Returns the resolved plan.",
       inputSchema: z.object({
         organizationId: z.string().min(1).describe("Organization id, e.g. org_..."),
         tier: z.enum(["free", "team", "enterprise"]).describe("Plan tier to set"),
-        seatLimit: z.number().int().min(1).max(100000).describe("Maximum active organization members/seats"),
+        seatLimit: z.number().int().min(1).max(100000).describe("Users allowed, counting pending invitations (at least 5; smaller values are raised to 5)"),
+        endsAt: z.string().nullable().optional().describe("Optional end date for team or enterprise, YYYY-MM-DD; display only. null clears it. Not allowed on free."),
       }),
     },
-    async ({ organizationId, tier, seatLimit }) =>
-      run(async () => {
+    async ({ organizationId, tier, seatLimit, endsAt }) =>
+      writeScopeMissing("den_update_org_plan") ?? run(async () => {
         if (!isOrganizationId(organizationId)) {
           throw new Error("Invalid organization id")
         }
+        const input = adminOrganizationPlanInputSchema.safeParse({ tier, seatLimit, endsAt })
+        if (!input.success) {
+          throw new Error(input.error.issues[0]?.message ?? "Invalid organization plan")
+        }
 
         const existing = await db
-          .select({ id: OrganizationTable.id, name: OrganizationTable.name, slug: OrganizationTable.slug, metadata: OrganizationTable.metadata })
+          .select({ id: OrganizationTable.id, name: OrganizationTable.name, slug: OrganizationTable.slug })
           .from(OrganizationTable)
           .where(eq(OrganizationTable.id, organizationId))
           .limit(1)
@@ -471,19 +465,7 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
           throw new Error(`No organization found for ${organizationId}`)
         }
 
-        const metadata = await runPlatformAdminServiceAction("organization.plan.set", requireAdmin(), organization, () => updateOrganizationMetadata(organizationId, (current) => {
-          const normalized = normalizeOrganizationMetadata(current).metadata
-          const plan = { ...readOrganizationMetadata(current.plan), ...manualPlan(tier) }
-          if (tier !== "enterprise") delete plan.grantedAt
-          return {
-            ...normalized,
-            plan,
-            limits: {
-              ...normalized.limits,
-              members: seatLimit,
-            },
-          }
-        }))
+        const plan = await runPlatformAdminServiceAction("organization.plan.set", requireAdmin(), organization, () => setOrganizationPlanByAdmin(organizationId, input.data))
 
         return {
           ok: true,
@@ -491,8 +473,8 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
             id: organization.id,
             name: organization.name,
             slug: organization.slug,
-            plan: parseOrganizationPlan(metadata),
-            seatLimit,
+            plan,
+            seatLimit: plan.seats ?? plan.userLimit ?? input.data.seatLimit,
           },
         }
       }),
@@ -502,7 +484,7 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
     "den_set_org_capability",
     {
       description:
-        "Admin write tool: turn one feature on or off for one organization (an organization override, the same switch as the admin panel), e.g. capability='workbot'. enabled=null removes the override so the feature follows the deployment-wide on/off state again. The kill switch (den_set_feature_rollout) still outranks it.",
+        "Admin write tool: turn one feature on or off for one organization (an organization override, the same switch as the admin panel), e.g. capability='workbotDocuments'. enabled=null removes the override so the feature follows the deployment-wide on/off state again. The kill switch (den_set_feature_rollout) still outranks it.",
       inputSchema: z.object({
         organizationId: z.string().min(1).describe("Organization id, e.g. org_..."),
         capability: featureKeySchema.describe("Feature to set (see packages/features/src/registry.ts)"),
@@ -510,7 +492,7 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
       }),
     },
     async ({ organizationId, capability, enabled }) =>
-      run(async () => {
+      writeScopeMissing("den_set_org_capability") ?? run(async () => {
         if (!isOrganizationId(organizationId)) {
           throw new Error("Invalid organization id")
         }
@@ -530,6 +512,7 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
           organizationId,
           changes: { [capability]: enabled },
           source: "platform",
+          setByUserId: requireAdmin().userId,
         }))
         return {
           ok: true,
@@ -548,7 +531,7 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
     "den_list_features",
     {
       description:
-        "Admin read tool: every feature in the registry with the deployments it exists on and this deployment's state (on or off for everyone, kill switch, operator lock).",
+        "Admin read tool: every feature in the registry with its author, internal docs link, the deployments it exists on and this deployment's state (on or off for everyone, kill switch, operator lock).",
       inputSchema: z.object({}),
     },
     async () =>
@@ -561,6 +544,10 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
             return {
               key,
               label: definition.label,
+              category: definition.category,
+              added: definition.added,
+              author: definition.author,
+              docsUrl: featureDocsUrl(key),
               deployments: definition.deployments,
               available: featureAvailableOn(key, env.features.deployment),
               ...featureRollout(key, rollouts),
@@ -583,12 +570,12 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
       }),
     },
     async ({ feature, enabled, killed }) =>
-      run(async () => {
+      writeScopeMissing("den_set_feature_rollout") ?? run(async () => {
         if (enabled === undefined && killed === undefined) throw new Error("Set enabled, killed, or both.")
         if (!featureAvailableOn(feature, env.features.deployment)) throw new Error(`${feature} is not part of this deployment.`)
         // Deployment-wide: no organization's data changes, so platform evidence only.
         const rollouts = await runPlatformAdminPlatformAction("feature.rollout.set", requireAdmin(), { type: "feature", id: feature }, () =>
-          updateFeatureRollout({ key: feature, enabled, killed, defaultEnabled: featureDefinition(feature).default }))
+          updateFeatureRollout({ key: feature, enabled, killed, defaultEnabled: featureDefinition(feature).default, updatedByUserId: requireAdmin().userId }))
         return { ok: true, feature, ...featureRollout(feature, rollouts) }
       }),
   )
@@ -700,6 +687,21 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
           cohorts: result,
           note: "week0 = signup week; weekN = active N weeks after signup",
         }
+      }),
+  )
+
+  server.registerTool(
+    "den_workbot_adoption",
+    {
+      description:
+        "Platform-admin read-only Workbot adoption funnel, grouped by first recorded sign-in day (UTC) and organization: signed in, greeting completed, first message, at least one connected service. Includes id-only member pages with initial/greeting ready counts, later connection success counts, completion model/source details, and greeting failures by error code/model. Dates are inclusive, at most 90 days; totals cover the full cohort even when breakdowns are truncated. Never reads messages or profile fields.",
+      inputSchema: workbotAdoptionInputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) =>
+      run(async () => {
+        if (!admin) throw new Error("Workbot adoption reports require an authenticated platform admin.")
+        return readWorkbotAdoptionReport(input, rows)
       }),
   )
 
@@ -844,7 +846,7 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
     "den_query",
     {
       description:
-        "Escape hatch: run a single read-only SQL statement (SELECT/WITH/SHOW/DESCRIBE/EXPLAIN) against the Den database. Useful tables: user, session, organization, member, invitation, team, org_subscriptions, telemetry_event, worker, audit_event. Avoid encrypted columns (scim_provider.scim_token, sso_provider.*_config, llm_provider.api_key, config_object_version payloads, inference upstream keys).",
+        "Escape hatch: run a single read-only SQL statement (SELECT/WITH/SHOW/DESCRIBE/EXPLAIN) against the Den database. Useful tables: user, organization, member, team, org_subscriptions, telemetry_event, worker, audit_event. Statements that name a credential table (session, account, verification, apikey, OAuth tokens, invitation, stored keys and secrets) or server internals are refused; use den_overview/den_retention for sign-in activity and single quotes for text. Avoid encrypted columns (sso_provider.*_config, llm_provider.api_key, config_object_version payloads).",
       inputSchema: z.object({
         sql: z.string().min(1).describe("A single read-only SQL statement"),
         limit: z.number().int().min(1).max(MAX_ROW_LIMIT).optional().describe("Row limit appended when the query has none"),
@@ -853,7 +855,10 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
     async ({ sql: sqlText, limit }) =>
       run(async () => {
         const safe = applyDefaultRowLimit(assertReadOnlySql(sqlText), limit)
-        const result = await rows(sql.raw(safe.sql))
+        const result = await rows(sql.raw(withDatabaseTimeLimit(safe.sql, DATABASE_TIME_LIMIT_MS))).catch((error: unknown) => {
+          if (!isDatabaseTimeLimitError(error)) throw error
+          throw new Error(`The database stopped this query at its ${DATABASE_TIME_LIMIT_MS}ms time limit. Narrow it with indexed filters such as org_id or a created_at range.`)
+        })
         const capped = result.slice(0, MAX_ROW_LIMIT)
         return {
           rowCount: capped.length,

@@ -98,6 +98,7 @@ const proxyPathNamespaces = [
   "/files",
 ]
 const alwaysProxyPathPrefixes = [
+  "/cloud-computer/",
   "/opencode/",
   "/w/",
   "/runtime/",

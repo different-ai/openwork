@@ -134,6 +134,10 @@ export type DenOrgAccessFlags = {
   canViewAgentPermissions: boolean;
   /** `agent_permissions.manage`: change what agents can do on members' computers. */
   canManageAgentPermissions: boolean;
+  /** `prompts.view`: see the system prompts that steer members' agents. */
+  canViewPrompts: boolean;
+  /** `prompts.manage`: change the system prompts that steer members' agents. */
+  canManagePrompts: boolean;
   /** `api_keys.view` */
   canViewApiKeys: boolean;
   /** `api_keys.manage` */
@@ -336,6 +340,8 @@ export type DenOrgContext = {
   /** Effective on/off per registry feature (packages/features/src/registry.ts). Missing from older servers means off. */
   features: FeatureMap;
   deploymentCapabilities: DeploymentCapabilities;
+  /** Server-verified installation operator capability; never inferred from organization role. */
+  canManageDeploymentServices: boolean;
 };
 
 export type DenOrgAuthMethods = {
@@ -349,6 +355,8 @@ export type DenOrgEntitlements = {
   orgControls: boolean;
   analytics: boolean;
   auditLogs: boolean;
+  /** SCIM provisioning (Enterprise). */
+  scim: boolean;
 };
 
 /** Server-advertised and per-org capabilities; optional fields default to off. */
@@ -593,6 +601,8 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
     canManagePermissions: can("permissions.manage"),
     canViewAgentPermissions: can("agent_permissions.view"),
     canManageAgentPermissions: can("agent_permissions.manage"),
+    canViewPrompts: can("prompts.view"),
+    canManagePrompts: can("prompts.manage"),
     canViewApiKeys: can("api_keys.view"),
     canManageApiKeys: can("api_keys.manage"),
     canViewScim: can("scim.view"),
@@ -684,10 +694,6 @@ export function getAuditLogsRoute(orgSlug?: string | null): string {
 
 export function getAnalyticsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/analytics`;
-}
-
-export function getModelsAnalyticsRoute(orgSlug?: string | null): string {
-  return `${getAnalyticsRoute(orgSlug)}/models`;
 }
 
 export function getLibraryUsageRoute(orgSlug?: string | null): string {
@@ -1224,6 +1230,7 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
     capabilities: parseOrgCapabilities(payload.capabilities),
     features: parseOrgFeatures(payload.features),
     deploymentCapabilities: parseDeploymentCapabilities(payload.deploymentCapabilities),
+    canManageDeploymentServices: payload.canManageDeploymentServices === true,
   };
 }
 
@@ -1270,7 +1277,7 @@ function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
 
 function parseOrgEntitlements(value: unknown): DenOrgEntitlements {
   if (!isRecord(value)) {
-    return { sso: true, desktopPolicies: true, orgControls: true, analytics: true, auditLogs: false };
+    return { sso: true, desktopPolicies: true, orgControls: true, analytics: true, auditLogs: false, scim: true };
   }
 
   return {
@@ -1279,6 +1286,7 @@ function parseOrgEntitlements(value: unknown): DenOrgEntitlements {
     orgControls: value.orgControls !== false,
     analytics: value.analytics !== false,
     auditLogs: value.auditLogs === true,
+    scim: value.scim !== false,
   };
 }
 

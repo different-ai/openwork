@@ -1,4 +1,6 @@
 import type { Context } from "hono"
+import { freeAutoJourneyHash, linkFreeAutoGuest } from "@openwork-ee/den-db"
+import { freeAutoDatabase } from "../../db.js"
 import { DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_RESPONSES_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_STATUS_PATH,
   type DesktopFreeAccessStatus } from "@openwork/free-auto"
 import { INFERENCE_FREE_MODEL_ID, managedModelCatalog } from "@openwork/types/den/inference"
@@ -22,12 +24,14 @@ export type FreeMemberDependencies = {
   fetch: typeof fetch;
   findMember: typeof findMemberFreePrincipal;
   defaultPinned: typeof readFreePrincipalDefaultPinned;
+  linkGuest?: (input: Parameters<typeof linkFreeAutoGuest>[1]) => Promise<void>;
   usageLog?: { insert: InsertRequestLog; update?: UpdateRequestLog; reporter?: InferenceReporter };
 }
 function defaults(): FreeMemberDependencies {
   const config = env.freeAuto
   return { config, store: createFreeAllowanceStore(config, "member"), fetch: createInferenceEgressFetch(), findMember: findMemberFreePrincipal,
-    defaultPinned: readFreePrincipalDefaultPinned, usageLog: { insert: insertRequestLogIntoDb, update: updateRequestLogInDb } }
+    defaultPinned: readFreePrincipalDefaultPinned, linkGuest: (input) => linkFreeAutoGuest(freeAutoDatabase(), input),
+    usageLog: { insert: insertRequestLogIntoDb, update: updateRequestLogInDb } }
 }
 function disabled() {
   return Response.json({ error: { message: "OpenWork Models are not enabled for this organization.", type: "invalid_request_error", code: "inference_disabled" } },
@@ -48,6 +52,10 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
       if (!principal) return disabled()
       const path = c.req.path, method = c.req.method
       if (new URL(c.req.url).search) return freeError(400, "invalid_request")
+      const journeyHash = freeAutoJourneyHash(c.req.header("x-openwork-free-journey"))
+      // A reported correlation ID is analytics evidence only; membership still comes from the authenticated key.
+      if (journeyHash && method === "GET" && path === MEMBER_FREE_STATUS_PATH) await dependencies.linkGuest?.({ journeyHash, userId: principal.id, organizationId: principal.organizationId, now: new Date() })
+        .catch(() => console.warn("[free-auto] signed-in journey could not be recorded"))
       if (method === "GET" && path === MEMBER_FREE_MODELS_PATH) {
         return c.json({ object: "list", data: [{ id: DESKTOP_FREE_MODEL_ID, object: "model", created: 0, owned_by: "openwork" }] }, 200, { "cache-control": "no-store" })
       }

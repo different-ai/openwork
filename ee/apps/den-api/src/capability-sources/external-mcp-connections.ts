@@ -43,6 +43,7 @@ import {
   type ExternalMcpOAuthStateIdentitySource,
 } from "./external-mcp-oauth-state-identity.js"
 import { normalizeConnectedAccountScopes, normalizeOAuthClientExtra } from "./oauth-credentials.js"
+import { withExternalMcpCreationRetry } from "./external-mcp-creation-retry.js"
 
 export { normalizeExternalMcpIdentityUrl } from "./external-mcp-oauth-state-identity.js"
 
@@ -523,7 +524,7 @@ export async function createExternalMcpConnection(input: {
         callbackMode: "shared-v1",
       }
     : null
-  await db.insert(ExternalMcpConnectionTable).values({
+  const connection = {
     id,
     organizationId: input.organizationId,
     name: input.name,
@@ -539,13 +540,20 @@ export async function createExternalMcpConnection(input: {
     apiKeyAuthScheme: input.apiKeyAuthScheme ?? "bearer",
     oauthConfiguration,
     createdByOrgMembershipId: input.createdByOrgMembershipId,
-  })
-  await replaceExternalMcpConnectionAccess({
+  } satisfies typeof ExternalMcpConnectionTable.$inferInsert
+  const grants = accessGrantRows({
     organizationId: input.organizationId,
     connectionId: id,
     access: input.access,
     createdByOrgMembershipId: input.createdByOrgMembershipId,
   })
+  await withExternalMcpCreationRetry(() => db.transaction(async (tx) => {
+    await tx.insert(ExternalMcpConnectionTable).values(connection)
+    // A fresh connection has no grants to replace. Deleting its absent index
+    // range takes gap locks that can deadlock other concurrent creations.
+    // Save both records together so a failed grant never leaves a connection.
+    if (grants.length > 0) await tx.insert(ExternalMcpConnectionAccessGrantTable).values(grants)
+  }))
   const created = await getExternalMcpConnection({ organizationId: input.organizationId, connectionId: id })
   if (!created) throw new Error("Failed to create external MCP connection.")
   return created
@@ -1088,6 +1096,7 @@ export async function updateExternalMcpConnection(
     }
 
     const identityChanged = normalizeExternalMcpIdentityUrl(existing.url) !== normalizeExternalMcpIdentityUrl(input.url)
+      || (Boolean(existing.oauthConfiguration?.manualOAuthEndpoints || input.oauthConfiguration?.manualOAuthEndpoints) && new URL(existing.url).href !== new URL(input.url).href)
       || existing.authType !== input.authType
       || existing.credentialMode !== input.credentialMode
       || apiKeyAuthSchemeChanged
@@ -1118,10 +1127,12 @@ export async function updateExternalMcpConnection(
     const existingClient = clientRows[0]
     const existingClientExtra = normalizeOAuthClientExtra(existingClient?.extra)
     const clientWasSdkRegistered = isSdkRegisteredOAuthClient(existingClientExtra)
+    const manualEndpointsChanged = input.oauthConfiguration !== undefined
+      && !isDeepStrictEqual(existing.oauthConfiguration?.manualOAuthEndpoints, input.oauthConfiguration?.manualOAuthEndpoints)
     const clientRegistrationInvalidated = identityChanged
       || issuerChanged
-      || (callbackModeChanged && clientWasSdkRegistered)
-    const credentialsInvalidated = identityChanged || issuerChanged || callbackModeChanged
+      || ((callbackModeChanged || manualEndpointsChanged) && clientWasSdkRegistered)
+    const credentialsInvalidated = identityChanged || issuerChanged || callbackModeChanged || manualEndpointsChanged
     const clientIdChanged = Boolean(input.oauthClient && existingClient?.clientId !== input.oauthClient.clientId)
     const clientSecretChanged = Boolean(
       input.oauthClient?.clientSecret !== undefined
@@ -1186,7 +1197,7 @@ export async function updateExternalMcpConnection(
           expiresAt: null,
           pendingCodeVerifier: null,
           credentialHealth: null,
-          ...(identityChanged || issuerChanged ? { oauthIssuerReviewRequiredAt: null } : {}),
+          ...(identityChanged || issuerChanged || manualEndpointsChanged ? { oauthIssuerReviewRequiredAt: null } : {}),
           connectedAt: input.authType === "none" ? input.validatedAt ?? changedAt : null,
           updatedAt: changedAt,
         })

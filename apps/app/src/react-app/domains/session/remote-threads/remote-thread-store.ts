@@ -65,8 +65,11 @@ export type RemoteThreadEntry = {
 
 type RemoteThreadState = {
   enabled: boolean
+  /** `remoteSessionThreadView`: a row opens the task's conversation beside the chat. */
+  threadView: boolean
   threads: Record<string, RemoteThreadEntry>
   setEnabled: (enabled: boolean) => void
+  setThreadView: (threadView: boolean) => void
   watch: (start: RemoteThreadStart, input: { owner: RemoteThreadOwner; organizationId: string; startedAt: number | null }) => () => void
   followedUp: (key: string) => void
   /** The agent sent the task a follow-up itself. */
@@ -90,6 +93,7 @@ export function remoteThreadNeedsStatus(entry: RemoteThreadEntry, organizationId
 
 export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
   enabled: false,
+  threadView: false,
   threads: {},
   setEnabled: (enabled) => {
     if (get().enabled === enabled) return
@@ -97,6 +101,7 @@ export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
     if (enabled) kick()
     else stopFollowing()
   },
+  setThreadView: (threadView) => set({ threadView }),
   watch: (start, input) => {
     const ownerKey = `${input.owner.workspaceId}:${input.owner.sessionId}`
     const now = Date.now()
@@ -309,6 +314,11 @@ async function follow() {
 
 export function useRemoteThreadsEnabled(): boolean {
   return useRemoteThreadStore((state) => state.enabled)
+}
+
+/** Whether a task's row opens its conversation; rows alone show progress. */
+export function useRemoteThreadViewEnabled(): boolean {
+  return useRemoteThreadStore((state) => state.enabled && state.threadView)
 }
 
 export function useRemoteThread(key: string | null): RemoteThreadEntry | null {

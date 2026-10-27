@@ -122,7 +122,27 @@ locals {
 
 # Task definitions -----------------------------------------------------------
 
-resource "aws_ecs_task_definition" "api" {
+# Forget pre-contract revisions rather than invoking AWS's unscopable
+# DeregisterTaskDefinition action. Never manually restart retained legacy ARNs.
+removed {
+  from = aws_ecs_task_definition.api
+  lifecycle { destroy = false }
+}
+removed {
+  from = aws_ecs_task_definition.web
+  lifecycle { destroy = false }
+}
+moved {
+  from = aws_ecs_task_definition.api_ca
+  to   = aws_ecs_task_definition.api_v1
+}
+moved {
+  from = aws_ecs_task_definition.web_ca
+  to   = aws_ecs_task_definition.web_v1
+}
+
+resource "aws_ecs_task_definition" "api_v1" {
+  skip_destroy             = true
   family                   = "${var.name}-den-api"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
@@ -139,27 +159,14 @@ resource "aws_ecs_task_definition" "api" {
 
   container_definitions = jsonencode([
     {
-      # Same migration the Helm chart runs as a pre-install/pre-upgrade Job.
-      # It exits when done; den-api starts only if it succeeded.
-      name        = "migrate"
-      image       = local.den_api_image
-      essential   = false
-      command     = ["node", "/app/ee/packages/den-db/dist/scripts/bootstrap.js"]
-      environment = local.environment_list
-      secrets     = local.api_secrets_list
-      logConfiguration = {
-        logDriver = "awslogs"
-        options   = merge(local.log_options.api, { "awslogs-stream-prefix" = "migrate" })
-      }
-    },
-    {
       name         = "den-api"
       image        = local.den_api_image
       essential    = true
       portMappings = [{ containerPort = 8788, protocol = "tcp" }]
       environment  = concat(local.environment_list, [{ name = "PORT", value = "8788" }])
       secrets      = local.api_secrets_list
-      dependsOn    = [{ containerName = "migrate", condition = "SUCCESS" }]
+      entryPoint   = ["/bin/sh", "-ec"]
+      command      = ["${local.tls_setup}exec node /app/ee/apps/den-api/dist/main.js"]
       logConfiguration = {
         logDriver = "awslogs"
         options   = merge(local.log_options.api, { "awslogs-stream-prefix" = "den-api" })
@@ -179,7 +186,8 @@ resource "aws_ecs_task_definition" "api" {
   }
 }
 
-resource "aws_ecs_task_definition" "web" {
+resource "aws_ecs_task_definition" "web_v1" {
+  skip_destroy             = true
   family                   = "${var.name}-den-web"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
@@ -202,6 +210,8 @@ resource "aws_ecs_task_definition" "web" {
       portMappings = [{ containerPort = 3005, protocol = "tcp" }]
       environment  = concat(local.environment_list, [{ name = "PORT", value = "3005" }])
       secrets      = local.secrets_list
+      entryPoint   = ["/bin/sh", "-ec"]
+      command      = ["${local.tls_setup}exec /app/ee/apps/den-web/node_modules/.bin/next start --hostname 0.0.0.0 --port 3005"]
       logConfiguration = {
         logDriver = "awslogs"
         options   = merge(local.log_options.web, { "awslogs-stream-prefix" = "den-web" })
@@ -215,12 +225,12 @@ resource "aws_ecs_task_definition" "web" {
 resource "aws_ecs_service" "api" {
   name                  = "${var.service_name_prefix}den-api"
   cluster               = local.cluster_arn
-  task_definition       = aws_ecs_task_definition.api.arn
+  task_definition       = aws_ecs_task_definition.api_v1.arn
   desired_count         = var.den_api.desired_count
   launch_type           = "FARGATE"
   wait_for_steady_state = var.wait_for_steady_state
 
-  # Migrations run before den-api listens; allow for a cold start.
+  # Migration has already completed; allow for a cold image pull.
   health_check_grace_period_seconds = 300
   enable_execute_command            = false
   propagate_tags                    = "SERVICE"
@@ -252,17 +262,18 @@ resource "aws_ecs_service" "api" {
   }
 
   deployment_circuit_breaker {
-    enable   = true
-    rollback = true
+    enable = true
+    # Never automatically resurrect a legacy migration-capable definition.
+    rollback = false
   }
 
-  depends_on = [aws_lb_listener_rule.api_host, aws_secretsmanager_secret_version.app, aws_secretsmanager_secret_version.runner]
+  depends_on = [terraform_data.migration_complete, aws_lb_listener_rule.api_host, aws_secretsmanager_secret_version.app, aws_secretsmanager_secret_version.runner]
 }
 
 resource "aws_ecs_service" "web" {
   name                  = "${var.service_name_prefix}den-web"
   cluster               = local.cluster_arn
-  task_definition       = aws_ecs_task_definition.web.arn
+  task_definition       = aws_ecs_task_definition.web_v1.arn
   desired_count         = var.den_web.desired_count
   launch_type           = "FARGATE"
   wait_for_steady_state = var.wait_for_steady_state
@@ -284,9 +295,11 @@ resource "aws_ecs_service" "web" {
   }
 
   deployment_circuit_breaker {
-    enable   = true
-    rollback = true
+    enable = true
+    # A managed first adoption may still have a pre-CA historical revision.
+    # Never resurrect it after strict promotion, even if the new rollout fails.
+    rollback = !var.managed_legacy_secrets
   }
 
-  depends_on = [aws_lb_listener.https, aws_lb_listener_rule.web_host, aws_secretsmanager_secret_version.app]
+  depends_on = [terraform_data.migration_complete, aws_lb_listener.https, aws_lb_listener_rule.web_host, aws_secretsmanager_secret_version.app]
 }

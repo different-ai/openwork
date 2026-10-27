@@ -12,14 +12,15 @@ import { composerPillFromPart, composerPillText } from "./composer/composer-pill
  * Returns undefined when the draft has neither and plain text is enough.
  */
 export function pendingDraftTextParts(parts: readonly ComposerPart[]): UIMessage["parts"] | undefined {
-  const hasChip = parts.some((part) => part.type === "skill" || part.type === "connect-skill" || part.type === "connector" || part.type === "computer" || part.type === "paste" || part.type === "agent" || part.type === "file");
+  const hasChip = parts.some((part) => part.type === "skill" || part.type === "connect-skill" || part.type === "connector" || part.type === "computer" || part.type === "session" || part.type === "paste" || part.type === "agent" || part.type === "file");
   if (!hasChip) return undefined;
   return parts.flatMap<UIMessage["parts"][number]>((part) => {
     switch (part.type) {
       case "skill":
       case "connect-skill":
       case "connector":
-      case "computer": {
+      case "computer":
+      case "session": {
         const pill = composerPillFromPart(part);
         return [{ type: "text", text: composerPillText(pill), state: "done", providerMetadata: { opencode: { composerPill: pill } } }];
       }

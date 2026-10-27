@@ -101,6 +101,8 @@ export type CapabilityMatch = {
 }
 ```
 
+With `connectStandardTools` enabled (off by default on cloud and self-hosted), supported clients (OpenCode v2, including OpenWork Desktop, and Claude Code) receive individual tools. Clients that retain capability search use the same rollout: `search_capabilities` sends each match in MCP `Tool` shape (`name`, `description`, `inputSchema`, optional `outputSchema` and `annotations`, plus Den details such as `kind`) through `capabilitySearchMatch` in `capability-registry.ts`. The transport fields above build that `inputSchema` and are still sent next to it, so desktops released before the flag keep working. `execute_capability` takes `{ name, arguments }`; an OpenWork API operation's `arguments` hold `path`, `query`, and `body`. With the flag off, the legacy match fields and `path/query/body` guidance remain unchanged. Both execution input forms stay accepted across rollout changes.
+
 Marketplace match shape:
 
 ```ts

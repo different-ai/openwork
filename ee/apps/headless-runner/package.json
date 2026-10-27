@@ -4,31 +4,46 @@
   "type": "module",
   "description": "Cheap headless agent sessions: OpenWork AI Gateway for the model, OpenWork MCP for tools, a small scratch filesystem, and optional kept files and a computer per conversation.",
   "engines": {
-    "node": ">=22.13"
+    "node": ">=24.22.1 <25"
   },
   "scripts": {
     "dev": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx watch src/server.ts",
-    "build": "pnpm --filter \"@openwork-ee/headless-runner^...\" --if-present run build && tsc -p tsconfig.json --noEmit && esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server.js --external:@hono/node-server --external:@modelcontextprotocol/client --external:hono --external:zod --external:@openwork-ee/headless-computer --external:@vercel/blob",
+    "build": "pnpm --filter \"@openwork-ee/headless-runner^...\" --if-present run build && tsc -p tsconfig.json --noEmit && esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server.js --external:@hono/node-server --external:@modelcontextprotocol/client --external:hono --external:zod --external:@openwork-ee/headless-computer",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke": "tsx scripts/smoke.ts",
-    "test:computer-config": "tsx --test scripts/computer-config.test.ts",
+    "test:computer-config": "tsx --test scripts/computer-config.test.ts scripts/worker-http.test.ts",
+    "test:service-health": "tsx --conditions=development --test scripts/service-health.test.ts",
     "test:sql-store": "tsx --test scripts/sql-store.test.ts",
+    "test:error-reporting": "tsx --test scripts/error-reporting.test.ts",
     "worker:types": "wrangler types",
     "worker:typecheck": "wrangler types && tsc -p tsconfig.worker.json --noEmit",
+    "worker:compat": "tsx scripts/compat-check.ts",
     "worker:e2e": "pnpm --filter @openwork-ee/headless-protocol build && tsx scripts/owner-cells-e2e.ts",
     "worker:e2e:celld": "pnpm --filter @openwork-ee/headless-protocol build && tsx scripts/owner-cells-e2e.ts --celld",
-    "test:conversation": "tsx --test scripts/conversation.test.ts"
+    "test:conversation": "tsx --test scripts/conversation.test.ts scripts/workbot-telemetry.test.ts",
+    "test:transfer": "tsx --test scripts/transfer.test.ts",
+    "test:storage": "tsx --test scripts/storage-migrations.test.ts scripts/storage-seal.test.ts scripts/storage-bodies.test.ts scripts/storage-outbox.test.ts",
+    "session": "tsx scripts/session-cli.ts",
+    "test:self-resume": "tsx --test scripts/self-resume.test.ts",
+    "test:den-index": "tsx --test scripts/den-index.test.ts",
+    "test:scoped-model-access": "tsx --test scripts/scoped-model-access.test.ts scripts/scoped-model-pin.test.ts scripts/owner-fenced-read.test.ts",
+    "test:steps": "tsx --test scripts/steps.test.ts scripts/steps-scoped-model.test.ts",
+    "test:checkpoints": "tsx --test scripts/checkpoints.test.ts",
+    "test:event-socket": "tsx --conditions=development --test scripts/event-socket.test.ts",
+    "test:session-cells": "tsx --test scripts/session-cells.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.0.12",
-    "@modelcontextprotocol/client": "^2.2.0",
+    "@modelcontextprotocol/client": "^2.3.1",
     "@openwork-ee/headless-computer": "workspace:*",
+    "@openwork-ee/headless-protocol": "workspace:*",
+    "@openwork/types": "workspace:*",
     "@openwork/workbook": "workspace:*",
-    "@vercel/blob": "^2.8.0",
     "aws4fetch": "1.0.20",
-    "hono": "4.13.9",
-    "zod": "^4.3.6"
+    "hono": "4.13.11",
+    "zod": "^4.6.6",
+    "axios": "1.20.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

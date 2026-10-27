@@ -101,7 +101,7 @@ class ImagePinTests(unittest.TestCase):
                 "images": {kind: repository + "@sha256:" + character * 64 for (kind, repository), character in
                            zip(install.IMAGE_REPOSITORIES.items(), "abc")}}
 
-    def mirror(self, manifest, destination_mismatch=False, bad_local=False):
+    def mirror(self, manifest, destination_mismatch=False, bad_local=False, docker_hub_alias=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             if manifest is not None:
@@ -115,7 +115,7 @@ class ImagePinTests(unittest.TestCase):
                 if command[:3] == ["docker", "image", "inspect"]:
                     return Mock(stdout=json.dumps([{"Id": "sha256:" + "d" * 64,
                         "Os": "linux", "Architecture": "arm64" if bad_local else "amd64",
-                        "RepoDigests": [command[-1]]}]))
+                        "RepoDigests": [command[-1].removeprefix("docker.io/library/") if docker_hub_alias and command[-1].startswith("docker.io/library/") else command[-1]]}]))
                 return Mock(stdout="private-token")
             def cloud(*arguments):
                 if arguments[:4] == ("artifacts", "docker", "images", "describe"):
@@ -147,6 +147,24 @@ class ImagePinTests(unittest.TestCase):
                         self.assertEqual(ref.split("@")[1], manifest["images"][kind].split("@")[1])
                     self.assertTrue(all(command[2] == "sha256:" + "d" * 64 for command in calls if command[:2] == ["docker", "tag"]))
 
+    def test_docker_hub_familiar_health_digest_survives_actual_mirror_guard(self):
+        self.mirror(self.inventory(), docker_hub_alias=True)
+
+    def test_docker_hub_reference_aliases_keep_the_exact_repository_and_digest(self):
+        digest = "@sha256:" + "c" * 64
+        for full, familiar in [("docker.io/library/x", "x"), ("index.docker.io/library/x", "library/x"),
+                               ("docker.io/user/x", "user/x"), ("index.docker.io/user/x", "docker.io/user/x")]:
+            with self.subTest(full=full, familiar=familiar):
+                self.assertTrue(runner.image_source_matches(full + digest, [familiar + digest]))
+        ghcr = "ghcr.io/different-ai/x" + digest
+        self.assertEqual(runner.canonical_image_reference(ghcr), ghcr)
+        self.assertFalse(runner.image_source_matches(ghcr, ["different-ai/x" + digest]))
+        self.assertFalse(runner.image_source_matches("docker.io/library/x" + digest, ["x@sha256:" + "e" * 64]))
+        self.assertFalse(runner.image_source_matches("docker.io/library/x" + digest, ["other/x" + digest]))
+        self.assertFalse(runner.image_source_matches("docker.io/library/x" + digest, ["evil.example/library/x" + digest]))
+        for observed in (None, [], [None], ["x:latest"], ["x@sha256:bad"]):
+            self.assertFalse(runner.image_source_matches("docker.io/library/x" + digest, observed))
+
     def test_reads_release_inventory_and_ignores_source_env_overrides(self):
         self.mirror(self.inventory())
 
@@ -159,6 +177,7 @@ class ImagePinTests(unittest.TestCase):
 
     def test_wrong_local_platform_rejected_before_tag_push(self):
         self.mirror(self.inventory(), bad_local=True)
+        self.mirror(self.inventory(), bad_local=True, docker_hub_alias=True)
 
     def test_mutable_wrong_repo_or_wrong_version_inventory_rejected(self):
         variants = []
@@ -270,6 +289,53 @@ class TrafficAttributionTests(unittest.TestCase):
                 "template": {"containers": [{"image": "expected@sha256:abc"}]},
                 "latestCreatedRevision": revision, "latestReadyRevision": revision,
                 "trafficStatuses": [{"percent": 100, "revision": "ow-api-00002"}]}
+
+    def tagged_service(self):
+        # Neutralized selected live wire: the old tagged target omits its
+        # proto3 int32 default percent=0; this is not explicit null.
+        service = self.service()
+        current = "ow-api-expcurrent"
+        old = "ow-api-00001-old"
+        service.update(generation="3", observedGeneration="3", latestCreatedRevision=current, latestReadyRevision=current)
+        service["traffic"] = [
+            {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100},
+            {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", "revision": old, "tag": "exp-test-old"},
+        ]
+        service["trafficStatuses"] = [
+            {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", "revision": old, "tag": "exp-test-old"},
+            {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "revision": current, "percent": 100},
+        ]
+        return service
+
+    def test_tagged_zero_percent_omitted_by_protojson_is_healthy(self):
+        service = self.tagged_service()
+        self.assertNotIn("percent", service["trafficStatuses"][0])
+        self.assertTrue(health.serving_expected_revision(service, "expected@sha256:abc"))
+        service["trafficStatuses"][0]["percent"] = 0
+        self.assertTrue(health.serving_expected_revision(service, "expected@sha256:abc"))
+
+    def test_explicit_malformed_traffic_percent_is_never_defaulted(self):
+        for percent in (None, True, False, "0", "100", 0.0, 100.0, -1, 101):
+            for target in (0, 1):
+                service = self.tagged_service()
+                service["trafficStatuses"][target]["percent"] = percent
+                with self.subTest(percent=percent, target=target):
+                    self.assertFalse(health.serving_expected_revision(service, "expected@sha256:abc"))
+
+    def test_omitted_zero_does_not_relax_totals_or_ready_revision_attribution(self):
+        for old_percent, current_percent in [(None, 99), (1, 100), (1, 99), (100, 0)]:
+            service = self.tagged_service()
+            if old_percent is not None:
+                service["trafficStatuses"][0]["percent"] = old_percent
+            service["trafficStatuses"][1]["percent"] = current_percent
+            with self.subTest(old=old_percent, current=current_percent):
+                self.assertFalse(health.serving_expected_revision(service, "expected@sha256:abc"))
+        service = self.tagged_service()
+        service["trafficStatuses"][1].pop("percent")
+        self.assertFalse(health.serving_expected_revision(service, "expected@sha256:abc"))
+        service = self.tagged_service()
+        service["trafficStatuses"][1]["revision"] = "ow-api-00001-old"
+        self.assertFalse(health.serving_expected_revision(service, "expected@sha256:abc"))
 
     def test_actual_latest_ready_revision_must_serve_all_traffic(self):
         good = self.service()

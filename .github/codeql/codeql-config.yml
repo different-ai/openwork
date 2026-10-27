@@ -1,0 +1,50 @@
+name: OpenWork CodeQL configuration
+
+# Loaded by .github/workflows/codeql.yml. See docs/codeql-results.md.
+paths-ignore:
+  # Repository tooling is not shipped application code (including docs/PDF tools).
+  # This intentionally excludes build/release tooling too; keep application
+  # scripts outside this root scanned.
+  - 'scripts/**'
+
+  # Test data can be colocated with production sources outside test suites.
+  - '**/fixtures/**'
+
+  # Entire eval trees, including fixtures, helpers, and shared eval packages.
+  - '**/evals/**'
+
+  # Test suites and support code, regardless of the filenames inside them.
+  - '**/tests/**'
+  - '**/__tests__/**'
+  - '**/__mocks__/**'
+  - '**/testing/**'
+  - '**/testdata/**'
+  - '**/e2e/**'
+  - '**/cypress/**'
+  # Scope singular test directories: app/sso/test is a production SSO route.
+  - 'apps/*/test/**'
+  - 'ee/apps/*/test/**'
+  - 'packages/*/test/**'
+  - 'ee/packages/*/test/**'
+  - '**/src/test/**'
+
+  # Extension-independent unit, integration, API, live, proof, and E2E tests.
+  # Avoid *test*: it also matches production code such as latest-*.ts.
+  - '**/*.test.*'
+  - '**/*.spec.*'
+  - '**/*.e2e.*'
+  - '**/test.*'
+  - '**/spec.*'
+  - '**/e2e.*'
+  - '**/test_*'
+  - '**/*_test.*'
+  - '**/spec_*'
+  - '**/*_spec.*'
+  - '**/test-*'
+  - '**/*-e2e.*'
+  - '**/*Test.*'
+  - '**/*Tests.*'
+  - '**/*Spec.*'
+  # Colocated test-only helpers and fixtures.
+  - '**/*.test-helper.*'
+  - '**/*-test-fixtures.*'

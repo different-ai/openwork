@@ -27,8 +27,16 @@ extraResources:
       - "docs.json"
 asar: true
 asarUnpack:
+  # Keep Windows native code outside ASAR so it can be signed and audited.
+  - "**/*.exe"
+  - "**/*.dll"
+  - "**/*.node"
+  # External tar cannot read an archive through Electron's virtual ASAR paths.
+  - server/dist/opencode-plugin-deps-*.tgz
   - node_modules/.pnpm/@lydell+node-pty*/**
   - node_modules/node-pty/**
+  # Blender loads computer use's script bridge from a real file.
+  - electron/computer-scripting/**
 npmRebuild: false
 afterPack: scripts/electron-after-pack.cjs
 afterSign: scripts/electron-after-sign.cjs
@@ -47,6 +55,8 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     NSMicrophoneUsageDescription: OpenWork uses the microphone when you allow a page to access audio input.
+    NSAppleEventsUsageDescription: OpenWork controls this app with a script when you approve a computer use task.
+    NSSpeechRecognitionUsageDescription: OpenWork turns your speech into text on this Mac when you dictate a message.
   extraResources:
     - from: resources/sidecars
       to: sidecars
@@ -60,6 +70,11 @@ mac:
         - versions.json
         - versions.json-aarch64-apple-darwin
         - versions.json-x86_64-apple-darwin
+    - from: resources/helpers
+      to: helpers
+      filter:
+        - "OpenWork Computer Use.app/**"
+        - openwork-dictation
   target:
     - dmg
     - zip
@@ -88,9 +103,18 @@ linux:
     - tar.gz
 win:
   icon: resources/icons/icon.ico
+  signExts: [".dll", ".node"]
+  signtoolOptions:
+    sign: scripts/windows-sign.cjs
+    signingHashAlgorithms: [sha256]
   extraResources:
     - from: resources/icons/icon.png
       to: icons/icon.png
+    - from: resources/helpers
+      to: helpers
+      filter:
+        - openwork-dictation.exe
+        - openwork-computer-use.exe
     - from: resources/sidecars
       to: sidecars
       filter:
@@ -101,8 +125,8 @@ win:
         - opencode-x86_64-pc-windows-msvc.exe
         - opencode2-x86_64-pc-windows-msvc.exe
         - versions.json
-        - versions.json-aarch64-pc-windows-msvc.exe
-        - versions.json-x86_64-pc-windows-msvc.exe
+        - versions.json-aarch64-pc-windows-msvc
+        - versions.json-x86_64-pc-windows-msvc
   target:
     - nsis
 nsis:

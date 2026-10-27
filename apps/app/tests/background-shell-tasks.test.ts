@@ -28,7 +28,6 @@ import {
   __createWorkspaceSessionSyncForTest,
   __reconcileBackgroundShellsForTest,
   __setWorkspaceSessionSyncRunningShellFetcherForTest,
-  setBackgroundShellTasksEnabled,
 } from "../src/react-app/domains/session/sync/session-sync";
 
 const ownedDom = typeof window === "undefined";
@@ -85,8 +84,6 @@ function sessionCount(sessionId = SESSION) {
 }
 
 describe("translating engine shell events", () => {
-  afterEach(() => setBackgroundShellTasksEnabled(false));
-
   test("a background shell call reports its running shell, with the command it runs", () => {
     const events = translateAll(shellToolCall("call_bg", { metadata: { status: "running", shellID: "sh_bg1" } }));
     const started = events.find((event) => event.type === BACKGROUND_SHELL_STARTED_EVENT);
@@ -111,13 +108,7 @@ describe("translating engine shell events", () => {
     expect(events[1]?.properties).toEqual({ id: "sh_life", status: "exited", exit: 0 });
   });
 
-  test("with the feature off, a completion notice is still dropped from the transcript", () => {
-    const events = translateAll([inboxNotice("sh_off")]);
-    expect(events.map((event) => event.type)).toEqual([BACKGROUND_SHELL_FINISHED_EVENT]);
-  });
-
-  test("with the feature on, a completion notice is one plain row, never the raw <shell> text", () => {
-    setBackgroundShellTasksEnabled(true);
+  test("a completion notice is one plain row without a signed-in feature reader, never the raw <shell> text", () => {
     const events = translateAll([inboxNotice("sh_on")]);
     expect(events.map((event) => event.type)).toEqual([BACKGROUND_SHELL_FINISHED_EVENT, "message.updated", "message.part.updated"]);
     expect(events[1]?.properties).toMatchObject({ info: { id: "msg_notice_sh_on", role: "system", sessionID: SESSION } });
@@ -173,14 +164,14 @@ describe("the background shell book", () => {
 describe("session sync", () => {
   let dispose: () => void = () => {};
   beforeEach(() => {
-    setBackgroundShellTasksEnabled(true);
+    useBackgroundShellStore.setState({ booksByWorkspaceId: {} });
     useSessionActivityStore.setState({ recordsByWorkspaceId: {} });
     dispose = __createWorkspaceSessionSyncForTest(sync);
   });
   afterEach(() => {
     dispose();
     __setWorkspaceSessionSyncRunningShellFetcherForTest(null);
-    setBackgroundShellTasksEnabled(false);
+    useBackgroundShellStore.setState({ booksByWorkspaceId: {} });
   });
 
   const apply = (events: unknown[]) => {
@@ -235,9 +226,8 @@ describe("session sync", () => {
     expect(sessionCount(OTHER_SESSION)).toBe(1);
   });
 
-  test("with the feature off, shell events change nothing", () => {
-    setBackgroundShellTasksEnabled(false);
-    apply(shellToolCall("call_off", { metadata: { status: "running", shellID: "sh_off" } }));
-    expect(useBackgroundShellStore.getState().booksByWorkspaceId).toEqual({});
+  test("shell events are tracked without waiting for deployment or organization features", () => {
+    apply(shellToolCall("call_ga", { metadata: { status: "running", shellID: "sh_ga" } }));
+    expect(sessionCount()).toBe(1);
   });
 });

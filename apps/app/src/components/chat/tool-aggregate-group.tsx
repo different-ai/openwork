@@ -18,6 +18,7 @@ import {
   getAggregateRowSearch,
   getAggregateSummary,
   getToolFamily,
+  getWorkspacePathResolutions,
   type AggregateThought,
   type AnyToolPart,
 } from "@/lib/tool-aggregate"
@@ -27,6 +28,14 @@ import { trackToolCallDuration } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
 
 const ROW_CAP = 8
+
+function WorkspacePathNotice({ part }: { part: AnyToolPart }) {
+  return getWorkspacePathResolutions(part).map(path => (
+    <div key={`${path.requested}:${path.resolved}`} data-workspace-file-resolution className="break-all text-xs text-muted-foreground">
+      Workspace destination: {path.resolved} (from {path.requested})
+    </div>
+  ))
+}
 
 type ToolAggregateGroupProps = {
   parts: AnyToolPart[]
@@ -288,6 +297,7 @@ export function ToolAggregateGroup({ parts, messageId, thoughts = [], className 
             <span>Choose an option or approve the request to continue.</span>
           </div>
         ) : null}
+        <WorkspacePathNotice part={soloRow.part} />
         {failure ? (
           <div className="mt-1.5">{detailBox("error", soloRow.part.toolCallId, failure)}</div>
         ) : null}
@@ -440,6 +450,7 @@ export function ToolAggregateGroup({ parts, messageId, thoughts = [], className 
                   ) : null}
                   </div>
                 ) : null}
+                <WorkspacePathNotice part={part} />
                 {bash && command ? detailBox("command", part.toolCallId, command) : null}
                 {search ? detailBox("pattern", part.toolCallId, search.pattern) : null}
                 {failure ? detailBox("error", part.toolCallId, failure) : null}

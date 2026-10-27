@@ -1,8 +1,12 @@
 import { createHash } from "node:crypto"
 import { posix } from "node:path"
-import { ensureRunning, isSandboxError, SCOPE_LABEL, withBlocks, type RunSpec, type SandboxHandle, type SandboxProvider, type SandboxSpec } from "@openwork/sandbox"
+import { ensureRunning, isSandboxError, shellQuote, SCOPE_LABEL, withBlocks, type RunSpec, type SandboxHandle, type SandboxProvider, type SandboxSpec } from "@openwork/sandbox"
 import { z } from "zod"
 import type { ComputerFile, ComputerFiles, FileReader, ToolResult, ToolSpec } from "./types.js"
+import { demonstrationReplySchema, type DemonstrationCommand } from "@openwork/types/browser-demonstration"
+import { Desktop, type DesktopView } from "./desktop.js"
+import { DESKTOP_TOOL } from "./desktop-tool.js"
+import { DesktopTiming, timedProvider } from "./desktop-timing.js"
 
 /** One provider-neutral Linux computer per conversation. Jobs own idle policy and files; adapters own transport. */
 export type ComputerOptions = {
@@ -11,7 +15,17 @@ export type ComputerOptions = {
   scope?: string
   idlePauseMs: number
   keepDays: number
+  /** Keep each conversation's computer until it is removed instead of deleting it after keepDays unused. */
+  persistent?: boolean
+  desktop?: boolean
+  /**
+   * Where each conversation's pause time is kept so it outlives this process (the runner's store). The host runs
+   * `pauseIdle` for the due ones; without it, only this process's timer pauses a computer.
+   */
+  pauses?: { set(sessionId: string, dueAt: number): void; clear(sessionId: string): void }
 }
+/** The desktop guest's viewer port (desktop-guest.mjs). */
+const DESKTOP_VIEWER_PORT = 6080
 
 const WORKSPACE = "/workspace"
 const FILES_DIR = `${WORKSPACE}/files`
@@ -43,8 +57,11 @@ export class Computers {
   /** Sessions whose VM this process has resolved: the handle, so later calls skip the lookup. */
   private readonly vms = new Map<string, Promise<SandboxHandle>>()
   private readonly pauseTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly pausing = new Map<string, Promise<void>>()
   /** Saved file ids already copied into each session's VM by this process. */
   private readonly copied = new Map<string, Set<string>>()
+  /** The desktop request being timed for each VM, by its slug. */
+  private readonly timings = new Map<string, DesktopTiming>()
 
   private readonly snapshot: string
   private readonly files?: ComputerFiles
@@ -54,17 +71,127 @@ export class Computers {
   readonly prompt = COMPUTER_PROMPT
   readonly tools: ToolSpec[] = COMPUTER_TOOLS
   readonly toolNames: ReadonlySet<string> = COMPUTER_TOOL_NAMES
+  readonly desktopTools: ToolSpec[]
+  private readonly desktop?: Desktop
 
   /**
    * `files` is the conversation's kept files (uploads in, outputs out); without it the computer only runs commands.
    * `readFile` turns a file into what the model can see (images, PDFs, text), the same way tool results are read.
    */
   constructor(private readonly options: ComputerOptions, deps: { files?: ComputerFiles; readFile: FileReader }) {
-    this.provider = options.provider
+    this.provider = timedProvider(options.provider, key => this.timings.get(key))
     this.blocks = computerBlocks(this.provider)
     this.snapshot = this.provider.currentImage()?.id ?? "configured image"
     this.files = deps.files
     this.readFile = deps.readFile
+    this.desktop = options.desktop ? new Desktop(this.provider) : undefined
+    this.desktopTools = this.desktop ? [DESKTOP_TOOL] : []
+  }
+
+  async desktopRun(sessionId: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+    // `description` is narration for the person watching; it never reaches the computer.
+    const parsed = z.object({ view: z.enum(["browser", "computer"]), operation: z.string().max(64), args: z.record(z.string(), z.unknown()), description: z.string().optional() }).strict().parse(input)
+    const desktop = this.desktop
+    if (!desktop) throw new Error("Desktop access is not configured.")
+    signal?.throwIfAborted()
+    const timing = this.track(sessionId, "tool")
+    const box = await this.vm(sessionId).catch((error: unknown) => { this.finish(timing, "failed"); throw error })
+    let stopping: Promise<unknown> | undefined
+    const stop = () => {
+      stopping ??= desktop.call(box, "/stop", {})
+      void stopping.catch(() => {})
+    }
+    try {
+      await desktop.start(box).catch((error: unknown) => { this.finish(timing, "failed"); throw error })
+      // A tool call that found the desktop ready is not worth a log line; one that woke or started it is.
+      this.finish(timing, "ok", !timing.prepared)
+      signal?.addEventListener("abort", stop, { once: true })
+      if (signal?.aborted) { stop(); signal.throwIfAborted() }
+      const program = parsed.operation === "computer_run"
+        ? z.object({ code: z.string().min(1).max(32_000), tabId: z.string().optional(), input: z.json().optional(), timeoutMs: z.number().int().min(1000).max(60_000).optional() }).strict().parse(parsed.args)
+        : null
+      const raw = await desktop.call(box, program ? "/computer/program" : parsed.view === "browser" ? "/browser/task" : "/computer/task", program
+        ? { ...program, sessionId, surface: parsed.view }
+        : { sessionId, ...(parsed.view === "browser" ? { operation: parsed.operation } : { name: parsed.operation }), args: parsed.args })
+      signal?.throwIfAborted()
+      const result = z.object({ ok: z.boolean().optional(), isError: z.boolean().optional(), image: z.object({ data: z.string(), mediaType: z.string().optional(), mimeType: z.string().optional() }).optional(), images: z.array(z.object({ data: z.string(), mimeType: z.string() })).optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional(), data: z.string().optional(), mimeType: z.string().optional() })).optional() }).loose().parse(raw)
+      const images = result.content?.flatMap(part => part.type === "image" && part.data ? [{ mediaType: part.mimeType ?? "image/png", data: part.data }] : []) ?? []
+      if (result.image) images.push({ mediaType: result.image.mediaType ?? result.image.mimeType ?? "image/png", data: result.image.data })
+      for (const image of result.images ?? []) images.push({ mediaType: image.mimeType, data: image.data })
+      const { image, images: programImages, content, ...text } = result
+      return { output: content ? content.filter(part => part.type === "text").map(part => part.text ?? "").join("\n") : JSON.stringify(text), isError: result.isError === true || result.ok === false, ...(images.length ? { images } : {}) }
+    } finally {
+      signal?.removeEventListener("abort", stop)
+      try { if (stopping) await stopping }
+      finally { this.release(sessionId) }
+    }
+  }
+
+  async desktopViewer(sessionId: string, input: { view: DesktopView; control: boolean; origin: string }) {
+    if (!this.desktop) throw new Error("Desktop access is not configured.")
+    const timing = this.track(sessionId, "viewer")
+    let outcome = "failed"
+    try {
+      const pending = this.vms.get(sessionId)
+      const existing = pending ? await this.provider.inspect(await pending) : await this.provider.find({ idempotencyKey: this.slug(sessionId), labels: this.spec(sessionId).labels })
+      if (existing?.state === "stopped" || existing?.state === "stopping") {
+        outcome = "paused"
+        return { state: "paused" as const }
+      }
+      const box = await this.vm(sessionId)
+      try {
+        const viewer = { state: "connected" as const, ...await this.desktop.viewer(box, input) }
+        outcome = "ok"
+        return viewer
+      } finally { this.release(sessionId) }
+    } finally { this.finish(timing, outcome) }
+  }
+
+  async browserDemonstration(sessionId: string, command: DemonstrationCommand) {
+    if (!this.desktop) throw new Error("Desktop access is not configured.")
+    if (command.action === "read") {
+      const pending = this.vms.get(sessionId)
+      const existing = pending ? await this.provider.inspect(await pending) : await this.provider.find({ idempotencyKey: this.slug(sessionId), labels: this.spec(sessionId).labels })
+      if (!existing || existing.state !== "running") throw new Error("Resume the computer before checking its demonstration.")
+    }
+    const box = await this.vm(sessionId)
+    try {
+      await this.desktop.start(box)
+      return demonstrationReplySchema.parse(await this.desktop.call(box, "/browser/demonstration", { sessionId, command }))
+    } finally { this.release(sessionId) }
+  }
+
+  async desktopAction(sessionId: string, action: "continue" | "pause" | "resume" | "rebuild") {
+    const timing = this.track(sessionId, action)
+    let outcome = "failed"
+    try {
+      const result = await this.changeDesktop(sessionId, action)
+      outcome = "ok"
+      return result
+    } finally { this.finish(timing, outcome) }
+  }
+
+  private async changeDesktop(sessionId: string, action: "continue" | "pause" | "resume" | "rebuild") {
+    if (!this.desktop) throw new Error("Desktop access is not configured.")
+    if (action === "rebuild") {
+      // A fresh VM from the configured snapshot, without waking the old one first. Kept Files survive; the VM's own disk does not.
+      await this.delete(sessionId)
+      try { await this.desktop.start(await this.vm(sessionId)) }
+      finally { this.release(sessionId) }
+      return { ok: true }
+    }
+    const pending = this.vms.get(sessionId)
+    const existing = action === "pause" ? pending ? await this.provider.inspect(await pending) : await this.provider.find({ idempotencyKey: this.slug(sessionId), labels: this.spec(sessionId).labels }) : null
+    if (action === "pause" && (!existing || existing.state === "stopped" || existing.state === "stopping")) return { ok: true }
+    const box = existing ?? await this.vm(sessionId)
+    if (action === "pause") {
+      if (!this.provider.blocks?.pause) throw new Error("This computer does not support pause.")
+      await this.provider.blocks.pause(box, { timeoutMs: 30_000 })
+    } else if (action === "continue") {
+      await this.desktop.call(box, "/continue", {})
+    } else await this.desktop.start(box)
+    this.release(sessionId)
+    return { ok: true }
   }
 
   /** Runs one of the computer's tools (`bash` or `look`) for a conversation. */
@@ -92,34 +219,42 @@ export class Computers {
     void this.vm(sessionId)
       .then((box) => this.execute(box, { command: "true", timeoutMs: 10_000 }))
       .catch(() => undefined)
+      .finally(() => this.release(sessionId))
   }
 
   /** The conversation's VM, created from the snapshot on first use. A paused VM wakes on its next command. */
   async vm(sessionId: string): Promise<SandboxHandle> {
     this.cancelPause(sessionId)
-    let pending = this.vms.get(sessionId)
-    if (!pending) {
-      pending = this.resolve(sessionId)
-      this.vms.set(sessionId, pending)
-      pending.catch(() => this.vms.delete(sessionId))
-      return pending
-    }
-    const current = await this.provider.inspect(await pending)
-    if (current.state === "running") return current
-    if (current.state === "missing") this.copied.delete(sessionId)
-    const waking = this.resolve(sessionId)
-    this.vms.set(sessionId, waking)
-    return waking
+    // In use: should this process stop before releasing it, it still pauses once the longest command would be done.
+    this.options.pauses?.set(sessionId, Date.now() + this.options.idlePauseMs + MAX_COMMAND_SECONDS * 1000)
+    await this.pausing.get(sessionId)
+    const prior = this.vms.get(sessionId)
+    // Reserve the transition before awaiting provider state. Concurrent viewer
+    // and tool requests must not both issue a start against the same paused VM.
+    const pending = prior ? prior.then(async box => {
+      const current = await this.provider.inspect(box)
+      if (current.state === "running") return current
+      if (current.state === "missing") this.copied.delete(sessionId)
+      return this.resolve(sessionId)
+    }) : this.resolve(sessionId)
+    this.vms.set(sessionId, pending)
+    pending.catch(() => { if (this.vms.get(sessionId) === pending) this.vms.delete(sessionId) })
+    return pending
   }
 
   private spec(sessionId: string): SandboxSpec {
     return {
       idempotencyKey: this.slug(sessionId), image: this.provider.currentImage(),
       labels: { kind: "headless-computer", ...(this.options.scope ? { [SCOPE_LABEL]: this.options.scope } : {}) },
-      env: {}, storage: [], exposePorts: [],
-      // The job's own timer checks background jobs. Keep the provider's idle
-      // backstop long enough that a quiet rendering job does not get stopped.
-      lifecycle: { autoStopMinutes: 60, autoDeleteMinutes: this.options.keepDays * 1440 },
+      env: {}, storage: [], exposePorts: this.desktop ? [DESKTOP_VIEWER_PORT] : [],
+      // Give the local background-job probe a minute of grace before provider
+      // auto-pause. The backstop still bounds cost if the runner disappears.
+      lifecycle: {
+        ...(this.provider.id === "daytona" && this.provider.blocks?.pause
+          ? { autoPauseMinutes: Math.max(1, Math.ceil(this.options.idlePauseMs / 60_000)) + 1, autoStopMinutes: 0 }
+          : { autoStopMinutes: 60 }),
+        autoDeleteMinutes: this.options.persistent ? -1 : this.options.keepDays * 1440,
+      },
     }
   }
 
@@ -134,6 +269,10 @@ export class Computers {
   /** Recover before launching work; never retry an unknown command outcome. */
   private async exec(sessionId: string, command: string, timeoutSeconds: number) {
     const box = await this.vm(sessionId)
+    if (this.desktop) return this.execute(box, {
+      command: `printf %s ${shellQuote(JSON.stringify({ command }))} | sudo -n /usr/local/sbin/openwork-desktop-bridge command`,
+      timeoutMs: timeoutSeconds * 1000,
+    })
     return this.execute(box, {
       command: `cd ${WORKSPACE} 2>/dev/null || cd ~; exec bash -c "$WORKBOT_COMMAND"`,
       env: { WORKBOT_COMMAND: command, PATH: GUEST_PATH, HOME: "/home/ubuntu", LANG: "C.UTF-8" },
@@ -148,19 +287,45 @@ export class Computers {
     const timer = setTimeout(() => void this.pauseIfIdle(sessionId), this.options.idlePauseMs)
     timer.unref?.()
     this.pauseTimers.set(sessionId, timer)
+    this.options.pauses?.set(sessionId, Date.now() + this.options.idlePauseMs)
   }
 
-  private async pauseIfIdle(sessionId: string) {
+  /**
+   * Pauses the conversation's computer if it is running and idle, for a host acting on a stored pause time
+   * (`pauses`), including after a restart, when this process never used it. It never wakes a paused computer.
+   */
+  async pauseIdle(sessionId: string) {
+    this.cancelPause(sessionId)
+    const known = this.vms.get(sessionId)
+    const box = await (known ? known.then(box => this.provider.inspect(box)) : this.provider.find({ idempotencyKey: this.slug(sessionId), labels: this.spec(sessionId).labels })).catch(() => undefined)
+    // Unknown: look again after another idle period rather than at once.
+    if (box === undefined) return this.options.pauses?.set(sessionId, Date.now() + this.options.idlePauseMs)
+    if (box?.state !== "running") return this.options.pauses?.clear(sessionId)
+    if (!known) this.vms.set(sessionId, Promise.resolve(box))
+    await this.pauseIfIdle(sessionId)
+  }
+
+  private pauseIfIdle(sessionId: string): Promise<void> {
+    const current = this.pausing.get(sessionId)
+    if (current) return current
+    const pending = this.checkIdle(sessionId).finally(() => this.pausing.delete(sessionId))
+    this.pausing.set(sessionId, pending)
+    return pending
+  }
+
+  private async checkIdle(sessionId: string) {
     this.pauseTimers.delete(sessionId)
     const pending = this.vms.get(sessionId)
-    if (!pending) return
+    if (!pending) return this.options.pauses?.clear(sessionId)
     try {
       const vm = await pending
-      const jobs = await this.execute(vm, { command: `ls ${WORKSPACE}/.jobs/*.running 2>/dev/null | wc -l`, timeoutMs: 10_000 })
+      const jobs = await this.execute(vm, { command: `ls ${WORKSPACE}/.jobs/*.running 2>/dev/null | wc -l`, activity: "maintenance", timeoutMs: 10_000 })
       if (Number(jobs.stdout?.trim() ?? "0") > 0) return this.release(sessionId)
       await (this.provider.blocks?.pause ? this.provider.blocks.pause(vm, { timeoutMs: 30_000 }) : this.provider.stop(vm, { timeoutMs: 30_000 }))
+      this.options.pauses?.clear(sessionId)
     } catch {
-      // Not fatal: Freestyle's own idle timeout pauses it later.
+      // Not fatal: tried again after another idle period, and Freestyle's own idle timeout pauses it later.
+      this.options.pauses?.set(sessionId, Date.now() + this.options.idlePauseMs)
     }
   }
 
@@ -170,9 +335,24 @@ export class Computers {
     this.pauseTimers.delete(sessionId)
   }
 
+  /** Times one desktop request; the first one open for a VM gets its steps, a concurrent one only its total. */
+  private track(sessionId: string, operation: string) {
+    const timing = new DesktopTiming(sessionId, operation)
+    const slug = this.slug(sessionId)
+    if (!this.timings.has(slug)) this.timings.set(slug, timing)
+    return timing
+  }
+
+  private finish(timing: DesktopTiming, outcome: string, quiet = false) {
+    const slug = this.slug(timing.sessionId)
+    if (this.timings.get(slug) === timing) this.timings.delete(slug)
+    if (!quiet) timing.log(outcome)
+  }
+
   /** Deletes the conversation's VM, if it has one. */
   async delete(sessionId: string) {
     this.cancelPause(sessionId)
+    this.options.pauses?.clear(sessionId)
     this.vms.delete(sessionId)
     this.copied.delete(sessionId)
     const box = await this.provider.find({ idempotencyKey: this.slug(sessionId), labels: this.spec(sessionId).labels })
@@ -201,7 +381,7 @@ export class Computers {
         done.add(file.id)
         continue
       }
-      await this.blocks.files.write(vm, path.path, found.bytes, { timeoutMs: 30_000 })
+      await this.blocks.files.write(vm, path.path, found.bytes, { timeoutMs: 30_000, ...(this.desktop ? { mode: 0o660 } : {}) })
       done.add(file.id)
       copied.push(path.path)
     }
@@ -433,10 +613,10 @@ export const COMPUTER_TOOLS: ToolSpec[] = [
   {
     name: "bash",
     description: [
-      "Run a shell command on your Linux computer for this conversation (Ubuntu, internet access, sudo).",
+      "Run a shell command on your Linux computer for this conversation (Ubuntu, internet access; administrative commands depend on the image policy).",
       `The working directory is ${WORKSPACE}; everything there persists between messages.`,
       `Files the person sends are copied to ${FILES_DIR}. Anything you write to ${OUT_DIR} is added to their Files after the command.`,
-      "Installed: python3 (pandas, numpy, matplotlib, openpyxl, xlsxwriter, python-docx, python-pptx, pdfplumber, pypdf, pillow, opencv), ffmpeg, imagemagick, poppler-utils, qpdf, tesseract, pandoc, node, jq, ripgrep, sqlite3, git, curl. Install more with sudo apt-get or pip.",
+      "Installed: python3 (pandas, numpy, matplotlib, openpyxl, xlsxwriter, python-docx, python-pptx, pdfplumber, pypdf, pillow, opencv), ffmpeg, imagemagick, poppler-utils, qpdf, tesseract, pandoc, node, jq, ripgrep, sqlite3, git, curl. There is no general administrative access: install system packages with \`sudo openwork-install <package>...\` (package names only, from the image's repositories) and Python libraries in a virtual environment.",
       `A command times out after timeout_seconds (at most ${MAX_COMMAND_SECONDS}). For longer work run \`background <name> '<command>'\` and check \`tail -n 20 ${WORKSPACE}/.jobs/<name>.log\`.`,
       "Always set description first: it is the progress update the person sees.",
     ].join(" "),

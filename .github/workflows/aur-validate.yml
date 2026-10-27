@@ -121,6 +121,10 @@ jobs:
   aur-validate:
     name: Validate AUR package (${{ inputs.arch }}, ${{ inputs.mode }})
     runs-on: ubuntu-22.04
+    # The AUR key belongs to this environment; no deployment is recorded.
+    environment:
+      name: aur
+      deployment: false
     container:
       image: archlinux:latest
     env:

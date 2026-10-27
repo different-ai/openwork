@@ -13,6 +13,11 @@ import { evalJourneyFiles } from '../bin/test-files.mjs';
 // satisfy prerequisites" instead of scheduling a guaranteed skip.
 const PACKAGED_BINARY = { env: ['OPENWORK_EVAL_ELECTRON_BINARY'] };
 const definitions = {
+  'v2-chat-recovery.proof.test.ts': {
+    cases: ['RECOVERY-01', 'REMOVAL-01', 'REVERT-01', 'HEARTBEAT-01', 'RECONNECT-01'].map(id => ({
+      id, engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' },
+    })),
+  },
   'agent-connection-journey.e2e.test.ts': {
     cases: [{ id: 'AGENT-VIS-04', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
   },

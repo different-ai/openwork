@@ -23,6 +23,59 @@ export type AutomationRunStatus = z.infer<typeof automationRunStatusSchema>
 export const automationRunTriggerSchema = z.enum(["scheduled", "recovery", "manual"]).meta({ ref: "AutomationRunTrigger" })
 export type AutomationRunTrigger = z.infer<typeof automationRunTriggerSchema>
 
+const daysOfWeekSchema = z.array(z.number().int().min(0).max(6)).min(1).max(7)
+  .transform((days) => [...new Set(days)].sort((left, right) => left - right))
+const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6]
+
+/** Shortest gap between two runs of an interval schedule, in hours. */
+export const AUTOMATION_INTERVAL_MIN_HOURS = 1
+export const AUTOMATION_INTERVAL_MAX_HOURS = 24
+
+/**
+ * Every `everyHours` hours on the hour, counted from `startHour` each listed
+ * day and stopping before `endHour`, in the schedule's own zone. A window of
+ * 9 to 18 every 3 hours runs at 9:00, 12:00 and 15:00. Parsing always fills
+ * the days and the window, so stored schedules carry every field.
+ */
+export const automationIntervalScheduleSchema = z.object({
+  kind: z.literal("interval"),
+  timezone: timezoneSchema,
+  everyHours: z.number().int().min(AUTOMATION_INTERVAL_MIN_HOURS).max(AUTOMATION_INTERVAL_MAX_HOURS),
+  daysOfWeek: daysOfWeekSchema.default(EVERY_DAY),
+  /** First hour of the window, 0–23. Defaults to midnight. */
+  startHour: z.number().int().min(0).max(23).default(0),
+  /** Hour the window closes, 1–24, after `startHour`. Defaults to the end of the day. */
+  endHour: z.number().int().min(1).max(24).default(24),
+}).refine((schedule) => schedule.endHour > schedule.startHour, {
+  message: "endHour must be after startHour",
+  path: ["endHour"],
+}).describe("Every everyHours hours on the hour, counted from startHour on each listed day (0 = Sunday) and stopping before endHour, in timezone. Needs the organization's every-few-hours schedules.")
+
+/** Furthest a calendar trigger may run from its meeting's start or end, in minutes either way. */
+export const AUTOMATION_CALENDAR_OFFSET_MAX_MINUTES = 120
+
+/**
+ * Runs around each meeting on the owner's primary Google Calendar instead of
+ * on a clock: `offsetMinutes` from the meeting's `edge` (negative is before).
+ * Only meetings the owner accepted (or organizes), with someone else invited,
+ * that are timed rather than all-day count; `rule` narrows them further. It
+ * has no clock occurrences, so `nextDueAt` stays null; Den reads the calendar
+ * and claims each meeting once. Cloud placement only.
+ */
+export const automationCalendarScheduleSchema = z.object({
+  kind: z.literal("calendar"),
+  /** The zone meeting times are shown in, to the person and in the run. */
+  timezone: timezoneSchema,
+  edge: z.enum(["start", "end"]),
+  offsetMinutes: z.number().int().min(-AUTOMATION_CALENDAR_OFFSET_MAX_MINUTES).max(AUTOMATION_CALENDAR_OFFSET_MAX_MINUTES),
+  rule: z.object({
+    /** Only meetings with someone whose email domain differs from the owner's. */
+    withExternalAttendees: z.boolean().default(false),
+    /** Only meetings whose title contains this text, ignoring case. */
+    titleIncludes: z.string().trim().min(1).max(120).optional(),
+  }).strict().default({ withExternalAttendees: false }),
+}).describe("Runs offsetMinutes (negative is before) from the start or end of each meeting on the owner's primary Google Calendar: timed meetings they accepted or organize, with someone else invited. Cloud Automations only; needs Google Calendar connected and the organization's before-and-after-meeting Automations.")
+
 export const automationScheduleSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("once"), timezone: timezoneSchema, at: timestampSchema }),
   z.object({
@@ -34,13 +87,62 @@ export const automationScheduleSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("weekly"),
     timezone: timezoneSchema,
-    daysOfWeek: z.array(z.number().int().min(0).max(6)).min(1).max(7)
-      .transform((days) => [...new Set(days)].sort((left, right) => left - right)),
+    daysOfWeek: daysOfWeekSchema,
     hour: z.number().int().min(0).max(23),
     minute: z.number().int().min(0).max(59),
   }),
+  automationIntervalScheduleSchema,
+  automationCalendarScheduleSchema,
 ])
+/**
+ * Why a run starts: a clock schedule or, for `calendar`, a moment around each
+ * meeting. One field per revision, so a revision always has exactly one.
+ */
 export type AutomationSchedule = z.infer<typeof automationScheduleSchema>
+export type AutomationScheduleKind = AutomationSchedule["kind"]
+export type AutomationIntervalSchedule = Extract<AutomationSchedule, { kind: "interval" }>
+export type AutomationCalendarSchedule = Extract<AutomationSchedule, { kind: "calendar" }>
+
+export const AUTOMATION_SCHEDULE_KINDS = ["once", "daily", "weekly", "interval", "calendar"] as const satisfies readonly AutomationScheduleKind[]
+
+/**
+ * The schedule kinds released desktops can read. They parse `schedule`
+ * strictly (the Calendar throws on any other kind), so Den leaves Automations
+ * with newer kinds out of what it returns to them.
+ */
+export const AUTOMATION_LEGACY_SCHEDULE_KINDS = ["once", "daily", "weekly"] as const satisfies readonly AutomationScheduleKind[]
+
+/**
+ * A desktop names the schedule kinds it can read on every Automation request,
+ * comma separated. First-party desktops have sent the model-attention header
+ * since August 2026; one that sends it without this header is a released
+ * desktop that reads only the legacy kinds.
+ */
+export const AUTOMATION_SCHEDULE_KINDS_HEADER = "x-openwork-automation-schedule-kinds" as const
+
+function isAutomationScheduleKind(value: string): value is AutomationScheduleKind {
+  return AUTOMATION_SCHEDULE_KINDS.some((kind) => kind === value)
+}
+
+/**
+ * The schedule kinds a caller can read, or null when it reads them all.
+ * Only first-party desktops are ever narrowed: everyone else (Den web, agents,
+ * API clients) is told every kind.
+ */
+export function readableAutomationScheduleKinds(input: {
+  scheduleKindsHeader: string | null | undefined
+  firstPartyDesktop: boolean
+}): ReadonlySet<AutomationScheduleKind> | null {
+  if (input.scheduleKindsHeader === undefined || input.scheduleKindsHeader === null) {
+    return input.firstPartyDesktop ? new Set(AUTOMATION_LEGACY_SCHEDULE_KINDS) : null
+  }
+  const kinds = new Set<AutomationScheduleKind>(AUTOMATION_LEGACY_SCHEDULE_KINDS)
+  for (const value of input.scheduleKindsHeader.split(",")) {
+    const kind = value.trim()
+    if (isAutomationScheduleKind(kind)) kinds.add(kind)
+  }
+  return kinds
+}
 
 /**
  * `variant` is the model's reasoning/thinking level, the same value the
@@ -323,9 +425,12 @@ export const automationRunnerWorkItemSchema = z.union([
 ])
 /** Runs a desktop may claim per work poll; a runner skips the ones pinned elsewhere. */
 export const AUTOMATION_RUNNER_WORK_RUN_LIMIT = 20
+export const runnerEnginePolicySchema = z.object({ upgrade: z.boolean() })
 export const automationRunnerWorkResponseSchema = z.object({
   // Up to the run limit plus five remote-session commands and five remote-session requests.
   items: z.array(automationRunnerWorkItemSchema).max(AUTOMATION_RUNNER_WORK_RUN_LIMIT + 10),
+  /** Live org policy is returned even when inventory has not changed. */
+  enginePolicy: runnerEnginePolicySchema.optional(),
 })
 export type AutomationRunnerWorkResponse = z.infer<typeof automationRunnerWorkResponseSchema>
 
@@ -374,6 +479,8 @@ export type DesktopRunnerInventory = z.infer<typeof desktopRunnerInventorySchema
 export const desktopRunnerInventoryResponseSchema = z.object({
   ok: z.literal(true),
   updatedAt: timestampSchema,
+  /** Effective live policy; old clients ignore this additive response field. */
+  enginePolicy: runnerEnginePolicySchema.optional(),
 })
 
 export const remoteSessionCommandAssignmentSchema = z.object({
@@ -694,6 +801,29 @@ export const automationRunnerTokenResponseSchema = z.object({
 }).meta({ ref: "AutomationRunnerTokenResponse" })
 export type AutomationRunnerTokenResponse = z.infer<typeof automationRunnerTokenResponseSchema>
 
+/**
+ * The meeting a calendar-triggered run is about, captured when Den claimed
+ * it, for the owner to see. The title is written by whoever sent the invite,
+ * so it is never put in the run's prompt.
+ */
+export const automationMeetingContextSchema = z.object({
+  kind: z.literal("calendar_meeting"),
+  eventId: z.string().trim().min(1).max(1_024),
+  title: z.string().max(300).nullable(),
+  start: timestampSchema,
+  end: timestampSchema,
+  /** Email domains of everyone else invited, without rooms; never full addresses. */
+  attendeeDomains: z.array(z.string().max(253)).max(50),
+  externalAttendees: z.number().int().nonnegative(),
+  /** A Google Meet or Calendar link, or null. */
+  link: z.string().max(2_048).nullable(),
+}).meta({ ref: "AutomationMeetingContext" })
+export type AutomationMeetingContext = z.infer<typeof automationMeetingContextSchema>
+
+export const automationRunTriggerContextSchema = z.discriminatedUnion("kind", [automationMeetingContextSchema])
+  .meta({ ref: "AutomationRunTriggerContext" })
+export type AutomationRunTriggerContext = z.infer<typeof automationRunTriggerContextSchema>
+
 export const automationRunSchema = z.object({
   id: idSchema,
   automationId: idSchema,
@@ -717,6 +847,8 @@ export const automationRunSchema = z.object({
   resultSummary: z.string().max(20_000).nullable(),
   codemodeReceiptId: idSchema.nullable().optional(),
   validatedResult: z.unknown().optional(),
+  /** What started a calendar-triggered run; absent for clock and manual runs. */
+  triggerContext: automationRunTriggerContextSchema.nullable().optional(),
   usage: automationUsageSchema,
   createdAt: timestampSchema,
   updatedAt: timestampSchema,

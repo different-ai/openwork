@@ -67,11 +67,18 @@ export const OrgOAuthClientTable = mysqlTable(
   ],
 )
 
+export type ExternalMcpReadinessFailure = "sign_in_required" | "sign_in_rejected" | "setup_required" | "unavailable" | "timed_out" | "settings_changed" | "tools_unreadable"
+
 export type ExternalMcpReadinessCheck = {
   status: "ready" | "could_not_verify"
   checkedAt: string
   lastSuccessfulAt: string | null
   reason: string | null
+  /**
+   * Why a check did not pass, so clients can tell a rejected sign-in from an
+   * outage without parsing copy. Absent on checks recorded before 2026-10-22.
+   */
+  failure?: ExternalMcpReadinessFailure | null
   /** Binds the probe to the configuration and credential it actually checked. Never returned. */
   fingerprint: string
 }
@@ -140,6 +147,8 @@ export type ExternalMcpOAuthConfiguration = {
   authorizationServerIssuer: string | null
   requestedScopes: string[]
   callbackMode: ExternalMcpOAuthCallbackMode
+  /** Explicit administrator-pinned endpoints; absent on discovery-based connections. */
+  manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string }
   /**
    * SDK-owned discovery state. Den validates it before reuse and never exposes
    * it through the connection API. Keeping it with the connection allows

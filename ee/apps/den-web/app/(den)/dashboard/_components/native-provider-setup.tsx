@@ -17,7 +17,7 @@ import { ItemHeader, ItemPage, SectionTitle, StepFooter } from "./item-header";
 import { DetailRows, ItemPanel } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import { McpCredentialInput } from "./mcp-credential-input";
-import { useCreateNativeProviderConnection, useNativeProviderClient, useSaveNativeProviderClient } from "./mcp-connections-data";
+import { useCreateNativeProviderConnection, useGoogleApiCheck, useNativeProviderClient, useSaveNativeProviderClient } from "./mcp-connections-data";
 import { MICROSOFT_365_DEFAULT_FEATURES, MICROSOFT_365_PERMISSION_GROUPS } from "./microsoft-365-permissions";
 
 type ProviderCopy = {
@@ -63,6 +63,50 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <span className="text-[12px] font-medium text-gray-700">{label}</span>
       {children}
     </label>
+  );
+}
+
+function permissionGroupName(feature: string) {
+  return GOOGLE_WORKSPACE_PERMISSION_GROUPS.find((group) => group.permissions.some((permission) => permission.key === feature))?.name;
+}
+
+/** Each permission calls a Google API that must be turned on in the OAuth client's Cloud project. */
+function GoogleApiStatus({ providerId, unsaved }: { providerId: string; unsaved: boolean }) {
+  const check = useGoogleApiCheck(providerId);
+  const off = check.data?.apis.filter((api) => api.status === "disabled").length ?? 0;
+  return (
+    <section className="flex flex-col gap-2.5" data-testid="google-api-check">
+      <SectionTitle title="Google APIs" meta={check.data?.checked ? (off ? `${off} turned off` : "All on") : undefined} />
+      <ItemPanel>
+        <div className="flex items-start justify-between gap-4 px-5 py-3.5">
+          <p className="text-[13px] leading-5 text-gray-600">
+            Each permission needs its Google API turned on in the Google Cloud project that owns this OAuth client. The check uses your own sign-in on this connector{unsaved ? " and the saved permissions, not your unsaved changes" : ""}.
+          </p>
+          <DenButton size="sm" variant="secondary" loading={check.isFetching} onClick={() => void check.refetch()} data-testid="google-api-check-run">
+            {check.data ? "Check again" : "Check APIs"}
+          </DenButton>
+        </div>
+        {check.error ? <p className="border-t border-gray-100 px-5 py-3 text-[13px] text-red-600" role="alert">{check.error.message}</p> : null}
+        {check.data && !check.data.checked ? (
+          <p className="border-t border-gray-100 px-5 py-3 text-[13px] text-gray-600">Sign in to this connector with your Google account, then check again.</p>
+        ) : null}
+        {check.data?.apis.map((api) => (
+          <div key={api.id} className="flex items-start justify-between gap-4 border-t border-gray-100 px-5 py-3" data-api={api.id} data-status={api.status}>
+            <span className="flex flex-col">
+              <span className="text-[13px] font-medium text-gray-900">{api.name}</span>
+              <span className="text-[12px] leading-4 text-gray-500">
+                {api.detail ?? `Needed for ${[...new Set(api.features.map(permissionGroupName).filter(Boolean))].join(", ")}`}
+              </span>
+            </span>
+            {api.status === "disabled" && api.enableUrl ? (
+              <a href={api.enableUrl} target="_blank" rel="noopener noreferrer" className="shrink-0 text-[13px] font-medium text-gray-900 underline">Turn on</a>
+            ) : (
+              <span className="shrink-0 text-[13px] text-gray-500">{api.status === "enabled" ? "On" : "Not checked"}</span>
+            )}
+          </div>
+        ))}
+      </ItemPanel>
+    </section>
   );
 }
 
@@ -234,6 +278,13 @@ export function NativeProviderSettings({ providerKey, clientProviderId, create, 
           ))}
         </ItemPanel>
       </section>
+
+      {providerKey === GOOGLE_WORKSPACE_QUICK_ADD_ID && configured && !replacing ? (
+        <GoogleApiStatus
+          providerId={clientProviderId}
+          unsaved={[...features].sort().join() !== [...(clientConfig.data?.features ?? [])].sort().join()}
+        />
+      ) : null}
 
       {error ? <p className="text-[13px] text-red-600" role="alert">{error}</p> : null}
       {footer({ save: () => void save(), saving, disabled, label })}

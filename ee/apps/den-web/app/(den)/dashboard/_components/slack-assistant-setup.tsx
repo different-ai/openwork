@@ -18,7 +18,6 @@ const setupSchema = z.object({
   installed: z.boolean(),
   hasSigningSecret: z.boolean(),
   eligible: z.boolean(),
-  rolloutEnabled: z.boolean(),
   runnerAvailable: z.boolean(),
   shadowMode: z.boolean(),
   dailyLimit: z.number(),
@@ -131,11 +130,6 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
       {query.isPending ? <p role="status">Loading Slack setup…</p> : null}
       {query.error ? <p role="alert">Could not load Slack setup.</p> : null}
       {data && !data.eligible ? <p>Choose Individual accounts mode before enabling the assistant.</p> : null}
-      {data && !data.rolloutEnabled ? (
-        <p className="text-sm text-gray-500">
-          Ask a platform admin to enable Slack Assistant for this workspace in /admin.
-        </p>
-      ) : null}
       {data && !data.runnerAvailable ? (
         <p className="text-sm text-gray-500" role="status">
           Not available on this deployment: the Slack assistant runs on OpenWork&apos;s cloud runner, which isn&apos;t set up
@@ -170,7 +164,7 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
             <span>Enable @openwork in Slack</span>
             <DenSwitch
               checked={data.enabled}
-              disabled={busy || (!data.enabled && (!data.rolloutEnabled || !data.runnerAvailable || (!data.hasSigningSecret && !secret)))}
+              disabled={busy || (!data.enabled && (!data.runnerAvailable || (!data.hasSigningSecret && !secret)))}
               aria-label="Enable @openwork in Slack"
               testId="slack-assistant-enabled"
               onChange={(checked) => void save(checked)}
@@ -186,7 +180,6 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
               onChange={setSecret}
               saved={data.hasSigningSecret}
               placeholder="Paste from Slack app settings"
-              savedPlaceholder="Saved securely"
               replaceTestId="slack-assistant-replace-signing-secret"
             />
           </label>

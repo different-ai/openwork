@@ -13,3 +13,4 @@ const hook = execFileSync("git", ["rev-parse", "--git-path", "hooks/pre-commit"]
 if (!current && existsSync(resolve(root, hook))) throw new Error("An existing pre-commit hook is installed; compose the contract hook with it instead.");
 execFileSync("git", ["config", "--local", "core.hooksPath", ".githooks"], { cwd: root });
 console.log("Installed the optional contract pre-commit hook. Disable with git config --local --unset core.hooksPath.");
+console.log("Optional: git config --local openwork.wardenPrePush true runs pnpm warden:quick before each push (.warden/README.md).");

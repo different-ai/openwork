@@ -14,7 +14,7 @@ OpenWork Cloud has three roles:
 - `Admin`: can invite `Member` users, manage ordinary teams, remove members subject to access safeguards, manage shared Cloud resources, connections, providers and usage limits, start a subscription, and view settings such as SSO, SCIM, API keys, approved web origins and desktop policies.
 - `Member`: can use resources shared with them but cannot manage org administration.
 
-`Super Admin` no longer exists. Every former super-admin is now an `Admin`, and admins keep exactly what they could do before. What only super-admins could do is now owner-only:
+`Super Admin` no longer exists as a built-in role. Ordinary admins keep their previous capabilities. The following actions default to the owner unless granted through Permissions:
 
 - changing member roles and inviting someone as an `Admin`
 - designating Admin teams and changing who is in them
@@ -22,6 +22,14 @@ OpenWork Cloud has three roles:
 - managing SSO, SCIM, organization API keys, desktop policies and network diagnostics
 - opening the billing portal
 - editing or removing a connection someone else added
+
+### Upgrading from before Super Admin was removed
+
+When an upgrade first removes the old role, active people whose stored role includes `super-admin` become `Admin` and join a visible **Super Admins** team (with an organization-specific suffix). Its **Super Admins Permissions** set preserves the 14 comparable former capabilities, including managing permissions. The owner can review the team in **Members › Teams**, remove people, edit or unlink the permission set, or delete it through **Permissions**. Subsequent startups do not restore revoked access.
+
+The upgrade uses only the roles stored at that moment, not invitation or audit history. It excludes removed members, unaccepted invitations, pending workspace claims, and people already demoted. Owners keep their existing access without joining the team. Organizations without active super-admins and fresh installations get no extra team. Existing teams, including Admin teams, are unchanged.
+
+This preservation applies only if the database has **not yet run the Super Admin deprecation migration**. It does not repair databases that already ran it, including existing 0.18.58 and 0.18.59 installations. Those organizations need an owner-reviewed manual grant. Agent-permission and deployment management are not included: they were not comparable former super-admin capabilities.
 
 Custom roles have also been removed; members who had one are treated as `Member`. Enterprise organizations can use Permissions to give any of the owner-only actions to admins or to a team, and to change what members and admins can do.
 

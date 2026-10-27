@@ -794,6 +794,7 @@ function safeMessageFor(input: {
   category: string
   code: string
   highestPassed?: ExternalMcpHealthLevel
+  httpStatus?: number
   providerStatus?: number
   providerCode?: string
   jsonRpcCode?: number
@@ -822,6 +823,7 @@ function safeBaseMessageFor(input: {
   category: string
   code: string
   highestPassed?: ExternalMcpHealthLevel
+  httpStatus?: number
   jsonRpcCode?: number
   providerErrorMessage?: string
 }): string {
@@ -868,7 +870,7 @@ function safeBaseMessageFor(input: {
     return "The MCP URL uses a port that server-side HTTP clients are not permitted to access."
   }
   if (input.phase === "NETWORK_DNS") {
-    return "Den could not resolve the MCP host from its server network."
+    return "OpenWork's server network could not resolve the MCP server's hostname. Check that the hostname is correct and publicly reachable. If public access was just turned on, DNS can take a while to update, so try again later."
   }
   if (input.phase === "NETWORK_TCP") {
     return "Den resolved the MCP host but could not establish a network connection."
@@ -902,12 +904,21 @@ function safeBaseMessageFor(input: {
       : "The provider rejected the authorization request before issuing a code."
   }
   if (input.phase === "AUTH_RESOURCE_VALIDATION") {
-    return "The MCP resource rejected the supplied authorization."
+    return input.httpStatus === undefined
+      ? "The MCP resource rejected the supplied authorization."
+      : `The MCP resource rejected the supplied authorization (HTTP ${input.httpStatus}).`
   }
   if (input.phase === "MCP_VERSION") {
     return "The MCP client and server could not agree on a supported protocol version."
   }
+  if (input.code === "MCP_SESSION_LIMIT") {
+    return "The MCP server refused to start a new session because it has reached its limit of open sessions."
+  }
   if (input.phase === "MCP_INITIALIZE" || input.phase === "MCP_INITIALIZED") {
+    const status = input.httpStatus === undefined ? "" : ` (HTTP ${input.httpStatus})`
+    if (input.category === "provider_throttled") return `The MCP server is rate limiting OpenWork and did not start a session${status}.`
+    if (input.category === "provider_unavailable") return `The MCP server failed or was unavailable while starting a session${status}.`
+    if (input.category === "http_failure") return `The MCP server refused to start a session${status}.`
     return "The MCP lifecycle failed during initialization."
   }
   if (input.phase === "MCP_TOOL_DISCOVERY") {
@@ -996,6 +1007,8 @@ function httpClassification(input: {
   hasSession: boolean
   contentType: string
   providerResponseExcerpt?: string
+  /** The response body says the server's session limit was reached. */
+  sessionLimit?: boolean
 }): Classification | null {
   const { phase, status } = input
   const redirectUriRejectionCode = status === 400 && phase === "AUTH_CLIENT_REGISTRATION"
@@ -1030,6 +1043,18 @@ function httpClassification(input: {
       retryable: false,
       actionOwner: "provider_admin",
       operatorAction: "Verify Streamable HTTP content negotiation and the provider's supported MCP transport.",
+    }
+  }
+  // Only an explicit statement from the server: a generic refusal is never
+  // reported as a session limit.
+  if (input.sessionLimit && phase === "MCP_INITIALIZE" && status >= 400 && status !== 401 && status !== 404) {
+    return {
+      phase,
+      category: "mcp_session_limit",
+      code: "MCP_SESSION_LIMIT",
+      retryable: true,
+      actionOwner: "provider_admin",
+      operatorAction: "Wait for idle sessions on the MCP server to end, then try again. If it keeps happening, ask the server's administrator to raise its session limit.",
     }
   }
   if (status === 429) {
@@ -1223,7 +1248,7 @@ function classifyByCode(code: string): Classification | null {
       code,
       retryable: false,
       actionOwner: "organization_admin",
-      operatorAction: "Repeat requirements discovery and select an authorization server advertised by the protected resource.",
+      operatorAction: "Ask the server owner to fix its inconsistent sign-in information, or enter the authorization and token URLs under Sign-in addresses in the connection settings.",
     }
   }
   if (code === "MCP_OAUTH_PERSISTENCE_INVALID") {
@@ -1275,7 +1300,7 @@ function classifyByCode(code: string): Classification | null {
       code: `MCP_${normalizedCode}`,
       retryable: normalizedCode === "EAI_AGAIN",
       actionOwner: "network_admin",
-      operatorAction: "Verify DNS resolution and Den egress for the MCP host.",
+      operatorAction: "Check the hostname and that it resolves on the public internet; if public access was just turned on, wait and try again.",
     }
   }
   if (TLS_ERROR_CODES.has(normalizedCode)) {
@@ -1826,6 +1851,7 @@ export class ExternalMcpDiagnosticTracker {
       ...diagnosticWithoutMessage,
       message: safeMessageFor({
         ...diagnosticWithoutMessage,
+        ...(this.lastHttpStatus === null ? {} : { httpStatus: this.lastHttpStatus }),
         ...(safeOAuthProviderDetail ? { providerDetail: safeOAuthProviderDetail } : {}),
       }),
       ...(this.lastHttpStatus === null ? {} : { httpStatus: this.lastHttpStatus }),
@@ -2013,8 +2039,12 @@ async function responseTextExcerptWithinLimit(response: Response, limit: number)
   }
 }
 
+const SESSION_LIMIT_TEXT = /\b(?:too many|max(?:imum)?|limit(?:ed)?|capacity|exhausted|exceeded)\b[^.]{0,40}\bsessions?\b|\bsessions?\b[^.]{0,40}\b(?:limit|capacity|exhausted|exceeded|maximum)\b/i
+
 async function providerResponseExcerpts(response: Response): Promise<{
   memberExcerpt?: string
+  /** Read from the body for classification only; the body itself is never kept. */
+  sessionLimit: boolean
   log: ProviderResponseLog
 } | null> {
   try {
@@ -2026,6 +2056,7 @@ async function providerResponseExcerpts(response: Response): Promise<{
     const memberExcerpt = structuredProviderResponseExcerpt(text)
     return {
       ...(memberExcerpt ? { memberExcerpt } : {}),
+      sessionLimit: SESSION_LIMIT_TEXT.test(text),
       log: {
         contentType: providerResponseContentType(
           (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim().toLowerCase() ?? "",
@@ -2180,8 +2211,10 @@ export function createExternalMcpDiagnosticFetch(input: {
       input.tracker.recordHttpStatus(response.status)
       input.tracker.recordProviderRequestId(response.headers)
       let providerResponseExcerpt: string | undefined
+      let sessionLimit = false
       if (!response.ok || (response.ok && isOAuthTokenPhase(phase) && contentType === "application/json")) {
         const excerpts = await providerResponseExcerpts(response)
+        sessionLimit = excerpts?.sessionLimit === true
         if (excerpts && (!response.ok || (excerpts.memberExcerpt && isProviderTokenErrorExcerpt(excerpts.memberExcerpt)))) {
           providerResponseExcerpt = excerpts.memberExcerpt
           input.tracker.recordProviderResponseExcerpt({
@@ -2207,6 +2240,7 @@ export function createExternalMcpDiagnosticFetch(input: {
             hasSession: Boolean(requestHeader(init, "mcp-session-id")),
             contentType,
             providerResponseExcerpt,
+            sessionLimit,
           })
       input.tracker.passed(phase, "reachable")
       if (classification) {

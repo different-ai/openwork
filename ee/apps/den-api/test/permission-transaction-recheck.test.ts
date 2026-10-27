@@ -20,7 +20,7 @@ test("missing default sets deny everything inside a transaction, even for admins
   for (const isAdmin of [false, true]) {
     const grants = missingDefaultSetsPermissionGrants({ isAdmin, transaction: true })
     assert.deepEqual(grants, [])
-    const permissions = memberPermissionsFromGrants({ featureEnabled: true, isOwner: false, isAdmin, grants })
+    const permissions = memberPermissionsFromGrants({ isOwner: false, isAdmin, grants })
     assert.equal(permissions.keys.size, 0)
     for (const key of permissionDefaultKeys("admin")) assert.equal(permissions.has(key), false, key)
   }

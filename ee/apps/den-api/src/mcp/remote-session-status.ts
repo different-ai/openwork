@@ -212,9 +212,13 @@ export async function readRemoteSessionStatus(
   const threads = [...byKey.values()]
   const commands = threads.filter((thread) => thread.kind === "command")
   const clouds = threads.filter((thread) => thread.kind === "cloud")
-  // Cloud access is resolved at most once per call, however long it waits.
+  // Reuse ready access and lasting errors, but retry a waking workspace on
+  // the next Cloud check so a long poll can observe it becoming available.
   let cloudAccess: Promise<RemoteSessionStatusCloud> | null = null
-  const cloud = () => cloudAccess ??= sources.cloud()
+  const cloud = () => cloudAccess ??= sources.cloud().then((access) => {
+    if (access === null) cloudAccess = null
+    return access
+  })
 
   const changed = (observed: ReadonlyMap<string, Observation>) => threads.some((thread) => {
     const observation = observed.get(thread.key)
@@ -222,10 +226,11 @@ export async function readRemoteSessionStatus(
   })
   const startedAt = now()
   const deadline = startedAt + (body.waitMs ?? 0)
-  let observed = new Map([
-    ...await observeCommands(commands, sources, startedAt),
-    ...await observeCloud(clouds, cloud, startedAt, options.signal),
+  const [initialCommands, initialCloud] = await Promise.all([
+    observeCommands(commands, sources, startedAt),
+    observeCloud(clouds, cloud, startedAt, options.signal),
   ])
+  let observed = new Map([...initialCommands, ...initialCloud])
   let cloudCheckedAt = startedAt
   while (!changed(observed) && !threads.every((thread) => settled(observed.get(thread.key))) && !options.signal?.aborted) {
     const remaining = deadline - now()
@@ -234,11 +239,11 @@ export async function readRemoteSessionStatus(
     if (options.signal?.aborted) break
     const checkedAt = now()
     const cloudDue = checkedAt - cloudCheckedAt >= CLOUD_RECHECK_MS
-    observed = new Map([
-      ...observed,
-      ...await observeCommands(commands, sources, checkedAt),
-      ...cloudDue ? await observeCloud(clouds, cloud, checkedAt, options.signal) : [],
+    const [checkedCommands, checkedCloud] = await Promise.all([
+      observeCommands(commands, sources, checkedAt),
+      cloudDue ? observeCloud(clouds, cloud, checkedAt, options.signal) : [],
     ])
+    observed = new Map([...observed, ...checkedCommands, ...checkedCloud])
     if (cloudDue) cloudCheckedAt = checkedAt
   }
 

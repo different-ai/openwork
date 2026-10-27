@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
 import { createAuth, type AppEnv, type DenAuth } from "../src/server/auth.js"
-import { DenSignedOutError, type DenSession } from "../src/server/den.js"
+import { createDen, DenRateLimitedError, DenSignedOutError, tokenRetryAfterSeconds, type DenSession } from "../src/server/den.js"
 import type { Tokens } from "../src/server/sealed.js"
 
 const SECRET = "test-secret-test-secret-test-secret-0001"
@@ -18,21 +18,38 @@ const who: DenSession = {
 // About the size of Den's JWT access tokens, so the cookie-size limit is exercised realistically.
 const accessToken = (n: number) => `access-${n}-${"x".repeat(1_400)}`
 
-function world(options: { secret?: string } = {}) {
+function world(options: { secret?: string; telemetryFails?: boolean; identity?: DenSession; identityForToken?(token: string): DenSession } = {}) {
+  const signIns: Array<{ token: string; id: string }> = []
   let clock = 1_000_000
   const calls = { refresh: [] as string[], revoke: [] as string[] }
+  const workspaceChoices: boolean[] = []
   let refreshes = 0
-  let refreshOutcome: "ok" | "signed_out" = "ok"
+  let refreshOutcome: "ok" | "signed_out" | { retryAfter: number } = "ok"
+  let sessionFailures = 0
   let releaseRefresh: (() => void) | null = null
   const den: DenAuth = {
-    authorizeUrl: async ({ state }) => `https://den.test/authorize?state=${state}`,
+    authorizeUrl: async ({ state, chooseWorkspace }) => {
+      workspaceChoices.push(chooseWorkspace === true)
+      return `https://den.test/authorize?state=${state}`
+    },
     exchangeCode: async (): Promise<Tokens> => ({ accessToken: accessToken(0), refreshToken: "refresh-0", expiresAt: clock + 45 * 60_000 }),
-    session: async () => who,
+    session: async token => {
+      if (sessionFailures > 0) {
+        sessionFailures -= 1
+        throw new Error("den_session_503")
+      }
+      return options.identityForToken?.(token) ?? options.identity ?? who
+    },
+    recordSignIn: async (token, id) => {
+      signIns.push({ token, id })
+      if (options.telemetryFails) throw new Error("telemetry unavailable")
+    },
     refresh: async (refreshToken) => {
       calls.refresh.push(refreshToken)
       // Held until released, so concurrent requests overlap one refresh.
       await new Promise<void>((resolve) => { releaseRefresh = resolve })
       if (refreshOutcome === "signed_out") throw new DenSignedOutError()
+      if (typeof refreshOutcome === "object") throw new DenRateLimitedError(refreshOutcome.retryAfter)
       refreshes += 1
       return { accessToken: accessToken(refreshes), refreshToken: `refresh-${refreshes}`, expiresAt: clock + 45 * 60_000 }
     },
@@ -48,8 +65,13 @@ function world(options: { secret?: string } = {}) {
   return {
     instance,
     calls,
+    signIns,
+    workspaceChoices,
     advance: (ms: number) => { clock += ms },
     failRefresh: () => { refreshOutcome = "signed_out" },
+    rateLimitRefresh: (retryAfter: number) => { refreshOutcome = { retryAfter } },
+    allowRefresh: () => { refreshOutcome = "ok" },
+    failSession: (times: number) => { sessionFailures = times },
     release: async () => {
       for (let i = 0; i < 50 && !releaseRefresh; i++) await new Promise((resolve) => setTimeout(resolve, 1))
       releaseRefresh?.()
@@ -88,6 +110,58 @@ test("sign-in keeps everything in sealed cookies, and any instance with the secr
   assert.equal(w.calls.refresh.length, 0)
 })
 
+test("sign-in telemetry follows a successful cookie write once, and never blocks sign-in", async () => {
+  const w = world({ telemetryFails: true })
+  const app = w.instance()
+  const { session } = await signIn(app)
+  assert.equal(w.signIns.length, 1)
+  assert.equal(w.signIns[0].token, accessToken(0))
+  assert.match(w.signIns[0].id, /^[A-Za-z0-9_-]{16,128}$/)
+  assert.equal((await me(app, session)).status, 200)
+  assert.equal(w.signIns.length, 1, "reading the session is not another sign-in")
+  assert.equal((await app.request("/auth/callback?state=invalid&code=invalid")).status, 400)
+  assert.equal(w.signIns.length, 1, "an unfinished sign-in is never recorded")
+})
+
+test("a stale client's scope cannot read a different signed-in person or workspace or sign them out", async () => {
+  const identities: DenSession[] = [
+    { ...who, user: { ...who.user, id: "user_other" }, memberId: "member_other" },
+    { ...who, organization: { ...who.organization, id: "org_other" } },
+  ]
+  for (const identity of identities) {
+    const w = world({ identity })
+    const app = w.instance()
+    const { session } = await signIn(app)
+    const request = (headers: Record<string, string>) => app.request("/v1/workbot/me", { headers: { cookie: `__Host-workbot=${session}`, ...headers } })
+    const rejected = await request({ "x-openwork-client-user": who.user.id, "x-openwork-client-organization": who.organization.id })
+    assert.equal(rejected.status, 401)
+    assert.match(await rejected.text(), /"error":"identity_changed"/)
+    assert.equal(rejected.headers.getSetCookie().length, 0, "a stale tab cannot revoke the current account's cookie")
+    assert.equal((await request({ "x-openwork-client-user": identity.user.id })).status, 401, "partial scope claims fail closed")
+    assert.equal((await request({ "x-openwork-client-user": identity.user.id, "x-openwork-client-organization": identity.organization.id })).status, 200)
+    assert.equal((await me(app, session)).status, 200, "unscoped identity discovery still works")
+    assert.equal(w.calls.revoke.length, 0)
+  }
+})
+
+test("identity metadata is bound to the current token, not only the sealed session id", async () => {
+  const other = { ...who, user: { ...who.user, id: "user_other" }, memberId: "member_other" }
+  const w = world({ identityForToken: token => token.startsWith("access-0-") ? who : other })
+  const app = w.instance()
+  const { session } = await signIn(app)
+  w.advance(42 * 60_000 + 50_000)
+  assert.equal((await me(app, session)).status, 200) // Warm A's metadata just before refresh.
+  w.advance(20_000)
+  const refreshing = app.request("/v1/workbot/me", { headers: { cookie: `__Host-workbot=${session}`, "x-openwork-client-user": who.user.id, "x-openwork-client-organization": who.organization.id } })
+  await w.release()
+  const response = await refreshing
+  assert.equal(response.status, 401, "a fresh token cannot borrow the old token's identity cache")
+  assert.match(await response.text(), /"error":"identity_changed"/)
+  assert.equal(cookieValue(response, "__Host-workbot"), "", "a changed subject is never written into the old sign-in, and the spent sign-in ends")
+  assert.equal((await me(app, session)).status, 401, "even unscoped discovery cannot silently rebind the old sign-in")
+  assert.equal(w.calls.refresh.length, 1)
+})
+
 test("forged, tampered, other-secret and wrong-purpose cookies are signed out", async () => {
   const w = world()
   const { session, loginCookie } = await signIn(w.instance())
@@ -112,6 +186,64 @@ test("a sign-in only finishes in the browser that started it, with its state, wi
   assert.equal((await app.request("/auth/login?return=//evil.test")).headers.get("location")?.startsWith("https://den.test/"), true)
   w.advance(11 * 60_000)
   assert.equal((await app.request(`/auth/callback?state=${state}&code=c`, { headers: { cookie: `__Host-workbot-login=${loginCookie}` } })).status, 400)
+})
+
+test("only an explicit workspace-choice link asks Den to reopen the workspace decision", async () => {
+  const w = world()
+  const app = w.instance()
+  await app.request("/auth/login")
+  await app.request("/auth/login?workspace=choose")
+  await app.request("/auth/login?workspace=other")
+  assert.deepEqual(w.workspaceChoices, [false, true, false])
+})
+
+test("workspace sign-in preserves a local destination but never returns to another site", async () => {
+  const app = world().instance()
+  const destinations: Array<[string, string]> = [
+    ["/documents?chat=example#section-2", "/documents?chat=example#section-2"],
+    ["/documents/My%20notes?query=a%20b#part%202", "/documents/My%20notes?query=a%20b#part%202"],
+    ["/?next=https://unrelated.example.test/#stay", "/?next=https://unrelated.example.test/#stay"],
+    ["https://unrelated.example.test", "/"],
+    ["//unrelated.example.test", "/"],
+    ["/\\unrelated.example.test", "/"],
+    ["/documents\\..\\unrelated.example.test", "/"],
+    ["javascript:alert(1)", "/"],
+    ["javascript://unrelated.example.test/", "/"],
+    [" /documents", "/"],
+  ]
+  for (const [destination, expected] of destinations) {
+    const login = await app.request(`/auth/login?return=${encodeURIComponent(destination)}`)
+    const cookie = cookieValue(login, "__Host-workbot-login") ?? ""
+    const state = new URL(login.headers.get("location") ?? "").searchParams.get("state") ?? ""
+    const callback = await app.request(`/auth/callback?state=${state}&code=example-code`, { headers: { cookie: `__Host-workbot-login=${cookie}` } })
+    assert.equal(callback.status, 302)
+    assert.equal(callback.headers.get("location"), expected)
+    assert.equal(new URL(callback.headers.get("location") ?? "", config.publicUrl).origin, config.publicUrl)
+    const session = cookieValue(callback, "__Host-workbot")
+    assert.ok(session)
+    assert.equal((await me(app, session)).status, 200)
+  }
+})
+
+test("encoded controls and ambiguous whitespace fall back to root through a successful sealed sign-in", async () => {
+  const app = world().instance()
+  const controls = ["\t", "\r", "\n", "\r\n", ...Array.from({ length: 33 }, (_, code) => String.fromCharCode(code)), "\u007f", "\u00a0", "\u2028", "\u3000"]
+  for (const control of controls) {
+    const destination = `/${control}/unrelated.example.test`
+    const login = await app.request(`/auth/login?return=${encodeURIComponent(destination)}`)
+    assert.equal(login.status, 302)
+    const loginCookie = cookieValue(login, "__Host-workbot-login")
+    assert.ok(loginCookie)
+    const state = new URL(login.headers.get("location") ?? "").searchParams.get("state")
+    assert.ok(state)
+    const callback = await app.request(`/auth/callback?state=${state}&code=example-code`, { headers: { cookie: `__Host-workbot-login=${loginCookie}` } })
+    assert.equal(callback.status, 302, `Sign-in must succeed for rejected return ${JSON.stringify(destination)}`)
+    assert.equal(callback.headers.get("location"), "/", `Unsafe return ${JSON.stringify(destination)}`)
+    assert.equal(new URL(callback.headers.get("location") ?? "", config.publicUrl).origin, config.publicUrl)
+    const session = cookieValue(callback, "__Host-workbot")
+    assert.ok(session)
+    assert.equal((await me(app, session)).status, 200)
+  }
 })
 
 test("a refresh token is spent once, even by requests still carrying the previous cookie", async () => {
@@ -153,4 +285,92 @@ test("Den refusing a refresh signs the person out; signing out revokes the refre
   const refused = await pending
   assert.equal(refused.status, 401)
   assert.ok(refused.headers.getSetCookie().some((cookie) => cookie.startsWith("__Host-workbot=;")))
+})
+
+test("Den asking Workbot to wait on a refresh is honored: no call reaches Den before Retry-After", async () => {
+  const w = world()
+  const app = w.instance()
+  const { session } = await signIn(app)
+  const request = async () => {
+    const pending = me(app, session)
+    await w.release()
+    return pending
+  }
+  w.advance(44 * 60_000)
+  w.rateLimitRefresh(120)
+  const limited = await request()
+  assert.equal(limited.status, 200, "the access token is still good for another minute")
+  assert.deepEqual(await limited.json(), { token: "access-0-" })
+  assert.equal(cookieValue(limited, "__Host-workbot"), undefined)
+  assert.deepEqual(w.calls.refresh, ["refresh-0"])
+
+  w.advance(10_000)
+  assert.equal((await request()).status, 200)
+  assert.deepEqual(w.calls.refresh, ["refresh-0"], "the wait is per refresh token, not per request")
+
+  w.advance(80_000)
+  const expired = await request()
+  assert.equal(expired.status, 503, "the access token ran out while Den still asks Workbot to wait")
+  assert.equal(expired.headers.get("retry-after"), "30")
+  assert.deepEqual(await expired.json(), { error: "den_unavailable" })
+  assert.equal(expired.headers.getSetCookie().length, 0, "waiting is not signing out")
+  assert.deepEqual(w.calls.refresh, ["refresh-0"])
+
+  w.advance(31_000)
+  w.allowRefresh()
+  const recovered = await request()
+  assert.equal(recovered.status, 200)
+  assert.deepEqual(await recovered.json(), { token: "access-1-" })
+  assert.ok(cookieValue(recovered, "__Host-workbot"))
+  assert.deepEqual(w.calls.refresh, ["refresh-0", "refresh-0"])
+})
+
+test("a refresh Den accepted is kept even when Den can't say who the person is yet", async (t) => {
+  t.mock.method(console, "error", () => {})
+  const w = world()
+  const { session: before } = await signIn(w.instance())
+  const app = w.instance()
+  w.advance(44 * 60_000)
+  w.failSession(1)
+  const pending = me(app, before)
+  await w.release()
+  const failed = await pending
+  assert.equal(failed.status, 503)
+  const after = cookieValue(failed, "__Host-workbot")
+  assert.ok(after && after !== before, "the rotated tokens reach the browser with the failed response")
+  assert.deepEqual(w.calls.refresh, ["refresh-0"])
+
+  // Long after the in-memory reuse window, on another instance: the spent refresh token is never sent again.
+  w.advance(5 * 60_000)
+  const resumed = await me(w.instance(), after)
+  assert.equal(resumed.status, 200)
+  assert.deepEqual(await resumed.json(), { token: "access-1-" })
+  assert.deepEqual(w.calls.refresh, ["refresh-0"])
+})
+
+test("Den's token endpoint Retry-After is bounded, and invalid_grant still signs the person out", async (t) => {
+  assert.equal(tokenRetryAfterSeconds("120"), 120)
+  assert.equal(tokenRetryAfterSeconds(" 7 "), 7)
+  assert.equal(tokenRetryAfterSeconds("0"), 1)
+  assert.equal(tokenRetryAfterSeconds("86400"), 300)
+  for (const garbage of [null, "", "soon", "-5", "1.5", "Wed, 21 Oct 2026 07:28:00 GMT", "9".repeat(20)]) {
+    assert.equal(tokenRetryAfterSeconds(garbage), 30, `${garbage}`)
+  }
+
+  let tokenResponse = () => Response.json({ error: "rate_limited" }, { status: 429, headers: { "retry-after": "240" } })
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request) => {
+    const url = String(input instanceof Request ? input.url : input)
+    if (url === "https://den.test/.well-known/oauth-protected-resource/mcp/agent") {
+      return Response.json({ resource: "https://den.test/mcp/agent", authorization_servers: ["https://den.test/api/auth"] })
+    }
+    if (url === "https://den.test/.well-known/oauth-authorization-server/api/auth") {
+      return Response.json({ issuer: "https://den.test/api/auth", authorization_endpoint: "https://den.test/api/auth/oauth2/authorize", token_endpoint: "https://den.test/api/auth/oauth2/token" })
+    }
+    if (url === "https://den.test/api/auth/oauth2/token") return tokenResponse()
+    return new Response(null, { status: 404 })
+  })
+  const den = createDen({ apiUrl: "https://den.test", publicUrl: config.publicUrl })
+  await assert.rejects(den.refresh("refresh-0"), (error: unknown) => error instanceof DenRateLimitedError && error.retryAfter === 240)
+  tokenResponse = () => Response.json({ error: "invalid_grant", error_description: "invalid refresh token" }, { status: 400 })
+  await assert.rejects(den.refresh("refresh-0"), DenSignedOutError)
 })

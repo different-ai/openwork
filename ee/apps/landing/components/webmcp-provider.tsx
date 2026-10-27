@@ -2,6 +2,8 @@
 
 import { useEffect } from "react"
 
+import { TRUST_CENTER_URL } from "../lib/trust-center"
+
 type ModelContext = {
   provideContext: (context: { tools: Tool[] }) => void | Promise<void>
 }
@@ -20,7 +22,7 @@ const destinations: Record<string, string> = {
   enterprise: "/enterprise",
   cloud: "https://app.openworklabs.com",
   docs: "/docs",
-  trust: "/trust",
+  trust: TRUST_CENTER_URL,
   feedback: "/feedback",
 }
 
@@ -42,9 +44,9 @@ const pricingSummary = {
       id: "team",
       name: "Team",
       price: "$10",
-      cadence: "per seat / month",
+      cadence: "per user / month",
       highlights: [
-        "First 5 seats free on OpenWork Cloud",
+        "Unlimited users (the Free plan is limited to 5)",
         "API access",
         "SSO / SAML",
         "Extension Marketplace",

@@ -6,29 +6,17 @@
  * tells the conversation when the command ends through a synthetic inbox item
  * whose metadata has `source: "shell"`.
  *
- * This module holds the pure readers for those shapes and the
- * `backgroundShellTasks` feature switch, so the engine adapter, the sync
- * layer and the chat agree on one meaning without importing each other.
+ * This module holds the pure readers for those shapes, so the engine
+ * adapter, the sync layer and the chat agree on one meaning without
+ * importing each other.
  */
 
-/** Translated event types; the sync layer ignores them while the feature is off. */
+/** Translated event types shared by the engine adapter and session sync. */
 export const SHELL_CREATED_EVENT = "shell.created";
 export const SHELL_EXITED_EVENT = "shell.exited";
 export const SHELL_DELETED_EVENT = "shell.deleted";
 export const BACKGROUND_SHELL_STARTED_EVENT = "shell.background.started";
 export const BACKGROUND_SHELL_FINISHED_EVENT = "shell.background.finished";
-
-let featureEnabled = false;
-
-/** Whether `backgroundShellTasks` is on for this app. Off (the default) keeps the old chat. */
-export function backgroundShellTasksEnabled(): boolean {
-  return featureEnabled;
-}
-
-/** Set by the feature reader in the app shell; the store mirrors it for React. */
-export function setBackgroundShellTasksFlag(enabled: boolean): void {
-  featureEnabled = enabled;
-}
 
 /** One command the engine reports, from `Shell.Info`. */
 export type EngineShell = {

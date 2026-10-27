@@ -138,8 +138,6 @@ export default {
   "den.sync_provider_failed": "同步{name}失败。",
   "engine_migration.progress_note": "在完成前，OpenWork 可能会变慢或不稳定。你的 v1 聊天记录保持不变。",
   "engine_migration.upgrade": "升级",
-  "engine_migration.upgrade_later": "稍后",
-  "engine_migration.upgrade_notice": "OpenWork 可升级聊天记录。",
   "engine_migration.upgrade_consent_title": "升级聊天记录？",
   "engine_migration.upgrade_consent_body": "先备份此电脑上已有的 OpenCode v2 聊天记录，再将你的聊天记录复制到 v2，最后将 OpenWork 切换到 v2。你的 v1 聊天记录保持不变。在完成前，OpenWork 可能会变慢。",
   "engine_migration.upgraded_title": "已升级到 OpenCode v2",

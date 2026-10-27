@@ -858,7 +858,6 @@ export function LlmProviderEditorScreen({
                                             }
                                             saved={configured}
                                             placeholder={`Paste the ${envName} value`}
-                                            savedPlaceholder="Leave blank to keep current value"
                                         />
                                     )}
                                 </label>
@@ -876,7 +875,6 @@ export function LlmProviderEditorScreen({
                             onChange={setApiKey}
                             saved={provider?.hasApiKey === true}
                             placeholder="Paste the provider credential"
-                            savedPlaceholder="Leave blank to keep current credential"
                         />
                     </label>
                 );

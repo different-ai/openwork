@@ -18,7 +18,7 @@ import {
   isDesktopNotificationPreference,
   type DesktopNotificationPreference,
 } from "./desktop-notification-preferences";
-import { isLinkOpenDestination, LOCAL_PREFERENCES_KEY, type LinkOpenDestination } from "./local-preferences-storage";
+import { DEFAULT_SHOW_THINKING, isLinkOpenDestination, LOCAL_PREFERENCES_KEY, needsShowThinkingReset, type LinkOpenDestination } from "./local-preferences-storage";
 import {
   readStoredDefaultModel,
   storedDefaultModelChangedEvent,
@@ -32,6 +32,8 @@ export type LocalUIState = {
 
 export type LocalPreferences = {
   showThinking: boolean;
+  /** Set once the one-time reset of Show model reasoning to off has run. */
+  showThinkingResetToOff: boolean;
   modelVariant: string | null;
   defaultModel: ModelRef | null;
   /**
@@ -80,11 +82,12 @@ type LocalContextValue = {
 const LocalContext = createContext<LocalContextValue | undefined>(undefined);
 
 const UI_STORAGE_KEY = "openwork.ui";
-export const DEFAULT_SHOW_THINKING = true;
+export { DEFAULT_SHOW_THINKING };
 
 const INITIAL_UI: LocalUIState = { view: "settings", tab: "general" };
 const INITIAL_PREFS: LocalPreferences = {
   showThinking: DEFAULT_SHOW_THINKING,
+  showThinkingResetToOff: true,
   modelVariant: null,
   defaultModel: null,
   selectedAgent: null,
@@ -96,6 +99,16 @@ const INITIAL_PREFS: LocalPreferences = {
   linkOpenDestination: "openwork",
   askBeforeOpeningLinks: true,
 };
+
+function readStored(key: string): unknown {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
 
 function readPersisted<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -131,6 +144,8 @@ export function LocalProvider({ children }: LocalProviderProps) {
   );
   const [prefs, setPrefsRaw] = useState<LocalPreferences>(() => {
     const persisted = readPersisted(LOCAL_PREFERENCES_KEY, INITIAL_PREFS);
+    if (needsShowThinkingReset(readStored(LOCAL_PREFERENCES_KEY))) persisted.showThinking = false;
+    persisted.showThinkingResetToOff = true;
     persisted.askBeforeOpeningLinks = persisted.askBeforeOpeningLinks !== false;
     persisted.linkOpenDestination = isLinkOpenDestination(persisted.linkOpenDestination)
       ? persisted.linkOpenDestination
@@ -212,24 +227,14 @@ export function LocalProvider({ children }: LocalProviderProps) {
     if (migratedThinkingRef.current) return;
     migratedThinkingRef.current = true;
 
-    const raw = window.localStorage.getItem(THINKING_PREF_KEY);
-    if (raw == null) return;
-
-    try {
-      const parsed = JSON.parse(raw);
-      if (typeof parsed === "boolean") {
-        setPrefs((previous) => ({ ...previous, showThinking: parsed }));
-      }
-    } catch {
-      // ignore invalid legacy values
-    }
-
+    // The legacy value predates the one-time reset of Show model reasoning to
+    // off, so it is discarded rather than applied.
     try {
       window.localStorage.removeItem(THINKING_PREF_KEY);
     } catch {
       // ignore
     }
-  }, [setPrefs]);
+  }, []);
 
   const setUi = useCallback(
     (updater: (previous: LocalUIState) => LocalUIState) => {

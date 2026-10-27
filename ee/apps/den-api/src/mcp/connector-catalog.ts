@@ -10,7 +10,7 @@ export function connectorCatalogForQuery(query: string, showAll = false): Connec
   }
   const entries: ConnectorCatalog["entries"] = [
     { id: "google-workspace", name: "Google Workspace", description: "Gmail, Calendar, and Drive with your work account.", setup: "suite", setupUrl: setupUrl("google-workspace") },
-    { id: "microsoft-365", name: "Microsoft 365", description: "Outlook, Calendar, and OneDrive with your work account.", setup: "suite", setupUrl: setupUrl("microsoft-365") },
+    { id: "microsoft-365", name: "Microsoft 365", description: "Outlook, Calendar, OneDrive, and SharePoint with your work account.", setup: "suite", setupUrl: setupUrl("microsoft-365") },
     ...EXTERNAL_MCP_PRESETS.map(preset => ({
       id: preset.presetId,
       name: preset.displayName,

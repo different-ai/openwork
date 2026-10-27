@@ -220,7 +220,7 @@ export const guides: Guide[] = [
       "MCP URL: https://api.openworklabs.com/mcp/agent",
       "Sign-in: OAuth in the browser, per organization",
       "Setup guides for 10 MCP clients",
-      "First 5 OpenWork Cloud seats free"
+      "OpenWork Cloud Free plan: up to 5 users"
     ],
     sections: [
       {
@@ -308,7 +308,7 @@ export const guides: Guide[] = [
       },
       {
         question: "Do I need an OpenWork account?",
-        answer: "Yes, an OpenWork Cloud account. The first 5 seats are free."
+        answer: "Yes, an OpenWork Cloud account. The Free plan covers up to 5 users."
       },
       {
         question: "Can I use my company's AI Gateway models in Claude Code, Codex, or Cursor?",

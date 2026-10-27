@@ -65,6 +65,17 @@ def bundle(extra=None, manifest_change=None):
 
 
 class BootstrapTests(unittest.TestCase):
+    def test_bootstrap_enables_exact_provider_and_runtime_apis_before_iam(self):
+        required = ["iam.googleapis.com", "iamcredentials.googleapis.com", "serviceusage.googleapis.com",
+                    "cloudresourcemanager.googleapis.com", "storage.googleapis.com", "run.googleapis.com", "sqladmin.googleapis.com",
+                    "secretmanager.googleapis.com", "artifactregistry.googleapis.com", "compute.googleapis.com",
+                    "dns.googleapis.com", "cloudscheduler.googleapis.com", "monitoring.googleapis.com"]
+        self.assertEqual(install.APIS, required)
+        with patch.object(install, "cloud", side_effect=RuntimeError("stop after API enablement")) as cloud:
+            with self.assertRaisesRegex(RuntimeError, "stop after API enablement"):
+                install.bootstrap(args(), install.name(DEPLOYMENT))
+        cloud.assert_called_once_with("services", "enable", *required, project=ENV["PROJECT_ID"])
+
     def test_validation_and_names_match_api(self):
         self.assertEqual(install.validate(args()), "ow-123456781234")
         self.assertEqual(install.name(DEPLOYMENT) + "-runner@test-project.iam.gserviceaccount.com", ENV["RUNNER_SERVICE_ACCOUNT"])

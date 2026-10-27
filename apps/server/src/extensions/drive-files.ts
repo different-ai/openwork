@@ -3,6 +3,7 @@ import { constants, realpathSync, type Stats } from "node:fs";
 import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile, type FileHandle } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { GOOGLE_DRIVE_PULL_CHUNK_BYTES, GOOGLE_DRIVE_PULL_MAX_BYTES, GOOGLE_DRIVE_UPLOAD_MAX_BYTES } from "@openwork/types/google-drive-upload";
+import { MICROSOFT_DRIVE_PULL_CHUNK_BYTES, MICROSOFT_DRIVE_TRANSFER_MAX_BYTES, MICROSOFT_DRIVE_UPLOAD_CHUNK_BYTES } from "@openwork/types/microsoft-drive-transfer";
 
 import { ApiError } from "../errors.js";
 import { runtimeStorageDir } from "../runtime-db.js";
@@ -24,7 +25,16 @@ const LINKS_FILE = "drive-links.json";
 const DEN_TIMEOUT_MS = 2 * 60 * 1000;
 const MAX_STATUS_FILES = 50;
 const CONNECTION_ID = /^(google-workspace|emc_[A-Za-z0-9]+)$/;
+const MICROSOFT_CONNECTION_ID = /^(microsoft-365|emc_[A-Za-z0-9]+)$/;
 const DRIVE_ID = /^[A-Za-z0-9_-]{1,512}$/;
+// Graph item and drive ids, such as b!x2_Kr or 01ABCDEF, are opaque but never hold whitespace or path characters.
+const MICROSOFT_ID = /^[^\s/\\?#]{1,512}$/;
+const MICROSOFT_LINK_HOST = /(^|\.)(sharepoint\.(com|us|cn|de)|sharepoint-mil\.us|onedrive\.(com|live\.com)|1drv\.ms)$/;
+
+type Provider = "google-workspace" | "microsoft-365";
+/** A Google Drive file id, or a Microsoft item (with its drive) or file link. */
+type FileTarget = { fileId: string } | { itemId: string; driveId?: string } | { url: string };
+const SERVICE_NAME: Record<Provider, string> = { "google-workspace": "Drive", "microsoft-365": "OneDrive or SharePoint" };
 // Exported formats Drive can import back into the same Google file type when saved as a copy.
 const CONVERTIBLE_FORMATS: Record<string, string[]> = {
   "application/vnd.google-apps.spreadsheet": ["xlsx", "csv"],
@@ -44,7 +54,11 @@ async function confirmDriveTransfer(config: ServerConfig, request: DriveFileAppr
 }
 
 type DriveLink = {
+  /** Absent on records made before Microsoft 365 files: those are Google Drive. */
+  provider?: Provider;
   fileId: string;
+  /** Microsoft only: the drive holding fileId. */
+  driveId?: string;
   connectionId: string | null;
   name: string;
   driveMimeType: string;
@@ -64,7 +78,7 @@ type DriveLink = {
 type DriveLinks = { version: 1; links: Record<string, DriveLink> };
 
 type DownloadInfo = {
-  file: { id: string; name: string; mimeType: string; native: boolean; revision: string | null; md5Checksum: string | null; size: number | null; webViewLink: string | null; parents: string[] };
+  file: { id: string; driveId: string; name: string; mimeType: string; native: boolean; revision: string | null; md5Checksum: string | null; size: number | null; webViewLink: string | null; parents: string[] };
   download: { format: string | null; mimeType: string; extension: string | null; size: number | null; exported: boolean; maxBytes: number };
 };
 
@@ -81,12 +95,46 @@ function readArgString(args: Record<string, unknown>, key: string) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function optionalConnectionId(args: Record<string, unknown>) {
+function optionalConnectionId(args: Record<string, unknown>, provider: Provider = "google-workspace") {
   if (args.connectionId === undefined) return undefined;
-  if (typeof args.connectionId !== "string" || !CONNECTION_ID.test(args.connectionId)) {
-    throw new ApiError(400, "invalid_payload", "connectionId must identify a native Google Workspace connection.");
+  const pattern = provider === "microsoft-365" ? MICROSOFT_CONNECTION_ID : CONNECTION_ID;
+  if (typeof args.connectionId !== "string" || !pattern.test(args.connectionId)) {
+    throw new ApiError(400, "invalid_payload", provider === "microsoft-365"
+      ? "connectionId must identify a Microsoft 365 connection."
+      : "connectionId must identify a native Google Workspace connection.");
   }
   return args.connectionId;
+}
+
+function isMicrosoftLink(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && MICROSOFT_LINK_HOST.test(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** An explicit provider wins; otherwise a driveId, a Microsoft connection or a OneDrive/SharePoint link means Microsoft 365. */
+function providerFor(args: Record<string, unknown>): Provider {
+  if (args.provider !== undefined) {
+    if (args.provider !== "google-workspace" && args.provider !== "microsoft-365") throw new ApiError(400, "invalid_payload", "provider must be google-workspace or microsoft-365.");
+    return args.provider;
+  }
+  if (args.driveId !== undefined || args.connectionId === "microsoft-365") return "microsoft-365";
+  return isMicrosoftLink(readArgString(args, "fileId")) ? "microsoft-365" : "google-workspace";
+}
+
+function microsoftTarget(args: Record<string, unknown>): FileTarget {
+  const fileId = readArgString(args, "fileId");
+  const driveId = args.driveId === undefined ? undefined : readArgString(args, "driveId");
+  if (driveId !== undefined && !MICROSOFT_ID.test(driveId)) throw new ApiError(400, "invalid_payload", "driveId must be a Microsoft drive id.");
+  if (isMicrosoftLink(fileId)) {
+    if (driveId !== undefined) throw new ApiError(400, "invalid_payload", "Pass a OneDrive or SharePoint link, or an item id with its driveId, not both.");
+    return { url: fileId };
+  }
+  if (!MICROSOFT_ID.test(fileId)) throw new ApiError(400, "invalid_payload", "fileId must be a OneDrive or SharePoint item id or file link.");
+  return { itemId: fileId, ...(driveId ? { driveId } : {}) };
 }
 
 /** Accepts a bare ID or a Drive, Docs, Sheets or Slides link. */
@@ -341,7 +389,7 @@ async function denRequest(
   config: ServerConfig,
   dependencies: CloudUploadDependencies,
   suffix: string,
-  init: { method?: string; query?: Record<string, string | undefined>; headers?: Record<string, string>; body?: unknown } = {},
+  init: { method?: string; query?: Record<string, string | undefined>; headers?: Record<string, string>; body?: unknown; bytes?: Uint8Array<ArrayBuffer> } = {},
 ) {
   dependencies.signal?.throwIfAborted();
   const endpoint = await cloudUploadEndpoint(config, suffix, dependencies);
@@ -353,9 +401,11 @@ async function denRequest(
       headers: {
         authorization: endpoint.authorization,
         ...(init.body !== undefined ? { "content-type": "application/json" } : {}),
+        ...(init.bytes ? { "content-type": "application/octet-stream" } : {}),
         ...init.headers,
       },
       ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+      ...(init.bytes ? { body: init.bytes } : {}),
       signal: dependencies.signal ? AbortSignal.any([dependencies.signal, AbortSignal.timeout(DEN_TIMEOUT_MS)]) : AbortSignal.timeout(DEN_TIMEOUT_MS),
     });
   } catch (error) {
@@ -389,7 +439,7 @@ function parseDownloadInfo(payload: Record<string, unknown>): DownloadInfo {
   const size = typeof download.size === "number" && Number.isSafeInteger(download.size) ? download.size : null;
   return {
     file: {
-      id: file.id, name: file.name, mimeType: file.mimeType, native: file.native === true,
+      id: file.id, driveId: "", name: file.name, mimeType: file.mimeType, native: file.native === true,
       revision: stringOrNull(file.revision), md5Checksum: stringOrNull(file.md5Checksum),
       size: typeof file.size === "number" ? file.size : null, webViewLink: stringOrNull(file.webViewLink),
       parents: Array.isArray(file.parents) ? file.parents.filter((parent): parent is string => typeof parent === "string") : [],
@@ -402,14 +452,54 @@ function parseDownloadInfo(payload: Record<string, unknown>): DownloadInfo {
   };
 }
 
-async function describe(config: ServerConfig, dependencies: CloudUploadDependencies, fileId: string, format: string | undefined, connectionId: string | undefined) {
-  return parseDownloadInfo(await denJson(config, dependencies, `/v1/direct-downloads/google-workspace/drive-files/${fileId}`, { query: { format, connectionId } }));
+/** Microsoft files have no native formats or md5; a PDF conversion is the only export. */
+function parseMicrosoftDownloadInfo(payload: Record<string, unknown>): DownloadInfo {
+  const file = payload.file;
+  const download = payload.download;
+  if (!isRecord(file) || !isRecord(download) || typeof file.id !== "string" || !MICROSOFT_ID.test(file.id) || typeof file.name !== "string"
+    || typeof file.mimeType !== "string" || typeof download.mimeType !== "string" || (file.driveId !== "" && (typeof file.driveId !== "string" || !MICROSOFT_ID.test(file.driveId)))) {
+    throw new ApiError(502, "cloud_drive_failed", "OpenWork Cloud returned an invalid OneDrive or SharePoint file description.");
+  }
+  const size = typeof download.size === "number" && Number.isSafeInteger(download.size) ? download.size : null;
+  return {
+    file: {
+      id: file.id, driveId: file.driveId, name: file.name, mimeType: file.mimeType, native: false,
+      revision: stringOrNull(file.revision), md5Checksum: null,
+      size: typeof file.size === "number" ? file.size : null, webViewLink: stringOrNull(file.webUrl),
+      parents: typeof file.parentId === "string" && file.parentId ? [file.parentId] : [],
+    },
+    download: {
+      format: download.format === "pdf" ? "pdf" : null, mimeType: download.mimeType, extension: stringOrNull(download.extension), size,
+      exported: download.exported === true,
+      maxBytes: typeof download.maxBytes === "number" ? Math.min(download.maxBytes, MICROSOFT_DRIVE_TRANSFER_MAX_BYTES) : MICROSOFT_DRIVE_TRANSFER_MAX_BYTES,
+    },
+  };
+}
+
+async function describe(config: ServerConfig, dependencies: CloudUploadDependencies, target: FileTarget, format: string | undefined, connectionId: string | undefined) {
+  if ("fileId" in target) {
+    return parseDownloadInfo(await denJson(config, dependencies, `/v1/direct-downloads/google-workspace/drive-files/${target.fileId}`, { query: { format, connectionId } }));
+  }
+  const query = "url" in target ? { url: target.url } : { itemId: target.itemId, driveId: target.driveId };
+  return parseMicrosoftDownloadInfo(await denJson(config, dependencies, "/v1/direct-downloads/microsoft-365/drive-files", { query: { ...query, format, connectionId } }));
+}
+
+/** The same file again, by the ids its first description returned. */
+function describedTarget(provider: Provider, info: DownloadInfo): FileTarget {
+  return provider === "microsoft-365" ? { itemId: info.file.id, ...(info.file.driveId ? { driveId: info.file.driveId } : {}) } : { fileId: info.file.id };
+}
+
+function linkTarget(link: DriveLink): FileTarget {
+  return link.provider === "microsoft-365" ? { itemId: link.fileId, ...(link.driveId ? { driveId: link.driveId } : {}) } : { fileId: link.fileId };
 }
 
 /** Ranged chunks for stored files, one stream for exports; the caller verifies size and md5. */
-async function download(config: ServerConfig, dependencies: CloudUploadDependencies, info: DownloadInfo, connectionId: string | undefined, handle: FileHandle) {
-  const suffix = `/v1/direct-downloads/google-workspace/drive-files/${info.file.id}/content`;
-  const query = { format: info.download.exported ? info.download.format ?? undefined : undefined, connectionId };
+async function download(config: ServerConfig, dependencies: CloudUploadDependencies, provider: Provider, info: DownloadInfo, connectionId: string | undefined, handle: FileHandle) {
+  const format = info.download.exported ? info.download.format ?? undefined : undefined;
+  const microsoft = provider === "microsoft-365";
+  const suffix = microsoft ? "/v1/direct-downloads/microsoft-365/drive-files/content" : `/v1/direct-downloads/google-workspace/drive-files/${info.file.id}/content`;
+  const query = microsoft ? { itemId: info.file.id, driveId: info.file.driveId || undefined, format, connectionId } : { format, connectionId };
+  const chunkBytes = microsoft ? MICROSOFT_DRIVE_PULL_CHUNK_BYTES : GOOGLE_DRIVE_PULL_CHUNK_BYTES;
   const sha256 = createHash("sha256");
   const md5 = createHash("md5");
   let written = 0;
@@ -422,13 +512,13 @@ async function download(config: ServerConfig, dependencies: CloudUploadDependenc
   };
   const size = info.download.size;
   if (!info.download.exported && size !== null) {
-    for (let start = 0; start < size; start += GOOGLE_DRIVE_PULL_CHUNK_BYTES) {
-      const end = Math.min(size, start + GOOGLE_DRIVE_PULL_CHUNK_BYTES) - 1;
+    for (let start = 0; start < size; start += chunkBytes) {
+      const end = Math.min(size, start + chunkBytes) - 1;
       const response = await denRequest(config, dependencies, suffix, { query, headers: { range: `bytes=${start}-${end}` } });
       if (!response.ok) await denFailure(response);
       if (response.status !== 206 && !(response.status === 200 && start === 0 && end === size - 1)) {
         await response.body?.cancel();
-        throw new ApiError(502, "drive_download_incomplete", "Google did not return the requested part of the file. Try the pull again.");
+        throw new ApiError(502, "drive_download_incomplete", "The requested part of the file did not arrive. Try the pull again.");
       }
       const bytes = new Uint8Array(await response.arrayBuffer().catch(() => {
         throw new ApiError(502, "drive_download_incomplete", "The download stopped early. Try the pull again.");
@@ -439,7 +529,7 @@ async function download(config: ServerConfig, dependencies: CloudUploadDependenc
   } else {
     const response = await denRequest(config, dependencies, suffix, { query });
     if (!response.ok) await denFailure(response);
-    if (!response.body) throw new ApiError(502, "drive_download_incomplete", "Google returned no file content.");
+    if (!response.body) throw new ApiError(502, "drive_download_incomplete", "No file content arrived.");
     try {
       for await (const chunk of response.body) await write(chunk);
     } catch (error) {
@@ -456,22 +546,29 @@ function verified(info: DownloadInfo, saved: { size: number; md5: string }) {
 }
 
 async function pullDriveFile(config: ServerConfig, args: Record<string, unknown>, context: Record<string, unknown>, dependencies: CloudUploadDependencies) {
-  const fileId = parseDriveFileId(readArgString(args, "fileId"));
+  const provider = providerFor(args);
+  let fileTarget: FileTarget = provider === "microsoft-365" ? microsoftTarget(args) : { fileId: parseDriveFileId(readArgString(args, "fileId")) };
   const format = readArgString(args, "format") || undefined;
+  if (provider === "microsoft-365" && format && format !== "pdf") throw new ApiError(400, "invalid_payload", "OneDrive and SharePoint files can only be converted to pdf; omit format to pull the file as it is.");
   if (format && !/^[a-z]{2,5}$/.test(format)) throw new ApiError(400, "invalid_payload", "format must be an export format such as xlsx, csv, docx, md, txt, pptx or pdf.");
-  const connectionId = optionalConnectionId(args);
+  const connectionId = optionalConnectionId(args, provider);
   const overwrite = args.overwrite === true;
   const requested = readArgString(args, "path") || null;
+  const service = SERVICE_NAME[provider];
 
-  let info = await describe(config, dependencies, fileId, format, connectionId);
-  const name = safeFileName(info.file.name, info.download.exported ? info.download.extension : null);
+  let info = await describe(config, dependencies, fileTarget, format, connectionId);
+  fileTarget = describedTarget(provider, info);
+  // A Microsoft PDF conversion of Plan.docx saves as Plan.pdf; Google files have no extension to replace.
+  const converted = provider === "microsoft-365" && info.download.exported;
+  const sourceName = converted ? info.file.name.slice(0, info.file.name.length - extname(info.file.name).length) || info.file.name : info.file.name;
+  const name = safeFileName(sourceName, info.download.exported ? info.download.extension : null);
   const links = await readLinks(config);
   let target = await resolvePullTarget(config, context, requested, name);
   if (!requested) {
     // The default name may belong to another file: use the first free name, or the one already holding this file.
     const extension = extname(name);
     const stem = name.slice(0, name.length - extension.length);
-    for (let copy = 2; await exists(target) && links.links[target]?.fileId !== info.file.id; copy += 1) {
+    for (let copy = 2; await exists(target) && !sameDriveFile(links.links[target], provider, info); copy += 1) {
       if (copy > 50) throw new ApiError(409, "path_exists", "Choose a path for this file; the default names are taken.");
       target = await resolvePullTarget(config, context, null, `${stem} (${copy})${extension}`);
     }
@@ -480,13 +577,13 @@ async function pullDriveFile(config: ServerConfig, args: Record<string, unknown>
   const before = await lstat(target).catch(() => null);
   if (before) {
     const link = links.links[target];
-    if (link?.fileId === info.file.id) {
+    if (sameDriveFile(link, provider, info)) {
       const local = await hashFile(target);
       if (local.sha256 === link.sha256 && link.revision !== null && link.revision === info.file.revision && link.format === info.download.format) {
         return pullResult(config, context, target, info, local.size, true);
       }
       if (!overwrite && local.sha256 !== link.sha256) {
-        throw new ApiError(409, "local_changes", "The local copy has edits that are not in Drive. Push them first, or pull with overwrite: true to discard them.", { path: displayPath(config, context, target) });
+        throw new ApiError(409, "local_changes", `The local copy has edits that are not in ${service}. Push them first, or pull with overwrite: true to discard them.`, { path: displayPath(config, context, target) });
       }
     } else if (!overwrite) {
       throw new ApiError(409, "path_exists", "A different file already exists at that path. Choose another path, or pass overwrite: true to replace it.");
@@ -494,11 +591,11 @@ async function pullDriveFile(config: ServerConfig, args: Record<string, unknown>
   }
 
   let saved: Awaited<ReturnType<typeof download>> | null = null;
-  await confirmDriveTransfer(config, { action: before && overwrite ? "overwrite" : "pull", path: target, fileId: info.file.id, name: info.file.name, webViewLink: info.file.webViewLink }, dependencies.signal);
+  await confirmDriveTransfer(config, { provider, action: before && overwrite ? "overwrite" : "pull", path: target, fileId: info.file.id, name: info.file.name, webViewLink: info.file.webViewLink }, dependencies.signal);
   for (let attempt = 1; attempt <= 2 && !saved; attempt += 1) {
     const temporary = await privateDriveFile(config);
     try {
-      const result = await download(config, dependencies, info, connectionId, temporary);
+      const result = await download(config, dependencies, provider, info, connectionId, temporary);
       if (verified(info, result)) {
         if (!sameState(before, await lstat(target).catch(() => null))) {
           throw new ApiError(409, "local_changes", "The file at that path changed while pulling, so it was not replaced. Pull again once it is saved or pushed.", { path: displayPath(config, context, target) });
@@ -529,9 +626,9 @@ async function pullDriveFile(config: ServerConfig, args: Record<string, unknown>
       }
     } catch (error) {
       // A file that changed (or shrank) mid-download fails a chunk: retry once from its new revision.
-      const transient = error instanceof ApiError && ["drive_download_incomplete", "google_api_error", "cloud_drive_failed"].includes(error.code);
+      const transient = error instanceof ApiError && ["drive_download_incomplete", "google_api_error", "microsoft_graph_error", "cloud_drive_failed"].includes(error.code);
       if (!transient || attempt === 2) throw error;
-      const fresh = await describe(config, dependencies, fileId, format, connectionId);
+      const fresh = await describe(config, dependencies, fileTarget, format, connectionId);
       if (fresh.file.revision === info.file.revision) throw error;
       info = fresh;
       continue;
@@ -539,11 +636,12 @@ async function pullDriveFile(config: ServerConfig, args: Record<string, unknown>
       await temporary.close();
     }
     // Size or md5 did not match: the file changed while downloading.
-    if (!saved && attempt === 1) info = await describe(config, dependencies, fileId, format, connectionId);
+    if (!saved && attempt === 1) info = await describe(config, dependencies, fileTarget, format, connectionId);
   }
-  if (!saved) throw new ApiError(409, "drive_changed_during_download", "The file kept changing in Drive while downloading. Try again later.");
+  if (!saved) throw new ApiError(409, "drive_changed_during_download", `The file kept changing in ${service} while downloading. Try again later.`);
 
   const link: DriveLink = {
+    ...(provider === "microsoft-365" ? { provider, driveId: info.file.driveId } : {}),
     fileId: info.file.id, connectionId: connectionId ?? null, name: info.file.name, driveMimeType: info.file.mimeType,
     native: info.file.native, format: info.download.format, localMimeType: info.download.mimeType,
     revision: info.file.revision, md5Checksum: info.file.md5Checksum, sha256: saved.sha256, size: saved.size,
@@ -563,8 +661,17 @@ function pullResult(config: ServerConfig, context: Record<string, unknown>, targ
     mimeType: info.download.mimeType,
     ...(info.download.exported ? { exportedAs: info.download.format } : {}),
     ...(upToDate ? { upToDate: true } : {}),
-    file: { id: info.file.id, name: info.file.name, mimeType: info.file.mimeType, webViewLink: info.file.webViewLink, revision: info.file.revision },
+    file: {
+      id: info.file.id, ...(info.file.driveId ? { driveId: info.file.driveId } : {}),
+      name: info.file.name, mimeType: info.file.mimeType, webViewLink: info.file.webViewLink, revision: info.file.revision,
+    },
   };
+}
+
+/** Whether a link record is the described file: same provider, id and (for Microsoft) drive. */
+function sameDriveFile(link: DriveLink | undefined, provider: Provider, info: DownloadInfo) {
+  if (!link || (link.provider ?? "google-workspace") !== provider || link.fileId !== info.file.id) return false;
+  return provider !== "microsoft-365" || (link.driveId ?? "") === info.file.driveId;
 }
 
 async function linkedEntries(config: ServerConfig, context: Record<string, unknown>, requested: string) {
@@ -587,6 +694,11 @@ async function linkedEntries(config: ServerConfig, context: Record<string, unkno
   return entries;
 }
 
+/** The format a pull exported, so a status check or push describes the same export. */
+function linkFormat(link: DriveLink) {
+  return link.provider === "microsoft-365" || link.native ? link.format ?? undefined : undefined;
+}
+
 async function driveFileStatus(config: ServerConfig, args: Record<string, unknown>, context: Record<string, unknown>, dependencies: CloudUploadDependencies) {
   const entries = await linkedEntries(config, context, readArgString(args, "path"));
   const files = [];
@@ -597,7 +709,7 @@ async function driveFileStatus(config: ServerConfig, args: Record<string, unknow
     let currentRevision: string | null = null;
     let note: string | undefined;
     try {
-      const info = await describe(config, dependencies, link.fileId, link.native ? link.format ?? undefined : undefined, link.connectionId ?? undefined);
+      const info = await describe(config, dependencies, linkTarget(link), linkFormat(link), link.connectionId ?? undefined);
       currentRevision = info.file.revision;
       drive = currentRevision === link.revision ? "unchanged" : "changed";
     } catch (error) {
@@ -605,7 +717,7 @@ async function driveFileStatus(config: ServerConfig, args: Record<string, unknow
       else note = error instanceof Error ? error.message : String(error);
     }
     files.push({
-      path: displayPath(config, context, path), fileId: link.fileId, name: link.name, webViewLink: link.webViewLink,
+      path: displayPath(config, context, path), provider: link.provider ?? "google-workspace", fileId: link.fileId, ...(link.driveId ? { driveId: link.driveId } : {}), name: link.name, webViewLink: link.webViewLink,
       local, drive, revision: link.revision, currentRevision, ...(note ? { note } : {}),
     });
   }
@@ -648,6 +760,7 @@ async function pushDriveFile(config: ServerConfig, args: Record<string, unknown>
 async function pushOpenFile(config: ServerConfig, args: Record<string, unknown>, context: Record<string, unknown>, dependencies: CloudUploadDependencies, path: string, handle: FileHandle) {
   const link = (await readLinks(config)).links[path];
   if (!link) throw new ApiError(409, "not_linked", "That file was not pulled from Drive. Upload it as a new file with drive_upload_file instead.");
+  if (link.provider === "microsoft-365") return pushMicrosoftFile(config, args, context, dependencies, path, handle, link);
   if (!DRIVE_ID.test(link.fileId) || (link.connectionId !== null && !CONNECTION_ID.test(link.connectionId))) {
     throw new ApiError(409, "invalid_link", "The saved Drive link is invalid. Pull the file again before saving.");
   }
@@ -667,12 +780,12 @@ async function pushOpenFile(config: ServerConfig, args: Record<string, unknown>,
   }
   const snapshot = await snapshotForPush(config, handle, local, dependencies.signal);
   try {
-    const remote = await describe(config, dependencies, link.fileId, link.native ? link.format ?? undefined : undefined, link.connectionId ?? undefined);
+    const remote = await describe(config, dependencies, linkTarget(link), linkFormat(link), link.connectionId ?? undefined);
     if (remote.file.id !== link.fileId) throw new ApiError(409, "drive_conflict", "The Drive target changed. Pull it again before saving.");
     if (mode === "replace" && remote.file.native) throw new ApiError(400, "native_file_replace_unsupported", "Save this Google file as a copy instead.");
     const target = { ...link, name: remote.file.name, driveMimeType: remote.file.mimeType, native: remote.file.native, parents: remote.file.parents };
     const convert = mode === "copy" && target.native && (CONVERTIBLE_FORMATS[target.driveMimeType] ?? []).includes(link.format ?? "");
-    await confirmDriveTransfer(config, { action: "push", path, fileId: remote.file.id, name: remote.file.name, webViewLink: remote.file.webViewLink, mode: mode === "copy" ? "copy" : "replace" }, dependencies.signal);
+    await confirmDriveTransfer(config, { provider: "google-workspace", action: "push", path, fileId: remote.file.id, name: remote.file.name, webViewLink: remote.file.webViewLink, mode: mode === "copy" ? "copy" : "replace" }, dependencies.signal);
     await assertStableFolder(config, dirname(path));
     await assertSameFile(path, await handle.stat());
     if ((await hashHandle(handle)).sha256 !== local.sha256) {
@@ -718,6 +831,146 @@ async function pushOpenFile(config: ServerConfig, args: Record<string, unknown>,
     return {
       ok: true, mode, path: displayPath(config, context, path), size: local.size,
       file: { id: file.id, name: file.name ?? name, mimeType: driveMimeType, webViewLink: file.webViewLink ?? null, revision },
+      ...(mode === "replace" ? { previousRevision: stringOrNull(replaces?.previousRevision) } : { copiedFrom: link.fileId }),
+    };
+  } finally {
+    await snapshot.close();
+  }
+}
+
+type RelayProgress = { status: "partial"; nextOffset: number } | { status: "complete"; file: Record<string, unknown> & { id: string } };
+
+/** One relay answer: progress, the saved file, "uncertain" (ask how much arrived), or a definite refusal (thrown). */
+async function relayProgress(response: Response): Promise<RelayProgress | "uncertain"> {
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "";
+    if (response.status >= 500 || code === "upload_out_of_order") return "uncertain";
+    const message = isRecord(payload) && typeof payload.message === "string" ? payload.message : `OpenWork Cloud returned HTTP ${response.status}.`;
+    const details = isRecord(payload) ? Object.fromEntries(Object.entries(payload).filter(([key]) => key === "currentRevision" || key === "modifiedTime")) : {};
+    throw new ApiError(response.status, code || "cloud_drive_failed", message, Object.keys(details).length ? details : undefined);
+  }
+  if (isRecord(payload) && payload.status === "partial" && typeof payload.nextOffset === "number" && Number.isSafeInteger(payload.nextOffset)) {
+    return { status: "partial", nextOffset: payload.nextOffset };
+  }
+  if (isRecord(payload) && payload.status === "complete" && isRecord(payload.file) && typeof payload.file.id === "string" && MICROSOFT_ID.test(payload.file.id)) {
+    return { status: "complete", file: payload.file as Record<string, unknown> & { id: string } };
+  }
+  return "uncertain";
+}
+
+/** Parts go to OpenWork Cloud, which holds Microsoft's session URL. An uncertain part asks how much arrived; it never starts another upload. */
+async function uploadMicrosoftRelayFile(config: ServerConfig, dependencies: CloudUploadDependencies, input: { token: string; file: FileHandle; size: number; chunkBytes: number }) {
+  const suffix = "/v1/direct-uploads/microsoft-365/drive-upload-sessions/content";
+  const query = { token: input.token };
+  const unconfirmed = () => new ApiError(502, "drive_upload_unconfirmed", "Microsoft did not confirm the upload. Check the file before retrying; no new upload was started.");
+  let offset = 0;
+  let recoveries = 0;
+  while (true) {
+    dependencies.signal?.throwIfAborted();
+    const length = Math.min(input.chunkBytes, input.size - offset);
+    const bytes = new Uint8Array(length);
+    for (let read = 0; read < length;) {
+      const part = await input.file.read(bytes, read, length - read, offset + read);
+      if (!part.bytesRead) throw new ApiError(409, "file_changed", "The file was truncated during upload.");
+      read += part.bytesRead;
+    }
+    let result: RelayProgress | "uncertain";
+    try {
+      result = await relayProgress(await denRequest(config, dependencies, suffix, {
+        method: "PUT", query, headers: { "content-range": `bytes ${offset}-${offset + length - 1}/${input.size}` }, bytes,
+      }));
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== "cloud_unreachable") throw error;
+      result = "uncertain";
+    }
+    if (result === "uncertain") {
+      if (++recoveries > 2) throw unconfirmed();
+      try {
+        result = await relayProgress(await denRequest(config, dependencies, suffix, { query }));
+      } catch (error) {
+        if (error instanceof ApiError && error.code === "cloud_unreachable") throw unconfirmed();
+        throw error;
+      }
+      if (result === "uncertain") throw unconfirmed();
+    }
+    if (result.status === "complete") return result.file;
+    if (result.nextOffset < 0 || result.nextOffset >= input.size) throw unconfirmed();
+    if (result.nextOffset <= offset && ++recoveries > 2) throw new ApiError(502, "drive_upload_unconfirmed", "Microsoft's upload made no progress. Completion is not confirmed; check the file before retrying.");
+    offset = result.nextOffset;
+  }
+}
+
+/** Office files on OneDrive and SharePoint are ordinary files, so they are replaced in place; only a PDF conversion goes back as a copy. */
+async function pushMicrosoftFile(config: ServerConfig, args: Record<string, unknown>, context: Record<string, unknown>, dependencies: CloudUploadDependencies, path: string, handle: FileHandle, link: DriveLink) {
+  if (!MICROSOFT_ID.test(link.fileId) || (link.driveId && !MICROSOFT_ID.test(link.driveId)) || (link.connectionId !== null && !MICROSOFT_CONNECTION_ID.test(link.connectionId))) {
+    throw new ApiError(409, "invalid_link", "The saved OneDrive or SharePoint link is invalid. Pull the file again before saving.");
+  }
+  const modeArg = readArgString(args, "mode");
+  if (modeArg && modeArg !== "replace" && modeArg !== "copy") throw new ApiError(400, "invalid_payload", "mode must be replace or copy.");
+  const converted = link.format !== null;
+  const mode = modeArg || (converted ? "copy" : "replace");
+  if (mode === "replace" && converted) {
+    throw new ApiError(400, "converted_file_replace_unsupported", "A PDF made from this file cannot replace the original. Push with mode copy to save the PDF next to it.");
+  }
+  // Replacing always names the pulled eTag: nothing the model passes can skip the newer-version check.
+  if (mode === "replace" && !link.revision) {
+    throw new ApiError(409, "revision_unknown", "Microsoft reported no revision when this file was pulled, so newer changes could not be detected. Pull it again, or save the edits as a copy.");
+  }
+  const local = await hashHandle(handle);
+  if (local.size > MICROSOFT_DRIVE_TRANSFER_MAX_BYTES) {
+    throw new ApiError(413, "file_too_large", `Saving to OneDrive or SharePoint supports files up to ${MICROSOFT_DRIVE_TRANSFER_MAX_BYTES} bytes.`);
+  }
+  if (mode === "replace" && local.sha256 === link.sha256) {
+    return { ok: true, unchanged: true, path: displayPath(config, context, path), file: { id: link.fileId, driveId: link.driveId ?? "", name: link.name, webViewLink: link.webViewLink, revision: link.revision } };
+  }
+  const snapshot = await snapshotForPush(config, handle, local, dependencies.signal);
+  try {
+    const remote = await describe(config, dependencies, linkTarget(link), undefined, link.connectionId ?? undefined);
+    if (remote.file.id !== link.fileId) throw new ApiError(409, "drive_conflict", "The OneDrive or SharePoint target changed. Pull it again before saving.");
+    await confirmDriveTransfer(config, { provider: "microsoft-365", action: "push", path, fileId: remote.file.id, name: remote.file.name, webViewLink: remote.file.webViewLink, mode: mode === "copy" ? "copy" : "replace" }, dependencies.signal);
+    await assertStableFolder(config, dirname(path));
+    await assertSameFile(path, await handle.stat());
+    if ((await hashHandle(handle)).sha256 !== local.sha256) {
+      throw new ApiError(409, "local_changes", "The local file changed while confirmation was open. Nothing was uploaded; review the edits and save again.");
+    }
+    const extension = converted ? ".pdf" : extname(remote.file.name);
+    const stem = remote.file.name.slice(0, remote.file.name.length - extname(remote.file.name).length);
+    const requestedName = readArgString(args, "name").replace(/[/\\\x00-\x1f\x7f]/g, "_").slice(0, 255);
+    const name = requestedName || `${stem} (edited)${extension}`;
+    const driveId = remote.file.driveId || link.driveId;
+    const session = await denJson(config, dependencies, "/v1/direct-uploads/microsoft-365/drive-upload-sessions", {
+      method: "POST",
+      body: {
+        size: local.size,
+        ...(link.connectionId ? { connectionId: link.connectionId } : {}),
+        ...(driveId ? { driveId } : {}),
+        ...(mode === "replace"
+          ? { itemId: link.fileId, baseRevision: link.revision }
+          : { name, conflictBehavior: "rename", ...(remote.file.parents[0] ? { folderId: remote.file.parents[0] } : {}) }),
+      },
+    });
+    const chunkBytes = session.chunkSize;
+    if (typeof session.uploadToken !== "string" || session.size !== local.size || typeof chunkBytes !== "number"
+      || !Number.isSafeInteger(chunkBytes) || chunkBytes < 1 || chunkBytes > MICROSOFT_DRIVE_UPLOAD_CHUNK_BYTES || chunkBytes % (320 * 1024) !== 0) {
+      throw new ApiError(502, "invalid_upload_session", "OpenWork Cloud returned an invalid upload session.");
+    }
+    const file = await uploadMicrosoftRelayFile(config, dependencies, { token: session.uploadToken, file: snapshot, size: local.size, chunkBytes });
+    const revision = stringOrNull(file.eTag);
+    const savedName = typeof file.name === "string" && file.name ? file.name : name;
+    const savedDriveId = typeof file.driveId === "string" && MICROSOFT_ID.test(file.driveId) ? file.driveId : driveId ?? "";
+    const webViewLink = typeof file.webUrl === "string" && file.webUrl ? file.webUrl : mode === "replace" ? link.webViewLink : null;
+    const driveMimeType = typeof file.mimeType === "string" && file.mimeType ? file.mimeType : link.driveMimeType;
+    await withLinks(config, (current) => {
+      current.links[path] = {
+        ...link, provider: "microsoft-365", fileId: file.id, driveId: savedDriveId, name: savedName, driveMimeType, native: false,
+        format: null, revision, md5Checksum: null, sha256: local.sha256, size: local.size, webViewLink, pushedAt: new Date().toISOString(),
+      };
+    });
+    const replaces = isRecord(session.replaces) ? session.replaces : null;
+    return {
+      ok: true, mode, path: displayPath(config, context, path), size: local.size,
+      file: { id: file.id, driveId: savedDriveId, name: savedName, mimeType: driveMimeType, webViewLink, revision },
       ...(mode === "replace" ? { previousRevision: stringOrNull(replaces?.previousRevision) } : { copiedFrom: link.fileId }),
     };
   } finally {

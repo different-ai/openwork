@@ -38,6 +38,47 @@ pnpm release:review         # sanity: placeholders intact, opencode pin present
    (`ee/apps/den-api/src/desktop-releases.ts`) — prereleases and drafts are
    excluded, so a rollback demotion removes a version immediately.
 
+## Rolling alpha builds (macOS arm64 and Windows x64)
+
+`.github/workflows/alpha-macos-aarch64.yml` builds both platforms on each
+app-related push to `dev`. Each platform has its own rolling prerelease:
+
+| Platform | Release tag | Assets | Updater manifest |
+| --- | --- | --- | --- |
+| macOS arm64 | `alpha-macos-latest` | Signed/notarized DMG, ZIP, blockmaps | `latest-mac.yml` |
+| Windows x64 | `alpha-windows-latest` | Azure-signed NSIS EXE, blockmap | `latest.yml` |
+
+Versions use the next stable patch plus `-alpha.<run>+<sha>` (Windows adds
+`.<attempt>` after the run number so reruns never overwrite signed installers),
+stamped only in the build workspace. Uploads put versioned assets first and the
+manifest last; each release retains the newest 100 builds. Windows skips
+publications older than an uploaded build and also protects the currently
+published run from pruning. These prereleases do not replace
+the stable Latest release. Windows requires the same `windows-signing`
+environment and Azure OIDC/signing configuration as stable, with no unsigned
+fallback.
+
+Build just Windows (download the signed output from the run's
+`openwork-alpha-windows-x64` artifact, retained for seven days):
+
+```bash
+gh workflow run alpha-macos-aarch64.yml -R different-ai/openwork --ref dev \
+  -f platform=windows-x64 -f publish=false
+```
+
+To publish to the rolling Windows alpha release:
+
+```bash
+gh workflow run alpha-macos-aarch64.yml -R different-ai/openwork --ref dev \
+  -f platform=windows-x64 -f publish=true
+```
+
+For isolated publication tests, set `windows_channel_tag=alpha-windows-staging`
+(or another `alpha-windows-*` tag). Stable and macOS tags are rejected. macOS
+keeps the existing `channel_tag` input; `platform=macos-arm64` builds only macOS,
+and `platform=all` (the default) builds both. This adds build publication only;
+it does not change the app's update-channel selection or the docs download UI.
+
 ## Prerequisites
 
 - `gh` authenticated with permission to dispatch workflows.

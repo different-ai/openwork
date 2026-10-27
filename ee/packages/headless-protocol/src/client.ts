@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { demonstrationReplySchema, type DemonstrationCommand } from "@openwork/types/browser-demonstration"
 
 /**
  * The typed client for the headless runner (ee/apps/headless-runner): the one place that knows its routes,
@@ -45,13 +46,41 @@ function withoutTrailingSlashes(value: string) {
   return value.slice(0, end)
 }
 
+/** In-memory inference credentials supplied only by an authenticated, trusted service caller. */
+export const headlessModelAccessSchema = z.strictObject({
+  baseUrl: z.string().url().max(2048).refine((value) => {
+    try {
+      const url = new URL(value)
+      return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash
+    } catch {
+      return false
+    }
+  }),
+  apiKey: z.string().min(1).max(4096),
+  protocol: z.enum(["anthropic", "openai", "openai-responses"]),
+  /** Trusted route's upstream identity. The persisted selection still pins its free/paid access domain. */
+  model: z.string().trim().min(1).max(512).optional(),
+})
+export type HeadlessModelAccess = z.infer<typeof headlessModelAccessSchema>
+
 export type HeadlessRunnerActor = { userId: string; organizationId: string }
 
 export type HeadlessRunnerDeps = {
   config: HeadlessRunnerConfig
   fetch: typeof fetch
-  /** `messageId` is the turn the token is minted for, so a caller can remember which run it belongs to. */
-  mintToken: (input: HeadlessRunnerActor & { ttlMs?: number; messageId?: string; readOnly?: boolean }) => Promise<{ token: string }>
+  /**
+   * `sessionId` and `messageId` are the turn the token is minted for, so a caller can remember which run it belongs
+   * to. `resumeGrant` (saved step turns): a credential the runner can exchange with Den for a fresh token
+   * for this turn, so it can continue the turn on its own after a restart. `indexCapability`: what the runner presents
+   * to report the session's content-free totals and state to Den's session index.
+   */
+  mintToken: (
+    input: HeadlessRunnerActor & { ttlMs?: number; sessionId?: string; messageId?: string; readOnly?: boolean; model?: string; modelAccessRequired?: boolean },
+  ) => Promise<{ token: string; resumeGrant?: string; modelAccess?: HeadlessModelAccess; indexCapability?: string }>
+  /** Resolve scoped turns' persisted model before minting, even when today's default is no longer accessible. */
+  modelAccessRequired?: (actor: HeadlessRunnerActor) => Promise<boolean> | boolean
+  /** Optional trusted caller hook for member-scoped turns when mintToken does not supply access. */
+  modelAccess?: (actor: HeadlessRunnerActor, selection?: { model?: string; modelAccessRequired?: boolean }) => Promise<HeadlessModelAccess | undefined>
   /** The longest a minted MCP token may live; a turn asking for longer gets this. */
   maxTokenTtlMs: number
 }
@@ -63,6 +92,8 @@ export const runnerTurnSchema = z.object({
   messageId: z.string(),
   status: z.string(),
   model: z.string().nullable().optional(),
+  /** Nonsecret durable policy; retains scoped recovery when the current rollout is off. */
+  modelAccessRequired: z.boolean().optional(),
   error: z.string().nullable(),
   usage: z.object({ inputTokens: z.number(), cachedInputTokens: z.number(), outputTokens: z.number() }).optional(),
   createdAt: z.number().optional(),
@@ -135,13 +166,21 @@ const runnerSnapshotSchema = z.object({
 })
 
 export type RunnerSnapshot = {
+  /**
+   * Reading one turn (`messageId`): that turn, the background tasks it started and their reports. Otherwise the
+   * newest turns (a window; see `hasEarlier`), oldest first.
+   */
   turns: RunnerTurn[]
   /** Transcript entries the runner returned that Den understands; unknown shapes are skipped. */
   messages: RunnerMessage[]
+  /** What the assistant wrote in the turn read (`messageId`), or in the newest turn of the window. */
   finalAssistantText: string
-  /** `busy` when any turn in the session is queued or running, including turns outside a windowed read. */
+  /** `busy` when the conversation (not a background task) is queued or running, including turns outside the window. */
   status?: string
-  /** Set on windowed reads (`turns`): whether older turns exist. */
+  /**
+   * Set on reads without `messageId`: whether older turns exist, read by passing the first turn's messageId as
+   * `before`. Older runners only set it when `turns` was given.
+   */
   hasEarlier?: boolean
 }
 
@@ -150,9 +189,17 @@ export const TERMINAL_TURN_STATUSES: ReadonlySet<RunnerTurnStatus> = new Set(["c
 
 const modelCatalogSchema = z.object({
   defaultModel: z.string(),
-  models: z.array(z.object({ id: z.string(), name: z.string() })),
+  models: z.array(z.object({ id: z.string(), name: z.string(), provider: z.string().optional() })),
+  /** True only after the configured gateway accepted the runner's model key. Older runners cannot prove readiness. */
+  verified: z.boolean().optional(),
 })
 export type HeadlessModelCatalog = z.infer<typeof modelCatalogSchema>
+
+const modelProbeSchema = z.discriminatedUnion("status", [
+  z.strictObject({ status: z.literal("answered"), errorCode: z.null(), requestedModel: z.string(), reportedModel: z.string().nullable() }),
+  z.strictObject({ status: z.literal("failed"), errorCode: z.enum(["credentials_unavailable", "authentication_failed", "payment_required", "provider_unavailable", "timed_out", "invalid_response", "busy"]), requestedModel: z.string(), reportedModel: z.null() }),
+])
+export type HeadlessModelProbe = z.infer<typeof modelProbeSchema>
 
 export const runnerSavedFileSchema = z.object({
   id: z.string(),
@@ -170,12 +217,12 @@ export type RunnerResult<T> = { ok: true; value: T } | { ok: false; status: numb
 
 const REQUEST_TIMEOUT_MS = 15_000
 
-async function request(deps: HeadlessRunnerDeps, method: string, path: string, body?: unknown) {
+async function request(deps: HeadlessRunnerDeps, method: string, path: string, body?: unknown, timeoutMs = REQUEST_TIMEOUT_MS) {
   const response = await deps.fetch(`${deps.config.url}${path}`, {
     method,
     headers: runnerHeaders(deps.config, { "content-type": "application/json" }),
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   })
   const payload: unknown = await response.json().catch(() => ({}))
   return { status: response.status, payload }
@@ -201,34 +248,77 @@ export type RunnerRepeatLimits = { maxWaitingMs?: number; maxIdenticalFailures?:
  * the computer must be configured on the runner too), so a caller that never asks (Automations) never gets any of
  * them. Slack asks for reactions and tasks where `slackWorkbotReplies` is on.
  */
-export type RunnerCapabilities = { files?: boolean; computer?: boolean; reactions?: boolean; tasks?: boolean }
+export type RunnerCapabilities = { files?: boolean; computer?: boolean; desktop?: boolean; reactions?: boolean; tasks?: boolean; documentNavigation?: boolean }
 
 /**
  * Who a conversation belongs to and how it is shown to the model: `owner` (the caller's key for one person) and `ref`
  * (the caller's id for the conversation) list a person's conversations; `timeZone` dates their messages; `autoTitle`
- * names it after its first answer; `memoryOf` shares memory/ with another of their conversations.
+ * names it after its first answer; `memoryOf` shares memory/ with another of their conversations (legacy chats);
+ * `memoryScope: "owner"` keeps memory/ with the owner, shared by all their chats (per-chat session cells).
  */
-export type RunnerSessionSettings = { owner?: string; ref?: string; timeZone?: string; autoTitle?: boolean; memoryOf?: string }
+export type RunnerSessionSettings = { owner?: string; ref?: string; timeZone?: string; autoTitle?: boolean; memoryOf?: string; memoryScope?: "owner" }
 
 const capabilityFields = (input: RunnerCapabilities & RunnerSessionSettings) => ({
   ...(input.files !== undefined ? { files: input.files } : {}),
   ...(input.computer !== undefined ? { computer: input.computer } : {}),
+  ...(input.desktop !== undefined ? { desktop: input.desktop } : {}),
   ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
   ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
+  ...(input.documentNavigation !== undefined ? { documentNavigation: input.documentNavigation } : {}),
   ...(input.owner ? { owner: input.owner } : {}),
   ...(input.ref ? { ref: input.ref } : {}),
   ...(input.timeZone ? { timeZone: input.timeZone } : {}),
   ...(input.autoTitle !== undefined ? { autoTitle: input.autoTitle } : {}),
   ...(input.memoryOf ? { memoryOf: input.memoryOf } : {}),
+  ...(input.memoryScope ? { memoryScope: input.memoryScope } : {}),
 })
 
 /** A runner older than a setting refuses it as an invalid request; any other refusal is real. */
 const unknownSetting = (status: number, payload: unknown) => status === 400 && errorCode(payload, "invalid_request") === "invalid_request"
 
+/**
+ * One live event, exactly as the SSE stream's `data:` lines carry it: `ready` first on a socket, then `changed`,
+ * `text` and `tool`. Kept open (like turn statuses) so a new event type never breaks a reader; callers validate.
+ */
+const runnerLiveEventSchema = z.looseObject({ type: z.string() })
+export type RunnerLiveEvent = z.infer<typeof runnerLiveEventSchema>
+
+/** What `openEventsSocket` needs of a WebSocket: Node's built-in one (undici) takes request headers, so the token and owner never go in the URL. */
+type HeaderWebSocket = {
+  send(data: string): void
+  close(code?: number, reason?: string): void
+  addEventListener(type: "open" | "message" | "error" | "close", listener: (event: { data?: unknown }) => void): void
+}
+type HeaderWebSocketConstructor = new (url: string, init: { headers: Record<string, string> }) => HeaderWebSocket
+function isHeaderWebSocket(value: unknown): value is HeaderWebSocketConstructor {
+  return typeof value === "function"
+}
+/** The keep-alive a live-event socket sends; the runner's cell answers it without waking. */
+const SOCKET_PING = "ping"
+const SOCKET_PING_MS = 30_000
+/** A reader this far behind is dropped (the socket closes; the caller reconnects and re-reads). */
+const SOCKET_MAX_QUEUED = 10_000
+
 export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
   return {
+    async desktopViewer(sessionId: string, input: { view: "browser" | "computer"; control: boolean; origin: string }) {
+      const { status, payload } = await request(deps, "POST", `${sessionPath(sessionId)}/desktop/viewer`, input, 180_000)
+      const parsed = z.union([z.object({ state: z.literal("paused") }), z.object({ state: z.literal("connected"), url: z.string().url(), expiresAt: z.number(), paused: z.boolean() })]).safeParse(payload)
+      if (status !== 200 || !parsed.success) return { ok: false as const, status, error: errorCode(payload, "desktop_unavailable") }
+      return { ok: true as const, value: parsed.data }
+    },
+    async browserDemonstration(sessionId: string, command: DemonstrationCommand) {
+      const { status, payload } = await request(deps, "POST", `${sessionPath(sessionId)}/desktop/demonstration`, command, 180_000)
+      const parsed = demonstrationReplySchema.safeParse(payload)
+      if (status !== 200 || !parsed.success) return { ok: false as const, status, error: errorCode(payload, "teaching_unavailable") }
+      return { ok: true as const, value: parsed.data }
+    },
+    async desktopAction(sessionId: string, action: "continue" | "pause" | "resume" | "rebuild") {
+      const { status, payload } = await request(deps, "POST", `${sessionPath(sessionId)}/desktop/action`, { action }, 180_000)
+      return { ok: status === 200, error: errorCode(payload, "desktop_unavailable") }
+    },
     async createSession(
-      input: { title?: string; instructions?: string; repeats?: RunnerRepeatLimits } & RunnerCapabilities = {},
+      input: { title?: string; instructions?: string; repeats?: RunnerRepeatLimits; memoryScope?: "owner" } & RunnerCapabilities = {},
     ): Promise<RunnerResult<{ id: string }>> {
       const base = {
         ...(input.title ? { title: input.title.slice(0, 200) } : {}),
@@ -264,11 +354,36 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       }
       const extras = { ...(input.repeats ? { repeats: input.repeats } : {}), ...capabilityFields(input) }
       let { status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...extras })
+      // An older runner has no document-navigation setting: the conversation keeps its other settings and offers links.
+      let compatible: Record<string, unknown> = extras
+      if (unknownSetting(status, payload) && input.documentNavigation !== undefined) {
+        const { documentNavigation: _navigation, ...rest } = compatible
+        compatible = rest
+        ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
+      }
+      // An older runner has no desktop setting. Omitting an explicit off value preserves side-chat settings.
+      if (unknownSetting(status, payload) && input.desktop === false) {
+        const { desktop: _desktop, ...rest } = compatible
+        ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...rest }))
+      }
       // A runner older than per-session capabilities or settings rejects them: keep the conversation, without them.
       if (unknownSetting(status, payload) && Object.keys(extras).length && !input.strict) ({ status, payload } = await request(deps, "PUT", sessionPath(id), base))
       const saved = z.object({ id: z.string() }).safeParse(payload)
       if ((status !== 200 && status !== 201) || !saved.success) return { ok: false, status, error: errorCode(payload, `headless_put_${status}`) }
       return { ok: true, value: { id: saved.data.id, created: status === 201 } }
+    },
+
+    /**
+     * Asks the runner to move this owner's older conversations into their own session cells, in the background
+     * (per-chat session cells). Owner-scoped: needs the client's `owner`. Idempotent; `not_needed` on a runner without
+     * cells. A runner from before session cells answers 404: reported as `unsupported`, never an error.
+     */
+    async splitOwner(): Promise<RunnerResult<{ split: string }>> {
+      const { status, payload } = await request(deps, "POST", "/v1/owner/split", {})
+      if (status === 404 || status === 405) return { ok: true, value: { split: "unsupported" } }
+      const parsed = z.object({ split: z.string() }).safeParse(payload)
+      if ((status !== 200 && status !== 202) || !parsed.success) return { ok: false, status, error: errorCode(payload, `headless_split_${status}`) }
+      return { ok: true, value: parsed.data }
     },
 
     /** One owner's conversations that have messages, most recently used first. */
@@ -301,36 +416,124 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
      * messageId never starts a second turn; it resumes an interrupted one.
      * `interrupt`: the conversation's answer in progress wraps up at its next safe point instead of this waiting behind
      * it (runners from before it refuse the field, so callers send it only where it is turned on).
+     * `execution: "steps"` (saved step turns): the runner runs the turn one step at a time, so a runner deploy
+     * switches between steps instead of cutting one off. Sent only when given; older runners refuse the field.
      */
     async sendTurn(
       actor: HeadlessRunnerActor,
-      input: { sessionId: string; messageId: string; prompt: string; model?: string; ttlMs?: number; attachments?: string[]; readOnly?: boolean; interrupt?: boolean },
+      input: {
+        sessionId: string
+        messageId: string
+        prompt: string
+        model?: string
+        modelAccessRequired?: boolean
+        ttlMs?: number
+        attachments?: string[]
+        readOnly?: boolean
+        /**
+         * A read-scoped MCP token (`mcp:read`) while the session keeps its own file tools, so a background agent can
+         * keep notes in `memory/` but can't change anything through MCP. `readOnly` also removes the file tools.
+         */
+        mcpReadOnly?: boolean
+        interrupt?: boolean
+        execution?: "steps"
+      },
     ): Promise<RunnerResult<{ state: string }>> {
       const ttlMs = Math.min(input.ttlMs ?? deps.maxTokenTtlMs, deps.maxTokenTtlMs)
-      const { token } = await deps.mintToken({ ...actor, ttlMs, messageId: input.messageId, ...(input.readOnly ? { readOnly: true } : {}) })
+      let modelAccessRequired = input.modelAccessRequired === true
+      const mint = async (model?: string) => {
+        const issued = await deps.mintToken({
+          ...actor,
+          ttlMs,
+          sessionId: input.sessionId,
+          messageId: input.messageId,
+          ...(model ? { model } : {}),
+          ...(modelAccessRequired ? { modelAccessRequired: true } : {}),
+          ...(input.readOnly || input.mcpReadOnly ? { readOnly: true } : {}),
+        })
+        const modelAccess = issued.modelAccess ?? await deps.modelAccess?.(actor, { ...(model ? { model } : {}), ...(modelAccessRequired ? { modelAccessRequired: true } : {}) })
+        return { ...issued, modelAccess }
+      }
+      const persistedModel = async (): Promise<RunnerResult<{ model?: string; modelAccessRequired?: boolean }>> => {
+        // A retry's route belongs to its persisted selection, not today's organization default.
+        const query = new URLSearchParams({ messageId: input.messageId, limit: "1", outputs: "none" })
+        let read: Awaited<ReturnType<typeof request>>
+        try {
+          read = await request(deps, "GET", `${sessionPath(input.sessionId)}?${query.toString()}`)
+        } catch {
+          return { ok: false, status: 503, error: "headless_read_unavailable" }
+        }
+        // Let the ordinary send handle a missing session. An unavailable or malformed snapshot is never a fallback.
+        if (read.status === 404) return { ok: true, value: {} }
+        if (read.status !== 200) return { ok: false, status: read.status, error: errorCode(read.payload, `headless_read_${read.status}`) }
+        const snapshot = runnerSnapshotSchema.safeParse(read.payload)
+        if (!snapshot.success) return { ok: false, status: read.status, error: "headless_read_invalid" }
+        const existing = snapshot.data.turns.find((turn) => turn.messageId === input.messageId)
+        if (existing && !existing.model) return { ok: false, status: 409, error: "headless_saved_model_unavailable" }
+        return { ok: true, value: { ...(existing?.model ? { model: existing.model } : {}), ...(existing?.modelAccessRequired ? { modelAccessRequired: true } : {}) } }
+      }
+      const required = modelAccessRequired || (await deps.modelAccessRequired?.(actor) ?? false)
+      let model = input.model
+      if (required) {
+        // This must precede minting: a changed default may now be unauthorized or use an entirely different protocol.
+        const original = await persistedModel()
+        if (!original.ok) return original
+        model = original.value.model ?? model
+        modelAccessRequired ||= original.value.modelAccessRequired === true
+      }
+      let issued = await mint(model)
+      if (required && !issued.modelAccess) return { ok: false, status: 503, error: "headless_model_access_unavailable" }
+      if (!required && issued.modelAccess) {
+        // Older trusted callers that supply scoped access without the hook still get retry pinning. Legacy sends
+        // without scoped access retain their original single-request behavior.
+        const original = await persistedModel()
+        if (!original.ok) return original
+        if ((original.value.model && original.value.model !== model) || (!modelAccessRequired && original.value.modelAccessRequired)) {
+          model = original.value.model ?? model
+          modelAccessRequired ||= original.value.modelAccessRequired === true
+          issued = await mint(model)
+          if (!issued.modelAccess) return { ok: false, status: 503, error: "headless_model_access_unavailable" }
+        }
+      }
+      const { token, resumeGrant, modelAccess, indexCapability } = issued
       const { status, payload } = await request(deps, "POST", `${sessionPath(input.sessionId)}/turns`, {
         messageId: input.messageId,
         prompt: input.prompt,
-        ...(input.model ? { model: input.model } : {}),
+        ...(model ? { model } : {}),
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
         ...(input.interrupt ? { interrupt: true } : {}),
-        credentials: { mcpToken: token, ...(input.readOnly ? { readOnly: true } : {}) },
+        ...(input.execution === "steps" ? { execution: "steps" } : {}),
+        // A grant is minted for named turns, an index capability only where the session is known;
+        // without them the body is exactly as before.
+        credentials: {
+          mcpToken: token,
+          ...(input.readOnly ? { readOnly: true } : {}),
+          ...(resumeGrant ? { resumeGrant } : {}),
+          ...(modelAccess ? { modelAccess } : {}),
+          ...(indexCapability ? { indexCapability } : {}),
+        },
       })
       if (status !== 202) return { ok: false, status, error: errorCode(payload, `headless_send_${status}`) }
       const accepted = z.object({ state: z.string() }).safeParse(payload)
       return { ok: true, value: { state: accepted.success ? accepted.data.state : "accepted" } }
     },
 
-    /** `outputs: "none"` leaves tool outputs on the runner when a caller only needs each tool's outcome. */
+    /**
+     * Every read is bounded. With `messageId`: that turn's transcript (its newest `limit` messages) and the turn with
+     * its background tasks and their reports. Without it: the newest `turns` turns (30 unless given, at most 200)
+     * before `before`, with their newest `limit` messages; `hasEarlier` says whether to page back.
+     * `outputs: "none"` leaves tool outputs on the runner when a caller only needs each tool's outcome.
+     */
     async readSession(
       sessionId: string,
-      input: { messageId?: string; limit?: number; outputs?: "none"; turns?: number; before?: string } = {},
+      input: { messageId?: string; limit?: number; outputs?: "none"; turns?: number; before?: string; expectedOwner?: string } = {},
     ): Promise<RunnerResult<RunnerSnapshot>> {
       const query = new URLSearchParams({ limit: String(input.limit ?? 500) })
       if (input.messageId) query.set("messageId", input.messageId)
       if (input.outputs) query.set("outputs", input.outputs)
       if (input.turns) query.set("turns", String(input.turns))
       if (input.before) query.set("before", input.before)
+      if (input.expectedOwner !== undefined) query.set("expectedOwner", input.expectedOwner)
       const { status, payload } = await request(deps, "GET", `${sessionPath(sessionId)}?${query.toString()}`)
       if (status !== 200) return { ok: false, status, error: errorCode(payload, `headless_read_${status}`) }
       const snapshot = runnerSnapshotSchema.safeParse(payload)
@@ -442,6 +645,105 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
     },
 
     /**
+     * The session's live events over a WebSocket (saved step turns): on celld the socket is hibernatable,
+     * so it keeps going while the runner's code is switched under it, and doesn't hold up that switch. Yields
+     * `{ type: "ready" }`, then each event as `openEvents` carries it, until the socket closes or `signal` aborts.
+     * Null when the runner doesn't upgrade (the Node runner, an older runner) or the socket can't open: use
+     * `openEvents` then. The token and owner go in request headers, never in the URL.
+     */
+    async openEventsSocket(sessionId: string, signal: AbortSignal): Promise<AsyncIterableIterator<RunnerLiveEvent> | null> {
+      const Socket: unknown = Reflect.get(globalThis, "WebSocket")
+      if (!isHeaderWebSocket(Socket) || signal.aborted) return null
+      const url = new URL(`${deps.config.url}${sessionPath(sessionId)}/events`)
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
+      let socket: HeaderWebSocket
+      try {
+        socket = new Socket(url.toString(), { headers: runnerHeaders(deps.config) })
+      } catch {
+        return null
+      }
+      const queue: RunnerLiveEvent[] = []
+      let ended = false
+      let wake: (() => void) | null = null
+      let ping: ReturnType<typeof setInterval> | undefined
+      let settle: (opened: boolean) => void = () => undefined
+      const end = () => {
+        settle(false)
+        if (!ended) {
+          ended = true
+          clearInterval(ping)
+          signal.removeEventListener("abort", end)
+          try {
+            socket.close(1000)
+          } catch {
+            // Already closed.
+          }
+        }
+        const resume = wake
+        wake = null
+        resume?.()
+      }
+      signal.addEventListener("abort", end, { once: true })
+      socket.addEventListener("message", (message) => {
+        if (ended || typeof message.data !== "string") return
+        let raw: unknown
+        try {
+          raw = JSON.parse(message.data)
+        } catch {
+          // A keep-alive answer, or anything else that isn't an event.
+          return
+        }
+        const event = runnerLiveEventSchema.safeParse(raw)
+        if (!event.success) return
+        queue.push(event.data)
+        if (queue.length > SOCKET_MAX_QUEUED) return end()
+        const resume = wake
+        wake = null
+        resume?.()
+      })
+      socket.addEventListener("error", end)
+      socket.addEventListener("close", end)
+      const opened = await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(end, REQUEST_TIMEOUT_MS)
+        settle = (value) => {
+          clearTimeout(timer)
+          settle = () => undefined
+          resolve(value)
+        }
+        socket.addEventListener("open", () => settle(!ended))
+      })
+      if (!opened) {
+        end()
+        return null
+      }
+      ping = setInterval(() => {
+        try {
+          socket.send(SOCKET_PING)
+        } catch {
+          end()
+        }
+      }, SOCKET_PING_MS)
+      async function* events(): AsyncGenerator<RunnerLiveEvent> {
+        try {
+          for (;;) {
+            const next = queue.shift()
+            if (next) {
+              yield next
+              continue
+            }
+            if (ended) return
+            await new Promise<void>((resolve) => {
+              wake = resolve
+            })
+          }
+        } finally {
+          end()
+        }
+      }
+      return events()
+    },
+
+    /**
      * Stops one turn, or without a messageId everything running or queued in
      * the session. `reached` is the runner answering; `stopped` is whether
      * anything was still running or queued to stop.
@@ -463,10 +765,20 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return { reached: status === 200, stopped: status === 200 && parsed.success && parsed.data.accepted }
     },
 
-    /** The models the runner's Gateway route can serve. Null when unavailable. */
-    async listModels(): Promise<HeadlessModelCatalog | null> {
+    /** A bounded synthetic completion using scoped access when provided, otherwise the deployment key. Never mints an MCP token. */
+    async testModel(model: string, modelAccess?: HeadlessModelAccess): Promise<HeadlessModelProbe | null> {
+      const { status, payload } = await request(deps, "POST", "/v1/model-probe", { model, ...(modelAccess ? { modelAccess } : {}) })
+      const result = modelProbeSchema.safeParse(payload)
+      if (status !== 200 || !result.success || result.data.requestedModel !== model) return null
+      return result.data
+    },
+
+    /** Scoped catalogs use an authenticated POST; legacy deployment catalogs keep the existing GET. */
+    async listModels(modelAccess?: HeadlessModelAccess): Promise<HeadlessModelCatalog | null> {
       try {
-        const { status, payload } = await request(deps, "GET", "/v1/models")
+        const { status, payload } = modelAccess
+          ? await request(deps, "POST", "/v1/models", { modelAccess })
+          : await request(deps, "GET", "/v1/models")
         const parsed = modelCatalogSchema.safeParse(payload)
         return status === 200 && parsed.success ? parsed.data : null
       } catch {

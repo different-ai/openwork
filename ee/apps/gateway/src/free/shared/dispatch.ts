@@ -26,7 +26,16 @@ export async function dispatchFreeCompletion(input: {
   signal.throwIfAborted()
   const requestId = randomBytes(16).toString("hex")
   const admission = await store.admit(principal)
-  if (!admission.ok) return freeError(admission.code === "free_principal_rejected" ? 403 : 429, admission.code)
+  if (!admission.ok) {
+    const response = freeError(admission.code === "free_principal_rejected" ? 403 : 429, admission.code)
+    // Keep desktop error bodies compatible. These headers distinguish a signed-in
+    // person's exhausted allowance from temporary capacity and guest limits.
+    if (principal.kind === "member" && admission.code === "anonymous_limit_exceeded") {
+      response.headers.set("X-OpenWork-Error-Code", "free_allowance_exhausted")
+      response.headers.set("X-OpenWork-Usage-State", "blocked")
+    }
+    return response
+  }
   const charge = (receipt: FreeUsageReceipt | null) => retryFreeSettlement(
     () => store.charge({ requestId, principal, windows: admission.windows, receipt }),
     () => Sentry.captureMessage("Free Auto charge pending database recovery", {

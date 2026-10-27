@@ -421,6 +421,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     const loaded = sessionReferenceLoadsRef.current.get(workspace.id);
     return {
       workspaceId: workspace.id,
+      workspaceTitle: workspace.displayNameResolved,
       available,
       sessions: available
         ? (sessionsByWorkspaceId[workspace.id] ?? []).filter((session) => loaded?.sessionIds.has(session.id))

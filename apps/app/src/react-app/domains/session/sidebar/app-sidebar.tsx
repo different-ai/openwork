@@ -101,6 +101,7 @@ import {
 
 import { SidebarContext, useSidebarContext } from "./app-sidebar-provider";
 import { AccountStatusMenu, type AccountStatusMenuProps } from "./account-status-menu";
+import { ActivationCard } from "../../cloud/activation/activation-card";
 import { usePlatform } from "../../../kernel/platform";
 import {
   sessionNumberAriaKeyShortcut,
@@ -894,6 +895,7 @@ export function AppSidebar(props: AppSidebarProps) {
         </SidebarReorderScope>
 
         <SidebarFooter className="border-t border-sidebar-border/60 p-1.5 pe-0">
+          <ActivationCard onOpenExtensions={props.onOpenExtensions} />
           <AccountStatusMenu {...props.status} onOpenAccountSettings={props.onOpenAccountSettings} />
         </SidebarFooter>
 
@@ -1870,7 +1872,9 @@ function SessionNumberShortcutSlot({ digit }: { digit: number | undefined }) {
       data-session-action-slot="number-shortcut"
       aria-hidden="true"
       className={cn(
-        "flex h-5 shrink-0 items-center justify-center",
+        // Mounted only once the hold delay has passed; fades in, and unmounts
+        // (hides at once) on release.
+        "flex h-5 shrink-0 items-center justify-center animate-in fade-in duration-1000 ease-out motion-reduce:animate-none",
         ctx.sessionNumberShortcutOs === "macos" ? "w-8" : "w-11",
       )}
     >

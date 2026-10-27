@@ -39,6 +39,8 @@ export interface User {
   rightClick(target: Target, options?: ClickOptions): Promise<void>;
   dblclick(target: Target): Promise<void>;
   type(target: Target, text: string, options?: TypeOptions): Promise<void>;
+  /** Select fixtures on the browser's host through a real file input, without a native OS dialog. */
+  attachFiles(selector: string, files: string[]): Promise<void>;
   press(key: string): Promise<void>;
   hover(target: Target): Promise<void>;
   /** Trusted wheel input at an observed point, without locator auto-scrolling. */
@@ -60,6 +62,7 @@ export interface User {
 }
 
 export interface Agent {
+  computerProgram(input: { sessionId: string; surface: "computer" | "browser"; code: string; tabId?: string; timeoutMs?: number }): Promise<unknown>;
   browserTask(input: import("@openwork/behaviors").BrowserTaskInput): Promise<import("@openwork/behaviors").BrowserTaskReply>;
   browserRequest(input: { url: string; method?: string; body?: string }): Promise<{ reached: boolean; error?: string }>;
   desktopApi(path: string, input: { method: string; body?: unknown }): Promise<{ status: number; body: unknown }>;

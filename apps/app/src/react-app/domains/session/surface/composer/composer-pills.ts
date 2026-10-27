@@ -4,10 +4,17 @@ import type { ComposerPart } from "@/app/types";
 import { computerMentionInstruction, isComputerTarget, type ComputerTarget } from "./computer-mentions";
 import { connectSkillPrompt, encodeConnectSkillToken, parseConnectSkillToken } from "./connect-skill-token";
 import { connectorPrompt, encodeConnectorToken, parseConnectorToken } from "./connector-token";
+import {
+  encodeSessionReferenceToken,
+  parseSessionReferenceToken,
+  sessionReferencePrompt,
+  sessionReferenceText,
+} from "./session-reference-token";
 
 /**
  * One source of truth for composer pills: the skills, connectors and
- * computers picked from the composer `+` menu or `@` mentions.
+ * computers picked from the composer `+` menu or `@` mentions, and the tasks
+ * referenced from the `#` menu.
  *
  * A pill has three faces, and each is owned here:
  * - its draft token (what the composer stores and re-renders as a chip),
@@ -23,12 +30,16 @@ export type ComposerPill =
   | { kind: "skill"; name: string }
   | { kind: "connect-skill"; slug: string; name: string; marketplace: string; capability: string }
   | { kind: "connector"; name: string }
-  | { kind: "computer"; target: ComputerTarget };
+  | { kind: "computer"; target: ComputerTarget }
+  | { kind: "session"; workspaceId: string; sessionId: string; title: string };
 
-type ComposerPillPart = Extract<ComposerPart, { type: "skill" | "connect-skill" | "connector" | "computer" }>;
+type ComposerPillPart = Extract<ComposerPart, { type: "skill" | "connect-skill" | "connector" | "computer" | "session" }>;
 
 /** Splits a draft into text and token segments (one capture group, keep it for `split`). */
-export const COMPOSER_DRAFT_TOKEN_RE = /(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|@[^\s@]+)/;
+export const COMPOSER_DRAFT_TOKEN_RE = /(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|\[session [^\]\n]+\]|@[^\s@]+)/;
+
+/** Pill tokens whose visible text replaces them in the resolved draft. */
+export const COMPOSER_PILL_TOKEN_GLOBAL_RE = /\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|\[session [^\]\n]+\]/g;
 
 const SKILL_TOKEN_RE = /^\[skill (.+)\]$/;
 
@@ -41,6 +52,8 @@ export function parseComposerPillToken(segment: string): ComposerPill | null {
   if (connectSkill) return { kind: "connect-skill", ...connectSkill };
   const connector = parseConnectorToken(segment);
   if (connector) return { kind: "connector", name: connector };
+  const session = parseSessionReferenceToken(segment);
+  if (session) return { kind: "session", ...session };
   const skill = segment.match(SKILL_TOKEN_RE)?.[1];
   return skill ? { kind: "skill", name: skill } : null;
 }
@@ -55,6 +68,8 @@ export function composerPillFromPart(part: ComposerPillPart): ComposerPill {
       return { kind: "connector", name: part.name };
     case "computer":
       return { kind: "computer", target: part.target };
+    case "session":
+      return { kind: "session", workspaceId: part.workspaceId, sessionId: part.sessionId, title: part.title };
   }
 }
 
@@ -69,6 +84,9 @@ export function composerPillToken(pill: ComposerPill): string {
       return encodeConnectorToken(pill.name);
     case "computer":
       return `@${pill.target}`;
+    case "session":
+      // Ids are validated when the pill is created or parsed.
+      return encodeSessionReferenceToken(pill) ?? "";
   }
 }
 
@@ -81,6 +99,8 @@ export function composerPillText(pill: ComposerPill): string {
   switch (pill.kind) {
     case "connect-skill":
       return `/${pill.slug}`;
+    case "session":
+      return sessionReferenceText(pill);
     default:
       return composerPillToken(pill);
   }
@@ -96,6 +116,8 @@ export function composerPillTitle(pill: ComposerPill): string {
       return `Connector: ${pill.name}`;
     case "computer":
       return `@${pill.target}`;
+    case "session":
+      return `Task: ${pill.title || pill.sessionId}`;
   }
 }
 
@@ -110,6 +132,8 @@ export function composerPillInstruction(pill: ComposerPill): string {
       return connectorPrompt(pill.name);
     case "computer":
       return computerMentionInstruction(pill.target);
+    case "session":
+      return sessionReferencePrompt(pill);
   }
 }
 
@@ -130,6 +154,7 @@ export function composerPillPromptParts(pill: ComposerPill): [TextPartInput, Tex
       openworkComposerPill: pill,
       // Prompt history recalls a Connect skill from its durable token.
       ...(pill.kind === "connect-skill" ? { openworkComposerToken: encodeConnectSkillToken(pill) } : {}),
+      ...(pill.kind === "session" ? { openworkComposerToken: composerPillToken(pill) } : {}),
     },
   }, {
     type: "text",
@@ -165,6 +190,15 @@ export function readComposerPill(value: unknown): ComposerPill | null {
     const capability = stringField(value, "capability");
     return slug && name && marketplace && capability ? { kind, slug, name, marketplace, capability } : null;
   }
+  if (kind === "session") {
+    const workspaceId = stringField(value, "workspaceId");
+    const sessionId = stringField(value, "sessionId");
+    const title = stringField(value, "title") ?? "";
+    if (!workspaceId || !sessionId) return null;
+    const token = encodeSessionReferenceToken({ workspaceId, sessionId, title });
+    const parsed = token ? parseSessionReferenceToken(token) : null;
+    return parsed ? { kind, ...parsed } : null;
+  }
   return null;
 }
 
@@ -198,6 +232,7 @@ function getPillMatchers(): PillMatcher[] {
     { re: /\[connect-skill [^\]]+\]/g, toPill: (match) => parseComposerPillToken(match[0]) },
     { re: /\[connector [^\]\n]+\]/g, toPill: (match) => parseComposerPillToken(match[0]) },
     { re: /\[skill [^\]\n]+\]/g, toPill: (match) => parseComposerPillToken(match[0]) },
+    { re: /\[session [^\]\n]+\]/g, toPill: (match) => parseComposerPillToken(match[0]) },
     // Instructions that older sends, or clients that flatten parts into one
     // string, left inline in the user's text.
     { re: templateRegExp(skillInstruction), toPill: (match) => match[1] ? { kind: "skill", name: match[1] } : null },

@@ -12,7 +12,8 @@ import {
   migrationFaq,
   migrationMoves,
   migrationStays,
-  migrationSteps
+  migrationSteps,
+  IMPORT_HISTORY_GUIDE_PATH
 } from "../lib/claude-cowork-migration";
 
 type Props = {
@@ -84,6 +85,13 @@ export function MigrationGuidePage({ stars }: Props) {
             </div>
             <p className="mt-6 text-[14px] leading-[1.6] text-[var(--lp-muted)]">
               Stays behind: {migrationStays.join("; ")}.
+            </p>
+            <p className="mt-2 text-[14px] leading-[1.6] text-[var(--lp-muted)]">
+              Want your past conversations too?{" "}
+              <a href={IMPORT_HISTORY_GUIDE_PATH} className="text-[var(--lp-ink)] underline underline-offset-4">
+                Import your Claude conversations
+              </a>
+              .
             </p>
           </section>
 

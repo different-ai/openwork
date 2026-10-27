@@ -10,12 +10,24 @@ export const meSchema = z.object({
   email: z.string(),
   organizationName: z.string(),
   enabled: z.boolean(),
+  computer: z.boolean().default(false),
+  browserDemonstrations: z.boolean().default(false),
+  browserLiveView: z.boolean().default(false),
   /** Workbot's Calendar tab (on while Workbot is on); older servers omit it. */
   calendar: z.boolean().default(false),
+  documents: z.boolean().default(false),
+  documentEditing: z.boolean().default(false),
+  nativeDictation: z.boolean().default(false),
+  workspaceAssistant: z.boolean().default(false),
+  guidedNavigation: z.boolean().default(false),
+  usageRecovery: z.boolean().default(false),
+  /** The Get set up checklist in the header; older servers omit it. */
+  activationChecklist: z.boolean().default(false),
   /** The organization runs Automations in the cloud, so the Calendar can create them. */
   canSchedule: z.boolean().default(false),
   /** Side chats are on for this person (while Workbot is on). */
   sideChats: z.boolean().default(false),
+  /** The Cmd+K / Ctrl+K command palette; older servers omit it. */
   denUrl: z.string().nullable(),
 })
 export type Me = z.infer<typeof meSchema>
@@ -42,19 +54,32 @@ function messageOf(payload: unknown, fallback: string) {
 }
 
 /** Workbot's page on its own site: same-origin requests with the session cookie; signed out means sign in again. */
-export function createHost(me: Me): WorkbotHost {
+export function createHost(me: Me, recovery: { authorization?: WorkbotHost["documentAuthorization"]; refreshIdentity?(): Promise<Me | null> } = {}): WorkbotHost {
+  const scopedHeaders = (init?: HeadersInit) => {
+    const headers = new Headers(init)
+    if (me.userId && me.organizationId) {
+      headers.set("x-openwork-client-user", me.userId)
+      headers.set("x-openwork-client-organization", me.organizationId)
+    }
+    return headers
+  }
   return {
     async requestJson(path, init = {}, timeoutMs = 30_000) {
-      const headers = new Headers(init.headers)
+      const headers = scopedHeaders(init.headers)
       headers.set("Accept", "application/json")
       if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json")
       const response = await fetch(path, { ...init, headers, credentials: "same-origin", signal: init.signal ?? AbortSignal.timeout(timeoutMs) })
-      if (response.status === 401) signIn()
+      // The parent owns auth recovery, including when Documents is retained
+      // behind another workspace page. Never navigate that owner away on 401.
+      if (response.status === 401) {
+        if (recovery.refreshIdentity) { if (!recovery.authorization) void recovery.refreshIdentity().catch(() => {}) }
+        else if (window.location.pathname !== "/documents") signIn()
+      }
       const payload: unknown = await response.json().catch(() => null)
       return { response, payload }
     },
     async prepare(path) {
-      return { url: path, headers: new Headers(), credentials: "same-origin" }
+      return { url: path, headers: scopedHeaders(), credentials: "same-origin" }
     },
     errorMessage: messageOf,
     user: { name: me.name },
@@ -62,8 +87,25 @@ export function createHost(me: Me): WorkbotHost {
     appIcons: (name) => appIconCandidates(name, me.denUrl),
     homeHref: me.denUrl ? `${me.denUrl}/dashboard` : "/",
     calendar: me.calendar,
+    documents: me.documents,
+    computer: me.computer,
+    browserDemonstrations: me.browserDemonstrations,
+    browserLiveView: me.browserLiveView,
+    documentEditing: me.documents && me.documentEditing,
+    nativeDictation: me.nativeDictation,
+    workspaceAssistant: me.workspaceAssistant,
+    guidedNavigation: me.workspaceAssistant && me.guidedNavigation,
+    usageRecovery: me.usageRecovery && me.denUrl && me.organizationId ? { denUrl: me.denUrl, organizationId: me.organizationId } : undefined,
+    activation: me.activationChecklist && me.denUrl && me.organizationId ? { denUrl: me.denUrl, organizationId: me.organizationId } : undefined,
     canSchedule: me.canSchedule,
     connectionsHref: me.denUrl ? `${me.denUrl}/dashboard/your-connections` : null,
+    get signInHref() { return `/auth/login?return=${encodeURIComponent(window.location.pathname + window.location.search)}` },
+    documentAuthorization: recovery.authorization,
+    async verifyDocumentIdentity() {
+      const current = await (recovery.refreshIdentity ? recovery.refreshIdentity() : fetchMe())
+      return current !== null && current.userId !== null && current.organizationId !== null
+        && current.userId === me.userId && current.organizationId === me.organizationId
+    },
     sideChats: me.sideChats,
     identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
   }

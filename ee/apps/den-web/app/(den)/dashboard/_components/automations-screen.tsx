@@ -2,7 +2,8 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, CalendarClock, Cloud, ExternalLink, Monitor, Square } from "lucide-react";
-import type { AutomationList, AutomationSchedule } from "@openwork/types/automations";
+import { formatAutomationSchedule } from "@openwork/types/automation-schedule";
+import type { AutomationList } from "@openwork/types/automations";
 import { DenButton } from "../../_components/ui/button";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { WorkflowArtifactResult } from "./workflow-artifact-result";
@@ -21,14 +22,6 @@ const ACTIVE_RUN_STATUSES = new Set(["queued", "claimed", "running"]);
 
 function statusTone(status: string) {
   return status === "failed" || status === "needs_attention" ? "bg-red-50 text-red-600" : status === "succeeded" || status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-600";
-}
-
-function scheduleLabel(schedule: AutomationSchedule) {
-  if (schedule.kind === "once") return `Once · ${new Date(schedule.at).toLocaleString()} · ${schedule.timezone}`;
-  const time = `${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`;
-  if (schedule.kind === "daily") return `Daily · ${time} · ${schedule.timezone}`;
-  const names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  return `Weekly ${schedule.daysOfWeek.map((day) => names[day]).join(", ")} · ${time} · ${schedule.timezone}`;
 }
 
 function placementLabel(executionTarget: "desktop" | "cloud" | undefined) {
@@ -122,7 +115,7 @@ export function AutomationsScreen() {
                     </div>
                     <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone(item.automation.state)}`}>{item.automation.state.replace("_", " ")}</span>
                   </div>
-                  <p className="mt-3 text-[11px] text-gray-400">{scheduleLabel(item.revision.schedule)}</p>
+                  <p className="mt-3 text-[11px] text-gray-400">{formatAutomationSchedule(item.revision.schedule)}</p>
                   <div className="mt-2 flex items-center justify-between text-[11px] text-gray-400">
                     <span>{item.latestRun ? `Last run ${item.latestRun.status}` : item.automation.nextDueAt ? `Next ${new Date(item.automation.nextDueAt).toLocaleString()}` : "Not run yet"}</span>
                     <span className="flex items-center gap-1"><PlacementIcon executionTarget={item.revision.executionTarget} />{placementLabel(item.revision.executionTarget)}</span>
@@ -150,7 +143,7 @@ export function AutomationsScreen() {
               <h1 className="text-[20px] font-semibold text-gray-950">{detail.automation.name}</h1>
               <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone(detail.automation.state)}`}>{detail.automation.state.replace("_", " ")}</span>
             </div>
-            <p className="mt-1 text-[12px] text-gray-400">Revision {detail.revision.version} · {placementLabel(detail.revision.executionTarget)} · {scheduleLabel(detail.revision.schedule)}</p>
+            <p className="mt-1 text-[12px] text-gray-400">Revision {detail.revision.version} · {placementLabel(detail.revision.executionTarget)} · {formatAutomationSchedule(detail.revision.schedule)}</p>
           </div>
         </div>
         <ManageLink item={detail} openworkWebUrl={runtimeConfig.openworkWebUrl} />

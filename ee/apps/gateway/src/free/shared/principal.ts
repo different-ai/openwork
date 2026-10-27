@@ -1,6 +1,6 @@
 import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
-import { InferenceKeyTable, MemberTable, OrganizationTable, readDesktopPolicyForOrgMember } from "@openwork-ee/den-db"
+import { InferenceKeyTable, MemberTable, OrganizationTable, readDesktopPolicyForOrgMember, sandboxFreeAutoStopped } from "@openwork-ee/den-db"
 import { assertManagedModelsAllowed } from "@openwork/types/den/managed-models-policy"
 import { freeInferenceDefaultPinned, freeInferenceOrganizationAllowed } from "@openwork/types/den/inference"
 import { db, freeAutoDatabase } from "../../db.js"
@@ -11,6 +11,10 @@ type InferenceKeyRow = typeof InferenceKeyTable.$inferSelect
  * carries its IP hash, because its machine id is only self-reported: it is limited per IP as well.
  */
 export type GuestPrincipal = { kind: "installation"; id: string; untaggedIpHash?: string;
+  /** Client-reported random journey, used only for analytics; never allowance identity. */
+  journeyHash?: string;
+  /** Keyed network hash derived by the Gateway, used only to bound analytics writes. */
+  observationRateHash?: string;
   /** An open request (no desktop proof, like OpenCode Zen's "public" key): there is no machine, only the IP. */
   deviceless?: true }
 /** Signed-in, unsubscribed member using their OpenWork Models key. The allowance is per person. */
@@ -43,7 +47,9 @@ function freeOrganization(metadata: Record<string, unknown> | null) {
 
 async function freePolicyAllowed(identity: Pick<MemberPrincipal, "memberId" | "organizationId">, database: Database) {
   const policy = await readDesktopPolicyForOrgMember(database, { organizationId: identity.organizationId, orgMemberId: identity.memberId })
-  return policy.allowZenModel !== false
+  if (policy.allowZenModel === false) return false
+  // A closed or expired sandbox organization gets no Free Auto (the same check as Den API).
+  return !await sandboxFreeAutoStopped(database, identity.organizationId)
 }
 
 export async function findMemberFreePrincipal(key: Pick<InferenceKeyRow, "id" | "org_membership_id" | "organization_id">, database: Database = freeAutoDatabase()): Promise<MemberPrincipal | null> {

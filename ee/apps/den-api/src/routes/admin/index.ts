@@ -7,8 +7,12 @@ import {
   AuthApiKeyTable,
   AuthSessionTable,
   AuthUserTable,
+  FreeAutoLimitEventTable,
+  FreeAutoPurchaseTable,
   ConnectedAccountTable,
   DesktopHandoffGrantTable,
+  HeadlessResumeGrantTable,
+  HeadlessResumeRevocationTable,
   ExternalIdentityTable,
   InvitationTable,
   InferenceOrgLimitPolicyTable,
@@ -35,27 +39,44 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { cache } from "../../cache.js"
 import { db } from "../../db.js"
-import { parseOrganizationPlan, type PlanTier } from "../../entitlements.js"
+import { parseOrganizationPlan } from "../../entitlements.js"
+import { adminOrganizationPlanInputSchema, setOrganizationPlanByAdmin } from "../../admin-organization-plan.js"
+import { getOrganizationPlanStates } from "../../organization-plan-state.js"
+import { organizationPlanStateSchema, type PlanPaidBy } from "@openwork/types/den/billing-plans"
 import { adminRoute, jsonValidator, queryValidator } from "../../middleware/index.js"
+import { registerAdminFreeAutoConversionsRoutes } from "./free-auto-conversions.js"
 import { registerAdminFreeAutoUsageRoutes } from "./free-auto-usage.js"
+import { registerAdminSecurityRoutes } from "./security.js"
+import { registerAdminDashboardRoute } from "./dashboard.js"
+import { registerAdminOpportunitiesRoute } from "./opportunities.js"
+import { registerAdminServiceReadinessRoutes } from "./services.js"
+import { registerAdminOrganizationDetailRoutes } from "./organization-detail.js"
+import { registerAdminSandboxOrganizationRoutes } from "./sandbox-organizations.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
-import { seedDefaultPermissionSetsOnEnable } from "../../permissions/default-sets.js"
 import {
   describeFeatures,
   readFeatureRollouts,
+  readLatestFeatureChanges,
   readOrganizationFeatureOverrides,
   readOrganizationFeatureOverridesForMany,
+  type FeatureChange,
   type FeatureOverrideChanges,
 } from "@openwork-ee/den-db/organization-features"
+import { adminFeatureChangeSchema, serializeFeatureChange } from "./feature-changes.js"
+import { registerAdminMemberFeatureRoutes } from "./member-features.js"
 import { updateFeatureRollout, updateOrganizationFeatureOverrides } from "../../features.js"
 import {
+  FEATURE_CATEGORIES,
+  FEATURE_CATEGORY_KEYS,
   FEATURE_KEYS,
   featureAvailableOn,
   featureDefinition,
+  featureDocsUrl,
   featureKeySchema,
   featureRollout,
   mapFeatures,
+  type FeatureCategory,
   type FeatureKey,
   type FeatureOverrides,
   type FeatureRollouts,
@@ -72,9 +93,12 @@ import { sessionRevokedEvent, type DirectlyDeletedSession } from "../../audit/do
 import { complimentaryAccessEvent, dpaSignedUpdatedEvent } from "../../audit/domain/organization-settings.js"
 import { auditChangeCapture, logAuditOutcomeLost } from "../../audit/request-capture.js"
 import { platformAdminChangeCapture } from "../../audit/service-capture.js"
-import { hasOpenWorkWebComplimentaryAccess, resolveOpenWorkWebAccess, setOpenWorkWebComplimentaryAccess } from "../../openwork-web-access.js"
-import { isOpenWorkWebAvailable } from "../../openwork-web-availability.js"
-import { calculateOrganizationSeatBillingCounts, getOrganizationSeatBillingCounts, isEligibleOpenWorkWebSubscriptionStatus, isOngoingOpenWorkWebSubscriptionStatus, organizationHasOngoingOpenWorkWebSubscription, refreshOrgSubscriptionFromStripe, syncSeatSubscriptionQuantityAfterMemberChange } from "../../stripe-billing.js"
+import { hasOpenWorkWebComplimentaryAccess, setOpenWorkWebComplimentaryAccess } from "../../openwork-web-access.js"
+import { readAdminOpenWorkWebAccess } from "./openwork-web-access-state.js"
+import { createEnterpriseSubscription, EnterpriseBillingError, getEnterpriseBillingAdminState, isOngoingOpenWorkWebSubscriptionStatus, organizationHasOngoingOpenWorkWebSubscription, refreshOrgSubscriptionFromStripe, syncOrganizationBillingQuantities, updateEnterpriseMinimumUsers } from "../../stripe-billing.js"
+import { FREE_ORG_SEAT_COUNT } from "../../billing-quantities.js"
+import { getBillingQuantitiesForOrganizations, getOrganizationBillingQuantities } from "../../billing-users.js"
+import { unlessResumeTableMissing } from "../../headless-runner/resume-grant-revocation.js"
 import { buildAdminPageInfo, normalizeAdminPageRequest, sanitizeAdminSearchForLike, type AdminPageRequest } from "./scale-performance.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
@@ -90,7 +114,7 @@ type AdminBillingStatus = {
   note: string | null
 }
 
-const DEFAULT_ORGANIZATION_FREE_SEAT_COUNT = calculateOrganizationSeatBillingCounts({ memberCount: 0 }).includedFree
+const DEFAULT_ORGANIZATION_FREE_SEAT_COUNT = FREE_ORG_SEAT_COUNT
 const logger = appLogger.child({ component: "admin_routes" })
 
 const overviewQuerySchema = z.object({
@@ -107,14 +131,54 @@ const adminPageQuerySchema = z.object({
   search: z.string().optional(),
 })
 
-const updateOrganizationPlanSchema = z.object({
-  tier: z.enum(["free", "team", "enterprise"]),
-  seatLimit: z.number().int().min(1).max(100000),
+const adminOrganizationPageQuerySchema = adminPageQuerySchema.extend({
+  includeFeatures: z.enum(["0", "1"]).optional().meta({
+    description: "Set to 0 to omit capabilities and featureStates. Fetch one organization's features when its editor is opened. Defaults to 1 for existing clients.",
+  }),
 })
 
 const updateOrganizationFreeSeatsSchema = z.object({
   totalFreeSeats: z.number().int().min(DEFAULT_ORGANIZATION_FREE_SEAT_COUNT).max(100000),
 })
+
+const createEnterpriseSubscriptionSchema = z.object({
+  priceId: z.string().trim().regex(/^price_[A-Za-z0-9]+$/, "Use a Stripe price id (price_...)."),
+  minimumUsers: z.number().int().min(0).max(100000),
+  billingEmail: z.string().trim().email(),
+  daysUntilDue: z.number().int().min(1).max(90).default(30),
+})
+
+const updateEnterpriseMinimumUsersSchema = z.object({
+  minimumUsers: z.number().int().min(0).max(100000),
+})
+
+const enterpriseBillingStateSchema = z.object({
+  configured: z.boolean(),
+  users: z.number().int(),
+  minimumUsers: z.number().int(),
+  billableUsers: z.number().int(),
+  subscription: z.object({}).passthrough().nullable(),
+}).meta({ ref: "AdminEnterpriseBillingState" })
+
+const enterpriseBillingErrorSchema = z.object({
+  error: z.string(),
+  message: z.string(),
+})
+
+function enterpriseBillingErrorStatus(error: EnterpriseBillingError) {
+  switch (error.code) {
+    case "organization_not_found":
+    case "enterprise_subscription_missing":
+      return 404 as const
+    case "enterprise_subscription_exists":
+      return 409 as const
+    case "enterprise_price_invalid":
+      return 400 as const
+    case "stripe_not_configured":
+    case "enterprise_product_not_configured":
+      return 503 as const
+  }
+}
 
 const updateOrganizationOpenWorkWebAccessSchema = z.object({
   enabled: z.boolean(),
@@ -148,12 +212,15 @@ const adminOrganizationCapabilitiesSchema = z.object({
 
 const adminFeatureStateSchema = z.object({
   enabled: z.boolean(),
-  source: z.enum(["unavailable", "killed", "lock", "override", "everyone"]),
+  source: z.enum(["unavailable", "killed", "lock", "override", "member", "everyone"]),
   everyone: z.boolean(),
   killed: z.boolean(),
   lock: z.boolean().nullable(),
   override: z.boolean().nullable(),
   overrideApplies: z.boolean(),
+  lastChange: adminFeatureChangeSchema.nullable().optional().meta({
+    description: "Latest change that could affect this organization (its override or the deployment-wide state). Returned when one organization is read or saved; omitted from organization lists.",
+  }),
 })
 
 const adminFeatureStatesSchema = z.object(mapFeatures(() => adminFeatureStateSchema)).meta({
@@ -164,13 +231,20 @@ const adminFeatureSchema = z.object({
   key: featureKeySchema,
   label: z.string(),
   description: z.string(),
+  category: z.enum(FEATURE_CATEGORY_KEYS as [FeatureCategory, ...FeatureCategory[]]).meta({ description: "Group the feature is listed under in /admin." }),
+  categoryLabel: z.string(),
+  added: z.string().meta({ description: "Day the flag was added to the registry (YYYY-MM-DD)." }),
   since: z.string(),
+  author: z.string().meta({ description: "GitHub handle of the person who owns the feature." }),
+  docs: z.string().nullable().meta({ description: "Repo path of the feature's internal doc, or null when it has none." }),
+  docsUrl: z.string().nullable().meta({ description: "Link to the feature's internal doc in the OpenWork repo, or null." }),
   deployments: z.array(z.enum(["cloud", "self_hosted"])),
   default: z.boolean(),
   available: z.boolean(),
   enabled: z.boolean(),
   killed: z.boolean(),
   lock: z.boolean().nullable(),
+  lastChange: adminFeatureChangeSchema.nullable().meta({ description: "Latest deployment-wide change (on or off for everyone, kill switch), or null when it was never changed in /admin." }),
 }).meta({ ref: "AdminFeature" })
 
 const updateFeatureRolloutSchema = z.object({
@@ -260,7 +334,7 @@ const adminUsersPageResponseSchema = z.object({
 }).meta({ ref: "AdminUsersPageResponse" })
 
 const adminOrganizationsPageResponseSchema = z.object({
-  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema, featureStates: adminFeatureStatesSchema }).passthrough()),
+  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema.optional(), featureStates: adminFeatureStatesSchema.optional() }).passthrough()),
   page: adminPageInfoSchema,
   generatedAt: z.string().datetime(),
 }).meta({ ref: "AdminOrganizationsPageResponse" })
@@ -344,10 +418,11 @@ function describeOrganization(rollouts: FeatureRollouts, overrides: FeatureOverr
   return describeFeatures({ rollouts, overrides, environment: env.features })
 }
 
-function readAdminFeatureStates(described: DescribedFeatures): z.infer<typeof adminFeatureStatesSchema> {
+function readAdminFeatureStates(described: DescribedFeatures, changes?: Partial<Record<FeatureKey, FeatureChange>>): z.infer<typeof adminFeatureStatesSchema> {
   return mapFeatures((key) => {
     const { enabled, source, everyone, killed, lock, override, overrideApplies } = described[key]
-    return { enabled, source, everyone, killed, lock, override, overrideApplies }
+    const state = { enabled, source, everyone, killed, lock, override, overrideApplies }
+    return changes ? { ...state, lastChange: serializeFeatureChange(changes[key]) } : state
   })
 }
 
@@ -355,53 +430,27 @@ function readAdminVisibleOrganizationCapabilities(described: DescribedFeatures):
   return { ...mapFeatures((key) => described[key].enabled), gatewayDashboard: true }
 }
 
-function readAdminFeature(key: FeatureKey, rollouts: FeatureRollouts): z.infer<typeof adminFeatureSchema> {
+function readAdminFeature(key: FeatureKey, rollouts: FeatureRollouts, changes: Partial<Record<FeatureKey, FeatureChange>>): z.infer<typeof adminFeatureSchema> {
   const definition = featureDefinition(key)
   const { enabled, killed } = featureRollout(key, rollouts)
   return {
     key,
     label: definition.label,
     description: definition.description,
+    category: definition.category,
+    categoryLabel: FEATURE_CATEGORIES[definition.category].label,
+    added: definition.added,
     since: definition.since,
+    author: definition.author,
+    docs: definition.docs ?? null,
+    docsUrl: featureDocsUrl(key),
     deployments: [...definition.deployments],
     default: definition.default,
     available: featureAvailableOn(key, env.features.deployment),
     enabled,
     killed,
     lock: env.features.locks[key] ?? null,
-  }
-}
-
-function readAdminOpenWorkWebAccess(
-  metadata: Record<string, unknown> | string | null | undefined,
-  subscription: AdminOpenWorkWebSubscription | null,
-) {
-  const complimentaryAccess = hasOpenWorkWebComplimentaryAccess(metadata)
-  const hasEligibleSubscription = Boolean(
-    subscription
-    && isEligibleOpenWorkWebSubscriptionStatus(subscription.status)
-    && env.stripe.openworkWebPriceId
-    && subscription.stripe_price_id === env.stripe.openworkWebPriceId
-    && subscription.payment_failed !== true,
-  )
-  const access = resolveOpenWorkWebAccess({
-    deploymentAvailable: isOpenWorkWebAvailable(),
-    hasEligibleSubscription,
-    complimentaryAccess,
-  })
-  return {
-    ...access,
-    hasEligibleSubscription,
-    hasOngoingSubscription: Boolean(subscription && isOngoingOpenWorkWebSubscriptionStatus(subscription.status)),
-    subscriptionStatus: subscription?.status ?? null,
-  }
-}
-
-function getManualPlanMetadata(tier: PlanTier): { tier: PlanTier; source: "manual"; grantedAt?: string } {
-  return {
-    tier,
-    source: "manual",
-    ...(tier === "enterprise" ? { grantedAt: new Date().toISOString() } : {}),
+    lastChange: serializeFeatureChange(changes[key]),
   }
 }
 
@@ -553,15 +602,15 @@ type AdminOrganizationRow = {
   freeSeatCount: number
   seatsFreeAdditional: number
   billableSeatCount: number
-  capabilities: ReturnType<typeof readAdminVisibleOrganizationCapabilities>
-  featureStates: ReturnType<typeof readAdminFeatureStates>
+  /** Users the plan allows (organization-plan.ts); null when nothing limits it. */
+  userLimit: number | null
+  endsAt: string | null
+  ended: boolean
+  paidBy: PlanPaidBy
+  capabilities?: ReturnType<typeof readAdminVisibleOrganizationCapabilities>
+  featureStates?: ReturnType<typeof readAdminFeatureStates>
   openworkWebAccess: AdminOpenWorkWebAccess
 }
-
-type AdminOpenWorkWebSubscription = Pick<
-  typeof OrgSubscriptionTable.$inferSelect,
-  "status" | "stripe_price_id" | "payment_failed"
->
 
 type AdminOpenWorkWebAccess = ReturnType<typeof readAdminOpenWorkWebAccess>
 
@@ -1015,10 +1064,10 @@ async function loadBillingForUsers(userIds: UserId[]) {
   return billingByUser
 }
 
-export async function loadAdminOrganizationsPage(request: AdminPageRequest) {
+export async function loadAdminOrganizationsPage(request: AdminPageRequest, includeFeatures = true) {
   const startedAt = Date.now()
   const { total, rows } = await selectOrganizationPage(request)
-  const organizations = await shapeAdminOrganizationRows(rows)
+  const organizations = await shapeAdminOrganizationRows(rows, includeFeatures)
   return {
     organizations,
     page: buildAdminPageInfo(request, total, organizations.length, elapsedMs(startedAt)),
@@ -1026,18 +1075,15 @@ export async function loadAdminOrganizationsPage(request: AdminPageRequest) {
   }
 }
 
-async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTable.$inferSelect, "id" | "name" | "slug" | "metadata" | "createdAt" | "updatedAt">>): Promise<AdminOrganizationRow[]> {
+async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTable.$inferSelect, "id" | "name" | "slug" | "metadata" | "createdAt" | "updatedAt">>, includeFeatures: boolean): Promise<AdminOrganizationRow[]> {
   if (rows.length === 0) {
     return []
   }
 
   const organizationIds = rows.map((row) => row.id)
-  const [memberRows, webSubscriptionRows, featureOverridesByOrg, featureRollouts] = await Promise.all([
-    db
-      .select({ organizationId: MemberTable.organizationId, memberCount: sql<number>`count(*)` })
-      .from(MemberTable)
-      .where(and(inArray(MemberTable.organizationId, organizationIds), isNull(MemberTable.removedAt)))
-      .groupBy(MemberTable.organizationId),
+  const [billingByOrg, planByOrg, webSubscriptionRows, featureOverridesByOrg, featureRollouts] = await Promise.all([
+    getBillingQuantitiesForOrganizations(rows),
+    getOrganizationPlanStates(rows),
     db
       .select({
         organizationId: OrgSubscriptionTable.organization_id,
@@ -1050,20 +1096,19 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
         inArray(OrgSubscriptionTable.organization_id, organizationIds),
         eq(OrgSubscriptionTable.type, "web"),
       )),
-    readOrganizationFeatureOverridesForMany(db, organizationIds),
-    readFeatureRollouts(db),
+    includeFeatures ? readOrganizationFeatureOverridesForMany(db, organizationIds) : null,
+    includeFeatures ? readFeatureRollouts(db) : null,
   ])
-  const memberCountByOrg = new Map<string, number>()
-  for (const row of memberRows) {
-    memberCountByOrg.set(row.organizationId, toNumber(row.memberCount))
-  }
   const webSubscriptionByOrg = new Map(webSubscriptionRows.map((row) => [row.organizationId, row]))
 
   return rows.map((entry) => {
-    const described = describeOrganization(featureRollouts, featureOverridesByOrg.get(entry.id) ?? {})
+    const described = featureRollouts && featureOverridesByOrg
+      ? describeOrganization(featureRollouts, featureOverridesByOrg.get(entry.id) ?? {})
+      : null
     const metadata = normalizeOrganizationMetadata(entry.metadata).metadata
     const seatLimit = metadata.limits.members ?? DEFAULT_ORGANIZATION_LIMITS.members
-    const seatCounts = calculateOrganizationSeatBillingCounts({ memberCount: memberCountByOrg.get(entry.id) ?? 0, metadata })
+    const seatCounts = billingByOrg.get(entry.id)?.seats ?? { total: 0, free: DEFAULT_ORGANIZATION_FREE_SEAT_COUNT, additionalFree: 0, chargeable: 0 }
+    const planState = planByOrg.get(entry.id)
     return {
       id: entry.id,
       name: entry.name,
@@ -1076,8 +1121,14 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
       freeSeatCount: seatCounts.free,
       seatsFreeAdditional: seatCounts.additionalFree,
       billableSeatCount: seatCounts.chargeable,
-      capabilities: readAdminVisibleOrganizationCapabilities(described),
-      featureStates: readAdminFeatureStates(described),
+      userLimit: planState?.userLimit ?? null,
+      endsAt: planState?.endsAt ?? null,
+      ended: planState?.ended ?? false,
+      paidBy: planState?.paidBy ?? "none",
+      ...(described ? {
+        capabilities: readAdminVisibleOrganizationCapabilities(described),
+        featureStates: readAdminFeatureStates(described),
+      } : {}),
       openworkWebAccess: readAdminOpenWorkWebAccess(metadata, webSubscriptionByOrg.get(entry.id) ?? null),
     }
   })
@@ -1381,6 +1432,14 @@ const adminRouteErrors = {
 
 export function registerAdminRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   registerAdminFreeAutoUsageRoutes(app)
+  registerAdminFreeAutoConversionsRoutes(app)
+  registerAdminSecurityRoutes(app)
+  registerAdminMemberFeatureRoutes(app)
+  registerAdminOrganizationDetailRoutes(app)
+  registerAdminDashboardRoute(app)
+  registerAdminOpportunitiesRoute(app)
+  registerAdminServiceReadinessRoutes(app)
+  registerAdminSandboxOrganizationRoutes(app)
   app.post(
     "/v1/admin/admins",
     describeRoute({
@@ -1737,6 +1796,9 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         await tx.delete(AuthSessionTable).where(eq(AuthSessionTable.userId, userId))
         await tx.delete(AuthAccountTable).where(eq(AuthAccountTable.userId, userId))
         await tx.delete(DesktopHandoffGrantTable).where(eq(DesktopHandoffGrantTable.user_id, userId))
+        // Each table on its own: one not migrated yet holds no rows; the other's rows must still go.
+        await unlessResumeTableMissing("headless_resume_grant", () => tx.delete(HeadlessResumeGrantTable).where(eq(HeadlessResumeGrantTable.userId, userId)))
+        await unlessResumeTableMissing("headless_resume_revocation", () => tx.delete(HeadlessResumeRevocationTable).where(eq(HeadlessResumeRevocationTable.userId, userId)))
         await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.userId, userId))
         await tx.delete(ScimSyncEventTable).where(eq(ScimSyncEventTable.userId, userId))
         if (membershipRows.length > 0) {
@@ -1751,6 +1813,8 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         }
         await tx.update(MemberTable).set({ removedAt }).where(eq(MemberTable.userId, userId))
         await tx.update(WorkerTable).set({ created_by_user_id: null }).where(eq(WorkerTable.created_by_user_id, userId))
+        await tx.delete(FreeAutoLimitEventTable).where(eq(FreeAutoLimitEventTable.user_id, userId))
+        await tx.delete(FreeAutoPurchaseTable).where(eq(FreeAutoPurchaseTable.user_id, userId))
         await tx.delete(AuthUserTable).where(eq(AuthUserTable.id, userId))
         return { oauthConsentRows: consentRows, gatewayCredentials: credentials }
       })
@@ -1777,8 +1841,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       // Admin user deletion soft-removes memberships; clear affected org membership caches.
       await Promise.all(organizationIds.map((organizationId) => cache.org.deleteMembers(organizationId)))
       for (const organizationId of organizationIds) {
-        const seatCounts = await getOrganizationSeatBillingCounts({ organizationId })
-        await syncSeatSubscriptionQuantityAfterMemberChange({ organizationId, memberCount: seatCounts.total })
+        await syncOrganizationBillingQuantities({ organizationId })
       }
 
       return c.json({ ok: true, user: { id: targetUser.id, email: targetUser.email } })
@@ -1790,9 +1853,12 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     describeRoute({
       tags: ["Admin"],
       summary: "Set an organization's plan",
-      description: "Assigns a manual plan tier and seat limit to the organization. Body: { tier: \"free\" | \"team\" | \"enterprise\", seatLimit: integer }.",
+      description: "Sets the organization's plan and how many users it allows, counting pending invitations; every way people join (invitations, SSO, SCIM) enforces it unless a paid Stripe plan bills every user. Body: { tier: \"free\" | \"team\" | \"enterprise\", seatLimit: integer (users allowed, at least 5), endsAt?: \"YYYY-MM-DD\" | null }. endsAt is a display-only end date for Team and Enterprise and is refused for Free. Never changes Stripe. Returns the resolved plan.",
       responses: {
-        200: jsonResponse("The plan was updated.", z.object({ ok: z.literal(true), organization: z.object({}).passthrough() })),
+        200: jsonResponse("The plan was updated.", z.object({
+          ok: z.literal(true),
+          organization: z.object({ id: z.string(), plan: organizationPlanStateSchema, seatLimit: z.number().int() }).passthrough(),
+        })),
         400: jsonResponse("The request body or organization id was invalid.", adminRequestErrorSchema),
         ...adminRouteErrors,
         404: jsonResponse("The organization does not exist.", notFoundSchema),
@@ -1800,7 +1866,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     }),
     adminRoute(),
     async (c) => {
-      const body = updateOrganizationPlanSchema.safeParse(await c.req.json().catch(() => null))
+      const body = adminOrganizationPlanInputSchema.safeParse(await c.req.json().catch(() => null))
       if (!body.success) {
         return c.json({ error: "invalid_request", message: body.error.issues[0]?.message ?? "Invalid organization plan request." }, 400)
       }
@@ -1810,31 +1876,16 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
       }
       const rows = await db
-        .select({ id: OrganizationTable.id, metadata: OrganizationTable.metadata })
+        .select({ id: OrganizationTable.id })
         .from(OrganizationTable)
         .where(eq(OrganizationTable.id, organizationId))
         .limit(1)
-
-      const organization = rows[0]
-      if (!organization) {
+      if (!rows[0]) {
         return c.json({ error: "not_found", message: "Organization not found." }, 404)
       }
 
-      const metadata = await updateOrganizationMetadata(organizationId, (current) => {
-        const normalized = normalizeOrganizationMetadata(current).metadata
-        const plan = { ...readOrganizationMetadata(current.plan), ...getManualPlanMetadata(body.data.tier) }
-        if (body.data.tier !== "enterprise") delete plan.grantedAt
-        return {
-          ...normalized,
-          plan,
-          limits: {
-            ...normalized.limits,
-            members: body.data.seatLimit,
-          },
-        }
-      })
-
-      return c.json({ ok: true, organization: { id: organizationId, plan: parseOrganizationPlan(metadata), seatLimit: body.data.seatLimit } })
+      const plan = await setOrganizationPlanByAdmin(organizationId, body.data)
+      return c.json({ ok: true, organization: { id: organizationId, plan, seatLimit: plan.seats ?? plan.userLimit ?? body.data.seatLimit } })
     },
   )
 
@@ -1874,14 +1925,15 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         return c.json({ error: "not_found", message: "Organization not found." }, 404)
       }
 
+      // Kept for older clients; /admin sets this with the plan ("Users allowed" on Free). Ignored while a Team or Enterprise plan is set.
       const seatsFreeAdditional = body.data.totalFreeSeats - DEFAULT_ORGANIZATION_FREE_SEAT_COUNT
       await updateOrganizationMetadata(organizationId, (current) => ({
         ...current,
         seatsFreeAdditional,
       }))
 
-      const seatCounts = await getOrganizationSeatBillingCounts({ organizationId })
-      await syncSeatSubscriptionQuantityAfterMemberChange({ organizationId, memberCount: seatCounts.total })
+      await syncOrganizationBillingQuantities({ organizationId })
+      const { seats: seatCounts } = await getOrganizationBillingQuantities(organizationId)
 
       return c.json({
         ok: true,
@@ -1893,6 +1945,108 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
           billableSeatCount: seatCounts.chargeable,
         },
       })
+    },
+  )
+
+  app.get(
+    "/v1/admin/organizations/:organizationId/enterprise-subscription",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Get an organization's Enterprise plan billing",
+      description: "Returns the organization's Stripe Enterprise subscription, committed minimum users and the users Stripe bills.",
+      responses: {
+        200: jsonResponse("Enterprise billing returned.", z.object({ enterprise: enterpriseBillingStateSchema })),
+        400: jsonResponse("The organization id was invalid.", adminRequestErrorSchema),
+        ...adminRouteErrors,
+      },
+    }),
+    adminRoute(),
+    async (c) => {
+      const organizationId = c.req.param("organizationId")
+      if (!isOrganizationId(organizationId)) {
+        return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
+      }
+      return c.json({ enterprise: await getEnterpriseBillingAdminState(organizationId) })
+    },
+  )
+
+  app.post(
+    "/v1/admin/organizations/:organizationId/enterprise-subscription",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Start an organization's Enterprise plan",
+      description: "Creates a Stripe Enterprise subscription on a custom per-user price of the Enterprise product, billed by invoice, never below the committed minimum users. Cancels a Team plan subscription with a prorated credit. Body: { priceId, minimumUsers, billingEmail, daysUntilDue? }.",
+      responses: {
+        200: jsonResponse("The Enterprise subscription was created.", z.object({ ok: z.literal(true), enterprise: enterpriseBillingStateSchema })),
+        400: jsonResponse("The request body, organization id or price was invalid.", z.union([adminRequestErrorSchema, enterpriseBillingErrorSchema])),
+        ...adminRouteErrors,
+        404: jsonResponse("The organization does not exist.", z.union([notFoundSchema, enterpriseBillingErrorSchema])),
+        409: jsonResponse("The organization already has an Enterprise subscription.", enterpriseBillingErrorSchema),
+        503: jsonResponse("Stripe Enterprise billing is not configured on this deployment.", enterpriseBillingErrorSchema),
+      },
+    }),
+    adminRoute(),
+    async (c) => {
+      const body = createEnterpriseSubscriptionSchema.safeParse(await c.req.json().catch(() => null))
+      if (!body.success) {
+        return c.json({ error: "invalid_request", message: body.error.issues[0]?.message ?? "Invalid Enterprise subscription request." }, 400)
+      }
+      const organizationId = c.req.param("organizationId")
+      if (!isOrganizationId(organizationId)) {
+        return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
+      }
+      try {
+        await createEnterpriseSubscription({
+          organizationId,
+          priceId: body.data.priceId,
+          minimumUsers: body.data.minimumUsers,
+          billingEmail: body.data.billingEmail,
+          daysUntilDue: body.data.daysUntilDue,
+          requestedByUserId: c.get("user").id,
+        })
+      } catch (error) {
+        if (error instanceof EnterpriseBillingError) {
+          return c.json({ error: error.code, message: error.message }, enterpriseBillingErrorStatus(error))
+        }
+        throw error
+      }
+      return c.json({ ok: true, enterprise: await getEnterpriseBillingAdminState(organizationId) })
+    },
+  )
+
+  app.patch(
+    "/v1/admin/organizations/:organizationId/enterprise-subscription",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Change an organization's Enterprise minimum users",
+      description: "Updates the committed minimum users on the organization's Enterprise subscription and resynchronizes its Stripe quantity. Body: { minimumUsers }.",
+      responses: {
+        200: jsonResponse("The minimum users were updated.", z.object({ ok: z.literal(true), enterprise: enterpriseBillingStateSchema })),
+        400: jsonResponse("The request body or organization id was invalid.", adminRequestErrorSchema),
+        ...adminRouteErrors,
+        404: jsonResponse("The organization has no ongoing Enterprise subscription.", enterpriseBillingErrorSchema),
+        503: jsonResponse("Stripe Enterprise billing is not configured on this deployment.", enterpriseBillingErrorSchema),
+      },
+    }),
+    adminRoute(),
+    async (c) => {
+      const body = updateEnterpriseMinimumUsersSchema.safeParse(await c.req.json().catch(() => null))
+      if (!body.success) {
+        return c.json({ error: "invalid_request", message: body.error.issues[0]?.message ?? "Invalid Enterprise minimum users request." }, 400)
+      }
+      const organizationId = c.req.param("organizationId")
+      if (!isOrganizationId(organizationId)) {
+        return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
+      }
+      try {
+        await updateEnterpriseMinimumUsers({ organizationId, minimumUsers: body.data.minimumUsers })
+      } catch (error) {
+        if (error instanceof EnterpriseBillingError) {
+          return c.json({ error: error.code, message: error.message }, enterpriseBillingErrorStatus(error))
+        }
+        throw error
+      }
+      return c.json({ ok: true, enterprise: await getEnterpriseBillingAdminState(organizationId) })
     },
   )
 
@@ -2113,9 +2267,13 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         return c.json({ error: "not_found", message: "Organization not found." }, 404)
       }
 
-      const [overrides, rollouts] = await Promise.all([readOrganizationFeatureOverrides(db, organization.id), readFeatureRollouts(db)])
+      const [overrides, rollouts, changes] = await Promise.all([
+        readOrganizationFeatureOverrides(db, organization.id),
+        readFeatureRollouts(db),
+        readLatestFeatureChanges(db, { organizationId: organization.id }),
+      ])
       const described = describeOrganization(rollouts, overrides)
-      return c.json({ capabilities: readAdminVisibleOrganizationCapabilities(described), featureStates: readAdminFeatureStates(described) })
+      return c.json({ capabilities: readAdminVisibleOrganizationCapabilities(described), featureStates: readAdminFeatureStates(described, changes) })
     },
   )
 
@@ -2171,13 +2329,10 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         setByUserId: c.get("user")?.id ?? null,
       })
 
-      const described = describeOrganization(await readFeatureRollouts(db), overrides)
-      // Turning Permissions on copies the default sets in now (docs/permissions/overview.md,
-      // section 8). Never fails the toggle: resolution seeds lazily if this does.
-      if (changes.permissions === true && described.permissions.enabled) {
-        await seedDefaultPermissionSetsOnEnable(organizationId)
-      }
-      return c.json({ ok: true, organization: { id: organizationId }, capabilities: readAdminVisibleOrganizationCapabilities(described), featureStates: readAdminFeatureStates(described) })
+      const [rollouts, latestChanges] = await Promise.all([readFeatureRollouts(db), readLatestFeatureChanges(db, { organizationId })])
+      const described = describeOrganization(rollouts, overrides)
+
+      return c.json({ ok: true, organization: { id: organizationId }, capabilities: readAdminVisibleOrganizationCapabilities(described), featureStates: readAdminFeatureStates(described, latestChanges) })
     },
   )
 
@@ -2194,8 +2349,8 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     }),
     adminRoute(),
     async (c) => {
-      const rollouts = await readFeatureRollouts(db)
-      return c.json({ deployment: env.features.deployment, features: FEATURE_KEYS.map((key) => readAdminFeature(key, rollouts)) })
+      const [rollouts, changes] = await Promise.all([readFeatureRollouts(db), readLatestFeatureChanges(db)])
+      return c.json({ deployment: env.features.deployment, features: FEATURE_KEYS.map((key) => readAdminFeature(key, rollouts, changes)) })
     },
   )
 
@@ -2233,7 +2388,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         defaultEnabled: featureDefinition(key.data).default,
         updatedByUserId: c.get("user")?.id ?? null,
       })
-      return c.json({ ok: true, feature: readAdminFeature(key.data, rollouts) })
+      return c.json({ ok: true, feature: readAdminFeature(key.data, rollouts, await readLatestFeatureChanges(db)) })
     },
   )
 
@@ -2265,7 +2420,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     describeRoute({
       tags: ["Admin"],
       summary: "Get a bounded admin organization page",
-      description: "Returns one bounded page of organizations plus required pagination metadata. Search runs across the global organization set without changing the global overview totals.",
+      description: "Returns one bounded page of organizations plus required pagination metadata. Set includeFeatures=0 to skip feature resolution and omit capabilities and featureStates; read them per organization when needed. Search runs across the global organization set without changing the global overview totals.",
       responses: {
         200: jsonResponse("Admin organization page returned successfully.", adminOrganizationsPageResponseSchema),
         400: jsonResponse("The admin organization page query parameters were invalid.", invalidRequestSchema),
@@ -2274,11 +2429,11 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       },
     }),
     adminRoute(),
-    queryValidator(adminPageQuerySchema),
+    queryValidator(adminOrganizationPageQuerySchema),
     async (c) => {
       const query = c.req.valid("query")
       const pageRequest = normalizeAdminPageRequest(query)
-      return c.json(await loadAdminOrganizationsPage(pageRequest))
+      return c.json(await loadAdminOrganizationsPage(pageRequest, query.includeFeatures !== "0"))
     },
   )
 

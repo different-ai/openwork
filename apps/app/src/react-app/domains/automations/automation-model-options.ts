@@ -61,9 +61,14 @@ export function resolveProposalModel(
     variant: null,
   }
   const options = automationModelOptions(providers, availability)
-  if (!proposed) return {
-    model: freeModel,
-    resolution: findAutomationModelOption(options, freeModel) ? "default" : "unavailable",
+  if (!proposed) {
+    if (findAutomationModelOption(options, freeModel)) return { model: freeModel, resolution: "default" }
+    // No model proposed and the free starter isn't offered here (Cloud placement): use the first model this
+    // member can actually run instead of a default the server will reject.
+    const first = options[0]
+    return first
+      ? { model: { providerId: first.providerId, modelId: first.modelId, variant: null }, resolution: "default" }
+      : { model: freeModel, resolution: "unavailable" }
   }
 
   if (findAutomationModelOption(options, proposed)) {

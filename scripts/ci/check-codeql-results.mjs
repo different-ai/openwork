@@ -2,11 +2,44 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
+// Default setup keys, plus the advanced-setup workflow that replaced it.
+const advancedSetupAnalysisKey = ".github/workflows/codeql.yml:analyze";
+const defaultSetupAnalysisKeys = new Set([
+  "dynamic/github-code-scanning/codeql:upload",
+  "dynamic/github-code-scanning/codeql:analyze",
+  advancedSetupAnalysisKey,
+]);
+const codeqlWorkflowPaths = new Set(["dynamic/github-code-scanning/codeql", ".github/workflows/codeql.yml"]);
+
+function isCodeqlBaselineKey(key) {
+  return typeof key === "string" && (key.startsWith("dynamic/github-code-scanning/codeql:") || key === advancedSetupAnalysisKey);
+}
+
+function successfulDefaultSetupAnalysis(analysis) {
+  return analysis.tool?.name === "CodeQL" && !analysis.error &&
+    defaultSetupAnalysisKeys.has(analysis.analysis_key) &&
+    typeof analysis.category === "string" && /^\/language:[a-z][a-z-]*$/.test(analysis.category);
+}
+
+export function defaultSetupBaseline(analyses) {
+  const latest = analyses.find((analysis) => analysis.tool?.name === "CodeQL" && !analysis.error &&
+    isCodeqlBaselineKey(analysis.analysis_key));
+  if (!latest) throw new Error("No successful default-setup baseline found; inspect CodeQL on the default branch.");
+  if (!successfulDefaultSetupAnalysis(latest) || typeof latest.commit_sha !== "string" || !latest.commit_sha) {
+    throw new Error("Unsupported CodeQL default-setup baseline; inspect the latest uploaded analysis.");
+  }
+  const languages = [...new Set(analyses.filter((analysis) =>
+    successfulDefaultSetupAnalysis(analysis) && analysis.commit_sha === latest.commit_sha &&
+    analysis.analysis_key === latest.analysis_key
+  ).map((analysis) => analysis.category.slice("/language:".length)))];
+  return { commitSha: latest.commit_sha, analysisKey: latest.analysis_key, languages };
+}
+
 export function missingLanguages(languages, analyses, shas) {
   const canonical = (language) => ["javascript", "typescript"].includes(language) ? "javascript-typescript" : language;
   const expected = [...new Set(languages.map(canonical))];
   const uploaded = new Set(analyses.filter((analysis) =>
-    shas.includes(analysis.commit_sha) && analysis.tool.name === "CodeQL" && !analysis.error
+    shas.includes(analysis.commit_sha) && successfulDefaultSetupAnalysis(analysis)
   ).map((analysis) => analysis.category));
   return expected.filter((language) => !uploaded.has(`/language:${language}`));
 }
@@ -25,12 +58,7 @@ async function main() {
   // to GITHUB_TOKEN. Use the successful baseline uploads that PRs must match.
   const repository = api(prefix);
   const baseline = api(`${prefix}/code-scanning/analyses?ref=${encodeURIComponent(`refs/heads/${repository.default_branch}`)}&tool_name=CodeQL&per_page=100`);
-  const latest = baseline.find((analysis) => !analysis.error && analysis.analysis_key === "dynamic/github-code-scanning/codeql:upload");
-  if (!latest) throw new Error("No successful default-setup baseline found; inspect CodeQL on the default branch.");
-  const languages = [...new Set(baseline.filter((analysis) =>
-    analysis.commit_sha === latest.commit_sha && !analysis.error &&
-    analysis.analysis_key === "dynamic/github-code-scanning/codeql:upload"
-  ).map((analysis) => analysis.category.replace(/^\/language:/, "")))];
+  const { languages } = defaultSetupBaseline(baseline);
   const number = process.argv[2];
   if (number && !/^\d+$/.test(number)) throw new Error("Usage: node scripts/ci/check-codeql-results.mjs [PR number]");
   const pulls = number ? [api(`${prefix}/pulls/${number}`)] : api(`${prefix}/pulls?state=open&per_page=100`, true);
@@ -44,7 +72,7 @@ async function main() {
     // Only query workflow state when coverage is incomplete.
     const runs = missing.length ? api(`${prefix}/actions/runs?head_sha=${pull.head.sha}&per_page=100`, true) : [];
     const active = runs.flatMap((page) => page.workflow_runs).some((run) =>
-      run.path === "dynamic/github-code-scanning/codeql" && run.status !== "completed"
+      codeqlWorkflowPaths.has(run.path?.split("@")[0]) && run.status !== "completed"
     );
     if (!missing.length) {
       lines.push(`- #${pull.number} (${pull.head.sha.slice(0, 7)}): all language results uploaded.`);

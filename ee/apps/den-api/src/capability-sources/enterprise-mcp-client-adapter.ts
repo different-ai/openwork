@@ -4,6 +4,9 @@ import {
   EnterpriseMcpCatalogError,
   EnterpriseMcpClientError,
   EnterpriseMcpToolResultError,
+  EnterpriseMcpOAuthContractError,
+  oauthIssuerMismatchMessage,
+  IssuerMismatchError,
   type EnterpriseMcpClient,
   type EnterpriseMcpConnection,
   type EnterpriseMcpDiagnosticEvent,
@@ -54,6 +57,7 @@ function toEnterpriseConnection(
         persistence: new DenEnterpriseMcpOAuthPersistence(connection, member, tracker),
         configuration: {
           applicationType: "web",
+          manualOAuthEndpoints: connection.oauthConfiguration?.manualOAuthEndpoints,
           // CIMD client identifiers must be HTTPS URLs. Local HTTP development
           // still exposes the document for inspection, but falls back to DCR
           // or pre-registration instead of advertising a non-conforming ID.
@@ -163,6 +167,11 @@ function translateEnterpriseMcpError(
   tracker: ExternalMcpDiagnosticTracker,
 ): ExternalMcpDiagnosticError {
   const chain = errorChain(error)
+  const mismatch = chain.find((cause) => cause instanceof IssuerMismatchError)
+  if (mismatch instanceof IssuerMismatchError && mismatch.kind === "metadata") {
+    const classified = tracker.error(new EnterpriseMcpOAuthContractError("MCP_OAUTH_ISSUER_MISMATCH", "Inconsistent sign-in information."), "AUTH_ISSUER_DISCOVERY")
+    return new ExternalMcpDiagnosticError({ ...classified.diagnostic, message: oauthIssuerMismatchMessage(mismatch.expected, mismatch.received) }, error)
+  }
   const existing = chain.find((cause) => cause instanceof ExternalMcpDiagnosticError)
   if (existing instanceof ExternalMcpDiagnosticError) return existing
   const catalog = chain.find((cause) => cause instanceof EnterpriseMcpCatalogError)
@@ -233,7 +242,18 @@ function createOperationClient(
       if (response.status === 401) await rejectMemberApiKey(input.connection, member.orgMembershipId, credential)
       return response
     }
-    : guardedFetch
+    : input.connection.oauthConfiguration?.manualOAuthEndpoints
+      ? async (resource, init) => {
+          // A saved static endpoint is exact: never forward a code, secret or
+          // bearer token to a redirect destination, even on the same host.
+          const destination = resource instanceof Request ? resource.url : String(resource)
+          const tokenEndpoint = input.connection.oauthConfiguration?.manualOAuthEndpoints?.tokenEndpoint
+          if (destination !== new URL(input.connection.url).href && destination !== tokenEndpoint) {
+            throw new Error("Manual sign-in configuration does not allow discovery or another endpoint.")
+          }
+          return guardedFetch(resource, { ...init, redirect: "manual" })
+        }
+      : guardedFetch
   const diagnosticFetch = createExternalMcpDiagnosticFetch({
     fetch: fetchForCaller,
     endpoint: input.connection.url,

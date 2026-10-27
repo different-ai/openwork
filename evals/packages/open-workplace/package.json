@@ -1,0 +1,23 @@
+{
+  "name": "@openwork/open-workplace",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Open Outlook, Open Calendar, Open Drive, Open Jira and Open Confluence: self-hosted workplace apps for testing agents end to end.",
+  "type": "module",
+  "exports": {
+    "./microsoft365": "./src/microsoft365.mjs",
+    "./atlassian": "./src/atlassian.mjs",
+    "./atlassian-web": "./src/atlassian-web.mjs"
+  },
+  "scripts": {
+    "start:microsoft365": "node src/microsoft365.mjs",
+    "start:atlassian": "node src/atlassian.mjs",
+    "start:atlassian-web": "node src/atlassian-web.mjs",
+    "start:workshop": "node src/workshop.mjs",
+    "workshop:roster": "node src/workshop-roster.mjs",
+    "test": "node --test src/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=24.22.1 <25"
+  }
+}

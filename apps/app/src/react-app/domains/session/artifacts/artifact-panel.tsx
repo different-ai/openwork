@@ -132,12 +132,12 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
       }
 
       if (isTextContent(target)) {
-        const result = await client.readWorkspaceFile(workspaceId, target.value);
+        const result = await client.readWorkspaceFile(workspaceId, target.value, { sessionId });
 
         return { kind: "text", data: result.content, updatedAt: result.updatedAt ?? null };
       }
 
-      const result = await client.downloadWorkspaceFile(workspaceId, target.value);
+      const result = await client.downloadWorkspaceFile(workspaceId, target.value, { sessionId });
 
       return { kind: "binary", data: result.data, contentType: result.contentType, updatedAt: target.updatedAt ?? null };
     },
@@ -186,10 +186,10 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
       }
 
       if (input.kind === "text") {
-        return client.writeWorkspaceFile(workspaceId, { path: target.value, content: input.data, baseUpdatedAt: input.baseUpdatedAt });
+        return client.writeWorkspaceFile(workspaceId, { path: target.value, content: input.data, baseUpdatedAt: input.baseUpdatedAt, sessionId });
       }
 
-      return client.writeWorkspaceBinaryFile(workspaceId, { path: target.value, data: input.data, baseUpdatedAt: input.baseUpdatedAt });
+      return client.writeWorkspaceBinaryFile(workspaceId, { path: target.value, data: input.data, baseUpdatedAt: input.baseUpdatedAt, sessionId });
     },
     onSuccess: (result, input, context) => {
       if (context?.owner !== owner) return;
@@ -217,7 +217,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
   });
 
   const downloadFile = async (path: string, name: string) => {
-    const result = await client.downloadWorkspaceFile(workspaceId, path);
+    const result = await client.downloadWorkspaceFile(workspaceId, path, { sessionId });
     const url = URL.createObjectURL(new Blob([result.data], { type: result.contentType ?? "application/octet-stream" }));
     const anchor = document.createElement("a");
 

@@ -90,7 +90,9 @@ export function applyTextHighlights(root: HTMLElement, query: string) {
 
       // `.katex` is excluded because injecting <mark> into rendered math corrupts
       // KaTeX's layout spans, and its MathML branch duplicates the visible text.
-      if (parent.closest("pre, code, .katex")) {
+      // Zoomable Mermaid diagrams are rendered by React; marks there would
+      // break its reconciliation.
+      if (parent.closest("pre, code, .katex, [data-openwork-mermaid-interactive]")) {
         return NodeFilter.FILTER_REJECT;
       }
 

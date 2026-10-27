@@ -9,10 +9,10 @@
 // - Remotely-initiated handoffs (install/invite links, enterprise bootstrap,
 //   "Open in desktop" from the Cloud dashboard) carry the org the user is
 //   actually working in — connect straight through.
-// - Desktop-initiated sign-ins (an in-app "Sign in" button opening the
-//   browser, or a pasted one-time code) must not silently adopt the
-//   server-resolved org when the account has several; the org chooser decides,
-//   with the exchange-reported org only pre-highlighted.
+// - Desktop-initiated sign-ins restore a remembered choice only after the
+//   destination verifies the returning account's membership and rollout.
+//   Without that, they must not silently adopt a server-resolved org when the
+//   account has several; the exchange org is only a chooser suggestion.
 //
 // This module owns the short-lived "the desktop started this sign-in" marker
 // and the "organization selection pending" state the routing and auth layers
@@ -127,9 +127,9 @@ export type HandoffOrgPlan =
  *
  * - An explicitly scoped org (install/invite link, enterprise bootstrap) is
  *   always committed — the link itself is the remote selection.
- * - A desktop-initiated sign-in commits nothing: the exchange-reported org
- *   becomes a chooser suggestion and the org onboarding step decides
- *   (auto-selecting silently only for single-org accounts).
+ * - A desktop-initiated sign-in restores a verified remembered choice, if
+ *   supplied. Otherwise the exchange org is only a chooser suggestion and
+ *   onboarding decides (silently auto-selecting single-org accounts).
  * - A remotely-initiated handoff commits the exchange-reported org — it is
  *   the organization the user's Cloud session is actually working in.
  */
@@ -137,11 +137,16 @@ export function resolveHandoffOrgPlan(input: {
   explicitActiveOrg: SignInOrgRef | null;
   exchangeOrganization: SignInOrgRef | null;
   desktopInitiated: boolean;
+  /** Already membership-validated and allowed by the destination's live rollout. */
+  rememberedOrganization?: SignInOrgRef | null;
 }): HandoffOrgPlan {
   if (input.explicitActiveOrg?.id?.trim()) {
     return { kind: "commit", organization: input.explicitActiveOrg };
   }
   if (input.desktopInitiated) {
+    if (input.rememberedOrganization?.id?.trim()) {
+      return { kind: "commit", organization: input.rememberedOrganization };
+    }
     return { kind: "await-user-selection", suggestion: input.exchangeOrganization };
   }
   return { kind: "commit", organization: input.exchangeOrganization };

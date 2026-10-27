@@ -59,7 +59,6 @@ export function isInvocation(event: SlackEvent) {
   )
 }
 export function canUseSlackAssistant(input: {
-  capabilityEnabled: boolean
   enabled: boolean
   individualAccounts: boolean
   activeMember: boolean
@@ -67,7 +66,6 @@ export function canUseSlackAssistant(input: {
   connected: boolean
 }) {
   return (
-    input.capabilityEnabled &&
     input.enabled &&
     input.individualAccounts &&
     input.activeMember &&
@@ -93,7 +91,7 @@ When you hand work to the member's desktop (remote-session:create with target "d
 When asked how earlier desktop work is going, call remote-session:read with its commandId and answer from that; never guess.`
 
 /**
- * With `slackWorkbotReplies`, these are the runner session's instructions (its cached system prompt) instead of a
+ * The runner session's instructions (its cached system prompt) instead of a
  * preamble repeated in every message: Slack's safety rules, then how Workbot talks, adapted to a Slack thread. They
  * must stay byte-for-byte the same from one message to the next (no dates, names or ids) so the cache keeps hitting.
  */
@@ -135,7 +133,7 @@ export function buildSlackEnvelope(input: {
   })
 }
 
-/** Without `slackWorkbotReplies`: the instructions travel with every message. */
+/** Compatibility for older in-flight checkpoints: the instructions travel with every message. */
 export function buildSlackPrompt(input: Parameters<typeof buildSlackEnvelope>[0]) {
   return `${SLACK_RUN_INSTRUCTIONS}\n\n${buildSlackEnvelope(input)}`
 }

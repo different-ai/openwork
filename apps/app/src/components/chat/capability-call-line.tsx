@@ -64,10 +64,34 @@ function ConnectorMark({ connector }: { connector: ConnectorToolIdentity }) {
   )
 }
 
+/**
+ * Results often nest JSON inside strings (an MCP resource's `text`, a tool's
+ * stringified output). Parse those so details read as indented JSON, not as
+ * one escaped line.
+ */
+function unwrapJson(value: unknown, depth = 0): unknown {
+  if (depth > 4) return value
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    if (!/^[[{]/.test(trimmed)) return value
+    try {
+      return unwrapJson(JSON.parse(trimmed), depth + 1)
+    } catch {
+      return value
+    }
+  }
+  if (Array.isArray(value)) return value.map((entry) => unwrapJson(entry, depth + 1))
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, unwrapJson(entry, depth + 1)]))
+  }
+  return value
+}
+
 function formatTechnicalValue(value: unknown): string {
-  if (typeof value === "string") return value
+  const unwrapped = unwrapJson(value)
+  if (typeof unwrapped === "string") return unwrapped
   try {
-    return JSON.stringify(value, null, 2)
+    return JSON.stringify(unwrapped, null, 2)
   } catch {
     return String(value)
   }
@@ -106,12 +130,12 @@ export function TechnicalDetailsPanel({ part }: { part: DynamicToolUIPart }) {
       {script ? (
         <pre className="max-h-60 overflow-auto whitespace-pre font-mono leading-5">{script.code}</pre>
       ) : part.input !== undefined && part.input !== null && !(typeof part.input === "object" && Object.keys(part.input).length === 0) ? (
-        <pre className="max-h-40 overflow-auto whitespace-pre-wrap wrap-break-word">
+        <pre className="max-h-40 overflow-auto whitespace-pre-wrap wrap-break-word font-mono leading-5">
           {formatTechnicalValue(part.input)}
         </pre>
       ) : null}
       {"output" in part && part.output !== undefined ? (
-        <pre className="max-h-60 overflow-auto whitespace-pre-wrap wrap-break-word opacity-80">
+        <pre className="max-h-60 overflow-auto whitespace-pre-wrap wrap-break-word font-mono leading-5 text-muted-foreground">
           {formatTechnicalValue(part.output)}
         </pre>
       ) : null}

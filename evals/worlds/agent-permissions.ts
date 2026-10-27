@@ -7,7 +7,6 @@ import type { MockAgentToolStep } from "@openwork/labs";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { configureProvider } from "./chat.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 import { isRecord, records } from "./library.ts";
 
 /** One permission's setting as Den's Agent permissions page saves it. */
@@ -17,8 +16,6 @@ export type AgentPermissionMember = "riley" | "morgan";
 
 type OrganizationOptions = {
   web: boolean;
-  /** A platform admin has turned agent permissions on for the organization. */
-  feature?: boolean;
   /** Each team's name and members. */
   teams?: Record<string, AgentPermissionMember[]>;
   /** Morgan is an organization admin, but not an owner. */
@@ -28,7 +25,7 @@ type OrganizationOptions = {
 /**
  * An organization Avery owns, with Riley and Morgan as members and the given
  * teams (by default Riley alone in Contractors). Nothing is set yet, as for
- * an organization that has just been given the feature.
+ * an organization that has not configured any agent permissions.
  */
 async function agentPermissionsOrganization(seed: Seed, options: OrganizationOptions) {
   const den = await seed.den({
@@ -71,8 +68,6 @@ async function agentPermissionsOrganization(seed: Seed, options: OrganizationOpt
     });
     if (!promoted.response.ok) throw new Error(`Making Morgan an admin failed: HTTP ${promoted.response.status} ${promoted.text.slice(0, 300)}`);
   }
-  const enableFeature = () => enableOrganizationCapabilities(seed, den.admin, { agentPermissions: true }, organizationId);
-  if (options.feature !== false) await enableFeature();
   const scopePath = (team?: string) => team === undefined
     ? "/v1/agent-permissions/everyone"
     : `/v1/agent-permissions/teams/${encodeURIComponent(teamIds[team] ?? team)}`;
@@ -93,7 +88,6 @@ async function agentPermissionsOrganization(seed: Seed, options: OrganizationOpt
     teamIds,
     /** The Contractors team's id, the team most journeys change. */
     teamId: teamIds.Contractors ?? "",
-    enableFeature,
     save,
     saveContractors: (settings: AgentPermissionSettings) => save(settings, "Contractors"),
     saveStatus,
@@ -172,9 +166,9 @@ export async function agentPermissionsAdminView(seed: Seed) {
   };
 }
 
-/** The owner on Contractors' Agents tab in an organization that does not have agent permissions yet. */
-export async function agentPermissionsFeatureOff(seed: Seed) {
-  const world = await agentPermissionsOrganization(seed, { web: true, feature: false });
+/** The owner on Contractors' Agents tab before any permissions are configured. */
+export async function agentPermissionsUnconfigured(seed: Seed) {
+  const world = await agentPermissionsOrganization(seed, { web: true });
   return { ...world, web: await ownerOn(seed, world, teamAgents(world.teamId), 1100) };
 }
 
@@ -259,24 +253,24 @@ function browserTabs(state: unknown): BrowserTab[] {
  * report. The model is a witness that calls the tool each prompt names.
  */
 export function agentPermissionsDesktop(seed: Seed, { place }: { place: Place }) {
-  return desktopWorld(seed, place, { feature: true });
+  return desktopWorld(seed, place, { configured: true });
 }
 
 /**
- * The same desktop setup for an organization that has not turned agent
- * permissions on: Riley's app gets no rules, so nothing about the agent, the
+ * The same desktop setup for an organization without configured agent
+ * permissions: Riley's app gets no rules, so nothing about the agent, the
  * folder's skills and MCP server, or the built-in browser changes.
  */
-export function agentPermissionsDesktopFeatureOff(seed: Seed, { place }: { place: Place }) {
-  return desktopWorld(seed, place, { feature: false });
+export function agentPermissionsDesktopUnconfigured(seed: Seed, { place }: { place: Place }) {
+  return desktopWorld(seed, place, { configured: false });
 }
 
-async function desktopWorld(seed: Seed, place: Place, { feature }: { feature: boolean }) {
+async function desktopWorld(seed: Seed, place: Place, { configured }: { configured: boolean }) {
   const stack = new AsyncDisposableStack();
   try {
     const engine = resolveEvalEngine();
-    const world = await agentPermissionsOrganization(seed, { web: true, feature });
-    if (feature) await world.saveContractors(contractorDesktopPermissions);
+    const world = await agentPermissionsOrganization(seed, { web: true });
+    if (configured) await world.saveContractors(contractorDesktopPermissions);
     // The witness model, and the MCP server the folder adds.
     const mock = (await seed.mock({ isolatedProcessEnv: true, allowUnauthenticatedMcp: true }).boot(place)).handle;
     stack.defer(() => mock.stop());
@@ -411,11 +405,11 @@ async function desktopWorld(seed: Seed, place: Place, { feature }: { feature: bo
 }
 
 /**
- * The owner on Members › Teams before agent permissions are on, with Riley in
+ * The owner on Members › Teams before agent permissions are configured, with Riley in
  * Contractors and Morgan in Engineering.
  */
 export async function agentPermissionsTeamsList(seed: Seed) {
-  const world = await agentPermissionsOrganization(seed, { web: true, feature: false, teams: { Contractors: ["riley"], Engineering: ["morgan"] } });
+  const world = await agentPermissionsOrganization(seed, { web: true, teams: { Contractors: ["riley"], Engineering: ["morgan"] } });
   const web = await seed.web({
     den: world.den,
     signedInAs: world.den.admin,
@@ -426,7 +420,7 @@ export async function agentPermissionsTeamsList(seed: Seed) {
   return { ...world, web };
 }
 
-/** The owner on the dashboard, with agent permissions on and Riley in Contractors. */
+/** The owner on the dashboard, with Riley in Contractors and agent permissions available. */
 export async function agentPermissionsMoved(seed: Seed) {
   const world = await agentPermissionsOrganization(seed, { web: true });
   const web = await seed.web({
@@ -443,8 +437,8 @@ export async function agentPermissionsMoved(seed: Seed) {
 export const LONG_TEAM_NAME = "Customer Success and Implementation Partners for Europe and the Middle East";
 
 /**
- * The owner on Members › Teams with agent permissions, team roles and shared
- * roles on, and names longer than the list's lanes: Sales Team has three
+ * The owner on Members › Teams with generally available agent permissions,
+ * team roles and shared roles, and names longer than the list's lanes: Sales Team has three
  * people with long names and its own "Sales Team Permissions" role, a second
  * team has a very long name, and Engineering asks before commands.
  */
@@ -467,7 +461,6 @@ export async function teamsListLongNames(seed: Seed) {
   if (!context.response.ok || typeof organization?.id !== "string") throw new Error(`Reading the organization failed: ${context.text.slice(0, 500)}`);
   const organizationId = organization.id;
   const scope = { "x-openwork-org-id": organizationId };
-  await enableOrganizationCapabilities(seed, den.admin, { agentPermissions: true, permissions: true, teamRoles: true, sharedRoles: true }, organizationId);
   const members = isRecord(context.body) ? records(context.body.members) : [];
   const memberId = (name: string) => {
     const id = members.find((member) => isRecord(member.user) && member.user.name === name)?.id;

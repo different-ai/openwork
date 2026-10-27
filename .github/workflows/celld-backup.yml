@@ -1,0 +1,86 @@
+name: Back up the celld bucket
+
+# Copies the production runner's bucket (celld cells under fleet/, kept files under sessions/) into a backup bucket
+# in another region, one dated snapshot per run. celld's replication protects against losing a node, not against a
+# bug or a bad write deleting data: that would replicate. R2 has no object versioning, so this is the backup.
+#
+# Snapshots go to s3://$CELLD_BACKUP_BUCKET/snapshots/<UTC time>/ and expire through the backup bucket's lifecycle
+# rule (15 days), so a deleted conversation is gone from backups within that time. Restoring: see
+# ee/apps/headless-runner/OWNER-CELLS.md ("Backups and restore").
+#
+# Needs, on the celld-backup environment: secrets CELLD_BACKUP_R2_ACCESS_KEY_ID and CELLD_BACKUP_R2_SECRET_ACCESS_KEY
+# (an R2 token that can read the source bucket and write the backup bucket), and variables CELLD_BACKUP_BUCKET and
+# CELLD_BACKUP_S3_ENDPOINT. Without them the job skips with a notice.
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: celld-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Snapshot the celld bucket
+    if: github.repository == 'different-ai/openwork'
+    runs-on: ubuntu-24.04
+    environment: celld-backup
+    timeout-minutes: 120
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_BACKUP_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_BACKUP_R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_REGION: auto
+      SOURCE_BUCKET: openwork-celld
+      BACKUP_BUCKET: ${{ vars.CELLD_BACKUP_BUCKET }}
+      S3_ENDPOINT: ${{ vars.CELLD_BACKUP_S3_ENDPOINT }}
+
+    steps:
+      - name: Check the backup is configured
+        id: configured
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$BACKUP_BUCKET" ] || [ -z "$S3_ENDPOINT" ]; then
+            echo "::notice title=celld backup not configured::set CELLD_BACKUP_R2_ACCESS_KEY_ID, CELLD_BACKUP_R2_SECRET_ACCESS_KEY (secrets) and CELLD_BACKUP_BUCKET, CELLD_BACKUP_S3_ENDPOINT (variables) on the celld-backup environment"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Copy the bucket into a dated snapshot
+        if: steps.configured.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          stamp="$(date -u +%Y-%m-%dT%H%MZ)"
+          target="s3://$BACKUP_BUCKET/snapshots/$stamp"
+          # ci/ holds throwaway deploy preflights; everything else (fleet/, sessions/) is kept.
+          # The fleet keeps running while this copies, so celld can delete an object between the listing and its copy
+          # (old epochs it cleans up, leases of nodes that left): those fail with NoSuchKey and are skipped. Any other
+          # copy failure fails the backup.
+          set +e
+          aws s3 sync "s3://$SOURCE_BUCKET" "$target" --endpoint-url "$S3_ENDPOINT" --exclude "ci/*" --only-show-errors > "$RUNNER_TEMP/sync.log" 2>&1
+          sync_status=$?
+          set -e
+          gone="$(grep -c 'NoSuchKey' "$RUNNER_TEMP/sync.log" || true)"
+          other="$(grep -v 'NoSuchKey' "$RUNNER_TEMP/sync.log" | grep -c . || true)"
+          if [ "$sync_status" -ne 0 ] && [ "$other" -gt 0 ]; then
+            grep -v 'NoSuchKey' "$RUNNER_TEMP/sync.log" | tail -20
+            echo "::error::The copy failed for reasons other than objects celld deleted meanwhile"
+            exit 1
+          fi
+          [ "$gone" -gt 0 ] && echo "$gone object(s) were deleted by celld while copying and are not in this snapshot (expected)"
+          source_count="$(aws s3 ls "s3://$SOURCE_BUCKET" --recursive --endpoint-url "$S3_ENDPOINT" | grep -vc ' ci/' || true)"
+          copied_count="$(aws s3 ls "$target/" --recursive --endpoint-url "$S3_ENDPOINT" | wc -l | tr -d ' ')"
+          echo "Snapshot $stamp: $copied_count objects copied ($source_count in the source, outside ci/)"
+          # Objects written while copying can make the source slightly larger; far fewer copies means the copy failed.
+          if [ "$copied_count" -lt $(( source_count * 95 / 100 )) ]; then
+            echo "::error::The snapshot holds $copied_count objects but the source has $source_count"
+            exit 1
+          fi
+          printf '{"snapshot":"%s","objects":%s,"source_objects":%s,"commit":"%s"}\n' "$stamp" "$copied_count" "$source_count" "$GITHUB_SHA" \
+            | aws s3 cp - "$target/_snapshot.json" --endpoint-url "$S3_ENDPOINT" --content-type application/json --only-show-errors

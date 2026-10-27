@@ -46,7 +46,7 @@ const documentedTools = toolDeclarations.clone({
 const authoringShape = {
   title: createMcpAppInputSchema.shape.title.describe("Short human-readable title naming the App's outcome, not a generic label such as Dashboard."),
   description: createMcpAppInputSchema.shape.description.describe("One sentence describing what the person sees and does in the App."),
-  reactSource: createMcpAppInputSchema.shape.reactSource.describe("Complete React source default-exporting a component receiving { app, input, result, hostContext }. React is injected; use no imports. Follow skill:build-an-app's source and tool-call rules."),
+  reactSource: createMcpAppInputSchema.shape.reactSource.describe("Complete React source default-exporting a component receiving { app, input, result, hostContext }. React is injected; import only the built-in libraries prepare_app lists, if any. Follow skill:build-an-app's source and tool-call rules."),
   cssSource: createMcpAppInputSchema.shape.cssSource.describe("Complete CSS source using host theme variables and responsive container rules. Omit on creation for empty CSS; omit on update to keep existing CSS."),
   textFallback: createMcpAppInputSchema.shape.textFallback.describe("Readable plain-text alternative describing what the App shows, for hosts that cannot render it; usually one or two sentences."),
   tools: documentedTools.optional().describe("Complete set of tools the App may call. Omit or use [] for a self-contained new App; omit on update to keep existing tools, or use [] to remove them."),
@@ -145,7 +145,7 @@ export function searchMcpApps(apps: McpAppEntry[], query: string, publicOrigin: 
     method: "MCP",
     path: app.serverPath,
     score: scoreText(tokenize(app.title), tokenize(app.description ?? ""), tokens, ["app", "apps", "dashboard"]),
-    summary: `${app.description || app.title} Execute this exact name to open the App; an optional body object becomes its launch input. It is also its own MCP server at ${mcpUrl(publicOrigin, app.serverPath)}. Its appId for read_app and update_app is ${app.appId}.`,
+    summary: `${app.description || app.title} Execute this exact name to open the App; an optional launch input object is passed to the App. It is also its own MCP server at ${mcpUrl(publicOrigin, app.serverPath)}. Its appId for read_app and update_app is ${app.appId}.`,
     pathParams: [],
     queryParams: [],
     hasBody: true,

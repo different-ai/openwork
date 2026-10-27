@@ -5,6 +5,7 @@ This folder owns routes about the currently authenticated user.
 ## Files
 
 - `index.ts`: registers `/v1/me` and `/v1/me/orgs`
+- `activation.ts`: the Get set up checklist, `GET /v1/me/activation` and `POST /v1/me/activation/events` (feature `activationChecklist`; steps are computed in `src/activation.ts`)
 
 ## Current responsibilities
 

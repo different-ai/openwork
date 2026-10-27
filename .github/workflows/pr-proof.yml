@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.22.1
       - id: select
         env:
           GH_TOKEN: ${{ github.token }}
@@ -81,7 +81,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.22.1
       - uses: pnpm/action-setup@v4
         with:
           version: 11.4.0
@@ -146,13 +146,15 @@ jobs:
       - uses: ./.github/actions/setup-browser
         with:
           oauth-handoff: "true"
-      - name: Build local Den dependencies
-        shell: bash
+      # Electron 43 installs its executable lazily rather than in postinstall.
+      # Keep that download outside the native world's CDP startup deadline.
+      - name: Install and verify the locked Electron runtime
+        timeout-minutes: 5
         run: |
-          pnpm --filter @openwork/types build
-          pnpm --filter @openwork-ee/den-db build
-          pnpm --filter @openwork/email build
-          pnpm dev:den:mysql
+          pnpm --filter @openwork/desktop exec install-electron
+          pnpm --filter @openwork/desktop exec node -e 'const fs = require("node:fs"); const binary = require("electron"); fs.accessSync(binary, fs.constants.X_OK); console.log("Electron executable is ready")'
+      - name: Build local Den dependencies
+        uses: ./.github/actions/den-deps
       - name: Run the selected changed spec on the PR head
         timeout-minutes: 20
         env:
@@ -183,92 +185,6 @@ jobs:
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: error
-
-  # The proof lane has no model key, so screenshot claims (user.looks and
-  # expect:) are recorded as pending, and Evidence preview reports Incomplete
-  # even when every test passed. Judge them here.
-  # Only trusted default-branch code ever sees the key: the PR head never runs
-  # in this job, it only supplies the screenshots and records being judged.
-  judge-vision:
-    needs: [select, proof]
-    if: >-
-      needs.proof.result == 'success' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.repo.fork == false &&
-      github.event.pull_request.user.login != 'dependabot[bot]' &&
-      github.actor != 'dependabot[bot]' &&
-      github.triggering_actor != 'dependabot[bot]'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      max-parallel: 8
-      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 24
-      - uses: pnpm/action-setup@v4
-      - name: Install trusted judge dependencies
-        run: pnpm --dir evals --filter @openwork/test-evidence... install --frozen-lockfile --ignore-scripts
-      - name: Restore the proof records
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
-          path: evals/results
-      - name: Judge deferred vision claims
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENWORK_EVAL_VISION_MODEL: gpt-5.6-luna
-          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -uo pipefail
-          if [[ -z "${OPENAI_API_KEY//[[:space:]]/}" ]]; then
-            echo '::warning::OPENAI_API_KEY is unavailable; screenshot claims stay pending.'
-            exit 0
-          fi
-          # Exit 1 = a claim failed, 2 = still pending. Both are written into
-          # the records, and Evidence preview reports them; only a crash fails here.
-          # Actions runs bash with -e, so capture the status instead of dying on it.
-          status=0
-          node evals/scripts/judge-journeys.mjs || status=$?
-          if [ "$status" -gt 2 ]; then exit "$status"; fi
-      # Advisory design review of every screenshot: measured layout rules
-      # (overlap, sideways scroll, columns drifting from their rows, lanes,
-      # contrast) plus, with a key, a critique against DESIGN.md and the
-      # OpenWork Design rubric in evals/design-review/rubric.md. Notes land in
-      # design-review.json beside each record, in this job's summary, and on
-      # each screenshot in the review report. A finding never fails the job.
-      # Hard-cap only this advisory process tree at 120s; completed notes survive.
-      # Deferred screenshot assertions above are authoritative and uncapped here.
-      - name: Review the design of every screenshot (advisory)
-        timeout-minutes: 3
-        continue-on-error: true
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENWORK_EVAL_VISION_MODEL: gpt-5.6-luna
-          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          if [ ! -f evals/scripts/design-review-journeys.mjs ]; then
-            echo 'The default branch does not have the design review yet.'
-            exit 0
-          fi
-          node evals/scripts/run-advisory-design-review.mjs
-      - name: Replace the proof records with judged ones
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
-          path: |
-            evals/results/test-runs/
-            evals/results/.testkit/cli-run-*.json
-          include-hidden-files: true
-          retention-days: 7
-          if-no-files-found: error
-          overwrite: true
 
   # Packaged specs need a packaged desktop binary. Build the same artifacts as
   # the packaged smoke gate for the spec's platform and run only that journey.

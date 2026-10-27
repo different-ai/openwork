@@ -19,6 +19,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 import { createDenDb, ensureSchemaRepairs } from "@openwork-ee/den-db"
+import { inlineIndexes } from "./schema-statements.js"
 
 const execFileAsync = promisify(execFile)
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -96,7 +97,7 @@ async function schemaStatements(): Promise<string[]> {
   )
   const start = stdout.indexOf("CREATE ")
   if (start < 0) throw new Error(`drizzle-kit export produced no schema:\n${stdout.slice(0, 500)}`)
-  return stdout.slice(start).split(/;\s*\n/).map((statement) => statement.trim()).filter(Boolean)
+  return inlineIndexes(stdout.slice(start).split(/;\s*\n/).map((statement) => statement.trim()).filter(Boolean))
 }
 
 /** A MySQL connection pool (never PlanetScale's HTTP client) for one database URL. */
@@ -108,11 +109,25 @@ function mysqlPool(databaseUrl: string) {
 
 async function createDatabase(): Promise<{ url: string; drop: () => Promise<void> }> {
   const base = mysqlBaseUrl()
-  const name = `den_api_test_${process.pid}_${Date.now().toString(36)}_${randomBytes(4).toString("hex")}`
+  const prefix = process.env.DEN_API_TEST_DATABASE_PREFIX || "den_api_test_"
+  if (!/^[a-z0-9_-]{1,24}$/.test(prefix)) throw new Error("Invalid API test database prefix")
+  const defaults = process.env.DEN_API_TEST_DATABASE_DEFAULTS || "utf8mb4"
+  if (defaults !== "server" && defaults !== "utf8mb4") throw new Error("Invalid API test database defaults")
+  const collation = process.env.DEN_API_TEST_DATABASE_COLLATION
+  const collations: Record<string, string> = {
+    latin1_swedish_ci: "latin1", utf8mb3_general_ci: "utf8mb3",
+    utf8mb4_general_ci: "utf8mb4", utf8mb4_unicode_ci: "utf8mb4",
+    utf8mb4_0900_ai_ci: "utf8mb4", utf8mb4_uca1400_ai_ci: "utf8mb4",
+  }
+  if (collation && !Object.hasOwn(collations, collation)) throw new Error("Invalid API test database collation")
+  const charsetClause = collation ? ` CHARACTER SET ${collations[collation]} COLLATE ${collation}` : defaults === "server" ? "" : " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+  const name = `${prefix}${process.pid}_${Date.now().toString(36)}_${randomBytes(4).toString("hex")}`
   const root = mysqlPool(withDatabase(base, "mysql"))
   const [statements] = await Promise.all([
     schemaStatements(),
-    root.query(`CREATE DATABASE \`${name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`),
+    // Bootstrap's current schema has no table charset clauses: server defaults
+    // must be testable without converting an already-created customer schema.
+    root.query(`CREATE DATABASE \`${name}\`${charsetClause}`),
   ])
   const url = withDatabase(base, name)
   const target = mysqlPool(url)
@@ -176,7 +191,7 @@ export async function startFakeHttpServer(handler: FakeHandler): Promise<{ url: 
 }
 
 export type FakeMcpTool = { name: string; description: string; text: string }
-export type WireEntry = { path: string; rpcMethod: string; authorization: string; status: number }
+export type WireEntry = { path: string; rpcMethod: string; authorization: string; status: number; sessionId?: string }
 /**
  * What the fake MCP server answers for one request. `reply` = speak MCP;
  * otherwise a bare status (with optional headers/body), as a real service might.
@@ -205,19 +220,23 @@ export async function startFakeMcpServer(options: {
     }
     const path = request.url ?? "/"
     const authorization = request.headers.authorization ?? ""
+    const sessionHeader = request.headers["mcp-session-id"]
+    const sessionId = rpcMethod === "initialize"
+      ? randomBytes(16).toString("hex")
+      : typeof sessionHeader === "string" ? sessionHeader : undefined
     const decision = options.decide?.({ path, rpcMethod, authorization, rpcId }) ?? { reply: true }
     if (!decision.reply) {
-      wire.push({ path, rpcMethod, authorization, status: decision.status })
+      wire.push({ path, rpcMethod, authorization, status: decision.status, sessionId })
       response.writeHead(decision.status, decision.headers ?? {}).end(decision.body ?? "")
       return
     }
     if (request.method !== "POST") {
-      wire.push({ path, rpcMethod, authorization, status: 405 })
+      wire.push({ path, rpcMethod, authorization, status: 405, sessionId })
       response.writeHead(405).end()
       return
     }
     if (rpcId === null) {
-      wire.push({ path, rpcMethod, authorization, status: 202 })
+      wire.push({ path, rpcMethod, authorization, status: 202, sessionId })
       response.writeHead(202).end()
       return
     }
@@ -235,8 +254,11 @@ export async function startFakeMcpServer(options: {
     } else {
       result = {}
     }
-    wire.push({ path, rpcMethod, authorization, status: 200 })
-    response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ jsonrpc: "2.0", id: rpcId, result }))
+    wire.push({ path, rpcMethod, authorization, status: 200, sessionId })
+    response.writeHead(200, {
+      "content-type": "application/json",
+      ...(rpcMethod === "initialize" && sessionId ? { "mcp-session-id": sessionId } : {}),
+    }).end(JSON.stringify({ jsonrpc: "2.0", id: rpcId, result }))
   })
   return { ...server, wire }
 }

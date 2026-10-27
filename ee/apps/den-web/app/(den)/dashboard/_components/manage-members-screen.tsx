@@ -1,5 +1,4 @@
 "use client";
-import { TeamAdminCheckbox } from "./team-admin-checkbox";
 
 import Link from "next/link";
 import { type ElementType, useEffect, useMemo, useState } from "react";
@@ -7,15 +6,9 @@ import {
   CheckCircle2,
   Circle,
   Globe,
-  Link as LinkIcon,
   Lock,
-  MoreHorizontal,
   Plus,
-  Send,
-  Settings,
-  Shield,
   ShieldCheck,
-  Trash2,
   User,
   Users,
 } from "lucide-react";
@@ -29,7 +22,6 @@ import {
   getNewRoleRoute,
   getPermissionSetRoute,
   getTeamRoute,
-  orgFeatureEnabled,
   splitRoleString,
   type DenOrgMember,
   permissionLockReason,
@@ -57,8 +49,7 @@ import { MemberListToolbar } from "./member-list-toolbar";
 import { formatAddedDate } from "./item-dates";
 import { TeamsListHeader, TeamsListLane, TeamsListLocked, TeamsListOpenLink, TeamsListRow, teamsListColumns } from "./teams-list-row";
 import { teamOverrideSummary, useAgentPermissions } from "./agent-permissions-data";
-import { useCustomRoleTeams, useSharedRolesOn, usePermissionSets, useRoleGrantLocks } from "./permissions-data";
-import { MemberTeamRoles } from "./member-team-roles";
+import { useCustomRoleTeams, usePermissionSets, useRoleGrantLocks } from "./permissions-data";
 import { TEAM_ROLE_LABELS, memberRoleOptions, parseRoleChoice, teamRole, teamRoleLabels } from "./team-roles";
 import { MemberRoleEditor, MemberRoleSelect } from "./member-role-select";
 
@@ -108,31 +99,6 @@ function ActionButton({
   );
 }
 
-function SummaryCard({
-  label,
-  value,
-  tone = "default",
-}: {
-  label: string;
-  value: string;
-  tone?: "default" | "dark";
-}) {
-  return (
-    <div
-      className={`rounded-[24px] border px-5 py-4 ${tone === "dark" ? "border-[#0f172a] bg-[#0f172a] text-white" : "border-gray-200 bg-white text-gray-900"}`}
-    >
-      <p
-        className={`text-[12px] font-semibold uppercase tracking-[0.16em] ${tone === "dark" ? "text-white/60" : "text-gray-400"}`}
-      >
-        {label}
-      </p>
-      <p className="mt-3 text-[24px] font-semibold tracking-[-0.05em]">
-        {value}
-      </p>
-    </div>
-  );
-}
-
 export function ManageMembersScreen() {
   const {
     activeOrg,
@@ -151,20 +117,18 @@ export function ManageMembersScreen() {
     createTeam,
     updateTeam,
     deleteTeam,
-    runReauthableAction,
   } = useOrgDashboard();
   const [activeTab, setActiveTab] = useState<MembersTab>("members");
   const [memberFilter, setMemberFilter] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
-  const listToolbars = Boolean(orgContext && orgFeatureEnabled(orgContext, "memberListToolbars"));
-  const visibleMembers = (orgContext?.members ?? []).filter((member) => !listToolbars || `${member.user.name} ${member.user.email}`.toLocaleLowerCase().includes(memberFilter.trim().toLocaleLowerCase()));
-  const visibleTeams = (orgContext?.teams ?? []).filter((team) => !listToolbars || team.name.toLocaleLowerCase().includes(teamFilter.trim().toLocaleLowerCase()));
+
+  const visibleMembers = (orgContext?.members ?? []).filter((member) => `${member.user.name} ${member.user.email}`.toLocaleLowerCase().includes(memberFilter.trim().toLocaleLowerCase()));
+  const visibleTeams = (orgContext?.teams ?? []).filter((team) => team.name.toLocaleLowerCase().includes(teamFilter.trim().toLocaleLowerCase()));
   const [pageError, setPageError] = useState<string | null>(null);
   const [showInviteForm, setShowInviteForm] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
-  const [openMemberMenuId, setOpenMemberMenuId] = useState<string | null>(null);
   const [memberRoleDraft, setMemberRoleDraft] = useState("member");
   const [editingMemberTeamsId, setEditingMemberTeamsId] = useState<string | null>(null);
   const [permissionsMemberId, setPermissionsMemberId] = useState<string | null>(null);
@@ -190,24 +154,23 @@ export function ManageMembersScreen() {
   );
   const canStartSeatCheckout = access.canStartSeatCheckout;
 
-  // teamRoles: Members gets a Roles tab (built-in roles and each team's custom role).
-  const teamRoles = orgContext ? orgFeatureEnabled(orgContext, "teamRoles") : false;
+  // Members gets a Roles tab (built-in roles and each team's custom role).
+
   useEffect(() => {
     // ?tab=roles or ?tab=teams opens that tab, e.g. coming back from Create role.
     const tab = new URLSearchParams(window.location.search).get("tab");
     if (tab === "roles" || tab === "teams") setActiveTab(tab);
   }, []);
-  const shownTab: MembersTab = activeTab === "roles" && !teamRoles ? "members" : activeTab;
-  // teamRoles: custom roles show wherever roles do (people's rows, the invite picker, the Teams list).
-  const permissionsFeature = orgContext ? orgFeatureEnabled(orgContext, "permissions") : false;
-  const customRoles = useCustomRoleTeams(orgContext?.organization.id ?? null, teamRoles && permissionsFeature && access.canViewPermissions);
-  const customRoleTeams = teamRoles ? (orgContext?.teams ?? []).filter((team) => customRoles.teamIds.has(team.id)) : [];
-  // sharedRoles: list permission sets by name; custom grants still come from teams.
-  const sharedRoles = useSharedRolesOn();
-  const canChooseInviteRole = access.canManageRoles || sharedRoles && access.canViewPermissions && access.canManageTeams;
-  const roleSets = usePermissionSets(orgContext?.organization.id ?? null, sharedRoles && teamRoles && permissionsFeature && access.canViewPermissions);
-  const customSets = (sharedRoles && teamRoles && permissionsFeature && access.canViewPermissions ? roleSets.data ?? [] : []).filter((set) => set.kind === "team");
-  const grantLocks = useRoleGrantLocks(orgContext?.organization.id ?? null, sharedRoles && teamRoles && permissionsFeature && access.canViewPermissions ? roleSets.data ?? [] : [], orgContext?.currentMember.permissions ?? [], orgContext?.currentMember.isOwner ?? false);
+  const shownTab: MembersTab = activeTab;
+  // custom roles show wherever roles do (people's rows, the invite picker, the Teams list).
+
+  const customRoles = useCustomRoleTeams(orgContext?.organization.id ?? null, access.canViewPermissions);
+  // list permission sets by name; custom grants still come from teams.
+
+  const canChooseInviteRole = access.canManageRoles || access.canViewPermissions && access.canManageTeams;
+  const roleSets = usePermissionSets(orgContext?.organization.id ?? null, access.canViewPermissions);
+  const customSets = (access.canViewPermissions ? roleSets.data ?? [] : []).filter((set) => set.kind === "team");
+  const grantLocks = useRoleGrantLocks(orgContext?.organization.id ?? null, access.canViewPermissions ? roleSets.data ?? [] : [], orgContext?.currentMember.permissions ?? [], orgContext?.currentMember.isOwner ?? false);
   const roleTeams = (setId: string) => {
     const set = customSets.find((entry) => entry.id === setId);
     const ids = (set?.teams.length ? set.teams : set?.team ? [set.team] : []).map((team) => team.id);
@@ -218,8 +181,8 @@ export function ManageMembersScreen() {
     const teams = roleTeams(set.id);
     if (teams.length && teams.every((team) => team.managedByScim || team.grantsOrganizationAdmin && !access.canManageAdminTeams)) roleLocks.set(set.id, "This role’s teams are managed by your identity provider or need Manage Admin teams. Ask the organization owner.");
   }
-  const memberRoles = memberRoleOptions({ sharedRoles, customRoleTeams, canManageTeams: access.canManageTeams, customRoles: customSets.map((set) => ({ ...set, teams: set.teams.length ? set.teams : set.team ? [set.team] : [] })), lockReasons: roleLocks, adminLockReason: sharedRoles ? !access.canManageRoles ? permissionLockReason("members.update") : grantLocks.get(roleSets.data?.find((set) => set.kind === "admin_default")?.id ?? "") : null });
-  const inviteTeamPicker = sharedRoles && access.canManageTeams && (orgContext?.teams.length ?? 0) > 0;
+  const memberRoles = memberRoleOptions({ canManageTeams: access.canManageTeams, customRoles: customSets.map((set) => ({ ...set, teams: set.teams.length ? set.teams : set.team ? [set.team] : [] })), lockReasons: roleLocks, adminLockReason: !access.canManageRoles ? permissionLockReason("members.update") : grantLocks.get(roleSets.data?.find((set) => set.kind === "admin_default")?.id ?? "") });
+  const inviteTeamPicker = access.canManageTeams && (orgContext?.teams.length ?? 0) > 0;
   const [inviteTeamId, setInviteTeamId] = useState("");
   const [memberRoleTeamId, setMemberRoleTeamId] = useState("");
   function chosenRole(value: string, teamId: string) {
@@ -255,10 +218,10 @@ export function ManageMembersScreen() {
       </label>
     );
   }
-  // agentPermissions: Teams lists Everyone first, and what each team changes from it.
-  const agentPermissionsColumn = Boolean(orgContext && orgFeatureEnabled(orgContext, "agentPermissions") && access.canViewAgentPermissions);
+  // Teams lists Everyone first, and what each team changes from it.
+  const agentPermissionsColumn = Boolean(orgContext && access.canViewAgentPermissions);
   const agentPolicies = useAgentPermissions(orgContext?.organization.id ?? "", agentPermissionsColumn && Boolean(orgContext?.organization.id));
-  const teamListColumns = teamsListColumns({ role: teamRoles, agentPermissions: agentPermissionsColumn });
+  const teamListColumns = teamsListColumns({ agentPermissions: agentPermissionsColumn });
   const tabCounts: Record<Exclude<MembersTab, "roles">, number> = {
     members: orgContext?.members.length ?? 0,
     teams: orgContext?.teams.length ?? 0,
@@ -361,7 +324,6 @@ export function ManageMembersScreen() {
     setPageError(null);
     try {
       await transferOwnership(member.id);
-      setOpenMemberMenuId(null);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : "Could not transfer ownership.");
     }
@@ -444,7 +406,7 @@ export function ManageMembersScreen() {
           {canChooseInviteRole ? (
             <label className="grid gap-3">
               <span className="text-[14px] font-medium text-gray-700">Role</span>
-              <MemberRoleSelect value={inviteRole} onChange={(value) => { setInviteRole(value); setInviteTeamId(""); }} options={memberRoles} searchable={sharedRoles} />
+              <MemberRoleSelect value={inviteRole} onChange={(value) => { setInviteRole(value); setInviteTeamId(""); }} options={memberRoles} searchable />
             </label>
           ) : (
             <div className="grid gap-3">
@@ -480,19 +442,14 @@ export function ManageMembersScreen() {
               {`Inviting someone as an admin is locked. ${permissionLockReason("members.update")}`}
             </p>
           )}
-          {access.canManageRoles && !sharedRoles && customRoleTeams.length > 0 && !access.canManageTeams ? (
-            <p className="flex items-center gap-1.5 text-[13px] text-gray-500 lg:col-span-3">
-              <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              {`Inviting someone into a custom role is locked. ${permissionLockReason("teams.manage")}`}
-            </p>
-          ) : null}
+
         </form>
       </DenCard>
     ) : null;
 
   const editingMember = editingMemberId ? orgContext.members.find((member) => member.id === editingMemberId) ?? null : null;
-  // sharedRoles: custom roles come from the person's teams, so show those next to their own role.
-  const editingMemberTeamRoles = editingMember && sharedRoles
+  // custom roles come from the person's teams, so show those next to their own role.
+  const editingMemberTeamRoles = editingMember
     ? teamRoleLabels({
         memberId: editingMember.id,
         ownRole: getOrgAccessFlags(editingMember.role, false).isAdmin ? "admin" : "member",
@@ -511,7 +468,7 @@ export function ManageMembersScreen() {
       if (editChoice.blocked) return;
       const choice = parseRoleChoice(memberRoleDraft);
       const team = editChoice.set ? editChoice.selected : choice.teamId ? orgContext?.teams.find((entry) => entry.id === choice.teamId) : null;
-      const demoteFirst = sharedRoles && choice.role === "member" && assignableOrgRole(member.role) === "admin";
+      const demoteFirst = choice.role === "member" && assignableOrgRole(member.role) === "admin";
       if (demoteFirst) await updateMemberRole(member.id, "member");
       if (team && !team.memberIds.includes(member.id)) {
         await updateTeam(team.id, { memberIds: [...team.memberIds, member.id] });
@@ -531,14 +488,14 @@ export function ManageMembersScreen() {
         memberName={editingMember.user.name || editingMember.user.email}
         value={memberRoleDraft}
         onChange={(value) => { setMemberRoleDraft(value); setMemberRoleTeamId(""); }}
-        searchable={sharedRoles}
+        searchable
         teamChoice={customTeamChoice(memberRoleDraft, memberRoleTeamId, setMemberRoleTeamId)}
         blocked={editChoice.blocked}
         options={memberRoles}
         saving={mutationBusy === "update-member-role" || mutationBusy === "update-team"}
         onCancel={resetMemberEditor}
         onSave={() => saveMemberRole(editingMember)}
-        teamRoles={sharedRoles ? (
+        teamRoles={(
           <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1" data-testid="member-role-editor-team-roles">
             <span className="min-w-0 truncate" title={editingMemberTeamRoles.join(", ")}>
               {editingMemberTeamRoles.length > 0 ? `From teams: ${editingMemberTeamRoles.join(", ")}` : "No roles from teams"}
@@ -557,7 +514,7 @@ export function ManageMembersScreen() {
               </button>
             ) : null}
           </span>
-        ) : undefined}
+        )}
       />
     ) : null;
 
@@ -610,45 +567,14 @@ export function ManageMembersScreen() {
               <div className="rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[14px] text-gray-500">
                 Invite a member before assigning people to this team.
               </div>
-            ) : teamRoles ? (
-              // teamRoles: the same people rows and Add person picker as Create role.
+            ) : (
+              // the same people rows and Add person picker as Create role.
               <PeopleField
                 people={orgContext.members.map((member) => ({ id: member.id, name: member.user.name || member.user.email, email: member.user.email }))}
                 chosenIds={teamMemberDraft}
                 onChange={setTeamMemberDraft}
                 rowTestId="team-form-person"
               />
-            ) : (
-              <div className="grid gap-3 md:grid-cols-2">
-                {orgContext.members.map((member) => {
-                  const selected = teamMemberDraft.includes(member.id);
-                  return (
-                    <button
-                      key={member.id}
-                      type="button"
-                      onClick={() => {
-                        setTeamMemberDraft((current) =>
-                          current.includes(member.id)
-                            ? current.filter((entry) => entry !== member.id)
-                            : [...current, member.id],
-                        );
-                      }}
-                      className={`flex items-start gap-3 rounded-[22px] border px-4 py-4 text-left transition ${
-                        selected
-                          ? "border-[#0f172a] bg-[#0f172a] text-white"
-                          : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"
-                      }`}
-                    >
-                      {selected ? (
-                        <CheckCircle2 className="mt-0.5 h-6 w-6 shrink-0" />
-                      ) : (
-                        <Circle className="mt-0.5 h-6 w-6 shrink-0 text-gray-300" />
-                      )}
-                      <OrgMemberIdentity member={member} inverted={selected} />
-                    </button>
-                  );
-                })}
-              </div>
             )}
           </div>
 
@@ -665,54 +591,34 @@ export function ManageMembersScreen() {
       </DenCard>
     ) : null;
 
-  const toolbarAction = (() => {
-    if (shownTab === "members" && access.canInviteMembers) {
-      return {
-        label: "Add member",
-        onClick: () => {
-          resetMemberEditor();
-          setShowInviteForm((current) => !current);
-        },
-      };
-    }
-    if (activeTab === "teams" && access.canManageTeams) {
-      return {
-        label: "Create team",
-        onClick: () => {
-          resetTeamEditor();
-          setShowTeamForm((current) => !current);
-        },
-      };
-    }
-    return null;
-  })();
-
   return (
     <DashboardPageTemplate
       icon={Users}
       title="Members"
-      description={listToolbars ? null : "Invite teammates, adjust roles, and keep access clean."}
+      description={null}
     >
       <OrgLimitDialog
         open={Boolean(limitDialogError)}
-        title={limitDialogError?.limitType === "members" ? "Member limit reached" : "Worker limit reached"}
+        eyebrow={limitDialogError?.limitType === "members" ? null : "Workspace limit"}
+        title={limitDialogError?.limitType === "workers" ? "Worker limit reached" : "Your plan is full"}
         message={limitDialogError?.message ?? "This workspace reached its current plan limit."}
         detail={
           limitDialogError
-            ? `${limitDialogError.currentCount} of ${limitDialogError.limit} ${limitDialogError.limitType} are already in use.`
+            ? `${limitDialogError.currentCount} of ${limitDialogError.limit} ${limitDialogError.limitType === "members" ? "users" : "workers"} are already in use.`
             : null
         }
-        feedbackHref={feedbackHref}
+        actionLabel={limitDialogError?.limitType === "members" ? undefined : "Contact support"}
+        feedbackHref={limitDialogError?.limitType === "members" ? undefined : feedbackHref}
         onClose={() => setLimitDialogError(null)}
       />
       <OrgLimitDialog
         open={Boolean(seatBillingDialogError)}
-        eyebrow="Seat billing"
-        title="Subscribe to add more users"
-        message="The first 5 users in your organization are free, additional users are charged at $10 per user per month"
+        eyebrow="Free plan limit"
+        title="Upgrade to the Team plan"
+        message={`The Free plan is limited to ${seatBillingDialogError?.freeSeatCount ?? 5} users, counting pending invitations. Upgrade to the Team plan to invite more people. Team is $10 per user per month.`}
         detail={canStartSeatCheckout ? null : permissionLockReason("billing.manage")}
-        closeLabel="Cancel"
-        actionLabel="Subscribe"
+        closeLabel="Not now"
+        actionLabel="Upgrade to Team"
         actionLoading={mutationBusy === "seat-checkout"}
         actionDisabled={!canStartSeatCheckout}
         onClose={() => setSeatBillingDialogError(null)}
@@ -737,14 +643,14 @@ export function ManageMembersScreen() {
         tabs={[
           { value: "members", label: "Members", icon: User, count: tabCounts.members },
           { value: "teams", label: "Teams", icon: Users, count: tabCounts.teams },
-          ...(teamRoles ? [{ value: "roles" as const, label: "Roles", icon: ShieldCheck }] : []),
+          ...([{ value: "roles" as const, label: "Roles", icon: ShieldCheck }]),
         ]}
       />
 
       {shownTab === "roles" ? (
         <RolesTab
-          action={orgContext && canCreateRole({ permissionsFeature: orgFeatureEnabled(orgContext, "permissions"), canManageTeams: access.canManageTeams, canManagePermissions: access.canManagePermissions })
-            ? <DenButton size={listToolbars ? "sm" : "md"} icon={Plus} href={getNewRoleRoute(orgSlug)} data-testid="roles-create">Create role</DenButton>
+          action={orgContext && canCreateRole({ canManageTeams: access.canManageTeams, canManagePermissions: access.canManagePermissions })
+            ? <DenButton size="sm" icon={Plus} href={getNewRoleRoute(orgSlug)} data-testid="roles-create">Create role</DenButton>
             : undefined}
         />
       ) : null}
@@ -755,29 +661,11 @@ export function ManageMembersScreen() {
 
       {shownTab === "members" ? (
         <div>
-          {listToolbars ? <MemberListToolbar
+          <MemberListToolbar
             collection="members" value={memberFilter} onChange={setMemberFilter}
             action={<DenButton size="sm" icon={access.canInviteMembers ? Plus : Lock} disabled={!access.canInviteMembers} title={!access.canInviteMembers ? permissionLockReason("invitations.manage") : undefined} onClick={() => { resetMemberEditor(); setShowInviteForm((current) => !current); }}>Add member</DenButton>}
             secondary={access.canInviteMembers && orgContext.capabilities.installLinks ? <ItemMenu label="Member list actions" entries={[{ label: installLinkCopied ? "Copied" : "Copy install link", onSelect: handleCopyInstallLink }]} /> : undefined}
-          /> : <div className="mb-6 flex flex-wrap items-center justify-end gap-4" data-testid="members-toolbar">
-            {toolbarAction ? (
-              <div className="flex flex-wrap justify-end gap-2">
-                {orgContext.capabilities.installLinks ? (
-                  <DenButton
-                    data-testid="copy-install-link"
-                    variant="secondary"
-                    icon={LinkIcon}
-                    onClick={() => void handleCopyInstallLink()}
-                  >
-                    {installLinkCopied ? "Copied" : "Copy install link"}
-                  </DenButton>
-                ) : null}
-                <DenButton icon={Plus} onClick={toolbarAction.onClick}>
-                  {toolbarAction.label}
-                </DenButton>
-              </div>
-            ) : null}
-          </div>}
+          />
 
           {installLinkShareUrl ? (
             <div className="mb-6 rounded-[24px] border border-gray-200 bg-white px-5 py-4">
@@ -820,7 +708,7 @@ export function ManageMembersScreen() {
           ) : null}
 
           <div className="overflow-visible rounded-2xl border border-gray-100 bg-white">
-            <div data-testid="members-column-header" className={`grid grid-cols-[minmax(0,1fr)_auto] gap-4 border-b border-gray-100 py-3 text-[12px] font-medium text-gray-500 ${listToolbars ? "px-5 lg:grid-cols-[minmax(0,1fr)_180px_140px_28px]" : "px-4 lg:grid-cols-[minmax(0,1fr)_180px_140px_160px] lg:px-6"}`}>
+            <div data-testid="members-column-header" className={`grid grid-cols-[minmax(0,1fr)_auto] gap-4 border-b border-gray-100 py-3 text-[12px] font-medium text-gray-500 px-5 lg:grid-cols-[minmax(0,1fr)_180px_140px_28px]`}>
               <span>Member</span>
               <span className="hidden lg:block">Role</span>
               <span className="hidden lg:block">Joined</span>
@@ -831,7 +719,7 @@ export function ManageMembersScreen() {
             {visibleMembers.map((member) => {
               const roleLabels = [
                 ...splitRoleString(member.role).map(formatRoleLabel),
-                ...(teamRoles ? teamRoleLabels({ memberId: member.id, ownRole: member.isOwner ? "owner" : getOrgAccessFlags(member.role, false).isAdmin ? "admin" : "member", teams: orgContext.teams, customTeamIds: customRoles.teamIds, customRoleNameByTeam: sharedRoles ? customRoles.nameByTeam : undefined }) : member.adminTeams.length > 0 ? ["Admin"] : []),
+                ...(teamRoleLabels({ memberId: member.id, ownRole: member.isOwner ? "owner" : getOrgAccessFlags(member.role, false).isAdmin ? "admin" : "member", teams: orgContext.teams, customTeamIds: customRoles.teamIds, customRoleNameByTeam: customRoles.nameByTeam })),
               ];
               const roleLabel = [...new Set(roleLabels)].join(", ");
               const isInvited = !member.joinedAt;
@@ -861,195 +749,22 @@ export function ManageMembersScreen() {
                 <div key={member.id}>
                 <div
                   data-testid="member-row"
-                  className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-b border-gray-100 transition hover:bg-gray-50/60 last:border-b-0 lg:gap-4 ${listToolbars ? "min-h-16 px-5 py-3 lg:grid-cols-[minmax(0,1fr)_180px_140px_28px]" : "px-4 py-3.5 lg:grid-cols-[minmax(0,1fr)_180px_140px_160px] lg:px-6"}`}
+                  className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-b border-gray-100 transition hover:bg-gray-50/60 last:border-b-0 lg:gap-4 min-h-16 px-5 py-3 lg:grid-cols-[minmax(0,1fr)_180px_140px_28px]`}
                 >
-                  <OrgMemberIdentity member={member} compact={listToolbars} />
-                  <span title={listToolbars ? roleLabel : undefined} className={`col-start-1 row-start-2 min-w-0 pl-11 text-[13px] text-gray-500 lg:col-auto lg:row-auto lg:pl-0 ${listToolbars ? "truncate" : ""}`} data-testid="member-role">
-                    {listToolbars ? roleLabel : splitRoleString(member.role).map(formatRoleLabel).join(", ")}
-                    {!listToolbars && teamRoles ? (
-                      <MemberTeamRoles member={member} teams={orgContext.teams} customTeamIds={customRoles.teamIds} customRoleNameByTeam={sharedRoles ? customRoles.nameByTeam : undefined} />
-                    ) : !listToolbars && member.adminTeams.length > 0 ? (
-                      <span className="mt-1 block text-[12px] text-cyan-700">Admin via {member.adminTeams.map((team) => team.name).join(", ")}</span>
-                    ) : null}
+                  <OrgMemberIdentity member={member} compact />
+                  <span title={roleLabel} className={`col-start-1 row-start-2 min-w-0 pl-11 text-[13px] text-gray-500 lg:col-auto lg:row-auto lg:pl-0 truncate`} data-testid="member-role">
+                    {roleLabel}
+
                   </span>
                   <span data-testid="member-joined" className="col-start-1 row-start-3 pl-11 text-[13px] text-gray-500 lg:col-auto lg:row-auto lg:pl-0">
                     {member.joinedAt ? <span className="lg:hidden">Joined </span> : null}
                     {member.joinedAt
-                      ? listToolbars ? formatAddedDate(member.joinedAt) : new Date(member.joinedAt).toLocaleDateString()
+                      ? formatAddedDate(member.joinedAt)
                       : "Pending"}
                   </span>
                   <div data-testid="member-actions" className="relative col-start-2 row-span-3 row-start-1 flex items-center justify-end gap-2 lg:col-auto lg:row-span-1 lg:row-auto">
-                    {listToolbars ? (
+                    {(
                       member.isOwner ? <span data-testid="member-owner-locked"><TeamsListLocked reason="The owner cannot be edited here. Only the owner can transfer ownership to an admin." /></span> : canOpenActions ? <ItemMenu label={`Open actions for ${member.user.name || member.user.email}`} entries={memberActions} /> : <TeamsListLocked reason="You cannot change this member. Ask an organization admin for access." />
-                    ) : member.isOwner ? (
-                      <span data-testid="member-owner-locked" className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-[12px] text-gray-600">
-                        <Lock className="h-3 w-3" />
-                        Locked
-                      </span>
-                    ) : canOpenActions ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => setOpenMemberMenuId((current) => current === member.id ? null : member.id)}
-                          className="rounded-full p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
-                          aria-label={`Open actions for ${member.user.name}`}
-                        >
-                          <MoreHorizontal className="h-4 w-4" />
-                        </button>
-                        {openMemberMenuId === member.id ? (
-                          <div className="absolute right-0 top-9 z-10 w-44 overflow-hidden rounded-2xl border border-gray-100 bg-white p-1.5 text-[13px] shadow-xl shadow-gray-900/10">
-                            {canResendInvitation && inviteId ? (
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  setPageError(null);
-                                  setOpenMemberMenuId(null);
-                                  try {
-                                    await copyTextWhenReady(getInvitationLink(inviteId));
-                                  } catch (error) {
-                                    setPageError(error instanceof Error ? error.message : "Could not copy the invite link.");
-                                  }
-                                }}
-                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50"
-                              >
-                                <LinkIcon className="h-3.5 w-3.5" />
-                                Copy invite link
-                              </button>
-                            ) : null}
-                            {canResendInvitation ? (
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  setPageError(null);
-                                  try {
-                                    await inviteMember({ email: member.user.email, role: assignableOrgRole(member.role) });
-                                    setOpenMemberMenuId(null);
-                                  } catch (error) {
-                                    setPageError(error instanceof Error ? error.message : "Could not resend invitation.");
-                                  }
-                                }}
-                                disabled={mutationBusy === "invite-member"}
-                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                <Send className="h-3.5 w-3.5" />
-                                Resend invite
-                              </button>
-                            ) : null}
-                            {isInvited && access.canCancelInvitations && canManageMemberGrants && inviteId ? (
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  setPageError(null);
-                                  try {
-                                    await cancelInvitation(inviteId);
-                                    setOpenMemberMenuId(null);
-                                  } catch (error) {
-                                    setPageError(error instanceof Error ? error.message : "Could not cancel invitation.");
-                                  }
-                                }}
-                                disabled={mutationBusy === "cancel-invitation"}
-                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                Cancel invite
-                              </button>
-                            ) : null}
-                            {canViewPermissions ? (
-                              <button
-                                type="button"
-                                data-testid="view-member-permissions"
-                                onClick={() => {
-                                  setPermissionsMemberId((current) => current === member.id ? null : member.id);
-                                  setOpenMemberMenuId(null);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50"
-                              >
-                                <ShieldCheck className="h-3.5 w-3.5" />
-                                {permissionsMemberId === member.id ? "Hide permissions" : "View permissions"}
-                              </button>
-                            ) : null}
-                            {!isInvited && access.canManageRoles ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditingMemberId(member.id);
-                                  setMemberRoleDraft(assignableOrgRole(member.role));
-                                  setShowInviteForm(false);
-                                  setOpenMemberMenuId(null);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50"
-                              >
-                                <Settings className="h-3.5 w-3.5" />
-                                Edit role
-                              </button>
-                            ) : !isInvited ? (
-                              <button
-                                type="button"
-                                disabled
-                                title={permissionLockReason("members.update")}
-                                className="flex w-full cursor-not-allowed items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-400"
-                              >
-                                <Lock className="h-3.5 w-3.5" />
-                                Edit role
-                              </button>
-                            ) : null}
-                            {canTransferOwnershipToMember ? (
-                              <button
-                                type="button"
-                                onClick={() => void handleTransferOwnership(member)}
-                                disabled={mutationBusy === "transfer-ownership"}
-                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                <Shield className="h-3.5 w-3.5" />
-                                Transfer ownership
-                              </button>
-                            ) : null}
-                            {!isInvited && access.canManageTeams ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const currentTeamIds = new Set(
-                                    (orgContext?.teams ?? [])
-                                      .filter((team) => team.memberIds.includes(member.id))
-                                      .map((team) => team.id),
-                                  );
-                                  setEditingMemberTeamsId(member.id);
-                                  setMemberTeamsDraft(currentTeamIds);
-                                  setOpenMemberMenuId(null);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50"
-                              >
-                                <Users className="h-3.5 w-3.5" />
-                                Manage teams
-                              </button>
-                            ) : null}
-                            {!isInvited && access.canRemoveMembers && canManageMemberGrants ? (
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  setPageError(null);
-                                  try {
-                                    await removeMember(member.id);
-                                    if (editingMemberId === member.id) {
-                                      resetMemberEditor();
-                                    }
-                                    setOpenMemberMenuId(null);
-                                  } catch (error) {
-                                    setPageError(error instanceof Error ? error.message : "Could not remove member.");
-                                  }
-                                }}
-                                disabled={mutationBusy === "remove-member"}
-                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                Remove member
-                              </button>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </>
-                    ) : (
-                      <span className="text-[13px] text-gray-500">Read only</span>
                     )}
                   </div>
                 </div>
@@ -1153,19 +868,12 @@ export function ManageMembersScreen() {
 
       {activeTab === "teams" ? (
         <div>
-          {listToolbars ? <MemberListToolbar collection="teams" value={teamFilter} onChange={setTeamFilter} action={<DenButton size="sm" icon={access.canManageTeams ? Plus : Lock} disabled={!access.canManageTeams} title={!access.canManageTeams ? permissionLockReason("teams.manage") : undefined} onClick={() => { resetTeamEditor(); setShowTeamForm((current) => !current); }}>Create team</DenButton>} /> : <div className="mb-6 flex items-center justify-between gap-4">
-            <p className="text-[14px] text-gray-500">Manage teams and their members.</p>
-            {toolbarAction ? (
-              <DenButton icon={Plus} onClick={toolbarAction.onClick}>
-                {toolbarAction.label}
-              </DenButton>
-            ) : null}
-          </div>}
+          <MemberListToolbar collection="teams" value={teamFilter} onChange={setTeamFilter} action={<DenButton size="sm" icon={access.canManageTeams ? Plus : Lock} disabled={!access.canManageTeams} title={!access.canManageTeams ? permissionLockReason("teams.manage") : undefined} onClick={() => { resetTeamEditor(); setShowTeamForm((current) => !current); }}>Create team</DenButton>} />
 
           <div className="rounded-2xl border border-gray-100 bg-white" data-testid="teams-list">
-            <TeamsListHeader columns={teamListColumns} role={teamRoles} agentPermissions={agentPermissionsColumn} />
+            <TeamsListHeader columns={teamListColumns} agentPermissions={agentPermissionsColumn} />
 
-            {(agentPermissionsColumn || desktopPolicyScreenRemoved(orgContext)) && (!listToolbars || "everyone".includes(teamFilter.trim().toLocaleLowerCase())) ? (
+            {(agentPermissionsColumn || desktopPolicyScreenRemoved(orgContext)) && ("everyone".includes(teamFilter.trim().toLocaleLowerCase())) ? (
               <TeamsListRow
                 testId="team-row-everyone"
                 columns={teamListColumns}
@@ -1175,7 +883,7 @@ export function ManageMembersScreen() {
                 subtitle="Every member, including people in no team"
                 lanes={(
                   <>
-                    {teamRoles ? <TeamsListLane testId="team-row-role">Member</TeamsListLane> : null}
+                    <TeamsListLane testId="team-row-role">Member</TeamsListLane>
                     {agentPermissionsColumn ? <TeamsListLane testId="team-row-agent-permissions">Base for every team</TeamsListLane> : null}
                     <TeamsListLane testId="team-row-members" tone="muted">{peopleCount(orgContext.members.length)}</TeamsListLane>
                   </>
@@ -1186,19 +894,16 @@ export function ManageMembersScreen() {
 
             {visibleTeams.length === 0 ? (
               <div className="px-5 py-6 text-[13px] text-gray-500" role="status">
-                {listToolbars && teamFilter.trim() ? "No teams match your filter." : "No teams yet."}
+                {teamFilter.trim() ? "No teams match your filter." : "No teams yet."}
               </div>
             ) : (
               visibleTeams.map((team) => {
                 const names = teamMemberNames.get(team.id) ?? [];
-                const role = teamRoles
-                  // Without permissions.view a custom role can't be told from Member, so only Admin is named.
-                  ? team.grantsOrganizationAdmin || !permissionsFeature || access.canViewPermissions
-                    ? team.grantsOrganizationAdmin || !sharedRoles || !customRoles.setByTeam.get(team.id)
+                const role = team.grantsOrganizationAdmin || access.canViewPermissions
+                    ? team.grantsOrganizationAdmin || !customRoles.setByTeam.get(team.id)
                       ? TEAM_ROLE_LABELS[teamRole({ admin: team.grantsOrganizationAdmin, customSetId: customRoles.setByTeam.get(team.id)?.id ?? null })]
                       : customRoles.setByTeam.get(team.id)?.name ?? ""
-                    : "—"
-                  : "";
+                    : "—";
                 const canEdit = !team.managedByScim && access.canManageTeams && (!team.grantsOrganizationAdmin || access.canManageAdminTeams);
                 return (
                   <TeamsListRow
@@ -1212,11 +917,9 @@ export function ManageMembersScreen() {
                       <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">Managed by SCIM</span>
                     ) : null}
                     subtitle={names.length > 0 ? names.join(", ") : team.memberIds.length > 0 ? peopleCount(team.memberIds.length) : "No members yet"}
-                    // teamRoles: Admin is the team's role (Role tab), so the old checkbox goes away.
-                    extra={teamRoles ? null : <TeamAdminCheckbox team={team} />}
                     lanes={(
                       <>
-                        {teamRoles ? <TeamsListLane testId="team-row-role" title={role}>{role}</TeamsListLane> : null}
+                        <TeamsListLane testId="team-row-role" title={role}>{role}</TeamsListLane>
                         {agentPermissionsColumn ? <TeamAgentPermissionsCell summary={agentPolicies.isSuccess ? teamOverrideSummary(agentPolicies.data.teams.find((policy) => policy.scopeId === team.id)) : undefined} failed={agentPolicies.isError} /> : null}
                         <TeamsListLane testId="team-row-members" tone="muted">{peopleCount(team.memberIds.length)}</TeamsListLane>
                       </>
@@ -1240,7 +943,7 @@ export function ManageMembersScreen() {
                             disabled: mutationBusy === "delete-team",
                             confirm: {
                               title: `Delete ${team.name}?`,
-                              description: `${team.memberIds.length > 0 ? `${peopleCount(team.memberIds.length)} ${team.memberIds.length === 1 ? "loses" : "lose"}` : "Nobody loses"} this team's ${teamLosses({ role: teamRoles, agentPermissions: agentPermissionsColumn })}. This cannot be undone.`,
+                              description: `${team.memberIds.length > 0 ? `${peopleCount(team.memberIds.length)} ${team.memberIds.length === 1 ? "loses" : "lose"}` : "Nobody loses"} this team's ${teamLosses({ agentPermissions: agentPermissionsColumn })}. This cannot be undone.`,
                               action: "Delete team",
                             },
                             onSelect: async () => {
@@ -1284,7 +987,7 @@ function peopleCount(count: number): string {
 }
 
 /** What a team's members stop getting when it is deleted, for the confirmation (DESIGN.md P9). */
-function teamLosses({ role, agentPermissions }: { role: boolean; agentPermissions: boolean }): string {
-  const parts = [role ? "role" : null, "access", agentPermissions ? "agent permissions" : null].filter((part): part is string => part !== null);
+function teamLosses({ agentPermissions }: { agentPermissions: boolean }): string {
+  const parts = ["role", "access", agentPermissions ? "agent permissions" : null].filter((part): part is string => part !== null);
   return parts.length === 1 ? parts[0] ?? "" : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }

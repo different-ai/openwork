@@ -1,0 +1,144 @@
+name: CodeQL
+
+# Advanced setup replacing GitHub's CodeQL default setup. Default setup builds
+# Swift with autobuild on every PR, which waits for a macOS runner and spends
+# ~8 minutes discovering the build before compiling. Here Swift is built
+# directly, and only when the Swift package changes. Every other language is
+# analyzed without a build on every PR, push and schedule.
+#
+# The code_scanning rule on dev waits for every language category dev has. PRs
+# that skip the Swift build upload an empty Swift result instead, so they stay
+# mergeable without an admin bypass. Pushes to dev always run the real scan.
+#
+# Default setup must be disabled for this workflow's uploads to be accepted.
+# See docs/codeql-results.md.
+
+on:
+  pull_request:
+    branches:
+      - dev
+  push:
+    branches:
+      - dev
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: Detect Swift changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      swift: ${{ steps.classify.outputs.swift }}
+    steps:
+      - name: Classify changed files
+        id: classify
+        uses: actions/github-script@v8
+        with:
+          script: |
+            if (context.eventName !== "pull_request") {
+              core.setOutput("swift", "true");
+              return;
+            }
+            // Keep in sync with swiftPaths in scripts/ci/check-codeql-results.mjs.
+            const swiftPaths = ["packages/computer-use/native/", ".github/workflows/codeql.yml"];
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const changed = files.some((file) => [file.filename, file.previous_filename]
+              .some((name) => name && swiftPaths.some((path) => name.startsWith(path))));
+            core.info(changed ? "Swift sources changed; Swift will be analyzed." : "No Swift changes; skipping Swift analysis.");
+            core.setOutput("swift", String(changed));
+
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    needs: changes
+    # Swift needs macOS (AppKit). When Swift is skipped, its leg finishes on
+    # Linux in seconds instead of waiting for a macOS runner.
+    runs-on: ${{ matrix.language == 'swift' && needs.changes.outputs.swift == 'true' && 'blacksmith-12vcpu-macos-15' || 'ubuntu-latest' }}
+    timeout-minutes: ${{ matrix.language == 'swift' && 45 || 30 }}
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: python
+            build-mode: none
+          - language: swift
+            build-mode: manual
+    env:
+      RUN_ANALYSIS: ${{ matrix.language != 'swift' || needs.changes.outputs.swift == 'true' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      # No Swift changes: upload an empty CodeQL result for /language:swift so
+      # the code_scanning merge rule is satisfied without the macOS build.
+      # Swift is analyzed for real on dev pushes and the weekly schedule.
+      - name: Write empty Swift result
+        if: env.RUN_ANALYSIS != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/codeql-swift-skipped"
+          cat > "$RUNNER_TEMP/codeql-swift-skipped/swift.sarif" <<'SARIF'
+          {
+            "version": "2.1.0",
+            "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+            "runs": [
+              {
+                "tool": { "driver": { "name": "CodeQL", "rules": [] } },
+                "results": []
+              }
+            ]
+          }
+          SARIF
+
+      - name: Upload empty Swift result
+        if: env.RUN_ANALYSIS != 'true'
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: ${{ runner.temp }}/codeql-swift-skipped/swift.sarif
+          category: /language:swift
+
+      - name: Initialize CodeQL
+        if: env.RUN_ANALYSIS == 'true'
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
+
+      # CodeQL traces this compile. Building the one SwiftPM product directly
+      # skips autobuild's project discovery.
+      - name: Build Swift
+        if: env.RUN_ANALYSIS == 'true' && matrix.language == 'swift'
+        run: swift build --package-path packages/computer-use/native --product ComputerUse
+
+      - name: Perform CodeQL Analysis
+        if: env.RUN_ANALYSIS == 'true'
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:${{ matrix.language }}

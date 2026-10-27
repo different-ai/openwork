@@ -84,7 +84,7 @@ function OAuthFailure({
   }
 
   return (
-    <DenStatusScreen title={failure.title} description={failure.description} error={message}>
+    <DenStatusScreen title={failure.title} description={failure.description} error={failure.description === message ? null : message}>
       {failure.advice.length > 0 ? (
         <div className="mt-8">
           <h2 className="text-[14px] font-semibold">What to do next</h2>

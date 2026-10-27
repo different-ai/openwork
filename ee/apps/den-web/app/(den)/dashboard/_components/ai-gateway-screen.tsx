@@ -13,6 +13,7 @@ import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute, getOrgAccessFlags, orgFeatureEnabled, type DenOrgAccessFlags } from "../../_lib/den-org";
 import { canOpenGatewayArea, gatewayAreaLockedMessage, type GatewayDashboardArea } from "../_lib/gateway-dashboard-access";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { AutoRouterSection } from "./auto-router-section";
 import { useGatewayDashboardAccess } from "./gateway-dashboard-capability-guard";
 import { GatewaySpendBreakdown } from "./gateway-spend-breakdown";
 import { getProviderIconSlug } from "./llm-provider-data";
@@ -131,7 +132,7 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
   return (
     <DashboardPageTemplate
       title="AI Gateway"
-      description="Manage Providers, Models, Usage Limits and LLM Controls for your team"
+      description={null}
     >
       <div data-testid="ai-gateway-tabs" className="mb-6">
         <UnderlineTabs tabs={AI_GATEWAY_TABS} activeTab={tab} onChange={setTab} />
@@ -149,6 +150,7 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
                 : access === "enabled" && orgId && orgContext ? (
                   <>
                     {tab === "overview" ? <AiGatewayOverview key={orgId} orgId={orgId} /> : null}
+                    {tab === "ai-providers" && orgFeatureEnabled(orgContext, "autoRouter") ? <AutoRouterSection key={`auto-router-${orgId}`} /> : null}
                     {tab === "ai-providers" ? <GatewayProvidersSection key={orgId} /> : null}
                     {tab === "users-and-teams" ? <GatewayUsersTeamsSection key={orgId} orgId={orgId} orgSlug={orgSlug} orgContext={orgContext} /> : null}
                     {tab === "limits" ? (
@@ -160,7 +162,7 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
                           orgSlug={orgSlug}
                           teams={orgContext.teams}
                           members={orgContext.members}
-                          providerLimits={orgFeatureEnabled(orgContext, "gatewayProviderUsageLimits")}
+
                         />
                       </>
                     ) : null}

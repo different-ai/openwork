@@ -1,5 +1,9 @@
 # OpenWork
 
+<p align="center">
+  <img src="./docs/images/model-picker.png" width="560" alt="The OpenWork composer with its model picker open: pinned, recent and per-provider models from Anthropic, OpenAI, Google and a local Ollama model" />
+</p>
+
 OpenWork is the free, open-source alternative to Claude Cowork and Codex: a desktop app for macOS, Windows, and Linux where AI agents do real work on your own files. It is built on [OpenCode](https://opencode.ai), works with any model — 50+ providers, your own API keys, or local models via Ollama — and lets teams share skills and MCP servers.
 
 [**Download OpenWork**](https://openworklabs.com/download) · [GitHub releases](https://github.com/different-ai/openwork/releases) · [Docs](https://openworklabs.com/docs)

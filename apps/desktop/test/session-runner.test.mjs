@@ -477,3 +477,29 @@ test("scheduled Automation execution stays independent with a recovery-capable t
   const disk = JSON.parse(await readFile(join(root, desktopSessionRunnerPartition(denBaseUrl, account), "journal.json"), "utf8").catch(() => "{\"commands\":[],\"requests\":[]}"))
   assert.deepEqual(disk.commands, [])
 })
+
+test("an engine policy the local server cannot take yet never stops the runner from finding work", async (t) => {
+  const root = await privateDirectory(t)
+  const native = nativeFixture()
+  const den = runnerFixture(native)
+  // Work responses carry the engine policy; the local server is still starting.
+  const fetchImpl = async (input, init = {}) => {
+    const response = await den.fetchImpl(input, init)
+    if (new URL(String(input)).pathname !== "/v1/automation-runner/work") return response
+    return new Response(JSON.stringify({ ...(await response.json()), enginePolicy: { upgrade: true } }), { status: response.status })
+  }
+  const policies = []
+  const runner = createDesktopAutomationRunner({
+    fetchImpl, getLocalRuntime: native.getLocalRuntime, getJournalRoot: () => root,
+    remoteSessionFirstTurnWindowMs: 0,
+    remoteSessionWatch: { fastPollMs: 10, slowPollMs: 10 },
+    remoteSessionRequestPoll: { pollMs: 10 },
+    waitBeforeReconnect: (_ms, signal) => new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true })),
+    onEnginePolicy: async (policy) => { policies.push(policy); throw new Error("OpenWork engine policy service unavailable") },
+  })
+  t.after(() => runner.stop())
+  configure(runner, legacyCapabilities)
+  await eventually(() => den.calls.some((call) => call.path.endsWith("/complete")))
+  assert.ok(den.calls.some((call) => call.path.endsWith("/claim")), "the Automation was still claimed")
+  assert.deepEqual(policies[0], { upgrade: true }, "the policy was still offered to the local server")
+})

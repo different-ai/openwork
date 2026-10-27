@@ -103,7 +103,7 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     items: {
       ready: ["Schedules on web and desktop", "Daily and weekly runs", "Missed and interrupted runs are shown"],
       building: ["Saved workflows from a chat that worked"],
-      soon: ["Custom schedules", "Team plan, no OpenWork Web needed", "Fine-grained automation control", "Approvals in the middle of a run"]
+      soon: ["Custom schedules", "Run in the cloud from GitHub events", "Team plan, no OpenWork Web needed", "Fine-grained automation control", "Approvals in the middle of a run"]
     }
   },
   {
@@ -164,7 +164,8 @@ const STATUS: Record<RoadmapStatus, { label: string; hint: string; className: st
 
 const STATUS_ORDER: RoadmapStatus[] = ["ready", "building", "soon"];
 
-export function RoadmapStatusPill({ status }: { status: RoadmapStatus }) {
+/** `label` replaces the status name where a page words the same state differently. */
+export function RoadmapStatusPill({ status, label }: { status: RoadmapStatus; label?: string }) {
   const details = STATUS[status];
   return (
     <span
@@ -172,7 +173,7 @@ export function RoadmapStatusPill({ status }: { status: RoadmapStatus }) {
       className={`inline-flex h-[22px] shrink-0 items-center gap-[5px] whitespace-nowrap rounded-full pl-[7px] pr-[9px] text-xs font-semibold ${details.className}`}
     >
       {details.icon}
-      {details.label}
+      {label ?? details.label}
     </span>
   );
 }

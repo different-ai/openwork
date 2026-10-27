@@ -1169,7 +1169,7 @@ const pluginMcpRequirementConfigureItemSchema = (
     }),
   })
 )
-/** With secure keys in chat on, an API-key requirement set up without its key also returns credentialPrompt. */
+/** An API-key requirement set up without its key also returns credentialPrompt. */
 export const pluginMcpRequirementConfigureResponseSchema = z.object({
   ok: z.literal(true),
   item: pluginMcpRequirementConfigureItemSchema,

@@ -190,6 +190,9 @@ test("a contractor's agent asks before commands, runs the ones the team allows, 
     const restarted = await world.restartEngine();
     evidence.recordAssertionEvidence(`the ${world.engine} engine after a restart with stored rules`, restarted.running ? "running" : `not running: ${restarted.error ?? "unknown"}`, restarted.running);
     expect(restarted.running).toBe(true);
+    // Reopen the app after the fixture swaps engine routing, matching the
+    // quit-and-reopen scenario instead of retaining the stopped engine's state.
+    await user.reload();
     await user.see("composer", { editable: true, timeoutMs: 120_000 });
     await user.screenshot();
   });

@@ -97,13 +97,15 @@ def serving_expected_revision(service, expected_image):
     if not isinstance(created, str) or not isinstance(ready, str) or not created or not ready or created != ready:
         return False
     traffic = service.get("trafficStatuses", [])
-    if not traffic or any(type(target.get("percent")) is not int or not 0 <= target["percent"] <= 100 for target in traffic):
+    # ProtoJSON omits int32's default zero. Default only an absent field;
+    # explicit null, bool, string, float and out-of-range values stay invalid.
+    if not traffic or any(type(target.get("percent", 0)) is not int or not 0 <= target.get("percent", 0) <= 100 for target in traffic):
         return False
     # API versions can return either a full revision resource name or its ID in
     # traffic status. Both are reported by the same service, not customer input.
     revision = ready.rsplit("/", 1)[-1]
-    return (sum(target["percent"] for target in traffic) == 100
-            and sum(target["percent"] for target in traffic
+    return (sum(target.get("percent", 0) for target in traffic) == 100
+            and sum(target.get("percent", 0) for target in traffic
                     if isinstance(target.get("revision"), str)
                     and target["revision"].rsplit("/", 1)[-1] == revision) == 100)
 

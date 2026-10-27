@@ -42,6 +42,7 @@ export const INVENTORY_IRRELEVANT_TABLES: ReadonlySet<string> = new Set([
   "inference_usage_ledger_entries", "inference_free_usage", "inference_free_usage_buckets",
   "anonymous_inference_identities", "anonymous_inference_rate_buckets", "anonymous_inference_usage",
   "anonymous_inference_usage_buckets",
+  "free_auto_limit_events", "free_auto_purchases",
   // Runs, runner presence and remote sessions.
   "automation_runner", "automation_runner_notification", "automation_run", "automation_run_event", "workflow_run",
   "remote_session_command", "remote_session_request", "daytona_sandbox", "cloud_runtime_instance",
@@ -80,4 +81,29 @@ export function inventoryRevisionsToBump(writes: InventoryWrites, requestOrganiz
   const organizationIds = new Set(writes.organizationIds)
   if (requestOrganizationId && ORGANIZATION_ID.test(requestOrganizationId)) organizationIds.add(requestOrganizationId)
   return [...organizationIds]
+}
+
+type InventoryChangeListener = (organizationIds: readonly string[]) => void
+
+const inventoryChangeListeners = new Set<InventoryChangeListener>()
+
+/**
+ * Hears, in this process, the organizations a finished request bumped. Open
+ * Connect streams use it to tell clients their tool list changed; other
+ * replicas' streams learn only from their own requests.
+ */
+export function onInventoryChanged(listener: InventoryChangeListener): () => void {
+  inventoryChangeListeners.add(listener)
+  return () => inventoryChangeListeners.delete(listener)
+}
+
+export function notifyInventoryChanged(organizationIds: readonly string[]) {
+  if (organizationIds.length === 0) return
+  for (const listener of inventoryChangeListeners) {
+    try {
+      listener(organizationIds)
+    } catch (error) {
+      console.error("inventory_change_listener_failed", { error })
+    }
+  }
 }

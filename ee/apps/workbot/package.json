@@ -4,26 +4,38 @@
   "type": "module",
   "description": "Workbot on its own address: one ongoing chat per member, signed in with Den, answered on the headless runner.",
   "engines": {
-    "node": ">=22.13"
+    "node": ">=24.22.1 <25"
   },
   "scripts": {
     "dev": "WORKBOT_DEV=1 NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx watch --ignore 'src/client/**' src/server/main.ts",
-    "build": "tsc -p tsconfig.json --noEmit && vite build && esbuild src/server/main.ts --bundle --platform=node --format=esm --target=node22 --conditions=development --outfile=dist/server.js --external:hono --external:@hono/node-server --external:zod --external:vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build && esbuild src/server/main.ts --bundle --platform=node --format=esm --target=node22 --conditions=development --outfile=dist/server.js --external:hono --external:@hono/node-server --external:zod --external:vite --external:@sentry/node",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:auth": "tsx --test scripts/auth.test.ts",
-    "test:model": "tsx --conditions=development --test scripts/model.test.ts"
+    "test:service-readiness": "tsx --conditions=development --test scripts/service-readiness.test.ts",
+    "test:error-reporting": "tsx --test scripts/error-reporting.test.ts",
+    "test:model": "tsx --conditions=development --test scripts/model.test.ts",
+    "test:gateway-models": "tsx --conditions=development --test scripts/gateway-models.test.ts",
+    "test:context": "tsx --conditions=development --test scripts/context.test.ts",
+    "test:events": "tsx --conditions=development --test scripts/events.test.ts",
+    "test:steps": "tsx --conditions=development --test scripts/steps.test.ts",
+    "test:session-cells": "tsx --conditions=development --test scripts/session-cells.test.ts",
+    "test:activation": "tsx --conditions=development --test scripts/activation.test.ts",
+    "test:command-palette": "tsx --conditions=development --test scripts/command-palette.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.0.12",
     "@openwork-ee/headless-protocol": "workspace:*",
     "@openwork-ee/workbot-server": "workspace:*",
     "@openwork-ee/workbot-ui": "workspace:*",
+    "@openwork/types": "workspace:*",
+    "@sentry/node": "10.64.0",
     "@tanstack/react-query": "^5.96.2",
-    "hono": "4.13.9",
+    "hono": "4.13.11",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6",
+    "@modelcontextprotocol/sdk": "^1.31.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
@@ -35,6 +47,6 @@
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.1",
     "typescript": "^5.5.4",
-    "vite": "^6.4.3"
+    "vite": "^6.4.4"
   }
 }

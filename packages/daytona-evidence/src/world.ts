@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { DaytonaApi, type Sandbox } from "./api.ts";
+import { LOCALHOST_RECIPE } from "./localhost.ts";
 import type { DaytonaEvidenceLaunch } from "./builder.ts";
 
 import { COPY_KIND, EVIDENCE_KIND } from "./kinds.ts";
@@ -62,6 +63,9 @@ export async function launchDaytonaEvidenceWorld(template: DaytonaEvidenceLaunch
     // A template may serve several commits whose VM-side files are identical.
     if ((await api.readFile(sandbox, `${ROOT}/evidence-ready`))?.trim() !== "web-v1"
       || (await api.readFile(sandbox, `${ROOT}/runtime-fingerprint`))?.trim() !== template.runtimeFingerprint) throw new Error("Evidence world source mismatch");
+    // The preview proxy dials localhost inside the VM; a boot with an empty /etc/hosts answers 502 on every
+    // port. Best effort and bounded: saved layers are already repaired, and the CDP wait reports any failure.
+    await Promise.race([api.exec(sandbox, LOCALHOST_RECIPE, 15).catch(() => undefined), delay(20_000, undefined, { ref: false })]).catch(() => undefined);
     const [viewer, cdp] = await Promise.all([api.previewUrl(sandbox.id, 8080), api.previewUrl(sandbox.id, 8081)]);
     credentials.add(viewer.token); credentials.add(cdp.token);
     const token = randomBytes(32).toString("base64url");

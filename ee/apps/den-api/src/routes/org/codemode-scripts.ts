@@ -257,7 +257,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       member,
       redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
       generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
-      organizationFeatures: await getOrganizationFeatures(context.organization.id),
+      organizationFeatures: await getOrganizationFeatures(context.organization.id, { userId: context.currentMember.userId }),
       // Den web and REST callers run saved Workflows here.
       usageSource: "workflow",
     })

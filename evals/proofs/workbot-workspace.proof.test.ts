@@ -1,0 +1,115 @@
+import { expect } from "vitest";
+import { spec } from "@openwork/testkit";
+import { workbotWorkspace } from "../worlds/workbot-workspace.ts";
+
+const test = spec.world(workbotWorkspace, { timeout: 120_000, needs: { placement: "local" }, resources: { surfaces: [], services: [] } });
+
+test("a member asks about an open document and calendar without losing a draft", async ({ world, user, probe, step, evidence }) => {
+  await user.resizeViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+  await step("before: Documents has no workspace chat while the feature is off", async () => {
+    await user.see({ role: "button", label: "My Drive" });
+    await user.notSee({ role: "button", label: "Show workspace chat" });
+    evidence.recordAssertionEvidence("The feature is absent before rollout", "Documents is usable; no floating assistant or navigation drawer", (await probe.dom("[data-workbot-workspace-assistant]")).elements.length === 0);
+    await user.screenshot();
+  });
+  await step("after: a member asks about the open file with a visible context chip", async () => {
+    await user.navigate(`${world.url}documents?sideChats=on&chat=sidechat000000001`);
+    await user.click({ role: "button", label: "Open workspace navigation" });
+    await user.click({ role: "button", label: "Open Project brief.txt" });
+    await user.see({ role: "textbox", label: "Document text" });
+    await user.click({ role: "button", label: /^Edit$/ });
+    await user.type({ role: "textbox", label: "Document text" }, "Private unsaved draft", { replace: true });
+    await user.see({ testId: "workbot-view-context", text: /Unsaved edits excluded/ });
+    await user.type({ role: "textbox", label: "Message Workbot" }, "Summarize this");
+    await user.press("Enter");
+    const sent = await probe.eventually(() => world.messages(), { within: 5000, label: "the question includes visible document metadata", until: values => values.length === 1 });
+    expect(sent[0]).toMatchObject({ text: "Summarize this", context: { kind: "document", fileId: "file_brief", title: "Project brief.txt", unsaved: true } });
+    expect(JSON.stringify(sent)).not.toContain("Private unsaved draft");
+    // The conversation is shown by default beside the document; editing the document did not minimize it.
+    await user.see({ role: "button", label: "Hide workspace chat" });
+    expect((await probe.dom("[data-workbot-workspace-chat]")).elements).toHaveLength(1);
+    expect((await probe.dom('textarea[aria-label="Message Workbot"]')).elements.some(input => input.focused)).toBe(true);
+    await user.see({ role: "link", label: "Budget notes", nth: 0 });
+    expect((await probe.url())).toContain("/documents");
+    expect(world.opened()).toEqual(["file_brief"]);
+    evidence.recordAssertionEvidence("Only the current file metadata accompanies the question", JSON.stringify(sent[0]), !JSON.stringify(sent).includes("Private unsaved draft"));
+    await user.screenshot();
+  });
+  await step("the member minimizes the chat, moves to Calendar and asks about the displayed week", async () => {
+    await user.click({ role: "button", label: "Hide workspace chat" });
+    await probe.eventually(() => probe.dom("[data-workbot-workspace-chat]"), { within: 3000, label: "the chat minimizes", until: layout => layout.elements.length === 0 });
+    await user.click({ role: "button", label: "Open workspace navigation" });
+    await user.see({ text: "Save or close drafts to switch chats." });
+    await user.press("Escape");
+    await probe.eventually(() => probe.dom('[role="dialog"]'), { within: 3000, label: "the navigation drawer finishes closing", until: layout => layout.elements.length === 0 });
+    await user.notSee({ role: "button", label: "Close workspace navigation" });
+    expect((await probe.dom('[aria-label="Open workspace navigation"]')).elements[0]?.focused).toBe(true);
+    await user.click({ role: "button", label: "Open workspace navigation" });
+    await user.click({ role: "button", label: /^Calendar$/ });
+    expect(await probe.url()).toContain("chat=sidechat000000001");
+    await user.see({ testId: "workbot-view-context", text: "Week calendar" });
+    await user.click({ role: "button", label: /^Team review,/ });
+    await user.type({ role: "textbox", label: "Message Workbot" }, "Help me prepare for this meeting");
+    await user.press("Enter");
+    const sent = await probe.eventually(() => world.messages(), { within: 5000, label: "calendar replaces the earlier document context", until: values => values.length === 2 });
+    expect(sent[1]).toMatchObject({ text: "Help me prepare for this meeting", context: { kind: "calendar", view: "week", selected: { kind: "meeting", id: "event_review", title: "Team review" } } });
+    expect(JSON.stringify(sent[1])).not.toContain("file_brief");
+    await user.click({ role: "button", label: "Show workspace chat" });
+    evidence.recordAssertionEvidence("The new question refers to Calendar", JSON.stringify(sent[1]), JSON.stringify(sent[1]).includes('"kind":"calendar"'));
+    await user.screenshot();
+  });
+  await step("the member returns to the document with their draft intact", async () => {
+    await user.click({ role: "button", label: "Hide workspace chat" });
+    await user.click({ role: "button", label: "Open workspace navigation" });
+    await user.click({ role: "button", label: /^Documents$/ });
+    await user.see({ role: "textbox", label: "Document text" }, { value: "Private unsaved draft" });
+    await user.click({ testId: "workbot-view-context" });
+    await user.type({ role: "textbox", label: "Message Workbot" }, "A separate question");
+    await user.press("Enter");
+    const sent = await probe.eventually(() => world.messages(), { within: 5000, label: "context can be excluded", until: values => values.length === 3 });
+    expect(sent[2]).not.toHaveProperty("context");
+    await user.click({ role: "button", label: "Show workspace chat" });
+    evidence.recordAssertionEvidence("The draft survives navigation and view sharing can be turned off", "Private unsaved draft remains; the third question contains no context", !("context" in sent[2]));
+    await user.screenshot();
+  });
+  await step("a document opens only after the member chooses its link", async () => {
+    await user.click({ role: "link", label: "Budget notes", nth: 0 });
+    await user.see({ role: "textbox", label: "Document text" }, { value: "Budget overview" });
+    // The earlier exclusion was for Project brief; the newly opened document is shared again.
+    await user.see({ testId: "workbot-view-context", text: /Budget notes\.txt · Read-only context/ });
+    expect(world.opened()).toEqual(["file_brief", "file_budget"]);
+    await user.click({ role: "button", label: "Show workspace chat" });
+    await user.click({ role: "link", label: "Restricted document", nth: 0 });
+    await user.see({ text: "Couldn't open this document. Check your Drive connection and access." });
+    await user.see({ role: "textbox", label: "Document text" }, { value: "Budget overview" });
+    await user.resizeViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
+    await user.click({ role: "button", label: "Show workspace chat" });
+    const layout = await probe.dom("[data-workbot-workspace-chat]");
+    expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.elements[0]?.rect.right).toBeLessThanOrEqual(layout.viewportWidth);
+    evidence.recordAssertionEvidence("A restricted link cannot replace an authorized open document", "Budget notes opened explicitly; restricted document was refused", world.opened().join(",") === "file_brief,file_budget");
+    await user.screenshot();
+  });
+  await step("the member asks from Home without opening a second chat pane", async () => {
+    await user.click({ role: "button", label: "Hide workspace chat" });
+    await user.resizeViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+    await user.click({ role: "button", label: "Close Project brief.txt" });
+    await user.click({ role: "button", label: "Don’t save" });
+    await user.click({ role: "button", label: "Open workspace navigation" });
+    await user.click({ role: "button", label: /^Home$/ });
+    await user.type({ role: "textbox", label: "Message Workbot" }, "A question from Home");
+    await user.press("Enter");
+    await user.see({ text: "A question from Home" });
+    expect((await probe.dom("[data-workbot-workspace-chat]")).elements).toHaveLength(0);
+    evidence.recordAssertionEvidence("Home continues the same conversation without a floating pane", "The Home message is visible; no workspace chat popover opens", (await probe.dom("[data-workbot-workspace-chat]")).elements.length === 0);
+    await user.screenshot();
+  });
+  await step("a member without Drive access gets a connection action", async () => {
+    await user.navigate(`${world.url}documents?access=denied`);
+    await user.see({ role: "button", label: "Connect Google Drive" });
+    expect(await probe.text()).toContain("Connect Google Drive to browse and open your documents. Drive read permission is required.");
+    await user.notSee({ role: "textbox", label: "Document text" });
+    evidence.recordAssertionEvidence("No document is exposed without a Drive connection", "The connection state replaces the document list", (await probe.dom(".ow-editor-plain")).elements.length === 0);
+    await user.screenshot();
+  });
+});

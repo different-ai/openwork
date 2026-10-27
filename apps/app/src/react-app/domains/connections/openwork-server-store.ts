@@ -770,7 +770,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     }
 
     try {
-      hostInfo = await openworkServerRestart() as OpenworkServerInfo;
+      hostInfo = await openworkServerRestart({ diagnosticsCause: "connection-recovery" }) as OpenworkServerInfo;
       mutateState((current) => ({ ...current, openworkServerHostInfo: hostInfo }));
     } catch {
       return null;

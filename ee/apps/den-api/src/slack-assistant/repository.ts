@@ -20,7 +20,6 @@ import {
   readConnectedAccountForExternalMcpIdentity,
   type ExternalMcpConnectionRow,
 } from "../capability-sources/external-mcp-connections.js"
-import { getOrganizationFeatures, organizationFeatureEnabled } from "../features.js"
 import { listTeamsForMember } from "../orgs.js"
 import { canUseSlackAssistant, scopeKey, slackClient, type SlackEvent } from "./protocol.js"
 import { CLAIMABLE_STATUSES, THREAD_ACTIVE_STATUSES } from "./statuses.js"
@@ -30,9 +29,6 @@ export type EventRow = typeof Event.$inferSelect
 export type ThreadRow = typeof Thread.$inferSelect
 export async function getInstallation(connectionId: DenTypeId<"externalMcpConnection">) {
   return (await db.select().from(Installation).where(eq(Installation.connectionId, connectionId)).limit(1))[0] ?? null
-}
-export async function slackAssistantEnabledForInstallation(installation: InstallationRow) {
-  return organizationFeatureEnabled(installation.organizationId, "slackAssistant")
 }
 export function isSlackConnection(connection: ExternalMcpConnectionRow) {
   return (
@@ -189,11 +185,10 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
     .limit(1)
   const member = members[0]
   if (!member?.userId) return null
-  const [organizations, teams, account, features] = await Promise.all([
+  const [organizations, teams, account] = await Promise.all([
     db.select().from(OrganizationTable).where(eq(OrganizationTable.id, installation.organizationId)).limit(1),
     listTeamsForMember({ organizationId: installation.organizationId, memberId: member.id }),
     readConnectedAccountForExternalMcpIdentity({ connection, orgMembershipId: member.id }),
-    getOrganizationFeatures(installation.organizationId),
   ])
   const organization = organizations[0]
   const granted = await memberCanUseExternalMcpConnection({
@@ -204,7 +199,6 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
   if (
     !organization ||
     !canUseSlackAssistant({
-      capabilityEnabled: features.slackAssistant,
       enabled: installation.enabled,
       individualAccounts: true,
       activeMember: true,

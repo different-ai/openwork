@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { OpenCodeLogo } from "./opencode-logo";
 import { SocTypeIIBadge } from "./soc-type-ii-badge";
+import { TRUST_CENTER_URL } from "../lib/trust-center";
 
 export function SiteFooter() {
   return (
@@ -39,12 +40,23 @@ export function SiteFooter() {
           <Link href="/enterprise" className="whitespace-nowrap transition-colors hover:text-gray-800">
             Enterprise
           </Link>
+          <Link href="/shadow-ai" className="whitespace-nowrap transition-colors hover:text-gray-800">
+            Shadow AI governance
+          </Link>
+          <Link href="/ai-governance" className="whitespace-nowrap transition-colors hover:text-gray-800">
+            AI governance
+          </Link>
           <Link href="/contact" className="whitespace-nowrap transition-colors hover:text-gray-800">
             Contact
           </Link>
-          <Link href="/trust" className="whitespace-nowrap transition-colors hover:text-gray-800">
+          <a
+            href={TRUST_CENTER_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="whitespace-nowrap transition-colors hover:text-gray-800"
+          >
             Trust Center
-          </Link>
+          </a>
           <Link href="/privacy" className="whitespace-nowrap transition-colors hover:text-gray-800">
             Privacy
           </Link>
@@ -67,14 +79,16 @@ export function SiteFooter() {
               <OpenCodeLogo className="h-3 w-auto" />
             </a>
           </div>
-          <Link
-            href="/trust"
+          <a
+            href={TRUST_CENTER_URL}
+            target="_blank"
+            rel="noreferrer"
             aria-label="SOC 2 Type II. View Trust Center"
             className="inline-flex shrink-0 items-center text-gray-600 transition-opacity hover:opacity-80"
           >
             <SocTypeIIBadge className="h-14 w-14" />
             <span className="sr-only">SOC 2 Type II</span>
-          </Link>
+          </a>
         </div>
       </div>
     </footer>

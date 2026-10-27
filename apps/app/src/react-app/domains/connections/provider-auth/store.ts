@@ -1,4 +1,7 @@
 import { useSyncExternalStore } from "react";
+import { providerCredentialScope, useProviderCredentialHealth } from "./credential-health";
+import { liveProviderSyncStatusQueryKey, usesLiveProviderSync, type LiveProviderSyncStatus } from "./live-provider-sync";
+import { isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import { CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 
 import { applyEdits, modify, parse } from "jsonc-parser";
@@ -87,7 +90,7 @@ import {
   type GatewayConnectProvider,
   resolveCloudProviderCredentials,
 } from "./cloud-provider-config";
-import { dispatchNewProviders } from "../../../../app/lib/provider-events";
+import { dispatchNewProviders, dispatchProviderCatalogChanged } from "../../../../app/lib/provider-events";
 import { hasPendingGatewayModelSelection } from "./pending-gateway-model-selection";
 import { readManagedDisabledProviders, updateManagedDisabledProviders } from "../managed-engine-config";
 import {
@@ -117,7 +120,7 @@ type CloudProviderSyncReason =
   | "settings_cloud_opened"
   | "manual";
 
-type CloudProviderSyncWorkResult = void | OpenworkCloudProviderSyncRun;
+type CloudProviderSyncWorkResult = void | OpenworkCloudProviderSyncRun | { status: "live" };
 
 type GlobalCloudProviderSyncOutcome = { contextKey: string } & (
   | { status: "completed"; result: CloudProviderSyncWorkResult }
@@ -1291,6 +1294,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         ) {
           return state.cloudOrgProviders;
         }
+        const workspaceId = options.runtimeWorkspaceId();
+        if (workspaceId) for (const provider of providers) {
+          useProviderCredentialHealth.getState().configure(workspaceId, getCloudManagedProviderId(provider), JSON.stringify([settings.baseUrl, orgId, provider.updatedAt]));
+        }
         setStateField("cloudOrgProviders", providers);
         cloudOrgProvidersLoadKey = loadKey;
         return providers;
@@ -1389,6 +1396,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   };
 
   const removeProviderAuthCredentials = async (providerId: string) => {
+    const workspaceId = options.runtimeWorkspaceId();
+    if (workspaceId && options.providerBaseUrl().trim()) useProviderCredentialHealth.getState().bindWorkspace(workspaceId, providerCredentialScope(options.providerBaseUrl()));
+    const changed = () => { if (workspaceId) useProviderCredentialHealth.getState().changed(workspaceId, providerId); };
     const c = options.client();
     if (!c) {
       throw new Error(t("providers.not_connected"));
@@ -1401,6 +1411,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (typeof authClient.remove === "function") {
       const result = await authClient.remove({ providerID: providerId });
       assertNoClientError(result);
+      changed();
       return;
     }
 
@@ -1408,13 +1419,15 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       client?: { delete?: (options: { url: string }) => Promise<unknown> };
     }).client;
     if (rawClient?.delete) {
-      await rawClient.delete({ url: `/auth/${encodeURIComponent(providerId)}` });
+      assertNoClientError(await rawClient.delete({ url: `/auth/${encodeURIComponent(providerId)}` }));
+      changed();
       return;
     }
 
     if (typeof authClient.set === "function") {
       const result = await authClient.set({ providerID: providerId, auth: null });
       assertNoClientError(result);
+      changed();
       return;
     }
 
@@ -1732,7 +1745,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
                   if (!unreachable || !isDesktopRuntime()) {
                     throw error;
                   }
-                  await engineRestart({});
+                  await engineRestart({ diagnosticsCause: "provider-auth" });
                 }
                 reloaded = true;
               }
@@ -1843,12 +1856,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         await ensureProjectProviderDisabledState(resolved, false);
       }
       const trimmedCode = code?.trim();
+      const workspaceId = options.runtimeWorkspaceId();
       const result = await c.provider.oauth.callback({
         providerID: resolved,
         method: methodIndex,
         code: trimmedCode || undefined,
       });
       assertNoClientError(result);
+      if (workspaceId) useProviderCredentialHealth.getState().changed(workspaceId, resolved);
       const updated = await refreshProviders({ dispose: true });
       const connectedNow = Array.isArray(updated?.connected) && updated.connected.includes(resolved);
       if (connectedNow) {
@@ -1895,8 +1910,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       if (providerId.trim().toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
         await ensureProjectProviderDisabledState(providerId, false);
       }
-      await c.auth.set({ providerID: providerId, auth: { type: "api", key: trimmed } });
+      const workspaceId = options.runtimeWorkspaceId();
+      assertNoClientError(await c.auth.set({ providerID: providerId, auth: { type: "api", key: trimmed } }));
+      if (workspaceId) useProviderCredentialHealth.getState().changed(workspaceId, providerId);
       await refreshProviders({ dispose: true });
+      // A configured provider can already be listed before a key is saved.
+      // Its connected IDs then stay identical, but its engine availability
+      // changed; do not leave the old skipped-provider state cached.
+      await getReactQueryClient().invalidateQueries({ queryKey: ["local-provider-engine-states"] });
       return `${t("status.connected")} ${providerId}`;
     } catch (error) {
       const message = describeProviderError(error, t("providers.save_api_key_failed"));
@@ -2385,7 +2406,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return result;
   }
 
-  async function runCloudProviderSync(reason: CloudProviderSyncReason): Promise<void | { outcome: "handled_server_side" }> {
+  async function runCloudProviderSync(reason: CloudProviderSyncReason): Promise<void | { outcome: "handled_server_side" | "handled_live" }> {
     if (disposed) return;
     const delivery = syncDenSessionDelivery();
     const contextKey = getCloudProviderSyncContextKey();
@@ -2445,6 +2466,26 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             // An old server session can still return noop after a failed token
             // refresh. Delivery must succeed before every run, not just no_session.
             if (!await pushDenSession() || !isCurrent()) return;
+            // Session delivery above must continue even when V2 owns provider
+            // reconciliation. Do not wake the legacy config writer in that mode.
+            if (isOpencodeV2BaseUrl(options.providerBaseUrl())) {
+              const status = await openworkClient.getEngineV2PreviewStatus().catch(() => null);
+              if (!isCurrent()) return;
+              const baseUrl = options.providerBaseUrl();
+              const queryClient = getReactQueryClient();
+              const key = liveProviderSyncStatusQueryKey(baseUrl);
+              const previouslyLive = usesLiveProviderSync({ baseUrl, status: queryClient.getQueryData<LiveProviderSyncStatus>(key) });
+              if (status) queryClient.setQueryData(key, status);
+              if (usesLiveProviderSync({ baseUrl, status })) {
+                // Registration may have emitted native events before the app
+                // knew who owned sync. Reconcile once when ownership is learned.
+                if (!previouslyLive) dispatchProviderCatalogChanged({
+                  baseUrl, directory: options.selectedWorkspaceRoot(), reason: "reconnect",
+                });
+                void refreshGatewayUsageAfterCloudSync(usageScope);
+                return { status: "live" as const };
+              }
+            }
             let result = await openworkClient.runCloudProviderSyncNow(reason, delivery?.controller.signal);
             if (!isCurrent()) return;
             if (result.status === "no_session") {
@@ -2458,6 +2499,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         );
         if (!isCurrent()) return;
         if (!result) throw new Error("Cloud provider sync returned no result.");
+        if (result.status === "live") {
+          // Live ownership skips legacy reconciliation, not server sync facts.
+          // Reread rather than treating ownership as proof a failed run recovered.
+          await refreshImportedCloudProviders();
+          if (!isCurrent()) return;
+          return { outcome: "handled_live" };
+        }
         // Re-derive the imported records (and reloadPending/skips) from the
         // server's status after EVERY server-handled pass. Without this the
         // Cloud Providers rows kept whatever the one-shot start() read found
@@ -2697,6 +2745,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const syncFromOptions = () => {
     if (disposed) return;
     const delivery = syncDenSessionDelivery();
+    const workspaceId = options.runtimeWorkspaceId();
+    if (workspaceId && options.providerBaseUrl().trim()) useProviderCredentialHealth.getState().bindWorkspace(workspaceId, providerCredentialScope(options.providerBaseUrl()));
     const workspaceKey = currentWorkspaceKey();
     const workspaceChanged = workspaceKey !== lastWorkspaceKey;
     lastWorkspaceKey = workspaceKey;
@@ -2800,7 +2850,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
               // Explicit desktop sign-out must replace that process so an
               // account-scoped provider cannot remain connected in the UI.
               if (isDesktopRuntime()) {
-                await engineRestart({}).catch(() => undefined);
+                await engineRestart({ diagnosticsCause: "provider-auth" }).catch(() => undefined);
               }
               if (!cleared) return;
               const providers = await refreshProviders({ force: true }, isCurrent);

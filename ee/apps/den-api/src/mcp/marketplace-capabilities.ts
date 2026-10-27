@@ -29,6 +29,7 @@ import {
 import { EXTERNAL_MCP_PRESETS } from "../capability-sources/external-mcp-presets.js"
 import { getConnectedAccount, getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { db } from "../db.js"
+import { latestConfigObjectVersions } from "../config-object-versions.js"
 import { requestRead } from "../request-reads.js"
 import { env } from "../env.js"
 import { recordSkillUse } from "../capability-usage.js"
@@ -801,6 +802,69 @@ export async function listAccessibleMarketplaceSkillDescriptors(input: {
     .sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability))
 }
 
+/** Authorized SKILL.md source per marketplace capability, or why it is withheld. */
+export type MarketplaceSkillSource =
+  | { content: string; provenance: string }
+  | { blocked: { status: string; message: string; action: unknown } }
+
+/**
+ * The authorized source of every marketplace skill the member may use, read in
+ * a few batched queries with the same visibility and connection-readiness rules
+ * as executing each skill. Never records Library usage: this answers "what would
+ * this skill load" for a catalog, not a member using it. Capabilities whose
+ * content has not synced are absent.
+ */
+export async function listAccessibleMarketplaceSkillSources(input: {
+  member: McpMemberIdentity | null
+  organizationId: string
+}): Promise<Map<string, MarketplaceSkillSource>> {
+  const sources = new Map<string, MarketplaceSkillSource>()
+  if (!input.member) return sources
+  const organizationId = normalizeDenTypeId("organization", input.organizationId)
+  if (!await getActiveMember(organizationId, input.member)) return sources
+
+  const rows = await filterVisibleRows({
+    organizationId,
+    member: input.member,
+    rows: (await listActiveCapabilityRows(organizationId))
+      .filter((row) => row.configObject.objectType === "skill"),
+  })
+  const byCapability = new Map<string, MarketplaceCapabilityRow>()
+  for (const row of rows) {
+    const capability = buildMarketplaceCapabilityName(row.plugin.id, row.configObject.id)
+    if (!byCapability.has(capability)) byCapability.set(capability, row)
+  }
+  if (byCapability.size === 0) return sources
+
+  const unique = [...byCapability.values()]
+  const [versions, requirements] = await Promise.all([
+    latestConfigObjectVersions(unique.map((row) => row.configObject.id), organizationId),
+    marketplacePluginMcpRequirementStatuses({
+      mode: "execution",
+      organizationId,
+      member: input.member,
+      pluginIds: [...new Set(unique.map((row) => row.plugin.id))],
+    }),
+  ])
+  for (const [capability, row] of byCapability) {
+    const version = versions.get(row.configObject.id)
+    if (!version) continue
+    const blocking = firstBlockingRequirement(requirements.get(row.plugin.id) ?? [])
+    if (blocking) {
+      sources.set(capability, {
+        blocked: {
+          status: blocking.state,
+          message: requirementHint({ capabilityName: row.configObject.title, requirement: blocking }),
+          action: blocking.action,
+        },
+      })
+      continue
+    }
+    sources.set(capability, { content: version.rawSourceText ?? "", provenance: provenance(row.plugin.name) })
+  }
+  return sources
+}
+
 async function latestVersion(configObjectId: ConfigObjectId, organizationId: OrganizationId) {
   const rows = await db
     .select()
@@ -993,7 +1057,7 @@ function marketplaceRequirementAction(input: {
     label: `Ask an org admin to configure Connections for ${input.pluginName}`,
     surface: "openwork_organization_connections",
     retry: "search_capabilities",
-    url: openworkOrganizationConnectionsUrl(),
+    url: openworkOrganizationConnectionsUrl(input.connectionId),
   }
 }
 
@@ -1321,20 +1385,7 @@ function groupReadinessObjects(rows: MarketplaceReadinessConfigObject[]) {
 }
 
 async function latestVersionsForReadiness(organizationId: OrganizationId, configObjectIds: ConfigObjectId[]) {
-  if (configObjectIds.length === 0) return new Map<string, ConfigObjectVersionRow>()
-  const rows = await db
-    .select()
-    .from(ConfigObjectVersionTable)
-    .where(and(
-      eq(ConfigObjectVersionTable.organizationId, organizationId),
-      inArray(ConfigObjectVersionTable.configObjectId, configObjectIds),
-    ))
-    .orderBy(desc(ConfigObjectVersionTable.createdAt), desc(ConfigObjectVersionTable.id))
-  const versions = new Map<string, ConfigObjectVersionRow>()
-  for (const row of rows) {
-    if (!versions.has(row.configObjectId)) versions.set(row.configObjectId, row)
-  }
-  return versions
+  return latestConfigObjectVersions(configObjectIds, organizationId)
 }
 
 export async function resolveMarketplacePluginCloudReadiness(input: {

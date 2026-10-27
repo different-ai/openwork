@@ -1,0 +1,9 @@
+{
+  "workshop-desktop-ef0db73-20261021": {
+    "id": "4f1a34ca-fea1-4bdf-8ecc-adf708290200",
+    "image": "cr.app.daytona.io/sbox/daytona-2816b4a0035ad88b66f894f34ad51088ea7c70b24ceab0e4bd67dbd843040327:daytona",
+    "sourceSandboxId": "f33fce20-10dc-44c2-b517-96ee589d3c64",
+    "appRef": "ef0db73ae009b6904d13bb8b1f5a391db713d86c",
+    "audit": "2026-10-21 clean-base audit passed: no browser or Electron profile data, no credential files, no provider keys in files or environment, no secrets volume, app processes stopped (worlds/workshop-clone.ts --phase base)"
+  }
+}

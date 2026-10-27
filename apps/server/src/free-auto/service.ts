@@ -15,6 +15,7 @@ import {
   runtimeDisabledProviderList, writeGlobalRuntimeOpencodeConfig,
 } from "../runtime-opencode-config-store.js";
 import { TaskActivation, taskRoute } from "./activation.js";
+import { readFreeAutoAnalyticsEnabled, readFreeAutoJourney, writeFreeAutoAnalyticsEnabled } from "./journey.js";
 import { RemoteFailure, isRecord, jsonError, readBoundedBody, readJson, responseHeaders } from "./http.js";
 import { isOwnedProvider, ownedProvider } from "./provider-config.js";
 import { memberCredentialFailure, parseMemberCredential, parseStatus, statusFromRejection } from "./responses.js";
@@ -43,6 +44,9 @@ export class AnonymousInferenceService {
   private readonly enabled: boolean;
   private readonly host: DesktopFreeHost | null;
   private localAccessToken = freshLocalToken();
+  private journey: Promise<string> | null = null;
+  private analyticsEnabled: Promise<boolean> | null = null;
+  private analyticsQueue: Promise<void> = Promise.resolve();
   // The member credential the engine's relay token is bound to. Held only in memory, like the credential itself,
   // and compared directly: it is an identity, not something to derive a digest from.
   private relayPrincipal: string | null = null;
@@ -151,7 +155,7 @@ export class AnonymousInferenceService {
       const bytes = await readBoundedBody(response.body, ERROR_BODY_LIMIT, signal);
       if (!response.ok) {
         const failure = memberCredentialFailure(response.status, bytes);
-        throw new ApiError(failure.status, failure.code, "Signed-in Auto access could not be authorized.");
+        throw new ApiError(failure.status, failure.code, "Signed-in OpenWork Free access could not be authorized.");
       }
       const apiKey = parseMemberCredential(JSON.parse(new TextDecoder().decode(bytes)), this.settings.origin);
       await this.assertDispatchAllowed();
@@ -220,7 +224,7 @@ export class AnonymousInferenceService {
       if (this.config.readOnly) throw new ApiError(403, "read_only", "This device is read-only.");
       if (enabled) {
         await managedDesktopPolicy(this.config).assert("model", { providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID });
-        if (!(await this.preferences()).canEnable) throw new ApiError(403, "auto_blocked", "Auto is unavailable on this device or blocked by your administrator.");
+        if (!(await this.preferences()).canEnable) throw new ApiError(403, "auto_blocked", "OpenWork Free is unavailable on this device or blocked by your administrator.");
       } else {
         this.disable();
         this.localAccessToken = freshLocalToken();
@@ -326,8 +330,37 @@ export class AnonymousInferenceService {
     if (!free && !(model === undefined && this.selectedAutoSessions.has(route.sessionID))) return;
     const status = await this.status(true);
     if (status.state !== "ready") throw new ApiError(statusHttpCode(status.state),
-      status.code ?? "anonymous_unavailable", "Auto is not available. Check desktop free access status.", status);
+      status.code ?? "anonymous_unavailable", "OpenWork Free is not available. Check desktop free access status.", status);
     this.activation.start(route.sessionID);
+  }
+
+  // ── Analytics correlation, only with the app's analytics setting on ───
+
+  /** Records the app's analytics setting. Off also forgets the journey, so a later opt-in cannot be linked to it. */
+  setAnalyticsEnabled(enabled: boolean): Promise<{ enabled: boolean }> {
+    const pending = this.journey;
+    this.analyticsEnabled = Promise.resolve(enabled);
+    this.journey = null;
+    // Writes run one at a time so quick toggles persist in order. Persisting only carries the choice across
+    // restarts; the in-memory value above already applies to new requests.
+    const run = this.analyticsQueue.then(async () => {
+      await pending?.catch(() => undefined);
+      await writeFreeAutoAnalyticsEnabled(this.config, enabled).catch(() => undefined);
+      return { enabled };
+    });
+    this.analyticsQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  /** The journey header, or nothing until the app has reported that analytics is on. */
+  private async journeyHeaders(): Promise<Record<string, string>> {
+    this.analyticsEnabled ??= readFreeAutoAnalyticsEnabled(this.config);
+    const decision = this.analyticsEnabled;
+    // A setting change while this request waited wins over the value it read.
+    if (!await decision || decision !== this.analyticsEnabled) return {};
+    this.journey ??= readFreeAutoJourney(this.config);
+    // Scope the anonymous identifier to this Gateway origin; account changes keep the same journey.
+    return { "x-openwork-free-journey": createHash("sha256").update(`${this.settings.origin}:${await this.journey}`).digest("hex") };
   }
 
   // ── Gateway calls ──────────────────────────────────────────────────────
@@ -343,9 +376,10 @@ export class AnonymousInferenceService {
     // Signed out, like OpenCode Zen: no device identity, just the shared "public" key; the gateway limits it by IP.
     const authorization = member ?? `Bearer ${DESKTOP_FREE_OPEN_API_KEY}`;
     const actualPath = member ? memberPath(path) : path;
+    const journey = await this.journeyHeaders();
     const response = await externalFetch(`${this.settings.origin}${actualPath}`, {
       method, body: method === "GET" ? undefined : body,
-      headers: { authorization, ...(method === "POST" ? { "content-type": "application/json" } : {}) },
+      headers: { authorization, ...journey, ...(method === "POST" ? { "content-type": "application/json" } : {}) },
       signal, redirect: "error", credentials: "omit", cache: "no-store",
     });
     signal.throwIfAborted();
@@ -402,7 +436,7 @@ export class AnonymousInferenceService {
       if (endpoint !== "models") {
         const status = await this.status(true);
         signal.throwIfAborted();
-        if (status.state !== "ready") return Response.json({ error: { ...status, message: "Auto is not available.", type: "openwork_anonymous_error" } }, {
+        if (status.state !== "ready") return Response.json({ error: { ...status, message: "OpenWork Free is not available.", type: "openwork_anonymous_error" } }, {
           status: statusHttpCode(status.state),
         });
       }
@@ -441,7 +475,7 @@ export class AnonymousInferenceService {
       }
       if (error instanceof ApiError) return jsonError(error.status, error.code, error.message);
       this.logger.log("warn", "Desktop free inference failed before a response began.");
-      return jsonError(503, "anonymous_unavailable", "Auto is temporarily unavailable. Try again later or use your own provider.");
+      return jsonError(503, "anonymous_unavailable", "OpenWork Free is temporarily unavailable. Try again later or use your own provider.");
     } finally { if (!streaming) cleanup(); }
   }
 

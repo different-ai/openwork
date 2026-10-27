@@ -8,7 +8,10 @@ export default defineConfig({
   root: fileURLToPath(new URL("./src/client", import.meta.url)),
   plugins: [react(), tailwindcss()],
   resolve: { conditions: ["development"] },
+  // noVNC uses top-level await; development pre-bundling must match the build target.
+  optimizeDeps: { esbuildOptions: { target: "es2022" } },
   build: {
+    target: "es2022",
     outDir: fileURLToPath(new URL("./dist/client", import.meta.url)),
     emptyOutDir: true,
   },

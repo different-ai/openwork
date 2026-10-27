@@ -12,7 +12,7 @@ import { formatElapsedSeconds } from "@/lib/tool-call-duration"
 import { Message } from "@/components/ui/message"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { useBackgroundShellStore, type BackgroundShell } from "@/react-app/domains/session/status/background-shell-store"
+import type { BackgroundShell } from "@/react-app/domains/session/status/background-shell-store"
 
 const COMMAND_PREVIEW_LENGTH = 80
 
@@ -38,10 +38,7 @@ export function backgroundShellNoticeFromMessage(message: UIMessage): Background
  * raw `<shell>` hand-off text.
  */
 export const BackgroundTaskNotice = React.memo(function BackgroundTaskNotice({ message, notice }: { message: UIMessage; notice: BackgroundShellNotice }) {
-  // A row cached while the feature was on stays hidden after it is turned off.
-  const enabled = useBackgroundShellStore((state) => state.enabled)
   const command = commandPreview(notice.command)
-  if (!enabled) return null
   return (
     <Message
       className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10"
@@ -66,12 +63,17 @@ type BackgroundTasksProps = {
   stale?: boolean
 }
 
+type BackgroundTasksLabelProps = BackgroundTasksProps & {
+  /** Off when the label sits inside a line whose one shimmer already covers it. */
+  shimmer?: boolean
+}
+
 /**
  * "2 running background tasks": commands the agent left running. Same
  * shimmer as the turn's "Working" line. The list stays one hover (or focus)
  * away: each command and how long it has been running.
  */
-export const BackgroundTasksLabel = React.memo(function BackgroundTasksLabel({ shells, stale = false }: BackgroundTasksProps) {
+export const BackgroundTasksLabel = React.memo(function BackgroundTasksLabel({ shells, stale = false, shimmer = true }: BackgroundTasksLabelProps) {
   const [open, setOpen] = React.useState(false)
   const [now, setNow] = React.useState(() => Date.now())
   React.useEffect(() => {
@@ -85,7 +87,7 @@ export const BackgroundTasksLabel = React.memo(function BackgroundTasksLabel({ s
       <Tooltip open={open} onOpenChange={setOpen}>
         <TooltipTrigger
           render={<span tabIndex={0} />}
-          className={cn("cursor-default rounded-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring/50", !stale && "ow-text-shimmer")}
+          className={cn("cursor-default rounded-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring/50", shimmer && !stale && "ow-text-shimmer")}
         >
           {runningBackgroundTasksLabel(shells.length)}
         </TooltipTrigger>

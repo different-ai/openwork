@@ -1,26 +1,22 @@
 name: Core journeys
 
-# Runs every core journey in evals/core (listed in evals/journeys.ts) on every
-# PR and nightly on dev. Packaged journeys run in packaged smoke instead.
+# Runs every core journey in evals/core (listed in evals/journeys.ts) nightly
+# on dev and on demand. On PRs, PR change proof runs them once (pr-proof.mjs).
+# Packaged journeys run in packaged smoke instead.
 on:
   schedule:
     - cron: "17 8 * * *"
   workflow_dispatch:
-  pull_request:
-    branches: [dev]
 
 permissions:
   contents: read
 
 concurrency:
-  group: core-journeys-${{ github.event.pull_request.number || github.ref }}
+  group: core-journeys-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   list:
-    # Same-repository refs only: the suite runs local worlds with no secrets,
-    # but it is a large job matrix that forks should not be able to start.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 3
     outputs:
@@ -28,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - id: list
         # Packaged journeys need a packaged desktop binary (packaged smoke runs
@@ -51,19 +47,14 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup-tests
       - uses: ./.github/actions/setup-browser
         with:
           oauth-handoff: "true"
       - name: Build local Den dependencies
-        shell: bash
-        run: |
-          pnpm --filter @openwork/types build
-          pnpm --filter @openwork-ee/den-db build
-          pnpm --filter @openwork/email build
-          pnpm dev:den:mysql
+        uses: ./.github/actions/den-deps
       - name: Run the journey
         timeout-minutes: 20
         env:

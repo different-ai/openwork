@@ -1,6 +1,6 @@
 ---
 title: "Deploy on Azure"
-description: "Run OpenWork on Azure Kubernetes Service with Azure Database for MySQL."
+description: "Run OpenWork on Azure Kubernetes Service or Azure Container Apps with Azure Database for MySQL."
 ---
 
 The recommended Azure path is Helm on Azure Kubernetes Service with Azure Database for MySQL Flexible Server. Use the AKS application-routing add-on's managed NGINX Ingress controller for browser-facing HTTPS and host routing.
@@ -25,5 +25,71 @@ The OpenWork chart manages Deployments, Services, ConfigMaps, Secret references,
 7. Point both hostnames at the ingress address and confirm trusted HTTPS.
 
 For exact Azure CLI commands, values, TLS options, migration troubleshooting, verification, and cleanup, follow the [Azure AKS operator runbook](https://github.com/different-ai/openwork/blob/dev/docs/azure-aks-helm.md).
+
+## Azure Container Apps with Terraform
+
+### What it deploys
+
+The module deploys Den API and web as HTTPS-only Container Apps, a singleton manual migration Job, MySQL Flexible Server 8.4 (or your existing database), managed Container Apps secrets with optional Key Vault references, and a new or existing environment and Log Analytics workspace. Application replicas do not run migrations. The native Job start is followed by a read-only observer of the exact execution; only `Succeeded` permits application rollout. Default image references and all overrides must be digest-pinned. The default API is 1 vCPU / 2 GiB and web is 0.5 vCPU / 1 GiB.
+
+### Tested scenarios
+
+| Date | Tools / release | Result |
+| --- | --- | --- |
+| 2026-10-13–14 | Terraform 1.16 / OpenTofu 1.11; legacy module, 0.18.58 to dev, one API replica | Setup, browser, isolated desktop, retained organization and teardown Passed; not proof of the new Job topology |
+| 2026-10-16 | Terraform 1.16.5 / OpenTofu 1.11.14, AzureRM 5.10 / AzAPI 2.13 | Contract offline suite Passed, 33 mocked runs each; selected root locks and fail-closed restricted-ingress guard |
+| 2026-10-15 | Default state-free secrets; two API replicas; 0.18.58 to dev ae7483e | Setup, browser, isolated Electron and retained data/core secrets/session Passed; 15 resources destroyed and log purge verified |
+
+### Support level
+
+<Warning>
+  OpenWork's Terraform modules are **beta**. If you hit an issue:
+
+  - **Customers with a support agreement:** contact your OpenWork team through your usual support channel.
+  - **Everyone else:** [open a GitHub issue](https://github.com/different-ai/openwork/issues/new/choose).
+  - **Security issues:** report them privately ([SECURITY.md](https://github.com/different-ai/openwork/blob/dev/SECURITY.md)).
+</Warning>
+
+The [module](https://github.com/different-ai/openwork/tree/dev/infra/terraform/modules/openwork-azure-container-apps)
+is available on `dev` in **beta**. Pin a reviewed module commit and follow the
+[shared module contract](https://github.com/different-ai/openwork/blob/dev/infra/terraform/MODULE_CONTRACT.md).
+The Job starts through native AzAPI, but ARM acceptance is not container completion: terminal observation currently needs Python 3 and an authenticated Azure CLI on the Terraform runner. This read-only observer never starts or retries a Job. It is not a provider-native terminal waiter. Custom domains, private registries, Key Vault references and existing environments/databases have mocked rather than new live coverage.
+
+Use Terraform or OpenTofu >= 1.11, < 2.0, and AzAPI >= 2.13. The root binds the module's `azapi` and `azapi.secret_read` provider names (the complete example binds both to the same authenticated provider). You provide an existing resource group with resource creation, Job start and execution-read permissions; the default database deletion lock also needs management-lock write/delete permission. The module creates no role assignments. A subscription owner registers `Microsoft.App`, `Microsoft.DBforMySQL`, `Microsoft.Network` and `Microsoft.OperationalInsights` first. Default hosts have Microsoft-managed HTTPS certificates. Email is optional for setup/sign-in; invites and password reset require SMTP or Resend.
+
+**CIDR ingress filtering is not currently supported:** only `allowed_ingress_cidrs = []` is accepted, which performs no app-level IP filtering. A non-empty list now fails validation instead of accepting an unverified configuration that may break sign-in or `/setup`. This is a deliberate restriction of the earlier prototype option. Do not clear a required allow-list just to deploy; use a separately verified network boundary or defer deployment. Microsoft's [inter-app routing documentation](https://learn.microsoft.com/azure/container-apps/connect-apps) says generated-FQDN traffic within one environment stays internal, but its [IP-restriction documentation](https://learn.microsoft.com/azure/container-apps/ip-restrictions) does not establish an exemption for that route. Restricted-CIDR sign-in/setup remains unverified; the tested empty-default HTTPS route is unchanged.
+
+### Upgrade notes
+
+When adopting this module from legacy per-replica migrations, use a maintenance window: freeze all deployment/retry/autoscale sources, stop and drain every old migration-capable revision and shared database consumer as needed, verify terminal containers and absence of old DB sessions/in-flight DDL, and fence old migration credentials. **Do not start the new Job if this exclusion cannot be established.** After its exact digest's execution succeeds, start API-only replicas and verify data and sign-in. Never reactivate legacy migration-capable definitions on rollback. Application migration locking and schema-compatibility manifests are separate work, not provided by this module.
+
+Compared with the earlier prototype, app/Job resource ownership changes from AzureRM to AzAPI for write-only secrets. Do not directly apply this to an existing prototype: first preserve current cloud values, fence legacy owners, import the exact resources into the new addresses without destroying them, and supply unchanged ephemeral preservation inputs (`better_auth_secret`, `db_encryption_key`, `database_admin_password`, `initial_admin_bootstrap_code`) for adoption. Never let generated defaults replace an existing encryption key. Tag-only image overrides must be replaced with manifest digests. Existing database URLs must start the query with a single `?sslaccept=strict`; put other query parameters afterwards. Duplicate/conflicting or unverified TLS settings are rejected. For existing databases, `migration_database_url` accepts a separately provisioned DDL principal for the same host/port/schema as the app's `database_url`; only the Job receives it. Managed-database user provisioning remains a least-privilege follow-up. The Job does not receive app authentication or email secrets.
+
+Additional prototype hardening restricts `extra_environment` to its documented plaintext tuning allowlist; put credential-bearing or unreviewed names in `extra_secrets`. The migration Job receives only a separate registry-pull identity, never the apps' Key Vault identity. Persisted credential-role provenance prevents a prior dedicated DDL URL becoming the application credential during recovery; role changes require a migration-URL version bump.
+
+### State guidance
+
+Use encrypted remote state with restricted access and locking, configured in your root module. For S3 state use `use_lockfile = true`, not DynamoDB. **State-free secrets are the default:** ephemeral values feed native AzAPI write-only secret properties and MySQL's write-only administrator password. State holds secret names/references and version gates, not generated values. `bootstrap_code` is deprecated and null; read the API app's managed `den-initial-admin-bootstrap-code` secret locally for setup, never through a state output. Existing Key Vault reference values remain outside state. Optional PFX certificate arguments can still be retained by the AzureRM certificate provider; that non-default path needs protected state or externally managed certificates.
+
+The default Azure `CanNotDelete` lock protects out-of-band database deletion; **Terraform destroy can remove its own lock**, so it is not a Terraform `prevent_destroy` guarantee. Separate production database state where needed. The reusable module has no lock file, but its executable complete example commits pinned provider versions and signed-release checksums. Use its `.terraform.lock.hcl` for Terraform; for OpenTofu, copy the supplied `opentofu.lock.hcl` over that file first. Initialize the selected root with `-lockfile=readonly`. Keep one tool's lock per deployment root: registry namespaces and package checksums differ.
+
+#### Secrets and later runs
+
+- Later applies and upgrades do not rotate secrets or sign anyone out: existing cloud values are recovered ephemerally unless their explicit rotation counters change. Full-resource writes resend those same values through write-only fields, never state.
+- Rotation happens only through an explicit `secret_versions.*_version` bump or a forced replacement. **Never rotate the database encryption key without a reviewed re-encryption procedure.** Keep version counters monotonic and coordinate database-password/consumer updates in maintenance.
+- The Container Apps managed secret store (or Key Vault for supplied references) is the only durable copy. Protect it and keep secure recovery backups; state does not back up secret values.
+- Manual edits to secret values are not detected or reconciled by write-only fields. Input edits alone do not request rotation.
+- Losing state, deleting the secret store or forcing replacement can regenerate values, sign users out or make encrypted data unreadable. Recover existing keys before re-creation.
+- Both Terraform and OpenTofu require **>= 1.11, < 2.0**.
+
+If a database survived a failed first apply before any recoverable cloud credential copy existed, the module stops instead of inventing a new password. Preserve/reset it deliberately and use the recovery acknowledgement only for that inspected recovery.
+
+### Cost notes
+
+Regional capacity can reject creation with `ManagedEnvironmentCapacityHeavyUsageError`. In the tested run, a fresh same-region retry succeeded only after the failed stack was cleaned up; no existing environment was reused. If another region is needed, verify its network/database availability and clean up the failed attempt before switching.
+
+Earlier short one-replica runs were estimated below USD 1, not settled invoices; two replicas cost more. Use Azure pricing for your reservations, logs and traffic. Disposable tests explicitly disable deletion protection. Environment deletion took 25–28 minutes in prior runs, and Log Analytics needs permanent purge. Verify both active and soft-deleted inventories before removing local state/secrets.
+
+See the [module README](https://github.com/different-ai/openwork/tree/dev/infra/terraform/modules/openwork-azure-container-apps) for every input/default and output, complete example, upgrade barrier and test commands.
 
 Next: [Create the first administrator](/self-host/deploy-to-your-cloud/first-administrator).

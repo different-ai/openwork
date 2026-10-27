@@ -64,6 +64,15 @@
       "override": "desktop apiBaseUrl / self-hosted Den API origin"
     },
     {
+      "host": "app.daytona.io",
+      "kind": "fetched",
+      "components": ["desktop"],
+      "purpose": "Daytona control API for computer use on an explicitly configured existing Linux sandbox, only when remote computers are enabled.",
+      "requirement": "opt-in",
+      "blockedEffect": "The configured Daytona computer cannot connect; local computer use and other targets are unaffected.",
+      "override": "OPENWORK_COMPUTER_DAYTONA_SANDBOX / DAYTONA_API_URL"
+    },
+    {
       "host": "app.openwork.software",
       "kind": "fetched",
       "components": ["server"],

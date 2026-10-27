@@ -1,23 +1,28 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Copy, Pencil, Trash2 } from "lucide-react";
-import { FEATURE_KEYS, FEATURES, mapFeatures, type FeatureKey } from "@openwork/features";
+import Link from "next/link";
+import { DenButton } from "../app/(den)/_components/ui/button";
+import { AdminDashboard } from "./admin/admin-dashboard";
+import { Check, Copy, Download, Search, Trash2 } from "lucide-react";
+import { planEndLabel } from "../app/(den)/_lib/plan-display";
+import { mapFeatures } from "@openwork/features";
 import { denApiCredentials, denBrowserEndpoint } from "../app/(den)/_lib/den-api-origin";
 import { withStoredBearer } from "./admin/admin-request";
+import { adminOrganizationHref, useAdminListLocation, type AdminDataSection } from "./admin/admin-list-location";
+import { AdminDeferredContent } from "./admin/admin-deferred-content";
+import { AdminAccessScreen } from "./admin/admin-access-screen";
+import { AdminRecentOrganizationsPanel, AdminRecentOrganizationsStrip } from "./admin/admin-recent-organizations";
+import { parseAdminOrganizationFeatures, type AdminOrganizationFeatures } from "./admin/admin-organization-feature-controls";
 
-type AccessState = "loading" | "ready" | "signed-out" | "forbidden" | "error";
-type ViewMode = "users" | "companies" | "organizations";
+type AccessState = "ready" | "signed-out" | "forbidden" | "error";
 
 const DEFAULT_FREE_SEAT_COUNT = 5;
-const ADMIN_OVERVIEW_CACHE_KEY = "den-admin-overview-cache";
 const ADMIN_PAGE_SIZE = 50;
 const ADMIN_MAX_PAGE_OFFSET = 100_000;
 const ADMIN_SCALE_FIXTURE_USERS = 50_000;
 const ADMIN_SCALE_FIXTURE_ORGANIZATIONS = 60_000;
 const ADMIN_SEARCH_DEBOUNCE_MS = 75;
-
-let cachedAdminOverviewPayload: unknown = null;
 
 type AdminBillingStatus = {
   status: "paid" | "unpaid" | "unavailable";
@@ -130,62 +135,6 @@ type AdminUser = {
   organizations: AdminUserOrganization[];
 };
 
-const ADMIN_FEATURE_SOURCES = ["unavailable", "killed", "lock", "override", "everyone"] as const;
-
-/** One registry feature for one organization, as /v1/admin reports it (featureStates). */
-type AdminFeatureState = {
-  enabled: boolean;
-  source: (typeof ADMIN_FEATURE_SOURCES)[number];
-  /** The deployment-wide on/off state. */
-  everyone: boolean;
-  killed: boolean;
-  override: boolean | null;
-  /** An organization override would take effect (not killed or locked). */
-  overrideApplies: boolean;
-};
-
-type AdminOrganizationFeatures = Record<FeatureKey, AdminFeatureState>;
-
-function parseAdminFeatureSource(value: unknown): AdminFeatureState["source"] {
-  return ADMIN_FEATURE_SOURCES.find((source) => source === value) ?? "everyone";
-}
-
-/** Server featureStates, falling back to the effective capabilities map from older servers. */
-function parseAdminOrganizationFeatures(featureStates: unknown, capabilities: unknown): AdminOrganizationFeatures {
-  const states = isRecord(featureStates) ? featureStates : {};
-  const effective = isRecord(capabilities) ? capabilities : {};
-  return mapFeatures((key) => {
-    const state = states[key];
-    if (!isRecord(state)) {
-      const enabled = effective[key] === true;
-      return { enabled, source: "everyone", everyone: enabled, killed: false, override: null, overrideApplies: true };
-    }
-    return {
-      enabled: state.enabled === true,
-      source: parseAdminFeatureSource(state.source),
-      everyone: state.everyone === true,
-      killed: state.killed === true,
-      override: typeof state.override === "boolean" ? state.override : null,
-      overrideApplies: state.overrideApplies === true,
-    };
-  });
-}
-
-function describeAdminFeatureSource(state: AdminFeatureState): string {
-  switch (state.source) {
-    case "everyone":
-      return state.everyone ? "On for everyone" : "Off for everyone";
-    case "override":
-      return "Set for this organization";
-    case "lock":
-      return "Set by deployment config";
-    case "killed":
-      return "Turned off everywhere";
-    case "unavailable":
-      return "Not part of this deployment";
-  }
-}
-
 type AdminOpenWorkWebAccess = {
   hasAccess: boolean;
   accessSource: "subscription" | "complimentary" | null;
@@ -210,7 +159,13 @@ type AdminOrganization = {
   freeSeatCount: number;
   seatsFreeAdditional: number;
   billableSeatCount: number;
-  features: AdminOrganizationFeatures;
+  /** Users the plan allows, counting pending invitations; null when nothing limits it. */
+  userLimit: number | null;
+  /** Display-only end date of a plan a platform admin set, YYYY-MM-DD. */
+  endsAt: string | null;
+  ended: boolean;
+  paidBy: "none" | "stripe_team" | "stripe_enterprise";
+  features: AdminOrganizationFeatures | null;
   openworkWebAccess: AdminOpenWorkWebAccess;
 };
 
@@ -501,7 +456,13 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
           freeSeatCount: toNumberValue(value.freeSeatCount) || DEFAULT_FREE_SEAT_COUNT,
           seatsFreeAdditional: toNumberValue(value.seatsFreeAdditional),
           billableSeatCount: toNumberValue(value.billableSeatCount),
-          features: parseAdminOrganizationFeatures(value.featureStates, value.capabilities),
+          userLimit: typeof value.userLimit === "number" ? value.userLimit : null,
+          endsAt: toStringValue(value.endsAt),
+          ended: value.ended === true,
+          paidBy: value.paidBy === "stripe_team" || value.paidBy === "stripe_enterprise" ? value.paidBy : "none",
+          features: isRecord(value.featureStates) || isRecord(value.capabilities)
+            ? parseAdminOrganizationFeatures(value.featureStates, value.capabilities)
+            : null,
           openworkWebAccess: parseAdminOpenWorkWebAccess(value.openworkWebAccess)
         };
       })
@@ -594,6 +555,30 @@ function parseAdminMetricsPayload(payload: unknown): AdminMetricsPayload | null 
   };
 }
 
+function parseAdminInitialPayload(value: unknown, section: AdminDataSection): AdminPayload | null {
+  if (section === "overview") return parseAdminPayload(value);
+  const users = section === "users" ? parseAdminUsersPayload(value) : null;
+  const organizations = section === "organizations" ? parseAdminOrganizationsPayload(value) : null;
+  if (!users && !organizations) return null;
+  return {
+    viewer: { id: "", email: null, name: null },
+    admins: [],
+    summary: parseAdminSummary({
+      totalUsers: users?.page.total ?? 0,
+      totalOrganizations: organizations?.page.total ?? 0,
+      billingLoaded: users?.billing.loaded ?? false,
+      paidUsers: users?.billing.paidUsers,
+      unpaidUsers: users?.billing.unpaidUsers,
+      billingUnavailableUsers: users?.billing.billingUnavailableUsers,
+    }, 0),
+    users: users?.users ?? [],
+    organizations: organizations?.organizations ?? [],
+    userPage: users?.page ?? parseAdminPageInfo({}, 0, 0),
+    organizationPage: organizations?.page ?? parseAdminPageInfo({}, 0, 0),
+    generatedAt: users?.generatedAt ?? organizations?.generatedAt ?? null,
+  };
+}
+
 function parseInferenceUsagePayload(payload: unknown): InferenceUsagePayload | null {
   if (!isRecord(payload) || !isRecord(payload.user) || typeof payload.user.id !== "string" || typeof payload.user.email !== "string" || !Array.isArray(payload.organizations)) {
     return null;
@@ -624,79 +609,6 @@ function parseInferenceUsagePayload(payload: unknown): InferenceUsagePayload | n
   }
 
   return { user: { id: payload.user.id, email: payload.user.email }, organizations };
-}
-
-function clearPersistedAdminOverviewCache() {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    window.sessionStorage.removeItem(ADMIN_OVERVIEW_CACHE_KEY);
-  } catch {
-    // Ignore storage failures: the cache is only a best-effort fast path.
-  }
-}
-
-function clearAdminOverviewCache() {
-  cachedAdminOverviewPayload = null;
-  clearPersistedAdminOverviewCache();
-}
-
-function storeAdminOverviewCache(payload: unknown) {
-  cachedAdminOverviewPayload = payload;
-
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    const serialized = JSON.stringify(payload);
-    if (serialized === undefined) {
-      window.sessionStorage.removeItem(ADMIN_OVERVIEW_CACHE_KEY);
-      return;
-    }
-
-    window.sessionStorage.setItem(ADMIN_OVERVIEW_CACHE_KEY, serialized);
-  } catch {
-    clearPersistedAdminOverviewCache();
-  }
-}
-
-function readAdminOverviewCache(): AdminPayload | null {
-  if (shouldClearAdminCacheFromUrl()) {
-    clearAdminOverviewCache();
-    return null;
-  }
-
-  const parsedCachedPayload = parseAdminPayload(cachedAdminOverviewPayload);
-  if (parsedCachedPayload) {
-    return parsedCachedPayload;
-  }
-
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  try {
-    const persistedPayload = window.sessionStorage.getItem(ADMIN_OVERVIEW_CACHE_KEY);
-    if (!persistedPayload) {
-      return null;
-    }
-
-    const storedPayload: unknown = JSON.parse(persistedPayload);
-    const parsedStoredPayload = parseAdminPayload(storedPayload);
-    if (!parsedStoredPayload) {
-      window.sessionStorage.removeItem(ADMIN_OVERVIEW_CACHE_KEY);
-      return null;
-    }
-
-    cachedAdminOverviewPayload = storedPayload;
-    return parsedStoredPayload;
-  } catch {
-    clearPersistedAdminOverviewCache();
-    return null;
-  }
 }
 
 function getFriendlyHtmlError(value: string): string | null {
@@ -752,14 +664,6 @@ function isAdminScaleFixtureEnabled(): boolean {
   }
 
   return new URLSearchParams(window.location.search).get("adminScaleFixture") === "1";
-}
-
-function shouldClearAdminCacheFromUrl(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  return new URLSearchParams(window.location.search).get("adminClearCache") === "1";
 }
 
 function fixturePageInfo(total: number, returned: number, offset: number, search: string, durationMs: number): AdminPageInfo {
@@ -857,7 +761,7 @@ function fixtureUsers(search: string, offset: number, includeBilling: boolean) {
   return { rows, total };
 }
 
-function buildFixtureOrganization(index: number): AdminOrganization {
+function buildFixtureOrganization(index: number, includeFeatures = false): AdminOrganization {
   const target = index === ADMIN_SCALE_FIXTURE_ORGANIZATIONS - 11;
   return {
     id: `org_${String(index).padStart(5, "0")}`,
@@ -871,10 +775,14 @@ function buildFixtureOrganization(index: number): AdminOrganization {
     freeSeatCount: target ? 25 : DEFAULT_FREE_SEAT_COUNT,
     seatsFreeAdditional: target ? 20 : 0,
     billableSeatCount: target ? 103 : 0,
-    features: mapFeatures((key) => {
-      const enabled = target && (key === "permissions" || key === "workbot");
+    userLimit: target ? 500 : 5,
+    endsAt: null,
+    ended: false,
+    paidBy: "none",
+    features: includeFeatures ? mapFeatures((key) => {
+      const enabled = target && key === "workbotDocuments";
       return { enabled, source: "everyone", everyone: enabled, killed: false, override: null, overrideApplies: true };
-    }),
+    }) : null,
     openworkWebAccess: {
       hasAccess: target,
       accessSource: target ? "complimentary" : null,
@@ -959,7 +867,7 @@ function fixtureMetricsSummary(): AdminSummary {
   };
 }
 
-function adminScaleFixturePayload(path: string): unknown | null {
+export function adminScaleFixturePayload(path: string): unknown | null {
   if (!isAdminScaleFixtureEnabled()) {
     return null;
   }
@@ -988,10 +896,15 @@ function adminScaleFixturePayload(path: string): unknown | null {
     const organizations = fixtureOrganizations(search, offset);
     const durationMs = Math.round(performance.now() - startedAt);
     return {
-      organizations: organizations.rows,
+      organizations: organizations.rows.map(({ features: _features, ...organization }) => organization),
       page: fixturePageInfo(organizations.total, organizations.rows.length, offset, search, durationMs),
       generatedAt
     };
+  }
+
+  const featureOrganization = url.pathname.match(/^\/v1\/admin\/organizations\/org_(\d+)\/capabilities$/);
+  if (featureOrganization) {
+    return { featureStates: buildFixtureOrganization(Number(featureOrganization[1]), true).features };
   }
 
   if (url.pathname === "/v1/admin/overview") {
@@ -1077,32 +990,6 @@ async function requestJson(path: string, signal?: AbortSignal) {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
-}
-
-async function patchJson(path: string, body: unknown) {
-  const endpoint = denBrowserEndpoint(path);
-  const response = await fetch(endpoint, {
-    method: "PATCH",
-    credentials: denApiCredentials(endpoint),
-    headers: withStoredBearer({
-      Accept: "application/json",
-      "Content-Type": "application/json"
-    }),
-    body: JSON.stringify(body)
-  });
-
-  const text = await response.text();
-  let payload: unknown = null;
-
-  if (text) {
-    try {
-      payload = JSON.parse(text);
-    } catch {
-      payload = text;
-    }
-  }
-
-  return { response, payload };
 }
 
 async function postJson(path: string, body: unknown) {
@@ -1252,8 +1139,8 @@ function formatOptionalCount(value: number | null): string {
   return value === null ? "Deferred" : String(value);
 }
 
-function formatOptionalDetail(value: number | null, label: string): string {
-  return value === null ? "Load analytics to calculate" : `${value} ${label}`;
+function formatCount(value: number): string {
+  return new Intl.NumberFormat().format(value);
 }
 
 function formatUsageAmount(value: number): string {
@@ -1338,8 +1225,8 @@ function formatSubscriptionStatus(value: string | null): string {
 
 function StatCard({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</p>
+    <div className="py-2">
+      <p className="text-xs font-medium text-slate-500">{label}</p>
       <p className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-slate-950">{value}</p>
       <p className="mt-1 text-sm leading-6 text-slate-500">{detail}</p>
     </div>
@@ -1354,12 +1241,12 @@ function ActivityChart({ series }: { series: ActivityPoint[] }) {
   const maxActive = Math.max(1, ...series.map((point) => point.activeUsers));
 
   return (
-    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+    <div className="mt-4 border-t border-slate-200 py-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">Active users · last 30 days</p>
+        <p className="text-xs font-medium text-slate-500">Active users · last 30 days</p>
         <p className="text-xs text-slate-500">
-          <span className="mr-3 inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-slate-900/80" />Any activity</span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-500" />Real DAU (ran a task)</span>
+          <span className="mr-3 inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-md bg-slate-900/80" />Any activity</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-md bg-violet-500" />Real DAU (ran a task)</span>
         </p>
       </div>
       <div className="mt-3 flex h-16 items-end gap-[3px]">
@@ -1394,7 +1281,7 @@ function ActivityChart({ series }: { series: ActivityPoint[] }) {
 function MetaCell({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</p>
+      <p className="text-xs font-medium text-slate-500">{label}</p>
       <p className="mt-1 text-sm text-slate-700">{value}</p>
     </div>
   );
@@ -1403,7 +1290,7 @@ function MetaCell({ label, value }: { label: string; value: string }) {
 function BillingPill({ billing }: { billing: AdminBillingStatus | null }) {
   if (!billing) {
     return (
-      <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
+      <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500">
         Not loaded
       </span>
     );
@@ -1417,7 +1304,7 @@ function BillingPill({ billing }: { billing: AdminBillingStatus | null }) {
         : "border-slate-200 bg-slate-100 text-slate-600";
 
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] ${palette}`}>
+    <span className={`inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-medium ${palette}`}>
       {formatBillingStatus(billing)}
     </span>
   );
@@ -1431,105 +1318,28 @@ function PlanPill({ tier }: { tier: AdminOrganization["plan"]["tier"] }) {
       : "border-slate-200 bg-slate-100 text-slate-600";
 
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] ${palette}`}>
+    <span className={`inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-medium ${palette}`}>
       {tier}
     </span>
   );
 }
 
-function OpenWorkWebAccessPill({ access }: { access: AdminOpenWorkWebAccess }) {
-  const label = access.hasOngoingSubscription
-    ? "Paid subscription"
-    : access.complimentaryAccess
-      ? "Complimentary"
-      : "No access";
-  const palette = access.hasOngoingSubscription
-    ? "border-violet-200 bg-violet-50 text-violet-700"
-    : access.complimentaryAccess
-      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-      : "border-slate-200 bg-slate-100 text-slate-600";
-
-  return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] ${palette}`}>
-      {label}
-    </span>
-  );
-}
-
-function DenAdminLoadingShell() {
-  return (
-    <section className="mx-auto w-full max-w-6xl rounded-3xl border border-slate-200 bg-white shadow-xs" aria-busy="true">
-      <div className="border-b border-slate-200 px-6 py-6 sm:px-8">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Den admin</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-950">User backoffice</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
-              Loading global totals and the first bounded user page.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3 animate-pulse">
-            <div className="h-10 w-48 rounded-full bg-slate-100" />
-            <div className="h-10 w-24 rounded-full border border-slate-200 bg-slate-50" />
-          </div>
-        </div>
-
-        <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-6 animate-pulse">
-          {[0, 1, 2, 3, 4, 5].map((index) => (
-            <div key={index} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-              <div className="h-3 w-20 rounded-full bg-slate-200" />
-              <div className="mt-3 h-8 w-16 rounded-lg bg-slate-200" />
-              <div className="mt-3 h-3 w-full rounded-full bg-slate-200" />
-              <div className="mt-2 h-3 w-2/3 rounded-full bg-slate-200" />
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="px-6 py-6 sm:px-8">
-        <div className="flex flex-wrap items-center justify-between gap-3 animate-pulse">
-          <div className="h-11 w-80 rounded-full border border-slate-200 bg-slate-50" />
-          <div className="h-10 w-28 rounded-full border border-slate-200 bg-slate-50" />
-        </div>
-
-        <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 animate-pulse">
-          <div className="h-4 w-56 rounded-full bg-slate-200" />
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <div className="h-24 rounded-2xl bg-slate-100" />
-            <div className="h-24 rounded-2xl bg-slate-100" />
-          </div>
-          <div className="mt-4 h-3 w-full rounded-full bg-slate-200" />
-          <div className="mt-2 h-3 w-5/6 rounded-full bg-slate-200" />
-        </div>
-      </div>
-    </section>
-  );
-}
-
-export function DenAdminPanel() {
-  const [accessState, setAccessState] = useState<AccessState>("loading");
-  const [payload, setPayload] = useState<AdminPayload | null>(null);
+export function DenAdminPanel({ initialPayload, section }: { initialPayload: unknown; section: AdminDataSection }) {
+  const viewMode = section;
+  const { search: routeSearch, draftSearch, page: routePage, offset: routeOffset, setSearch, setPage } = useAdminListLocation();
+  const userQuery = draftSearch;
+  const organizationQuery = draftSearch;
+  const [initial] = useState(() => parseAdminInitialPayload(initialPayload, section));
+  const [accessState, setAccessState] = useState<AccessState>(initial ? "ready" : "error");
+  const [payload, setPayload] = useState<AdminPayload | null>(initial);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
-  const [userQuery, setUserQuery] = useState("");
-  const [organizationQuery, setOrganizationQuery] = useState("");
-  const [viewMode, setViewMode] = useState<ViewMode>("users");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [copiedOrgId, setCopiedOrgId] = useState<string | null>(null);
   const [includeBilling, setIncludeBilling] = useState(false);
   const [usersLoading, setUsersLoading] = useState(false);
   const [organizationsLoading, setOrganizationsLoading] = useState(false);
-  const [orgDrafts, setOrgDrafts] = useState<Record<string, { tier: AdminOrganization["plan"]["tier"]; seatLimit: string }>>({});
-  const [savingOrgId, setSavingOrgId] = useState<string | null>(null);
-  const [freeSeatsDialog, setFreeSeatsDialog] = useState<{ org: AdminOrganization; totalFreeSeats: string } | null>(null);
-  const [savingFreeSeatsOrgId, setSavingFreeSeatsOrgId] = useState<string | null>(null);
-  const [savingCapabilityOrgId, setSavingCapabilityOrgId] = useState<string | null>(null);
-  const [capabilityError, setCapabilityError] = useState<{ orgId: string; message: string } | null>(null);
-  const [openworkWebAccessDialog, setOpenWorkWebAccessDialog] = useState<{ org: AdminOrganization; enabled: boolean; reason: string } | null>(null);
-  const [savingOpenWorkWebAccessOrgId, setSavingOpenWorkWebAccessOrgId] = useState<string | null>(null);
-  const [openworkWebAccessError, setOpenWorkWebAccessError] = useState<{ orgId: string; message: string } | null>(null);
   const [deleteUserDialog, setDeleteUserDialog] = useState<AdminUser | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [adminEmail, setAdminEmail] = useState("");
@@ -1543,7 +1353,9 @@ export function DenAdminPanel() {
   const overviewRequestIdRef = useRef(0);
   const userRequestIdRef = useRef(0);
   const organizationRequestIdRef = useRef(0);
-  const payloadRef = useRef<AdminPayload | null>(null);
+  const payloadRef = useRef<AdminPayload | null>(initial);
+  const usageRequestsRef = useRef(new Set<string>());
+  const overviewControllerRef = useRef<AbortController | null>(null);
   const includeBillingRef = useRef(includeBilling);
   const userSearchStartedAtRef = useRef<number | null>(null);
   const organizationSearchStartedAtRef = useRef<number | null>(null);
@@ -1566,24 +1378,25 @@ export function DenAdminPanel() {
   const loadOverview = useCallback(async () => {
     const requestId = overviewRequestIdRef.current + 1;
     overviewRequestIdRef.current = requestId;
+    overviewControllerRef.current?.abort();
+    const controller = new AbortController();
+    overviewControllerRef.current = controller;
     setRefreshing(true);
     setError(null);
 
     try {
-      const { response, payload: nextPayload } = await requestJson("/v1/admin/overview");
+      const { response, payload: nextPayload } = await requestJson("/v1/admin/overview?limit=1", controller.signal);
       if (requestId !== overviewRequestIdRef.current) {
         return;
       }
 
       if (response.status === 401) {
-        clearAdminOverviewCache();
         setAccessState("signed-out");
         setPayload(null);
         return;
       }
 
       if (response.status === 403) {
-        clearAdminOverviewCache();
         setAccessState("forbidden");
         setPayload(null);
         return;
@@ -1604,13 +1417,12 @@ export function DenAdminPanel() {
         return;
       }
 
-      storeAdminOverviewCache(nextPayload);
       setIncludeBilling(parsed.summary.billingLoaded);
       payloadRef.current = parsed;
       setAccessState("ready");
       setPayload(parsed);
     } catch (nextError) {
-      if (requestId === overviewRequestIdRef.current) {
+      if (requestId === overviewRequestIdRef.current && !isAbortError(nextError)) {
         setAccessState("error");
         setPayload(null);
         setError(nextError instanceof Error ? nextError.message : "Unknown network error");
@@ -1646,13 +1458,11 @@ export function DenAdminPanel() {
         return;
       }
       if (response.status === 401) {
-        clearAdminOverviewCache();
         setAccessState("signed-out");
         setPayload(null);
         return;
       }
       if (response.status === 403) {
-        clearAdminOverviewCache();
         setAccessState("forbidden");
         setPayload(null);
         return;
@@ -1671,10 +1481,11 @@ export function DenAdminPanel() {
         return;
       }
 
+      setAccessState("ready");
       setIncludeBilling(parsed.billing.loaded);
       setPayload((current) => {
         if (!current) {
-          return current;
+          return parseAdminInitialPayload(nextPayload, "users");
         }
         return {
           ...current,
@@ -1711,6 +1522,7 @@ export function DenAdminPanel() {
       const params = new URLSearchParams({
         limit: "50",
         offset: String(offset),
+        includeFeatures: "0",
       });
       const trimmed = search.trim();
       if (trimmed) {
@@ -1722,13 +1534,11 @@ export function DenAdminPanel() {
         return;
       }
       if (response.status === 401) {
-        clearAdminOverviewCache();
         setAccessState("signed-out");
         setPayload(null);
         return;
       }
       if (response.status === 403) {
-        clearAdminOverviewCache();
         setAccessState("forbidden");
         setPayload(null);
         return;
@@ -1747,9 +1557,10 @@ export function DenAdminPanel() {
         return;
       }
 
+      setAccessState("ready");
       setPayload((current) => {
         if (!current) {
-          return current;
+          return parseAdminInitialPayload(nextPayload, "organizations");
         }
         return {
           ...current,
@@ -1769,6 +1580,12 @@ export function DenAdminPanel() {
     }
   }, []);
 
+  const refreshCurrentPage = useCallback(() => {
+    if (section === "users") return loadUsers(routeSearch, routeOffset, includeBillingRef.current);
+    if (section === "organizations") return loadOrganizations(routeSearch, routeOffset);
+    return loadOverview();
+  }, [section, routeSearch, routeOffset, loadUsers, loadOrganizations, loadOverview]);
+
   const loadAnalytics = useCallback(async () => {
     setAnalyticsLoading(true);
     setError(null);
@@ -1776,13 +1593,11 @@ export function DenAdminPanel() {
     try {
       const { response, payload: nextPayload } = await requestJson("/v1/admin/metrics");
       if (response.status === 401) {
-        clearAdminOverviewCache();
         setAccessState("signed-out");
         setPayload(null);
         return;
       }
       if (response.status === 403) {
-        clearAdminOverviewCache();
         setAccessState("forbidden");
         setPayload(null);
         return;
@@ -1823,6 +1638,8 @@ export function DenAdminPanel() {
   }, []);
 
   const loadInferenceUsage = useCallback(async (userId: string) => {
+    if (usageRequestsRef.current.has(userId)) return;
+    usageRequestsRef.current.add(userId);
     setUsageByUserId((current) => ({ ...current, [userId]: { status: "loading" } }));
     try {
       const { response, payload: nextPayload } = await requestJson(`/v1/admin/users/${encodeURIComponent(userId)}/inference-usage`);
@@ -1840,6 +1657,8 @@ export function DenAdminPanel() {
     } catch (nextError) {
       const message = nextError instanceof Error ? nextError.message : "Unknown network error";
       setUsageByUserId((current) => ({ ...current, [userId]: { status: "error", message } }));
+    } finally {
+      usageRequestsRef.current.delete(userId);
     }
   }, []);
 
@@ -1919,18 +1738,10 @@ export function DenAdminPanel() {
     }
   }, [loadInferenceUsage, resetUsageDialog]);
 
-  useEffect(() => {
-    const cachedPayload = readAdminOverviewCache();
-    if (cachedPayload) {
-      payloadRef.current = cachedPayload;
-      setPayload(cachedPayload);
-      includeBillingRef.current = cachedPayload.summary.billingLoaded;
-      setIncludeBilling(cachedPayload.summary.billingLoaded);
-      setAccessState("ready");
-    }
-
-    void loadOverview();
-  }, [loadOverview]);
+  useEffect(() => () => {
+    overviewControllerRef.current?.abort();
+    overviewRequestIdRef.current += 1;
+  }, []);
 
   useEffect(() => {
     if (!copiedOrgId) {
@@ -1954,64 +1765,38 @@ export function DenAdminPanel() {
   const filteredOrganizations = payload?.organizations ?? [];
 
   useEffect(() => {
-    if (accessState !== "ready" || viewMode !== "users") {
-      return;
-    }
-
-    const trimmedQuery = userQuery.trim();
-    const currentPayload = payloadRef.current;
-    if (currentPayload?.userPage.search === trimmedQuery) {
+    if (accessState !== "ready" || viewMode !== "users") return;
+    const trimmedQuery = routeSearch.trim();
+    const currentPage = payloadRef.current?.userPage;
+    if (currentPage?.search === trimmedQuery && currentPage.offset === routeOffset) {
       setUsersLoading(false);
       return;
     }
-
-    const requestId = userRequestIdRef.current + 1;
-    userRequestIdRef.current = requestId;
+    const requestId = ++userRequestIdRef.current;
     setUsersLoading(true);
     const controller = new AbortController();
     const timeout = window.setTimeout(() => {
-      void loadUsers(trimmedQuery, 0, includeBillingRef.current, controller.signal, requestId);
+      void loadUsers(trimmedQuery, routeOffset, includeBillingRef.current, controller.signal, requestId);
     }, ADMIN_SEARCH_DEBOUNCE_MS);
-
-    return () => {
-      controller.abort();
-      window.clearTimeout(timeout);
-    };
-  }, [accessState, loadUsers, userQuery, viewMode]);
+    return () => { controller.abort(); window.clearTimeout(timeout); };
+  }, [accessState, loadUsers, routeSearch, routeOffset, viewMode]);
 
   useEffect(() => {
-    if (accessState !== "ready" || viewMode !== "organizations") {
-      return;
-    }
-
-    const trimmedQuery = organizationQuery.trim();
-    const currentPayload = payloadRef.current;
-    if (currentPayload?.organizationPage.search === trimmedQuery && (currentPayload.organizations.length > 0 || currentPayload.organizationPage.total === 0 || currentPayload.organizationPage.offset > 0 || currentPayload.organizationPage.returned > 0)) {
+    if (accessState !== "ready" || viewMode !== "organizations") return;
+    const trimmedQuery = routeSearch.trim();
+    const currentPage = payloadRef.current?.organizationPage;
+    if (currentPage?.search === trimmedQuery && currentPage.offset === routeOffset) {
       setOrganizationsLoading(false);
       return;
     }
-
-    const requestId = organizationRequestIdRef.current + 1;
-    organizationRequestIdRef.current = requestId;
+    const requestId = ++organizationRequestIdRef.current;
     setOrganizationsLoading(true);
     const controller = new AbortController();
-
-    if (trimmedQuery === "") {
-      void loadOrganizations(trimmedQuery, 0, controller.signal, requestId);
-      return () => {
-        controller.abort();
-      };
-    }
-
     const timeout = window.setTimeout(() => {
-      void loadOrganizations(trimmedQuery, 0, controller.signal, requestId);
+      void loadOrganizations(trimmedQuery, routeOffset, controller.signal, requestId);
     }, ADMIN_SEARCH_DEBOUNCE_MS);
-
-    return () => {
-      controller.abort();
-      window.clearTimeout(timeout);
-    };
-  }, [accessState, loadOrganizations, organizationQuery, viewMode]);
+    return () => { controller.abort(); window.clearTimeout(timeout); };
+  }, [accessState, loadOrganizations, routeSearch, routeOffset, viewMode]);
 
   useEffect(() => {
     if (accessState !== "ready" || !payload || overviewUsableMs !== null || mountedAtRef.current === null) {
@@ -2044,226 +1829,6 @@ export function DenAdminPanel() {
     organizationSearchStartedAtRef.current = null;
   }, [organizationQuery, organizationsLoading, payload]);
 
-  useEffect(() => {
-    if (!payload) {
-      setOrgDrafts({});
-      return;
-    }
-
-    const drafts: Record<string, { tier: AdminOrganization["plan"]["tier"]; seatLimit: string }> = {};
-    for (const org of payload.organizations) {
-      drafts[org.id] = { tier: org.plan.tier, seatLimit: String(org.seatLimit) };
-    }
-    setOrgDrafts(drafts);
-  }, [payload]);
-
-  const saveOrganizationPlan = useCallback(async (org: AdminOrganization) => {
-    const draft = orgDrafts[org.id];
-    if (!draft) {
-      return;
-    }
-
-    const seatLimit = Number(draft.seatLimit);
-    if (!Number.isInteger(seatLimit) || seatLimit < 1) {
-      setError("Seat limit must be a positive whole number.");
-      return;
-    }
-
-    setSavingOrgId(org.id);
-    setError(null);
-
-    try {
-      const { response, payload: nextPayload } = await patchJson(`/v1/admin/organizations/${org.id}/plan`, {
-        tier: draft.tier,
-        seatLimit
-      });
-
-      if (!response.ok) {
-        setError(getErrorMessage(nextPayload, `Could not update ${org.name}.`));
-        return;
-      }
-
-      setPayload((current) => {
-        if (!current) {
-          return current;
-        }
-        return {
-          ...current,
-          organizations: current.organizations.map((entry) => entry.id === org.id
-            ? { ...entry, plan: { ...entry.plan, tier: draft.tier, source: "manual" }, seatLimit }
-            : entry)
-        };
-      });
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unknown network error");
-    } finally {
-      setSavingOrgId(null);
-    }
-  }, [orgDrafts]);
-
-  const saveOrganizationFreeSeats = useCallback(async () => {
-    if (!freeSeatsDialog) {
-      return;
-    }
-
-    const totalFreeSeats = Number(freeSeatsDialog.totalFreeSeats);
-    if (!Number.isInteger(totalFreeSeats) || totalFreeSeats < DEFAULT_FREE_SEAT_COUNT) {
-      setError(`Free seats must be a whole number at least ${DEFAULT_FREE_SEAT_COUNT}.`);
-      return;
-    }
-
-    setSavingFreeSeatsOrgId(freeSeatsDialog.org.id);
-    setError(null);
-
-    try {
-      const { response, payload: nextPayload } = await patchJson(`/v1/admin/organizations/${freeSeatsDialog.org.id}/free-seats`, {
-        totalFreeSeats
-      });
-
-      if (!response.ok) {
-        setError(getErrorMessage(nextPayload, `Could not update free seats for ${freeSeatsDialog.org.name}.`));
-        return;
-      }
-
-      const updatedOrganization = isRecord(nextPayload) && isRecord(nextPayload.organization) ? nextPayload.organization : null;
-      setPayload((current) => {
-        if (!current || !updatedOrganization) {
-          return current;
-        }
-        return {
-          ...current,
-          organizations: current.organizations.map((entry) => entry.id === freeSeatsDialog.org.id
-            ? {
-              ...entry,
-              memberCount: toNumberValue(updatedOrganization.memberCount),
-              freeSeatCount: toNumberValue(updatedOrganization.freeSeatCount),
-              seatsFreeAdditional: toNumberValue(updatedOrganization.seatsFreeAdditional),
-              billableSeatCount: toNumberValue(updatedOrganization.billableSeatCount)
-            }
-            : entry)
-        };
-      });
-      setFreeSeatsDialog(null);
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unknown network error");
-    } finally {
-      setSavingFreeSeatsOrgId(null);
-    }
-  }, [freeSeatsDialog]);
-
-  const setOrganizationFeaturesLocally = useCallback((orgId: string, update: (features: AdminOrganizationFeatures) => AdminOrganizationFeatures) => {
-    setPayload((current) => {
-      if (!current) {
-        return current;
-      }
-
-      return {
-        ...current,
-        organizations: current.organizations.map((org) =>
-          org.id === orgId ? { ...org, features: update(org.features) } : org
-        )
-      };
-    });
-  }, []);
-
-  // value: true/false sets an override for this organization; null makes it follow the deployment-wide state again.
-  const saveOrganizationFeature = useCallback(async (org: AdminOrganization, key: FeatureKey, value: boolean | null) => {
-    const previous = org.features;
-    setSavingCapabilityOrgId(org.id);
-    setError(null);
-    setCapabilityError(null);
-    // Optimistic: show the change immediately, roll back if the PUT fails.
-    setOrganizationFeaturesLocally(org.id, (features) => ({
-      ...features,
-      [key]: {
-        ...features[key],
-        enabled: value ?? features[key].everyone,
-        override: value,
-        source: value === null ? "everyone" : "override",
-      },
-    }));
-
-    try {
-      const { response, payload: nextPayload } = await putJson(`/v1/admin/organizations/${org.id}/capabilities`, {
-        capabilities: { [key]: value }
-      });
-
-      if (!response.ok) {
-        setOrganizationFeaturesLocally(org.id, () => previous);
-        const message = getErrorMessage(nextPayload, `Could not update features for ${org.name}.`);
-        setError(message);
-        setCapabilityError({ orgId: org.id, message });
-        return;
-      }
-      // The server's answer is the truth (locks, defaults), not the optimistic guess.
-      if (isRecord(nextPayload) && isRecord(nextPayload.featureStates)) {
-        const features = parseAdminOrganizationFeatures(nextPayload.featureStates, nextPayload.capabilities);
-        setOrganizationFeaturesLocally(org.id, () => features);
-      }
-    } catch (nextError) {
-      setOrganizationFeaturesLocally(org.id, () => previous);
-      const message = nextError instanceof Error ? nextError.message : "Unknown network error";
-      setError(message);
-      setCapabilityError({ orgId: org.id, message });
-    } finally {
-      setSavingCapabilityOrgId(null);
-    }
-  }, [setOrganizationFeaturesLocally]);
-
-  const saveOpenWorkWebAccess = useCallback(async () => {
-    if (!openworkWebAccessDialog) {
-      return;
-    }
-
-    const reason = openworkWebAccessDialog.reason.trim();
-    if (reason.length < 3) {
-      setOpenWorkWebAccessError({ orgId: openworkWebAccessDialog.org.id, message: "Add a short reason for the audit log." });
-      return;
-    }
-
-    const { org, enabled } = openworkWebAccessDialog;
-    setSavingOpenWorkWebAccessOrgId(org.id);
-    setOpenWorkWebAccessError(null);
-    setError(null);
-
-    try {
-      const { response, payload: nextPayload } = await putJson(`/v1/admin/organizations/${org.id}/openwork-web-access`, {
-        enabled,
-        reason
-      });
-      if (!response.ok) {
-        const message = getErrorMessage(nextPayload, `Could not update OpenWork Web access for ${org.name}.`);
-        setOpenWorkWebAccessError({ orgId: org.id, message });
-        setError(message);
-        return;
-      }
-
-      const updatedOrganization = isRecord(nextPayload) && isRecord(nextPayload.organization) ? nextPayload.organization : null;
-      if (!updatedOrganization) {
-        throw new Error("The OpenWork Web access response was incomplete.");
-      }
-      const openworkWebAccess = parseAdminOpenWorkWebAccess(updatedOrganization.openworkWebAccess);
-      setPayload((current) => {
-        if (!current) {
-          return current;
-        }
-        return {
-          ...current,
-          organizations: current.organizations.map((entry) => entry.id === org.id
-            ? { ...entry, openworkWebAccess }
-            : entry)
-        };
-      });
-      setOpenWorkWebAccessDialog(null);
-    } catch (nextError) {
-      const message = nextError instanceof Error ? nextError.message : "Unknown network error";
-      setOpenWorkWebAccessError({ orgId: org.id, message });
-      setError(message);
-    } finally {
-      setSavingOpenWorkWebAccessOrgId(null);
-    }
-  }, [openworkWebAccessDialog]);
-
   const deleteUser = useCallback(async () => {
     if (!deleteUserDialog) {
       return;
@@ -2282,31 +1847,33 @@ export function DenAdminPanel() {
 
       setDeleteUserDialog(null);
       setSelectedUserId(null);
-      await loadOverview();
+      await refreshCurrentPage();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unknown network error");
     } finally {
       setDeletingUserId(null);
     }
-  }, [deleteUserDialog, loadOverview]);
+  }, [deleteUserDialog, refreshCurrentPage]);
 
   const exportCsv = useCallback(() => {
     const date = new Date().toISOString().slice(0, 10);
 
     if (viewMode === "organizations") {
       downloadCsv(`den-organizations-${date}.csv`, [
-        ["id", "name", "slug", "plan", "plan_source", "seat_limit", "free_seats", "additional_free_seats", "chargeable_seats", "members", "created_at"],
+        ["id", "name", "slug", "plan", "plan_source", "paid_by", "users", "user_limit", "ends_at", "free_seats", "additional_free_seats", "chargeable_seats", "created_at"],
         ...filteredOrganizations.map((org) => [
           org.id,
           org.name,
           org.slug,
           org.plan.tier,
           org.plan.source,
-          String(org.seatLimit),
+          org.paidBy,
+          String(org.memberCount),
+          org.userLimit === null ? "" : String(org.userLimit),
+          org.endsAt ?? "",
           String(org.freeSeatCount),
           String(org.seatsFreeAdditional),
           String(org.billableSeatCount),
-          String(org.memberCount),
           org.createdAt ?? ""
         ])
       ]);
@@ -2353,132 +1920,79 @@ export function DenAdminPanel() {
     return filteredUsers.find((user) => user.id === selectedUserId) ?? filteredUsers[0] ?? null;
   }, [filteredUsers, selectedUserId]);
 
-  useEffect(() => {
-    if (!selectedUser || usageByUserId[selectedUser.id]) {
-      return;
-    }
-    void loadInferenceUsage(selectedUser.id);
-  }, [loadInferenceUsage, selectedUser, usageByUserId]);
-
-  if (accessState === "loading") {
-    return <DenAdminLoadingShell />;
-  }
+  const handleDashboardAccessDenied = useCallback((access: "signed-out" | "forbidden") => {
+    setAccessState(access);
+    setPayload(null);
+  }, []);
 
   if (accessState === "signed-out" || accessState === "forbidden" || accessState === "error") {
-    const title = accessState === "signed-out"
-      ? "Sign in required"
-      : accessState === "forbidden"
-        ? "Admin access required"
-        : "Backoffice unavailable";
-    const message = accessState === "signed-out"
-      ? "Use the main Den page to sign in, then return with a whitelisted admin account."
-      : accessState === "forbidden"
-        ? "Your session is valid, but the email on it is not present in the Den admin allowlist."
-        : error ?? "The backoffice request failed before the dashboard could load.";
-
-    return (
-      <section className="mx-auto w-full max-w-4xl rounded-3xl border border-slate-200 bg-white p-8 shadow-xs">
-        <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Den admin</p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">{title}</h1>
-        <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">{message}</p>
-        <div className="mt-6 flex flex-wrap gap-3">
-          <a
-            href="/"
-            className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white"
-          >
-            Open sign-in page
-          </a>
-          <button
-            type="button"
-            onClick={() => {
-              void loadOverview();
-            }}
-            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-          >
-            Retry
-          </button>
-        </div>
-      </section>
-    );
+    return <AdminAccessScreen state={accessState} message={error ?? undefined} onRetry={() => void refreshCurrentPage()} />;
   }
 
   if (!payload) {
     return null;
   }
 
-  const billingValue = payload.summary.billingLoaded
-    ? formatOptionalCount(payload.summary.paidUsers)
-    : "On demand";
-  const billingDetail = payload.summary.billingLoaded && payload.summary.paidUsers !== null && payload.summary.unpaidUsers !== null
-    ? `${payload.summary.paidUsers} paid / ${payload.summary.unpaidUsers} unpaid on current page`
-    : payload.summary.billingLoaded
-      ? "Billing counts unavailable for this page"
-      : "Load billing only when you need it";
-  const inviterDetail = payload.summary.medianHoursToFirstInvite === null
-    ? "Load analytics to calculate"
-    : `Median time to invite ${formatHours(payload.summary.medianHoursToFirstInvite)}`;
   const analyticsLoaded = payload.summary.verifiedUsers !== null || payload.summary.activitySeries.length > 0;
   const pageDurationLabel = isAdminScaleFixtureEnabled() ? "fixture computation" : "server";
 
   return (
-    <section className="mx-auto w-full max-w-6xl rounded-3xl border border-slate-200 bg-white shadow-xs">
-      <div className="border-b border-slate-200 px-6 py-6 sm:px-8">
+    <section data-testid="admin-data-page" className="mx-auto w-full max-w-6xl bg-white">
+      <div className="border-b border-slate-200 pb-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Den admin</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-950">User backoffice</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
-              Lightweight internal view for signups, worker creation, and on-demand billing checks.
-            </p>
+            <h1 className="text-lg font-semibold text-slate-950">{section === "overview" ? "Overview" : section === "users" ? "Users" : "Organizations"}</h1>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <div className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600">
-              {payload.viewer.email ?? payload.viewer.id}
-            </div>
+            {section === "overview" ? <p className="text-sm text-slate-600">{payload.viewer.email ?? payload.viewer.id}</p> : null}
             <button
               type="button"
               onClick={() => {
-                void loadOverview();
+                void refreshCurrentPage();
               }}
-              disabled={refreshing}
-              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={refreshing || usersLoading || organizationsLoading}
+              className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {refreshing ? "Refreshing..." : "Refresh"}
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                void loadAnalytics();
-              }}
-              disabled={analyticsLoading}
-              className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {analyticsLoading ? "Loading analytics..." : analyticsLoaded ? "Refresh analytics" : "Load analytics"}
-            </button>
+            {section !== "overview" ? (
+              <button
+                type="button"
+                onClick={exportCsv}
+                disabled={viewMode === "organizations" ? filteredOrganizations.length === 0 : filteredUsers.length === 0}
+                className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Download size={15} strokeWidth={1.75} aria-hidden="true" />
+                Export current page CSV
+              </button>
+            ) : null}
+
           </div>
         </div>
 
-        <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-          <StatCard label="Users" value={String(payload.summary.totalUsers)} detail={formatOptionalDetail(payload.summary.recentUsers7d, "new in 7d")} />
-          <StatCard label="Active today" value={formatOptionalCount(payload.summary.activeUsers1d)} detail="Load analytics to calculate" />
-          <StatCard label="Real DAU" value={formatOptionalCount(payload.summary.realActiveUsers1d)} detail="Load analytics to calculate" />
-          <StatCard label="Recurring" value={formatOptionalCount(payload.summary.recurringUsers)} detail="Load analytics to calculate" />
-          <StatCard label="Inviters" value={formatOptionalCount(payload.summary.inviters)} detail={inviterDetail} />
-          <StatCard label="Verified" value={formatOptionalCount(payload.summary.verifiedUsers)} detail="Load analytics to calculate" />
-          <StatCard label="Worker creators" value={formatOptionalCount(payload.summary.usersWithWorkers)} detail={payload.summary.usersWithoutWorkers === null ? "Load analytics to calculate" : `${payload.summary.usersWithoutWorkers} without workers`} />
-          <StatCard label="Workers" value={formatOptionalCount(payload.summary.totalWorkers)} detail="Load analytics to calculate" />
-          <StatCard label="Billing" value={billingValue} detail={billingDetail} />
-          <StatCard label="Admins" value={String(payload.summary.adminCount)} detail="Whitelisted operator accounts" />
-        </div>
+        {error ? (
+          <div role="alert" className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+            {error}
+          </div>
+        ) : null}
 
-        <ActivityChart series={payload.summary.activitySeries} />
-
-        <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+        {section === "overview" ? <>
+        <AdminDashboard refreshKey={payload.generatedAt} totalOrganizations={payload.summary.totalOrganizations} totalUsers={payload.summary.totalUsers} onAccessDenied={handleDashboardAccessDenied} />
+        <details className="border-t border-slate-200 py-4">
+          <summary className="w-fit cursor-pointer text-sm font-medium text-slate-700 focus-visible:outline-2 focus-visible:outline-slate-500">More analytics</summary>
+          <div className="mt-4"><DenButton size="sm" variant="secondary" loading={analyticsLoading} onClick={() => void loadAnalytics()}>{analyticsLoaded ? "Refresh analytics" : "Load analytics"}</DenButton></div>
+          {analyticsLoaded ? <><div className="mt-4 grid gap-4 sm:grid-cols-3">
+            <StatCard label="New users" value={formatOptionalCount(payload.summary.recentUsers7d)} detail="Last 7 days" />
+            <StatCard label="Task runners" value={formatOptionalCount(payload.summary.realActiveUsers30d)} detail="Last 30 days" />
+            <StatCard label="Worker creators" value={formatOptionalCount(payload.summary.usersWithWorkers)} detail={`${formatOptionalCount(payload.summary.totalWorkers)} workers`} />
+          </div><ActivityChart series={payload.summary.activitySeries} /></> : null}
+        </details>
+        <details className="border-t border-slate-200 py-4"><summary className="w-fit cursor-pointer text-sm font-medium text-slate-700 focus-visible:outline-2 focus-visible:outline-slate-500">Platform admins ({payload.summary.adminCount})</summary>
+        <div className="pt-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-sm font-semibold text-slate-950">Platform admins</p>
-              <p className="mt-1 text-xs leading-5 text-slate-500">Manage operator access to this backoffice.</p>
+              <p className="text-sm font-medium text-slate-700">Operator access</p>
             </div>
             <div className="grid gap-2 sm:grid-cols-[minmax(12rem,1fr)_minmax(10rem,1fr)_auto]">
               <input
@@ -2488,7 +2002,7 @@ export function DenAdminPanel() {
                 onChange={(event) => setAdminEmail(event.target.value)}
                 placeholder="Email"
                 aria-label="Admin email"
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-hidden focus:border-slate-400"
+                className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-hidden focus:border-slate-400"
               />
               <input
                 data-testid="admin-add-note"
@@ -2496,14 +2010,14 @@ export function DenAdminPanel() {
                 onChange={(event) => setAdminNote(event.target.value)}
                 placeholder="Note (optional)"
                 aria-label="Admin note"
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-hidden focus:border-slate-400"
+                className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-hidden focus:border-slate-400"
               />
               <button
                 type="button"
                 data-testid="admin-add-action"
                 onClick={() => void addAdmin()}
                 disabled={adminMutationId !== null || !adminEmail.trim()}
-                className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-md bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {adminMutationId === "add" ? "Adding..." : "Add admin"}
               </button>
@@ -2513,7 +2027,7 @@ export function DenAdminPanel() {
             {payload.admins.map((admin) => {
               const isViewer = admin.email.toLowerCase() === payload.viewer.email?.toLowerCase();
               return (
-                <div key={admin.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                <div key={admin.id} className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-slate-800">{admin.email}{isViewer ? " · You" : ""}</p>
                     <p className="truncate text-xs text-slate-500">{admin.note ?? `Added ${formatDateTime(admin.createdAt)}`}</p>
@@ -2524,7 +2038,7 @@ export function DenAdminPanel() {
                       data-testid={`admin-remove-${admin.id}`}
                       onClick={() => void removeAdmin(admin)}
                       disabled={adminMutationId !== null}
-                      className="shrink-0 rounded-full border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="shrink-0 rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {adminMutationId === admin.id ? "Removing..." : "Remove"}
                     </button>
@@ -2534,74 +2048,33 @@ export function DenAdminPanel() {
             })}
           </div>
         </div>
+        </details>
+        </> : null}
       </div>
 
-      <div className="px-6 py-6 sm:px-8">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1">
-            <button
-              type="button"
-              onClick={() => setViewMode("users")}
-              className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${viewMode === "users" ? "bg-slate-950 text-white" : "text-slate-600 hover:text-slate-900"}`}
-            >
-              Users ({payload.summary.totalUsers})
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("companies")}
-              className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${viewMode === "companies" ? "bg-slate-950 text-white" : "text-slate-600 hover:text-slate-900"}`}
-            >
-              Companies (deferred)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (viewMode !== "organizations") {
-                  organizationSearchStartedAtRef.current = performance.now();
-                  setOrganizationVisibleDurationMs(null);
-                }
-                setViewMode("organizations");
-              }}
-              className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${viewMode === "organizations" ? "bg-slate-950 text-white" : "text-slate-600 hover:text-slate-900"}`}
-            >
-              Organizations ({payload.summary.totalOrganizations})
-            </button>
-          </div>
-
-            <button
-              type="button"
-              onClick={exportCsv}
-              disabled={viewMode === "companies" || (viewMode === "organizations" ? filteredOrganizations.length === 0 : filteredUsers.length === 0)}
-              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Export current page CSV
-            </button>
-        </div>
-
-        {error ? (
-          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
-            {error}
-          </div>
-        ) : null}
+      {section !== "overview" ? <div className="py-5">
 
         {isAdminScaleFixtureEnabled() ? (
-          <div data-testid="admin-scale-eval-status" className="mt-4 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm leading-6 text-violet-900">
+          <div data-testid="admin-scale-eval-status" className="mt-4 rounded-md border border-violet-200 bg-violet-50 px-4 py-3 text-sm leading-6 text-violet-900">
             Eval scale fixture active: 50,000 users · 60,000 organizations · first pages capped at 50. Browser usable {overviewUsableMs === null ? "measuring" : `${overviewUsableMs} ms`}. Real database budget command: pnpm benchmark:admin-scale:mysql (500 ms initial, 300 ms searches).
           </div>
         ) : null}
 
         {(viewMode === "users" && usersLoading) || (viewMode === "organizations" && organizationsLoading) ? (
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600" aria-busy="true">
+          <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600" aria-busy="true">
             Loading the bounded page…
           </div>
         ) : null}
 
         {viewMode === "organizations" ? (
-          <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between" data-testid="admin-orgs-page">
-            <div className="grid w-full max-w-xl gap-2">
-              <label className="grid gap-2">
-                <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Search organizations</span>
+          <div className="grid gap-4" data-testid="admin-orgs-page">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <label className="relative block w-full max-w-xl">
+                <span className="sr-only">Search organizations</span>
+                <Search size={16} strokeWidth={1.75} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
+                  maxLength={160}
+                  aria-label="Search organizations"
                   value={organizationQuery}
                   onChange={(event) => {
                     overviewRequestIdRef.current += 1;
@@ -2609,49 +2082,52 @@ export function DenAdminPanel() {
                     organizationRequestIdRef.current += 1;
                     organizationSearchStartedAtRef.current = performance.now();
                     setOrganizationVisibleDurationMs(null);
-                    setOrganizationQuery(event.target.value);
+                    setSearch(event.target.value);
                   }}
-                  placeholder="Org name, slug, or id"
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
+                  placeholder="Search by name, slug, or id"
+                  className="w-full rounded-md border border-slate-200 bg-white py-2.5 pl-9 pr-4 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
                 />
               </label>
-              <p className="text-xs leading-5 text-slate-500">
-                Search across all {payload.summary.totalOrganizations} organizations · page {payload.organizationPage.offset + 1}-{payload.organizationPage.offset + payload.organizationPage.returned} of {payload.organizationPage.total} · {pageDurationLabel} {payload.organizationPage.durationMs} ms{organizationVisibleDurationMs === null ? "" : ` · browser visible ${organizationVisibleDurationMs} ms`}
-              </p>
+              <div className="flex shrink-0 items-center gap-3">
+                <p className="text-xs tabular-nums text-slate-500" title={`${pageDurationLabel} ${payload.organizationPage.durationMs} ms${organizationVisibleDurationMs === null ? "" : ` · browser visible ${organizationVisibleDurationMs} ms`}`}>
+                  {payload.organizationPage.total === 0
+                    ? "No matches"
+                    : `${formatCount(payload.organizationPage.offset + 1)}–${formatCount(payload.organizationPage.offset + payload.organizationPage.returned)} of ${formatCount(payload.organizationPage.total)}`}
+                </p>
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPage(Math.max(1, routePage - 1));
+                    }}
+                    disabled={organizationsLoading || payload.organizationPage.offset === 0}
+                    className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPage(routePage + 1);
+                    }}
+                    disabled={organizationsLoading || !payload.organizationPage.hasMore}
+                    className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  void loadOrganizations(organizationQuery, Math.max(0, payload.organizationPage.offset - payload.organizationPage.limit));
-                }}
-                disabled={organizationsLoading || payload.organizationPage.offset === 0}
-                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void loadOrganizations(organizationQuery, payload.organizationPage.offset + payload.organizationPage.limit);
-                }}
-                disabled={organizationsLoading || !payload.organizationPage.hasMore}
-                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        ) : viewMode === "companies" ? (
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600">
-            Company-domain grouping is intentionally deferred at scale. It previously grouped only the loaded user list, which would be misleading now. Use server-side user search (for example, @acme.com) to find matching users across all {payload.summary.totalUsers} users.
+            <AdminRecentOrganizationsStrip />
           </div>
         ) : (
           <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <div className="grid w-full max-w-xl gap-2">
               <label className="grid gap-2">
-                <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Search users</span>
+                <span className="text-xs font-medium text-slate-500">Search users</span>
                 <input
+                  maxLength={160}
+                  aria-label="Search users"
                   value={userQuery}
                   onChange={(event) => {
                     overviewRequestIdRef.current += 1;
@@ -2659,14 +2135,14 @@ export function DenAdminPanel() {
                     userRequestIdRef.current += 1;
                     userSearchStartedAtRef.current = performance.now();
                     setUserVisibleDurationMs(null);
-                    setUserQuery(event.target.value);
+                    setSearch(event.target.value);
                   }}
                   placeholder="Email, name, user id, provider, organization"
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
+                  className="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
                 />
               </label>
               <p className="text-xs leading-5 text-slate-500">
-                Search across all {payload.summary.totalUsers} users · page {payload.userPage.offset + 1}-{payload.userPage.offset + payload.userPage.returned} of {payload.userPage.total} · {pageDurationLabel} {payload.userPage.durationMs} ms{userVisibleDurationMs === null ? "" : ` · browser visible ${userVisibleDurationMs} ms`}
+                Page {routePage} · {payload.userPage.total} matching users · {pageDurationLabel} {payload.userPage.durationMs} ms{userVisibleDurationMs === null ? "" : ` · browser visible ${userVisibleDurationMs} ms`}
               </p>
             </div>
 
@@ -2678,7 +2154,7 @@ export function DenAdminPanel() {
                     void loadUsers(userQuery, payload.userPage.offset, true);
                   }}
                   disabled={usersLoading}
-                  className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center justify-center rounded-md bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Load billing for page
                 </button>
@@ -2688,20 +2164,20 @@ export function DenAdminPanel() {
               <button
                 type="button"
                 onClick={() => {
-                  void loadUsers(userQuery, Math.max(0, payload.userPage.offset - payload.userPage.limit), includeBilling);
+                  setPage(Math.max(1, routePage - 1));
                 }}
                 disabled={usersLoading || payload.userPage.offset === 0}
-                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Previous
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  void loadUsers(userQuery, payload.userPage.offset + payload.userPage.limit, includeBilling);
+                  setPage(routePage + 1);
                 }}
                 disabled={usersLoading || !payload.userPage.hasMore}
-                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Next
               </button>
@@ -2712,206 +2188,78 @@ export function DenAdminPanel() {
         <div className="mt-6 grid gap-3">
           {viewMode === "organizations" ? (
             filteredOrganizations.length > 0 ? (
-              <>
+              <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                <div aria-hidden="true" className="hidden border-b border-slate-200 bg-slate-50/80 px-4 py-2 text-xs font-medium text-slate-500 lg:grid lg:grid-cols-[minmax(0,1fr)_12rem_12rem] lg:gap-4 xl:grid-cols-[minmax(0,1fr)_12rem_7rem_12rem]">
+                  <span>Organization</span><span>Users</span><span className="hidden xl:block">Created</span><span className="text-right">Actions</span>
+                </div>
+                <ul className="divide-y divide-slate-200">
                 {filteredOrganizations.map((org) => {
-              const draft = orgDrafts[org.id] ?? { tier: org.plan.tier, seatLimit: String(org.seatLimit) };
-              const changed = draft.tier !== org.plan.tier || draft.seatLimit !== String(org.seatLimit);
+              const limited = org.paidBy === "none" && org.userLimit !== null;
+              const full = limited && org.userLimit !== null && org.memberCount >= org.userLimit;
+              const share = limited && org.userLimit ? Math.min(100, Math.round((org.memberCount / org.userLimit) * 100)) : 0;
+              const endLabel = planEndLabel(org.endsAt, org.ended);
 
               return (
-                <div key={org.id} data-testid={`admin-org-row-${org.slug}`} className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate text-base font-semibold text-slate-950">{org.name}</p>
+                <li key={org.id} data-testid={`admin-org-row-${org.slug}`} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 64px" }} className="min-w-0">
+                  <div className="grid min-w-0 grid-cols-2 items-center gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_12rem_12rem] lg:gap-4 xl:grid-cols-[minmax(0,1fr)_12rem_7rem_12rem]">
+                    <div className="col-span-2 min-w-0 lg:col-span-1">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <Link href={adminOrganizationHref(org.id, routeSearch, routePage)} prefetch={false} className="min-w-0 truncate text-sm font-semibold text-slate-950 hover:underline">{org.name}</Link>
                         <PlanPill tier={org.plan.tier} />
                       </div>
-                      <p className="mt-1 truncate text-sm text-slate-500">/{org.slug} · {org.id}</p>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-600">
-                        {org.memberCount} / {org.seatLimit} seats
-                      </span>
-                      <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-emerald-700">
-                        {org.freeSeatCount} free
-                      </span>
-                      <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-amber-700">
-                        {org.billableSeatCount} chargeable
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                    <MetaCell label="Created" value={formatDateTime(org.createdAt)} />
-                    <MetaCell label="Plan source" value={formatProvider(org.plan.source)} />
-                    <MetaCell label="Members" value={String(org.memberCount)} />
-                    <div>
-                      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Free seats</p>
-                      <div className="mt-1 flex items-center gap-2">
-                        <p className="text-sm text-slate-700">{org.freeSeatCount}</p>
+                      <div className="mt-0.5 flex min-w-0 items-center gap-1 text-xs text-slate-500">
+                        <span className="min-w-0 truncate font-mono">{org.slug && org.slug !== org.id ? `/${org.slug} · ${org.id}` : org.id}</span>
                         <button
                           type="button"
-                          aria-label={`Edit free seats for ${org.name}`}
-                          onClick={() => setFreeSeatsDialog({ org, totalFreeSeats: String(org.freeSeatCount) })}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                          aria-label={`Copy id for ${org.name}`}
+                          title="Copy organization id"
+                          onClick={() => {
+                            void copyOrgId(org.id);
+                          }}
+                          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700"
                         >
-                          <Pencil size={13} aria-hidden="true" />
+                          {copiedOrgId === org.id ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
                         </button>
                       </div>
-                      <p className="mt-1 text-xs text-slate-400">
-                        {org.seatsFreeAdditional > 0 ? `${org.seatsFreeAdditional} additional` : "Default included"}
-                      </p>
                     </div>
-                  </div>
 
-                  <div className="mt-4 border-t border-slate-200 pt-4">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Features</p>
-                      <a href="/admin/features" className="text-xs font-medium text-slate-500 underline-offset-2 hover:underline">All features</a>
-                    </div>
-                    {/* Generated from packages/features/src/registry.ts; add features there, not here. */}
-                    <ul className="mt-2 grid gap-2">
-                      {FEATURE_KEYS.filter((key) => org.features[key].source !== "unavailable").map((key) => {
-                        const state = org.features[key];
-                        const definition = FEATURES[key];
-                        return (
-                          <li key={key} className="flex items-start gap-3">
-                            <label className="flex min-w-0 flex-1 items-start gap-2">
-                              <input
-                                type="checkbox"
-                                data-testid={`admin-capability-${key}`}
-                                checked={state.enabled}
-                                disabled={!state.overrideApplies || savingCapabilityOrgId === org.id}
-                                onChange={(event) => void saveOrganizationFeature(org, key, event.target.checked)}
-                                className="mt-0.5 h-4 w-4 shrink-0 rounded-sm border-slate-300"
-                              />
-                              <span className="min-w-0">
-                                <span className="text-sm text-slate-700">{definition.label}</span>
-                                <span className="ml-2 text-xs text-slate-400" data-testid={`admin-capability-source-${key}`}>{describeAdminFeatureSource(state)}</span>
-                                <span className="block text-xs leading-5 text-slate-400">{definition.description}</span>
-                              </span>
-                            </label>
-                            {state.source === "override" && state.overrideApplies ? (
-                              <button
-                                type="button"
-                                data-testid={`admin-capability-reset-${key}`}
-                                disabled={savingCapabilityOrgId === org.id}
-                                onClick={() => void saveOrganizationFeature(org, key, null)}
-                                className="shrink-0 text-xs font-medium text-slate-500 underline-offset-2 hover:underline disabled:opacity-50"
-                              >
-                                Use everyone&apos;s setting
-                              </button>
-                            ) : null}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                    {capabilityError?.orgId === org.id ? (
-                      <p data-testid="admin-capability-error" className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
-                        Save failed — the change was reverted. {capabilityError.message}
+                    <div className="min-w-0" data-testid={`admin-org-users-${org.slug}`}>
+                      <p className="text-sm tabular-nums text-slate-700">
+                        {limited && org.userLimit !== null
+                          ? <>{formatCount(org.memberCount)} / {formatCount(org.userLimit)}{endLabel ? <span className={org.ended ? "text-amber-700" : "text-slate-500"}> · {endLabel}</span> : null}</>
+                          : <>{formatCount(org.memberCount)} <span className="text-slate-500">· {org.paidBy === "none" ? "no limit" : "paid in Stripe"}</span></>}
                       </p>
-                    ) : null}
-                  </div>
-
-                  <div className="mt-4 border-t border-slate-200 pt-4" data-testid="admin-openwork-web-access">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">OpenWork Web billing access</p>
-                          <OpenWorkWebAccessPill access={org.openworkWebAccess} />
+                      {limited ? (
+                        <div className="mt-1 h-1 w-full max-w-[8rem] overflow-hidden rounded-full bg-slate-100" aria-hidden="true">
+                          <div className={`h-full rounded-full ${full ? "bg-slate-700" : "bg-slate-400"}`} style={{ width: `${Math.max(share, 4)}%` }} />
                         </div>
-                        <p className="mt-2 text-sm leading-6 text-slate-600">
-                          {org.openworkWebAccess.hasOngoingSubscription
-                            ? `A ${org.openworkWebAccess.subscriptionStatus ?? "current"} Stripe subscription controls access and billing.`
-                            : org.openworkWebAccess.complimentaryAccess
-                              ? "All joined members can use OpenWork Web without a Stripe subscription or per-member charge, even when deployment-wide availability is off."
-                              : "No complimentary grant or ongoing paid OpenWork Web subscription."}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        data-testid="admin-openwork-web-access-action"
-                        onClick={() => setOpenWorkWebAccessDialog({
-                          org,
-                          enabled: !org.openworkWebAccess.complimentaryAccess,
-                          reason: ""
-                        })}
-                        disabled={savingOpenWorkWebAccessOrgId === org.id || (!org.openworkWebAccess.complimentaryAccess && org.openworkWebAccess.hasOngoingSubscription)}
-                        className="inline-flex shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {savingOpenWorkWebAccessOrgId === org.id
-                          ? "Saving..."
-                          : org.openworkWebAccess.complimentaryAccess
-                            ? "Revoke complimentary access"
-                            : "Grant complimentary access"}
-                      </button>
+                      ) : null}
                     </div>
-                    {!org.openworkWebAccess.complimentaryAccess && org.openworkWebAccess.hasOngoingSubscription ? (
-                      <p className="mt-2 text-xs leading-5 text-amber-700">
-                        Cancel or finish the paid subscription in Stripe before granting complimentary access.
-                      </p>
-                    ) : null}
-                    {openworkWebAccessError?.orgId === org.id ? (
-                      <p data-testid="admin-openwork-web-access-error" className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
-                        {openworkWebAccessError.message}
-                      </p>
-                    ) : null}
+
+                    <p className="text-sm text-slate-600 lg:hidden xl:block" title={formatDateTime(org.createdAt)}><span className="xl:hidden">Created </span>{org.createdAt ? formatRelativeTime(org.createdAt) : "—"}</p>
+
+                    <div className="col-span-2 flex flex-wrap items-center justify-end gap-1 lg:col-span-1">
+                      <Link href={adminOrganizationHref(org.id, routeSearch, routePage, "features")} prefetch={false}
+                        data-testid="admin-organization-features-link" className="rounded-md px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950">
+                        Features
+                      </Link>
+                      <Link href={adminOrganizationHref(org.id, routeSearch, routePage, "billing")} prefetch={false}
+                        data-testid="admin-organization-billing-link" aria-label={`Billing for ${org.name}`} className="rounded-md px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950">
+                        Billing
+                      </Link>
+                    </div>
                   </div>
-
-                  <div className="mt-4 grid gap-3 border-t border-slate-200 pt-4 lg:grid-cols-[12rem_10rem_auto] lg:items-end">
-                    <label className="grid gap-2">
-                      <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Plan</span>
-                      <select
-                        value={draft.tier}
-                        onChange={(event) => {
-                          const tier = event.target.value === "enterprise" || event.target.value === "team" ? event.target.value : "free";
-                          setOrgDrafts((current) => ({ ...current, [org.id]: { ...draft, tier } }));
-                        }}
-                        className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
-                      >
-                        <option value="free">Free</option>
-                        <option value="team">Team</option>
-                        <option value="enterprise">Enterprise</option>
-                      </select>
-                    </label>
-
-                    <label className="grid gap-2">
-                      <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Seats</span>
-                      <input
-                        type="number"
-                        min={1}
-                        value={draft.seatLimit}
-                        onChange={(event) => setOrgDrafts((current) => ({ ...current, [org.id]: { ...draft, seatLimit: event.target.value } }))}
-                        className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
-                      />
-                    </label>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void saveOrganizationPlan(org);
-                      }}
-                      disabled={!changed || savingOrgId === org.id}
-                      className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {savingOrgId === org.id ? "Saving..." : "Save access"}
-                    </button>
-                  </div>
-                </div>
+                </li>
               );
                 })}
-              </>
+                </ul>
+              </div>
             ) : (
-              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
+              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
                 <p className="text-base font-semibold text-slate-950">No organizations match</p>
-                <p className="mt-2 text-sm leading-7 text-slate-500">Try a different search.</p>
+                <p className="mt-2 text-sm leading-7 text-slate-500">Try a different name, slug, or id.</p>
               </div>
             )
-          ) : viewMode === "companies" ? (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
-              <p className="text-base font-semibold text-slate-950">Company rollups are deferred at scale</p>
-              <p className="mt-2 text-sm leading-7 text-slate-500">This view no longer groups a partial user page. Search Users by domain to query the full user table server-side.</p>
-            </div>
           ) : filteredUsers.length > 0 ? filteredUsers.map((user) => {
             const isSelected = user.id === selectedUser?.id;
             const usageEntry = usageByUserId[user.id];
@@ -2920,7 +2268,8 @@ export function DenAdminPanel() {
               <div
                 key={user.id}
                 data-testid={`admin-user-row-${user.id}`}
-                className={`rounded-2xl border px-4 py-4 transition ${isSelected ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/70"}`}
+                style={isSelected ? undefined : { contentVisibility: "auto", containIntrinsicSize: "auto 180px" }}
+                className={`min-w-0 rounded-md border px-4 py-4 transition ${isSelected ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/70"}`}
               >
                 <button type="button" onClick={() => setSelectedUserId(user.id)} className="block w-full text-left">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -2928,12 +2277,12 @@ export function DenAdminPanel() {
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="truncate text-base font-semibold text-slate-950">{user.name?.trim() || user.email}</p>
                         {user.emailVerified ? (
-                          <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                          <span className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[0.66rem] font-medium text-emerald-700">
                             Verified
                           </span>
                         ) : null}
                         {user.isRecurring ? (
-                          <span className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-sky-700">
+                          <span className="inline-flex items-center rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-[0.66rem] font-medium text-sky-700">
                             Recurring
                           </span>
                         ) : null}
@@ -2943,10 +2292,10 @@ export function DenAdminPanel() {
 
                     <div className="flex flex-wrap items-center gap-2">
                       <BillingPill billing={user.billing} />
-                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-600">
+                      <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600">
                         {user.workerCount} workers
                       </span>
-                      <span className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-violet-700">
+                      <span className="inline-flex items-center rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">
                         {user.organizations.length} {user.organizations.length === 1 ? "org" : "orgs"}
                       </span>
                     </div>
@@ -2976,7 +2325,7 @@ export function DenAdminPanel() {
                           <MetaCell label="Billing note" value={user.billing.note ?? "No billing note returned."} />
                         </>
                       ) : (
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                        <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-4">
                           <p className="text-sm leading-7 text-slate-600">
                             Billing is intentionally loaded on demand to keep the admin page fast.
                           </p>
@@ -2987,7 +2336,7 @@ export function DenAdminPanel() {
                               void loadUsers(userQuery, payload.userPage.offset, true);
                             }}
                             disabled={usersLoading}
-                            className="mt-3 inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                            className="mt-3 inline-flex items-center justify-center rounded-md bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             Load billing for page
                           </button>
@@ -2995,70 +2344,80 @@ export function DenAdminPanel() {
                       )}
                     </div>
 
-                    <div data-testid="admin-usage-section" className="rounded-2xl border border-slate-200 bg-white px-4 py-4 lg:col-span-2">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">OpenWork model consumption</p>
-                          <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
-                            Limits are shared by everyone in each organization. Reset only forgives this user&apos;s consumption in the current windows; it does not change shared limits or other members&apos; usage.
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          data-testid="admin-usage-reset-open"
-                          onClick={() => setResetUsageDialog(user)}
-                          disabled={usageEntry?.status !== "ready" || usageEntry.data.organizations.length === 0}
-                          className="shrink-0 rounded-full border border-amber-200 bg-white px-4 py-2 text-sm font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          Reset consumption
-                        </button>
-                      </div>
-
-                      {resetSuccessByUserId[user.id] !== undefined ? (
-                        <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                          Reset complete. Forgave {formatUsageAmount(resetSuccessByUserId[user.id])} units from this user&apos;s current windows.
-                        </p>
-                      ) : null}
-
-                      {!usageEntry || usageEntry.status === "loading" ? (
-                        <p className="mt-4 text-sm text-slate-500" aria-busy="true">Loading model consumption…</p>
-                      ) : usageEntry.status === "error" ? (
-                        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
-                          <p>{usageEntry.message}</p>
-                          <button type="button" onClick={() => void loadInferenceUsage(user.id)} className="mt-2 font-semibold underline">Retry</button>
-                        </div>
-                      ) : usageEntry.data.organizations.length === 0 ? (
-                        <p className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-5 text-center text-sm text-slate-500">No organization consumption windows are available for this user.</p>
-                      ) : (
-                        <div className="mt-4 grid gap-3">
-                          {usageEntry.data.organizations.map((organization) => (
-                            <div key={organization.membershipId} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-                              <p className="text-sm font-semibold text-slate-950">{organization.name}</p>
-                              <p className="mt-0.5 truncate font-mono text-[0.68rem] text-slate-400">{organization.id}</p>
-                              {organization.windows.length === 0 ? (
-                                <p className="mt-3 text-sm text-slate-500">No current five-hour, weekly, or monthly windows.</p>
-                              ) : (
-                                <div className="mt-3 grid gap-2 md:grid-cols-3">
-                                  {organization.windows.map((window) => (
-                                    <div key={window.bucketId} className="rounded-xl border border-slate-200 bg-white p-3">
-                                      <p className="text-xs font-semibold text-slate-800">{formatWindowType(window.windowType)}</p>
-                                      <p className="mt-2 text-sm text-slate-700">User: <strong>{formatUsageAmount(window.userUsedAmount)}</strong></p>
-                                      <p className="mt-1 text-xs text-slate-500">Shared: {formatUsageAmount(window.organizationUsedAmount)} / {formatUsageAmount(window.limitAmount)}</p>
-                                      <p className="mt-2 text-xs leading-5 text-slate-400">Resets {formatDateTime(window.windowEndAt)}</p>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
+                    <AdminDeferredContent
+                      key={user.id}
+                      label={`Model consumption for ${user.email}`}
+                      className="lg:col-span-2"
+                      placeholderClassName="min-h-48"
+                      onVisible={() => { if (!usageEntry) void loadInferenceUsage(user.id); }}
+                    >
+                      {() => (
+                        <div data-testid="admin-usage-section" className="rounded-md border border-slate-200 bg-white px-4 py-4 lg:col-span-2">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <p className="text-xs font-medium text-slate-500">OpenWork model consumption</p>
+                              <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
+                                Limits are shared by everyone in each organization. Reset only forgives this user&apos;s consumption in the current windows; it does not change shared limits or other members&apos; usage.
+                              </p>
                             </div>
-                          ))}
+                            <button
+                              type="button"
+                              data-testid="admin-usage-reset-open"
+                              onClick={() => setResetUsageDialog(user)}
+                              disabled={usageEntry?.status !== "ready" || usageEntry.data.organizations.length === 0}
+                              className="shrink-0 rounded-md border border-amber-200 bg-white px-4 py-2 text-sm font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Reset consumption
+                            </button>
+                          </div>
+
+                          {resetSuccessByUserId[user.id] !== undefined ? (
+                            <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                              Reset complete. Forgave {formatUsageAmount(resetSuccessByUserId[user.id])} units from this user&apos;s current windows.
+                            </p>
+                          ) : null}
+
+                          {!usageEntry || usageEntry.status === "loading" ? (
+                            <p className="mt-4 text-sm text-slate-500" aria-busy="true">Loading model consumption…</p>
+                          ) : usageEntry.status === "error" ? (
+                            <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                              <p>{usageEntry.message}</p>
+                              <button type="button" onClick={() => void loadInferenceUsage(user.id)} className="mt-2 font-semibold underline">Retry</button>
+                            </div>
+                          ) : usageEntry.data.organizations.length === 0 ? (
+                            <p className="mt-4 rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 py-5 text-center text-sm text-slate-500">No organization consumption windows are available for this user.</p>
+                          ) : (
+                            <div className="mt-4 grid gap-3">
+                              {usageEntry.data.organizations.map((organization) => (
+                                <div key={organization.membershipId} className="rounded-md border border-slate-200 bg-slate-50/70 p-3">
+                                  <p className="text-sm font-semibold text-slate-950">{organization.name}</p>
+                                  <p className="mt-0.5 truncate font-mono text-xs text-slate-400">{organization.id}</p>
+                                  {organization.windows.length === 0 ? (
+                                    <p className="mt-3 text-sm text-slate-500">No current five-hour, weekly, or monthly windows.</p>
+                                  ) : (
+                                    <div className="mt-3 grid gap-2 md:grid-cols-3">
+                                      {organization.windows.map((window) => (
+                                        <div key={window.bucketId} className="rounded-md border border-slate-200 bg-white p-3">
+                                          <p className="text-xs font-semibold text-slate-800">{formatWindowType(window.windowType)}</p>
+                                          <p className="mt-2 text-sm text-slate-700">User: <strong>{formatUsageAmount(window.userUsedAmount)}</strong></p>
+                                          <p className="mt-1 text-xs text-slate-500">Shared: {formatUsageAmount(window.organizationUsedAmount)} / {formatUsageAmount(window.limitAmount)}</p>
+                                          <p className="mt-2 text-xs leading-5 text-slate-400">Resets {formatDateTime(window.windowEndAt)}</p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
-                    </div>
+                    </AdminDeferredContent>
 
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 lg:col-span-2">
+                    <div className="rounded-md border border-slate-200 bg-white px-4 py-4 lg:col-span-2">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div>
-                          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Organizations</p>
+                          <p className="text-xs font-medium text-slate-500">Organizations</p>
                           <p className="mt-1 text-sm text-slate-600">
                             {user.organizations.length > 0
                               ? `${user.email} is a member of ${user.organizations.length} organization${user.organizations.length === 1 ? "" : "s"}.`
@@ -3066,13 +2425,13 @@ export function DenAdminPanel() {
                           </p>
                         </div>
                         {user.organizations.length > 0 ? (
-                          <span className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-violet-700">
+                          <span className="inline-flex items-center rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">
                             {user.organizations.length} total
                           </span>
                         ) : null}
                       </div>
 
-                      <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-4">
+                      <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-4 py-4">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <div>
                             <p className="text-sm font-semibold text-red-950">Delete user</p>
@@ -3082,7 +2441,7 @@ export function DenAdminPanel() {
                             type="button"
                             onClick={() => setDeleteUserDialog(user)}
                             disabled={deletingUserId === user.id}
-                            className="inline-flex items-center justify-center gap-2 rounded-full border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 transition hover:border-red-300 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="inline-flex items-center justify-center gap-2 rounded-md border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 transition hover:border-red-300 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             <Trash2 size={15} aria-hidden="true" />
                             {deletingUserId === user.id ? "Deleting..." : "Delete user"}
@@ -3093,7 +2452,7 @@ export function DenAdminPanel() {
                       {user.organizations.length > 0 ? (
                         <div className="mt-3 grid gap-2">
                           {user.organizations.map((org) => (
-                            <div key={org.id} className="rounded-2xl border border-slate-200 bg-slate-50/70 px-3 py-3">
+                            <div key={org.id} className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-3">
                               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                                 <div className="min-w-0">
                                   <p className="truncate text-sm font-semibold text-slate-950">{org.name}</p>
@@ -3101,10 +2460,10 @@ export function DenAdminPanel() {
                                 </div>
 
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-600">
+                                  <span className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600">
                                     {formatProvider(org.role)}
                                   </span>
-                                  <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-600">
+                                  <span className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600">
                                     {org.memberCount} {org.memberCount === 1 ? "member" : "members"}
                                   </span>
                                   <button
@@ -3112,26 +2471,18 @@ export function DenAdminPanel() {
                                     onClick={() => {
                                       void copyOrgId(org.id);
                                     }}
-                                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
+                                    className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
                                   >
                                     <Copy size={13} aria-hidden="true" />
                                     {copiedOrgId === org.id ? "Copied" : "Copy ID"}
                                   </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      overviewRequestIdRef.current += 1;
-                                      setRefreshing(false);
-                                      organizationRequestIdRef.current += 1;
-                                      organizationSearchStartedAtRef.current = performance.now();
-                                      setOrganizationVisibleDurationMs(null);
-                                      setOrganizationQuery(org.id);
-                                      setViewMode("organizations");
-                                    }}
-                                    className="inline-flex items-center justify-center rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white"
+                                  <Link
+                                    href={`/admin/organizations/${encodeURIComponent(org.id)}`}
+                                    prefetch={false}
+                                    className="inline-flex items-center justify-center rounded-md bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white"
                                   >
                                     View org
-                                  </button>
+                                  </Link>
                                 </div>
                               </div>
                             </div>
@@ -3144,7 +2495,7 @@ export function DenAdminPanel() {
               </div>
             );
           }) : (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
+            <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
               <p className="text-base font-semibold text-slate-950">No users match the current filters</p>
               <p className="mt-2 text-sm leading-7 text-slate-500">Try broadening search or relaxing the worker and billing filters.</p>
             </div>
@@ -3152,129 +2503,7 @@ export function DenAdminPanel() {
         </div>
 
         <p className="mt-6 text-xs leading-6 text-slate-500">Snapshot generated {formatDateTime(payload.generatedAt)}.</p>
-      </div>
-
-      {openworkWebAccessDialog ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="openwork-web-access-dialog-title"
-          onClick={() => setOpenWorkWebAccessDialog(null)}
-        >
-          <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
-            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Organization billing access</p>
-            <h2 id="openwork-web-access-dialog-title" className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-slate-950">
-              {openworkWebAccessDialog.enabled ? "Grant" : "Revoke"} complimentary OpenWork Web?
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              {openworkWebAccessDialog.enabled
-                ? `${openworkWebAccessDialog.org.name} will receive OpenWork Web for every joined member without a Stripe subscription or per-member charge, even when deployment-wide availability is off.`
-                : `${openworkWebAccessDialog.org.name} will lose complimentary access immediately unless an independently eligible paid subscription exists.`}
-            </p>
-
-            <label className="mt-5 grid gap-2">
-              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Reason for audit log</span>
-              <textarea
-                data-testid="admin-openwork-web-access-reason"
-                rows={3}
-                maxLength={500}
-                value={openworkWebAccessDialog.reason}
-                onChange={(event) => setOpenWorkWebAccessDialog({ ...openworkWebAccessDialog, reason: event.target.value })}
-                placeholder="For example: Internal OpenWork administration organization"
-                className="resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
-              />
-            </label>
-
-            {openworkWebAccessError?.orgId === openworkWebAccessDialog.org.id ? (
-              <p className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs leading-5 text-red-700">
-                {openworkWebAccessError.message}
-              </p>
-            ) : null}
-
-            <div className="mt-6 flex flex-wrap justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setOpenWorkWebAccessDialog(null)}
-                disabled={savingOpenWorkWebAccessOrgId === openworkWebAccessDialog.org.id}
-                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                data-testid="admin-openwork-web-access-confirm"
-                onClick={() => {
-                  void saveOpenWorkWebAccess();
-                }}
-                disabled={savingOpenWorkWebAccessOrgId === openworkWebAccessDialog.org.id || openworkWebAccessDialog.reason.trim().length < 3}
-                className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {savingOpenWorkWebAccessOrgId === openworkWebAccessDialog.org.id
-                  ? "Saving..."
-                  : openworkWebAccessDialog.enabled
-                    ? "Grant access"
-                    : "Revoke access"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {freeSeatsDialog ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="free-seats-dialog-title"
-          onClick={() => setFreeSeatsDialog(null)}
-        >
-          <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
-            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Organization billing</p>
-            <h2 id="free-seats-dialog-title" className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-slate-950">
-              Edit free seats
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              Set the total number of free seats for {freeSeatsDialog.org.name}. The default {DEFAULT_FREE_SEAT_COUNT} seats stay included; OpenWork saves only the additional seats in organization metadata.
-            </p>
-
-            <label className="mt-5 grid gap-2">
-              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Total free seats</span>
-              <input
-                type="number"
-                min={DEFAULT_FREE_SEAT_COUNT}
-                value={freeSeatsDialog.totalFreeSeats}
-                onChange={(event) => setFreeSeatsDialog({ ...freeSeatsDialog, totalFreeSeats: event.target.value })}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
-              />
-            </label>
-
-            <p className="mt-3 rounded-2xl bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500">
-              Additional metadata value to save: {Math.max(0, Number(freeSeatsDialog.totalFreeSeats) - DEFAULT_FREE_SEAT_COUNT) || 0}
-            </p>
-
-            <div className="mt-6 flex flex-wrap justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setFreeSeatsDialog(null)}
-                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void saveOrganizationFreeSeats();
-                }}
-                disabled={savingFreeSeatsOrgId === freeSeatsDialog.org.id}
-                className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {savingFreeSeatsOrgId === freeSeatsDialog.org.id ? "Saving..." : "Save"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      </div> : null}
 
       {deleteUserDialog ? (
         <div
@@ -3284,8 +2513,8 @@ export function DenAdminPanel() {
           aria-labelledby="delete-user-dialog-title"
           onClick={() => setDeleteUserDialog(null)}
         >
-          <div className="w-full max-w-md rounded-3xl border border-red-100 bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
-            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-red-500">Danger zone</p>
+          <div className="w-full max-w-md rounded-lg border border-red-100 bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-red-500">Danger zone</p>
             <h2 id="delete-user-dialog-title" className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-slate-950">
               Delete {deleteUserDialog.email}?
             </h2>
@@ -3297,7 +2526,7 @@ export function DenAdminPanel() {
                 type="button"
                 onClick={() => setDeleteUserDialog(null)}
                 disabled={deletingUserId === deleteUserDialog.id}
-                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Cancel
               </button>
@@ -3307,7 +2536,7 @@ export function DenAdminPanel() {
                   void deleteUser();
                 }}
                 disabled={deletingUserId === deleteUserDialog.id}
-                className="inline-flex items-center justify-center rounded-full bg-red-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center justify-center rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {deletingUserId === deleteUserDialog.id ? "Deleting..." : "Delete user"}
               </button>
@@ -3325,8 +2554,8 @@ export function DenAdminPanel() {
           aria-labelledby="reset-usage-dialog-title"
           onClick={() => setResetUsageDialog(null)}
         >
-          <div className="w-full max-w-md rounded-3xl border border-amber-100 bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
-            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-600">Model consumption</p>
+          <div className="w-full max-w-md rounded-lg border border-amber-100 bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-600">Model consumption</p>
             <h2 id="reset-usage-dialog-title" className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-slate-950">
               Reset {resetUsageDialog.email}?
             </h2>
@@ -3338,7 +2567,7 @@ export function DenAdminPanel() {
                 type="button"
                 onClick={() => setResetUsageDialog(null)}
                 disabled={resettingUsageUserId === resetUsageDialog.id}
-                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60"
+                className="rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60"
               >
                 Cancel
               </button>
@@ -3347,7 +2576,7 @@ export function DenAdminPanel() {
                 data-testid="admin-usage-reset-action"
                 onClick={() => void resetInferenceUsage()}
                 disabled={resettingUsageUserId === resetUsageDialog.id}
-                className="rounded-full bg-amber-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-md bg-amber-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {resettingUsageUserId === resetUsageDialog.id ? "Resetting..." : "Reset consumption"}
               </button>

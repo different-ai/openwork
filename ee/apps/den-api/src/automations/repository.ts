@@ -26,6 +26,7 @@ import type {
   AutomationRun,
   AutomationRunEvent,
   AutomationRunEventType,
+  AutomationRunTriggerContext,
   AutomationUsage,
   DesktopRunnerInventory,
 } from "@openwork/types/automations"
@@ -181,6 +182,7 @@ function mapRun(row: RunRow): AutomationRun {
     resultSummary: row.result_summary,
     codemodeReceiptId: row.codemode_receipt_id,
     validatedResult: row.validated_result,
+    ...(row.trigger_context ? { triggerContext: row.trigger_context } : {}),
     usage: row.usage,
     createdAt: row.created_at.getTime(),
     updatedAt: row.updated_at.getTime(),
@@ -482,6 +484,19 @@ export class DenAutomationRepository implements AutomationRepository {
     return this.get(input)
   }
 
+  /** Active Cloud Automations that run around meetings, oldest first, for the calendar trigger source. */
+  async listActiveCalendarTriggers(input: { limit: number }): Promise<AutomationListItem[]> {
+    const rows = await db.select({ automation: AutomationTable }).from(AutomationTable)
+      .innerJoin(AutomationRevisionTable, eq(AutomationRevisionTable.id, AutomationTable.current_revision_id))
+      .where(and(
+        eq(AutomationTable.state, "active"),
+        eq(AutomationRevisionTable.schedule_kind, "calendar"),
+        eq(AutomationRevisionTable.execution_target, "cloud"),
+      ))
+      .orderBy(asc(AutomationTable.id)).limit(input.limit)
+    return itemsFromRows(rows.map((row) => row.automation))
+  }
+
   async listDue(input: Parameters<AutomationRepository["listDue"]>[0]): Promise<AutomationListItem[]> {
     const rows = await db.select().from(AutomationTable).where(and(
       eq(AutomationTable.state, "active"),
@@ -490,7 +505,10 @@ export class DenAutomationRepository implements AutomationRepository {
     return itemsFromRows(rows)
   }
 
-  async claim(input: Parameters<AutomationRepository["claim"]>[0]): Promise<AutomationClaimResult> {
+  async claim(input: Parameters<AutomationRepository["claim"]>[0] & {
+    /** The meeting a calendar-triggered occurrence is about. */
+    triggerContext?: AutomationRunTriggerContext | null
+  }): Promise<AutomationClaimResult> {
     return db.transaction(async (tx) => {
       const locked = await tx.select().from(AutomationTable)
         .where(eq(AutomationTable.id, normalizeAutomationId(input.automation.id))).limit(1).for("update")
@@ -548,6 +566,7 @@ export class DenAutomationRepository implements AutomationRepository {
         finished_at: overlap ? new Date(input.now) : null,
         error: null,
         result_summary: overlap ? "Skipped because another occurrence is already active." : null,
+        trigger_context: input.triggerContext ?? null,
         usage: emptyUsage,
         created_at: new Date(input.now),
         updated_at: new Date(input.now),
@@ -1364,7 +1383,7 @@ export class DenAutomationRepository implements AutomationRepository {
   /** Durably skips a run that must not execute (e.g. revoked model access). */
   async skipRun(input: {
     runId: string
-    code: "owner_membership_lost" | "model_access_lost" | "provider_unavailable" | "openwork_web_access_required"
+    code: "owner_membership_lost" | "model_access_lost" | "provider_unavailable" | "openwork_web_access_required" | "execution_runtime_unavailable"
     message: string
     now: number
   }): Promise<void> {

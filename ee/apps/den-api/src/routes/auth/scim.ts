@@ -4,6 +4,7 @@ import { resolver } from "hono-openapi"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { auth } from "../../auth.js"
+import { betterAuthRequest } from "../../request-client-ip.js"
 import { rawRefusalAttribution } from "../../audit/better-auth.js"
 import { attributeAuditRequest, auditServiceAttribution } from "../../audit/request-capture.js"
 import { deleteScimProvisionedAccessForProvider, recordScimSyncFailure, recordScimSyncFailureFromBearerToken, resolveScimProviderFromBearerToken, syncExternalIdentityFromScimResource, syncExternalIdentityFromScimUserId } from "../../scim.js"
@@ -133,7 +134,7 @@ async function authorizeScimRequest(c: Context): Promise<{ provider: ScimProvide
 }
 
 async function appendScimMetadataResource(request: Request, resource: Record<string, unknown>) {
-  const response = await auth.handler(request)
+  const response = await auth.handler(betterAuthRequest(request))
   if (!response.ok) {
     return response
   }
@@ -817,7 +818,7 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
       return new Response(null, { status: 204 })
     }
 
-    const response = await timeScimDiagnosticStage("better_auth_ms", () => auth.handler(c.req.raw))
+    const response = await timeScimDiagnosticStage("better_auth_ms", () => auth.handler(betterAuthRequest(c.req.raw)))
     if (!bearerToken) {
       return response
     }

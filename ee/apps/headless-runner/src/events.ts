@@ -19,16 +19,62 @@ export type SessionEvent =
 
 type Listener = (event: SessionEvent) => void
 
+/** The first message on a live-event WebSocket, as `event: ready` starts the SSE stream. */
+export const READY_MESSAGE = JSON.stringify({ type: "ready" })
+
+/**
+ * Live events over WebSockets, on a host that can hold them (a celld cell keeps them hibernatable: they outlive the
+ * cell's memory and its code version, so a socket can't be found through an in-memory listener). Each message is one
+ * event's JSON, exactly what the SSE stream's `data:` lines carry. The Node host has none: callers use SSE there.
+ */
+export type EventSockets = {
+  /** Answers an upgrade with a socket for the session's events whose first message is `READY_MESSAGE`. */
+  accept(sessionId: string): Response
+  /** Sends one event's JSON to every socket open on the session, including ones accepted before the host slept. */
+  send(sessionId: string, data: string): void
+}
+
 export class SessionEvents {
   private readonly listeners = new Map<string, Set<Listener>>()
+  private readonly enders = new Map<string, Set<() => void>>()
+  private sockets: EventSockets | null = null
 
-  subscribe(sessionId: string, listener: Listener) {
+  /** Publishes every event to the host's WebSockets too; set again each time the host starts (a cell wakes). */
+  useSockets(sockets: EventSockets) {
+    this.sockets = sockets
+  }
+
+  /** The upgrade answer for a live-event WebSocket, or null where the host holds no sockets (callers use SSE). */
+  acceptSocket(sessionId: string): Response | null {
+    return this.sockets?.accept(sessionId) ?? null
+  }
+
+  /** `onEnd` runs when the session's events stop here for good (it moved to its own cell): the reader reconnects. */
+  subscribe(sessionId: string, listener: Listener, onEnd?: () => void) {
     const set = this.listeners.get(sessionId) ?? new Set()
     set.add(listener)
     this.listeners.set(sessionId, set)
+    const ends = this.enders.get(sessionId) ?? new Set()
+    if (onEnd) {
+      ends.add(onEnd)
+      this.enders.set(sessionId, ends)
+    }
     return () => {
       set.delete(listener)
       if (set.size === 0) this.listeners.delete(sessionId)
+      if (onEnd) ends.delete(onEnd)
+      if (ends.size === 0) this.enders.delete(sessionId)
+    }
+  }
+
+  /** Ends every reader of the session here (see subscribe's `onEnd`). */
+  end(sessionId: string) {
+    for (const onEnd of [...(this.enders.get(sessionId) ?? [])]) {
+      try {
+        onEnd()
+      } catch {
+        // A broken reader never affects the others.
+      }
     }
   }
 
@@ -40,6 +86,11 @@ export class SessionEvents {
         // A broken reader never affects the turn.
       }
     }
+    if (!this.sockets) return
+    try {
+      this.sockets.send(sessionId, JSON.stringify(event))
+    } catch {
+      // Nor does a broken socket.
+    }
   }
-
 }

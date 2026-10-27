@@ -26,6 +26,7 @@ import {
   type UpdateMcpAppInput,
 } from "@openwork/types/mcp-app"
 import { db } from "./db.js"
+import { organizationFeatureEnabled } from "./features.js"
 import { buildGeneratedMcpApp, type GeneratedArtifactViewBuildResult } from "./generated-artifact-view-builder.js"
 import type { McpMemberIdentity } from "./mcp/external-capabilities.js"
 import { buildMarketplaceCapabilityName, listAccessibleMarketplaceCapabilityReferences, listAccessibleMarketplaceCapabilityReferencesFor, parseMarketplaceCapabilityName } from "./mcp/marketplace-capabilities.js"
@@ -153,7 +154,7 @@ async function editablePlugin(context: PluginArchActorContext, id: string) {
 // The builder's own policy and size refusals are fixed text naming what to
 // change, so they are returned as written; compiler errors keep a generic hint.
 const BUILDER_POLICY_MESSAGE = /^Generated [^.]* cannot /u
-const BUILDER_LIMIT_MESSAGE = /^(?:(?:React|CSS) source exceeds \d+ bytes\.|Compiled MCP App exceeds \d+ bytes\.|React view build exceeded the server time limit\.)$/u
+const BUILDER_LIMIT_MESSAGE = /^(?:(?:React|CSS) source exceeds \d+ bytes\.|Compiled MCP App exceeds \d+ bytes\.(?: Compiled size: \d+ bytes\.)?|React view build exceeded the server time limit\.)$/u
 
 function compileFailure(result?: GeneratedArtifactViewBuildResult): McpAppError {
   const diagnostic = result?.diagnostics[0]
@@ -233,13 +234,19 @@ async function addWorkflows(context: PluginArchActorContext, pluginId: DenTypeId
   for (const configObjectId of workflowIds) await attachConfigObjectToPlugin({ context, configObjectId, pluginId })
 }
 
-async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpAppToolBinding[]) {
+async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpAppToolBinding[], context: PluginArchActorContext) {
   const reactSource = input.reactSource.trim()
   const cssSource = input.cssSource?.trim() ?? ""
   const description = input.description?.trim() || null
+  // Resolved for this editor on every write, never from preparation or
+  // authored input. Turning the feature off refuses new library builds; a
+  // published revision stays readable and usable.
+  const allowLibraries = await organizationFeatureEnabled(context.organizationContext.organization.id, "mcpAppLibraries", {
+    userId: context.organizationContext.currentMember.userId,
+  })
   let result: GeneratedArtifactViewBuildResult
   try {
-    result = await buildGeneratedMcpApp({ reactSource, cssSource, title: input.title, description })
+    result = await buildGeneratedMcpApp({ reactSource, cssSource, title: input.title, description }, { allowLibraries })
   } catch {
     throw compileFailure()
   }
@@ -269,8 +276,9 @@ async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpApp
     throw new McpAppError(422, "mcp_app_invalid_build", "The compiled MCP App failed its integrity check. No revision was published.")
   }
   const rawSourceText = JSON.stringify({ reactSource, cssSource })
-  if (Buffer.byteLength(JSON.stringify(payload)) + Buffer.byteLength(rawSourceText) > MCP_APP_MAX_STORAGE_BYTES) {
-    throw new McpAppError(413, "mcp_app_too_large", "The encoded MCP App revision and source must fit within 1 MiB. Reduce its size; no revision was published.")
+  const storageLimit = allowLibraries ? MCP_APP_MAX_STORAGE_BYTES : 1024 * 1024
+  if (Buffer.byteLength(JSON.stringify(payload)) + Buffer.byteLength(rawSourceText) > storageLimit) {
+    throw new McpAppError(413, "mcp_app_too_large", `The encoded MCP App revision and source must fit within ${storageLimit / 1024 / 1024} MiB. Reduce its size; no revision was published.`)
   }
   return { payload, rawSourceText }
 }
@@ -285,7 +293,7 @@ export async function createMcpApp({ context, resolveTools, ...source }: CreateM
   let pluginId = input.pluginId ? await editablePlugin(context, input.pluginId) : null
   const resolved = await resolveTools(input.tools ?? [])
   const workflows = await workflowsToAdd(context, pluginId, workflowTools(resolved))
-  const compiled = await compile(input, pluginId ?? createDenTypeId("plugin"), resolved)
+  const compiled = await compile(input, pluginId ?? createDenTypeId("plugin"), resolved, context)
   let createdPluginId: DenTypeId<"plugin"> | null = null
   if (pluginId) {
     await editablePlugin(context, pluginId)
@@ -352,7 +360,7 @@ export async function updateMcpApp({ context, resolveTools, ...source }: UpdateM
     ...input,
     cssSource: input.cssSource ?? storedSource(current.version, current.payload).cssSource,
     description: input.description ?? current.payload.description ?? undefined,
-  }, pluginId, throughPlugin(resolved, pluginId))
+  }, pluginId, throughPlugin(resolved, pluginId), context)
   // Rechecked after compiling, outside the transaction so a slow check never
   // holds the row lock and a second pool connection at once.
   await requireEditor(context, id)

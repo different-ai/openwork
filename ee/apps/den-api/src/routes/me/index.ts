@@ -1,5 +1,5 @@
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { AuthAccountTable, AuthUserTable, RateLimitTable } from "@openwork-ee/den-db/schema"
+import { and, eq, gt, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { AuthAccountTable, AuthUserTable, InvitationTable, MemberTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { desktopConfigSchema } from "@openwork/types/den/desktop-policies"
 import type { Hono } from "hono"
@@ -11,6 +11,7 @@ import { recordSessionOrganizationEntered } from "../../audit/domain/sessions.js
 import { cache } from "../../cache.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
+import { automationAvailabilityFor, headlessAutomationsConfigured } from "../../automations/organization-availability.js"
 import { authenticatedRoute, jsonValidator, orgMemberRoute, userSessionRoute, type OrganizationContextVariables, type UserOrganizationsContext } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
@@ -19,8 +20,12 @@ import type { AuthContextVariables } from "../../session.js"
 import { calculateDesktopPolicyForOrgMember } from "../../desktop-policies.js"
 import { readAgentPermissionRulesForMember } from "../../agent-permissions.js"
 import { desktopConfigDefaultModel } from "../../default-model.js"
-import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
+import { readPromptsForMember } from "../../prompts.js"
+import { memberPromptsSchema } from "@openwork/types/den/prompts"
 import { getOrganizationFeatures } from "../../features.js"
+import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
+import { registerMeActivationRoutes } from "./activation.js"
+import { registerMeAgentRoutes } from "./agent.js"
 
 const DOWNLOAD_LINK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
 const DOWNLOAD_LINK_RATE_LIMIT_MAX = 5
@@ -38,6 +43,15 @@ const meOrganizationsResponseSchema = z.object({
   activeOrgId: denTypeIdSchema("organization").nullable(),
   activeOrgSlug: z.string().nullable(),
 }).meta({ ref: "CurrentUserOrganizationsResponse" })
+
+const meInvitationsResponseSchema = z.object({
+  invitations: z.array(z.object({
+    id: denTypeIdSchema("invitation"),
+    organization: z.object({ id: denTypeIdSchema("organization"), name: z.string() }),
+    role: z.string(),
+    expiresAt: z.string().datetime(),
+  })),
+}).meta({ ref: "CurrentUserInvitationsResponse" })
 
 const meDesktopConfigResponseSchema = desktopConfigSchema.meta({
   ref: "CurrentUserDesktopConfigResponse",
@@ -151,6 +165,9 @@ async function checkDownloadLinkRateLimit(userId: string, now: number) {
 }
 
 export function registerMeRoutes<T extends { Variables: AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
+  registerMeActivationRoutes(app)
+  registerMeAgentRoutes(app)
+
   app.get(
     "/v1/me",
     describeRoute({
@@ -208,6 +225,50 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       })),
       activeOrgId: c.get("activeOrganizationId") ?? null,
       activeOrgSlug: c.get("activeOrganizationSlug") ?? null,
+    })
+    },
+  )
+
+  app.get(
+    "/v1/me/invitations",
+    describeRoute({
+      tags: ["Users"],
+      summary: "List current user's pending invitations",
+      description: "Lists unexpired invitations sent to the signed-in person's verified email for organizations they have not joined yet. Always empty for an unverified email, whatever the deployment's verification setting. Accept one with POST /v1/orgs/invitations/accept.",
+      responses: {
+        200: jsonResponse("Pending invitations returned successfully.", meInvitationsResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+      },
+    }),
+    userSessionRoute(),
+    async (c) => {
+    const user = c.get("user")
+    const email = user.email?.trim().toLowerCase()
+    // Only a verified email proves the person owns the inbox an invitation went to. Without it, listing would hand
+    // out the invitation id that accepting otherwise requires from the emailed link, even where verification is off.
+    if (!email || user.emailVerified !== true) return c.json({ invitations: [] })
+
+    const userId = normalizeDenTypeId("user", user.id)
+    const rows = await db
+      .select({ id: InvitationTable.id, organizationId: InvitationTable.organizationId, organizationName: OrganizationTable.name, role: InvitationTable.role, expiresAt: InvitationTable.expiresAt })
+      .from(InvitationTable)
+      .innerJoin(OrganizationTable, eq(OrganizationTable.id, InvitationTable.organizationId))
+      .leftJoin(MemberTable, and(eq(MemberTable.organizationId, InvitationTable.organizationId), eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
+      .where(and(
+        eq(InvitationTable.status, "pending"),
+        gt(InvitationTable.expiresAt, new Date()),
+        sql`lower(${InvitationTable.email}) = ${email}`,
+        isNull(MemberTable.id),
+      ))
+      .limit(20)
+
+    return c.json({
+      invitations: rows.map((row) => ({
+        id: row.id,
+        organization: { id: row.organizationId, name: row.organizationName },
+        role: row.role,
+        expiresAt: row.expiresAt.toISOString(),
+      })),
     })
     },
   )
@@ -362,11 +423,30 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
   )
 
   app.get(
+    "/v1/me/prompts",
+    describeRoute({
+      tags: ["Users"],
+      summary: "Get current user's prompts",
+      description: "Returns the system prompts that apply to the caller in their active organization, in the order desktops append them to OpenWork's instructions: prompts for everyone, then each of the caller's teams' prompts by team name, then prompts assigned to the caller. Desktops read it with their provider sync.",
+      responses: {
+        200: jsonResponse("Current user prompts returned successfully.", memberPromptsSchema),
+        401: jsonResponse("The caller must be signed in to read their prompts.", unauthorizedSchema),
+      },
+    }),
+    orgMemberRoute(),
+    async (c) => {
+      const { organization, currentMember } = c.get("organizationContext")
+      c.header("Cache-Control", "no-store")
+      return c.json({ prompts: await readPromptsForMember({ organizationId: organization.id, memberId: currentMember.id }) })
+    },
+  )
+
+  app.get(
     "/v1/me/desktop-config",
     describeRoute({
       tags: ["Users"],
       summary: "Get current user's desktop config",
-      description: "Returns the authenticated desktop app restrictions for the caller's active organization, including the caller's agent permissions as ordered OpenCode permission rules when the organization has agent permissions on, and the model new chats start with (defaultModel, applied by OpenCode v2 desktops only) when the organization has the default model feature on and has chosen one the caller can use.",
+      description: "Returns the authenticated desktop app restrictions for the caller's active organization, including the caller's agent permissions as ordered OpenCode permission rules and the model new chats start with (defaultModel, applied by OpenCode v2 desktops only) when the organization has chosen one the caller can use.",
       responses: {
         200: jsonResponse("Current user desktop config returned successfully.", meDesktopConfigResponseSchema),
         401: jsonResponse("The caller must be signed in to read desktop config.", unauthorizedSchema),
@@ -381,20 +461,30 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         organizationId: organization.id,
         orgMemberId: currentMember.id,
       })
-      const features = await getOrganizationFeatures(organization.id)
-      const agentPermissions = features.agentPermissions
-        ? { rules: await readAgentPermissionRulesForMember({ organizationId: organization.id, orgMemberId: currentMember.id }) }
-        : undefined
+      const features = await getOrganizationFeatures(organization.id, { userId: currentMember.userId })
+      const agentPermissions = { rules: await readAgentPermissionRulesForMember({ organizationId: organization.id, orgMemberId: currentMember.id }) }
       // The model new chats start with; only v2 desktops apply it. A failure leaves desktops on their own default.
-      const defaultModel = await desktopConfigDefaultModel({ organizationId: organization.id, memberId: currentMember.id, featureOn: features.orgDefaultModel })
+      const defaultModel = await desktopConfigDefaultModel({ organizationId: organization.id, memberId: currentMember.id })
+      const automations = automationAvailabilityFor({
+        metadata: organization.metadata,
+        headlessRunnerConfigured: headlessAutomationsConfigured(),
+      })
 
       return c.json({
         ...desktopPolicy,
-        automationsEnabled: env.automations.enabled,
+        // The Automations page shows when either kind is allowed; only Desktop Automations make this desktop a runner.
+        automationsEnabled: env.automations.enabled && (automations.desktop || automations.cloud),
+        desktopAutomationsEnabled: automations.desktop,
+        cloudAutomationsEnabled: automations.cloud,
         dashboardEnabled: env.dashboardsEnabled,
         // Compatibility field for published desktops: Connect is always on.
         connectEnabled: true,
-        ...(agentPermissions ? { agentPermissions } : {}),
+        liveProviderSync: features.liveProviderSync,
+        nativeAffordanceCodeMode: features.nativeAffordanceCodeMode,
+        // Compatibility fields for published desktops: both behaviors are now always on.
+        localProviderMirror: true,
+        removeOpencodeZen: true,
+        agentPermissions,
         ...(defaultModel ? { defaultModel } : {}),
         ...(Array.isArray(metadata.allowedDesktopVersions)
           ? { allowedDesktopVersions: metadata.allowedDesktopVersions }

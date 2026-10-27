@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { env } from "../env.js"
+import { workbotOAuthReturnSchema, type WorkbotOAuthReturn } from "../workbot/connect-return-schema.js"
 import { publicRequestUrl } from "../request-url.js"
 import { clientSelectedFeatures, resolveProviderScopes, type NativeOAuthProviderConfig } from "./provider-registry.js"
 import { readProviderTenantId, resolveTenantEndpointTemplate } from "./oauth-tenant.js"
@@ -67,6 +68,7 @@ export type OAuthStatePayload = {
   callbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1"
   authorizationServerIssuer?: string
   authorizationResponseIssuerRequired?: boolean
+  workbotReturn?: WorkbotOAuthReturn
   nonce: string
   iat?: number
   exp: number
@@ -81,6 +83,7 @@ export function createOAuthStateToken(input: {
   callbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1"
   authorizationServerIssuer?: string
   authorizationResponseIssuerRequired?: boolean
+  workbotReturn?: WorkbotOAuthReturn
   secret: string
   ttlSeconds?: number
   now?: number
@@ -97,6 +100,7 @@ export function createOAuthStateToken(input: {
     ...(input.authorizationResponseIssuerRequired !== undefined
       ? { authorizationResponseIssuerRequired: input.authorizationResponseIssuerRequired }
       : {}),
+    ...(input.workbotReturn ? { workbotReturn: workbotOAuthReturnSchema.parse(input.workbotReturn) } : {}),
     nonce: randomUUID(),
     iat: Math.floor(nowMs / 1000),
     exp: Math.floor(nowMs / 1000) + (input.ttlSeconds ?? 10 * 60),
@@ -130,6 +134,7 @@ export function verifyOAuthStateToken(input: { token: string; secret: string; no
       || (payload.callbackMode !== undefined && payload.callbackMode !== "shared-v1" && payload.callbackMode !== "isolated-v1" && payload.callbackMode !== "legacy-v1")
       || (payload.authorizationServerIssuer !== undefined && typeof payload.authorizationServerIssuer !== "string")
       || (payload.authorizationResponseIssuerRequired !== undefined && typeof payload.authorizationResponseIssuerRequired !== "boolean")
+      || (payload.workbotReturn !== undefined && !workbotOAuthReturnSchema.safeParse(payload.workbotReturn).success)
       || typeof payload.nonce !== "string"
       || (payload.iat !== undefined && typeof payload.iat !== "number")
       || typeof payload.exp !== "number"

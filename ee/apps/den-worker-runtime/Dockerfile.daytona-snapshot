@@ -2,7 +2,7 @@
 # the target: bun compiles openwork-server via --target and the web build is
 # arch-independent. This avoids emulating the whole toolchain under QEMU
 # (node's libuv crashes under qemu-x86_64: uv__io_poll EEXIST assert).
-FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS openwork-builder
+FROM --platform=$BUILDPLATFORM node:24.22.1-bookworm-slim AS openwork-builder
 
 WORKDIR /src
 
@@ -18,7 +18,7 @@ COPY . .
 # python3/make/g++ above: better-sqlite3 v13 has no install script, but pnpm's
 # implicit node-gyp build for packages with a binding.gyp still compiles it
 # from source here, which needs a toolchain (v12 downloaded prebuilds instead).
-RUN pnpm install --frozen-lockfile --filter openwork-server... --filter @openwork/app...
+RUN pnpm install --frozen-lockfile --filter openwork-server... --filter @openwork/app... --filter @openwork/documents
 
 ARG TARGETARCH
 # .git is excluded from the Docker context; pass the UI source revision in.
@@ -34,9 +34,10 @@ RUN set -eux; \
   pnpm --filter openwork-server build; \
   pnpm --filter openwork-server exec bun ./script/build.ts --outdir dist/bin --target "$target"; \
   install -m 0755 "apps/server/dist/bin/openwork-server-${target}" /tmp/openwork-server; \
-  pnpm --filter @openwork/app build:web
+  pnpm --filter @openwork/app build:web; \
+  pnpm --filter @openwork/documents build:collabora-theme
 
-FROM node:22-bookworm-slim
+FROM node:24.22.1-bookworm-slim
 
 ARG OPENWORK_SERVER_VERSION=0.18.1
 ARG OPENCODE_VERSION
@@ -45,6 +46,33 @@ ARG OPENCODE_DOWNLOAD_URL=
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl tar unzip \
   && rm -rf /var/lib/apt/lists/*
+
+# Workbot Documents' editor: the open-source Collabora Online engine from its
+# CODE packages, without proprietary branding (packages/documents/README.md).
+# The bootstrap starts it only when Den sets DEN_DOCUMENTS_EDITOR=cloud-worker.
+# DOCUMENTS_EDITOR=0 builds an image without it.
+ARG DOCUMENTS_EDITOR=1
+ARG COLLABORA_REPO=https://collaboraoffice.com/repos/CollaboraOnline/25.04-CODE/CODE-deb/
+COPY --from=openwork-builder /src/packages/documents/collabora/dist/branding.js /tmp/openwork-branding.js
+COPY --from=openwork-builder /src/packages/documents/collabora/branding.css /tmp/openwork-branding.css
+COPY packages/documents/collabora/install-openwork-theme.sh /tmp/install-openwork-theme.sh
+COPY ee/apps/den-worker-runtime/documents-editor-proxy.mjs /opt/openwork/documents-editor-proxy.mjs
+RUN set -eux; \
+  if [ "$DOCUMENTS_EDITOR" = "1" ]; then \
+    apt-get update; \
+    apt-get install -y cpio tzdata libcap2-bin; \
+    curl -fsSL https://www.collaboraoffice.com/downloads/gpg/collaboraonline-release-keyring.gpg \
+      -o /usr/share/keyrings/collaboraonline-release-keyring.gpg; \
+    echo "deb [signed-by=/usr/share/keyrings/collaboraonline-release-keyring.gpg] $COLLABORA_REPO /" \
+      > /etc/apt/sources.list.d/collabora.list; \
+    apt-get update; \
+    apt-get install -y coolwsd collaboraofficebasis-en-us; \
+    sh /tmp/install-openwork-theme.sh /tmp/openwork-branding.js /tmp/openwork-branding.css; \
+    chown cool:cool /etc/coolwsd /etc/coolwsd/coolwsd.xml; \
+    chmod 644 /etc/coolwsd/coolwsd.xml; \
+    rm -rf /etc/coolwsd/proof_key* /var/lib/apt/lists/*; \
+  fi; \
+  rm -f /tmp/openwork-branding.js /tmp/openwork-branding.css /tmp/install-openwork-theme.sh
 
 COPY --from=openwork-builder /tmp/openwork-server /usr/local/bin/openwork-server
 COPY --from=openwork-builder /src/apps/app/dist /opt/openwork/web
@@ -70,6 +98,27 @@ RUN set -eux; \
   install -m 0755 "$binary" /usr/local/bin/opencode; \
   rm -rf "$tmpdir"
 
+# Bake the same pinned, integrity-checked v2 artifact the server would install.
+# No package lifecycle scripts and no runtime downloads, even after a restore.
+COPY --from=openwork-builder /src/constants.json /tmp/openwork-constants.json
+COPY --from=openwork-builder /src/apps/server/src/opencode-v2-artifacts.json /tmp/opencode-v2-artifacts.json
+RUN set -eux; \
+  arch="$(dpkg --print-architecture)"; \
+  case "$arch" in \
+    amd64) platform="linux-x64-baseline" ;; \
+    arm64) platform="linux-arm64" ;; \
+    *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
+  esac; \
+  url="$(node -e 'const c=require("/tmp/openwork-constants.json"); const a=require("/tmp/opencode-v2-artifacts.json"); if(a.version!==c.opencodeV2Version) throw new Error("OpenCode v2 artifact pin mismatch"); process.stdout.write(a.platforms[process.argv[1]].url)' "$platform")"; \
+  tmpdir="$(mktemp -d)"; \
+  curl -fsSL "$url" -o "$tmpdir/opencode2.tgz"; \
+  node -e 'const fs=require("node:fs"); const crypto=require("node:crypto"); const a=require("/tmp/opencode-v2-artifacts.json"); const actual="sha512-"+crypto.createHash("sha512").update(fs.readFileSync(process.argv[2])).digest("base64"); if(actual!==a.platforms[process.argv[1]].integrity) throw new Error("OpenCode v2 archive integrity mismatch")' "$platform" "$tmpdir/opencode2.tgz"; \
+  tar -xzf "$tmpdir/opencode2.tgz" -C "$tmpdir" package/bin/opencode; \
+  install -m 0755 "$tmpdir/package/bin/opencode" /usr/local/bin/opencode2; \
+  rm -rf "$tmpdir" /tmp/opencode-v2-artifacts.json
+
+ENV OPENWORK_OPENCODE2_BIN=/usr/local/bin/opencode2
+
 # Runtime asserts run the target-arch binaries. Keep them on in CI (native
 # amd64 runners); disable only for local cross-builds, where bun binaries die
 # with "Illegal instruction" under qemu-x86_64 even though they run fine on
@@ -82,9 +131,11 @@ RUN if [ "$RUNTIME_ASSERTS" = "1" ]; then \
     && test -f /opt/openwork/opencode-plugins/openwork-anthropic-adaptive-thinking.js \
     && test -f /opt/openwork/opencode-plugins/openwork-anthropic-tool-schema.js \
     && test "$(openwork-server --version)" = "$OPENWORK_SERVER_VERSION" \
-    && opencode --version; \
+    && opencode --version \
+    && "$OPENWORK_OPENCODE2_BIN" --version | node -e 'const fs=require("node:fs"); const expected=require("/tmp/openwork-constants.json").opencodeV2Version; const actual=fs.readFileSync(0,"utf8").trim().replace(/^opencode v?/, ""); if(actual!==expected) throw new Error(`OpenCode v2 version mismatch: ${actual}`)'; \
   else \
     echo "RUNTIME_ASSERTS disabled (cross-build); binaries must be verified on target hardware"; \
-  fi
+  fi \
+  && rm /tmp/openwork-constants.json
 
 CMD ["sleep", "infinity"]

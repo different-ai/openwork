@@ -1,8 +1,9 @@
 "use client";
 
 import { Check } from "lucide-react";
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { useWorkbotConnections, type WorkbotConnection } from "./data";
+import { useState, type CSSProperties, type ReactNode } from "react";
+import { type WorkbotConnection } from "./data";
+import { useWorkbotConnect, WorkbotConnectionButton } from "./connect";
 import { AppMark } from "./files";
 import { OpenWorkMark } from "./mark";
 
@@ -14,14 +15,9 @@ import { OpenWorkMark } from "./mark";
 export function Welcome({ name, firstName, onBegin, onDone }: { name: string; firstName: string | null; onBegin: () => void; onDone: () => void }) {
   const [step, setStep] = useState<"hello" | "connect">("hello");
   const [leaving, setLeaving] = useState(false);
-  const [waitingFor, setWaitingFor] = useState<string | null>(null);
-  const connections = useWorkbotConnections({ enabled: true, waiting: waitingFor !== null });
+  const connect = useWorkbotConnect();
+  const { connections } = connect;
   const list = connections.data ?? [];
-
-  // Stop re-reading once the app the person went to connect is ready.
-  useEffect(() => {
-    if (waitingFor && list.find((connection) => connection.id === waitingFor)?.ready) setWaitingFor(null);
-  }, [list, waitingFor]);
 
   const leaveTo = (next: () => void) => {
     setLeaving(true);
@@ -37,11 +33,11 @@ export function Welcome({ name, firstName, onBegin, onDone }: { name: string; fi
   };
   const getStarted = () => {
     // Nothing set up to connect (or the list isn't back yet and failed): straight to the conversation.
-    if (list.length === 0) finish();
+    if (list.length === 0 && !connections.isError) finish();
     else {
       // Natural replies: with everything already connected there is nothing left to choose, so Workbot starts looking
       // at their day while they read the next screen.
-      if (list.every((connection) => connection.ready)) onBegin();
+      if (list.length > 0 && list.every((connection) => connection.ready)) onBegin();
       leaveTo(() => setStep("connect"));
     }
   };
@@ -73,13 +69,8 @@ export function Welcome({ name, firstName, onBegin, onDone }: { name: string; fi
         ) : (
           <ConnectStep
             connections={list}
-            waitingFor={waitingFor}
+            connect={connect}
             leaving={leaving}
-            onConnect={(connection) => {
-              if (!connection.connectUrl) return;
-              window.open(connection.connectUrl, "_blank", "noopener");
-              setWaitingFor(connection.id);
-            }}
             onContinue={finish}
           />
         )}
@@ -90,12 +81,11 @@ export function Welcome({ name, firstName, onBegin, onDone }: { name: string; fi
 
 function ConnectStep(props: {
   connections: WorkbotConnection[];
-  waitingFor: string | null;
+  connect: ReturnType<typeof useWorkbotConnect>;
   leaving: boolean;
-  onConnect: (connection: WorkbotConnection) => void;
   onContinue: () => void;
 }) {
-  const allReady = props.connections.every((connection) => connection.ready);
+  const allReady = props.connections.length > 0 && props.connections.every((connection) => connection.ready);
   return (
     <>
       <Rise order={0}>
@@ -107,9 +97,10 @@ function ConnectStep(props: {
         <p className="pt-2 text-[14px] leading-5 text-[var(--wb-muted)]">Set up for you by your team.</p>
       </Rise>
       <Rise order={2}>
+        {props.connect.connections.isError && <p role="alert" className="pt-4 text-[13px] text-[var(--wb-muted)]">Couldn&apos;t verify your connections. <button type="button" onClick={() => void props.connect.connections.refetch()}>Try again</button></p>}
         <ul className="mt-7 w-[min(400px,calc(100vw-48px))] overflow-hidden rounded-[16px] bg-[var(--wb-surface)] text-left shadow-[var(--wb-card-shadow)]">
           {props.connections.map((connection, index) => (
-            <li key={connection.id} className={`flex h-14 items-center gap-3 px-4 ${index > 0 ? "border-t border-[var(--wb-row-line)]" : ""}`}>
+            <li key={connection.id} className={`flex min-h-14 flex-wrap items-center gap-3 px-4 py-3 ${index > 0 ? "border-t border-[var(--wb-row-line)]" : ""}`}>
               <span aria-hidden className="grid size-8 shrink-0 place-items-center rounded-[9px] bg-[var(--wb-chip)]">
                 <AppMark name={APP_NAMES[connection.app]} size={18} />
               </span>
@@ -121,20 +112,7 @@ function ConnectStep(props: {
                   </span>
                   Connected
                 </span>
-              ) : props.waitingFor === connection.id ? (
-                <span className="workbot-shimmer shrink-0 pr-1 text-[13px] leading-4" role="status">
-                  Finish in the new tab
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => props.onConnect(connection)}
-                  disabled={!connection.connectUrl}
-                  className="h-8 shrink-0 rounded-full px-3.5 text-[13px] font-medium text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] transition-[box-shadow,background-color] duration-150 ease-out hover:bg-[var(--wb-chip)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
-                >
-                  Connect
-                </button>
-              )}
+              ) : <WorkbotConnectionButton connection={connection} flow={props.connect} />}
             </li>
           ))}
         </ul>

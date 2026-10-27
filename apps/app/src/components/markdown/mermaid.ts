@@ -1,7 +1,9 @@
 import DOMPurify from "dompurify";
-import { useEffect, useSyncExternalStore, type RefObject } from "react";
+import { useEffect, useState, useSyncExternalStore, type RefObject } from "react";
 import type { MermaidConfig } from "mermaid";
 import { enhanceNearViewport } from "./near-viewport";
+import { useMermaidZoomEnabled } from "./mermaid-zoom";
+import type { MermaidZoomDiagram } from "./mermaid-zoom-viewport";
 
 import {
   getResolvedThemeMode,
@@ -304,15 +306,34 @@ function sourceStatus(reason: Exclude<MermaidRenderResult, { status: "rendered" 
   return "Diagram could not be rendered. Showing source.";
 }
 
+type MermaidPublish = (element: HTMLElement, slot: HTMLElement, svg: string | null) => void;
+
+const mermaidDiagramKeys = new WeakMap<HTMLElement, string>();
+let mermaidDiagramKeyCounter = 0;
+
+function mermaidDiagramKey(element: HTMLElement) {
+  let key = mermaidDiagramKeys.get(element);
+  if (!key) {
+    mermaidDiagramKeyCounter += 1;
+    key = `mermaid-${mermaidDiagramKeyCounter}`;
+    mermaidDiagramKeys.set(element, key);
+  }
+  return key;
+}
+
 function setMermaidView(element: HTMLElement, view: "rendered" | "source") {
   const rendered = element.querySelector("[data-openwork-mermaid-rendered]");
+  const interactive = element.querySelector("[data-openwork-mermaid-interactive]");
   const source = element.querySelector("[data-openwork-mermaid-source]");
   const renderedButton = element.querySelector("[data-openwork-mermaid-view='rendered']");
   const sourceButton = element.querySelector("[data-openwork-mermaid-view='source']");
   if (!(rendered instanceof HTMLElement) || !(source instanceof HTMLElement)) return;
 
   const showRendered = view === "rendered" && mermaidSvgByElement.has(element);
-  rendered.hidden = !showRendered;
+  // Zoomable diagrams live in the React-owned slot; the static pane stays empty.
+  const useInteractive = element.dataset.openworkMermaidZoom === "true" && interactive instanceof HTMLElement;
+  rendered.hidden = !showRendered || useInteractive;
+  if (interactive instanceof HTMLElement) interactive.hidden = !showRendered || !useInteractive;
   source.hidden = showRendered;
   element.dataset.openworkMermaidState = showRendered ? "rendered" : "source";
   renderedButton?.setAttribute("aria-pressed", String(showRendered));
@@ -323,13 +344,20 @@ function setMermaidView(element: HTMLElement, view: "rendered" | "source") {
   sourceButton?.classList.toggle("text-foreground", !showRendered);
 }
 
-async function enhanceMermaidElement(element: HTMLElement, theme: ResolvedThemeMode, signal: AbortSignal) {
+async function enhanceMermaidElement(
+  element: HTMLElement,
+  theme: ResolvedThemeMode,
+  signal: AbortSignal,
+  publish: MermaidPublish | null,
+) {
   const code = element.querySelector("[data-openwork-mermaid-source] code");
   const renderedPane = element.querySelector("[data-openwork-mermaid-rendered]");
+  const interactiveSlot = element.querySelector("[data-openwork-mermaid-interactive]");
   const renderedButton = element.querySelector("[data-openwork-mermaid-view='rendered']");
   const downloadButton = element.querySelector("[data-openwork-mermaid-download]");
   const status = element.querySelector("[data-openwork-mermaid-status]");
   if (!(code instanceof HTMLElement) || !(renderedPane instanceof HTMLElement)) return;
+  const slot = publish && interactiveSlot instanceof HTMLElement ? interactiveSlot : null;
 
   element.setAttribute("aria-busy", "true");
   if (status instanceof HTMLElement) {
@@ -345,6 +373,7 @@ async function enhanceMermaidElement(element: HTMLElement, theme: ResolvedThemeM
   if (result.status === "source") {
     mermaidSvgByElement.delete(element);
     renderedPane.replaceChildren();
+    if (slot && publish) publish(element, slot, null);
     element.dataset.openworkMermaidReason = result.reason;
     if (renderedButton instanceof HTMLButtonElement) renderedButton.disabled = true;
     if (downloadButton instanceof HTMLButtonElement) downloadButton.hidden = true;
@@ -354,7 +383,14 @@ async function enhanceMermaidElement(element: HTMLElement, theme: ResolvedThemeM
   }
 
   delete element.dataset.openworkMermaidReason;
-  renderedPane.innerHTML = result.svg;
+  if (slot && publish) {
+    renderedPane.replaceChildren();
+    element.dataset.openworkMermaidZoom = "true";
+    publish(element, slot, result.svg);
+  } else {
+    delete element.dataset.openworkMermaidZoom;
+    renderedPane.innerHTML = result.svg;
+  }
   mermaidSvgByElement.set(element, result.svg);
   element.dataset.openworkMermaidTheme = theme;
   if (renderedButton instanceof HTMLButtonElement) renderedButton.disabled = false;
@@ -363,21 +399,46 @@ async function enhanceMermaidElement(element: HTMLElement, theme: ResolvedThemeM
   setMermaidView(element, preserveSource ? "source" : "rendered");
 }
 
+/**
+ * Renders the Mermaid blocks inside `rootRef` and wires their view toggles.
+ * With the `mermaidZoom` feature on it returns the rendered diagrams; render
+ * them with `MermaidZoomPortals` so each one can be zoomed and panned.
+ */
 export function useMermaidEnhancer(
   rootRef: RefObject<HTMLElement | null>,
   /** Identity of the rendered content; diagrams are re-enhanced when it changes. */
   content: unknown,
   enabled = true,
-) {
+): MermaidZoomDiagram[] {
   const theme = useSyncExternalStore(subscribeToTheme, getResolvedThemeMode, getResolvedThemeMode);
+  const interactive = useMermaidZoomEnabled();
+  const [diagrams, setDiagrams] = useState<MermaidZoomDiagram[]>([]);
 
   useEffect(() => {
     const root = rootRef.current;
+    // Drop diagrams whose markup was replaced, and all of them when zoom is off.
+    setDiagrams((current) => {
+      const next = interactive && root ? current.filter((diagram) => root.contains(diagram.slot)) : [];
+      return next.length === current.length ? current : next;
+    });
     if (!root || !enabled) return;
 
     const controller = new AbortController();
-    const diagrams = Array.from(root.querySelectorAll("[data-openwork-mermaid]"))
+    const diagramElements = Array.from(root.querySelectorAll("[data-openwork-mermaid]"))
       .filter((element): element is HTMLElement => element instanceof HTMLElement);
+    const publish: MermaidPublish | null = interactive
+      ? (element, slot, svg) => {
+        const key = mermaidDiagramKey(element);
+        setDiagrams((current) => {
+          const live = current.filter((diagram) => diagram.slot.isConnected);
+          if (svg === null) return live.filter((diagram) => diagram.key !== key);
+          const next = { key, slot, svg };
+          const index = live.findIndex((diagram) => diagram.key === key);
+          if (index < 0) return [...live, next];
+          return live.map((diagram, position) => (position === index ? next : diagram));
+        });
+      }
+      : null;
 
     const handleClick = (event: MouseEvent) => {
       if (!(event.target instanceof Element)) return;
@@ -397,7 +458,7 @@ export function useMermaidEnhancer(
       if (!svg) return;
 
       event.preventDefault();
-      const index = diagrams.indexOf(diagram) + 1;
+      const index = diagramElements.indexOf(diagram) + 1;
       const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -409,8 +470,8 @@ export function useMermaidEnhancer(
     };
 
     root.addEventListener("click", handleClick);
-    const stopObserving = enhanceNearViewport(diagrams, (diagram) => {
-      void enhanceMermaidElement(diagram, theme, controller.signal);
+    const stopObserving = enhanceNearViewport(diagramElements, (diagram) => {
+      void enhanceMermaidElement(diagram, theme, controller.signal, publish);
     });
 
     return () => {
@@ -418,5 +479,7 @@ export function useMermaidEnhancer(
       stopObserving();
       root.removeEventListener("click", handleClick);
     };
-  }, [content, enabled, rootRef, theme]);
+  }, [content, enabled, interactive, rootRef, theme]);
+
+  return diagrams;
 }

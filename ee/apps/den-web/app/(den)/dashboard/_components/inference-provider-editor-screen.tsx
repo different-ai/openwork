@@ -358,11 +358,11 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
               : "Save this provider to obtain its exact OAuth callback URL, then register it in your Google Web OAuth client before members connect."} />}
             {signInMethod === "microsoft" ? <label className={LABEL}>Directory (tenant) ID<DenInput className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-oauth-tenant-id" value={oauthTenantId} autoComplete="off" placeholder="00000000-0000-0000-0000-000000000000" onChange={(event) => { setOauthTenantId(event.target.value); setRotationAcknowledged(false); }} /></label> : null}
             <label className={LABEL}>{signInMethod === "microsoft" ? "Application (client) ID" : "OAuth client ID"}<DenInput className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-oauth-client-id" value={oauthClientId} autoComplete="off" onChange={(event) => { setOauthClientId(event.target.value); setRotationAcknowledged(false); }} /></label>
-            <label className={LABEL}>{signInMethod === "microsoft" ? "Client secret" : "OAuth client secret"} {configuredSet?.hasOauthClientSecret ? "(configured)" : ""}<DenSecretInput className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-oauth-client-secret" value={oauthClientSecret} autoComplete="new-password" onChange={(value) => { setOauthClientSecret(value); setRotationAcknowledged(false); }} saved={configuredSet?.hasOauthClientSecret === true} savedPlaceholder="Saved — enter a replacement to change it" replaceTestId="gateway-oauth-client-secret-replace" /></label>
+            <label className={LABEL}>{signInMethod === "microsoft" ? "Client secret" : "OAuth client secret"} {configuredSet?.hasOauthClientSecret ? "(configured)" : ""}<DenSecretInput className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-oauth-client-secret" value={oauthClientSecret} autoComplete="new-password" onChange={(value) => { setOauthClientSecret(value); setRotationAcknowledged(false); }} saved={configuredSet?.hasOauthClientSecret === true} replaceTestId="gateway-oauth-client-secret-replace" /></label>
             <Link href={MEMBER_SIGN_IN_DOC_URLS[signInMethod ?? "google"]} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "secondary", size: "sm", className: "mt-3 w-fit" })}>Read setup instructions</Link>
           </>
         ) : vertex ? (
-          <label className={LABEL}>Service account JSON<DenSecretInput multiline className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-service-account" value={serviceAccountJson} onChange={setServiceAccountJson} saved={configuredSet?.configured === true} placeholder="Paste the key file" savedPlaceholder="Saved — paste a replacement to change it" replaceTestId="gateway-service-account-replace" /></label>
+          <label className={LABEL}>Service account JSON<DenSecretInput multiline className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-service-account" value={serviceAccountJson} onChange={setServiceAccountJson} saved={configuredSet?.configured === true} placeholder="Paste the key file" replaceTestId="gateway-service-account-replace" /></label>
         ) : bedrock ? (
           <>
             {reusableKeyProviders.length ? (
@@ -393,7 +393,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
             API key
             <DenSecretInput className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-provider-api-key" autoComplete="new-password"
               value={apiKey} onChange={setApiKey} placeholder="Paste the key"
-              saved={keySaved} alwaysShowSaved
+              saved={keySaved}
               replacing={replacingKey} onReplacingChange={setReplacingKey} replaceTestId="gateway-provider-replace-key" />
           </label>
         )}

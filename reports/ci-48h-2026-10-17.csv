@@ -1,0 +1,10 @@
+workflow,runs,runner_minutes,share_percent,successful_median_minutes,successful_p90_minutes
+PR change proof,173,5898.1,66.0,10.82,12.70
+Build and core checks (PR),173,1010.5,11.3,2.82,3.62
+CodeQL PR scanning,172,841.0,9.4,3.02,4.75
+Warden,190,708.7,7.9,2.95,6.38
+Evidence review (downstream),802,326.0,3.6,0.48,0.90
+Feature registry check,161,74.2,0.8,0.50,0.57
+Evidence review candidate checks,53,61.1,0.7,0.83,0.92
+Other PR checks,192,17.8,0.2,,
+Total,1916,8937.4,100.0,,

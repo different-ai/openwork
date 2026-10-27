@@ -34,6 +34,12 @@ export async function startAcmeUpstream(stack: AsyncDisposableStack, checkpoint?
   const requests: { model: string; authenticated: boolean }[] = [];
   const upstream = createServer(async (request, response) => {
     try {
+      // The runner verifies its model catalog from this list; Workbot refuses turns on an unverified catalog.
+      if (request.method === "GET" && request.url?.split("?")[0] === "/v1/models") {
+        if (request.headers["x-api-key"] !== key) { response.writeHead(401).end(); return; }
+        response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data: [{ id: ACME_MODEL, name: ACME_MODEL }] }));
+        return;
+      }
       if (request.method !== "POST" || request.url?.split("?")[0] !== "/v1/messages") {
         response.writeHead(404).end();
         return;

@@ -86,10 +86,21 @@ it runs, whether it is working, waiting on the person or finished, and its
 answer. Its routes under `/v1/remote-sessions/` run these same capabilities
 with the member's own session. One loop in the app follows every shown
 session with one waiting `status` call at a time, not while the window is
-hidden or offline, and stops once they settle. The transcript is read only
-while the person has the session open, when its status changes; follow-ups
-and stop go through `send` and `stop`. Answering a pending permission or
-question stays on the computer that runs the session.
+hidden or offline, and stops once they settle. Stop on the row goes through
+`stop`. Answering a pending permission or question stays on the computer that
+runs the session.
+
+Two features roll this out in steps, both on Cloud and self-hosted and off by
+default:
+
+- `remoteSessionSubagents`: the row, its progress, Stop, the sidebar's
+  needs-you marker, and the Den routes and `status` capability behind them.
+- `remoteSessionThreadView` (needs the first): clicking the row opens the
+  session's conversation beside the chat. The transcript is read only while
+  it is open, when the status changes; follow-ups go through `send`. Off, the
+  row shows progress only and a conversation tab left open from before says
+  the view is turned off. Den routes stay behind `remoteSessionSubagents`:
+  Stop also reads a slow desktop's pending receipt through `read`.
 
 Slack uses the same capabilities and trusted run-token provenance to post a
 result back to its originating thread. A model cannot choose an arbitrary
@@ -144,17 +155,9 @@ and permission state rather than an in-memory event alone.
 Runner unload/account switch stops its control loop and releases ownership;
 normal native permission handling is never bypassed.
 
-## MCP events: optional observation, separate rollout
+## Following progress: polling, not events
 
-A separate stacked `remoteSessionEvents` feature adds caller-facing receipt
-resource invalidations, not runner dispatch. Current MCP `subscriptions/listen`
-uses a POST-response SSE stream with explicit URI filters; it is not a durable
-queue and has no `Last-Event-ID` replay. After acknowledgement or reconnect,
-read the current durable receipt. Polling remains a fallback.
-
-Notifications contain only an authorized resource URI. Ownership and live
-credential/membership checks are required for both subscription and read.
-Process-local notifications alone cannot establish multi-replica delivery;
-active watchers must observe the shared durable receipt. The OpenCode plugin's
-public MCP API does not expose arbitrary URI subscriptions, so this layer does
-not turn native runners into an event-driven dispatch system.
+MCP callers follow a remote session by polling its durable receipt
+(`remote-session:status` with `waitMs`, or `remote-session:read`). There are no
+receipt resource subscriptions or change notifications; reads always return the
+current durable state, which also covers reconnects and other replicas.

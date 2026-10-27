@@ -12,8 +12,25 @@ export interface BrowserTaskInput {
     observationId?: string;
     toolId?: string;
     input?: unknown;
-    action?: { type: "click" | "fill" | "key" | "scroll"; ref?: string; text?: string; key?: string; x?: number; y?: number; deltaY?: number };
+    action?: { type: "click" | "fill" | "select" | "set_checked" | "key" | "scroll"; ref?: string; text?: string; checked?: boolean; values?: string[]; key?: string; x?: number; y?: number; deltaY?: number };
   };
+}
+
+export interface BrowserControl {
+  name: string;
+  tag?: string;
+  type?: string;
+  role?: string | null;
+  value?: string;
+  valueTruncated?: boolean;
+  disabled?: boolean;
+  readOnly?: boolean;
+  required?: boolean;
+  checked?: boolean | "mixed";
+  selectedValues?: string[];
+  options?: Array<{ value: string; label: string; selected: boolean; disabled: boolean }>;
+  valid?: boolean;
+  validationMessage?: string;
 }
 
 export interface BrowserTaskReply {
@@ -32,7 +49,8 @@ export interface BrowserTaskReply {
   image?: { data: string };
   scroll?: { x: number; y: number };
   tools?: Array<{ toolId: string; name: string; origin: string }>;
-  elements?: Array<{ ref: string; name: string }>;
+  elements?: Array<BrowserControl & { ref: string }>;
+  control?: BrowserControl;
   result?: unknown;
 }
 
@@ -86,8 +104,9 @@ export function parseBrowserTaskReply(value: unknown): BrowserTaskReply {
     }) } : {}),
     ...(Array.isArray(value.elements) ? { elements: value.elements.map((element: unknown) => {
       if (!record(element)) throw new Error("Invalid page control.");
-      return { ref: string(element.ref), name: string(element.name) };
+      return { ...element, ref: string(element.ref), name: string(element.name) };
     }) } : {}),
+    ...(record(value.control) ? { control: { ...value.control, name: string(value.control.name) } } : {}),
     ...(Object.hasOwn(value, "result") ? { result: value.result } : {}),
   };
 }

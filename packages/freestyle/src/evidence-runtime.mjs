@@ -44,7 +44,7 @@ try {
     prefix: "This response is paused at the saved checkpoint. ",
     suffix: "The same response continued from the saved browser.",
     async hold() { streamCount++; held = true; await new Promise((resolve) => { release = resolve; }); held = false; complete = true; },
-  });
+  }, { v2Only: true });
   const browser = stack.use(await chrome({ host: localHost({ repoRoot: "/workspace", log: () => {} }), name: "evidence-web", startUrl: "about:blank", headless: false }));
   // CDP may attach before Chrome's startup tab exists and create its own blank
   // target. Navigate the attached target, as the regular app-web launcher does,

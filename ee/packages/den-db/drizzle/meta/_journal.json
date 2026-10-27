@@ -1023,6 +1023,125 @@
       "when": 1792003878606,
       "tag": "0146_gateway_provider_usage_limits",
       "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "5",
+      "when": 1792104699960,
+      "tag": "0147_free_auto_behavior",
+      "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "5",
+      "when": 1792192418476,
+      "tag": "0148_headless_resume_grant",
+      "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "5",
+      "when": 1792434268632,
+      "tag": "0149_headless_resume_revocation",
+      "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "5",
+      "when": 1792451113327,
+      "tag": "0150_headless_session_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 151,
+      "version": "5",
+      "when": 1792527537815,
+      "tag": "0151_desktop_startup_report",
+      "breakpoints": true
+    },
+    {
+      "idx": 152,
+      "version": "5",
+      "when": 1792532635388,
+      "tag": "0152_organization_benefit_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "5",
+      "when": 1792603569109,
+      "tag": "0153_member_feature_overrides",
+      "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "5",
+      "when": 1792620716958,
+      "tag": "0154_account_follow_up",
+      "breakpoints": true
+    },
+    {
+      "idx": 155,
+      "version": "5",
+      "when": 1792693523832,
+      "tag": "0155_enterprise_plan_subscriptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 156,
+      "version": "5",
+      "when": 1792711073793,
+      "tag": "0156_org_prompts",
+      "breakpoints": true
+    },
+    {
+      "idx": 157,
+      "version": "5",
+      "when": 1792782314399,
+      "tag": "0157_sandbox_organizations",
+      "breakpoints": true
+    },
+    {
+      "idx": 158,
+      "version": "5",
+      "when": 1793040523131,
+      "tag": "0158_feature_change",
+      "breakpoints": true
+    },
+    {
+      "idx": 159,
+      "version": "5",
+      "when": 1793058495003,
+      "tag": "0159_agent_instance",
+      "breakpoints": true
+    },
+    {
+      "idx": 160,
+      "version": "5",
+      "when": 1793077527383,
+      "tag": "0160_automation_interval_schedule",
+      "breakpoints": true
+    },
+    {
+      "idx": 161,
+      "version": "5",
+      "when": 1793079251966,
+      "tag": "0161_automation_calendar_trigger",
+      "breakpoints": true
+    },
+    {
+      "idx": 162,
+      "version": "5",
+      "when": 1793113145625,
+      "tag": "0162_agent_check",
+      "breakpoints": true
+    },
+    {
+      "idx": 163,
+      "version": "5",
+      "when": 1793118453819,
+      "tag": "0163_auto_router",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,5 @@
 import { createDenClient, readDenSettings, type DenExternalMcpConnection } from "@/app/lib/den";
+import { markStartupStep, trackStartupOrgTools } from "@/app/lib/startup-diagnostics";
 import {
   EMPTY_CONNECT_CAPABILITY_INVENTORY,
   listAssignedConnectCapabilities,
@@ -135,7 +136,11 @@ export function loadConnectCapabilities(input: {
   scope: CloudInventoryScope;
   maxAgeMs?: number;
 }) {
-  return connectCapabilitiesCache.load(input);
+  const loading = connectCapabilitiesCache.load(input);
+  // The first load of what the organization gives this member ends the
+  // desktop startup report.
+  trackStartupOrgTools(loading);
+  return loading;
 }
 
 /** Last known organization MCP connections for this scope, without fetching. */
@@ -177,6 +182,7 @@ export function storeCloudInventory(
 ) {
   connectCapabilitiesCache.seed(scope, loaded.capabilities);
   orgMcpConnectionsCache.seed(scope, loaded.connections);
+  markStartupStep("org_tools");
   if (options.changed) notifyCloudInventoryChanged();
 }
 

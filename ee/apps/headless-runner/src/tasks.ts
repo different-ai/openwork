@@ -1,4 +1,5 @@
-import type { Turn } from "./store.js"
+import type { FileEntry, Turn } from "./store.js"
+import { formatBytes } from "./tool-files.js"
 import type { ToolSpec } from "./types.js"
 
 /**
@@ -23,6 +24,11 @@ export const TASK_TOOLS: ToolSpec[] = [
       properties: {
         title: { type: "string", description: "A few words the person will recognize, e.g. Q3 board deck." },
         brief: { type: "string", description: "Everything the task needs: what to do, for whom, what to hand back." },
+        files: {
+          type: "array",
+          items: { type: "string" },
+          description: "Scratch files the task should work from. It shares your scratch workspace, so name files here instead of copying their content into the brief.",
+        },
       },
       required: ["title", "brief"],
       additionalProperties: false,
@@ -53,24 +59,34 @@ export function reportMessageId(taskMessageId: string) {
 /** Added to a task's system prompt. */
 export function taskInstructions() {
   return `# Your background task
-You are doing this in the background. The person isn't watching and can't answer now, so don't ask; do the whole task with your tools. Finish with a short report: what you did, what you found, the files you saved, and anything you still need from them. Your report goes back to the conversation, not straight to them.`
+You are doing this in the background. The person isn't watching and can't answer now, so don't ask; do the whole task with your tools. Finish with a short report: what you did, what you found, the files you saved, and anything you still need from them. Your report goes back to the conversation, not straight to them. You share the conversation's scratch workspace: put long results (scripts, tables, drafts) in scratch files and name them in the report instead of pasting them, so the conversation reads just the part it needs.`
+}
+
+/** The task's prompt: its brief, then the scratch files it was handed. */
+export function taskPrompt(brief: string, files: FileEntry[]) {
+  if (files.length === 0) return brief
+  return `${brief}\n\nFiles for this task, in your scratch workspace:\n${files.map((file) => `- ${file.path} (${formatBytes(file.size)})`).join("\n")}`
 }
 
 const REASONS: Record<string, string> = {
   max_steps_exceeded: "it needed more steps than it can take at once",
   stuck_repeating: "it kept getting the same result",
+  output_limit: "its replies kept getting too long to finish",
   turn_timeout: "it took too long",
   mcp_unavailable: "their connected apps couldn't be reached",
 }
 
 /** The message a task's report turn starts from. */
-export function reportPrompt(task: Turn, report: string) {
+export function reportPrompt(task: Turn, report: string, files: FileEntry[] = []) {
   const reason = task.error ? (REASONS[task.error] ?? (task.error.startsWith("model_") ? "the AI model couldn't be reached" : "something went wrong")) : null
   const head =
     task.status === "completed"
       ? `[Background task "${task.title}" finished. Its report is below; the person hasn't seen it yet.]`
       : `[Background task "${task.title}" stopped before finishing: ${reason}. What it reported is below; the person hasn't seen it yet.]`
-  return `${head}\n\n${report.trim() || "(It wrote no report.)"}`
+  const wrote = files.length
+    ? `\n\nScratch files it wrote (read_file reads a part of one by lines or by text):\n${files.map((file) => `- ${file.path} (${formatBytes(file.size)})`).join("\n")}`
+    : ""
+  return `${head}\n\n${report.trim() || "(It wrote no report.)"}${wrote}`
 }
 
 function ago(at: number, now: number) {

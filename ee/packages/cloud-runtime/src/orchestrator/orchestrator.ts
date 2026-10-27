@@ -5,6 +5,7 @@ import {
   renderRestoreMarkerExistsCommand,
   type OpenWorkBootstrapConfig,
   type OpenWorkCheckpointConfig,
+  type OpenWorkDocumentsEditorConfig,
 } from "../bootstrap/openwork-runtime"
 import { runtimeProviderErrorCode } from "@openwork/sandbox"
 import type {
@@ -75,7 +76,10 @@ export type CloudRuntimeOrchestratorConfig = {
   /** Bound for the best-effort checkpoint flush before a running instance is stopped for recovery. */
   stopFlushTimeoutMs?: number
   activityHeartbeatUrl: (workerId: string) => string
+  /** Start the image's document editor beside the server; absent leaves it off. */
+  documentsEditor?: OpenWorkDocumentsEditorConfig
   bootstrap: {
+    cloudComputerDisplay?: string
     imageDescription: string
     rebuildHint: string
   }
@@ -110,7 +114,10 @@ export interface CloudRuntimeOrchestrator {
   deprovision(workerId: string): Promise<void>
   flushCheckpoint(workerId: string): Promise<boolean>
   inspect(workerId: string): Promise<RuntimeInstanceInspection | null>
+  recordActivity(workerId: string): Promise<void>
   refreshEndpoint(workerId: string): Promise<RuntimeInstanceRecord | null>
+  /** A fresh signed endpoint for another port on the live instance; not stored. */
+  portEndpoint(workerId: string, port: number, ttlSeconds: number): Promise<{ url: string; expiresAt: Date | null } | null>
   getRecord(workerId: string): Promise<RuntimeInstanceRecord | null>
 }
 
@@ -171,7 +178,7 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
     }
   }
 
-  function bootstrapConfig(input: ProvisionInput): OpenWorkBootstrapConfig {
+  async function bootstrapConfig(input: ProvisionInput): Promise<OpenWorkBootstrapConfig> {
     return {
       ...checkpointConfig(),
       workspaceMountPath: config.workspaceMountPath,
@@ -184,8 +191,10 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
         token: input.activityToken,
       },
       runtimeProvider: provider.id,
+      cloudComputerDisplay: config.bootstrap.cloudComputerDisplay,
       imageDescription: config.bootstrap.imageDescription,
       rebuildHint: config.bootstrap.rebuildHint,
+      ...(config.documentsEditor ? { documentsEditor: config.documentsEditor } : {}),
     }
   }
 
@@ -336,7 +345,7 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
 
   async function startProcess(input: ProvisionInput, handle: SandboxHandle, sessionId: string): Promise<StartedProcess> {
     const exec = await provider.exec(handle, {
-      script: renderOpenWorkBootstrapScript(bootstrapConfig(input)),
+      script: renderOpenWorkBootstrapScript(await bootstrapConfig(input)),
       detach: true,
       timeoutMs: config.createTimeoutMs,
       sessionId,
@@ -448,6 +457,8 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
 
   async function wakeExisting(context: WakeContext): Promise<ProvisionedInstance> {
     let handle = context.handle
+    // A resolve can arrive while the provider is still finishing pause.
+    const canResumeMemory = ["stopped", "stopping"].includes(handle.state) && Boolean(provider.blocks?.pause) && provider.describe().memorySnapshotRestore
     if (handle.state === "running") {
       // A failed health probe means an already-running OpenWork process cannot be
       // trusted. Restart the instance before launching a new process so recovery
@@ -457,6 +468,29 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
       handle = await provider.inspect(handle)
     }
     handle = await startForWake(context.input.workerId, handle)
+    if (canResumeMemory) {
+      const ttlSeconds = endpointTtlSeconds()
+      const issuedAtMs = now()
+      const endpoint = await provider.endpoint(handle, config.port, { ttlSeconds })
+      let healthy = false
+      try {
+        const baseUrl = endpoint.url.replace(/\/$/, "")
+        const checks = await Promise.all([
+          fetchImpl(`${baseUrl}/health`, { redirect: "error", signal: AbortSignal.timeout(healthRequestTimeoutMs) }),
+          fetchImpl(`${baseUrl}/whoami`, { redirect: "error", headers: { Authorization: `Bearer ${context.input.clientToken}` }, signal: AbortSignal.timeout(healthRequestTimeoutMs) }),
+          // Host-only probe, with no bearer fallback. A token rotated while the
+          // VM slept must reach the live server before clients reconnect.
+          fetchImpl(`${baseUrl}/tokens`, { redirect: "error", headers: { "x-openwork-host-token": context.input.hostToken }, signal: AbortSignal.timeout(healthRequestTimeoutMs) }),
+        ])
+        healthy = checks.every(response => response.ok)
+        for (const response of checks) void response.body?.cancel().catch(() => {})
+      } catch { /* Cold stopped VMs have no process to resume. Bootstrap below. */ }
+      if (healthy) {
+        const resumed = { endpointUrl: endpoint.url, endpointExpiresAt: endpointSafeUntil(endpoint.expiresAt, issuedAtMs, ttlSeconds) }
+        await persist(context.input, handle, resumed, context.workspaceVolumeId, context.dataVolumeId)
+        return provisioned(resumed.endpointUrl, handle.region, context.imageVersion)
+      }
+    }
 
     return startOnInstance({ ...context, handle }, `openwork-wake-${workerHint(context.input.workerId)}-${now()}`)
   }
@@ -663,7 +697,8 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
       return { status: "stopped" }
     }
 
-    await provider.stop(handle, { timeoutMs: config.stopTimeoutMs })
+    if (provider.blocks?.pause && provider.describe().memorySnapshotRestore) await provider.blocks.pause(handle, { timeoutMs: config.stopTimeoutMs })
+    else await provider.stop(handle, { timeoutMs: config.stopTimeoutMs })
     return { status: "stopped" }
   }
 
@@ -714,6 +749,31 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
     }
     await store.updateEndpoint(workerId, update)
     return { ...record, ...update }
+  }
+
+  async function recordActivity(workerId: string) {
+    const activity = provider.blocks?.activity
+    if (!activity) return
+    const record = await store.get(workerId)
+    if (!record) return
+    // Preview requests do not refresh Daytona's idle timer. Only actual work
+    // heartbeats reach this path; a dormant or paused instance stays asleep.
+    const handle = await provider.get(record.sandbox)
+    if (handle?.state === "running") await activity(handle, { timeoutMs: 5_000 })
+  }
+
+  async function portEndpoint(workerId: string, port: number, ttlSeconds: number) {
+    const record = await store.get(workerId)
+    if (!record) {
+      return null
+    }
+
+    const handle = await requireLiveHandle(record)
+    if (handle.state !== "running") {
+      return null
+    }
+    const endpoint = await provider.endpoint(handle, port, { ttlSeconds: Math.max(1, Math.min(ttlSeconds, maxEndpointTtlSeconds)) })
+    return { url: endpoint.url, expiresAt: endpoint.expiresAt }
   }
 
   async function eraseWorkerData(workerId: string) {
@@ -771,7 +831,9 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
     deprovision,
     flushCheckpoint,
     inspect,
+    recordActivity,
     refreshEndpoint,
+    portEndpoint,
     getRecord: (workerId) => store.get(workerId),
   }
 }

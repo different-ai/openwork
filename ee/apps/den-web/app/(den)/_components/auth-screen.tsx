@@ -9,8 +9,9 @@ import { AuthPanel } from "./auth-panel";
 import { OnboardingTexture } from "./onboarding-texture";
 import { McpAppFact, McpStoryTiles, mcpStoryCopy } from "../../mcp/mcp-story";
 import { useMcpClient } from "../../mcp/use-mcp-client";
+import { isWorkbotSignIn } from "../../mcp/workbot-sign-in";
 import { SetupFrame } from "./setup-frame";
-import { SetupFacts, SetupPanelBody } from "./setup-frame-parts";
+import { SetupFacts, SetupPanelBody, SetupSkeletonRows } from "./setup-frame-parts";
 import { TemporaryAuthNotice } from "./temporary-auth-notice";
 import { MemberAuthCheckError } from "./member-auth-guard";
 
@@ -123,8 +124,10 @@ function AgentSignInScreen({ status }: { status: "checking" | "redirecting" | "e
   }, []);
   const client = useMcpClient(oauthQuery);
   const story = mcpStoryCopy(client);
+  const workbot = isWorkbotSignIn(oauthQuery);
   return (
     <SetupFrame
+      workbot={workbot}
       title={story.title}
       description={story.description}
       aside={<McpStoryTiles client={client} workspaceName={null} />}
@@ -133,17 +136,17 @@ function AgentSignInScreen({ status }: { status: "checking" | "redirecting" | "e
       <div data-testid="auth-landing-frame">
         <div data-testid="auth-landing-form">
           <SetupPanelBody>
-            <SetupFacts rows={[{ label: "Signing in for", value: <McpAppFact client={client} /> }]} />
+            {workbot ? null : <SetupFacts rows={[{ label: "Signing in for", value: <McpAppFact client={client} /> }]} />}
             {status === "error" ? (
               <MemberAuthCheckError />
             ) : status ? (
-              <SessionStatusPanel mode={status} />
+              workbot ? <SetupSkeletonRows /> : <SessionStatusPanel mode={status} />
             ) : (
               <AuthPanel
                 bare
                 emailFirstFlow
                 socialFirst
-                emailStepContent={{ title: "Create your account.", copy: "Already have an account? Enter your email and we\u2019ll find it." }}
+                emailStepContent={workbot ? { title: "Sign in to Workbot" } : { title: "Create your account.", copy: "Already have an account? Enter your email and we\u2019ll find it." }}
               />
             )}
           </SetupPanelBody>

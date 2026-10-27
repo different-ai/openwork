@@ -1,0 +1,19 @@
+# Trivy 0.75 YAML supports file scope (not resource scope); targets are relative
+# to each scanned module. IDs are provider-specific; no wildcard/global ignores.
+# Keep the unfiltered job summary: these exceptions accept risk, not fix it.
+misconfigurations:
+  - id: AWS-0104
+    paths: ["alb.tf"]
+    statement: "Known gap, tracked for a fix: aws_vpc_security_group_egress_rule.alb and .tasks allow unrestricted egress; restrict ALB to targets and define task egress policy."
+  - id: AWS-0053
+    paths: ["alb.tf"]
+    statement: "Intentional public application endpoint on aws_lb.this; private installs can set internal_alb."
+  - id: AWS-0164
+    paths: ["examples/complete/main.tf"]
+    statement: "Intentional low-cost example: aws_subnet.public auto-assigns public IPs; production should use private task subnets (private_subnets option)."
+  - id: GCP-0017
+    paths: ["database.tf"]
+    statement: "Intentional Cloud SQL public address on google_sql_database_instance.this with no authorized networks; application uses the IAM-authorized verified-TLS connector."
+  - id: GCP-0015
+    paths: ["database.tf"]
+    statement: "Known gap, tracked for a fix: google_sql_database_instance.this does not explicitly enforce instance-wide SSL despite encrypted application connector traffic."

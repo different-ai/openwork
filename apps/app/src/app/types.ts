@@ -103,6 +103,8 @@ export type ComposerPart =
   | { type: "connector"; name: string }
   | { type: "file"; path: string; label?: string }
   | { type: "computer"; target: "cloud" | "desktop" }
+  /** Another task picked from the composer `#` menu (`[session …]` pill). */
+  | { type: "session"; workspaceId: string; sessionId: string; title: string }
   | { type: "paste"; id: string; label: string; text: string; lines: number };
 
 export type ComposerAttachment = {
@@ -198,8 +200,10 @@ export const SETTINGS_TAB_VALUES = [
   "extensions",
   "environment",
   "advanced",
+  "import",
   "appearance",
   "shortcuts",
+  "computer",
   "updates",
   "recovery",
   "debug",

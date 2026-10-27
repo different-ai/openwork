@@ -48,7 +48,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -65,15 +65,26 @@ jobs:
           OPENWORK_DESKTOP_SENTRY_TRACES_SAMPLE_RATE: ${{ vars.OPENWORK_DESKTOP_SENTRY_TRACES_SAMPLE_RATE || '0.01' }}
         run: pnpm --filter @openwork/desktop package:electron:dir
 
+      # Preserve executable bits and macOS bundle symlinks for exact-head testing.
+      - name: Archive unpacked desktop
+        shell: bash
+        run: tar -czf "openwork-electron-${{ matrix.artifact }}.tgz" -C apps/desktop dist-electron
+
       - name: Upload Electron artifacts
         uses: actions/upload-artifact@v4
         with:
           name: openwork-electron-${{ matrix.artifact }}
-          path: apps/desktop/dist-electron/**
+          path: |
+            apps/desktop/dist-electron/**
+            openwork-electron-${{ matrix.artifact }}.tgz
 
   electron-macos-notarization-smoke:
     name: Electron macOS notarization smoke
     runs-on: macos-14
+    # Apple signing secrets belong to this environment; no deployment is recorded.
+    environment:
+      name: macos-signing
+      deployment: false
 
     steps:
       - name: Checkout
@@ -87,7 +98,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2

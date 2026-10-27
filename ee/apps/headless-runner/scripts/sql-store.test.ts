@@ -101,6 +101,7 @@ test("the original schema migrates without losing sessions or scratch files", ()
   const store = new Store(db)
   try {
     store.migrate() // Schema initialization is safe to repeat.
+    assert.ok(store.columns("turns").has("resume_grant"), "old cells gain the resume grant column in place")
     assert.equal(store.getSession("hs_legacy")?.title, "Existing chat")
     assert.equal(store.getSession("hs_legacy")?.owner, null)
     assert.equal(store.getSession("hs_legacy")?.files, false)
@@ -110,5 +111,32 @@ test("the original schema migrates without losing sessions or scratch files", ()
     assert.equal(store.messages("hs_legacy").length, 1)
   } finally {
     store.close()
+  }
+})
+
+test("computer pause times survive reopen, list when due, and go with their conversation", () => {
+  const directory = mkdtempSync(join(tmpdir(), "headless-sql-"))
+  const path = join(directory, "runner.sqlite")
+  let store = new Store(nodeSqlite(path))
+  try {
+    const first = store.createSession({ owner, ref: "main", computer: true })
+    const second = store.createSession({ owner, ref: "side", computer: true })
+    assert.equal(store.nextComputerPauseAt(), null)
+    store.setComputerPause(first.id, 5_000)
+    store.setComputerPause(second.id, 9_000)
+    store.setComputerPause(first.id, 7_000)
+    // A conversation this store doesn't hold has no row to keep.
+    store.setComputerPause("hs_elsewhere", 1_000)
+    store.close()
+    store = new Store(nodeSqlite(path))
+    assert.equal(store.nextComputerPauseAt(), 7_000)
+    assert.deepEqual(store.dueComputerPauses(8_000), [first.id])
+    store.clearComputerPause(first.id)
+    assert.deepEqual(store.dueComputerPauses(10_000), [second.id])
+    store.deleteSession(second.id)
+    assert.equal(store.nextComputerPauseAt(), null)
+  } finally {
+    store.close()
+    rmSync(directory, { recursive: true, force: true })
   }
 })

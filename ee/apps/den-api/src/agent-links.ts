@@ -21,3 +21,14 @@ export function memberSignInLink(connection: { id: string; organizationId: strin
 export function invitationBillingUrl() {
   return new URL("/dashboard/billing", env.betterAuthUrl).toString()
 }
+
+/**
+ * Where a person confirms removing a connection their agent prepared. The
+ * connector page opens its Remove confirmation; nothing is removed until they
+ * choose Remove there, signed in.
+ */
+export function connectionRemovalLink(connectionId: string) {
+  const link = new URL(`/dashboard/mcp-connections/${encodeURIComponent(connectionId)}`, env.betterAuthUrl)
+  link.searchParams.set("remove", "1")
+  return link.toString()
+}

@@ -26,6 +26,7 @@ import { createDenClient, readDenSettings } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { hasMovedRejectedTurn, rejectedTurnOwner, useRejectedTurns, useSessionDraftState } from "@/react-app/domains/session/sync/draft-store";
 import { mergeRejectedTurns, retainRejectedTurn } from "@/react-app/domains/session/sync/rejected-turn";
+import { autoRoutesFromSession, useAutoRouteStore } from "@/react-app/domains/session/sync/auto-route-store";
 import type {
   OpenworkServerClient,
   OpenworkSessionHistory,
@@ -66,7 +67,7 @@ import { isComputerTarget } from "./composer/computer-mentions";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
 import { openDesktopUrl } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
-import { COMPOSER_DRAFT_TOKEN_RE, composerPillText, parseComposerPillToken } from "./composer/composer-pills";
+import { COMPOSER_DRAFT_TOKEN_RE, COMPOSER_PILL_TOKEN_GLOBAL_RE, composerPillText, parseComposerPillToken } from "./composer/composer-pills";
 import { createPastedTextChip, insertDraftToken, resolvePastedTextPlaceholders } from "./composer/pasted-text";
 import {
   canAdmitNextQueuedItem,
@@ -94,6 +95,7 @@ import {
 import { describeOpencodeSessionError, interruptedTaskRecoveryPrompt, presentOpencodeSessionError, sessionErrorPresentationFromUIMessage, type OpencodeSessionErrorPresentation } from "@/react-app/domains/session/sync/session-error";
 import { createSessionErrorUIMessage } from "@/react-app/domains/session/sync/usechat-adapter";
 import { TaskRecovery } from "@/components/chat/task-recovery";
+import { SignInHandoffNotice } from "@/react-app/domains/cloud/sign-in-handoff-notice";
 import { autoAccessRefreshEvent, autoAccessWallFromError, preflightAutoSubmission, type AutoAccessBlock } from "@/app/lib/inference-access";
 import { isAutoModel } from "@/react-app/domains/models/model-catalog";
 import { modelRefKey } from "../models/model-collections-store";
@@ -112,6 +114,8 @@ import { SessionFindBar } from "./find-bar";
 import { useSessionFindStore } from "./find-store";
 import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store";
 import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permission-approval-modal";
+import { ComputerRequestPanel } from "@/react-app/domains/session/computer/computer-request-panel";
+import { useComputerRequest, useComputerStore } from "@/react-app/domains/session/computer/computer-store";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
 import { deriveOpenTargets, sameOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
@@ -189,6 +193,7 @@ import { buildConnectorToolIdentities } from "@/react-app/domains/connections/co
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
 const IDLE_STATUS: SessionStatus = { type: "idle" };
 const DEFAULT_COMPOSER_CONTROL_TEXT = "Help me outline the next OpenWork task.";
+const COMPUTER_CONTINUE_PROMPT = "I'm done with the computer. Go ahead.";
 const SESSION_SURFACE_SELECTOR = "[data-session-surface-id]";
 
 function sanitizedInspectorDiagnosticText(value: string) {
@@ -610,6 +615,7 @@ export type SessionSurfaceProps = {
   modelPickerOpen: boolean;
   modelUnavailable?: boolean;
   modelUnavailableMessage?: string | null;
+  modelRecoveryScope?: string;
   /**
    * Resolves availability for one provider/model identity against the active
    * workspace's settled catalogs. Each surface validates its OWN effective
@@ -1171,10 +1177,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
     props.onModelChange(nextModel, variant);
     setModelPickerOpen(false);
   }, [props.onModelChange, sessionModel]);
+  // Only this conversation's setting changes. A conversation without its own
+  // model already routes to the global default here; writing a remembered
+  // model's setting globally would pair it with a different default model.
   const handleModelVariantChange = useCallback((value: string | null) => {
     sessionModel.setVariant(value);
-    props.onModelVariantChange(value);
-  }, [props.onModelVariantChange, sessionModel]);
+  }, [sessionModel]);
   const handleOpenModelPicker = useCallback(() => {
     props.onModelClick(props.sessionId);
   }, [props.onModelClick, props.sessionId]);
@@ -1359,6 +1367,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const fullSnapshot = snapshotOwnerMatches && snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
   const hasFullHistory = snapshotOwnerMatches && openingHistory.complete;
   const currentSnapshot = fullSnapshot ?? openingHistory.snapshot;
+  // Auto replies recorded before this view opened name their model too.
+  const snapshotSession = currentSnapshot?.session;
+  useEffect(() => {
+    if (snapshotSession?.id === props.sessionId) useAutoRouteStore.getState().publish(props.sessionId, autoRoutesFromSession(snapshotSession));
+  }, [snapshotSession, props.sessionId]);
   const archived = Boolean(props.archived || currentSnapshot?.session.time.archived);
   const archiveStateKnown = props.archived !== undefined || currentSnapshot !== null;
   const [restoringArchived, setRestoringArchived] = useState(false);
@@ -1955,7 +1968,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         return;
       }
       try {
-        const response = await props.client.resolveArtifacts(props.workspaceId, openTargets);
+        const response = await props.client.resolveArtifacts(props.workspaceId, openTargets, { sessionId: props.sessionId });
         if (!cancelled) {
           const nextTargets = response.items as OpenTarget[];
           updateVerifiedOpenTargets(nextTargets);
@@ -2065,6 +2078,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         return [{ type: "connect-skill", slug: pill.slug, name: pill.name, marketplace: pill.marketplace, capability: pill.capability } satisfies ComposerDraft["parts"][number]];
       }
       if (pill?.kind === "skill") return [{ type: "skill", name: pill.name } satisfies ComposerDraft["parts"][number]];
+      if (pill?.kind === "session") {
+        return [{ type: "session", workspaceId: pill.workspaceId, sessionId: pill.sessionId, title: pill.title } satisfies ComposerDraft["parts"][number]];
+      }
       const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
       if (attachmentMatch) {
         // Attachment chips are visual tokens only; bytes travel via draft.attachments.
@@ -2094,7 +2110,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     resolved = resolved.replace(/\[attachment [^\]]+\]/g, "");
     // Pills keep their short visible text; their instructions travel as
     // synthetic parts and never expand into the user's message.
-    resolved = resolved.replace(/\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]/g, (match) => {
+    resolved = resolved.replace(COMPOSER_PILL_TOKEN_GLOBAL_RE, (match) => {
       const pill = parseComposerPillToken(match);
       return pill ? composerPillText(pill) : match;
     });
@@ -3241,6 +3257,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId, sessionOwner, props.activeQuestion, props.respondQuestion, baseRenderedMessages, props.isControlTarget, props.draftScope, archived, archiveStateKnown, archiveHeld]);
   const composerQuestion = composerQuestionForConnectionDecision(props.activeQuestion, nativeConnectionRequest);
+  // The agent is waiting for computer use in this chat (setup or allowance).
+  const computerRequest = useComputerRequest(props.sessionId);
   // A turn that ended on a Connect card picks up once its sign-in lands, as if the person said so.
   const continueAfterConnectionRef = useRef({ status, messages: baseRenderedMessages, asking: Boolean(props.activeQuestion) });
   continueAfterConnectionRef.current = { status, messages: baseRenderedMessages, asking: Boolean(props.activeQuestion) };
@@ -3249,6 +3267,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (context.status !== "ready" || context.asking || !isLatestTurnToolCall(context.messages, toolCallId)) return;
     void handleResumeInterrupted(prompt ?? CHAT_CONNECTION_CONTINUE_PROMPT);
   }, [handleResumeInterrupted]);
+  // Continue in the Computer view after the turn ended while the person had control:
+  // carry on, as if the person said so. A turn still running continues by itself.
+  const computerContinued = useComputerStore((state) => state.continued[props.sessionId] ?? 0);
+  const handledComputerContinue = useRef(computerContinued);
+  useEffect(() => {
+    if (computerContinued === handledComputerContinue.current) return;
+    handledComputerContinue.current = computerContinued;
+    const context = continueAfterConnectionRef.current;
+    if (context.status !== "ready" || context.asking) return;
+    void handleResumeInterrupted(COMPUTER_CONTINUE_PROMPT);
+  }, [computerContinued, handleResumeInterrupted]);
 
   const handleRevertToUserMessage = useCallback((messageId: string) => {
     if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
@@ -3562,7 +3591,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       <div ref={composerShellRef} className="shrink-0 px-0 pb-2 pt-2 max-lg:pb-0">
         <GatewayUsageApprovalNotice />
         {gatewayNotice && gatewayScope ? <GatewayUsageNotice key={`${gatewayUsage.scopeKey}:${sessionOwner}:${gatewayCloudProviderId ?? ""}`} state={gatewayNotice} status={gatewayScope.status} stale={gatewayUsage.query.isError}
-          providerName={gatewayScope.providerName} canSwitchProvider={gatewayCanSwitchProvider} /> : null}
+          providerName={gatewayScope.providerName} canSwitchProvider={gatewayCanSwitchProvider} sessionId={props.sessionId} messageSaved={hideGatewayError || hideDirectGatewayError} /> : null}
         {(props.providerConnectedCount ?? 0) === 0 ? (
           <button
             type="button"
@@ -3612,6 +3641,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         {attachmentsUploading ? <div role="status" className="mx-3 mb-2 text-xs text-muted-foreground" data-attachment-status="uploading">
           Preparing attachments...
         </div> : null}
+        <SignInHandoffNotice workspaceId={props.workspaceId} sessionId={props.sessionId} hasDraft={Boolean(persistableComposerDraftText(draft).trim())} />
         <ReactSessionComposer
           runModeControl={<WorkspaceRunModeMenu client={props.client} workspaceId={props.workspaceId} busy={chatStreaming || preparingCloudTools || Boolean(props.activePermission || props.activeQuestion)} />}
           draft={autoSendPayload ? draft : autoSending ? "" : draft}
@@ -3642,6 +3672,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         ]}
         modelUnavailable={sessionModelUnavailable}
         modelUnavailableMessage={sessionModelUnavailable ? props.modelUnavailableMessage : null}
+        modelRecoveryScope={props.modelRecoveryScope}
         organizationModelsEmpty={props.organizationModelsEmpty}
         statusLabel={statusLabel(liveStatus, chatStreaming)}
         modelPickerOpen={modelPickerOpen}
@@ -3685,9 +3716,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         pastedText={pasteParts}
         onExpandPastedText={handleExpandPastedText}
         onRemovePastedText={handleRemovePastedText}
-          compactTopSpacing={Boolean(composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedItems.length > 0)}
+          compactTopSpacing={Boolean(composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0)}
           topAccessory={
-            composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedItems.length > 0 ? (
+            composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 ? (
               <div>
                 {queuedItems.length > 0 ? (
                   <QueuedMessagesPanel
@@ -3713,6 +3744,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 ) : (props.todos ?? []).some((todo) => todo.content.trim()) ? (
                   <TodoPanel todos={props.todos ?? []} />
                 ) : null}
+                {computerRequest ? <ComputerRequestPanel sessionId={props.sessionId} request={computerRequest} /> : null}
                 {props.activePermission ? (
                   <PermissionApprovalPanel
                     permission={props.activePermission}
@@ -3729,7 +3761,26 @@ export function SessionSurface(props: SessionSurfaceProps) {
         </>}
       </div>
       {/* Error display moved inline into the session conversation area */}
-      {props.developerMode ? <SessionDebugPanel model={model} snapshot={snapshot ? { ...snapshot, status: liveStatus, todos: props.todos ?? [] } : null} /> : null}
+      {props.developerMode && props.isControlTarget ? <SessionDebugPanel
+        client={props.client} workspaceId={props.workspaceId} workspaceRoot={props.workspaceRoot}
+        opencodeBaseUrl={props.opencodeBaseUrl} openworkToken={props.openworkToken}
+        thread={{
+          model, status: liveStatus.type, messageCount: renderedMessages.length, todoCount: props.todos?.length ?? 0,
+          modelLabel: sessionModel.modelLabel, threadTitle: snapshot?.session.title ?? "Focused thread",
+          selectedModel: sessionModel.selectedModel, variant: sessionModel.modelVariant, historyComplete: hasFullHistory,
+          resolveAvailability: props.resolveModelAvailability, onCopyThread: handleCopyTranscript,
+          waitingOn: props.activePermission ? "Permission" : props.activeQuestion ? "Your answer" : attachmentsUploading ? "Attachment upload" : preparingCloudTools ? "Connected tools" : sending ? "Send acknowledgement" : snapshotQuery.isFetching || openingHistory.openingLoading ? "Session history" : liveStatus.type === "retry" ? "Retry backoff" : liveStatus.type === "busy" ? "Assistant" : "Nothing",
+          activity: [
+            { label: "Conversation history", state: snapshotQuery.isError || openingHistory.openingError ? "Failed" : snapshotQuery.isFetching || openingHistory.openingLoading || openingHistory.pages.loading ? "Loading" : "Loaded" },
+            { label: "Attachments", state: attachmentsUploading ? "Uploading" : "Idle" },
+            { label: "Connected tools", state: props.cloudMcpSubmissionState.status === "repairing" ? "Reconnecting" : props.cloudMcpSubmissionState.status === "checking" ? "Checking" : props.cloudMcpSubmissionState.status === "failed" ? "Failed" : "Ready" },
+            { label: "Prompt send", state: sending ? "Sending" : "Idle" },
+            { label: "Assistant", state: liveStatus.type === "busy" ? "Running" : liveStatus.type === "retry" ? "Waiting to retry" : "Idle" },
+            { label: "Queued messages", state: queuedItems.length > 0 ? `${queuedItems.length} waiting` : "Empty" },
+            { label: "Your input", state: props.activePermission ? "Permission required" : props.activeQuestion ? "Answer required" : "None" },
+          ],
+        }}
+      /> : null}
     </div>
     </DevProfiler>
   );

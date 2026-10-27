@@ -1,6 +1,28 @@
 export const OpenWorkDownloads = () => {
   const STABLE_RELEASES_URL = "https://api.github.com/repos/different-ai/openwork/releases?per_page=30";
-  const ALPHA_RELEASE_URL = "https://api.github.com/repos/different-ai/openwork/releases/tags/alpha-macos-latest";
+  // Each alpha platform is a rolling GitHub release written by
+  // alpha-macos-aarch64.yml (alpha-macos-latest, alpha-windows-latest).
+  const ALPHA_PLATFORMS = [
+    {
+      id: "macos",
+      label: "macOS",
+      releaseUrl: "https://api.github.com/repos/different-ai/openwork/releases/tags/alpha-macos-latest",
+      assetPrefix: "openwork-mac-arm64-",
+      files: [
+        { label: "DMG", extension: ".dmg" },
+        { label: "ZIP", extension: ".zip" },
+      ],
+      description: "Apple Silicon, signed and notarized.",
+    },
+    {
+      id: "windows",
+      label: "Windows",
+      releaseUrl: "https://api.github.com/repos/different-ai/openwork/releases/tags/alpha-windows-latest",
+      assetPrefix: "openwork-win-x64-",
+      files: [{ label: "Installer (x64)", extension: ".exe" }],
+      description: "x64 installer, signed.",
+    },
+  ];
   const GITHUB_HEADERS = { Accept: "application/vnd.github+json" };
   const dateFormatter = new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -23,16 +45,26 @@ export const OpenWorkDownloads = () => {
   const [stableLoading, setStableLoading] = useState(true);
   const [stableError, setStableError] = useState("");
   const [stableVisibleCount, setStableVisibleCount] = useState(8);
-  const [alphaBuilds, setAlphaBuilds] = useState([]);
-  const [alphaLoading, setAlphaLoading] = useState(false);
-  const [alphaError, setAlphaError] = useState("");
-  const [alphaRequested, setAlphaRequested] = useState(false);
-  const [alphaVisibleCount, setAlphaVisibleCount] = useState(12);
+  const [alphaPlatformId, setAlphaPlatformId] = useState(() => {
+    if (typeof navigator === "undefined") return "macos";
+    const platform = `${navigator.userAgent} ${navigator.platform}`.toLowerCase();
+    return platform.includes("win") && !platform.includes("darwin") ? "windows" : "macos";
+  });
+  const [alphaState, setAlphaState] = useState({});
+
+  const emptyAlphaState = { builds: [], loading: false, error: "", requested: false, visibleCount: 12 };
+  const getAlphaState = (platformId) => alphaState[platformId] || emptyAlphaState;
+  const updateAlphaState = (platformId, patch) => {
+    setAlphaState((current) => ({
+      ...current,
+      [platformId]: { ...(current[platformId] || emptyAlphaState), ...patch },
+    }));
+  };
 
   const formatSize = (bytes) => `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
   const formatDate = (date) => dateFormatter.format(new Date(date));
   const getAlphaMetadata = (asset) => {
-    // Written by alpha-macos-aarch64.yml at the start of the Electron build.
+    // Written by the alpha workflows at the start of the Electron build.
     // The rolling tag and asset upload dates are not build provenance.
     const prefix = `${asset.name} (commit `;
     if (typeof asset.label !== "string" || !asset.label.startsWith(prefix)) return null;
@@ -42,13 +74,18 @@ export const OpenWorkDownloads = () => {
     if (!Number.isFinite(startedAt.getTime()) || startedAt.toISOString() !== match[2].replace("Z", ".000Z")) return null;
     return { commit: match[1], startedAt: match[2] };
   };
-  const getAlphaBuildMetadata = (build) => {
-    const dmg = getAlphaMetadata(build.dmg);
-    const zip = getAlphaMetadata(build.zip);
-    // An interrupted re-run can leave a pair from different build attempts.
-    if (!dmg || !zip || dmg.commit !== zip.commit || dmg.startedAt !== zip.startedAt) return null;
-    if (build.dmg.name.replace(/\.dmg$/, "") !== build.zip.name.replace(/\.zip$/, "")) return null;
-    return dmg;
+  const getAlphaBuildMetadata = (platform, build) => {
+    const entries = platform.files.map((file) => ({
+      asset: build.assets[file.extension],
+      extension: file.extension,
+    }));
+    const metadata = entries.map((entry) => getAlphaMetadata(entry.asset));
+    const first = metadata[0];
+    // An interrupted re-run can leave files from different build attempts.
+    if (!first || metadata.some((item) => !item || item.commit !== first.commit || item.startedAt !== first.startedAt)) return null;
+    const baseNames = entries.map((entry) => entry.asset.name.slice(0, -entry.extension.length));
+    if (baseNames.some((name) => name !== baseNames[0])) return null;
+    return first;
   };
   const githubError = (response, channel) => {
     const rateLimitMessage = response.status === 403
@@ -124,42 +161,50 @@ export const OpenWorkDownloads = () => {
     };
   }, []);
 
-  const loadAlpha = async () => {
-    if (alphaRequested) return;
-    setAlphaRequested(true);
-    setAlphaLoading(true);
-    setAlphaError("");
+  const loadAlpha = async (platformId) => {
+    const platform = ALPHA_PLATFORMS.find((item) => item.id === platformId);
+    if (!platform || getAlphaState(platformId).requested) return;
+    updateAlphaState(platformId, { requested: true, loading: true, error: "" });
     try {
-      const response = await fetch(ALPHA_RELEASE_URL, { headers: GITHUB_HEADERS });
-      if (!response.ok) throw new Error(githubError(response, "alpha builds"));
+      const response = await fetch(platform.releaseUrl, { headers: GITHUB_HEADERS });
+      // The rolling release does not exist until the first build publishes.
+      if (response.status === 404) {
+        updateAlphaState(platformId, { builds: [], loading: false });
+        return;
+      }
+      if (!response.ok) throw new Error(githubError(response, `${platform.label} alpha builds`));
       const release = await response.json();
       const buildsByRun = {};
       release.assets.forEach((asset) => {
-        if (!asset.name.startsWith("openwork-mac-arm64-") || (!asset.name.endsWith(".dmg") && !asset.name.endsWith(".zip"))) return;
+        if (!asset.name.startsWith(platform.assetPrefix)) return;
+        const file = platform.files.find((item) => asset.name.endsWith(item.extension));
+        if (!file) return;
         const runMatch = asset.name.match(/-alpha\.(\d+)(?=[^0-9]|$)/);
         if (!runMatch) return;
         const run = runMatch[1];
-        if (!buildsByRun[run]) buildsByRun[run] = { run: Number(run), dmg: null, zip: null };
-        if (asset.name.endsWith(".dmg")) buildsByRun[run].dmg = asset;
-        if (asset.name.endsWith(".zip")) buildsByRun[run].zip = asset;
+        if (!buildsByRun[run]) buildsByRun[run] = { run: Number(run), assets: {} };
+        buildsByRun[run].assets[file.extension] = asset;
       });
-      setAlphaBuilds(
-        Object.values(buildsByRun)
-          .filter((build) => build.dmg && build.zip)
-          .map((build) => ({
-            ...build,
-            version: build.dmg.name.replace("openwork-mac-arm64-", "").replace(/\.dmg$/, ""),
-            metadata: getAlphaBuildMetadata(build),
-          }))
-          .sort((first, second) => second.run - first.run),
-      );
+      const primaryExtension = platform.files[0].extension;
+      const builds = Object.values(buildsByRun)
+        .filter((build) => platform.files.every((file) => build.assets[file.extension]))
+        .map((build) => ({
+          ...build,
+          version: build.assets[primaryExtension].name.slice(platform.assetPrefix.length, -primaryExtension.length),
+          metadata: getAlphaBuildMetadata(platform, build),
+        }))
+        .sort((first, second) => second.run - first.run);
+      updateAlphaState(platformId, { builds, loading: false });
     } catch (error) {
-      setAlphaError(error instanceof Error ? error.message : "Could not load alpha builds.");
-    } finally {
-      setAlphaLoading(false);
+      updateAlphaState(platformId, {
+        loading: false,
+        error: error instanceof Error ? error.message : "Could not load alpha builds.",
+      });
     }
   };
 
+  const alphaPlatform = ALPHA_PLATFORMS.find((platform) => platform.id === alphaPlatformId) || ALPHA_PLATFORMS[0];
+  const alpha = getAlphaState(alphaPlatform.id);
   const latestStable = stableReleases[0];
   const detectedPlatform = detectPlatform();
   const latestVersion = latestStable ? latestStable.tag_name.slice(1) : "";
@@ -205,7 +250,7 @@ export const OpenWorkDownloads = () => {
             tabIndex={activeChannel === "alpha" ? 0 : -1}
             onClick={() => {
               setActiveChannel("alpha");
-              void loadAlpha();
+              void loadAlpha(alphaPlatformId);
             }}
             className={`border-b-2 px-4 py-2.5 text-sm font-medium ${activeChannel === "alpha" ? "border-gray-950 text-gray-950 dark:border-white dark:text-white" : "border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"}`}
           >
@@ -268,12 +313,31 @@ export const OpenWorkDownloads = () => {
       </div>
 
       <div id="downloads-alpha-list" role="tabpanel" aria-labelledby="downloads-channel-alpha" hidden={activeChannel !== "alpha"}>
-        <p className="mb-4 mt-0 text-sm text-gray-500 dark:text-gray-400">Pre-release builds from every merge to dev. macOS Apple Silicon only, signed and notarized. Newest 100 builds are kept.</p>
-        {alphaLoading ? <p className="m-0 text-sm text-gray-500 dark:text-gray-400">Loading alpha builds…</p> : null}
-        {alphaError ? <p className="m-0 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">{alphaError}</p> : null}
-        {!alphaLoading && !alphaError ? (
+        <div className="mb-4 flex w-fit gap-1 rounded-full border border-gray-200 p-1 dark:border-white/10" role="group" aria-label="Alpha platform">
+          {ALPHA_PLATFORMS.map((platform) => (
+            <button
+              key={platform.id}
+              type="button"
+              aria-pressed={alphaPlatformId === platform.id}
+              onClick={() => {
+                setAlphaPlatformId(platform.id);
+                void loadAlpha(platform.id);
+              }}
+              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${alphaPlatformId === platform.id ? "bg-gray-950 text-white dark:bg-white dark:text-gray-950" : "text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"}`}
+            >
+              {platform.label}
+            </button>
+          ))}
+        </div>
+        <p className="mb-4 mt-0 text-sm text-gray-500 dark:text-gray-400">Pre-release builds from every merge to dev. {alphaPlatform.description} Newest 100 builds are kept.</p>
+        {alpha.loading ? <p className="m-0 text-sm text-gray-500 dark:text-gray-400">Loading {alphaPlatform.label} alpha builds…</p> : null}
+        {alpha.error ? <p className="m-0 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">{alpha.error}</p> : null}
+        {alpha.requested && !alpha.loading && !alpha.error && alpha.builds.length === 0 ? (
+          <p className="m-0 text-sm text-gray-500 dark:text-gray-400">No {alphaPlatform.label} alpha builds yet. The next merge to dev publishes one.</p>
+        ) : null}
+        {!alpha.loading && !alpha.error ? (
           <div className="space-y-4">
-            {alphaBuilds.slice(0, alphaVisibleCount).map((build, index) => (
+            {alpha.builds.slice(0, alpha.visibleCount).map((build, index) => (
               <div key={build.run} className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-white/10 dark:bg-gray-950">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2">
@@ -290,25 +354,25 @@ export const OpenWorkDownloads = () => {
                 ) : null}
 
                 <div className="mt-5 grid grid-cols-2 gap-3">
-                  {[
-                    { label: "DMG", asset: build.dmg },
-                    { label: "ZIP", asset: build.zip },
-                  ].map((download) => (
-                    <a key={download.label} download href={download.asset.browser_download_url} className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-900 transition-colors hover:border-gray-400 dark:border-white/10 dark:text-white dark:hover:border-white/30">
-                      <span>{download.label}</span>
-                      <span className="flex shrink-0 items-center gap-2 text-xs font-normal text-gray-500 dark:text-gray-400">
-                        {formatSize(download.asset.size)} <span aria-hidden="true">⤓</span>
-                      </span>
-                    </a>
-                  ))}
+                  {alphaPlatform.files.map((file) => {
+                    const asset = build.assets[file.extension];
+                    return (
+                      <a key={file.extension} download href={asset.browser_download_url} className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-900 transition-colors hover:border-gray-400 dark:border-white/10 dark:text-white dark:hover:border-white/30">
+                        <span>{file.label}</span>
+                        <span className="flex shrink-0 items-center gap-2 text-xs font-normal text-gray-500 dark:text-gray-400">
+                          {formatSize(asset.size)} <span aria-hidden="true">⤓</span>
+                        </span>
+                      </a>
+                    );
+                  })}
                 </div>
               </div>
             ))}
           </div>
         ) : null}
-        {alphaVisibleCount < alphaBuilds.length ? (
+        {alpha.visibleCount < alpha.builds.length ? (
           <div className="mt-6 text-center">
-            <button type="button" onClick={() => setAlphaVisibleCount((count) => count + 20)} className="rounded-full border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-900 transition-colors hover:border-gray-500 dark:border-white/20 dark:bg-gray-950 dark:text-white dark:hover:border-white/40">
+            <button type="button" onClick={() => updateAlphaState(alphaPlatformId, { visibleCount: alpha.visibleCount + 20 })} className="rounded-full border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-900 transition-colors hover:border-gray-500 dark:border-white/20 dark:bg-gray-950 dark:text-white dark:hover:border-white/40">
               Show more versions
             </button>
           </div>

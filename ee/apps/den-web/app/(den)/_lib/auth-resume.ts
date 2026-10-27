@@ -6,7 +6,7 @@ import { getMcpOAuthSocialCallbackUrl } from "./mcp-oauth-route";
  * code), so after email or social sign-in they land back on the same page and
  * step instead of the dashboard.
  */
-export const IN_PLACE_AUTH_PATHS: readonly string[] = ["/connect/mcp", "/device", "/claim"];
+export const IN_PLACE_AUTH_PATHS: readonly string[] = ["/connect/mcp", "/device", "/claim", "/join-sandbox"];
 
 function normalizePathname(pathname: string) {
   return pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { buildRelease, GCP_REPOSITORIES, HEALTH_SOURCE, resolveGcpImages } from "../tools/build-release.mjs";
+import { buildRelease, GCP_REPOSITORIES, HEALTH_SOURCE, resolveGcpImages, resolveAwsImages, validateModuleReferences } from "../tools/build-release.mjs";
 
 const digest = (character) => "sha256:" + character.repeat(64);
 const metadata = (character, os = "linux", architecture = "amd64") => ({
@@ -94,5 +96,78 @@ test("GCP CLI cannot disable registry verification or use unsupported options", 
     ["aws", "0.18.0", "/unused", "--image-pins", "/unused"]]) {
     const result = spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
     assert.notEqual(result.status, 0);
+  }
+});
+
+const root = fileURLToPath(new URL("../../../", import.meta.url));
+
+test("second-update fixture only overrides the non-secret revision default", () => {
+  const fixture = readFileSync(resolve(root, "infra/managed-deployments/tests/second-update_override.tf"), "utf8")
+    .split("\n").filter((line) => !line.trim().startsWith("#")).join("\n").trim();
+  assert.match(fixture, /^variable "tls_task_revision"\s*\{\s*default = "second-update"\s*\}$/);
+  const main = readFileSync(resolve(root, "infra/managed-deployments/aws/terraform/main.tf"), "utf8");
+  assert.match(main, /variable "tls_task_revision"\s*\{\s*type\s*=\s*string\s*default\s*=\s*""/);
+  assert.match(main, /OPENWORK_MANAGED_TASK_REVISION\s*=\s*var\.tls_task_revision/);
+});
+const modulePath = "infra/terraform/modules/openwork-aws-ecs";
+test("new AWS installer versions use independently approved immutable application images", () => {
+  assert.deepEqual(resolveAwsImages(pins, inspect), pins);
+  for (const candidate of [{}, { ...pins, den_api: GCP_REPOSITORIES.den_api + ":latest" }, { ...pins, health: HEALTH_SOURCE }]) {
+    assert.throws(() => resolveAwsImages(candidate, inspect));
+  }
+  assert.throws(() => resolveAwsImages(pins, () => { throw new Error("missing image"); }), /missing image/);
+});
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+test("missing module-local file references fail the release before packaging", () => {
+  const definition = `${modulePath}/migration.tf`;
+  const code = `${modulePath}/migration.py`;
+  const source = readFileSync(resolve(root, definition), "utf8");
+  assert.throws(() => validateModuleReferences([definition], () => source), /Missing packaged module reference.*migration.py/);
+  assert.doesNotThrow(() => validateModuleReferences([definition, code], () => source));
+});
+
+test("managed AWS explicitly preserves legacy keys while adopting the shared module", () => {
+  const tls = readFileSync(resolve(root, modulePath, "security.tf"), "utf8");
+  assert.match(tls, /https:\/\/truststore\.pki\.rds\.amazonaws\.com/);
+  assert.match(tls, /NODE_EXTRA_CA_CERTS/);
+  assert.doesNotMatch(tls, /insecure\s*=\s*true/);
+  const main = readFileSync(resolve(root, "infra/managed-deployments/aws/terraform/main.tf"), "utf8");
+  assert.match(main, /source\s*=\s*"\.\.\/\.\.\/\.\.\/terraform\/modules\/openwork-aws-ecs"/);
+  assert.match(main, /write_only_secrets\s*=\s*false/);
+  assert.match(main, /managed_legacy_secrets\s*=\s*true/);
+});
+
+test("installer archive contains every shared operational dependency with identical file bytes", () => {
+  const output = mkdtempSync(join(tmpdir(), "openwork-shared-installer-test-"));
+  try {
+    buildRelease(["aws", "0.18.58", output]);
+    const bundle = join(output, "bundle.tar.gz");
+    const manifest = JSON.parse(readFileSync(join(output, "manifest.json"), "utf8"));
+    assert.equal(manifest.bundleSha256, sha256(readFileSync(bundle)));
+    const release = JSON.parse(execFileSync("tar", ["-xOf", bundle, "release.json"], { encoding: "utf8" }));
+    const names = Object.keys(release.files);
+    // Python lists raw members; macOS tar can hide AppleDouble sidecars.
+    const archiveNames = JSON.parse(execFileSync("python3", ["-c",
+      "import json,sys,tarfile; a=tarfile.open(sys.argv[1]); print(json.dumps([e.name for e in a.getmembers() if e.isfile()]))", bundle], { encoding: "utf8" }));
+    assert.deepEqual(archiveNames.sort(), [...names, "release.json"].sort());
+    const expected = readdirSync(resolve(root, modulePath)).filter((name) => name.endsWith(".tf") || name === "migration.py").map((name) => `${modulePath}/${name}`).sort();
+    assert.ok(expected.includes(`${modulePath}/migration.py`));
+    validateModuleReferences(expected);
+    assert.deepEqual(names.filter((name) => name.startsWith(modulePath + "/")).sort(), expected);
+    assert.equal(names.some((name) => name.includes("aws/terraform/modules/openwork-aws-ecs/")), false);
+    assert.equal(names.some((name) => name.includes("/examples/") || name.includes("/tests/")), false);
+    assert.equal(names.some((name) => name.endsWith("second-update_override.tf")), false);
+    assert.match(execFileSync("tar", ["-xOf", bundle, "infra/managed-deployments/aws/runner/runner.py"], { encoding: "utf8" }), /def tls_redeploy\(force=True, cluster=None, expected=None\):/);
+    for (const name of expected) {
+      const source = readFileSync(resolve(root, name));
+      const packaged = execFileSync("tar", ["-xOf", bundle, name]);
+      assert.deepEqual(packaged, source, name);
+      assert.equal(release.files[name], sha256(source), name);
+    }
+    const packagedMain = execFileSync("tar", ["-xOf", bundle, "infra/managed-deployments/aws/terraform/main.tf"], { encoding: "utf8" });
+    assert.match(packagedMain, /source\s*=\s*"\.\.\/\.\.\/\.\.\/terraform\/modules\/openwork-aws-ecs"/);
+    assert.equal(names.some((name) => /\.(?:tfstate|tfvars|tfplan)(?:\.|$)/.test(name)), false);
+  } finally {
+    rmSync(output, { recursive: true, force: true });
   }
 });

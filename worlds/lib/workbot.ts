@@ -50,6 +50,8 @@ const execFileAsync = promisify(execFile);
 /** `--live`: a real model, the computer on, and an MCP App seeded. Local placement only. */
 export type WorkbotWorldOptions = {
   live: boolean;
+  /** Daytona only: a published Linux microVM desktop snapshot. The key stays in its runner host. */
+  computerSnapshot?: string;
   /**
    * `--calendar`: seed the owner's Automations and runs, turn on the desktop and Workbot Calendars, and read
    * meetings from the calendar mock (worlds/lib/calendar.ts).
@@ -63,14 +65,21 @@ export type WorkbotWorldOptions = {
   runnerProxy?: (runnerUrl: string) => Promise<string>;
   /** Extra runner settings, for example a small HEADLESS_CONTEXT_CHAR_BUDGET so a short journey outgrows the context. */
   runnerEnv?: Record<string, string>;
-  /** Features turned on for the seeded organization besides Workbot itself, for example `slackAssistant`. */
+  /** Features turned on for the seeded organization besides Workbot itself, for example `workbotDocuments`. */
   features?: Record<string, boolean>;
 };
 
 /** `--natural` is accepted for older preview launch commands; all Workbot chats now use natural replies. */
 export function parseWorkbotOptions(argv: string[]): WorkbotWorldOptions {
-  for (const arg of argv) if (arg !== "--live" && arg !== "--calendar" && arg !== "--natural") throw new Error(`preview-workbot: unknown option ${arg} (supported: --live, --calendar, --natural)`);
-  return { live: argv.includes("--live"), calendar: argv.includes("--calendar") };
+  let computerSnapshot: string | undefined;
+  for (let index = 0; index < argv.length; index++) {
+    const arg = argv[index];
+    if (arg === "--computer-snapshot") {
+      computerSnapshot = argv[++index];
+      if (!computerSnapshot || !/^[a-z0-9][a-z0-9.-]{0,62}$/.test(computerSnapshot)) throw new Error("--computer-snapshot needs a published Daytona snapshot name");
+    } else if (!["--live", "--calendar", "--natural"].includes(arg)) throw new Error(`preview-workbot: unknown option ${arg}`);
+  }
+  return { live: argv.includes("--live"), calendar: argv.includes("--calendar"), ...(computerSnapshot ? { computerSnapshot } : {}) };
 }
 
 /** A secret from the caller's environment, else the team's dev Infisical; never printed. */
@@ -154,6 +163,7 @@ export interface WorkbotWorld {
   live: boolean;
   model: string;
   computer: boolean;
+  computerProvider?: "daytona";
   demo: DemoWorkspace | null;
   app: { title: string; pluginPage: string } | null;
 }
@@ -420,7 +430,7 @@ export function workbotOutputs(world: WorkbotWorld, extra: Record<string, WorldO
     runnerUrl: output(world.runnerUrl, { group: "Headless runner", note: "Private service; Workbot and Den reach it with the runner token" }),
     model: output(world.model, { group: "Headless runner", note: world.live ? "Real model (live)" : "Deterministic Acme upstream; no paid inference keys" }),
     ...(world.live ? {} : { reply: output(ACME_REPLY, { group: "Headless runner" }) }),
-    computer: output(world.computer ? "on (Freestyle)" : "off", { group: "Headless runner", note: world.computer ? "Background tasks run on Workbot's own computer" : "No background tasks; --live with a Freestyle key turns it on" }),
+    computer: output(world.computer ? world.computerProvider === "daytona" ? "on (Daytona microVM desktop)" : "on (Freestyle)" : "off", { group: "Headless runner", note: world.computer ? "Work runs on Workbot's own computer" : "No background tasks; --live with a Freestyle key turns it on" }),
     ...(world.demo ? {
       demoApps: output(DEMO_WORKSPACE_SERVICES.map((service) => service.name).join(", "), { group: "Demo apps", note: "Acme Robotics demo data (you are Alex Chen); reads and writes stay in memory until the world stops" }),
       ...(world.demo.stateUrl ? { demoState: output(world.demo.stateUrl, { group: "Demo apps", note: "Live demo data; POST /reset restores the seed" }) } : {}),
@@ -431,6 +441,52 @@ export function workbotOutputs(world: WorkbotWorld, extra: Record<string, WorldO
     alexPassword: secret(world.den.admin.password, { group: "Accounts" }),
     runnerToken: secret(world.secrets.runnerToken, { group: "Headless runner" }),
     ...extra,
+  };
+}
+
+/**
+ * The desktop runner holds a Daytona key, so it only runs reviewed code: a commit already on
+ * upstream dev, or one the operator names in OPENWORK_PREVIEW_TRUSTED_SHA after reading it.
+ */
+async function requireReviewedDesktopSource(ref: string) {
+  const sha = ref.replace(/^sha:/, "");
+  if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("--computer-snapshot needs a pinned commit SHA.");
+  if (process.env.OPENWORK_PREVIEW_TRUSTED_SHA?.trim() === sha) return;
+  const root = fileURLToPath(new URL("../..", import.meta.url));
+  await execFileAsync("git", ["fetch", "--quiet", "origin", "dev"], { cwd: root });
+  const reviewed = await execFileAsync("git", ["merge-base", "--is-ancestor", sha, "origin/dev"], { cwd: root }).then(() => true, () => false);
+  if (!reviewed) {
+    throw new Error(`--computer-snapshot gives the runner a Daytona key, so ${sha.slice(0, 10)} must already be on dev. After reviewing that commit yourself, set OPENWORK_PREVIEW_TRUSTED_SHA=${sha}.`);
+  }
+}
+
+/**
+ * The runner executes the previewed checkout, which may be anyone's pull request. It never
+ * receives the operator's Daytona key: only a key limited to sandboxes and their memory
+ * snapshots, which expires with the preview and is revoked when the world is torn down.
+ */
+async function createRunnerDaytonaKey(auth: { apiKey: string; apiUrl: string }, name: string) {
+  const api = auth.apiUrl.replace(/\/+$/, "");
+  const headers = { authorization: `Bearer ${auth.apiKey}`, "content-type": "application/json" };
+  const keyName = `${name}-runner`;
+  const response = await fetch(`${api}/api-keys`, {
+    method: "POST", headers, signal: AbortSignal.timeout(30_000),
+    body: JSON.stringify({
+      name: keyName,
+      permissions: ["write:sandboxes", "delete:sandboxes", "write:snapshots", "delete:snapshots"],
+      expiresAt: new Date(Date.now() + (DAYTONA_LIFETIME_MINUTES + 30) * 60_000).toISOString(),
+    }),
+  });
+  const created = response.ok ? await response.json() as { value?: unknown } : null;
+  if (typeof created?.value !== "string" || !created.value) {
+    throw new Error(`The operator's Daytona key could not create a scoped runner key (HTTP ${response.status}); it needs manage:api_keys.`);
+  }
+  return {
+    value: created.value,
+    revoke: async () => {
+      const removed = await fetch(`${api}/api-keys/${encodeURIComponent(keyName)}`, { method: "DELETE", headers, signal: AbortSignal.timeout(30_000) });
+      if (!removed.ok && removed.status !== 404) throw new Error(`Revoke the Daytona key ${keyName}; it expires on its own (HTTP ${removed.status}).`);
+    },
   };
 }
 
@@ -446,12 +502,39 @@ child.on("exit", (code) => process.exit(code ?? 1));
  * preview-workbot on Daytona: Den in its own sandbox (as preview-den), and the runner, Workbot and the fake model in
  * one private sandbox at the same commit. Workbot's signed URL exists before Den starts, so Den is configured with it.
  */
-export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: Place): Promise<Record<string, WorldOutput>> {
-  const { createWorldDaytonaExec } = await import("../../evals/packages/hosts/src/sandbox-daytona.ts");
+export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: Place, options: WorkbotWorldOptions = { live: false }): Promise<Record<string, WorldOutput>> {
+  const { createWorldDaytonaExec, worldDaytonaAuth } = await import("../../evals/packages/hosts/src/sandbox-daytona.ts");
+  if (options.live || options.calendar) throw new Error("Daytona Workbot supports the deterministic model and --computer-snapshot; --live and --calendar remain local.");
   const exec = await createWorldDaytonaExec();
   const base = place.denBase();
   if (base.kind !== "daytona") throw new Error("preview-workbot on Daytona needs a pinned Daytona ref.");
   const name = `${receiptName(WORKBOT_WORLD, resolveStage(process.env))}-${randomUUID().slice(0, 8)}`;
+  let computerEnv: Record<string, string> = {};
+  let desktopClient: import("../../packages/sandbox-daytona/src/index.ts").DaytonaClient | undefined;
+  if (options.computerSnapshot) {
+    await requireReviewedDesktopSource(base.ref);
+    const auth = await worldDaytonaAuth();
+    if (auth.mode !== "api-key") throw new Error("The desktop runner needs a scoped Daytona API key, not a browser-session token.");
+    const { createDaytonaClient } = await import("../../packages/sandbox-daytona/dist/index.js");
+    const client = createDaytonaClient({ ...auth, target: process.env.DAYTONA_TARGET ?? "us-west-3" });
+    const snapshot = await client.snapshot?.get(options.computerSnapshot);
+    if (snapshot?.sandboxClass !== "linux-vm") throw new Error("The desktop snapshot must be a Daytona Linux microVM.");
+    desktopClient = client;
+    const runnerKey = await createRunnerDaytonaKey(auth, name);
+    stack.defer(runnerKey.revoke);
+    computerEnv = {
+      HEADLESS_COMPUTER: "daytona", HEADLESS_COMPUTER_CLASS: "linux-vm", HEADLESS_COMPUTER_DESKTOP: "true",
+      HEADLESS_COMPUTER_SNAPSHOT: options.computerSnapshot, HEADLESS_COMPUTER_SCOPE: name, HEADLESS_COMPUTER_KEEP_DAYS: "1",
+      DAYTONA_API_KEY: runnerKey.value, DAYTONA_API_URL: auth.apiUrl, DAYTONA_TARGET: process.env.DAYTONA_TARGET ?? "us-west-3",
+    };
+    stack.defer(async () => {
+      const owned: string[] = [];
+      for await (const box of client.list({ labels: { kind: "headless-computer", "openwork.sandbox.scope": name }, limit: 100 })) owned.push(box.id);
+      const removed = await Promise.allSettled(owned.map(async id => (await client.get(id)).delete(60)));
+      const errors = removed.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+      if (errors.length) throw new AggregateError(errors, "Some owned preview computers need cleanup");
+    });
+  }
   let sandboxId: string | undefined;
   const room = await provisionWebSandbox({
     exec, ref: base.ref, name, private: true, autoStopMinutes: 0,
@@ -462,6 +545,7 @@ export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: P
   });
   stack.defer(() => deleteSandboxes([sandboxId ?? room.sandbox], { exec }));
   if (!sandboxId || !room.created) throw new Error("preview-workbot did not receive an owned private sandbox.");
+  await (await desktopClient?.get(sandboxId))?.setTtl?.(DAYTONA_LIFETIME_MINUTES + 30);
   const lifetime = (DAYTONA_LIFETIME_MINUTES + 10) * 60;
   const issuedAt = Date.now();
   const workbotPreview = await privateWebPreview(sandboxId, DAYTONA_WORKBOT_PORT, exec, lifetime);
@@ -474,6 +558,7 @@ export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: P
       DEN_HEADLESS_RUNNER_TOKEN: secrets.runnerToken, RESEND_API_KEY: "", SMTP_HOST: "",
     },
   }));
+  if (den.placement?.kind === "daytona") await (await desktopClient?.get(den.placement.sandboxId))?.setTtl?.(DAYTONA_LIFETIME_MINUTES + 30);
   const upstream = await startScriptOnSandbox({
     exec, sandbox: sandboxId, label: "acme-upstream", port: DAYTONA_UPSTREAM_PORT,
     scriptSource: await readFile(fileURLToPath(new URL("../../evals/packages/labs/src/acme-upstream.mjs", import.meta.url)), "utf8"),
@@ -481,7 +566,8 @@ export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: P
     log: (line) => console.error(`[preview-workbot] ${line}`),
   });
   stack.defer(() => upstream.stop().catch(() => undefined));
-  const built = await execInSandbox(exec, sandboxId, "cd /workspace && pnpm --filter @openwork-ee/workbot build > /tmp/workbot-build.log 2>&1; status=$?; tail -20 /tmp/workbot-build.log; exit $status", {
+  const desktopBuild = options.computerSnapshot ? " && pnpm --filter @openwork-ee/headless-computer build" : "";
+  const built = await execInSandbox(exec, sandboxId, `cd /workspace && (pnpm --filter @openwork-ee/workbot build${desktopBuild}) > /tmp/workbot-build.log 2>&1; status=$?; tail -20 /tmp/workbot-build.log; exit $status`, {
     timeoutMs: 900_000, context: "Workbot build",
   });
   if (built.code !== 0) throw new Error(`Workbot build failed in the sandbox: ${built.stdout.slice(-800)}`);
@@ -494,6 +580,7 @@ export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: P
       HEADLESS_MODEL_PROTOCOL: "anthropic", HEADLESS_MODEL_BASE_URL: `${upstream.loopbackUrl}/v1`, HEADLESS_MODEL: ACME_MODEL,
       HEADLESS_MODEL_API_KEY: secrets.upstreamKey, HEADLESS_MCP_URL: `${den.ref.apiUrl}/mcp/agent`,
       HEADLESS_FILES: "disk", HEADLESS_FILES_DIR: "/tmp/workbot-world/files", HEADLESS_COMPUTER: "off",
+      ...computerEnv,
     },
     log: (line) => console.error(`[preview-workbot] ${line}`),
   });
@@ -510,11 +597,11 @@ export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: P
   });
   stack.defer(() => workbot.stop().catch(() => undefined));
   await verifyWorkbotPreviews(workbotPreview, runnerPreview);
-  const orgId = await enableWorkbot(den);
+  const orgId = await enableWorkbot(den, options.computerSnapshot ? { computerUse: true, remoteComputers: true, workbotDocuments: true } : {});
   const world: WorkbotWorld = {
     den, orgId, workbotUrl: workbotPreview.browserOrigin, workbotInternal: workbotPreview.browserOrigin,
     denWebPublic: den.ref.webUrl, runnerUrl: runnerPreview.browserOrigin, secrets,
-    live: false, model: ACME_MODEL, computer: false, demo: null, app: null,
+    live: false, model: ACME_MODEL, computer: Boolean(options.computerSnapshot), ...(options.computerSnapshot ? { computerProvider: "daytona" } : {}), demo: null, app: null,
   };
   const proof = await probeWorkbot(world);
   return workbotOutputs(world, {
@@ -522,6 +609,7 @@ export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: P
     runnerUrl: secret(world.runnerUrl, { group: "Headless runner", note: "Private signed URL; needs the runner token" }),
     verified: output(`Signed in through Den and answered: ${proof.reply}`, { group: "Verification" }),
     previewExpires: output(new Date(issuedAt + lifetime * 1000).toISOString(), { group: "World" }),
+    ...(options.computerSnapshot ? { expires: output(new Date(Math.min(Date.now() + DAYTONA_LIFETIME_MINUTES * 60_000, issuedAt + lifetime * 1000)).toISOString(), { group: "World", note: "Automatic teardown, including the conversation computers" }) } : {}),
     ...(den.placement?.kind === "daytona" ? { denSandbox: output(den.placement.sandboxId, { group: "World" }) } : {}),
     workbotSandbox: output(sandboxId, { group: "World" }),
   });

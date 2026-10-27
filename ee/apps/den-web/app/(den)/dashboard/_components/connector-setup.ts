@@ -7,7 +7,7 @@ import { connectorAccountReady } from "./connector-detail";
 import { type ConnectorSignInMethod, connectorSignInMethod, oauthClientSecretRequired, oauthRequestFields } from "./connector-sign-in-method";
 import { libraryQueryKeys } from "./library-data";
 import { credentialModeForAuth, personalApiKeyStatus, usesMemberApiKey } from "./member-api-key";
-import { resolveMcpAuthorizationPollOutcome } from "./mcp-account-authorization-state";
+import { pollMcpAuthorization } from "./mcp-account-authorization-state";
 import { openMcpAuthorizationTab, safeMcpAuthorizationUrl, showMcpAuthorizationFailure } from "./mcp-authorization-url";
 import {
   apiKeyAuthSchemeInput,
@@ -26,6 +26,7 @@ import {
   useMcpConnections,
   useMcpConnectionTools,
   useStartMcpConnectionOAuth,
+  useUpdateMcpConnection,
 } from "./mcp-connections-data";
 import type { SetupCheck } from "./setup-checks";
 
@@ -70,7 +71,7 @@ type SignInState =
 export type ConnectorSetupMode = "admin" | "member";
 
 /** The fields step two needs from an admin before anyone can sign in. */
-export type OAuthAppInput = { clientId: string; clientSecret: string };
+export type OAuthAppInput = { clientId: string; clientSecret: string; manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string } };
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -93,6 +94,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   const { orgId, orgContext } = useOrgDashboard();
   const discover = useDiscoverMcpConnectionRequirements();
   const createConnection = useCreateMcpConnection();
+  const updateConnection = useUpdateMcpConnection();
   const deleteConnection = useDeleteMcpConnection();
   const startOAuth = useStartMcpConnectionOAuth();
   const usable = useMcpConnections("usable");
@@ -103,6 +105,9 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   const [signIn, setSignIn] = useState<SignInState>({ kind: "idle" });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [skipped, setSkipped] = useState(false);
+  const [skipping, setSkipping] = useState(false);
+  const [skipError, setSkipError] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const discoveredUrl = useRef<string | null>(null);
   const autoCreated = useRef(false);
@@ -132,7 +137,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   }, []);
   useEffect(() => stopPolling, [stopPolling]);
 
-  const createForMe = useCallback(async (auth: Pick<CreateMcpConnectionInput, "authType"> & Partial<Pick<CreateMcpConnectionInput, "apiKey" | "apiKeyAuthScheme" | "credentialMode" | "oauthClient">>) => {
+  const createForMe = useCallback(async (auth: Pick<CreateMcpConnectionInput, "authType"> & Partial<Pick<CreateMcpConnectionInput, "apiKey" | "apiKeyAuthScheme" | "credentialMode" | "oauthClient" | "manualOAuthEndpoints">>) => {
     if (!target || !orgContext) throw new Error("Your organization is still loading. Try again in a moment.");
     const created = await createConnection.mutateAsync({
       name: target.name,
@@ -146,6 +151,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       ...apiKeyAuthSchemeInput(auth.authType, auth.apiKeyAuthScheme ?? DEFAULT_API_KEY_AUTH_SCHEME),
       ...(auth.oauthClient ? { oauthClient: auth.oauthClient } : {}),
       ...(auth.authType === "oauth" ? oauthRequestFields(discovery) : {}),
+      ...(auth.manualOAuthEndpoints ? { manualOAuthEndpoints: auth.manualOAuthEndpoints } : {}),
       access: { orgWide: false, memberIds: [orgContext.currentMember.id], teamIds: [] },
     });
     setConnectionId(created.id);
@@ -195,7 +201,11 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     }
   }, [createForMe]);
 
-  /** Step two for a server that only accepts a pre-registered OAuth app; sign-in follows. */
+  /**
+   * Step two for a server that only accepts a pre-registered OAuth app; sign-in follows.
+   * Also the way out when automatic sign-in setup fails: the OAuth app is
+   * added to the connection that sign-in already created.
+   */
   const saveOAuthApp = useCallback(async (input: OAuthAppInput) => {
     const clientId = input.clientId.trim();
     const clientSecret = input.clientSecret.trim();
@@ -203,20 +213,40 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       setSaveError("Paste the client ID first.");
       return;
     }
-    if (!clientSecret && oauthClientSecretRequired(discovery)) {
+    if (!input.manualOAuthEndpoints && !clientSecret && oauthClientSecretRequired(discovery)) {
       setSaveError(`${target?.name ?? "This server"} needs the client secret too.`);
       return;
     }
     setSaving(true);
     setSaveError(null);
+    const oauthClient = { clientId, ...(clientSecret ? { clientSecret } : {}) };
     try {
-      await createForMe({ authType: "oauth", oauthClient: { clientId, ...(clientSecret ? { clientSecret } : {}) } });
+      // A failed sign-in attempt updates the connection, so read its latest version first.
+      const latest = connection ? (await usable.refetch()).data?.find((entry) => entry.id === connection.id) ?? connection : null;
+      if (latest && latest.authType === "oauth" && latest.updatedAt) {
+        await updateConnection.mutateAsync({
+          connectionId: latest.id,
+          expectedUpdatedAt: latest.updatedAt,
+          name: latest.name,
+          url: latest.url,
+          authType: "oauth",
+          credentialMode: latest.credentialMode,
+          exposeDirectly: latest.exposeDirectly,
+          oauthClient,
+          ...(input.manualOAuthEndpoints ? { manualOAuthEndpoints: input.manualOAuthEndpoints } : {}),
+          access: latest.access ?? { orgWide: false, memberIds: orgContext ? [orgContext.currentMember.id] : [], teamIds: [] },
+        });
+        await usable.refetch();
+      } else {
+        await createForMe({ authType: "oauth", oauthClient, ...(input.manualOAuthEndpoints ? { manualOAuthEndpoints: input.manualOAuthEndpoints } : {}) });
+      }
+      setSignIn({ kind: "idle" });
     } catch (error) {
       setSaveError(errorMessage(error, "The OAuth app did not save."));
     } finally {
       setSaving(false);
     }
-  }, [createForMe, discovery, target?.name]);
+  }, [connection, createForMe, discovery, orgContext, target?.name, updateConnection, usable]);
 
   const startSignIn = useCallback(async () => {
     if (!target) return;
@@ -242,15 +272,16 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       pollTimer.current = setInterval(async () => {
         if (fetching) return;
         fetching = true;
-        const refreshed = await usable.refetch();
-        fetching = false;
-        const current = refreshed.data?.find((entry) => entry.id === pollId);
-        const outcome = resolveMcpAuthorizationPollOutcome({
-          connected: Boolean(current && connectorAccountReady(current)),
-          authorizationWindowClosed: openedTab.closed,
-          elapsedMs: Date.now() - startedAt,
+        const outcome = await pollMcpAuthorization({
+          authorizationWindow: openedTab,
+          readConnected: async () => {
+            const current = (await usable.refetch()).data?.find((entry) => entry.id === pollId);
+            return Boolean(current && connectorAccountReady(current));
+          },
+          startedAt,
           timeoutMs: POLL_TIMEOUT_MS,
         });
+        fetching = false;
         if (outcome === "pending") return;
         stopPolling();
         if (outcome === "connected") {
@@ -280,6 +311,28 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       await queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items });
     }
   }, [connectionId, createdHere, deleteConnection, queryClient, stopPolling]);
+
+  /**
+   * Add it without every check passing, e.g. when the provider refuses
+   * automatic sign-in setup. Creates the connection if no step has yet, so the
+   * admin can finish its settings on the connector's page later.
+   */
+  const skipChecks = useCallback(async () => {
+    stopPolling();
+    setSkipping(true);
+    setSkipError(null);
+    try {
+      if (!connectionId) {
+        await createForMe({ authType: method === "sign_in" || method === "oauth_app" ? "oauth" : "none" });
+      }
+      setSignIn({ kind: "idle" });
+      setSkipped(true);
+    } catch (error) {
+      setSkipError(errorMessage(error, "Could not add it."));
+    } finally {
+      setSkipping(false);
+    }
+  }, [connectionId, createForMe, method, stopPolling]);
 
   const name = target?.name ?? "it";
   const findFailed = discoveryError !== null || (discovery !== null && !findDone);
@@ -363,6 +416,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   ];
 
   const doneCount = checks.filter((check) => check.status === "done").length;
+  const anyFailed = checks.some((check) => check.status === "failed");
   const stepNumber = Math.min(checks.findIndex((check) => check.status !== "done") + 1 || checks.length, checks.length);
 
   return {
@@ -375,6 +429,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     method,
     /** Step two is waiting on a key or OAuth app from this viewer. */
     needsInput: needsAdminInput && mode === "admin" && !connection,
+    discovery,
     secretRequired: oauthClientSecretRequired(discovery),
     saving,
     saveError,
@@ -383,8 +438,16 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     saveOAuthApp,
     canSignIn,
     signingIn: signIn.kind === "waiting",
+    /** Sign-in failed for a server people sign in to; an admin can try their own OAuth app instead. */
+    signInFailed: signIn.kind === "failed" && (method === "sign_in" || connection?.authType === "oauth"),
     startSignIn,
     discard,
+    /** A check failed, so an admin may add the connector anyway and finish it from its page. */
+    canSkip: mode === "admin" && anyFailed && !skipped,
+    skipped,
+    skipping,
+    skipError,
+    skipChecks,
   };
 }
 

@@ -1,22 +1,23 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DenPageHeader } from "../../_components/ui/page-header";
-import { getAddConnectorRoute, getMcpConnectionRoute } from "../../_lib/den-org";
+import { getAddConnectorRoute, getLibraryConnectorRoute, getMcpConnectionRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { managedAccessStatus } from "./access-summary";
 import { usePrefetchConnectorCatalog } from "./connector-catalog-screen";
 import { GOOGLE_WORKSPACE_QUICK_ADD_ID, MICROSOFT_365_QUICK_ADD_ID } from "./connector-catalog";
 import { connectorAccountReady, displayedConnectorConnections } from "./connector-detail";
+import { assignedConnectorForLibrary } from "./connector-library-navigation";
 import { useDenToast } from "./den-toast";
 import { ItemPage } from "./item-header";
 import { FilterInput, ItemMenu, removeEntry, ItemPanel, ItemRow, ItemRowsSkeleton, LinkButton } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import { ConnectorLogoStrip } from "./library-add-dialog";
 import { DenButton } from "../../_components/ui/button";
-import { connectorReadinessState, connectorReadinessNote } from "./connector-readiness";
-import { useCheckMcpConnection } from "./mcp-connections-data";
+import { connectorNeedsFirstCheck, connectorReadinessState, connectorReadinessNote } from "./connector-readiness";
+import { useCheckMcpConnection, useRefreshUncheckedConnections } from "./mcp-connections-data";
 import { getOrgAccessFlags } from "../../_lib/den-org";
 import { connectorSetupUnfinished, finishSetupHref } from "./admin-connectors";
 import { type ExternalMcpConnection, isNativeProviderConnectionId, useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
@@ -45,6 +46,7 @@ function ConnectorsEmpty({ orgSlug }: { orgSlug: string | null }) {
 export function AdminConnectorsScreen() {
   const toast = useDenToast();
   const { orgSlug, orgContext } = useOrgDashboard();
+  const libraryNavigation = orgFeatureEnabled(orgContext, "libraryConnectorNavigation");
   const connections = useMcpConnections("manageable");
   const usable = useMcpConnections("usable");
   const deleteConnection = useDeleteMcpConnection();
@@ -57,6 +59,31 @@ export function AdminConnectorsScreen() {
   const needle = query.trim().toLowerCase();
   const visible = needle ? all.filter((connection) => connection.name.toLowerCase().includes(needle)) : all;
   const empty = !connections.isLoading && !connections.error && all.length === 0;
+
+  // Connectors with no stored status are brought up to date once per visit:
+  // a member's Ready check is copied, or the connector is checked now.
+  const refreshUnchecked = useRefreshUncheckedConnections();
+  const requested = useRef(new Set<string>());
+  const [firstChecks, setFirstChecks] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    if (!canCheck || !connections.data) return;
+    const ids = connections.data.filter((connection) => connectorNeedsFirstCheck(connection) && !requested.current.has(connection.id)).map((connection) => connection.id);
+    if (ids.length === 0) return;
+    for (const id of ids) requested.current.add(id);
+    setFirstChecks((current) => new Set([...current, ...ids]));
+    refreshUnchecked.mutateAsync(ids).catch(() => undefined).finally(() => {
+      setFirstChecks((current) => new Set([...current].filter((id) => !ids.includes(id))));
+    });
+  }, [canCheck, connections.data]);
+
+  // Check again runs per row, so one slow service never blocks the others.
+  const [rechecking, setRechecking] = useState<ReadonlySet<string>>(new Set());
+  function checkAgain(connection: ExternalMcpConnection) {
+    setRechecking((current) => new Set([...current, connection.id]));
+    checkConnection.mutateAsync(connection.id)
+      .catch(() => toast({ title: `Could not check ${connection.name}`, description: "Try again." }))
+      .finally(() => setRechecking((current) => new Set([...current].filter((id) => id !== connection.id))));
+  }
 
   async function remove(connection: ExternalMcpConnection) {
     await deleteConnection.mutateAsync(connection.id);
@@ -95,7 +122,10 @@ export function AdminConnectorsScreen() {
             <ItemPanel>
               {visible.map((connection) => {
                 const href = getMcpConnectionRoute(orgSlug, connection.id);
-                const readinessState = connectorReadinessState(connection);
+                const assignedConnection = assignedConnectorForLibrary(libraryNavigation, connection.id, usable.data);
+                const readinessView = { organization: true, checking: firstChecks.has(connection.id) || rechecking.has(connection.id) };
+                const readinessState = connectorReadinessState(connection, readinessView);
+                const checkLabel = readinessState === "Not checked" ? "Check now" : "Check again";
                 const unfinished = connectorSetupUnfinished(connection);
                 const status = unfinished
                   ? "Setup not finished"
@@ -111,14 +141,16 @@ export function AdminConnectorsScreen() {
                       href={href}
                       logo={<ConnectorLogo name={connection.name} url={connection.url} />}
                       title={connection.name}
-                      description={readinessState ? connectorReadinessNote(connection) ?? signInNote : signInNote}
+                      description={readinessState ? connectorReadinessNote(connection, readinessView) ?? signInNote : signInNote}
                       status={readinessState ?? status}
                       statusOnNarrow={readinessState !== null}
                       wideAction={readinessState !== null}
-                      wrapDescription={readinessState === "Couldn't verify"}
-                      action={readinessState === "Couldn't verify" ? (
-                        <DenButton size="xs" variant="secondary" disabled={!canCheck || checkConnection.isPending} title={!canCheck ? "An admin can check this connection." : undefined}
-                          onClick={() => void checkConnection.mutateAsync(connection.id).catch(() => toast({ title: "Could not check this connection", description: "Try again." }))}>Check again</DenButton>
+                      wrapDescription={readinessState === "Couldn't verify" || readinessState === "Sign in"}
+                      action={readinessState === "Couldn't verify" || readinessState === "Not checked" || readinessState === "Checking…" ? (
+                        <DenButton size="xs" variant="secondary" loading={readinessState === "Checking…"} disabled={!canCheck || readinessState === "Checking…"} title={!canCheck ? "An admin can check this connection." : undefined}
+                          onClick={() => checkAgain(connection)}>{checkLabel}</DenButton>
+                      ) : readinessState === "Sign in" && connection.credentialMode === "shared" ? (
+                        <LinkButton size="xs" href={href}>Reconnect</LinkButton>
                       ) : unfinished ? (
                         <LinkButton size="xs" href={finishSetupHref(orgSlug, connection)}>Finish</LinkButton>
                       ) : (
@@ -126,7 +158,8 @@ export function AdminConnectorsScreen() {
                           label={`More for ${connection.name}`}
                           entries={[
                             { label: "Open", href },
-                            ...(readinessState && canCheck ? [{ label: "Check again", onSelect: () => void checkConnection.mutateAsync(connection.id).catch(() => toast({ title: "Could not check this connection", description: "Try again." })) }] : []),
+                            ...(assignedConnection ? [{ label: "Open in My Library", href: getLibraryConnectorRoute(orgSlug, assignedConnection.id) }] : []),
+                            ...(readinessState && canCheck && (connection.credentialMode === "shared" || connection.connectedForMe) ? [{ label: "Check again", onSelect: () => checkAgain(connection) }] : []),
                             ...(connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID || connection.id === MICROSOFT_365_QUICK_ADD_ID
                               ? []
                               : [removeEntry(connection.name, () => remove(connection))]),

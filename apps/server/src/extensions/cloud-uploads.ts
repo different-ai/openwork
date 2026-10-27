@@ -8,7 +8,8 @@ import { ApiError } from "../errors.js";
 import { externalFetch } from "../server-fetch.js";
 import type { ServerConfig } from "../types.js";
 
-export const OPENWORK_CLOUD_UPLOADS_EXTENSION_ID = "openwork-cloud-uploads";
+import { OPENWORK_CLOUD_UPLOADS_EXTENSION_ID } from "./cloud-upload-constants.js";
+export { OPENWORK_CLOUD_UPLOADS_EXTENSION_ID } from "./cloud-upload-constants.js";
 const DIRECT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
 const DIRECT_UPLOAD_TIMEOUT_MS = 2 * 60 * 1000;
 

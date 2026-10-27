@@ -1,6 +1,9 @@
 {
   "name": "@openwork-ee/gateway",
   "private": true,
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
   "type": "module",
   "scripts": {
     "models:build": "node scripts/build-models.mjs",
@@ -16,13 +19,14 @@
     "@openwork-ee/den-db": "workspace:*",
     "@openwork-ee/telemetry": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
+    "@openwork/features": "workspace:*",
     "@openwork/free-auto": "workspace:*",
     "@openwork/types": "workspace:*",
     "@sentry/hono": "^10.65.0",
     "@sentry/node": "^10.65.0",
     "dotenv": "^16.4.5",
-    "hono": "4.13.9",
-    "zod": "^4.3.6"
+    "hono": "4.13.11",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@ai-sdk/mistral": "3.0.51",

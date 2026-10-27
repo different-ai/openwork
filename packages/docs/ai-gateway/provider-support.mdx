@@ -1,0 +1,89 @@
+---
+title: "Provider support"
+description: "Compare AI Gateway providers, supported credentials and APIs, and the differences between Gateway and legacy providers."
+---
+
+Use an **AI Gateway provider** for server-held credentials, model access rules, and per-person usage reporting. Use a **legacy provider** when you need a custom model definition or an SDK the Gateway does not support.
+
+This page covers the **AI Gateway**, which routes model requests. The [MCP Gateway](/start-here/connect-openwork-mcp) shares skills and service connections instead.
+
+## Gateway versus legacy providers
+
+Both appear under **AI Gateway → AI Providers**. Add a normal Gateway provider with **Add provider**; legacy providers are in the separate **Legacy Providers** section.
+
+| Capability | AI Gateway provider (recommended) | Legacy provider |
+| --- | --- | --- |
+| Request path | App → OpenWork AI Gateway → provider | App or OpenWork Web runtime → provider directly |
+| Where upstream credentials live | Encrypted on the server; the app receives an OpenWork Gateway key, not the upstream credential | Synced to the member's app or Web runtime |
+| Provider definitions | Compatible catalog providers, plus the dedicated LiteLLM integration | Catalog providers or custom JSON/model definitions supported by the runtime |
+| Custom endpoint | Concrete upstream URL overrides for compatible providers; dedicated LiteLLM proxy setup. Not arbitrary custom model definitions | Custom base URL and manually entered model IDs, or advanced JSON |
+| Access control | Model groups and credential sets granted to the organization, teams, or people; checked on each request | Provider access granted to the organization, teams, or people; changes reach apps through sync |
+| Per-person authentication | Google Vertex AI, Bedrock and Microsoft Foundry sign-in; personal or OpenWork-created LiteLLM keys | Generic per-member key bindings through the API |
+| Token reporting in OpenWork | Per-person reporting for supported response protocols, when the upstream reports usage | No AI Gateway usage reporting |
+| Cost estimates and OpenWork spend limits | Supported when pricing is available and spend tracking is enabled; personal and OpenWork-created LiteLLM keys are tokens-only | Not enforced through AI Gateway; upstream budgets may still apply |
+| Management API | `/v1/inference-providers`; credential-set modes `org` and `member` | `/v1/llm-providers`; provider modes `shared` and `per_member` |
+
+Legacy does **not** mean the upstream model is old. It describes how OpenWork distributes credentials and routes requests. OpenWork Models is a separate managed subscription, not another name for either provider type.
+
+## Supported Gateway providers
+
+The table describes supported integration paths, not a guarantee that every model or API offered by an upstream is available. Models, regions, account permissions and API capabilities must also match your configuration.
+
+**Organization credential** means an admin saves a shared upstream credential. **Per-person credential** means Gateway uses the requesting person's own sign-in or key; it never falls back to an organization credential when theirs is missing.
+
+| Provider | Organization credential | Per-person credential | Supported model request API | Setup notes and limits |
+| --- | --- | --- | --- | --- |
+| OpenAI | API key | Not supported | Chat Completions and Responses | Catalog models using the OpenAI SDK; not ChatGPT subscription sign-in |
+| Anthropic | API key | Not supported | Messages, including streaming; token counting | Claude API credentials, not a Claude subscription login |
+| Google Gemini | Gemini API key | Not supported | Generate Content and streaming Generate Content | Also allows embedding and token-count operations; these do not have the chat usage parser |
+| [Google Vertex AI](/ai-gateway/google-agent-platform) | Google service-account JSON | Google OAuth sign-in | Generate Content and streaming Generate Content | Requires a Google Cloud project and location; member sign-in needs an admin-configured OAuth client |
+| [Claude on Vertex AI](/ai-gateway/google-agent-platform) | Google service-account JSON | Google OAuth sign-in | Anthropic Messages, adapted to Vertex prediction endpoints | Separate `google-vertex-anthropic` provider; Messages token-count endpoint is not supported |
+| [Amazon Bedrock](/ai-gateway/amazon-bedrock) | AWS access key ID and secret, optional session token; or a Bedrock API key | AWS IAM Identity Center sign-in | Converse and ConverseStream | Requires an AWS region and model permissions. InvokeModel operations are also allowed, but without the Converse usage parser |
+| [Amazon Bedrock (OpenAI / Mantle)](/ai-gateway/amazon-bedrock) | AWS access keys or a Bedrock API key | AWS IAM Identity Center sign-in | Chat Completions and Responses | Separate `amazon-bedrock-mantle` provider and AWS permissions; not the Converse endpoint |
+| Azure OpenAI | Azure resource API key | Not supported | Chat Completions and Responses, including deployment-addressed paths | Requires the resource name; optional API version. Does not provide Entra member sign-in for Azure OpenAI |
+| [Microsoft Foundry (Claude)](/ai-gateway/microsoft-foundry) | Foundry resource API key | Microsoft Entra ID sign-in | Anthropic Messages and token counting | Requires a resource name; member mode also needs a tenant and OAuth app. This integration is for Claude, not every Foundry API |
+| Mistral | API key | Not supported | Chat Completions | Embeddings are also allowed, without the chat usage parser |
+| OpenRouter | API key | Not supported | OpenAI-compatible Chat Completions and Responses, where supported by the upstream/model | Alternate model selectors, fallback routing and plugins that could bypass model grants are rejected |
+| Other compatible catalog providers | API key | Not supported | The catalog provider's supported OpenAI-compatible or Anthropic API | Includes compatible catalog entries such as DeepSeek and other providers using an allowed SDK; subject to the checks below |
+| [LiteLLM](/ai-gateway/litellm) | One organization LiteLLM virtual key | Personal LiteLLM virtual key, or keys OpenWork creates for each person | OpenAI-compatible chat requests for models synced from your proxy | Syncs models and teams from LiteLLM. Embedding, image and audio models are skipped. LiteLLM JWT/identity-provider sign-in is not supported |
+
+All supported chat integrations support streaming on their streaming operation. Tool calling, reasoning, structured output, attachments and context limits depend on the **selected model and upstream API**, not just the provider row. Gateway is not a universal API translator: an OpenAI request cannot be sent to an Anthropic-only model merely by changing its model ID.
+
+### What “compatible catalog provider” means
+
+The Gateway does not support every provider simply because it appears in models.dev or advertises an OpenAI-compatible endpoint. Creation checks the catalog's SDK, and model selection checks each model's configuration.
+
+Supported SDK families are:
+
+| Catalog SDK | Gateway integration |
+| --- | --- |
+| `@ai-sdk/openai` | OpenAI |
+| `@ai-sdk/anthropic` | Anthropic Messages; Microsoft Foundry uses a specialized integration |
+| `@ai-sdk/google` | Google Gemini |
+| `@ai-sdk/google-vertex` | Google Vertex AI |
+| `@ai-sdk/google-vertex/anthropic` | Claude on Vertex AI |
+| `@ai-sdk/amazon-bedrock` | Bedrock Converse |
+| `@ai-sdk/amazon-bedrock/mantle` | Bedrock OpenAI / Mantle |
+| `@ai-sdk/azure` | Azure OpenAI |
+| `@ai-sdk/mistral` | Mistral |
+| `@ai-sdk/openai-compatible` | Compatible catalog endpoints; also used by the dedicated LiteLLM integration |
+| `@openrouter/ai-sdk-provider` | OpenRouter-compatible catalog endpoints |
+
+A model that switches to a different SDK or contains unresolved configuration templates is excluded. Selecting it explicitly is rejected. **All models** means all compatible catalog models, not every model enabled in your upstream account. A new catalog model is not automatically granted to existing model groups.
+
+For an arbitrary endpoint or model definition outside this contract, use a [custom legacy provider](/cloud/share-with-your-team/custom-llm-provider). For LiteLLM, prefer the dedicated [Gateway integration](/ai-gateway/litellm) rather than the legacy custom-provider route.
+
+## Usage and API boundaries
+
+- **Usage parsing:** Gateway parses Chat Completions, Responses, Anthropic Messages, Google Generate Content and Bedrock Converse responses. Additional allowed operations may have no usage parser; allowing an API path does not guarantee token counts, prices or spend enforcement. See [Counting usage](/ai-gateway/counting-usage) and [Token costs](/ai-gateway/token-costs).
+- **LiteLLM budgeting:** With one organization key, OpenWork estimates cost and applies OpenWork limits. With personal or OpenWork-created keys, OpenWork records tokens only; LiteLLM enforces user, team and key budgets.
+- **Not a full provider API proxy:** Model requests must select an authorized model. Arbitrary account management, batch/deferred jobs, multipart uploads, provider-hosted tools and stored-resource references are not supported. Do not assume image/audio API paths imply file-upload support, or that HTTP streaming implies WebSocket/realtime support.
+- **Network access:** Upstreams use public HTTPS by default. Private/local endpoints or HTTP require the operator to approve the exact origin on both Den and Gateway. A provider setting cannot grant private network access. See [Self-hosted Gateway](/self-host/gateway).
+
+## Moving an existing legacy provider
+
+**Move to gateway** is available only for eligible shared-key catalog providers with compatible models and configuration. Custom providers and legacy `per_member` providers cannot be moved automatically. Azure, Vertex and Bedrock providers that require explicit destination or authentication settings must be configured as new Gateway providers.
+
+When automatic migration is unavailable, add the Gateway provider separately, set its credentials and access, and test a model request before removing the legacy provider. Do not treat removal from OpenWork as revocation of an upstream key that was previously synced to a device; rotate or revoke that key with the upstream provider when needed.
+
+For setup, start with [AI Gateway](/ai-gateway/overview). For the legacy workflows, see [Managed providers](/cloud/share-with-your-team/managed-llm-provider), [Custom providers](/cloud/share-with-your-team/custom-llm-provider) and [Per-member credential bindings](/cloud/share-with-your-team/per-member-llm-credentials).

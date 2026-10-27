@@ -33,7 +33,8 @@ export type GoogleWorkspaceActionDependencies = {
   token: (input: {
     organizationId: NonNullable<OrgRouteVariables["organizationContext"]>["organization"]["id"]
     orgMembershipId: NonNullable<OrgRouteVariables["organizationContext"]>["currentMember"]["id"]
-    connectionId?: string
+    /** Omitted: the signed capability header or the default. null: always the default. */
+    connectionId?: string | null
   }) => Promise<GoogleWorkspaceAccessToken>
   fetch: (input: Parameters<typeof fetch>[0], init?: RequestInit) => Promise<Response>
 }
