@@ -186,20 +186,24 @@ test("v2-only rollout: a fresh install runs v2, refuses v1, and turning it off c
   });
 });
 
-test("v2-only rollout: a v1 profile moves to v2 at once and a refused copy never strands it on v1", { timeout: 60_000 }, async () => {
+test("v2-only rollout: an unchanged policy retries after v1 becomes idle and a refused copy never strands it on v1", { timeout: 60_000 }, async () => {
   await disposableProfile(async ({ directory, config, root, v1, statePath }) => {
     await writeV1History(v1, directory, [{ id: id("ses", 1), title: "v1 chat", messages: 3 }]);
     await writeFile(statePath, JSON.stringify({ enabled: false, chatRouting: false, engineOrigin: "manual", engineChangedAt: "2026-10-01T00:00:00.000Z" }));
     const v1Before = await digest(v1);
     let idle = false;
-    const preview = createEngineV2Preview({ config, autoUpgradeIdle: async () => idle, historyCopyFreeBytes: LOW_DISK, deferStart: true });
+    let checks = 0;
+    const preview = createEngineV2Preview({ config, autoUpgradeIdle: async () => { checks++; return idle; }, historyCopyFreeBytes: LOW_DISK, deferStart: true });
     try {
       await preview.setV2Only(true);
-      await new Promise(done => setTimeout(done, 100));
+      await new Promise<void>(resolve => setImmediate(resolve));
+      assert.equal(checks, 1);
       assert.equal(preview.status().chatRouting, false, "running v1 work is never stranded");
-      await preview.setV2Only(false);
       idle = true;
+      // The next desktop-config refresh still carries the same enabled policy.
+      // No policy toggle or OpenWork restart should be needed after v1 goes idle.
       await preview.setV2Only(true);
+      assert.equal(checks, 2, "an unchanged policy checks again once the earlier busy check has settled");
       await waitFor(() => preview.status().running && preview.status().chatRouting && preview.status().migration.state === "error", 20_000, "v2 selected; copy refused");
       assert.match(preview.status().migration.error ?? "", /Not enough free disk space/);
       assert.equal(preview.status().engineOrigin, "forced");
@@ -211,6 +215,61 @@ test("v2-only rollout: a v1 profile moves to v2 at once and a refused copy never
     } finally { await preview.stop(); }
     assert.equal(await digest(v1), v1Before, "v1 history is never written");
     assert.equal(olderBuildServesV2(await readFile(statePath, "utf8")), true);
+  });
+});
+
+test("v2-only rollout: repeated policy refreshes share a pending idle check", { timeout: 60_000 }, async () => {
+  await disposableProfile(async ({ config, statePath }) => {
+    await writeFile(statePath, JSON.stringify({ enabled: false, chatRouting: false, engineOrigin: "manual", engineChangedAt: "2026-10-01T00:00:00.000Z" }));
+    let checks = 0;
+    let finishIdle: ((idle: boolean) => void) | undefined;
+    const preview = createEngineV2Preview({ config, deferStart: true, autoUpgradeIdle: () => {
+      checks++;
+      return new Promise<boolean>(resolve => { finishIdle = resolve; });
+    } });
+    try {
+      await preview.setV2Only(true);
+      await waitFor(() => finishIdle !== undefined, 1_000, "the idle check starts");
+      await preview.setV2Only(true);
+      await preview.setV2Only(true);
+      assert.equal(checks, 1, "policy refreshes must not start parallel engine switches");
+      assert.equal(preview.status().chatRouting, false, "v1 keeps serving while its activity is unknown");
+      assert.ok(finishIdle);
+      finishIdle(true);
+      await waitFor(() => preview.status().running && preview.status().chatRouting, 20_000, "one switch selects v2");
+      const pid = preview.status().pid;
+      await preview.setV2Only(true);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      assert.equal(checks, 1);
+      assert.equal(preview.status().pid, pid, "an already applied policy keeps the same v2 engine");
+    } finally {
+      finishIdle?.(false);
+      await preview.stop();
+    }
+  });
+});
+
+test("v2-only rollout: revoking the policy during an idle check leaves v1 selected", { timeout: 60_000 }, async () => {
+  await disposableProfile(async ({ config, statePath }) => {
+    await writeFile(statePath, JSON.stringify({ enabled: false, chatRouting: false, engineOrigin: "manual", engineChangedAt: "2026-10-01T00:00:00.000Z" }));
+    let finishIdle: ((idle: boolean) => void) | undefined;
+    const preview = createEngineV2Preview({ config, deferStart: true, autoUpgradeIdle: () =>
+      new Promise<boolean>(resolve => { finishIdle = resolve; }) });
+    try {
+      await preview.setV2Only(true);
+      await waitFor(() => finishIdle !== undefined, 1_000, "the idle check starts");
+      await preview.setV2Only(false);
+      assert.ok(finishIdle);
+      finishIdle(true);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      assert.equal(preview.status().v2Only, false);
+      assert.equal(preview.status().chatRouting, false, "a revoked rollout must not select v2 after the idle check");
+      assert.equal(preview.status().running, false);
+      assert.equal(readEngineV2PreviewState(config).chatRouting, false);
+    } finally {
+      finishIdle?.(false);
+      await preview.stop();
+    }
   });
 });
 
