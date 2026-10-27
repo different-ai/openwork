@@ -213,6 +213,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  opencodeV2Only: {
+    label: "OpenCode v2 only",
+    description: "Desktop chats always run on OpenCode v2: switching to OpenCode v1 is turned off and earlier chats are copied to v2 in the background.",
+    category: "experience",
+    added: "2026-10-27",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/opencode-v2-only/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   managedDeployments: {
     label: "Managed deployments",
     description: "Organization admins install OpenWork in their own AWS account or Google Cloud project and see its health and updates in OpenWork, and agents connected to OpenWork can create and follow those deployments.",

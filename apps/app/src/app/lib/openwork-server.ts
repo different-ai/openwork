@@ -176,6 +176,8 @@ export interface EngineV2PreviewStatus {
   migration?: EngineV2MigrationStatus;
   /** Older servers omit it; treat that as unknown and do not prompt. */
   v1HistoryAvailable?: boolean;
+  /** The organization runs every chat on OpenCode v2 (the opencodeV2Only rollout). Older servers omit it: off. */
+  v2Only?: boolean;
   mirroredProviderIds: string[];
   skippedProviderIds: string[];
   /** Why each skipped provider is not on OpenCode v2. Older servers, and the rollout switched off, omit it. */

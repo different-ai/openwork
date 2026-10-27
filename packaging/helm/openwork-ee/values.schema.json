@@ -171,6 +171,16 @@
               ],
               "description": "Live provider sync: Keep desktop OpenCode v2 models up to date with the organization's AI Gateway in real time. Renders DEN_FEATURE_LIVE_PROVIDER_SYNC."
             },
+            "opencodeV2Only": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "OpenCode v2 only: Desktop chats always run on OpenCode v2: switching to OpenCode v1 is turned off and earlier chats are copied to v2 in the background. Renders DEN_FEATURE_OPENCODE_V2_ONLY."
+            },
             "managedDeployments": {
               "enum": [
                 "",

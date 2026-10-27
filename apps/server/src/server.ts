@@ -831,7 +831,11 @@ export async function startServer(
   let resolvedLiveProviderSync = false;
   const resolveLiveProviderSync = async () => {
     resolvedLiveProviderSync = false;
-    resolvedLiveProviderSync = (await managedDesktopPolicy(config).current())?.liveProviderSync === true;
+    const policy = await managedDesktopPolicy(config).current();
+    resolvedLiveProviderSync = policy?.liveProviderSync === true;
+    // The same verified desktop-config read carries the v2-only rollout. Off
+    // when signed out, on older Den, or while Den cannot be reached.
+    void engineV2Preview.setV2Only(policy?.opencodeV2Only === true).catch(() => undefined);
     return resolvedLiveProviderSync;
   };
   const engineV2Preview: EngineV2Preview = createEngineV2Preview({ config, env, deferStart: true,
@@ -3392,6 +3396,8 @@ function createRoutes(
     } finally {
       await clearing;
     }
+    // Signed out, no organization rollout applies. The engine selection stays.
+    await engineV2Preview.setV2Only(false);
     await anonymousInference.initialize(config.port);
     return new Response(null, { status: 204 });
   });
