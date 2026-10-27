@@ -1619,7 +1619,9 @@ export function createEngineV2Preview(options: {
   }
 
   async function setV2Only(next: boolean): Promise<EngineV2PreviewStatus> {
-    if (v2Only === next) return status();
+    // A busy v1 engine can defer the switch. Retry the unchanged enabled
+    // policy on the next check until v2 serves chats; keep in-flight work single.
+    if (v2Only === next && (!next || chatRouting)) return status();
     v2Only = next;
     // Turning the rollout off keeps the engine selection, routing and any
     // copy in progress exactly as they are: nothing moves back to v1.
