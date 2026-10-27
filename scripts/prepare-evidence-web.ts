@@ -1,4 +1,5 @@
 import { evidenceProviderFromEnv, EVIDENCE_PROVIDER_LABELS } from "../packages/evidence-provider/src/provider.ts";
+import { deadlineFromEnv } from "../packages/daytona-evidence/src/build-budget.ts";
 
 // Builds (or finds) this commit's e2e/preview world on the provider chosen by
 // OPENWORK_EVIDENCE_PROVIDER (unset means Freestyle).
@@ -12,8 +13,13 @@ const imageSha = process.env.OPENWORK_EVIDENCE_IMAGE_SHA || undefined;
 if (!sha || !process.env[credential]?.trim()) throw new Error(`OPENWORK_EVIDENCE_SOURCE_SHA and ${credential} are required`);
 const started = performance.now();
 const stages: { stage: string; durationMs: number; cacheHit?: boolean; reason?: string }[] = [];
+// The CI step's budget, inside its timeout-minutes: Daytona waits stop in time
+// to print what they waited on instead of being cancelled with no output.
+const deadline = deadlineFromEnv(process.env, Date.now());
 const options = {
   imageSha,
+  deadline,
+  progress: (event: unknown) => { console.log(JSON.stringify(event)); },
   observe: (event: { stage: string; durationMs: number; cacheHit?: boolean; reason?: string }) => { stages.push(event); console.log(JSON.stringify(event)); },
   // The builder VM is credential-free and built from this public commit; its
   // log tail is the fastest way to see why the shared e2e/preview world failed.

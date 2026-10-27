@@ -127,7 +127,7 @@ jobs:
       - name: Test fork authorization and free screening policy
         run: node --test .github/scripts/contributor-pr.test.mjs .github/scripts/contributor-screen.test.mjs .github/scripts/warden-check.test.mjs .github/scripts/warden-report.test.mjs .github/scripts/warden-fast.test.mjs .github/scripts/setup-browser.test.mjs
       - name: Test on-demand PR proof review builds
-        run: node --test .github/scripts/pr-proof-review-build.test.mjs .github/scripts/pr-proof-artifacts.test.mjs evals/scripts/engine-parity-binaries.test.mjs evals/scripts/run-parity-proof.test.mjs
+        run: node --test .github/scripts/pr-proof-review-build.test.mjs .github/scripts/pr-proof-artifacts.test.mjs .github/scripts/pr-proof-budgets.test.mjs evals/scripts/engine-parity-binaries.test.mjs evals/scripts/run-parity-proof.test.mjs
       - name: Test desktop and cloud computer access and interruption
         run: |
           pnpm --filter @openwork/computer-use build

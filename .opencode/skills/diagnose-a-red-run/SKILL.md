@@ -50,6 +50,10 @@ git worktree remove /tmp/openwork-dev-control
 - World preparation failed: read the "builder log" group in the job log; it is
   the VM's own build or boot output. A fast path that fails falls back to a full
   build by itself, so a red here is a real build or boot failure.
+- "was not ready within this job's N min preparation budget": another run (often
+  the dev warm-up after a dependency change) holds that shared Daytona layer.
+  The `waiting` lines and the message name its builder, state, commit and when
+  its controller gives up. Not caused by the PR: rerun once that build finishes.
 - Journey failed: the timeout prints the on-screen state. Reproduce with the
   `run-tests` core journey command on the same pushed commit.
 

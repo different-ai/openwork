@@ -97,13 +97,17 @@ jobs:
         run: |
           pnpm --filter @openwork/freestyle... --filter @openwork/daytona-evidence... --filter @openwork/review... --filter @openwork/world... --filter @openwork/types... --filter @openwork/sdk... install --frozen-lockfile --ignore-scripts --prefer-offline
           pnpm --dir evals install --frozen-lockfile --ignore-scripts --prefer-offline
+      # Budgets nest: the preparation's own budget < this step < the job, so
+      # a slow shared image build fails with what it waited on instead of the
+      # job being cancelled silently (.github/scripts/pr-proof-budgets.test.mjs).
       - name: Prepare this commit's evidence world
-        timeout-minutes: 35
+        timeout-minutes: 13
         env:
           FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
           OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
+          OPENWORK_EVIDENCE_PREPARE_BUDGET_MINUTES: '11'
         run: node scripts/prepare-evidence-web.ts
       - name: Run the core journey and save its end state as the preview
         timeout-minutes: 15
@@ -401,12 +405,13 @@ jobs:
       - name: Build this branch's review app
         run: pnpm --filter @openwork/review-app build
       - name: Prepare this branch's isolated web world
-        timeout-minutes: 35
+        timeout-minutes: 30
         env:
           FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
           OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
+          OPENWORK_EVIDENCE_PREPARE_BUDGET_MINUTES: '28'
         run: node scripts/prepare-evidence-web.ts
       # Specs tagged "checkpoints" run here because the Freestyle credential is
       # protected. Their records join this PR's normal evidence report; the shared
