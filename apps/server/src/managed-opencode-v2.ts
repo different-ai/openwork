@@ -455,7 +455,7 @@ async function createManagedOpencodeV2ServerInner(
   // Cloud skills use Connect on demand, just like v1. No generated Cloud
   // skill directory is registered with the native engine.
   await writeConfig();
-  const historyLease = await acquireEngineHistoryLease(options.rootDir);
+  const historyLease = await acquireEngineHistoryLease(options.rootDir, { bin: options.bin });
   const child = spawn(options.bin, ["serve", "--hostname", hostname, "--port", String(port)], {
     env: {
       ...inherited,

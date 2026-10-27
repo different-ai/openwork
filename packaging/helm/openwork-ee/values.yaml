@@ -37,6 +37,7 @@ config:
     connectionMcpServers: ""        # default off · Members can add one connected service, such as Gmail or Linear, to an agent like Claude Code as its own MCP server that lists only that service's tools.
     slackSendAsBot: ""              # default off · Chats and Automations can send a Slack message from the OpenWork app instead of as the member: a DM that notifies them ("ping me when this is done") or a channel post that names whose agent sent it. Needs the OpenWork app in Slack; limited to 20 messages a day per member.
     liveProviderSync: ""            # default off · Keep desktop OpenCode v2 models up to date with the organization's AI Gateway in real time.
+    opencodeV2Only: ""              # default off · Desktop chats always run on OpenCode v2: switching to OpenCode v1 is turned off and earlier chats are copied to v2 in the background.
     managedDeployments: ""          # default off (cloud only) · Organization admins install OpenWork in their own AWS account or Google Cloud project and see its health and updates in OpenWork, and agents connected to OpenWork can create and follow those deployments.
     workbotDocuments: ""            # default off · Members browse recent Google Drive files and folders in Workbot, open documents in tabs, and save supported text and spreadsheet edits to Drive.
     workbotDocumentEditing: ""      # default off · Members choose Edit from a document preview. Full Office editing starts their Cloud workspace only when requested. Requires Workbot Documents.

@@ -33,7 +33,9 @@ or migrate manually from the desktop command palette or Advanced settings;
 explicit manual engine choices remain respected.
 
 Neither direction deletes history: v1 originals remain in place and new v2
-chats remain in v2 storage for a later switch back. Failures keep v1 selected,
+chats remain in v2 storage for a later switch back. Automatic failures keep v1
+selected (a profile already on v2 stays on v2), never leave the v2 history
+fenced (see [History copy fence and recovery](#history-copy-fence-and-recovery)),
 retain a durable error and backup receipt, and retry only on a later boot with
 a one-minute-to-one-day bounded exponential backoff. Source chat changes during
 copying or v2 startup prevent the switch; a later attempt restores the pre-copy
@@ -64,6 +66,56 @@ separate from the retired rollout flag and still take precedence. Explicitly
 configured external engines are not local migration sources: automatic migration
 must not replace their routing with a host-local sidecar or copy unrelated local
 history.
+
+### OpenCode v2 only rollout
+
+`opencodeV2Only` (cloud and self-hosted, off) makes v2 the only chat engine for
+a signed-in organization's desktops: v1 is selected away once it is idle,
+switching back answers `409 engine_v2_only`, and v1 chats are copied in the
+background after v2 is selected, never before. Turning it off unlocks the
+switch and changes nothing else. See
+[the feature doc](features/opencode-v2-only/README.md).
+
+### Downgrade compatibility
+
+Every engine state write keeps `enabled`, `chatRouting`, `engineOrigin`
+(and `engineChangedAt`/`engineForced`): published builds read a file without a
+boolean `enabled` as OpenCode v1. A file the reverted v2-only build wrote
+(no `enabled` or `chatRouting`) is read here as v2 with `engineOrigin: "forced"`.
+A leftover automatic-copy marker is ignored once v2 is selected, so it cannot
+keep v2 from starting. `apps/server/test/engine-v2-history-recovery.test.ts`
+checks each saved state against the v0.18.63 selection logic.
+
+## History copy fence and recovery
+
+The copy owns the target through the OS-level SQLite mutex
+(`history-copy-mutex.db`), which a dead process cannot hold. In order, before
+anything durable is written or v2 is stopped:
+
+1. Preflight: the saved stage belongs to this profile and the rest of the copy
+   fits on disk (estimated from the saved stage).
+2. Copy lock: no other copy holds the mutex, and every engine lease is checked.
+   An engine whose OpenWork still runs (including another installed app sharing
+   the history) refuses the copy and is never stopped. A lease whose OpenWork
+   exited is removed; its engine is stopped only when it is positively
+   identified (`ps` start time before the lease and an opencode `serve`
+   command, re-checked before each signal). A pid now used by another process
+   is never signalled; anything unidentifiable refuses the copy.
+
+The `history-copy.pending` fence (JSON with an owner token; older builds wrote
+plain text) is published only immediately before the first target write. A
+copy that fails after that removes the chats it left unfinished (rows owned by
+an incomplete `openwork_history_copy` checkpoint) and lifts its own fence. Only
+a pause (closing OpenWork) or process death keeps the fence and start marker so
+the next start resumes.
+
+An engine start that finds a fence while no copy holds the mutex lifts it when
+the target has no unfinished checkpoint: completed chats are verified and
+consistent. Otherwise it fails with `history_copy_interrupted`, and the host
+resumes that copy once; a resume that cannot finish undoes the unfinished
+chats, lifts the fence and starts v2. Start errors suggest
+`OPENWORK_OPENCODE2_BIN` only for executable failures (spawn, exit, health),
+never for history copy states.
 
 ## Running tasks, switching, and migration progress
 
@@ -187,6 +239,20 @@ explicitly skips.
 ```sh
 OPENWORK_OPENCODE2_BIN="$(command -v opencode2)" pnpm --filter openwork-server test:history-migration
 ```
+
+Fence, lease, recovery, rollout and downgrade behavior run in CI without a
+native engine, against disposable profiles and a stand-in executable:
+
+```sh
+bun test apps/server/test/opencode-v2-history-safety.test.ts \
+  apps/server/test/engine-v2-history-recovery.test.ts \
+  apps/server/test/engine-v2-history-lockout-repro.test.ts
+```
+
+`engine-v2-history-lockout-repro.test.ts` uses only APIs that predate the fix,
+so it fails on the previous dev and passes here. Set
+`OPENWORK_NATIVE_OPENCODE2_BIN` to also run the native-engine recovery case
+(a real orphaned `opencode2 serve` and a real conversion).
 
 The same integration can be bundled and run on Node with a small V8 heap to
 exercise the desktop database implementation. No production history, provider

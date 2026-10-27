@@ -152,6 +152,8 @@ jobs:
           node --test apps/desktop/test/fresh-install-engine.test.mjs
           pnpm --filter openwork-server test:fresh-install-engine
           bun test apps/server/test/engine-auto-upgrade-boot.test.ts apps/server/test/engine-auto-upgrade.test.ts apps/server/test/engine-auto-upgrade-safety.test.ts
+      - name: Test v2 history copy fences, interrupted-copy recovery, the v2-only rollout and downgrades
+        run: bun test apps/server/test/opencode-v2-history-safety.test.ts apps/server/test/engine-v2-history-recovery.test.ts apps/server/test/engine-v2-history-lockout-repro.test.ts
       - name: Test providers reaching OpenCode v2 and the organization's provider rule
         run: bun test apps/server/test/engine-v2-provider-mapping.test.ts apps/server/test/opencode-v2-local-auth.test.ts
       - name: Test the self-hosted web UI stays on its own origin

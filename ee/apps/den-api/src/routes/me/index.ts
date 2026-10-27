@@ -481,6 +481,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         connectEnabled: true,
         liveProviderSync: features.liveProviderSync,
         nativeAffordanceCodeMode: features.nativeAffordanceCodeMode,
+        opencodeV2Only: features.opencodeV2Only,
         // Compatibility fields for published desktops: both behaviors are now always on.
         localProviderMirror: true,
         removeOpencodeZen: true,

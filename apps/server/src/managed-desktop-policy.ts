@@ -191,7 +191,7 @@ class ManagedDesktopPolicy {
         // Model access/permissions keep their offline policy. A rollout is
         // different: a newly started engine must not resurrect live sync from
         // a stale grant after its kill switch changed while disconnected.
-        return this.lastKnown?.key === sessionKey(session) ? { ...this.lastKnown.policy, liveProviderSync: false, nativeAffordanceCodeMode: false } : null;
+        return this.lastKnown?.key === sessionKey(session) ? { ...this.lastKnown.policy, liveProviderSync: false, nativeAffordanceCodeMode: false, opencodeV2Only: false } : null;
       }
       throw new ApiError(403, "policy_unavailable", "Your organization's policy could not be verified. Try again when connected.");
     }
