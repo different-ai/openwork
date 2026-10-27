@@ -8,6 +8,7 @@ import { z } from "zod"
 import { cloudHostingAvailable } from "../../capability-sources/cloud-hosting.js"
 import { recordDesktopHandoffCreated, recordSessionHandedOff } from "../../audit/domain/sessions.js"
 import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/request-capture.js"
+import { sessionTokenMatches } from "../../session-token.js"
 import { jsonValidator, publicRoute, userSessionRoute } from "../../middleware/index.js"
 import { db } from "../../db.js"
 import { env, type DenOrgMode } from "../../env.js"
@@ -609,22 +610,32 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
 
     const now = new Date()
     const exchange = await db.transaction(async (tx) => {
-      const rows = await tx
-        .select({
-          session: AuthSessionTable,
-          user: AuthUserTable,
-        })
+      const grants = await tx
+        .select({ sessionToken: DesktopHandoffGrantTable.session_token, userId: DesktopHandoffGrantTable.user_id })
         .from(DesktopHandoffGrantTable)
-        .innerJoin(AuthSessionTable, eq(DesktopHandoffGrantTable.session_token, AuthSessionTable.token))
-        .innerJoin(AuthUserTable, eq(DesktopHandoffGrantTable.user_id, AuthUserTable.id))
         .where(
           and(
             eq(DesktopHandoffGrantTable.id, input.grant),
             isNull(DesktopHandoffGrantTable.consumed_at),
             gt(DesktopHandoffGrantTable.expires_at, now),
-            gt(AuthSessionTable.expiresAt, now),
           ),
         )
+        .limit(1)
+
+      const grant = grants[0]
+      if (!grant) {
+        return null
+      }
+
+      // The grant holds the client's token; the session row may hold only its hash.
+      const rows = await tx
+        .select({
+          session: AuthSessionTable,
+          user: AuthUserTable,
+        })
+        .from(AuthSessionTable)
+        .innerJoin(AuthUserTable, eq(AuthUserTable.id, grant.userId))
+        .where(and(sessionTokenMatches(grant.sessionToken), gt(AuthSessionTable.expiresAt, now)))
         .limit(1)
 
       const row = rows[0]
@@ -660,7 +671,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       }
 
       return {
-        token: row.session.token,
+        token: grant.sessionToken,
         session: { id: row.session.id, userId: row.session.userId, expiresAt: row.session.expiresAt },
         user: {
           id: row.user.id,

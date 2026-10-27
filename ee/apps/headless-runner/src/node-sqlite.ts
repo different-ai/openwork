@@ -7,7 +7,9 @@ import type { SqlDriver } from "./sql.js"
 export function nodeSqlite(path: string): SqlDriver {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true })
   const db = new DatabaseSync(path)
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;")
+  // secure_delete FAST: space freed inside a page (a row rewritten or deleted) is zeroed at no extra I/O, so a deleted
+  // conversation's bytes don't linger in the file (storage/ scrubs and deletes; see README "Deleting a conversation").
+  db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = FAST;")
   return {
     exec: (sql) => db.exec(sql),
     prepare(sql) {

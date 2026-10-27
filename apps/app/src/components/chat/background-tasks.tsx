@@ -12,7 +12,7 @@ import { formatElapsedSeconds } from "@/lib/tool-call-duration"
 import { Message } from "@/components/ui/message"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { useBackgroundShellStore, type BackgroundShell } from "@/react-app/domains/session/status/background-shell-store"
+import type { BackgroundShell } from "@/react-app/domains/session/status/background-shell-store"
 
 const COMMAND_PREVIEW_LENGTH = 80
 
@@ -38,10 +38,7 @@ export function backgroundShellNoticeFromMessage(message: UIMessage): Background
  * raw `<shell>` hand-off text.
  */
 export const BackgroundTaskNotice = React.memo(function BackgroundTaskNotice({ message, notice }: { message: UIMessage; notice: BackgroundShellNotice }) {
-  // A row cached while the feature was on stays hidden after it is turned off.
-  const enabled = useBackgroundShellStore((state) => state.enabled)
   const command = commandPreview(notice.command)
-  if (!enabled) return null
   return (
     <Message
       className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10"

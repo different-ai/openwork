@@ -31,6 +31,7 @@ import { EnterpriseMcpClientError, EnterpriseMcpLifecycleDeadlineError, Enterpri
 import { ENTERPRISE_MCP_REQUESTED_SCOPES_LIMIT } from "./contracts.js"
 import { EnterpriseMcpOAuthProvider } from "./oauth-provider.js"
 import { createOAuthLoginDiscoveryFetch } from "./oauth-login-discovery.js"
+import { manualOAuthEndpointsSchema } from "./manual-oauth.js"
 import { createEnterpriseMcpRequestObserver, type EnterpriseMcpRequestObserver } from "./request-observer.js"
 import { createEnterpriseMcpTokenResponseCompat } from "./token-response-compat.js"
 import { collectEnterpriseMcpTools } from "./tool-catalog.js"
@@ -54,6 +55,7 @@ const clientMetadataUrlSchema = z.string().trim().url().refine((value) => {
 }, "An OAuth client metadata document URL must use HTTPS and include a path.")
 const oauthConfigurationSchema = z.object({
   applicationType: z.enum(["web", "native"]),
+  manualOAuthEndpoints: manualOAuthEndpointsSchema.optional(),
   clientMetadataUrl: clientMetadataUrlSchema.optional(),
   authorizationServerIssuer: z.string().trim().url().optional(),
   requestedScopes: z.array(z.string().trim().min(1)).max(ENTERPRISE_MCP_REQUESTED_SCOPES_LIMIT).optional(),
@@ -91,6 +93,8 @@ type Session = {
   controller: AbortController
   requestOptions: RequestOptions
   lifecycle: EnterpriseMcpLifecycle
+  /** Set once the server was asked to end the session. */
+  releaseAttempted?: boolean
 }
 
 function requestInit(authorization: EnterpriseMcpAuthorization): RequestInit | undefined {
@@ -185,6 +189,27 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
     }
   }
 
+  /**
+   * Asks the server to end this one-off session (an HTTP DELETE). Closing the
+   * client only stops local requests, so a stateful server would otherwise
+   * keep the session until it expires, and gateways that cap open sessions
+   * then refuse new ones. Bounded, attempted once and best-effort: a server
+   * without DELETE support, a failure or a timeout never changes the result.
+   */
+  async function releaseSession(session: Session): Promise<void> {
+    if (session.releaseAttempted || !session.transport.sessionId) return
+    session.releaseAttempted = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const released = session.transport.terminateSession().catch(() => undefined)
+    await Promise.race([released, new Promise<void>((resolve) => { timer = setTimeout(resolve, closeTimeoutMs) })])
+    clearTimeout(timer)
+  }
+
+  async function closeSession(session: Session): Promise<void> {
+    await releaseSession(session)
+    await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+  }
+
   function failureRequestPhase(observer: EnterpriseMcpRequestObserver) {
     return observer.lastFailedRequestPhase() ?? observer.lastRequestPhase()
   }
@@ -250,7 +275,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
 
     const compatibleFetch = createEnterpriseMcpTokenResponseCompat({
       fetch: input.connection.authorization.type === "oauth" && input.flow.kind === "connect"
-        ? createOAuthLoginDiscoveryFetch({ fetch: configuredFetch, serverUrl })
+        ? createOAuthLoginDiscoveryFetch({ fetch: configuredFetch, serverUrl, manual: Boolean(oauthConfiguration?.manualOAuthEndpoints) })
         : configuredFetch,
       onTranslation: (translation) => emitDiagnostic({
         kind: "request",
@@ -278,6 +303,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
     const oauthProvider = input.connection.authorization.type === "oauth"
       ? new EnterpriseMcpOAuthProvider({
           redirectUri,
+          serverUrl: serverUrl.href,
           connectionId: input.connection.id,
           persistence: input.connection.authorization.persistence,
           flow: input.flow,
@@ -405,6 +431,8 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       })
       throw wrapped
     } finally {
+      // A failure can leave a session the operation never closed.
+      await releaseSession(session)
       session.controller.abort()
     }
   }
@@ -433,7 +461,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             throw error
           } finally {
             try {
-              await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+              await closeSession(session)
             } catch (error) {
               if (!operationFailed) {
                 throw new EnterpriseMcpClientError({
@@ -505,7 +533,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
                   throw new Error("The OAuth provider requested authorization without an authorization URL.")
                 }
                 try {
-                  await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+                  await closeSession(session)
                 } catch {
                   // The bounded cleanup attempt must not discard a valid authorization URL.
                 }
@@ -513,7 +541,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
               }
             }
             try {
-              await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+              await closeSession(session)
             } catch (error) {
               throw new EnterpriseMcpClientError({
                 operationPhase: "shutdown",
@@ -526,7 +554,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             const authorizeUrl = session.oauthProvider?.authorizeUrl ?? null
             if (error instanceof UnauthorizedError && authorizeUrl) {
               try {
-                await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+                await closeSession(session)
               } catch {
                 // The bounded cleanup attempt must not discard a valid authorization URL.
               }
@@ -608,7 +636,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             })
           } finally {
             try {
-              await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+              await closeSession(session)
             } catch (error) {
               if (!operationFailed) {
                 throw new EnterpriseMcpClientError({

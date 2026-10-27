@@ -31,11 +31,14 @@ import {
 } from "../../capability-sources/google-workspace-api.js"
 import { getOrgOAuthClient, type ConnectedAccountRow } from "../../capability-sources/oauth-credentials.js"
 import { clientSelectedFeatures, getNativeOAuthProvider, providerScopesSatisfy, resolveProviderScopes } from "../../capability-sources/provider-registry.js"
+import { registerGoogleOfficeEditorRoutes } from "./google-office-editor.js"
+import { registerGoogleDocumentEditorRoutes } from "./google-document-editor.js"
 import { registerGoogleDriveFileRoutes } from "./google-drive-files.js"
 import { registerGoogleDriveUploadRoutes } from "./google-drive-uploads.js"
 import { isGoogleAuthorizationFailure, parseGoogleError } from "./google-workspace-actions.js"
 import { registerGmailManagementRoutes } from "./gmail-management.js"
 import { registerGoogleProductivityManagementRoutes } from "./google-productivity-management.js"
+import { registerGoogleDocumentRoutes } from "./google-documents.js"
 import { listTeamsForMember } from "../../orgs.js"
 import { readInternalCapabilityConnectorId } from "../../session.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -235,6 +238,8 @@ const driveFilesQuerySchema = z.object({
   query: z.string().trim().min(1).max(500).optional().describe("Optional text to search in Drive file names and full text. Omit to list files."),
   maxResults: z.coerce.number().int().min(1).max(25).default(10).describe("Maximum files to return, capped at 25."),
   pageToken: z.string().min(1).max(2048).optional(),
+  orderBy: z.enum(["folder,name_natural", "recency desc", "modifiedTime desc"]).optional(),
+  filesOnly: z.enum(["true", "false"]).optional(),
   modifiedAfter: z.string().datetime({ offset: true }).optional().describe("Only files modified after this RFC3339 timestamp; follow nextPageToken to enumerate all matching files."),
   folderId: z.string().min(1).max(512).regex(/^[A-Za-z0-9_-]+$/).optional().describe("Limit to direct children of this folder."),
 })
@@ -307,7 +312,7 @@ const shareDriveFileResponseSchema = z.object({
 }).meta({ ref: "GoogleWorkspaceShareDriveFileResponse" })
 
 export type GoogleWorkspaceAccessToken =
-  | { kind: "ok"; accessToken: string; account: ConnectedAccountRow; enabledScopes: string[]; enabledFeatures?: string[] }
+  | { kind: "ok"; accessToken: string; account: ConnectedAccountRow; enabledScopes: string[]; enabledFeatures?: string[]; connectionId?: string }
   | { kind: "needs_connection"; message: string }
   | { kind: "google_api_error"; message: string }
   | NativeProviderPolicyError
@@ -437,7 +442,37 @@ async function googleWorkspaceToken(input: {
   const client = await getOrgOAuthClient(input.organizationId, credentialProviderId)
   const enabledFeatures = client ? clientSelectedFeatures(provider, client.extra) : []
   const enabledScopes = client ? resolveProviderScopes(provider, enabledFeatures) : []
-  return { kind: "ok", accessToken: token.accessToken, account: token.account, enabledScopes, enabledFeatures }
+  return { kind: "ok", accessToken: token.accessToken, account: token.account, enabledScopes, enabledFeatures, connectionId: credentialProviderId }
+}
+
+export type MemberCalendarRead =
+  | { kind: "ok"; json: unknown }
+  | { kind: "needs_connection" | "policy_blocked" | "missing_scope" | "google_api_error" }
+
+/**
+ * Reads a member's primary Google Calendar for their agent's event source (calendar changes that wake it early),
+ * outside any request: one read-only `GET`, expanded recurring events and cancelled ones (`showDeleted`), so a
+ * cancellation can be told from a move. Uses the member's default Google Workspace connection, like the calendar list route.
+ */
+export async function readMemberGoogleCalendar(input: {
+  organizationId: DenTypeId<"organization">
+  orgMembershipId: DenTypeId<"member">
+  timeMin: string
+  timeMax: string
+}): Promise<MemberCalendarRead> {
+  const token = await googleWorkspaceToken({ organizationId: input.organizationId, orgMembershipId: input.orgMembershipId, connectionId: null })
+  if (token.kind !== "ok") return { kind: token.kind }
+  if (missingScope(token.account, [CALENDAR_READ_SCOPE, CALENDAR_EVENTS_SCOPE])) return { kind: "missing_scope" }
+  const url = new URL(`${calendarApiBase()}/calendar/v3/calendars/primary/events`)
+  url.searchParams.set("timeMin", input.timeMin)
+  url.searchParams.set("timeMax", input.timeMax)
+  url.searchParams.set("singleEvents", "true")
+  url.searchParams.set("showDeleted", "true")
+  url.searchParams.set("orderBy", "startTime")
+  url.searchParams.set("maxResults", "250")
+  const response = await googleWorkspaceApiFetch(url, { headers: { authorization: `Bearer ${token.accessToken}` } })
+  if (!response.ok) return { kind: "google_api_error" }
+  return { kind: "ok", json: await readJson(response) }
 }
 
 async function googleApiError(operation: string, response: Response) {
@@ -745,8 +780,11 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
   const actionDependencies = { token: googleWorkspaceToken, fetch: googleWorkspaceApiFetch }
   registerGoogleDriveUploadRoutes(app, actionDependencies)
   registerGoogleDriveFileRoutes(app, actionDependencies)
+  registerGoogleDocumentEditorRoutes(app, actionDependencies)
+  registerGoogleOfficeEditorRoutes(app, actionDependencies)
   registerGmailManagementRoutes(app, actionDependencies)
   registerGoogleProductivityManagementRoutes(app, actionDependencies)
+  registerGoogleDocumentRoutes(app, actionDependencies)
 
   app.post(
     "/v1/direct-uploads/google-workspace/drive-files",
@@ -1255,13 +1293,17 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       }
       const permissionMessage = driveReadPermissionMessage(token.account)
-      if (permissionMessage) {
-        return c.json({ error: "needs_connection", message: permissionMessage }, 409)
+      // A previously granted Google scope is not permission after the admin removes it from this connector.
+      const enabledRead = token.enabledScopes.some((scope) => scope === DRIVE_READ_SCOPE || scope === DRIVE_FULL_SCOPE)
+      if (permissionMessage || !enabledRead) {
+        return c.json({ error: "needs_connection", message: permissionMessage ?? "An organization admin must enable Read all Drive files in connector setup, then reconnect Google Workspace." }, 409)
       }
 
       const query = c.req.valid("query")
       const url = new URL(`${driveApiBase()}/drive/v3/files`)
       const filters = [query.query ? buildDriveSearchQuery(query.query) : "trashed = false"]
+      if (query.filesOnly === "true") filters.push("mimeType != 'application/vnd.google-apps.folder'")
+      if (query.orderBy) url.searchParams.set("orderBy", query.orderBy)
       if (query.modifiedAfter) filters.push(`modifiedTime > '${query.modifiedAfter}'`)
       if (query.folderId) filters.push(`'${query.folderId}' in parents`)
       url.searchParams.set("q", filters.join(" and "))
@@ -1294,7 +1336,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Read a Google Drive file's text or binary content as the calling member",
-      description: "Reads a Drive file. Docs and Slides export as plain text; Sheets exports the first tab as CSV. For every spreadsheet tab or edits use the spreadsheet metadata and values capabilities. Downloaded content is bounded; binary files use standard base64 within the model-safety limit. To analyze or edit a whole file (Office, PDF, large CSV), pull it into the workspace with the drive_pull_file tool instead.",
+      description: "Reads a Drive file. Docs and Slides export as plain text; Sheets exports the first tab as CSV. For every spreadsheet tab or edits use the spreadsheet metadata and values capabilities. Downloaded content is bounded; binary files use standard base64 within the model-safety limit. To analyze or edit a whole file (Office, PDF, large CSV), pull it into the workspace with the drive_pull_file tool instead, or with createGoogleDriveDownloadLink from a shell.",
       responses: {
         200: jsonResponse("Google Drive file returned.", driveFileResponseSchema),
         400: jsonResponse("The Drive item is not a readable file.", invalidRequestSchema),
@@ -1318,8 +1360,9 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       }
       const permissionMessage = driveReadPermissionMessage(token.account)
-      if (permissionMessage) {
-        return c.json({ error: "needs_connection", message: permissionMessage }, 409)
+      const enabledRead = token.enabledScopes.some((scope) => scope === DRIVE_READ_SCOPE || scope === DRIVE_FULL_SCOPE)
+      if (permissionMessage || !enabledRead) {
+        return c.json({ error: "needs_connection", message: permissionMessage ?? "An organization admin must enable Read all Drive files in connector setup, then reconnect Google Workspace." }, 409)
       }
 
       const { fileId } = c.req.valid("param")

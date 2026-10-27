@@ -56,16 +56,46 @@ export function resolveGcpImages(version, approvedPins, inspect) {
   }));
 }
 
+export function resolveAwsImages(approvedPins, inspect) {
+  if (!approvedPins || Array.isArray(approvedPins) || typeof approvedPins !== "object"
+      || Object.keys(approvedPins).sort().join(",") !== "den_api,den_web") {
+    throw new Error("Approved AWS image pins must contain exactly den_api and den_web.");
+  }
+  return Object.fromEntries(["den_api", "den_web"].map((kind) => {
+    const repository = GCP_REPOSITORIES[kind];
+    const source = approvedPins[kind];
+    if (typeof source !== "string" || !source.startsWith(repository + "@")
+        || !digestPattern.test(source.slice(repository.length + 1))) throw new Error(`Invalid approved image pin: ${kind}`);
+    const pinned = resolveImage(source, repository, inspect);
+    if (pinned !== source) throw new Error(`Approved pin must be a Linux/amd64 manifest: ${kind}`);
+    return [kind, pinned];
+  }));
+}
+
+// Check operational module-local references against the actual payload allowlist.
+// A release must not succeed just because the source checkout has the file.
+export function validateModuleReferences(moduleFiles, read = (path) => readFileSync(resolve(root, path), "utf8")) {
+  const included = new Set(moduleFiles);
+  for (const file of moduleFiles.filter((name) => name.endsWith(".tf"))) {
+    const source = read(file);
+    for (const match of source.matchAll(/\$\{path\.module\}\/([^"\s]+)"/g)) {
+      const target = join(dirname(file), match[1]);
+      if (!included.has(target)) throw new Error(`Missing packaged module reference: ${target}`);
+    }
+  }
+}
+
 export function buildRelease(argv = process.argv.slice(2)) {
   const [provider, version, outputArgument, ...options] = argv;
-  if (options.length && (provider !== "gcp" || options.length !== 2 || options[0] !== "--image-pins")) {
-    throw new Error("Only GCP supports --image-pins <approved-json-file> (registry verification is mandatory).");
+  if (options.length && (options.length !== 2 || options[0] !== "--image-pins")) {
+    throw new Error("Use --image-pins <approved-json-file> (registry verification is mandatory).");
   }
   if (!["aws", "gcp"].includes(provider)) throw new Error("Usage: build-release.mjs <aws|gcp> <published-version> [output-directory]");
   if (!version || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error("Supply an exact published OpenWork image version.");
   // Resolve before writing artifacts; no customer-time source tag resolution.
   const images = provider === "gcp" ? resolveGcpImages(version,
-    options.length ? JSON.parse(readFileSync(resolve(options[1]), "utf8")) : undefined) : undefined;
+    options.length ? JSON.parse(readFileSync(resolve(options[1]), "utf8")) : undefined)
+    : options.length ? resolveAwsImages(JSON.parse(readFileSync(resolve(options[1]), "utf8"))) : undefined;
   const output = resolve(outputArgument ?? resolve(root, "dist/managed-deployments", provider, version));
   mkdirSync(output, { recursive: true });
   const templateName = provider === "aws" ? "cloudformation.json" : "tutorial.md";
@@ -100,8 +130,10 @@ export function buildRelease(argv = process.argv.slice(2)) {
     ...(provider === "aws" ? [
       "infra/managed-deployments/aws/runner/runner.py",
       "infra/managed-deployments/aws/health/health_agent.py",
-      ...files("infra/managed-deployments/aws/terraform", terraform),
-      ...files("infra/terraform/modules/openwork-aws-ecs", (name) => name.endsWith(".tf")).filter((path) => !path.includes("/examples/") && !path.includes("/tests/")),
+       ...files("infra/managed-deployments/aws/terraform", terraform).filter((path) => !path.includes("/examples/") && !path.includes("/tests/") && !path.includes("/modules/openwork-aws-ecs/")),
+       ...files("infra/terraform/modules/openwork-aws-ecs", (name) => name.endsWith(".tf") || name === "migration.py")
+         .filter((path) => !path.includes("/examples/") && !path.includes("/tests/")),
+
     ] : [
       "infra/managed-deployments/gcp/runner/install.py",
       "infra/managed-deployments/gcp/runner/runner.py",
@@ -109,6 +141,7 @@ export function buildRelease(argv = process.argv.slice(2)) {
       ...files("infra/managed-deployments/gcp/terraform", terraform),
     ]),
   ];
+  if (provider === "aws") validateModuleReferences(included.filter((path) => path.startsWith("infra/terraform/modules/openwork-aws-ecs/")));
   assertRegularInsideRoot(`infra/managed-deployments/${provider}/terraform/.terraform.lock.hcl`);
   if (provider === "gcp") {
     assertRegularInsideRoot("infra/managed-deployments/gcp/bootstrap/tutorial.md");

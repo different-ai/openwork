@@ -32,8 +32,13 @@ import {
 import { getInvalidMcpOAuthRedirectUris, isAllowedMcpOAuthRedirectUri, MCP_OAUTH_REDIRECT_URI_ERROR_DESCRIPTION } from "../../mcp/oauth-client-policy.js"
 import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
 import { publicRoute, queryValidator, tokenRoute } from "../../middleware/index.js"
-import { checkOAuthTokenRateLimit, recordOAuthTokenFailure } from "../../oauth-token-rate-limit.js"
-import { getOAuthTokenRateLimitLogFields, readBasicAuthClientId } from "../../oauth-token-rate-limit-observability.js"
+import { checkOAuthTokenRateLimit, recordOAuthTokenFailure, type OAuthTokenFailureBudgets } from "../../oauth-token-rate-limit.js"
+import {
+  getOAuthTokenFailureLogFields,
+  getOAuthTokenRateLimitLogFields,
+  readBasicAuthClientId,
+  type OAuthTokenLimitAttribution,
+} from "../../oauth-token-rate-limit-observability.js"
 import { emptyObjectSchema, emptyResponse, jsonResponse } from "../../openapi.js"
 import { getSingletonSsoStatus } from "../../orgs.js"
 import { cache } from "../../cache.js"
@@ -44,6 +49,8 @@ import { samlResponsePolicyMiddleware } from "../../sso-saml-response-middleware
 import { authorizeOrganizationSsoCallback, failOrganizationSsoTestIntent } from "../../sso-test-lifecycle.js"
 import { getRequestSession, readSignedSessionCookieToken, revokeBearerSession, type AuthContextVariables } from "../../session.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
+import { AUTH_RATE_LIMIT_POLICIES, authRateLimitedResponse, checkAuthRateLimit } from "../../auth-rate-limits.js"
+import { betterAuthRequest, requestClientIpKey, resolveRequestClientIp } from "../../request-client-ip.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
 import { exchangePreclaimAssertion, JWT_BEARER_GRANT_TYPE } from "../../workspace-preclaim.js"
 import { withAgentAuthMetadata } from "../../agent-auth-metadata.js"
@@ -430,7 +437,7 @@ async function rewriteMcpClientRegistrationRequest(request: Request, path: strin
 
 async function handleMcpClientRegistrationRequest(request: Request, path: string) {
   const rewritten = await rewriteMcpClientRegistrationRequest(request, path)
-  return rewritten instanceof Response ? rewritten : auth.handler(rewritten)
+  return rewritten instanceof Response ? rewritten : auth.handler(betterAuthRequest(rewritten))
 }
 
 // Better Auth includes RFC 9207 `iss` on successful code responses but not on
@@ -523,11 +530,6 @@ const INITIAL_ADMIN_BOOTSTRAP_VERIFY_RATE_LIMIT_WINDOW_MS = 300_000
 // A generous domain bucket bounds distributed enumeration without recreating coworker lockouts;
 // only unresolved addresses pay the tighter miss bucket.
 
-function readRequestAddress(headers: Headers) {
-  const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-  return forwarded || headers.get("x-real-ip")?.trim() || "unknown"
-}
-
 function sha256Hex(value: string) {
   return createHash("sha256").update(value).digest("hex")
 }
@@ -535,7 +537,7 @@ function sha256Hex(value: string) {
 export function loginOptionsRateLimitKeys(headers: Headers, email: string) {
   const domainHash = sha256Hex(email.slice(email.lastIndexOf("@") + 1).trim().toLowerCase())
   return {
-    ip: `auth-login-options:ip:${sha256Hex(readRequestAddress(headers))}`,
+    ip: `auth-login-options:ip:${sha256Hex(requestClientIpKey(headers))}`,
     email: `auth-login-options:email:${sha256Hex(email)}`,
     domain: `auth-login-options:domain:${domainHash}`,
     domainMiss: `auth-login-options:domain-miss:${domainHash}`,
@@ -659,6 +661,70 @@ async function handleJwtBearerGrant(request: Request): Promise<Response | null> 
   return Response.json(result.body, { status: result.ok ? 200 : result.status, headers })
 }
 
+function logAuthRateLimited(request: Request, bucket: string, retryAfter: number | string | null) {
+  const clientIp = resolveRequestClientIp(request.headers)
+  logger.warn("auth request rate limited", {
+    http_path: getBetterAuthProxyPath(normalizedPath(request)),
+    bucket,
+    retry_after: retryAfter === null ? undefined : String(retryAfter),
+    // How the address was found, never the address: "none" means every such
+    // caller shares one bucket because no forwarded header could be trusted.
+    client_ip_source: clientIp.source,
+    client_ip_header: clientIp.header ?? undefined,
+  })
+}
+
+/** Says which limiter refused a token request: Den's admission buckets, or one inside auth.handler. */
+async function logOAuthTokenRateLimited(request: Request, response: Response, attribution: Omit<OAuthTokenLimitAttribution, "clientIpSource">) {
+  const fields = await getOAuthTokenRateLimitLogFields(request, response, {
+    ...attribution,
+    clientIpSource: resolveRequestClientIp(request.headers).source,
+  })
+  if (fields) {
+    logger.warn("oauth token request rate limited", fields)
+  }
+}
+
+/** Charges a failed token request and logs each failure budget it filled, so a cooldown is logged when it starts, not on every failure. */
+async function recordOAuthTokenFailureWithLog(failure: OAuthTokenFailureBudgets, request: Request, response: Response) {
+  const filled = await recordOAuthTokenFailure(failure, response)
+  if (!filled.length) return
+  const clientIpSource = resolveRequestClientIp(request.headers).source
+  for (const exhausted of filled) {
+    const fields = await getOAuthTokenFailureLogFields(request, response, exhausted, clientIpSource)
+    if (fields) {
+      logger.warn("oauth token failure budget exhausted", fields)
+    }
+  }
+}
+
+/** Den's per-email / per-invitation / per-address limits for the email auth endpoints (auth-rate-limits.ts). */
+async function checkEmailAuthRateLimit(request: Request, invitationSignupAllowed: boolean) {
+  if (env.devMode || request.method !== "POST") {
+    return null
+  }
+  const path = getBetterAuthProxyPath(normalizedPath(request))
+  if (!AUTH_RATE_LIMIT_POLICIES[path]) {
+    return null
+  }
+  const email = await getAuthRequestEmail(request)
+  const invitation = invitationSignupAllowed
+    ? new URL(request.url).searchParams.get("invite")?.trim() || null
+    : null
+  const result = await checkAuthRateLimit({
+    path,
+    email: email ? normalizeLoginEmail(email) : null,
+    clientIpKey: requestClientIpKey(request.headers),
+    invitation,
+    keySecret: env.betterAuthSecret,
+  }, checkRateLimit)
+  if (!result) {
+    return null
+  }
+  logAuthRateLimited(request, result.bucket, result.retryAfterSeconds)
+  return authRateLimitedResponse(result)
+}
+
 async function handleAuthRequest(c: Context) {
   const request = c.req.raw
   const observabilityRequest = request.method === "POST"
@@ -666,31 +732,31 @@ async function handleAuthRequest(c: Context) {
     ? request.clone()
     : null
   const oauthTokenRateLimit = observabilityRequest
-    ? await checkOAuthTokenRateLimit(request, checkRateLimit)
+    ? await checkOAuthTokenRateLimit(request)
     : null
   if (observabilityRequest && oauthTokenRateLimit?.response) {
-    const rateLimitFields = await getOAuthTokenRateLimitLogFields(observabilityRequest, oauthTokenRateLimit.response)
-    if (rateLimitFields) {
-      logger.warn("oauth token request rate limited", rateLimitFields)
-    }
+    await logOAuthTokenRateLimited(observabilityRequest, oauthTokenRateLimit.response, {
+      layer: "den_admission",
+      blocked: oauthTokenRateLimit.blocked,
+    })
     return oauthTokenRateLimit.response
   }
   if (observabilityRequest) {
     const jwtBearerResponse = await handleJwtBearerGrant(observabilityRequest.clone())
     if (jwtBearerResponse) {
       if (oauthTokenRateLimit && !jwtBearerResponse.ok) {
-        await recordOAuthTokenFailure(oauthTokenRateLimit.failureKey, jwtBearerResponse, checkRateLimit)
+        await recordOAuthTokenFailureWithLog(oauthTokenRateLimit.failure, observabilityRequest, jwtBearerResponse)
       }
       return jwtBearerResponse
     }
   }
   const authRequest = await normalizeMcpOAuthRequest(request)
   if (authRequest instanceof Response) {
-    if (oauthTokenRateLimit) {
+    if (observabilityRequest && oauthTokenRateLimit) {
       // Malformed token requests rejected before auth.handler must still
       // consume the failure budget, or repeated invalid-resource submissions
       // would only ever pay the looser attempt buckets.
-      await recordOAuthTokenFailure(oauthTokenRateLimit.failureKey, authRequest, checkRateLimit)
+      await recordOAuthTokenFailureWithLog(oauthTokenRateLimit.failure, observabilityRequest, authRequest)
     }
     return authRequest
   }
@@ -706,6 +772,11 @@ async function handleAuthRequest(c: Context) {
   }
   const invitationSignupAllowed = await isInvitationSignupAllowed(authRequest)
   const initialAdminBootstrapGrant = await getInitialAdminBootstrapGrantFromRequest(authRequest)
+
+  const authRateLimit = await checkEmailAuthRateLimit(authRequest, invitationSignupAllowed)
+  if (authRateLimit) {
+    return authRateLimit
+  }
 
   const emailSignInAttempt = await readEmailSignInAttempt(authRequest)
   if (emailSignInAttempt) {
@@ -762,7 +833,7 @@ async function handleAuthRequest(c: Context) {
 
   let response: Response
   try {
-    response = await timeScimDiagnosticStage("better_auth_ms", () => auth.handler(authRequest))
+    response = await timeScimDiagnosticStage("better_auth_ms", () => auth.handler(betterAuthRequest(authRequest)))
   } catch (error) {
     if (ssoCallbackAuthorization?.ok && ssoCallbackAuthorization.mode === "test") {
       await failOrganizationSsoTestIntent(ssoCallbackAuthorization.intentId, "authentication")
@@ -793,14 +864,15 @@ async function handleAuthRequest(c: Context) {
   if (emailSignInAttempt) {
     await recordEmailSignInResult(emailSignInAttempt, response)
   }
-  if (oauthTokenRateLimit) {
-    await recordOAuthTokenFailure(oauthTokenRateLimit.failureKey, response, checkRateLimit)
+  if (observabilityRequest && oauthTokenRateLimit) {
+    await recordOAuthTokenFailureWithLog(oauthTokenRateLimit.failure, observabilityRequest, response)
+  }
+  if (response.status === 429 && !observabilityRequest) {
+    logAuthRateLimited(authRequest, "better_auth_ip", response.headers.get("x-retry-after"))
   }
   if (observabilityRequest) {
-    const rateLimitFields = await getOAuthTokenRateLimitLogFields(observabilityRequest, response)
-    if (rateLimitFields) {
-      logger.warn("oauth token request rate limited", rateLimitFields)
-    }
+    // Den's own limits answered above, so a 429 here came from inside auth.handler.
+    await logOAuthTokenRateLimited(observabilityRequest, response, { layer: "auth_handler" })
   }
   return response
 }
@@ -867,7 +939,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
       if (authRequest instanceof Response) {
         return authRequest
       }
-      const response = await auth.handler(authRequest)
+      const response = await auth.handler(betterAuthRequest(authRequest))
       return normalizeOAuthAuthorizeRedirect(response)
     },
   )

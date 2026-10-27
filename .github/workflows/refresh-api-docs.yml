@@ -1,0 +1,113 @@
+# The hosted docs (Mintlify) build the API tab from the live public contract at
+# api.openworklabs.com/openapi.json?public=1, but Mintlify's Git integration
+# only rebuilds when packages/docs changes. When the Den API contract sources
+# change, this waits until production den-api (Render deploys every dev commit)
+# serves this commit or a newer one, then asks Mintlify to rebuild. A skipped or
+# failed rebuild only warns: the next docs change rebuilds the API tab anyway.
+name: Refresh API Docs
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - ee/apps/den-api/**
+      - ee/packages/**
+      - packages/types/**
+      - packages/features/**
+      - .github/workflows/refresh-api-docs.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+env:
+  OPENAPI_URL: https://api.openworklabs.com/openapi.json?public=1
+
+jobs:
+  refresh:
+    # The Mintlify key is only for dev's own workflow code: no manual runs, and
+    # never from another ref.
+    if: github.repository == 'different-ai/openwork' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Wait for den-api to serve this commit
+        id: live
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+
+          # den-api reports its Render commit as info.version ("commit 0b73707").
+          # Render cancels a deploy when a newer commit lands, so a newer commit
+          # counts too. Old instances keep serving for a few minutes after a
+          # deploy goes live, so require a few matching reads in a row.
+          deadline=$((SECONDS + 30 * 60))
+          matches=0
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            version="$(curl -fsS --compressed --max-time 60 "$OPENAPI_URL" | jq -r '.info.version // empty' 2> /dev/null)"
+            status=""
+            if [[ "$version" =~ ^commit\ [0-9a-f]{7,40}$ ]]; then
+              status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...${version#commit }" --jq '.status' 2> /dev/null)"
+            fi
+            if [ "$status" = "identical" ] || [ "$status" = "ahead" ]; then
+              matches=$((matches + 1))
+              if [ "$matches" -ge 3 ]; then
+                echo "den-api serves $version, which includes $GITHUB_SHA."
+                echo "live=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            else
+              matches=0
+            fi
+            sleep 20
+          done
+
+          echo "::warning title=API docs not refreshed::den-api did not serve $GITHUB_SHA or a newer commit within 30 minutes (last seen: ${version:-no response}). The next packages/docs change rebuilds the API tab."
+          echo "live=false" >> "$GITHUB_OUTPUT"
+
+      - name: Rebuild the docs
+        if: steps.live.outputs.live == 'true'
+        env:
+          MINTLIFY_PROJECT_ID: ${{ vars.MINTLIFY_PROJECT_ID }}
+          MINTLIFY_API_KEY: ${{ secrets.MINTLIFY_API_KEY }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "$MINTLIFY_PROJECT_ID" ] || [ -z "$MINTLIFY_API_KEY" ]; then
+            echo "::warning title=API docs not refreshed::Set the MINTLIFY_API_KEY secret (an admin API key) and MINTLIFY_PROJECT_ID variable to rebuild the docs when den-api deploys. The next packages/docs change rebuilds the API tab."
+            exit 0
+          fi
+
+          response="$(curl -sS --max-time 30 --retry 3 \
+            -X POST "https://api.mintlify.com/v1/project/update/$MINTLIFY_PROJECT_ID" \
+            -H "Authorization: Bearer $MINTLIFY_API_KEY")"
+          status_id="$(jq -r '.statusId // empty' <<< "$response" 2> /dev/null)"
+          if [ -z "$status_id" ]; then
+            echo "::warning title=API docs not refreshed::Mintlify did not queue a rebuild: ${response:-no response}"
+            exit 0
+          fi
+
+          deadline=$((SECONDS + 10 * 60))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            update="$(curl -sS --max-time 30 \
+              "https://api.mintlify.com/v1/project/update-status/$status_id" \
+              -H "Authorization: Bearer $MINTLIFY_API_KEY")"
+            case "$(jq -r '.status // empty' <<< "$update" 2> /dev/null)" in
+              success)
+                echo "Mintlify rebuilt the docs from the live API contract."
+                exit 0
+                ;;
+              failure)
+                echo "::warning title=API docs rebuild failed::$(jq -r '.summary // "Mintlify reported a failed update."' <<< "$update")"
+                exit 0
+                ;;
+            esac
+            sleep 15
+          done
+
+          echo "::warning title=API docs rebuild still running::Mintlify update $status_id did not finish within 10 minutes."

@@ -11,7 +11,6 @@ import { AUTOMATION_CLOUD_DEFAULT_MODEL, AUTOMATION_FREE_MODEL, automationModelA
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 import { db } from "../db.js"
 import { organizationAllowsManagedModels } from "../inference.js"
-import { calculateDesktopPolicyForOrgMember } from "../desktop-policies.js"
 
 type ProviderId = typeof LlmProviderTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -62,7 +61,6 @@ export type AutomationModelAuthorityStore = {
   findProvider(input: { organizationId: string; providerId: string }): Promise<AutomationAuthorityProvider | null>
   findModel(input: { providerRecordId: ProviderId; modelId: string }): Promise<AutomationAuthorityModel | null>
   canAccessProvider(input: { member: AutomationAuthorityMember; providerRecordId: ProviderId }): Promise<boolean>
-  allowsZenModel(input: { organizationId: string; ownerMemberId: string }): Promise<boolean>
 }
 
 const databaseAuthorityStore: AutomationModelAuthorityStore = {
@@ -122,14 +120,6 @@ const databaseAuthorityStore: AutomationModelAuthorityStore = {
     )).limit(1)
     return Boolean(grants[0])
   },
-
-  async allowsZenModel(input) {
-    const policy = await calculateDesktopPolicyForOrgMember({
-      organizationId: normalizeDenTypeId("organization", input.organizationId),
-      orgMemberId: normalizeDenTypeId("member", input.ownerMemberId),
-    })
-    return policy.allowZenModel
-  },
 }
 
 function enabledOpenWorkModel(modelId: string) {
@@ -184,26 +174,10 @@ export async function resolveAutomationModelAccessWithStore(
   }
 
   if (input.providerId === AUTOMATION_FREE_MODEL.providerId) {
-    if (input.modelId !== AUTOMATION_FREE_MODEL.modelId) {
-      return { ok: false, code: "model_access_lost", message: "The selected free model is not available for Automations." }
-    }
-    if (!await store.allowsZenModel(input)) {
-      return {
-        ok: false,
-        code: "model_access_lost",
-        message: "The selected OpenCode Zen model is no longer available. Choose a supported model to resume this Automation.",
-      }
-    }
     return {
-      ok: true,
-      value: {
-        accessKind: "free",
-        providerRecordId: null,
-        providerId: input.providerId,
-        modelId: input.modelId,
-        providerName: AUTOMATION_FREE_MODEL.providerName,
-        modelName: AUTOMATION_FREE_MODEL.modelName,
-      },
+      ok: false,
+      code: "model_access_lost",
+      message: "The selected OpenCode Zen model is no longer available. Choose a supported model to resume this Automation.",
     }
   }
 

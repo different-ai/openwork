@@ -1,6 +1,9 @@
 {
   "name": "@openwork-ee/den-api",
   "private": true,
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
   "type": "module",
   "scripts": {
     "audit:pilot": "tsx --conditions=development scripts/audit-pilot.ts",
@@ -8,6 +11,7 @@
     "dev": "pnpm run build:workspace-dependencies && OPENWORK_DEV_MODE=1 OPENWORK_DEN_DEVELOPMENT_CONDITIONS_REEXEC=1 NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx watch src/main.ts",
     "dev:local": "pnpm run build:workspace-dependencies && OPENWORK_DEV_MODE=1 OPENWORK_DEN_DEVELOPMENT_CONDITIONS_REEXEC=1 NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" PORT=${DEN_API_PORT:-8790} tsx watch src/main.ts",
     "build": "node ./scripts/build.mjs",
+    "check:runtime-imports": "node ./scripts/check-runtime-imports.mjs",
     "build:workspace-dependencies": "node ../../../scripts/build-workspace-dependencies.mjs @openwork-ee/den-api",
     "build:den-db": "pnpm --filter @openwork-ee/den-db build",
     "build:mcp-apps": "pnpm --filter @openwork/mcp-apps build",
@@ -33,8 +37,8 @@
     "@hono/standard-validator": "^0.2.2",
     "@hono/swagger-ui": "^0.6.1",
     "@modelcontextprotocol/ext-apps": "^1.7.5",
-    "@modelcontextprotocol/sdk": "^1.31.0",
-    "@modelcontextprotocol/server": "^2.2.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@modelcontextprotocol/server": "^2.3.1",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/api-logs": "0.220.0",
     "@opentelemetry/exporter-logs-otlp-proto": "0.220.0",
@@ -79,21 +83,26 @@
     "effect": "4.0.0-beta.83",
     "esbuild": "catalog:",
     "fast-xml-parser": "5.8.0",
-    "hono": "4.13.9",
+    "hono": "4.13.11",
     "hono-openapi": "^1.3.0",
     "htmlparser2": "8.0.2",
     "ioredis": "^6.0.0",
     "jose": "6.2.8",
     "jsonc-parser": "^3.2.1",
+    "lucide-react": "0.577.0",
+    "motion": "12.38.0",
     "nanoid": "3.3.18",
     "openapi-types": "^12.1.3",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "recharts": "3.10.1",
     "sharp": "0.35.5",
     "stripe": "^22.1.1",
+    "three": "0.186.1",
     "typescript": "^5.5.4",
-    "undici": "7.29.1",
-    "zod": "^4.3.6"
+    "undici": "7.30.1",
+    "zod": "^4.6.6",
+    "@openwork/documents": "workspace:*"
   },
   "devDependencies": {
     "@sentry/cli": "3.6.0",

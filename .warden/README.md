@@ -22,8 +22,9 @@ hold:
 - No high or medium security findings. Low findings are noted, not blocking.
 - No confidentiality findings at any severity.
 - The PR does not change Warden itself: `.github/workflows/warden.yml`,
-  `.github/workflows/warden-clearance.yml`, `.github/scripts/warden-report.mjs`,
-  `.github/scripts/warden-clearance.mjs`, `warden.toml`, or `.warden/`.
+  `.github/workflows/warden-clearance.yml`, `.github/workflows/warden-quick.yml`,
+  `.github/scripts/warden-report.mjs`, `.github/scripts/warden-clearance.mjs`,
+  `.github/scripts/warden-fast.mjs`, `warden.toml`, or `.warden/`.
   `warden.yml` runs inside the PR's own review and could forge its result; the
   others would let one PR rewrite the reviewer for every later PR.
 
@@ -114,6 +115,59 @@ This reviews committed branch changes against `dev`. For an uncommitted
 iteration, `pnpm warden:check --staged` reviews the index. Local security and
 confidentiality findings still return a failure at every severity. Missing
 credentials, partial analysis, and model errors are incomplete reviews.
+
+## Fast feedback: re-review only what moved
+
+A full review of a large PR takes about 20 minutes, and every push restarts
+it. Two tools give feedback in a few minutes instead. Neither approves
+anything: clearance still comes only from the full review of the exact head.
+
+Both fingerprint each file's own change: the lines it adds and removes, plus
+mode and binary markers, without line numbers or surrounding context. Merging
+or rebasing `dev` keeps a file's fingerprint unless `dev` touched the change
+itself or a conflict was resolved inside it. Only files whose fingerprint
+changed since the last complete review are sent to Warden, with each skill
+limited to them through `paths`; findings for the other files carry over.
+
+**In CI**, `.github/workflows/warden-quick.yml` runs on every push to a
+same-repository PR. It finds the newest complete review of the PR (the full
+review's `warden-findings` artifact or an earlier quick review's
+`warden-quick-baseline`), checked against the run, PR and commit it claims.
+Like `warden.yml`, it runs only trusted code, policy and skills from the PR's
+base and never installs or runs PR code. Warden's agent gets no GitHub token,
+and credential-shaped text is redacted from what it writes. Results appear in
+the job summary and as annotations on the diff. Confidentiality findings
+appear only as a count.
+It does nothing for PRs under 15 files (the full review is already quick), for
+the first push (no review to compare against yet), or when more than half the
+files moved. A finished quick review becomes the next push's baseline; an
+incomplete one keeps the earlier findings and saves nothing.
+
+**Before pushing**, `pnpm warden:quick` does the same on your branch against
+your last local review, kept in `.git/warden-quick/`. The first run reviews
+the whole branch; a change to `warden.toml` or `.warden/skills` on `dev`
+starts over. The policy, skills and model catalog (`.warden/pi`) always come
+from `origin/dev`, never from the branch under review, so a branch can't steer
+the reviewer or send your key elsewhere.
+It exits 1 on high or medium security findings or any confidentiality finding,
+and 2 when it couldn't review (no `WARDEN_OPENAI_API_KEY`, model errors).
+To run it on every push from the checked-out branch, after
+`pnpm hooks:install`:
+
+```sh
+git config --local openwork.wardenPrePush true
+```
+
+The hook runs the reviewer script from `origin/dev`, not from the branch being
+pushed. It blocks a push only on findings CI's Warden would block on; skip it
+once with `git push --no-verify`. If the review can't finish, the push goes
+ahead. It only reviews when you push `HEAD`, and never commits or pushes.
+Like any `core.hooksPath` hook, the hook file itself comes from your checkout,
+so enable it only in checkouts whose branches you trust.
+
+Fast reviews see less of the PR at once than the full review, so an
+interaction between a moved file and an unchanged one can be missed until the
+full review runs. That is why they never clear a PR.
 
 ## Rollout
 

@@ -2,6 +2,7 @@ import "./load-env.js";
 import type { DenDbMode, PlanetScaleCredentials } from "@openwork-ee/den-db";
 import { gatewayInteger, gatewayOrigin, parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env";
 import { z } from "zod";
+import { parseFeatureEnvironment } from "@openwork/features";
 import { readAutoConfig } from "./free/shared/config.js";
 
 const EnvSchema = z
@@ -26,6 +27,10 @@ const EnvSchema = z
     GATEWAY_RESPONSE_HEARTBEAT_MS: z.number().int().min(1000).max(90000),
     GATEWAY_WEBHOOK_SECRET: z.string().optional(),
     GATEWAY_CREDITS_PER_DOLLAR: z.string().optional(),
+    TYPESAFE_API_KEY: z.string().optional(),
+    TYPESAFE_BASE_URL: z.string().optional(),
+    AUTO_ROUTER_JEV_MODEL: z.string().optional(),
+    AUTO_ROUTER_JEV_TIMEOUT_MS: z.string().optional(),
   })
   .superRefine((value, ctx) => {
     const mode =
@@ -88,6 +93,10 @@ const input = {
   GATEWAY_WEBHOOK_SECRET:
     process.env.GATEWAY_WEBHOOK_SECRET ?? process.env.INFERENCE_WEBHOOK_SECRET ??
     (isDevMode ? "local-dev-webhook-secret" : undefined),
+  TYPESAFE_API_KEY: process.env.TYPESAFE_API_KEY,
+  TYPESAFE_BASE_URL: process.env.TYPESAFE_BASE_URL,
+  AUTO_ROUTER_JEV_MODEL: process.env.AUTO_ROUTER_JEV_MODEL,
+  AUTO_ROUTER_JEV_TIMEOUT_MS: process.env.AUTO_ROUTER_JEV_TIMEOUT_MS,
 };
 const gatewayDeployment = parseGatewayDeploymentEnv({ ...process.env,
   DATABASE_URL: input.DATABASE_URL,
@@ -120,6 +129,11 @@ function splitCsv(value: string | undefined) {
 
 function normalizeUrl(value: string) {
   return value.replace(/\/+$/, "");
+}
+
+function parseJevTimeout(value: string | undefined) {
+  const timeout = Number(value ?? "4000");
+  return Number.isInteger(timeout) && timeout >= 200 && timeout <= 30000 ? timeout : 4000;
 }
 
 function parseCreditsPerDollar(value: string | undefined) {
@@ -164,4 +178,13 @@ export const env = {
   adminToken: optionalString(parsed.GATEWAY_ADMIN_TOKEN),
   webhookSecret: optionalString(parsed.GATEWAY_WEBHOOK_SECRET),
   creditsPerDollar: parseCreditsPerDollar(parsed.GATEWAY_CREDITS_PER_DOLLAR),
+  /** Feature rollout environment (DEN_DEPLOYMENT, DEN_FEATURE_*), the same den-api reads. */
+  features: parseFeatureEnvironment(process.env),
+  autoRouter: {
+    /** TypeSafe (Jev) API key; without it Auto always uses the fallback route. */
+    typesafeApiKey: optionalString(parsed.TYPESAFE_API_KEY),
+    typesafeBaseUrl: normalizeUrl(optionalString(parsed.TYPESAFE_BASE_URL) ?? "https://api.typesafe.ai"),
+    jevModel: optionalString(parsed.AUTO_ROUTER_JEV_MODEL) ?? "jev-latest",
+    jevTimeoutMs: parseJevTimeout(parsed.AUTO_ROUTER_JEV_TIMEOUT_MS),
+  },
 };

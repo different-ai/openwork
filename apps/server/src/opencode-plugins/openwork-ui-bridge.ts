@@ -49,7 +49,8 @@ async function discoverUiBridge(): Promise<UiBridge | null> {
 
 export async function uiBridgeRequest(
   path: string,
-  options: { method?: string; body?: unknown; timeoutMs?: number; signal?: AbortSignal } = {},
+  /** `timeoutMs: null` waits until `signal` aborts. */
+  options: { method?: string; body?: unknown; timeoutMs?: number | null; signal?: AbortSignal } = {},
 ): Promise<unknown> {
   const bridge = await discoverUiBridge();
   if (!bridge) return { ok: false, code: "browser_unavailable", dispatched: false, error: "The built-in browser is unavailable. Open the desktop app on the same machine as this task's server." };
@@ -57,7 +58,8 @@ export async function uiBridgeRequest(
     const response = await fetch(`${bridge.baseUrl}${path}`, {
       method: options.method || "GET",
       redirect: "error",
-      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs ?? BRIDGE_TIMEOUT_MS)]) : AbortSignal.timeout(options.timeoutMs ?? BRIDGE_TIMEOUT_MS),
+      signal: options.timeoutMs === null && options.signal ? options.signal
+        : options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs ?? BRIDGE_TIMEOUT_MS)]) : AbortSignal.timeout(options.timeoutMs ?? BRIDGE_TIMEOUT_MS),
       headers: {
         Authorization: `Bearer ${bridge.token}`,
         ...(options.body ? { "Content-Type": "application/json" } : {}),

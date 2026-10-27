@@ -14,6 +14,7 @@ import {
   getLibraryPluginRoute,
   getLibraryPluginShareRoute,
   getYourConnectionsRoute,
+  orgFeatureEnabled,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FilterInput, ItemMenu, ItemPanel, ItemRow, removeEntry, ItemSection, ItemSectionSkeleton } from "./item-list";
@@ -24,6 +25,7 @@ import { type LibraryItem, libraryQueryKeys, useLibrary } from "./library-data";
 import {
   groupLibrary,
   isOwnedByViewer,
+  isSingleSkill,
   LIBRARY_FILTERS,
   type LibraryFilter,
   libraryItemDescription,
@@ -43,6 +45,7 @@ import { MemberApiKeyDialog } from "./member-api-key-dialog";
 import { useDenToast } from "./den-toast";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
 import { pluginQueryKeys } from "./plugin-data";
+import { LibraryPluginSkills } from "./library-plugin-skills";
 
 function itemHref(orgSlug: string | null, item: LibraryItem): string {
   if (item.type === "connection") return getLibraryConnectorRoute(orgSlug, item.id);
@@ -63,7 +66,7 @@ function LibraryItemRow({ item, mine, signIn }: {
   const router = useRouter();
   const queryClient = useQueryClient();
   const toast = useDenToast();
-  const { orgSlug } = useOrgDashboard();
+  const { orgSlug, orgContext } = useOrgDashboard();
   const deleteConnection = useDeleteMcpConnection();
   const href = itemHref(orgSlug, item);
 
@@ -113,6 +116,14 @@ function LibraryItemRow({ item, mine, signIn }: {
         status={needsSignIn ? undefined : libraryItemReady(item) ? "Ready" : item.type !== "plugin" && item.state === "needs_signin" ? "Sign in" : "Set up"}
         action={action}
       />
+      {item.type === "plugin" && item.componentKinds.some((kind) => kind.toLowerCase() === "skill") && orgFeatureEnabled(orgContext, "libraryConnectorNavigation") ? (
+        <LibraryPluginSkills
+          pluginId={item.id}
+          name={item.name}
+          single={isSingleSkill(item)}
+          knownCount={item.componentKinds.every((kind) => kind.toLowerCase() === "skill") ? item.componentCount : null}
+        />
+      ) : null}
     </div>
   );
 }
@@ -248,7 +259,7 @@ function LibraryContent() {
                   >
                     <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
                     Needs sign-in
-                    <span className={onlyNeedsSignIn ? "text-white/70" : "text-gray-400"}>{needsSignInCount}</span>
+                    <span className={onlyNeedsSignIn ? "text-white/70" : "text-gray-500"}>{needsSignInCount}</span>
                   </button>
                 </>
               ) : null}

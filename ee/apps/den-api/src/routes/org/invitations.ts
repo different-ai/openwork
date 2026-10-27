@@ -21,8 +21,11 @@ import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationM
 import type { PermissionDatabase } from "@openwork-ee/den-db/permissions"
 import { resolveTeamActorInTransaction, teamGrantDecisionInTransaction, teamGrantsForbiddenResponse, roleAssignmentDeniedHeaders, roleAssignmentDeniedResponse, roleAssignmentDenial, roleAssignmentDenialInTransaction, type RoleAssignmentDenial } from "../../permissions/team-grants.js"
 import { resolvePermissionsForMember } from "../../permissions/resolve.js"
-import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
+import { getOrganizationSeatAddEligibility, getSeatPlanQuote } from "../../stripe-billing.js"
+import { planLimitReachedMessage } from "../../organization-plan.js"
+import { seatPlanQuoteSchema } from "@openwork/types/den/billing-plans"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
+import { organizationInviteEmailProps } from "../../invitation-email.js"
 import type { OrgRouteVariables } from "./shared.js"
 import {
   buildInvitationLink,
@@ -83,7 +86,16 @@ const invitePaymentRequiredSchema = z.object({
   freeSeatCount: z.number(),
   message: z.string(),
   billingUrl: z.string().url().describe("Open in a browser to start seat billing; an owner can finish it there, then retry the invitation."),
+  quote: seatPlanQuoteSchema.describe("The Team plan with this person added: every person at the Team price. `available` is false when Team checkout is off for this organization or not sold on this deployment."),
 }).meta({ ref: "InvitePaymentRequiredError" })
+
+const inviteOrgLimitReachedSchema = z.object({
+  error: z.literal("org_limit_reached"),
+  limitType: z.literal("members"),
+  currentCount: z.number().int(),
+  limit: z.number().int(),
+  message: z.string(),
+}).meta({ ref: "InviteOrgLimitReachedError" })
 
 const invitationNotPendingSchema = z.object({
   error: z.literal("invitation_not_pending"),
@@ -199,7 +211,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Invitations"],
       summary: "Create organization invitation",
-      description: "Creates or refreshes a pending organization invitation for an email address and sends the invite email. Returns 502 when the invitation row is persisted but the configured email provider failed to send; the client should surface the error and give the user a retry affordance. Returns 402 with billingUrl when the workspace has used its free members: give the user billingUrl to start seat billing, then invite again.",
+      description: "Creates or refreshes a pending organization invitation for an email address and sends the invite email. Returns 502 when the invitation row is persisted but the configured email provider failed to send; the client should surface the error and give the user a retry affordance. Returns 402 with billingUrl when a Free workspace has used its free users: give the user billingUrl to start seat billing, then invite again. Returns 409 org_limit_reached when a Team or Enterprise plan set by OpenWork is full: OpenWork must add seats.",
       responses: {
         200: jsonResponse("Existing invitation refreshed successfully.", invitationResponseSchema),
         201: jsonResponse("Invitation created successfully.", invitationResponseSchema),
@@ -208,7 +220,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         402: jsonResponse("A seat subscription is required before inviting more members. The body includes billingUrl, where an owner starts seat billing.", invitePaymentRequiredSchema),
         403: jsonResponse("The caller needs the Invite people permission and a recent sign-in. Inviting with a role other than member also needs Change member roles, and with Permissions on inviting an admin needs every Admin permission; reusing an invitation with Admin team access needs Manage Admin teams.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
-        409: jsonResponse("The email address is outside this workspace's allowed domains.", inviteEmailDomainNotAllowedSchema),
+        409: jsonResponse("The email address is outside this workspace's allowed domains, or the plan OpenWork set for this workspace has no room for another user.", z.union([inviteEmailDomainNotAllowedSchema, inviteOrgLimitReachedSchema])),
         502: jsonResponse("The invitation was saved but the email provider rejected or failed to deliver it. Retry by submitting the same email again.", invitationEmailFailedSchema),
       },
     }),
@@ -284,6 +296,10 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         .orderBy(desc(InvitationTable.createdAt))
         .for("update")
       const existingInvitation = existingInvitationRows.find((row) => row.status === "pending") ?? null
+      const now = new Date()
+      // An expired invitation stops counting as a user; resending it makes it
+      // count again, so it needs a seat like a new invitation.
+      const reactivatesExpiredInvitation = Boolean(existingInvitation && existingInvitation.expiresAt <= now)
 
       const existingMembers = await tx
         .select({ id: MemberTable.id })
@@ -313,8 +329,12 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         if (!refreshRole.ok) {
           return { status: "role_error" as const, validation: refreshRole }
         }
-      } else {
+      }
+      if (!existingInvitation || reactivatesExpiredInvitation) {
         const seatEligibility = await getOrganizationSeatAddEligibility(payload.organization.id)
+        if (seatEligibility.reason === "plan_limit_reached") {
+          return { status: "plan_limit_reached" as const, seatEligibility }
+        }
         if (!seatEligibility.allowed) {
           return { status: "payment_required" as const, seatEligibility }
         }
@@ -342,7 +362,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         }
       }
 
-      const now = new Date()
       const expiresAt = new Date(now.getTime() + 1000 * 60 * 60 * 24 * 7)
       const invitationId = existingInvitation?.id ?? createInvitationId()
       const inviteToken = existingInvitation?.inviteToken && existingInvitation.expiresAt > now
@@ -442,6 +461,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         invitationId,
         invitationOrgMemberId,
         inviteToken,
+        reactivatesExpiredInvitation,
         refreshed: Boolean(existingInvitation),
       }
     })
@@ -470,16 +490,32 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       }
       return c.json({ error: validation.error, message: validation.message }, 403)
     }
+    if (invitationWrite.status === "plan_limit_reached") {
+      const { plan } = invitationWrite.seatEligibility
+      return c.json({
+        error: "org_limit_reached",
+        limitType: "members",
+        currentCount: plan.users,
+        limit: plan.userLimit ?? plan.users,
+        message: planLimitReachedMessage(plan),
+      }, 409)
+    }
     if (invitationWrite.status === "payment_required") {
       const { seatEligibility } = invitationWrite
+      const quote = await getSeatPlanQuote({
+        organizationId: payload.organization.id,
+        currentCount: seatEligibility.currentCount,
+        teamPlanEnabled: payload.features.teamPlan,
+      })
       return c.json({
         error: "payment_required",
         reason: "seat_subscription_required",
         subscriptionType: "seat",
         currentCount: seatEligibility.currentCount,
         freeSeatCount: seatEligibility.freeSeatCount,
-        message: `This workspace includes ${seatEligibility.freeSeatCount} free seats. Start seat billing at ${invitationBillingUrl()} to invite more people.`,
+        message: `The Free plan is limited to ${seatEligibility.freeSeatCount} users, counting pending invitations. Upgrade to the Team plan at ${invitationBillingUrl()} to invite more people.`,
         billingUrl: invitationBillingUrl(),
+        quote,
       }, 402)
     }
 
@@ -490,12 +526,15 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       invitationId,
       invitationOrgMemberId,
       inviteToken,
+      reactivatesExpiredInvitation,
       refreshed,
     } = invitationWrite
     addAuditRequestResource(c, { type: "invitation", id: invitationId })
 
-    if (createdOrgMemberId) {
-      await runPostOrganizationMemberChangeHooks({ organizationId: payload.organization.id, memberId: createdOrgMemberId, change: "added" })
+    // A new pending invitation, or a resent expired one, counts as a user again.
+    const billingMemberId = createdOrgMemberId ?? (reactivatesExpiredInvitation ? invitationOrgMemberId : null)
+    if (billingMemberId) {
+      await runPostOrganizationMemberChangeHooks({ organizationId: payload.organization.id, memberId: billingMemberId, change: "added" })
     }
 
     await finishLegacyAuditAction(capture, {
@@ -517,13 +556,14 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       await sendEmail({
         to: email,
         template: "organizationInvite",
-        props: {
+        props: organizationInviteEmailProps({
           inviteLink: buildInvitationLink(inviteToken),
-          invitedByName: user.name ?? user.email ?? "OpenWork",
-          invitedByEmail: user.email ?? "",
+          inviterName: user.name,
+          inviterEmail: user.email,
+          inviteeEmail: email,
           organizationName: payload.organization.name,
           role: assignedRole,
-        },
+        }),
       })
     } catch (error) {
       if (error instanceof DenEmailSendError) {

@@ -4,6 +4,7 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { usePlatform } from "../kernel/platform";
 import {
+  createSessionNumberHintReveal,
   getSessionNumberShortcutIntent,
   hasSessionNumberShortcutOwner,
   isSessionNumberModifierKey,
@@ -24,11 +25,13 @@ import {
 import { isFavoriteModelShortcut } from "./favorite-model-shortcut";
 import { isCycleModelSourceShortcut } from "@/react-app/domains/models/model-catalog";
 import { isFastModeShortcut } from "./fast-mode-shortcut";
+import { isNewSessionShortcut } from "./new-session-shortcut";
+
+const NO_SESSION_NUMBER_TARGETS: readonly SessionNumberShortcutTarget[] = [];
 
 export type UseShellShortcutsInput = {
-  canCreateTask: boolean;
-  workspaceId: string;
-  onCreateTask: (workspaceId: string) => void | Promise<void>;
+  /** Same action as the command palette's "New session". */
+  onCreateNewSession: () => void;
   onNextSessionTab?: () => void;
   onPrevSessionTab?: () => void;
   onCycleThinkingMode?: (direction: ThinkingModeShortcutDirection) => void;
@@ -60,9 +63,7 @@ export function useCommandPaletteShortcut(enabled = true) {
 export function useShellShortcuts(input: UseShellShortcutsInput) {
   const platform = usePlatform();
   const {
-    canCreateTask,
-    workspaceId,
-    onCreateTask,
+    onCreateNewSession,
     onNextSessionTab,
     onPrevSessionTab,
     onCycleThinkingMode,
@@ -76,6 +77,11 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
   const [sessionNumberTargets, setSessionNumberTargets] = useState<SessionNumberShortcutTarget[]>([]);
   const sessionNumberCancelledRef = useRef(false);
   const sessionNumberModifierHeldRef = useRef(false);
+  // Shortcuts work as soon as the modifier is down; only the sidebar hints wait.
+  const [sessionNumberHintsVisible, setSessionNumberHintsVisible] = useState(false);
+  const [sessionNumberHintReveal] = useState(() => createSessionNumberHintReveal({
+    onChange: setSessionNumberHintsVisible,
+  }));
   const sessionNumberOs: SessionNumberShortcutOs = resolveSessionNumberShortcutOs(
     platform.os,
     typeof navigator === "undefined" ? "" : navigator.platform,
@@ -93,6 +99,7 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
     const modifierHeld = nextSessionNumberModifierHeld(transition);
     sessionNumberModifierHeldRef.current = modifierHeld;
     setSessionNumberModifierHeld(modifierHeld);
+    sessionNumberHintReveal.release();
     setSessionNumberTargets((current) => current.length === 0 ? current : []);
   });
 
@@ -104,6 +111,7 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
     const targets = readVisibleSessionNumberShortcutTargets(document);
     sessionNumberModifierHeldRef.current = true;
     setSessionNumberModifierHeld(true);
+    sessionNumberHintReveal.hold();
     setSessionNumberTargets((current) => (
       sameSessionNumberShortcutTargets(current, targets) ? current : targets
     ));
@@ -111,7 +119,7 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
   });
 
   // Global shortcuts:
-  //   Cmd/Ctrl+N        -> new task in selected workspace
+  //   Cmd/Ctrl+N        -> new session (handleNewSessionKeyDown, capture phase)
   //   Cmd/Ctrl+K        -> toggle command palette
   //   Cmd/Ctrl+J        -> toggle terminal panel (matches VS Code)
   //   Cmd/Ctrl+F        -> find in current conversation (handled by session surface)
@@ -161,21 +169,7 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
     }
     if (event.shiftKey || event.altKey) return;
 
-    const target = event.target as HTMLElement | null;
-    const inEditable =
-      !!target &&
-      (target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable);
-
     const key = event.key?.toLowerCase();
-    if (key === "n" && !inEditable) {
-      event.preventDefault();
-      if (canCreateTask && workspaceId) {
-        void onCreateTask(workspaceId);
-      }
-      return;
-    }
     if (key === "j" && platform.capabilities.terminal) {
       event.preventDefault();
       setTerminalOpen((value) => !value);
@@ -186,6 +180,16 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
       onNextSessionTab?.();
       return;
     }
+  });
+
+  // Cmd/Ctrl+N must work while the composer (or any text field) has focus,
+  // which is nearly always. An open modal dialog keeps the key.
+  const handleNewSessionKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented) return;
+    if (!isNewSessionShortcut(event, sessionNumberOs)) return;
+    if (hasSessionNumberShortcutOwner(document)) return;
+    event.preventDefault();
+    if (!event.repeat) onCreateNewSession();
   });
 
   const handleSessionNumberKeyDown = useEffectEvent((event: KeyboardEvent) => {
@@ -239,6 +243,14 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
   }, []);
 
   useEffect(() => {
+    const handler = (event: KeyboardEvent) => handleNewSessionKeyDown(event);
+    // Capture first so editor keydown handlers cannot consume Cmd/Ctrl+N
+    // before the shell sees it (same as the Cmd/Ctrl+1–9 session jump).
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, []);
+
+  useEffect(() => {
     const keyDown = (event: KeyboardEvent) => handleSessionNumberKeyDown(event);
     const keyUp = (event: KeyboardEvent) => handleSessionNumberKeyUp(event);
     const mouseMove = (event: MouseEvent) => handleSessionNumberMouseMove(event);
@@ -283,9 +295,10 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
       document.removeEventListener("visibilitychange", visibilityChange);
       document.removeEventListener("focusin", focusIn);
       sessionNumberModifierHeldRef.current = false;
+      sessionNumberHintReveal.release();
       observer.disconnect();
     };
-  }, []);
+  }, [sessionNumberHintReveal]);
 
   return {
     commandPaletteOpen,
@@ -297,7 +310,7 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
     sessionNumberShortcuts: {
       modifierHeld: sessionNumberModifierHeld,
       os: sessionNumberOs,
-      targets: sessionNumberTargets,
+      targets: sessionNumberHintsVisible ? sessionNumberTargets : NO_SESSION_NUMBER_TARGETS,
     },
   };
 }

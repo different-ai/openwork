@@ -21,13 +21,11 @@ import {
 import { MemberTable, TeamMemberTable, TeamTable, type OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
-import { organizationFeatureEnabled } from "../features.js"
 import { appLogger } from "../observability/logger.js"
 import { roleIncludesOwner } from "../organization-member-guards.js"
 import { isEffectiveOrganizationAdmin } from "../organization-role-hierarchy.js"
 import type { OrganizationContext } from "../orgs.js"
 import {
-  codeDefaultPermissionGrants,
   createMemberPermissions,
   explainPermissionGrants,
   memberPermissionsFromGrants,
@@ -84,11 +82,9 @@ export type ResolveMemberPermissionsInput = {
   /**
    * Teams the member belongs to. Team sets apply only through those of these
    * memberships that carry authority (listAuthoritativeTeamMemberships).
-   * Not read when the feature is off or the member is the owner.
+   * Not read when the member is the owner.
    */
   teamIds: readonly string[]
-  /** The organization's `permissions` feature, when already known (e.g. from OrganizationContext.features). */
-  featureEnabled?: boolean
 }
 
 export type ExplainMemberPermissionsInput = Omit<ResolveMemberPermissionsInput, "adminTeamIds" | "teamIds"> & {
@@ -110,7 +106,6 @@ type PermissionSubject = {
   directRole: string
   adminTeams: readonly { id: string; name: string | null }[]
   teamIds: readonly string[]
-  featureEnabled?: boolean
 }
 
 /**
@@ -134,7 +129,6 @@ function readLock(reads: PermissionReads): { lock?: "share" } {
 }
 
 type CollectedGrants = {
-  featureEnabled: boolean
   isOwner: boolean
   isAdmin: boolean
   grants: PermissionGrant[]
@@ -227,18 +221,12 @@ async function databaseGrants(subject: PermissionSubject, isAdmin: boolean, read
   return grants
 }
 
-function permissionsFeatureEnabled(organizationId: OrganizationId, reads: PermissionReads) {
-  return organizationFeatureEnabled(organizationId, "permissions", reads.transaction ? { database: reads.database, lock: "share" } : {})
-}
-
 async function collectPermissionGrants(subject: PermissionSubject, reads: PermissionReads = ROOT_READS): Promise<CollectedGrants> {
-  const featureEnabled = subject.featureEnabled ?? await permissionsFeatureEnabled(subject.organizationId, reads)
   const isAdmin = isEffectiveOrganizationAdmin({ directRole: subject.directRole, adminTeamIds: subject.adminTeams.map((team) => team.id) })
-  if (subject.isOwner) return { featureEnabled, isOwner: true, isAdmin, grants: ownerPermissionGrants() }
-  if (!featureEnabled) return { featureEnabled, isOwner: false, isAdmin, grants: codeDefaultPermissionGrants({ isAdmin }) }
+  if (subject.isOwner) return { isOwner: true, isAdmin, grants: ownerPermissionGrants() }
 
   try {
-    return { featureEnabled, isOwner: false, isAdmin, grants: await databaseGrants(subject, isAdmin, reads) }
+    return { isOwner: false, isAdmin, grants: await databaseGrants(subject, isAdmin, reads) }
   } catch (error) {
     // Fail closed: only missing default sets (which should never happen, and
     // would otherwise lock the org out) fall back to code defaults, and only
@@ -251,7 +239,7 @@ async function collectPermissionGrants(subject: PermissionSubject, reads: Permis
       member_id: subject.memberId,
       error,
     })
-    return { featureEnabled, isOwner: false, isAdmin, grants: missingDefaultSetsPermissionGrants({ isAdmin, transaction: reads.transaction }) }
+    return { isOwner: false, isAdmin, grants: missingDefaultSetsPermissionGrants({ isAdmin, transaction: reads.transaction }) }
   }
 }
 
@@ -275,7 +263,6 @@ export function resolveMemberPermissionsFromContext(
     directRole: context.currentMember.directRole,
     adminTeamIds: context.currentMember.adminTeams.map((team) => team.id),
     teamIds,
-    featureEnabled: context.features.permissions,
   })
 }
 
@@ -283,7 +270,7 @@ export function resolveMemberPermissionsFromContext(
 export async function explainMemberPermissions(input: ExplainMemberPermissionsInput): Promise<MemberPermissionExplanation> {
   const collected = await collectPermissionGrants({ ...input, teamIds: input.teams.map((team) => team.id) })
   return {
-    featureEnabled: collected.featureEnabled,
+    featureEnabled: true,
     isOwner: collected.isOwner,
     isAdmin: collected.isAdmin,
     permissions: explainPermissionGrants(collected.grants),
@@ -347,19 +334,16 @@ export async function loadPermissionSubject(
 export async function resolvePermissionsForMember(input: {
   organizationId: OrganizationId
   memberId: MemberId
-  featureEnabled?: boolean
   database?: PermissionDatabase
 }): Promise<MemberPermissions> {
   const reads = permissionReads(input.database)
   const subject = await loadPermissionSubject(input, reads)
   if (!subject) {
-    const featureEnabled = input.featureEnabled ?? await permissionsFeatureEnabled(input.organizationId, reads)
-    return createMemberPermissions({ featureEnabled, isOwner: false, isAdmin: false, keys: [] })
+    return createMemberPermissions({ isOwner: false, isAdmin: false, keys: [] })
   }
   return memberPermissionsFromGrants(await collectPermissionGrants({
     ...subject,
     teamIds: subject.teams.map((team) => team.id),
-    ...(input.featureEnabled !== undefined ? { featureEnabled: input.featureEnabled } : {}),
   }, reads))
 }
 

@@ -88,6 +88,8 @@ const DESKTOP_CONFIG_ITEMS = [
   "brandIconUrl",
   "brandAccentColor",
   "automationsEnabled",
+  "desktopAutomationsEnabled",
+  "cloudAutomationsEnabled",
   "dashboardEnabled",
   "connectEnabled",
   "onboardingPrompts",

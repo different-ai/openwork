@@ -6,6 +6,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { createMcpAppInputSchema, prepareMcpAppInputSchema, readMcpAppInputSchema, updateMcpAppInputSchema } from "@openwork/types/mcp-app"
 import { z } from "zod"
 import { BUILD_AN_APP_SKILL_SOURCE } from "../src/mcp/build-an-app-skill.js"
+import { appAuthoringStarter } from "../src/mcp/app-authoring-starter.js"
 
 import { registerAppBuilderTools } from "../src/mcp/app-builder-tools.js"
 import { buildMarketplaceCapabilityName } from "../src/mcp/marketplace-capability-name.js"
@@ -25,6 +26,31 @@ function assertDescriptions(value: unknown, path: string) {
   }
   if (schema.items) assertDescriptions(schema.items, `${path}[]`)
 }
+
+test("App preparation lists built-in libraries only for an editor who has them", () => {
+  const input = { title: "Procedural scene" }
+  const off = appAuthoringStarter(input, [])
+  const on = appAuthoringStarter(input, [], { libraries: true })
+  assert.deepEqual(on.nextSteps.slice(0, -1), off.nextSteps)
+  assert.doesNotMatch(off.nextSteps.join("\n"), /built-in libraries/i)
+  for (const specifier of ["lucide-react", "recharts", "motion/react", "three/addons/controls/OrbitControls.js"]) {
+    assert.match(on.nextSteps.at(-1) ?? "", new RegExp(`"${specifier}"|${specifier} for`))
+  }
+  assert.match(on.nextSteps.at(-1) ?? "", /<svg>/)
+  assert.equal(on.starter.reactSource, off.starter.reactSource)
+  assert.match(BUILD_AN_APP_SKILL_SOURCE, /When prepare_app's nextSteps lists built-in libraries, import only those/)
+})
+
+test("App source cannot grant itself library access", () => {
+  const parsed = createMcpAppInputSchema.safeParse({
+    title: "Procedural scene",
+    reactSource: "export default function Scene() { return <p>Scene</p> }",
+    textFallback: "A procedural scene.",
+    allowLibraries: true,
+  })
+  assert.equal(parsed.success, false)
+  if (!parsed.success) assert.equal(parsed.error.issues[0]?.message, 'Unrecognized key: "allowLibraries"')
+})
 
 test("Marketplace capability names retain their wire format", () => {
   assert.equal(buildMarketplaceCapabilityName("plugin-id", "object-id"), "plugin:plugin-id:object-id")

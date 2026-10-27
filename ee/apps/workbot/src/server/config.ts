@@ -16,6 +16,12 @@ const origin = (allowInternal: boolean) =>
     return z.NEVER
   })
 
+/** Empty means unset, as an env file's `NAME=` line usually intends. */
+const optionalText = z
+  .string()
+  .optional()
+  .transform((value) => value?.trim() || undefined)
+
 const schema = z.object({
   /** Where people reach Workbot, e.g. https://chat.openworklabs.com. Den sends them back to `${this}/auth/callback`. */
   WORKBOT_PUBLIC_URL: origin(false),
@@ -38,6 +44,15 @@ const schema = z.object({
   WORKBOT_CALENDAR_MOCK_URL: origin(false).optional(),
   /** Serve the page from Vite with hot reload instead of the built files. */
   WORKBOT_DEV: z.enum(["0", "1"]).default("0"),
+  /**
+   * Optional error reports to Sentry (see error-reporting.ts). Unset, nothing is sent anywhere: self-hosted
+   * installs ship without one. The release defaults to `workbot@<WORKBOT_VERSION>`.
+   */
+  WORKBOT_SENTRY_DSN: optionalText.pipe(z.url().optional()),
+  WORKBOT_SENTRY_ENVIRONMENT: optionalText,
+  WORKBOT_SENTRY_RELEASE: optionalText,
+  /** Set by the Workbot image at build time. */
+  WORKBOT_VERSION: optionalText,
 })
 
 export type Config = {
@@ -52,6 +67,8 @@ export type Config = {
   calendarMockUrl: string | null
   /** Cookies are Secure (and __Host- prefixed) whenever Workbot is served over https. */
   secureCookies: boolean
+  /** Where error reports go; null (no DSN) sends none. */
+  errorReporting: { dsn: string; environment?: string; release?: string } | null
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -71,5 +88,12 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     dev: value.WORKBOT_DEV === "1",
     calendarMockUrl: value.WORKBOT_CALENDAR_MOCK_URL ?? null,
     secureCookies: value.WORKBOT_PUBLIC_URL.startsWith("https:"),
+    errorReporting: value.WORKBOT_SENTRY_DSN
+      ? {
+          dsn: value.WORKBOT_SENTRY_DSN,
+          environment: value.WORKBOT_SENTRY_ENVIRONMENT,
+          release: value.WORKBOT_SENTRY_RELEASE ?? (value.WORKBOT_VERSION && value.WORKBOT_VERSION !== "dev" ? `workbot@${value.WORKBOT_VERSION}` : undefined),
+        }
+      : null,
   }
 }

@@ -20,6 +20,7 @@ import {
   callFunctionOnSurface,
   CdpPageError,
   addInitScript,
+  attachFiles,
   callFunction, connect, debuggerUrlFor, listTargets,
   clickTarget,
   dumpScreenState,
@@ -43,6 +44,7 @@ import {
   mcpMock,
   server,
   requestBrowserTask,
+  requestComputerProgram,
   readBrowserFixtureState,
   setBrowserFixtureDiscovery,
   requireWorldResource,
@@ -899,6 +901,12 @@ export class UserChannel implements User {
     });
   }
 
+  attachFiles(selector: string, files: string[]): Promise<void> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("user", "attachFiles", `attachFiles(${selector}, ${files.length} files)`, surface,
+      () => attachFiles(surface, selector, files));
+  }
+
   press(key: string): Promise<void> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("user", "press", `press(${key})`, surface, () => pressKey(surface, key));
@@ -1005,6 +1013,12 @@ export class AgentChannel implements Agent {
 
   on(surface: Surface): Agent {
     return new AgentChannel(this.#runtime, surface);
+  }
+
+  computerProgram(input: { sessionId: string; surface: "computer" | "browser"; code: string; tabId?: string; timeoutMs?: number }) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("agent", "computerProgram", `computerProgram(${input.surface}, session=${input.sessionId})`, surface,
+      () => requestComputerProgram(surface, input));
   }
 
   browserTask(input: import("@openwork/behaviors").BrowserTaskInput) {

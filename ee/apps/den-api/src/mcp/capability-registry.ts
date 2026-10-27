@@ -75,6 +75,11 @@ import {
   type RemoteSessionAction,
 } from "./remote-session-capabilities.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
+import {
+  executeSlackSendAsBot,
+  isSlackSendAsBotCapabilityName,
+  searchSlackSendAsBotCapability,
+} from "./slack-send-as-bot.js"
 import { headlessRunTokenId } from "./headless-run-token.js"
 import {
   compareCapabilityMatches,
@@ -86,10 +91,19 @@ import {
   type SearchCapabilityType,
 } from "./search.js"
 import { externalToolContent } from "./tool-content.js"
-import { withRemoteSessionReceiptUri } from "./remote-session-resources.js"
+import { capabilityCallInput, capabilityToolMatch, type CapabilityToolMatch } from "./capability-tool.js"
 
-export const CAPABILITY_SOURCE_KINDS = ["catalog", "native", "externalMcp", "marketplace", "builtinSkill", "remoteSession", "admin"] as const
+export const CAPABILITY_SOURCE_KINDS = ["catalog", "native", "externalMcp", "marketplace", "builtinSkill", "remoteSession", "slackSendAsBot", "admin"] as const
 export type CapabilitySourceKind = (typeof CAPABILITY_SOURCE_KINDS)[number]
+
+/**
+ * Sources whose capabilities Code Mode scripts (ad-hoc tests, saved Workflows,
+ * Apps, Automations) can call. Platform-admin tools are left out: one script
+ * could otherwise hand what an admin tool reads straight to a connection tool
+ * with no call in between for the client to show. Admins call them one at a
+ * time through execute_capability, their full-view tools or /mcp/admin.
+ */
+const SCRIPT_SOURCE_KINDS: readonly CapabilitySourceKind[] = CAPABILITY_SOURCE_KINDS.filter((kind) => kind !== "admin")
 
 export type ParsedCapability =
   | { kind: "catalog"; name: string }
@@ -98,6 +112,7 @@ export type ParsedCapability =
   | { kind: "marketplace"; name: string; configObjectId: string; pluginId: string }
   | { kind: "builtinSkill"; name: string }
   | { kind: "remoteSession"; name: string; action: RemoteSessionAction }
+  | { kind: "slackSendAsBot"; name: string }
   | { kind: "admin"; name: string; toolName: string }
 
 export type ExecuteCapabilityToolResult = {
@@ -114,6 +129,8 @@ export type CapabilityExecuteInput = {
   requireSchemaMatch?: boolean
   /** Refuse an external tool that its provider no longer marks read-only for this caller. */
   requireReadOnly?: boolean
+  /** One object matching the search match's `inputSchema`; wins over path/query/body. */
+  arguments?: unknown
   path?: unknown
   query?: unknown
   body?: unknown
@@ -128,13 +145,12 @@ export type CapabilityRegistryContext = {
   member: McpMemberIdentity | null
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
-  /** Managed deployment planning, launch preparation and status (both rollouts on). */
-  managedDeploymentsMcpEnabled: boolean
-  /** Secure keys in chat: provider creation is offered to agents, never keys. */
-  secureSecretFieldsEnabled: boolean
-  remoteSessionEventsEnabled: boolean
+  /** Managed deployment planning, launch preparation and status (managed deployments enabled). */
+  managedDeploymentsEnabled: boolean
   /** `remote-session:status`, rolled out with the desktop's remote sub-agents. */
   remoteSessionStatusEnabled: boolean
+  /** `slack_send_as_bot` (feature `slackSendAsBot`); it also needs a member and the write scope. */
+  slackSendAsBotEnabled: boolean
   resolvePlatformAdmin: () => Promise<boolean>
   resolveNamespaceContext: () => Promise<CodemodeConnectionNamespaceContext>
   /** Set only by MCP transports: direct service mutations are audited for this caller (src/audit/service-actions.ts). */
@@ -153,7 +169,7 @@ export type CapabilityRegistryContextInput = {
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   /** Effective features of the organization (see features.ts). */
-  organizationFeatures: Partial<Pick<FeatureMap, "remoteSessionEvents" | "remoteSessionSubagents" | "managedDeployments" | "managedDeploymentsMcp" | "secureSecretFields">>
+  organizationFeatures: Partial<Pick<FeatureMap, "remoteSessionSubagents" | "managedDeployments" | "slackSendAsBot">>
   /** MCP transports pass the verified caller; route and Automation contexts omit it (their route records the request). */
   audit?: McpAuditPrincipal | null
   /**
@@ -181,17 +197,17 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
   return {
     app: input.app,
     env: input.env,
+    // All capability paths (search, Code Mode, execution, saved Workflows) use this catalog.
+    // The route also checks the current rollout so a cached tool cannot bypass a kill switch.
     catalog: input.catalog,
     principal: input.principal,
     organizationId: input.organizationId,
     member: input.member,
     redirectUriBase: input.redirectUriBase,
     generatedArtifactViewsEnabled: input.generatedArtifactViewsEnabled,
-    managedDeploymentsMcpEnabled: input.organizationFeatures.managedDeployments === true
-      && input.organizationFeatures.managedDeploymentsMcp === true,
-    secureSecretFieldsEnabled: input.organizationFeatures.secureSecretFields === true,
-    remoteSessionEventsEnabled: input.organizationFeatures.remoteSessionEvents === true,
+    managedDeploymentsEnabled: input.organizationFeatures.managedDeployments === true,
     remoteSessionStatusEnabled: input.organizationFeatures.remoteSessionSubagents === true,
+    slackSendAsBotEnabled: input.organizationFeatures.slackSendAsBot === true,
     resolvePlatformAdmin,
     resolveNamespaceContext,
     audit: input.audit ?? null,
@@ -228,6 +244,14 @@ export function workflowExecutionAudit(ctx: Pick<CapabilityRegistryContext, "aud
   return (configObjectId, run) => runMcpServiceAction("workflow.execute", principal, serviceAuditResourceId(configObjectId), run, {
     result: workflowExecutionAuditStatus, error: serviceErrorStatus,
   })
+}
+
+/**
+ * Whether this caller may see and run slack_send_as_bot: the feature on, an active member, and a token that may
+ * write. Read-only tokens (Your agent's background turns) never list it.
+ */
+export function slackSendAsBotAvailable(ctx: Pick<CapabilityRegistryContext, "slackSendAsBotEnabled" | "member" | "principal">): boolean {
+  return ctx.slackSendAsBotEnabled && ctx.member !== null && ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE)
 }
 
 const remoteSessionAuditActions: Partial<Record<RemoteSessionAction, AuditServiceActionName>> = {
@@ -272,15 +296,16 @@ function textContent(text: string): { text: string; type: "text" }[] {
   return [{ type: "text", text }]
 }
 
-function unknownCapabilityText(name: string): string {
-  return JSON.stringify({
-    error: "unknown_capability",
-    message: `No capability named "${name}". Call search_capabilities to find a valid name.`,
-  })
+/** A tool execution error the model can act on, as text and as structured content. */
+function capabilityErrorResult(payload: Record<string, unknown>): ExecuteCapabilityToolResult {
+  return { isError: true, content: textContent(JSON.stringify(payload)), structuredContent: payload }
 }
 
 function unknownCapabilityResult(name: string): ExecuteCapabilityToolResult {
-  return { isError: true, content: textContent(unknownCapabilityText(name)) }
+  return capabilityErrorResult({
+    error: "unknown_capability",
+    message: `No capability named "${name}". Call search_capabilities to find a valid name.`,
+  })
 }
 
 const externalMcpProviderErrorOutputSchema = z.object({
@@ -339,12 +364,7 @@ export function externalCapabilityErrorToolResult(
       ? { connectionCard: `Execute "${statusCapability}" once to show the member an actionable connection card, then relay the action in text.` }
       : {}),
   })
-  if (!result.connectionStatus) {
-    return {
-      isError: true,
-      content: textContent(JSON.stringify(payload)),
-    }
-  }
+  if (!result.connectionStatus) return capabilityErrorResult(payload)
   return {
     isError: true,
     content: textContent(JSON.stringify(payload)),
@@ -390,11 +410,7 @@ export function externalCapabilitySuccessToolResult(
 function marketplaceCapabilityErrorToolResult(
   result: Exclude<MarketplaceCapabilityExecuteResult, { ok: true }>,
 ): ExecuteCapabilityToolResult {
-  const payload = Object.fromEntries(Object.entries(result).filter(([key]) => key !== "ok"))
-  return {
-    isError: true,
-    content: textContent(JSON.stringify(payload)),
-  }
+  return capabilityErrorResult(Object.fromEntries(Object.entries(result).filter(([key]) => key !== "ok")))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -492,7 +508,8 @@ function parsedForKind<K extends CapabilitySourceKind>(parsed: ParsedCapability,
 
 const catalogSource: CapabilitySource = {
   kind: "catalog",
-  parseName: (name) => name.includes(":") ? null : { kind: "catalog", name },
+  // Every name without a colon is a Den operation, except the Den-native capabilities named like tools.
+  parseName: (name) => name.includes(":") || isSlackSendAsBotCapabilityName(name) ? null : { kind: "catalog", name },
   search: async (ctx, query, limit) => {
     if (!ctx.sourceFilter.api) return []
     return searchCapabilities(
@@ -613,7 +630,7 @@ const externalMcpSource: CapabilitySource = {
         connectionId: parsed.connectionId,
       })
       if (!probe.ok) {
-        return { isError: true, content: textContent(JSON.stringify({ error: probe.error, message: probe.message })) }
+        return capabilityErrorResult({ error: probe.error, message: probe.message })
       }
       const payload = probe.connected
         ? connectedConnectionActionPayload({ connectionId: probe.connection.id, connectionName: probe.connection.name })
@@ -754,26 +771,52 @@ const remoteSessionSource: CapabilitySource = {
     if (!parsedForKind(parsed, "remoteSession")) return unknownCapabilityResult(input.name)
     if (parsed.action === "status" && !ctx.remoteSessionStatusEnabled) return unknownCapabilityResult(input.name)
     if (!ctx.member) {
-      return {
-        isError: true,
-        content: textContent(JSON.stringify({
-          error: "membership_required",
-          message: "Remote sessions require an active organization membership.",
-        })),
-      }
+      return capabilityErrorResult({
+        error: "membership_required",
+        message: "Remote sessions require an active organization membership.",
+      })
     }
-    const run = async () => withRemoteSessionReceiptUri(await executeRemoteSessionCapability({
+    const run = () => executeRemoteSessionCapability({
       action: parsed.action,
       organizationId: ctx.organizationId,
       userId: ctx.principal.userId,
       hasWriteScope: ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE),
       body: input.body,
       headlessRunTokenId: headlessRunTokenId(ctx.principal.payload),
-    }), ctx.remoteSessionEventsEnabled)
+    })
     const auditAction = remoteSessionAuditActions[parsed.action]
     if (!auditAction || !ctx.audit) return run()
     try {
       return await runMcpServiceAction(auditAction, ctx.audit, remoteSessionResourceId(input.body), run, { result: toolResultStatus })
+    } catch (error) {
+      if (error instanceof AuditUnavailableError) return auditUnavailableToolResult()
+      throw error
+    }
+  },
+}
+
+const slackSendAsBotSource: CapabilitySource = {
+  kind: "slackSendAsBot",
+  parseName: (name) => isSlackSendAsBotCapabilityName(name) ? { kind: "slackSendAsBot", name } : null,
+  // Listed with Den's own operations and next to the Slack connection's tools.
+  search: async (ctx, query) => {
+    if (!(ctx.sourceFilter.api || ctx.sourceFilter.mcp) || !slackSendAsBotAvailable(ctx)) return []
+    return searchSlackSendAsBotCapability(query)
+  },
+  // Not in Code Mode scripts in v1: each message is one explicit call the person can see.
+  enumerate: () => Promise.resolve([]),
+  execute: async (ctx, parsed, input) => {
+    if (!parsedForKind(parsed, "slackSendAsBot") || !ctx.slackSendAsBotEnabled) return unknownCapabilityResult(input.name)
+    const run = () => executeSlackSendAsBot({
+      organizationId: ctx.organizationId,
+      userId: ctx.principal.userId,
+      member: ctx.member !== null,
+      hasWriteScope: ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE),
+      body: input.body,
+    })
+    if (!ctx.audit) return run()
+    try {
+      return await runMcpServiceAction("slack_assistant.bot_message.send", ctx.audit, null, run, { result: toolResultStatus })
     } catch (error) {
       if (error instanceof AuditUnavailableError) return auditUnavailableToolResult()
       throw error
@@ -789,9 +832,10 @@ const adminSource: CapabilitySource = {
   },
   search: async (ctx, query, limit) => {
     if (!ctx.sourceFilter.admin) return []
-    const matches = await searchAvailableAdminCapabilities(await ctx.resolvePlatformAdmin(), query, limit)
-    return matches.map((match) => ({ ...match, scriptPath: codemodeScriptPath("admin", parseAdminCapabilityName(match.name) ?? match.name) }))
+    // No scriptPath: Code Mode scripts cannot call admin tools (SCRIPT_SOURCE_KINDS).
+    return searchAvailableAdminCapabilities(await ctx.resolvePlatformAdmin(), query, limit)
   },
+  // Full-view tools list these; Code Mode trees leave them out.
   enumerate: async (ctx) => {
     const matches = await listAvailableAdminCapabilities(await ctx.resolvePlatformAdmin())
     return matches.flatMap((match) => {
@@ -818,7 +862,7 @@ const adminSource: CapabilitySource = {
     if (!parsedForKind(parsed, "admin") || !(await ctx.resolvePlatformAdmin())) {
       return unknownCapabilityResult(input.name)
     }
-    const admin = { userId: ctx.principal.userId, credentialId: mcpPrincipalCredentialId(ctx.principal) }
+    const admin = { userId: ctx.principal.userId, credentialId: mcpPrincipalCredentialId(ctx.principal), scopes: ctx.principal.scopes }
     return (await executeAdminCapability(parsed.name, input.body, admin)) ?? unknownCapabilityResult(input.name)
   },
 }
@@ -830,6 +874,7 @@ export const CAPABILITY_SOURCES: Record<CapabilitySourceKind, CapabilitySource> 
   marketplace: marketplaceSource,
   builtinSkill: builtinSkillSource,
   remoteSession: remoteSessionSource,
+  slackSendAsBot: slackSendAsBotSource,
   admin: adminSource,
 }
 
@@ -867,12 +912,17 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
       for (const kind of CAPABILITY_SOURCE_KINDS) {
         const source = sources[kind]
         const parsed = source.parseName(input.name)
-        if (parsed) return source.execute(ctx, parsed, input)
+        if (!parsed) continue
+        const call = capabilityCallInput(
+          input.arguments === undefined ? input : { ...input, arguments: normalizeToolBody(input.arguments) },
+          HTTP_ARGUMENT_KINDS.has(kind),
+        )
+        return call.ok ? source.execute(ctx, parsed, call.input) : capabilityErrorResult(call.error)
       }
       return unknownCapabilityResult(input.name)
     },
     buildToolTree: async (ctx: CapabilityRegistryContext): Promise<BuiltCodemodeTools> => {
-      const enumerated = await Promise.all(CAPABILITY_SOURCE_KINDS.map(async (kind) => {
+      const enumerated = await Promise.all(SCRIPT_SOURCE_KINDS.map(async (kind) => {
         const result = await sources[kind].enumerate(ctx)
         return "excluded" in result ? [] : result
       }))
@@ -894,6 +944,15 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
       }
     },
   }
+}
+
+/** Den API and native connector operations take `{ path, query, body }` as their arguments. */
+const HTTP_ARGUMENT_KINDS: ReadonlySet<CapabilitySourceKind> = new Set(["catalog", "native"])
+
+/** A search match in MCP `Tool` shape, with its `inputSchema` built the way execute reads `arguments`. */
+export function capabilitySearchMatch(match: CapabilityMatch): CapabilityToolMatch {
+  const kind = CAPABILITY_SOURCE_KINDS.find((candidate) => CAPABILITY_SOURCES[candidate].parseName(match.name) !== null)
+  return capabilityToolMatch(match, kind !== undefined && HTTP_ARGUMENT_KINDS.has(kind))
 }
 
 export const CAPABILITY_REGISTRY = createCapabilityRegistry(CAPABILITY_SOURCES)

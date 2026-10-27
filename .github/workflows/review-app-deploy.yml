@@ -10,7 +10,8 @@ name: Review app deploy
 #   vars.OPENWORK_REVIEW_URL                 https://<stable-alias>.vercel.app
 #   vars.OPENWORK_REVIEW_VERCEL_ORG_ID       Vercel team id (team_...)
 #   vars.OPENWORK_REVIEW_VERCEL_PROJECT_ID   Vercel project id (prj_...)
-#   secrets.VERCEL_TOKEN                     Vercel token with access to the project
+#   secrets.VERCEL_TOKEN                     Vercel token with access to the project,
+#                                            stored on the review-app environment
 
 on:
   push:
@@ -39,6 +40,10 @@ jobs:
       vars.OPENWORK_REVIEW_VERCEL_ORG_ID != '' &&
       vars.OPENWORK_REVIEW_VERCEL_PROJECT_ID != ''
     runs-on: ubuntu-latest
+    # The Vercel token belongs to this environment; no deployment is recorded.
+    environment:
+      name: review-app
+      deployment: false
     timeout-minutes: 15
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -51,7 +56,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.22.1
       - name: Resolve the stable review alias
         id: alias
         run: |

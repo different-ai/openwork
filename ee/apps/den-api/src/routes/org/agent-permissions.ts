@@ -16,7 +16,6 @@ import {
 import { agentPermissionPolicyChangedEvent, type AgentPermissionAuditScope } from "../../audit/domain/agent-permissions.js"
 import { appendDomainChanges } from "../../audit/domain/legacy.js"
 import { auditChangeCapture, type AuditChangeCapture } from "../../audit/request-capture.js"
-import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, paramValidator, requireOrgPermission } from "../../middleware/index.js"
 import {
   emptyResponse,
@@ -119,7 +118,6 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
       },
     }),
     orgMemberRoute(),
-    requireFeature("agentPermissions"),
     requireOrgPermission("agent_permissions.view"),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -160,7 +158,6 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
       },
     }),
     orgMemberRoute(),
-    requireFeature("agentPermissions"),
     requireOrgPermission("agent_permissions.manage"),
     jsonValidator(agentPermissionPolicyWriteSchema),
     async (c) => {
@@ -185,7 +182,6 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
       },
     }),
     orgMemberRoute(),
-    requireFeature("agentPermissions"),
     requireOrgPermission("agent_permissions.manage"),
     paramValidator(teamParamsSchema),
     jsonValidator(agentPermissionPolicyWriteSchema),
@@ -211,7 +207,6 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
       },
     }),
     orgMemberRoute(),
-    requireFeature("agentPermissions"),
     requireOrgPermission("agent_permissions.manage"),
     paramValidator(teamParamsSchema),
     async (c) => {

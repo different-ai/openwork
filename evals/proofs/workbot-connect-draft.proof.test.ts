@@ -1,0 +1,114 @@
+import { expect } from "vitest";
+import { spec } from "@openwork/testkit";
+import { workbotDraftConnect } from "../worlds/workbot-connect.ts";
+
+const test = spec.world(workbotDraftConnect, { timeout: 180_000, needs: { placement: "local" }, resources: { surfaces: [], services: ["den"] } });
+const draft = "Draft retained through OAuth recovery.\nDo not save this automatically.";
+
+test("a member reconnects Drive and explicitly restores their exact unsaved draft only after fresh identity and file checks", async ({ world, user, probe, step, evidence }) => {
+  await user.resizeViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+  const account = user.on(world.accountWeb);
+  await step("before: the member opens an authorized editable Drive file and leaves an unsaved draft", async () => {
+    await user.see({ role: "button", label: "Connect Google Drive" });
+    await user.click({ role: "button", label: "Connect Google Drive" });
+    const consent = await probe.eventually(() => world.consent(), { within: 10_000, label: "the member reviews provider consent", until: value => Boolean(value) });
+    await user.on(consent).click({ role: "button", label: "Approve access" });
+    await probe.eventually(() => world.ready(), { within: 10_000, label: "Den verifies the member's initial connection", until: value => value });
+    await user.click({ role: "button", label: "Check browsing access" });
+    await user.see({ role: "button", label: /^Project brief\.txt$/, nth: 0 });
+    await user.click({ role: "button", label: /^Project brief\.txt$/, nth: 0 });
+    await user.see({ role: "textbox", label: "Document text" }, { value: "Saved project overview.\n" });
+    await user.type({ role: "textbox", label: "Document text" }, draft, { replace: true });
+    await user.see({ role: "textbox", label: "Document text" }, { value: draft });
+    await user.see({ text: "Unsaved changes" });
+    expect(world.documentWrites()).toEqual([]);
+    evidence.recordAssertionEvidence("The actual Den editor serves an editable file, while the typed draft remains local", `editor reads=${world.editorReads().length}; writes=${world.documentWrites().length}`, world.editorReads().some(read => read.status === 200) && world.documentWrites().length === 0);
+    await user.screenshot();
+  });
+  await step("expired provider authorization locks the open draft without discarding it", async () => {
+    await account.click({ role: "button", label: "Expire account authorization" });
+    await account.see({ text: "Authorization expired; file allowed; member original" });
+    await user.click({ role: "button", label: /^Files$/ });
+    await user.click({ role: "button", label: "Refresh documents" });
+    await user.see({ text: "Google Drive needs a fresh connection." });
+    await user.see({ text: "Locked recovery is kept in this tab for up to 15 minutes." });
+    await user.see({ role: "button", label: "Reconnect Google Drive" });
+    await user.see({ role: "button", label: "Check access and restore tabs" });
+    await user.notSee({ role: "textbox", label: "Document text" });
+    await user.notSee({ text: "Project brief.txt" });
+    expect(await world.ready()).toBe(false);
+    expect(world.refreshFailures()).toBeGreaterThan(0);
+    evidence.recordAssertionEvidence("The real OAuth refresh was rejected and the bounded recovery stays masked", `revoked refreshes=${world.refreshFailures()}; last directory status=${world.directoryReads().at(-1)}; writes=${world.documentWrites().length}`, world.refreshFailures() > 0 && !await world.ready() && world.documentWrites().length === 0);
+    await user.screenshot();
+  });
+  await step("declining reconnect leaves the retained draft locked with an honest retry", async () => {
+    await user.click({ role: "button", label: "Reconnect Google Drive" });
+    const consent = await probe.eventually(() => world.consent(), { within: 10_000, label: "provider reconnect opens directly", until: value => Boolean(value) });
+    await user.on(consent).click({ role: "button", label: "Decline access" });
+    await user.see({ text: "Connection wasn't completed. Try again, or ask an admin to review the app's permissions." });
+    await user.see({ role: "button", label: "Check access and restore tabs" });
+    await user.notSee({ role: "textbox", label: "Document text" });
+    expect(await world.ready()).toBe(false);
+    evidence.recordAssertionEvidence("Denied consent neither discards nor reveals retained work", `ready=${await world.ready()}; writes=${world.documentWrites().length}; route=${await probe.url()}`, !await world.ready() && world.documentWrites().length === 0 && (await probe.url()).endsWith("/documents"));
+    await user.screenshot();
+  });
+  await step("successful reconnect and fresh Den readiness do not automatically reveal the retained draft", async () => {
+    await user.click({ role: "button", label: "Reconnect Google Drive" });
+    const consent = await probe.eventually(() => world.consent(), { within: 10_000, label: "the member grants a fresh connection", until: value => Boolean(value) });
+    await user.on(consent).click({ role: "button", label: "Approve access" });
+    await probe.eventually(() => world.ready(), { within: 10_000, label: "Den confirms the fresh OAuth grant", until: value => value });
+    await probe.eventually(() => world.directoryReads(), { within: 10_000, label: "the directory read succeeds after reconnect", until: values => values.at(-1) === 200 });
+    await user.see({ role: "button", label: "Check access and restore tabs" });
+    await user.see({ text: "Locked recovery is kept in this tab for up to 15 minutes." });
+    await user.notSee({ role: "textbox", label: "Document text" });
+    await user.notSee({ text: "Project brief.txt" });
+    evidence.recordAssertionEvidence("A usable connection is not permission to bypass explicit draft restoration", `ready=${await world.ready()}; last directory status=${world.directoryReads().at(-1)}; writes=${world.documentWrites().length}`, await world.ready() && world.directoryReads().at(-1) === 200 && world.documentWrites().length === 0);
+    await user.screenshot();
+  });
+  await step("another real member with file access cannot restore the original member's retained draft", async () => {
+    expect(await world.otherMemberCanRead()).toBe(true);
+    await account.click({ role: "button", label: "Use another signed-in member" });
+    await account.see({ text: "Authorization active; file allowed; member other" });
+    const reads = world.editorReads().length;
+    await user.click({ role: "button", label: "Check access and restore tabs" });
+    await user.see({ text: "The signed-in account or workspace changed. Retained documents are locked." });
+    await user.notSee({ role: "textbox", label: "Document text" });
+    expect(world.editorReads()).toHaveLength(reads);
+    evidence.recordAssertionEvidence("Fresh identity fails before any retained file is revalidated or revealed", `other member file access=true; editor reads before/after=${reads}/${world.editorReads().length}; writes=${world.documentWrites().length}`, world.editorReads().length === reads && world.documentWrites().length === 0);
+    await user.screenshot();
+  });
+  await step("the original identity still cannot reveal a file whose access was denied", async () => {
+    await account.click({ role: "button", label: "Restore original member" });
+    await account.see({ text: "Authorization active; file allowed; member original" });
+    await account.click({ role: "button", label: "Deny file access" });
+    await account.see({ text: "Authorization active; file denied; member original" });
+    await user.click({ role: "button", label: "Check sign-in" });
+    await user.see({ role: "button", label: "Check access and restore tabs" });
+    await user.notSee({ role: "textbox", label: "Document text" });
+    const reads = world.editorReads().length;
+    await user.click({ role: "button", label: "Check access and restore tabs" });
+    await user.see({ text: "Some documents are still locked. Check or discard them individually." });
+    await user.notSee({ role: "textbox", label: "Document text" });
+    expect(await world.ready()).toBe(true);
+    expect(world.providerFileDenials()).toBeGreaterThan(0);
+    expect(world.editorReads().at(-1)?.status).toBe(502);
+    evidence.recordAssertionEvidence("Per-file authorization remains separate from the fresh connection and identity", `provider file denial=403; Den editor status=${world.editorReads().at(-1)?.status}; ready=${await world.ready()}; writes=${world.documentWrites().length}`, world.editorReads().length > reads && world.providerFileDenials() > 0 && world.editorReads().at(-1)?.status === 502 && world.documentWrites().length === 0);
+    await user.screenshot();
+  });
+  await step("after: explicit identity and per-file checks restore the exact unsaved text without saving it", async () => {
+    await account.click({ role: "button", label: "Allow file access" });
+    await account.see({ text: "Authorization active; file allowed; member original" });
+    const reads = world.editorReads().length;
+    const identities = world.identityReads();
+    await user.click({ role: "button", label: "Check access and restore tabs" });
+    await user.see({ role: "button", label: "Project brief.txt, unsaved changes" });
+    await user.click({ role: "button", label: "Project brief.txt, unsaved changes" });
+    await user.see({ role: "textbox", label: "Document text" }, { value: draft });
+    await user.see({ text: "Unsaved changes" });
+    expect(world.documentWrites()).toEqual([]);
+    expect(world.editorReads().length).toBeGreaterThan(reads);
+    expect(world.identityReads()).toBeGreaterThanOrEqual(identities + 2);
+    evidence.recordAssertionEvidence("The typed work and Unsaved state survive; no document write is replayed", `fresh identity reads=${world.identityReads() - identities}; fresh editor reads=${world.editorReads().length - reads}; writes=${world.documentWrites().length}; exact draft=${JSON.stringify(draft)}`, world.identityReads() >= identities + 2 && world.editorReads().length > reads && world.documentWrites().length === 0);
+    await user.screenshot();
+  });
+});

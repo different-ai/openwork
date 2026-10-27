@@ -20,6 +20,15 @@ export const SEARCH_CAPABILITIES_TOOL_NAME = "search_capabilities"
 export const EXECUTE_CAPABILITY_TOOL_NAME = "execute_capability"
 export type SearchCapabilityType = "all" | "api" | "admin" | "mcp" | "marketplace" | "skills"
 
+/** MCP `Tool.annotations` hints. They come from providers, so clients treat them as untrusted. */
+export type CapabilityToolAnnotations = {
+  title?: string
+  readOnlyHint?: boolean
+  destructiveHint?: boolean
+  idempotentHint?: boolean
+  openWorldHint?: boolean
+}
+
 export type CapabilityMatch = {
   name: string
   method: string
@@ -43,6 +52,8 @@ export type CapabilityMatch = {
   invocation?: { argumentsField: "body" }
   /** For a connection tool: whether its provider marks it read-only and not destructive. */
   readOnly?: boolean
+  /** For a connection tool: the provider's own MCP tool annotations, unchanged. */
+  annotations?: CapabilityToolAnnotations
   /** Exact confined-script path when Code Mode scripts are enabled. */
   scriptPath?: string
   /** Callable capability or a source-specific advisory/content kind. */
@@ -69,11 +80,61 @@ export function searchCapabilitySourceFilter(type?: SearchCapabilityType) {
   }
 }
 
+/**
+ * Lowercase words, with camelCase / PascalCase split like snake_case, so a
+ * provider tool `searchMessages` and a query `createConfigObject` match by word.
+ */
 export function tokenize(value: string): string[] {
   return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((token) => token.length > 0)
+}
+
+/** Filler words in natural queries; scored, they prefix-match unrelated names ("to" → "today"). */
+const STOP_WORDS = new Set(["a", "an", "and", "any", "at", "for", "i", "in", "me", "my", "of", "on", "or", "our", "please", "some", "that", "the", "this", "to", "with", "your"])
+
+/**
+ * Words people use for the same capability. A synonym earns less than the
+ * word itself, so a direct match still ranks first.
+ */
+const SYNONYM_GROUPS: readonly (readonly string[])[] = [
+  ["email", "mail", "gmail", "inbox"],
+  ["meeting", "event", "appointment"],
+  ["ticket", "issue"],
+  ["doc", "document", "file"],
+  ["teammate", "colleague", "member", "user", "people", "person"],
+  ["sprint", "cycle", "iteration"],
+  ["pr", "pull"],
+  ["repo", "repository"],
+  ["find", "search", "lookup"],
+  ["get", "read", "fetch", "retrieve", "view"],
+  ["create", "add", "new", "make"],
+  ["update", "edit", "modify", "change"],
+  ["delete", "remove"],
+  ["send", "post"],
+  ["reply", "respond"],
+  ["spreadsheet", "sheet"],
+  ["folder", "directory"],
+]
+
+/** Singular form of a plural word ("issues" → "issue", "entries" → "entry", "searches" → "search"). */
+function singular(token: string): string {
+  if (token.length > 4 && token.endsWith("ies")) return `${token.slice(0, -3)}y`
+  if (token.length > 4 && /(?:ss|x|z|ch|sh)es$/.test(token)) return token.slice(0, -2)
+  if (token.length > 3 && token.endsWith("s") && !/(?:ss|us|is)$/.test(token)) return token.slice(0, -1)
+  return token
+}
+
+const SYNONYMS = new Map(SYNONYM_GROUPS.flatMap((group) => group.map((word) =>
+  [word, group.filter((other) => other !== word)] as const)))
+
+/** The query words that carry meaning: no filler words and no repeats, unless that leaves nothing. */
+function searchTerms(queryTokens: string[]): string[] {
+  const words = [...new Set(queryTokens)]
+  const meaningful = words.filter((word) => !STOP_WORDS.has(word))
+  return meaningful.length > 0 ? meaningful : words
 }
 
 export function scoreText(
@@ -82,30 +143,35 @@ export function scoreText(
   queryTokens: string[],
   extraTokens: string[] = [],
 ): number {
+  const names = nameTokens.map(singular)
+  const nameSet = new Set(names)
+  const summary = new Set(summaryTokens.map(singular))
+  const extra = new Set(extraTokens.map(singular))
   let score = 0
-  for (const queryToken of queryTokens) {
-    if (nameTokens.includes(queryToken)) {
-      score += 5
-    } else if (nameTokens.some((token) => token.startsWith(queryToken) || queryToken.startsWith(token))) {
-      score += 3
+  for (const word of searchTerms(queryTokens)) {
+    const term = singular(word)
+    let termScore = 0
+    if (nameSet.has(term)) {
+      // The same word form as asked keeps "pull requests" on the list tool
+      // ahead of create_pull_request.
+      termScore += nameTokens.includes(word) ? 6 : 5
+    } else if (term.length >= 3 && names.some((token) => token.length >= 3 && (token.startsWith(term) || term.startsWith(token)))) {
+      termScore += 3
     }
-    if (summaryTokens.includes(queryToken)) {
-      score += 2
+    if (summary.has(term)) {
+      termScore += 2
     }
-    if (extraTokens.includes(queryToken)) {
-      score += 1
+    if (extra.has(term)) {
+      termScore += 1
     }
+    if (termScore === 0) {
+      const synonyms = SYNONYMS.get(term) ?? []
+      if (synonyms.some((synonym) => nameSet.has(synonym))) termScore += 3
+      if (synonyms.some((synonym) => summary.has(synonym))) termScore += 1
+    }
+    score += termScore
   }
   return score
-}
-
-/**
- * Apply the same camelCase / PascalCase splitting to API tool names and queries.
- * A query like `createConfigObject` must match like "create config object".
- */
-function tokenizeIdentifier(value: string): string[] {
-  const spaced = value.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-  return tokenize(spaced)
 }
 
 function summaryFor(operation: McpToolOperation): string {
@@ -121,15 +187,15 @@ function scoreOperation(operation: McpToolOperation, queryTokens: string[], exac
   // request schemas (which would make generic fields match unrelated tools).
   const aliases = operation.operation["x-mcp-search-aliases"]
   const aliasTokens = Array.isArray(aliases)
-    ? aliases.filter((alias): alias is string => typeof alias === "string").flatMap(tokenizeIdentifier)
+    ? aliases.filter((alias): alias is string => typeof alias === "string").flatMap(tokenize)
     : []
-  const nameTokens = [...tokenizeIdentifier(operation.name), ...aliasTokens]
+  const nameTokens = [...tokenize(operation.name), ...aliasTokens]
   const summaryTokens = tokenize(summaryFor(operation))
   const pathTokens = tokenize(operation.path)
   const score = scoreText(nameTokens, summaryTokens, queryTokens, pathTokens)
-  // Ordinary matches earn at most 5 + 2 + 1 per token. Promote an exact callable
+  // Ordinary matches earn at most 6 + 2 + 1 per token. Promote an exact callable
   // name before source-local truncation, retaining priority in the aggregate sort.
-  return score + (operation.name.toLowerCase() === exactName ? queryTokens.length * (5 + 2 + 1) + 1 : 0)
+  return score + (operation.name.toLowerCase() === exactName ? queryTokens.length * (6 + 2 + 1) + 1 : 0)
 }
 
 export function searchCapabilities(
@@ -137,7 +203,7 @@ export function searchCapabilities(
   query: string,
   limit = 5,
 ): CapabilityMatch[] {
-  const queryTokens = tokenizeIdentifier(query)
+  const queryTokens = tokenize(query)
   const exactName = query.trim().toLowerCase()
   const boundedLimit = Math.max(1, Math.min(20, Math.trunc(limit) || 5))
 

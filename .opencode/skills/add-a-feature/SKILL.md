@@ -22,12 +22,21 @@ this order by one function (`resolveFeature`) everywhere it is checked:
 1. **Deployments**: products it exists on (`cloud`, `self_hosted`). Fixed in code.
 2. **Kill switch**: off everywhere at once, outranking everything below. This is the revert; no deploy.
 3. **Operator lock**: a self-hosted operator forces it on or off for the whole install (Helm `config.features.<key>`).
-4. **Organization override**: platform admins turn it on or off for one organization in `/admin`.
-5. **Everyone**: on or off for everyone on the deployment, changed in `/admin` without a deploy.
+4. **Member override**: platform admins turn it on or off for one active organization member from the organization’s Members page in `/admin`. No override inherits the organization setting.
+5. **Organization override**: platform admins turn it on or off for one organization in `/admin`.
+6. **Everyone**: on or off for everyone on the deployment, changed in `/admin` without a deploy.
 
-Steps 2, 4 and 5 are set per deployment in `/admin` (Features page and each
+Steps 2, 5 and 6 are set per deployment in `/admin` (Features page and each
 organization's row) or with the admin MCP tools `den_list_features`,
 `den_set_feature_rollout` and `den_set_org_capability`.
+
+Every change made in `/admin` or by those tools (on, off, reset, kill switch,
+restore) is appended to the `feature_change` table with who made it and when.
+`/admin` shows the latest one on each row, e.g. "Last change: On for this
+organization by Omar McAdam · 26 Oct 2026, 14:03". Deploy-time operator locks
+(`DEN_FEATURE_*`) are not changes and are not recorded.
+
+Member overrides are scoped to a membership, never a user globally. Pass `{ userId }` for caller-specific checks; organization-owned background policy without a person intentionally uses only organization state. The member editor supports true/false and null to restore inheritance.
 
 ## Does this need a feature?
 
@@ -38,6 +47,15 @@ Yes, if any of these is true:
 - It should roll out gradually, be revertable, or might not belong on self-hosted installs.
 
 No for bug fixes, copy changes, refactors and internal tooling.
+
+Not a feature: anything that only platform admins see in `/admin` (the
+pages we use to manage the deployment itself: Features, organizations, grants,
+plans, sandboxes, recovery). Feature flags control what people in
+organizations get, not the tools of the people running the deployment. Ship
+those `/admin` controls without a flag; platform admin access already gates
+them. This is about `/admin` only: organization admin screens in Den (the
+dashboard, Manage, team settings) are things customers get, so they still need
+a feature when they are new.
 
 Not a feature either: something that only keeps older clients working
 (compat shim with a removal condition), something worked out from what is
@@ -50,23 +68,33 @@ works rather than *whether* people get it (put it in `env.ts` / Helm `config.<ar
 newThing: {
   label: "New thing",
   description: "What a person gets, in words they see in the product.",
+  category: "workbot",
+  added: "2026-10-26",
   since: "2026-10",
+  author: "your-github-handle",
+  docs: "docs/features/new-thing/README.md",
   deployments: ["cloud", "self_hosted"],
   default: false,
 },
 ```
 
 - **Key**: lowerCamelCase, no consecutive capitals. Permanent: also the Helm key, `DEN_FEATURE_NEW_THING`, the API field and stored rows.
+- **category**: the group `/admin` lists it under, one of `FEATURE_CATEGORIES` at the top of the registry. Pick the one a platform admin would look under; add a group there only when none fits.
+- **added**: the day you add the flag, `YYYY-MM-DD`. It never changes (`since` moves when the entry changes). Shown in `/admin` as "Added 26 Oct 2026".
 - **Deployments**: leave one out on purpose (e.g. `["cloud"]` for a cloud-only feature).
 - **default**: false for new work. A fresh deployment, and a client that cannot reach Den, uses it, so never ship half-done work as `true`.
+- **author**: GitHub handle of the person who owns the feature: who platform admins ask what it does, whether it is safe to turn on, and when the flag can go. Shown on `/admin` › Features with a link to their profile.
+- **docs**: repo path of an internal doc, linked from `/admin` › Features as **Internal docs**. Internal docs live in the repo's `docs/` folder (e.g. `docs/features/new-thing/README.md`), never the published `packages/docs` site. Write it in the same PR:
+  - **Visual feature** (a screen, button, card, panel): show at least one screenshot of it working, stored next to the doc (`docs/features/new-thing/new-thing.png`) and referenced with a relative path. Screenshot the real app, on and off if the difference matters.
+  - **Not visual** (a backend change, engine, sync, token handling): enough for someone who did not build it to decide whether to turn it on: what changes, for whom, how to try it, what turning it off does, and what to watch (logs, errors, metrics).
+  - Both: the feature key, its deployments, and the author.
 - **permanent: true** only when the switch itself is part of the product (e.g. turning Connect off for one organization). Rollouts are temporary.
 
-Then run `pnpm features:sync`. It regenerates the Helm files **and the Den API
-contract/SDK** (feature keys are part of API schemas). It prepares a disposable
-local database and removes it afterwards; MySQL must be running
-(`pnpm dev:den:mysql`). Commit the Helm files, `packages/docs/openapi.json`, and
-`packages/sdk/src/gen/**` together. Do not stop after Helm generation if the
-contract step fails.
+Then run `pnpm features:sync` and commit the Helm files with the registry.
+OpenAPI and SDK outputs are ignored build artifacts: CI regenerates, lints and
+typechecks them from the source change. `pnpm sdk:build` generates them locally
+when needed; use `pnpm den:contract` for a forced generation with disposable
+local MySQL. Do not commit generated contracts.
 
 ## 2. Make it safe to turn off at any moment
 
@@ -108,10 +136,15 @@ Evals turn features on per organization through the admin API:
 - Read or write `organization.metadata.capabilities` (CI rejects it).
 - Hand-write an `/admin` control, a `/v1/org` field, or a Helm line for a feature.
 - Ship something on self-hosted by accident: choose `deployments` on purpose.
+- Put an `/admin`-only control behind a feature.
+- Declare a feature without an `author`, or a new one without an internal doc.
 
 ## In the PR
 
 Name the feature and its deployments under "How is this implemented?", e.g.
 "Behind `newThing` (cloud and self-hosted, off), safe to kill: falls back to
-the old flow." Run `pnpm features:check` before
-pushing.
+the old flow." Link its internal doc. Run `pnpm features:check` before
+pushing: it fails when a feature has no author, when a new feature has no
+`docs`, or when the doc or an image it shows does not exist. Features declared
+before docs were required are listed in `FEATURES_WITHOUT_DOCS` in
+`scripts/features-sync.mjs`; when you add docs for one, remove it there.

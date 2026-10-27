@@ -16,7 +16,8 @@ import {
 } from "../../app/lib/den-session-events";
 import { evalRelaunchDesktopApp, readDesktopDistributionInfo } from "../../app/lib/desktop";
 import { outboundEgressAllowed } from "../../app/lib/enterprise-activation";
-import { isDesktopRuntime } from "../../app/lib/runtime-env";
+import { isDesktopRuntime, isElectronRuntime } from "../../app/lib/runtime-env";
+import { ComputerBridge } from "../domains/session/computer/computer-store";
 import { Button } from "../../components/ui/button";
 import { t } from "../../i18n";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
@@ -39,6 +40,7 @@ import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
 import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
 import { CloudWorkspaceOverlay, CloudWorkspaceStatusProvider } from "./cloud-workspace-overlay";
 import { EngineMigrationOverlay } from "./engine-migration";
+import { useEngineMigrationAnalytics } from "./use-engine-migration-analytics";
 import { MemberApiKeyDialog } from "../domains/connections/member-api-key-dialog";
 import { AppMenuProvider } from "./app-menu";
 import {
@@ -54,6 +56,8 @@ import { SettingsRoute } from "./settings-route";
 import { ShellConfigProvider } from "./shell-config";
 import { WelcomeRoute } from "./welcome-route";
 import { readOrgSelectionPending } from "../../app/lib/den-sign-in-intent";
+import { readSignInReturnTarget, resolvePostHandoffRoute, shouldHandleSignInReturnAttempt } from "../../app/lib/den-sign-in-return";
+import { completeSignInReturn } from "../domains/cloud/sign-in-return";
 import {
   resolveDenSigninRedirect,
   shouldRenderPreparedRedirect,
@@ -161,6 +165,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     const handler = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
       if (event.detail?.status !== "success") return;
       const signInLocation = locationRef.current;
+      const signInAttempt = readSignInReturnTarget();
       let attempts = 0;
       const check = () => {
         const currentLocation = locationRef.current;
@@ -169,14 +174,28 @@ function DenSigninGate({ children }: DenSigninGateProps) {
           || currentLocation.search !== signInLocation.search
           || currentLocation.hash !== signInLocation.hash
         ) return;
+        const target = readSignInReturnTarget();
+        // Onboarding can already have returned to the very same URL before
+        // this delayed check runs. Consuming the target is not a new sign-in
+        // without a target: never bounce that conversation to the session root.
+        if (!shouldHandleSignInReturnAttempt(signInAttempt, target)) return;
         attempts++;
         const settings = readDenSettings();
-        if (settings.authToken?.trim() && readOrgSelectionPending().pending) {
-          // Desktop-initiated sign-in: the org chooser decides — do not race
-          // it to /session while the choice is deliberately open.
-          navigate("/onboarding", { replace: true });
-        } else if (settings.authToken?.trim() && settings.activeOrgId?.trim()) {
-          navigate("/session", { replace: true });
+        // Desktop-initiated sign-in with the choice deliberately open: the org
+        // chooser decides (and returns to the recorded route when it
+        // finishes) — do not race it to /session. With an organization
+        // active, chat opens where sign-in started,
+        // otherwise on the session root.
+        const route = resolvePostHandoffRoute({
+          hasToken: Boolean(settings.authToken?.trim()),
+          activeOrgId: settings.activeOrgId,
+          orgSelectionPending: readOrgSelectionPending().pending,
+          target,
+        });
+        if (route) {
+          if (route.kind !== "return" || !completeSignInReturn(navigate)) {
+            navigate(route.kind === "return" ? "/session" : route.path, { replace: true });
+          }
         } else if (attempts < 10) {
           // Session persistence should already be done, but retry briefly in
           // case another consumer is still applying the handoff result.
@@ -409,6 +428,7 @@ export function AppRoot() {
   useVisualViewportInset();
   const egressAllowed = useOutboundEgressAllowed();
   useMemberActivitySync(egressAllowed);
+  useEngineMigrationAnalytics(egressAllowed);
 
   // Module-level dedupe keeps StrictMode double-mounts from double-counting.
   useEffect(() => {
@@ -448,6 +468,8 @@ export function AppRoot() {
             <DenSigninGate>
               <OpenWorkWebAccessGate>
                 <CloudWorkspaceStatusProvider>
+                  {/* Settings unmounts the chat; computer use stays connected on every route. */}
+                  {isElectronRuntime() ? <ComputerBridge /> : null}
                   <Routes>
               <Route
                 path="/signin"

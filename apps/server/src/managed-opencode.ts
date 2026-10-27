@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import net from "node:net";
+import { deleteEnv, mergeEnv } from "@openwork/paths";
+import { startupPhase } from "./startup-phase.js";
 import { randomUUID } from "node:crypto";
 import { appendEngineOutputTail, createEngineStartupLineReader } from "./engine-output.js";
 
@@ -161,16 +163,15 @@ async function startManagedOpencodeServer(
   // to hang for the full five-minute registry timeout, so first-run must not wait.
   // @npmcli/config reads npm_config_* settings from the environment.
   const engineEnvDefaults = { npm_config_audit: "false" };
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...engineEnvDefaults,
-    ...options.env,
-    OPENCODE_SERVER_USERNAME: username,
-    OPENCODE_SERVER_PASSWORD: password,
-  };
+  const env: NodeJS.ProcessEnv = mergeEnv([
+    process.env,
+    engineEnvDefaults,
+    options.env,
+    { OPENCODE_SERVER_USERNAME: username, OPENCODE_SERVER_PASSWORD: password },
+  ]);
   // The managed engine needs its own provider environment, but never the key
-  // that decrypts OpenWork-owned OAuth credentials.
-  delete env.OPENWORK_ENCRYPTION_KEY;
+  // that decrypts OpenWork-owned OAuth credentials, under any Windows spelling.
+  deleteEnv(env, "OPENWORK_ENCRYPTION_KEY");
   const injectedEnv = Object.entries({
     ...engineEnvDefaults,
     ...(options.env ?? {}),
@@ -274,6 +275,10 @@ async function startManagedOpencodeServer(
 }
 
 export async function createManagedOpencodeServer(options: ManagedOpencodeServerOptions): Promise<ManagedOpencodeServer> {
+  return startupPhase("engine.v1.serve", () => createManagedOpencodeServerInner(options));
+}
+
+async function createManagedOpencodeServerInner(options: ManagedOpencodeServerOptions): Promise<ManagedOpencodeServer> {
   const hostname = options.hostname ?? "127.0.0.1";
   const port = options.port ?? await findFreePort(hostname, options.excludedPorts);
   try {

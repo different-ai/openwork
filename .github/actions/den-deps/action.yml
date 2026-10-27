@@ -1,0 +1,26 @@
+name: Den dependencies for journeys
+description: Restore or build the packages a local Den needs, and start MySQL
+runs:
+  using: composite
+  steps:
+    # The build output depends only on these sources and the lockfile, so a
+    # cache hit skips ~25s of rebuilding on every journey job.
+    - name: Restore Den package builds
+      id: cache
+      uses: actions/cache@v5
+      with:
+        path: |
+          packages/types/dist
+          ee/packages/den-db/dist
+          packages/email/dist
+        key: den-deps-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'packages/types/src/**', 'packages/types/package.json', 'packages/types/tsup.config.ts', 'packages/types/tsconfig*.json', 'ee/packages/den-db/src/**', 'ee/packages/den-db/scripts/**', 'ee/packages/den-db/package.json', 'packages/email/src/**', 'packages/email/emails/**', 'packages/email/package.json', 'packages/email/tsup.config.ts', 'packages/email/tsconfig*.json') }}
+    - name: Build Den packages
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        pnpm --filter @openwork/types build
+        pnpm --filter @openwork-ee/den-db build
+        pnpm --filter @openwork/email build
+    - name: Start MySQL
+      shell: bash
+      run: pnpm ci:den:mysql

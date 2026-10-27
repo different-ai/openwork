@@ -242,7 +242,7 @@ server.tool(
   "Execute an OpenWork UI action by its id without activating the desktop window. Use ui_list_actions first to see available actions and their required arguments.",
   {
     actionId: z.string().describe("The action id from ui_list_actions, e.g. 'session.create_task' or 'composer.set_text'"),
-    args: z.record(z.unknown()).optional().describe("JSON arguments for the action, if required"),
+    args: z.record(z.string(), z.unknown()).optional().describe("JSON arguments for the action, if required"),
   },
   async ({ actionId, args }) => {
     const result = await bridgeRequest("/execute", {
@@ -262,7 +262,7 @@ server.tool(
   "Run a side-effect-free OpenWork query by id. Use ui_context to inspect currently available queries. Queries never focus or navigate the app.",
   {
     id: z.string().describe("Query id from ui_context, such as 'session.list_sessions' or 'notifications.list'"),
-    args: z.record(z.unknown()).optional().describe("JSON arguments for the query, if required"),
+    args: z.record(z.string(), z.unknown()).optional().describe("JSON arguments for the query, if required"),
   },
   async ({ id, args }) => {
     const result = await bridgeRequest("/query", {
@@ -282,7 +282,7 @@ server.tool(
   "Execute a semantic OpenWork command by id while OpenWork remains in the background. Use ui_context first and pass its revision to prevent acting on stale UI state.",
   {
     id: z.string().describe("Command id from ui_context"),
-    args: z.record(z.unknown()).optional().describe("JSON arguments for the command, if required"),
+    args: z.record(z.string(), z.unknown()).optional().describe("JSON arguments for the command, if required"),
     expectedRevision: z.number().int().nonnegative().optional().describe("Revision returned by ui_context"),
     actor: z.string().optional().describe("Optional agent or client id for serialized-command attribution"),
   },

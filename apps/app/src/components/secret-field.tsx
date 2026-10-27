@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, use, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react"
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react"
 import { Eye, EyeOff } from "lucide-react"
 import { SECRET_INPUT_ATTRIBUTES, SECRET_REGION_ATTRIBUTES, useMultilineSecretSupported, useSecretReveal } from "@openwork/ui/secret-input"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
@@ -15,16 +15,6 @@ export type SecretFieldHandle = {
 }
 
 /**
- * Whether secret fields offer "Show while typing". Off unless the signed-in
- * organization has secureSecretFields, so turning the rollout off restores
- * plain masked inputs everywhere.
- */
-const SecretRevealContext = createContext(false)
-export function SecretRevealProvider({ enabled, children }: { enabled: boolean; children: ReactNode }) {
-  return <SecretRevealContext value={enabled}>{children}</SecretRevealContext>
-}
-
-/**
  * A private, host-owned input for one secret. The value never enters React
  * state, props, telemetry or the transcript: the parent takes it once to send
  * it and the field clears. It is shown only while the person is typing and
@@ -33,7 +23,7 @@ export function SecretRevealProvider({ enabled, children }: { enabled: boolean; 
  * `multiline` is for pasted JSON keys (service accounts): the text stays
  * masked the same way until revealed.
  */
-export function SecretField({ id, label, labelHidden = false, labelClassName, description, error, disabled, onSubmit, onValueChange, handleRef, autoFocus = false, multiline: multilineRequested = false, placeholder, revealable, testId, className }: {
+export function SecretField({ id, label, labelHidden = false, labelClassName, description, error, disabled, onSubmit, onValueChange, handleRef, autoFocus = false, multiline: multilineRequested = false, placeholder, testId, className }: {
   id: string
   label: string
   /** The surrounding title already names the secret; keep the label for assistive tech only. */
@@ -50,14 +40,11 @@ export function SecretField({ id, label, labelHidden = false, labelClassName, de
   autoFocus?: boolean
   multiline?: boolean
   placeholder?: string
-  /** Overrides the rollout context, e.g. for surfaces already gated on it. */
-  revealable?: boolean
   /** `data-testid` on the input itself, for journey specs. */
   testId?: string
   /** Extra classes for the input box, to match the surrounding screen's fields. */
   className?: string
 }) {
-  const canReveal = revealable ?? use(SecretRevealContext)
   // Only where the browser can mask a textarea; otherwise a password input.
   const multiline = useMultilineSecretSupported() && multilineRequested
   const input = useRef<HTMLInputElement>(null)
@@ -106,7 +93,7 @@ export function SecretField({ id, label, labelHidden = false, labelClassName, de
     ...SECRET_INPUT_ATTRIBUTES,
   }
   const reveal = multiline ? areaReveal : inputReveal
-  const toggle = !canReveal ? null : (
+  const toggle = (
     <InputGroupButton size="icon-xs" aria-controls={id} {...reveal.toggleProps}>
       {reveal.revealed ? <EyeOff aria-hidden="true" strokeWidth={1.5} /> : <Eye aria-hidden="true" strokeWidth={1.5} />}
     </InputGroupButton>
@@ -132,7 +119,7 @@ export function SecretField({ id, label, labelHidden = false, labelClassName, de
                 if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && onSubmit) { event.preventDefault(); onSubmit() }
               }}
             />
-            {toggle ? <InputGroupAddon align="block-end" className="justify-end">{toggle}</InputGroupAddon> : null}
+            <InputGroupAddon align="block-end" className="justify-end">{toggle}</InputGroupAddon>
           </>
         ) : (
           <>
@@ -148,7 +135,7 @@ export function SecretField({ id, label, labelHidden = false, labelClassName, de
                 if (event.key === "Enter" && onSubmit) { event.preventDefault(); onSubmit() }
               }}
             />
-            {toggle ? <InputGroupAddon align="inline-end">{toggle}</InputGroupAddon> : null}
+            <InputGroupAddon align="inline-end">{toggle}</InputGroupAddon>
           </>
         )}
       </InputGroup>

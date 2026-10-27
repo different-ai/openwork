@@ -90,6 +90,8 @@ export type SandboxResources = {
 
 export type SandboxLifecyclePolicy = {
   autoStopMinutes?: number
+  /** Memory-preserving idle suspension; providers must reject unsupported classes. */
+  autoPauseMinutes?: number
   autoArchiveMinutes?: number
   autoDeleteMinutes?: number
 }

@@ -5,11 +5,12 @@ import { ChevronDown, MessageSquare, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
-import { getLibraryConnectorShareRoute, getLibraryRoute } from "../../_lib/den-org";
+import { getLibraryConnectorShareRoute, getLibraryRoute, getMcpConnectionRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ownedAccessStatus } from "./access-summary";
 import { connectorChatDeepLink, connectorChatPrompt } from "./connector-catalog";
 import { connectorAccountReady } from "./connector-detail";
+import { canOpenConnectorManagement } from "./connector-library-navigation";
 import { toolSummary, toolTitle, useMemberSignIn } from "./connector-setup";
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
@@ -37,11 +38,13 @@ export function WhatYourAiCanDo({ tools, loading, signedIn, error }: {
   error: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const visible = expanded ? tools : tools.slice(0, TOOLS_PREVIEW);
-  const count = tools.length === 1 ? "1 thing" : `${tools.length} things`;
+  // A cached list from before a sign-out is not what this person's AI can do now.
+  const available = signedIn ? tools : [];
+  const visible = expanded ? available : available.slice(0, TOOLS_PREVIEW);
+  const count = available.length === 1 ? "1 thing" : `${available.length} things`;
   return (
     <section className="flex flex-col gap-2.5" data-testid="what-your-ai-can-do">
-      <SectionTitle title="What your AI can do" meta={tools.length > 0 ? count : undefined} />
+      <SectionTitle title="What your AI can do" meta={available.length > 0 ? count : undefined} />
       <ItemPanel>
         {!signedIn ? <p className="px-5 py-4 text-[13px] text-gray-500">They show up after you sign in.</p> : null}
         {signedIn && loading ? <p className="px-5 py-4 text-[13px] text-gray-500">Reading them now...</p> : null}
@@ -52,13 +55,13 @@ export function WhatYourAiCanDo({ tools, loading, signedIn, error }: {
             {toolSummary(tool) ? <p className="text-[13px] leading-[18px] text-gray-500">{toolSummary(tool)}</p> : null}
           </div>
         ))}
-        {tools.length > TOOLS_PREVIEW ? (
+        {available.length > TOOLS_PREVIEW ? (
           <button
             type="button"
             onClick={() => setExpanded((value) => !value)}
             className="flex items-center gap-1.5 px-5 py-3 text-left text-[13px] font-medium text-gray-700 hover:text-gray-900"
           >
-            {expanded ? "Show less" : `Show all ${tools.length}`}
+            {expanded ? "Show less" : `Show all ${available.length}`}
             <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden />
           </button>
         ) : null}
@@ -94,6 +97,10 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
   const viewerId = orgContext?.currentMember.id ?? null;
   const mine = Boolean(connection?.access) || Boolean(item && isOwnedByViewer(item, viewerId, new Set()));
   const back = { href: getLibraryRoute(orgSlug), label: "My Library" };
+  const memberAccess = orgContext
+    ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
+    : null;
+  const canManage = canOpenConnectorManagement(orgFeatureEnabled(orgContext, "libraryConnectorNavigation"), memberAccess);
 
   if (!connection && (usable.isLoading || library.isLoading)) {
     return <ItemPage><ItemHeader back={back} title="Loading..." /></ItemPage>;
@@ -138,6 +145,7 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
               size="md"
               label={`More for ${name}`}
               entries={[
+                ...(canManage ? [{ label: "Manage", href: getMcpConnectionRoute(orgSlug, connectionId) }] : []),
                 ...(connection.connectedForMe && connection.credentialMode === "per_member" ? [{ label: apiKeyStatus ? "Remove key" : "Sign out", onSelect: () => void signOut() }] : []),
                 ...(mine ? [removeEntry(name, remove)] : []),
               ]}

@@ -8,6 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
 const repoRoot = resolve(desktopRoot, "../..");
 const electronSidecarDir = resolve(desktopRoot, "resources", "sidecars");
+const electronHelperDir = resolve(desktopRoot, "resources", "helpers");
 const electronRoot = resolve(desktopRoot, "electron");
 const packagedServerRoot = resolve(desktopRoot, "server");
 const packagedRuntimeRoot = resolve(desktopRoot, ".electron-runtime", "node_modules");
@@ -46,8 +47,13 @@ function writeSentryBuildConfig() {
 }
 
 run(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], desktopRoot);
+run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], desktopRoot);
+run(nodeCmd, [resolve(__dirname, "prepare-dictation-helper.mjs"), "--outdir", electronHelperDir], desktopRoot);
 // Build before staging: the runtime copy must contain this checkout's ESM.
 run(pnpmCmd, ["--filter", "@openwork/remote-sessions", "build"], repoRoot);
+run(pnpmCmd, ["--filter", "@openwork/computer-use", "build"], repoRoot);
+// Remote computers for computer use load these lazily from their builds.
+run(pnpmCmd, ["--filter", "@openwork/sandbox", "--filter", "@openwork/sandbox-freestyle", "--filter", "@openwork/sandbox-daytona", "build"], repoRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-runtime-node-modules.mjs"), "--outdir", packagedRuntimeRoot], desktopRoot);
 writeSentryBuildConfig();
 // Records an explicit build-time Auto opt-out, if any.
@@ -59,6 +65,9 @@ run(pnpmCmd, ["--filter", "@openwork/free-auto", "build"], repoRoot);
 if (!process.argv.includes("--server-built")) {
   run(pnpmCmd, ["--filter", "openwork-server", "build"], repoRoot);
 }
+// Resolve the pinned v1 engine's plugin dependencies at build time. Fresh
+// desktops unpack this install instead of requiring npm access to open a folder.
+run(nodeCmd, [resolve(repoRoot, "apps/server/scripts/build-opencode-plugin-deps.mjs")], repoRoot);
 // automation-runner.mjs imports @openwork/headless-threads through its
 // published "default" export (dist/index.js); build it so plain-node
 // consumers resolve it in packaged layouts.

@@ -33,6 +33,7 @@ import { OrganizationMark, ProviderSectionLabel, ProviderStatus, ProviderTile } 
 import { autoProviderSubtitle } from "../../models/model-catalog";
 import type { SecretFieldHandle } from "@/components/secret-field";
 import { SecretTextInput } from "../../../design-system/secret-text-input";
+import { reportActivationEvent } from "../../cloud/activation/use-activation";
 import { TextInput } from "../../../design-system/text-input";
 import type {
   ProviderAuthMethod,
@@ -565,6 +566,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     try {
       await props.onSubmitApiKey(selectedEntry.id, trimmed);
+      void reportActivationEvent("own_provider");
       toast.success(`${selectedEntry.name} connected`, {
         description: "API key saved locally by OpenCode.",
       });

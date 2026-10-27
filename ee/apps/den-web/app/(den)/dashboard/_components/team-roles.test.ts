@@ -22,7 +22,7 @@ import {
 const member = { admin: false, customSetId: null };
 const admin = { admin: true, customSetId: null };
 const custom = { admin: false, customSetId: "pms_team" };
-const all = { canManageAdminTeams: true, canManagePermissions: true, permissionsFeature: true };
+const all = { canManageAdminTeams: true, canManagePermissions: true };
 
 test("a team's role comes from the Admin flag and its permission set, Admin first", () => {
   assert.equal(teamRole(member), "member");
@@ -45,9 +45,9 @@ test("a role change is locked with the permission it needs", () => {
   assert.equal(teamRoleLockReason(member, "admin", all), null);
   assert.match(teamRoleLockReason(member, "admin", { ...all, canManageAdminTeams: false }) ?? "", /Manage Admin teams/);
   assert.match(teamRoleLockReason(admin, "member", { ...all, canManageAdminTeams: false }) ?? "", /Manage Admin teams/);
-  assert.match(teamRoleLockReason(member, "custom", { ...all, permissionsFeature: false }) ?? "", /Enterprise/);
+  assert.equal(teamRoleLockReason(member, "custom", all), null);
   assert.match(teamRoleLockReason(custom, "member", { ...all, canManagePermissions: false }) ?? "", /Manage permissions/);
-  assert.equal(teamRoleLockReason(custom, "custom", { canManageAdminTeams: false, canManagePermissions: false, permissionsFeature: false }), null);
+  assert.equal(teamRoleLockReason(custom, "custom", { canManageAdminTeams: false, canManagePermissions: false }), null);
 });
 
 test("a new role starts from Member, Admin or everything, limited to what the creator holds", () => {
@@ -61,7 +61,7 @@ test("a new role starts from Member, Admin or everything, limited to what the cr
 test("every screen names roles the same way, never by Den's stored set names", () => {
   assert.equal(roleName({ kind: "member_default", name: "Member permissions", team: null }), "Member");
   assert.equal(roleName({ kind: "admin_default", name: "Admin permissions", team: null }), "Admin");
-  assert.equal(roleName({ kind: "team", name: "Engineering Permissions", team: { id: "tem_1", name: "Engineering" } }), "Engineering");
+  assert.equal(roleName({ kind: "team", name: "Engineering Permissions", team: { id: "tem_1", name: "Engineering" } }), "Engineering Permissions");
   assert.equal(roleKindLabel({ kind: "team" }), "Custom role");
   assert.equal(roleKindLabel({ kind: "admin_default" }), "Built-in role");
   assert.equal(permissionSourceRoleLabel({ kind: "admin_default", label: "Admin permissions (via Sales team)", via: "team", teamName: "Sales" }), "Admin via Sales");
@@ -92,7 +92,7 @@ test("allowed keys keep catalog order and drop retired keys", () => {
   assert.deepEqual(allowedKeys([{ key: "teams.view", status: "allow" }, { key: "organization.update", status: "allow" }, { key: "retired.key", status: "allow" }, { key: "sso.view", status: "deny" }]), ["organization.update", "teams.view"]);
 });
 
-test("sharedRoles: changing a team's role never leaves it with less access part way", () => {
+test("shared roles: changing a team's role never leaves it with less access part way", () => {
   const member = { admin: false, setId: null };
   const admin = { admin: true, setId: null };
   const publisher = { admin: false, setId: "pms_publisher" };
@@ -105,18 +105,17 @@ test("sharedRoles: changing a team's role never leaves it with less access part 
   assert.deepEqual(sharedTeamRole({ admin: true, setId: "pms_publisher" }), { kind: "admin" });
 });
 
-test("sharedRoles: a role change is locked with the permission it needs", () => {
-  const abilities = { canManageAdminTeams: false, canManagePermissions: true, permissionsFeature: true };
+test("shared roles: a role change is locked with the permission it needs", () => {
+  const abilities = { canManageAdminTeams: false, canManagePermissions: true };
   assert.match(sharedTeamRoleLockReason({ admin: false, setId: null }, { kind: "admin" }, abilities) ?? "", /Manage Admin teams/);
   assert.equal(sharedTeamRoleLockReason({ admin: false, setId: null }, { kind: "custom", setId: "pms_publisher" }, abilities), null);
   assert.match(sharedTeamRoleLockReason({ admin: false, setId: null }, { kind: "custom", setId: "pms_publisher" }, { ...abilities, canManagePermissions: false }) ?? "", /Manage permissions/);
 });
 
-test("sharedRoles: custom roles read by their own name", () => {
+test("shared roles: custom roles read by their own name", () => {
   const set = { kind: "team" as const, name: "Skill publisher", team: { id: "tem_sales", name: "Sales" } };
-  assert.equal(roleName(set), "Sales");
-  assert.equal(roleName(set, { shared: true }), "Skill publisher");
-  assert.equal(permissionSourceRoleLabel({ kind: "team", label: "x", teamName: "Sales", setName: "Skill publisher" }, { shared: true }), "Skill publisher via Sales");
+  assert.equal(roleName(set), "Skill publisher");
+  assert.equal(permissionSourceRoleLabel({ kind: "team", label: "x", teamName: "Sales", setName: "Skill publisher" }), "Skill publisher via Sales");
   const teams = [{ id: "tem_sales", name: "Sales", memberIds: ["om_1"], grantsOrganizationAdmin: false }, { id: "tem_eng", name: "Engineering", memberIds: ["om_1"], grantsOrganizationAdmin: false }];
   const names = new Map([["tem_sales", "Skill publisher"], ["tem_eng", "Skill publisher"]]);
   assert.deepEqual(teamRoleLabels({ memberId: "om_1", ownRole: "member", teams, customTeamIds: new Set(["tem_sales", "tem_eng"]), customRoleNameByTeam: names }), ["Skill publisher"]);
@@ -127,7 +126,7 @@ test("Invite and Edit role list built-ins first, then every shared role by name,
     { id: "set_publisher", name: "Skill publisher", teams: [{ id: "tem_sales", name: "Sales" }, { id: "tem_eng", name: "Engineering" }] },
     { id: "set_empty", name: "Unassigned", teams: [] },
   ];
-  const options = memberRoleOptions({ sharedRoles: true, customRoleTeams: [], customRoles, canManageTeams: true, lockReasons: new Map([["set_publisher", "Ask the owner"]]) });
+  const options = memberRoleOptions({ customRoles, canManageTeams: true, lockReasons: new Map([["set_publisher", "Ask the owner"]]) });
   assert.deepEqual(options.map((option) => [option.value, option.label, option.caption, option.disabled]), [
     ["member", "Member", null, false], ["admin", "Admin", null, false],
     ["role:set_publisher", "Skill publisher", "On Sales, Engineering", true],
@@ -135,20 +134,9 @@ test("Invite and Edit role list built-ins first, then every shared role by name,
   ]);
   assert.equal(options[2]?.lockReason, "Ask the owner");
   assert.deepEqual(parseRoleChoice("role:set_publisher"), { role: "member", teamId: null });
-  assert.ok(memberRoleOptions({ sharedRoles: true, customRoleTeams: [], customRoles, canManageTeams: false }).slice(2).every((option) => option.disabled));
+  assert.ok(memberRoleOptions({ customRoles, canManageTeams: false }).slice(2).every((option) => option.disabled));
 });
 
-test("Without shared roles, Invite and Edit role retain custom roles by team", () => {
-  const customRoleTeams = [{ id: "tem_eng", name: "test Permissions" }, { id: "tem_scim", name: "Directory", managedByScim: true }];
-  const shared = memberRoleOptions({ sharedRoles: true, customRoleTeams, canManageTeams: true });
-  assert.deepEqual(shared.map((option) => option.value), ["member", "admin"]);
-  const byTeam = memberRoleOptions({ sharedRoles: false, customRoleTeams, canManageTeams: true });
-  assert.deepEqual(byTeam.map((option) => [option.value, option.label, option.caption, option.disabled]), [
-    ["member", "Member", null, false],
-    ["admin", "Admin", null, false],
-    ["team:tem_eng", "test Permissions", "Custom role", false],
-    ["team:tem_scim", "Directory", "Custom role", true],
-  ]);
-  assert.ok(memberRoleOptions({ sharedRoles: false, customRoleTeams, canManageTeams: false }).filter((option) => option.caption).every((option) => option.disabled));
-  assert.deepEqual(parseRoleChoice(byTeam[2]?.value ?? ""), { role: "member", teamId: "tem_eng" });
+test("Invite and Edit role keep built-ins when no custom roles exist", () => {
+  assert.deepEqual(memberRoleOptions({ canManageTeams: true }).map((option) => option.value), ["member", "admin"]);
 });

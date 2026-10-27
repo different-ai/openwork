@@ -35,6 +35,7 @@ const {
   gatewayMcpAppLaunch,
   isActionableMcpAppResolutionError,
   isNativeConnectionAppLaunch,
+  McpAppDiagnosticNotice,
   McpAppFrame,
   McpAppSandboxView,
   secureMcpAppHtml,
@@ -168,6 +169,46 @@ async function startupFixture(options: Pick<McpAppSandboxViewProps, "presentatio
     },
   }
 }
+
+describe("MCP App connection diagnostics", () => {
+  test.each(["server_unavailable", "mcp_unreachable"])("v2 keeps %s compact without feature or organization context", async causeCode => {
+    const host = await startupFixture()
+    const retry = jest.fn()
+    try {
+      await host.renderElement(createElement(McpAppDiagnosticNotice, {
+        engine: "v2", notice: "Interactive view unavailable.", onRetry: retry,
+        error: { code: "MCP_APP_RESOURCE_RESOLUTION_FAILED", causeCode, stage: "resource-resolution",
+          message: "Connection or protocol negotiation failed", toolName: "read_report", elapsedMs: 1, checkpoints: [] },
+      }))
+      expect(host.container.querySelector("p")?.textContent).toBe("View unavailable")
+      expect(host.container.querySelector("summary")?.textContent).toBe("Technical details")
+      expect(host.container.querySelector("details")?.open).toBe(false)
+      expect(host.container.querySelector("pre")?.textContent).toContain("Connection or protocol negotiation failed")
+      const button = host.container.querySelector("button")
+      expect(button?.textContent).toBe("Retry view")
+      await act(async () => button?.click())
+      expect(retry).toHaveBeenCalledTimes(1)
+    } finally { await host.dispose() }
+  })
+
+  test.each([
+    { engine: "v1", causeCode: "mcp_unreachable" },
+    { engine: undefined, causeCode: "mcp_unreachable" },
+    { engine: "v2", causeCode: "access_denied" },
+  ] satisfies Array<{ engine: "v1" | "v2" | undefined; causeCode: string }>)("preserves full diagnostics for $engine / $causeCode", async ({ engine, causeCode }) => {
+    const host = await startupFixture()
+    try {
+      await host.renderElement(createElement(McpAppDiagnosticNotice, {
+        engine, notice: "Interactive view unavailable.", onRetry: jest.fn(),
+        error: { code: "MCP_APP_RESOURCE_RESOLUTION_FAILED", causeCode, stage: "resource-resolution",
+          message: "Original failure reason", toolName: "read_report", elapsedMs: 1, checkpoints: [] },
+      }))
+      expect(host.container.querySelector("p")?.textContent).toContain("Original failure reason")
+      expect(host.container.querySelector("summary")?.textContent).toContain("MCP_APP_RESOURCE_RESOLUTION_FAILED")
+      expect(host.container.querySelector("button")?.textContent).toBe("Retry")
+    } finally { await host.dispose() }
+  })
+})
 
 describe("MCP App startup scheduling", () => {
   test("cached HTML exposes pending tools, waits for a live lease, and never reuses cached authority", async () => {

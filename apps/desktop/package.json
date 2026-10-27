@@ -22,18 +22,21 @@
     "package:electron:dir": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml --dir",
     "electron": "pnpm run rebuild:electron-native && pnpm exec electron ./electron/main.mjs",
     "check:electron": "node ./scripts/check-electron-bridge.mjs",
-    "typecheck:electron": "pnpm --filter @openwork/remote-sessions build && pnpm --dir ../server exec tsc -p ../desktop/tsconfig.electron.json --noEmit",
+    "typecheck:electron": "pnpm --filter @openwork/computer-use build && pnpm --filter @openwork/remote-sessions build && pnpm --dir ../server exec tsc -p ../desktop/tsconfig.electron.json --noEmit",
     "test:session-runner": "node --test ./test/session-runner.test.mjs",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "^2.2.0",
-    "@modelcontextprotocol/sdk": "^1.31.0",
+    "@modelcontextprotocol/client": "^2.3.1",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@opencode-ai/sdk": "^1.18.15",
     "@openwork/browser-tabs": "workspace:*",
     "@openwork/enterprise-mcp-client": "workspace:*",
     "@openwork/headless-threads": "workspace:*",
     "@openwork/remote-sessions": "workspace:*",
+    "@openwork/sandbox": "workspace:*",
+    "@openwork/sandbox-daytona": "workspace:*",
+    "@openwork/sandbox-freestyle": "workspace:*",
     "@openwork/paths": "workspace:*",
     "@openwork/free-auto": "workspace:*",
     "@openwork/types": "workspace:*",
@@ -47,14 +50,15 @@
     "jsonc-parser": "^3.2.1",
     "minimatch": "^10.2.5",
     "node-pty": "npm:@lydell/node-pty@1.2.0-beta.12",
-    "undici": "6.28.1",
+    "undici": "6.29.1",
     "yaml": "^2.9.0",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6",
+    "@openwork/computer-use": "workspace:*"
   },
   "devDependencies": {
     "@electron/asar": "^3.4.1",
     "@electron/rebuild": "^4.2.0",
-    "electron": "^43.7.5",
+    "electron": "^43.8.1",
     "electron-builder": "^26.15.3"
   },
   "packageManager": "pnpm@10.27.0"

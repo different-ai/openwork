@@ -20,6 +20,24 @@ import {
 export { headlessRunnerConfig, stepLabel }
 export type HeadlessDeps = HeadlessRunnerDeps
 
+type SlackModelDeps = {
+  cloudModel: (actor: HeadlessRunnerActor, fallback?: string | null) => Promise<string | null>
+}
+
+/** Resolve only after the invoking member is known; gateway denials never select a deployment default. */
+export async function slackTurnModel(
+  installation: { organizationId: string; model: string | null },
+  actor: { userId: string },
+  suppliedDeps?: SlackModelDeps,
+) {
+  const deps: SlackModelDeps = suppliedDeps ?? await import("../workbot/model.js").then((policy) => ({
+    cloudModel: policy.organizationCloudModelSelection,
+  }))
+  const model = await deps.cloudModel({ organizationId: installation.organizationId, userId: actor.userId }, installation.model)
+  if (!model) throw new Error("cloud_agent_model_unavailable")
+  return model
+}
+
 /** Slack answers only on a deployment with a headless runner (a self-hosted install may not have one). */
 export function slackRunnerAvailable(env: Record<string, string | undefined> = process.env) {
   return headlessRunnerConfig(env) !== null
@@ -35,13 +53,15 @@ export function slackHeadlessDeps(base: HeadlessDeps | null = defaultHeadlessRun
     ...base,
     // Loaded lazily: the minter pulls in the auth and database modules.
     mintToken: async (input) => {
-      const minted = await (await import("../mcp/headless-run-token-mint.js")).mintHeadlessRunMcpToken(input)
+      // A resume grant and an index capability pass through unchanged with the token.
+      const minted = await (await import("../headless-runner/resume-grants.js")).mintHeadlessTurnCredentials({ ...input, indexKind: "slack" })
       try {
         const { recordSlackRunToken } = await import("./desktop-handoff.js")
         await recordSlackRunToken({ tokenId: minted.tokenId, expiresAt: minted.expiresAt, userId: input.userId, messageId: input.messageId })
       } catch {
         // The run still works; only a desktop handoff's thread report is lost.
       }
+      // Keep gateway modelAccess alongside the token and durable resume grant.
       return minted
     },
   }
@@ -73,9 +93,9 @@ export type SlackRunStep = { id: string; label: string; status: "running" | "com
 export type SlackBackgroundTurn = { id: string; title: string; status: string }
 
 /**
- * How a thread's runner session is set up before each message. With `slackWorkbotReplies` the instructions live in
- * the session (the provider caches them) and the model may react and start background tasks; without it they are
- * cleared, so turning the feature off also turns them off for threads that had them.
+ * How a thread's runner session is set up before each message. Instructions live in
+ * the session (the provider caches them) and the model may react and start background tasks.
+ * Older in-flight checkpoints still clear these settings when resuming their legacy reply mode.
  */
 export type SlackSessionSettings = { instructions: string; reactions: boolean; tasks: boolean }
 
@@ -100,7 +120,7 @@ export type SlackRunSnapshot = {
 }
 
 export type SlackRunner = {
-  /** `settings` only with `slackWorkbotReplies`; otherwise the session keeps the runner's defaults. */
+  /** New runs supply `settings`; older checkpoints can keep the runner's defaults. */
   create(input: { title: string; settings?: SlackSessionSettings }): Promise<RunnerOutcome<{ sessionId: string }>>
   /**
    * With `settings`, the session is brought up to date first. `accepted`: the runner started a new turn (not a resend
@@ -111,6 +131,9 @@ export type SlackRunner = {
     messageId: string
     prompt: string
     model?: string
+    modelAccessRequired?: boolean
+    /** Called only after a saved-turn read proves this message has not been admitted. */
+    resolveModel?: () => Promise<string | undefined>
     settings?: SlackSessionSettings
   }): Promise<RunnerOutcome<{ accepted: boolean }>>
   read(input: { sessionId: string; messageId: string }): Promise<RunnerOutcome<{ snapshot: SlackRunSnapshot }>>
@@ -150,9 +173,22 @@ function stepOf(tool: { id: string; name: string; input: Record<string, unknown>
 const retryable = (error: string): RunnerFailure => ({ ok: false, error, retryable: true, retryAfterMs: 5_000 })
 const unknownSession: RunnerFailure = { ok: false, error: "unknown_session", retryable: false }
 
+export type SlackRunnerOptions = {
+  /**
+   * Test injection for protocol compatibility; production always sends step-by-step turns.
+   */
+  stepTurns?: () => Promise<boolean>
+}
+
+/** The Slack worker always runs turns step by step. */
+export function slackRunnerForActor(actor: HeadlessRunnerActor, suppliedDeps: HeadlessDeps | null = slackHeadlessDeps()): SlackRunner {
+  return createSlackRunner(actor, suppliedDeps)
+}
+
 export function createSlackRunner(
   actor: HeadlessRunnerActor,
   suppliedDeps: HeadlessDeps | null = slackHeadlessDeps(),
+  options: SlackRunnerOptions = {},
 ): SlackRunner {
   if (!suppliedDeps) {
     const missing: RunnerFailure = { ok: false, error: "headless_runner_not_configured", retryable: false }
@@ -176,19 +212,47 @@ export function createSlackRunner(
       if (!saved.ok && (saved.status === 404 || saved.error === "invalid_session_id")) return unknownSession
       if (!saved.ok) return retryable(`headless_put_${saved.status}`)
     }
+    // Re-sending a turn keeps the mode the runner stored for it, so a resume may carry the field either way.
+    const execution: "steps" | undefined = (options.stepTurns ? await options.stepTurns().catch(() => false) : true) ? "steps" : undefined
     // One fresh, member-scoped MCP token per admitted run; the runner holds it in memory only.
-    const sent = await client.sendTurn(actor, {
-      sessionId: input.sessionId,
-      messageId: input.messageId,
-      prompt: input.prompt,
-      ...(input.model ? { model: input.model } : {}),
-    })
+    let sent
+    try {
+      let model = input.model
+      let modelAccessRequired = input.modelAccessRequired
+      if (input.resolveModel) {
+        const read = await client.readSession(input.sessionId, { messageId: input.messageId, limit: 1, outputs: "none" })
+        if (!read.ok && read.status === 404) return unknownSession
+        if (!read.ok) return retryable(`headless_read_${read.status}`)
+        const existing = read.value.turns.find((turn) => turn.messageId === input.messageId)
+        if (existing) {
+          // A lost send response is still the original turn, even if today's default is now denied.
+          model = existing.model ?? undefined
+          modelAccessRequired ||= existing.modelAccessRequired === true
+        } else {
+          model = await input.resolveModel()
+        }
+      }
+      sent = await client.sendTurn(actor, {
+        sessionId: input.sessionId,
+        messageId: input.messageId,
+        prompt: input.prompt,
+        ...(model ? { model } : {}),
+        ...(modelAccessRequired ? { modelAccessRequired: true } : {}),
+        ...(execution ? { execution } : {}),
+      })
+    } catch {
+      // Credential/model access refusals are not a reason to retry on another model.
+      return { ok: false, error: "model_access_unavailable", retryable: false }
+    }
     if (sent.ok) return { ok: true, accepted: sent.value.state === "accepted" }
     if (sent.status === 404) return unknownSession
+    if (sent.error === "headless_saved_model_unavailable" || sent.error === "headless_model_access_unavailable") {
+      return { ok: false, error: "model_access_unavailable", retryable: false }
+    }
     return retryable(`headless_send_${sent.status}`)
   }
 
-  const resume = async (sessionId: string, messageId: string) => send({ sessionId, messageId, prompt: "resume" })
+  const resume = async (sessionId: string, messageId: string, model?: string, modelAccessRequired?: boolean) => send({ sessionId, messageId, prompt: "resume", model, modelAccessRequired })
 
   return {
     async create(input) {
@@ -213,8 +277,10 @@ export function createSlackRunner(
       // A runner restart or an expired token pauses a task or report; re-sending its id resumes it with a fresh token.
       for (const turn of [...tasks, ...reports]) {
         if (turn.status !== "interrupted") continue
-        const resumed = await resume(input.sessionId, turn.id)
-        if (resumed.ok) turn.status = "queued"
+        const stored = read.value.turns.find((entry) => entry.messageId === turn.id)
+        const resumed = await resume(input.sessionId, turn.id, stored?.model ?? undefined, stored?.modelAccessRequired)
+        if (!resumed.ok) return resumed
+        turn.status = "queued"
       }
       return { ok: true, tasks, reports }
     },
@@ -243,7 +309,7 @@ export function createSlackRunner(
 
       // A runner restart or a credential refresh interrupts a turn; re-sending the same messageId resumes it.
       if (turn?.status === "interrupted") {
-        const resumed = await resume(input.sessionId, input.messageId)
+        const resumed = await resume(input.sessionId, input.messageId, turn.model ?? undefined, turn.modelAccessRequired)
         if (!resumed.ok) return resumed
       }
 

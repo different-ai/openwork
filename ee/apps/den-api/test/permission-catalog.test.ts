@@ -79,6 +79,8 @@ const ADMIN_SCOPE_KEYS = [
   "oauth_clients.view",
   "permissions.view",
   "plugins.import",
+  "prompts.manage",
+  "prompts.view",
   "scim.view",
   "sharing.manage_all",
   "sharing.share_org_wide",

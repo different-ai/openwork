@@ -10,6 +10,9 @@ import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { getDesktopGrant } from "../../_lib/desktop-handoff";
 import {
+  freePlanUserLimitMessage,
+  getOrgLimitError,
+  getOrgPaymentRequiredError,
   getRequestError,
   normalizeAuthIntentParam,
   PENDING_AUTH_INTENT_STORAGE_KEY,
@@ -134,7 +137,15 @@ function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, canInvite 
               headers: { [ORG_SCOPE_HEADER]: orgId },
               body: JSON.stringify({ email: row.email, role: "member" }),
             }, 12000);
-            if (!response.ok) throw getRequestError(payload, response, "Could not send this invitation. Try again.");
+            if (!response.ok) {
+              // Inviting a 6th user on the Free plan: ask for the Team plan.
+              const freePlanLimit = getOrgPaymentRequiredError(payload);
+              if (freePlanLimit) throw new Error(freePlanUserLimitMessage(freePlanLimit.freeSeatCount));
+              // A full Team or Enterprise plan set by OpenWork: the server says how many users it includes.
+              const planLimit = getOrgLimitError(payload);
+              if (planLimit) throw new Error(planLimit.message);
+              throw getRequestError(payload, response, "Could not send this invitation. Try again.");
+            }
           });
           updateRow(row.id, { email: row.email, status: "sent", error: null });
         } catch (error) {

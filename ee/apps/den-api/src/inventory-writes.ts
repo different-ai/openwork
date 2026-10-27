@@ -82,3 +82,28 @@ export function inventoryRevisionsToBump(writes: InventoryWrites, requestOrganiz
   if (requestOrganizationId && ORGANIZATION_ID.test(requestOrganizationId)) organizationIds.add(requestOrganizationId)
   return [...organizationIds]
 }
+
+type InventoryChangeListener = (organizationIds: readonly string[]) => void
+
+const inventoryChangeListeners = new Set<InventoryChangeListener>()
+
+/**
+ * Hears, in this process, the organizations a finished request bumped. Open
+ * Connect streams use it to tell clients their tool list changed; other
+ * replicas' streams learn only from their own requests.
+ */
+export function onInventoryChanged(listener: InventoryChangeListener): () => void {
+  inventoryChangeListeners.add(listener)
+  return () => inventoryChangeListeners.delete(listener)
+}
+
+export function notifyInventoryChanged(organizationIds: readonly string[]) {
+  if (organizationIds.length === 0) return
+  for (const listener of inventoryChangeListeners) {
+    try {
+      listener(organizationIds)
+    } catch (error) {
+      console.error("inventory_change_listener_failed", { error })
+    }
+  }
+}

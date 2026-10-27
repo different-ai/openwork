@@ -1,35 +1,25 @@
 import { useEffect } from "react"
-import { useQuery } from "@tanstack/react-query"
-
-import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations"
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature"
 import { setComputerTasksFollowedInChat } from "../surface/composer/computer-mentions"
 import { useRemoteThreadStore } from "./remote-thread-store"
 
-const FEATURE_STALE_MS = 5 * 60_000
-
 /**
- * Reads `remoteSessionSubagents` for the active organization. Tasks on other
- * computers need a signed-in organization, so signed out, unreachable or
- * missing means off: the chat shows the plain tool call as before and nothing
- * is followed.
+ * Reads `remoteSessionSubagents` and `remoteSessionThreadView` for the active
+ * organization. Tasks on other computers need a signed-in organization, so
+ * signed out, unreachable or missing means off: the chat shows the plain tool
+ * call as before and nothing is followed. The first shows a task's progress
+ * row; the second also lets the row open its conversation.
  */
 export function useRemoteSessionSubagentsFeature(): void {
-  const context = useAutomationsDenContext()
   const followedInChat = useRemoteThreadStore((state) => state.enabled)
-  const organization = useQuery({
-    // Shares the cache with the other organization feature reads.
-    queryKey: ["den", "org-features", context.organizationId],
-    queryFn: (): Promise<Record<string, boolean>> => context.client && context.organizationId
-      ? context.client.getOrgFeatures(context.organizationId)
-      : Promise.resolve({}),
-    enabled: context.ready,
-    staleTime: FEATURE_STALE_MS,
-    select: (features) => features.remoteSessionSubagents === true,
-  })
-  const enabled = context.ready && organization.data === true
+  const enabled = useOrgFeature("remoteSessionSubagents")
+  const threadView = useOrgFeature("remoteSessionThreadView")
   useEffect(() => {
     useRemoteThreadStore.getState().setEnabled(enabled)
   }, [enabled])
+  useEffect(() => {
+    useRemoteThreadStore.getState().setThreadView(threadView)
+  }, [threadView])
   useEffect(() => {
     setComputerTasksFollowedInChat(followedInChat)
   }, [followedInChat])

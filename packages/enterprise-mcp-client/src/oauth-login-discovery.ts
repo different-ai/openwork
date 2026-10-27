@@ -6,6 +6,7 @@ import { EnterpriseMcpOAuthContractError } from "./errors.js"
 export function createOAuthLoginDiscoveryFetch(input: {
   fetch: EnterpriseMcpFetch
   serverUrl: URL
+  manual?: boolean
 }): EnterpriseMcpFetch {
   let firstResourcePost = true
   let verified: { url: string; body: string } | undefined
@@ -26,6 +27,8 @@ export function createOAuthLoginDiscoveryFetch(input: {
     const html = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() === "text/html"
     if (!(response.status >= 300 && response.status < 400) && !(response.status === 200 && html)) return response
     await response.body?.cancel()
+    // An administrator already pinned the sign-in endpoints; no discovery is needed.
+    if (input.manual) return new Response(null, { status: 401, headers: { "www-authenticate": "Bearer" } })
 
     const path = input.serverUrl.pathname === "/" ? "" : input.serverUrl.pathname
     const pathMetadata = new URL(`/.well-known/oauth-protected-resource${path}`, input.serverUrl.origin)

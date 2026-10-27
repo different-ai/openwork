@@ -200,6 +200,13 @@ export interface GatewayProviderSummary {
   /** Display when catalog refresh is unavailable or compatibility excludes catalog models. */
   catalogWarning?: string;
   models: GatewayUsableModel[];
+  /**
+   * True only when models + authorizationRequests.models represent every
+   * effective active grant's alias assignment within the provider universe.
+   * Credential/config/catalog omissions make this false even if aggregate
+   * credentialStatus is ready. Missing on older servers means unknown.
+   */
+  modelAssignmentsComplete: boolean;
   pinnedModelIds: string[];
   authorizationRequests: GatewayAuthorizationRequest[];
   migration?: GatewayProviderMigration;

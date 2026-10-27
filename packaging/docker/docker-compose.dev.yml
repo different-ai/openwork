@@ -21,7 +21,7 @@
 #   OPENWORK_HOST_OPENCODE_DATA_DIR   — import source for OpenCode auth/data
 
 x-shared: &shared
-  image: node:22-bookworm-slim
+  image: node:24.22.1-bookworm-slim
   working_dir: /app
   volumes:
     # Mount the entire repo so both services share node_modules + source

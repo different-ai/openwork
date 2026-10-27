@@ -18,6 +18,12 @@ export function checkDesktopAppRestriction(input: {
   config: DenDesktopConfig | null | undefined;
   restriction: DesktopAppRestrictionKey;
 }) {
+  // OpenCode Zen is retired, including signed-out and offline use. Reuse the
+  // restriction every surface already honors (model list, Connect, Automations
+  // and the engine's disabled providers), regardless of organization policy.
+  if (input.restriction === "allowZenModel") {
+    return true;
+  }
   return desktopPolicyKeyEnforced(input.restriction) && input.config?.[input.restriction] === false;
 }
 

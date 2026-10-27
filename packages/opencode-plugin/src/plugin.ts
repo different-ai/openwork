@@ -11,13 +11,16 @@
  * network and never throw (a throwing transform disables the plugin).
  */
 import { createHash } from "node:crypto"
+import { createDesktopProviderPlugin } from "./desktop.ts"
 import {
   INTEGRATION_ID,
   INTEGRATION_NAME,
   readCredentialMetadata,
   signInMethods,
 } from "./auth.ts"
-import { DenAuthError, isAllowedApiBaseUrl, isRecord, normalizeBaseUrl, signOut, type DenSession, type Fetch } from "./den.ts"
+import { DenAuthError, denRequest, isAllowedApiBaseUrl, isRecord, normalizeBaseUrl, signOut, type DenSession, type Fetch } from "./den.ts"
+import { subscribeSharedInventory } from "./inventory-events.ts"
+import { inventoryRetry } from "./inventory-retry.ts"
 import {
   fetchDirectServers,
   mcpServerEntries,
@@ -35,7 +38,8 @@ import type {
   PluginDefinition,
   RemoteMcpConfig,
 } from "./opencode.ts"
-import { fetchGatewayInventory, toProviderRecord, type GatewayProvider, type ProviderRecord } from "./providers.ts"
+import { fetchSharedGatewayInventory, inventoryRequestTicket } from "./inventory-fetch.ts"
+import { toProviderRecord, type GatewayProvider, type ProviderRecord } from "./providers.ts"
 import type { RemoteRunnerController } from "./remote-runner.ts"
 
 export const PLUGIN_ID = "openwork"
@@ -82,11 +86,12 @@ export interface Inventory {
   readonly connectionKey: string
   readonly apiBaseUrl: string
   readonly fetchedAt: number
+  readonly liveProviderSync?: boolean
   readonly gateway: { readonly providers: readonly GatewayProvider[]; readonly apiKey: string | null } | null
   readonly mcp: { readonly token: McpToken; readonly servers: readonly DirectServer[] } | null
 }
 
-function parseInventory(value: Json | undefined): Inventory | null {
+export function parseInventory(value: Json | undefined): Inventory | null {
   if (!isRecord(value) || value.version !== 1 || typeof value.connectionKey !== "string" || typeof value.fetchedAt !== "number") {
     return null
   }
@@ -149,13 +154,18 @@ function isCredentialEvent(event: unknown): boolean {
   return isRecord(event) && typeof event.type === "string" && event.type.startsWith("credential.")
 }
 
-export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): PluginDefinition {
+export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?: number } = {}): PluginDefinition {
   const fetcher: Fetch = deps.fetch ?? ((input, init) => fetch(input, init))
   const now = deps.now ?? Date.now
 
   return {
     id: PLUGIN_ID,
     async setup(ctx: PluginContext): Promise<Cleanup> {
+      if (ctx.options.desktopSession !== undefined) {
+        // Keep provider-only setup in the entry graph; its credential broker is
+        // additionally shared through native require across Location-scoped graphs.
+        return (await createDesktopProviderPlugin({ fetch: fetcher, now, retryMs: deps.retryMs }).setup(ctx)) ?? (() => {})
+      }
       if (typeof ctx.integration?.transform !== "function"
         || typeof ctx.integration?.connection?.active !== "function"
         || typeof ctx.provider?.transform !== "function"
@@ -173,6 +183,17 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): 
       let applied = { providers: "", mcp: "" }
       let reportedNeedsAuth = false
       let disposed = false
+      let generation = 0
+      let refreshController = new AbortController()
+      let stream: AbortController | null = null
+      let streamKey = ""
+      let revokedIdentity = ""
+      let unauthorizedIdentity = ""
+      const stopStream = () => {
+        stream?.abort()
+        stream = null
+        streamKey = ""
+      }
 
       // 1. Sign-in methods. Registered from constants: nothing here can fail.
       await ctx.integration.transform((editor) => {
@@ -187,7 +208,12 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): 
       // 2. Start from the cache so setup never waits on the network (it blocks the first prompt).
       const initialConnection = await ctx.integration.connection.active(INTEGRATION_ID).catch(() => undefined)
       // Never publish another account's gateway key or MCP token after an account switch.
-      const cachedInventory = belongsTo(parseInventory(await ctx.storage.get(INVENTORY_KEY).catch(() => undefined)), initialConnection)
+      const initialCredential = initialConnection ? await ctx.integration.connection.resolve(initialConnection).catch(() => undefined) : undefined
+      const initialMetadata = initialCredential?.type === "oauth" ? readCredentialMetadata(initialCredential, options.apiBaseUrl) : null
+      const initialKey = initialConnection && initialCredential?.type === "oauth" && initialMetadata
+        ? `${connectionKey(initialConnection, initialCredential.access)}:${hash(`${initialMetadata.apiBaseUrl}:${initialMetadata.orgId}`)}` : null
+      const candidate = parseInventory(await ctx.storage.get(INVENTORY_KEY).catch(() => undefined))
+      const cachedInventory = candidate?.connectionKey === initialKey ? candidate : null
       snapshot = snapshotFrom(cachedInventory, options, initialConnection)
       applied = { providers: fingerprint([snapshot.providers, snapshot.sourceConnection]), mcp: fingerprint(snapshot.mcp) }
 
@@ -209,9 +235,8 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): 
         const providers = fingerprint([next.providers, next.sourceConnection])
         const mcp = fingerprint(next.mcp)
         const reloads: Promise<void>[] = []
-        if (providers !== applied.providers) reloads.push(ctx.provider.reload())
-        if (mcp !== applied.mcp) reloads.push(ctx.mcp.reload())
-        applied = { providers, mcp }
+        if (providers !== applied.providers) reloads.push(ctx.provider.reload().then(() => { if (snapshot === next) applied.providers = providers }))
+        if (mcp !== applied.mcp) reloads.push(ctx.mcp.reload().then(() => { if (snapshot === next) applied.mcp = mcp }))
         await Promise.all(reloads)
       }
 
@@ -258,11 +283,89 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): 
 
       let running: Promise<void> | null = null
       let queued = false
+      let forceQueued = false
+      const retry = inventoryRetry(() => { void refresh(true) }, deps.retryMs)
+      const revokeAuthority = (identity: string) => {
+        revokedIdentity = identity
+        generation++
+        retry.reset()
+        refreshController.abort()
+        refreshController = new AbortController()
+        queued = false
+        forceQueued = false
+        // A membership denial is recoverable with this same session. Keep the
+        // subscription that can authoritatively acknowledge the regrant.
+        void ctx.storage.remove(INVENTORY_KEY).catch(() => {})
+        void publish(EMPTY).catch(() => {})
+      }
 
-      const refreshOnce = async () => {
+      const authorizedFeatureState = async (session: DenSession): Promise<boolean | null> => {
+        try {
+          const body = await denRequest(fetcher, session, "/v1/org")
+          return isRecord(body) && isRecord(body.features) ? body.features.liveProviderSync === true : null
+        } catch { return null }
+      }
+      const featureEnabled = async (session: DenSession) => await authorizedFeatureState(session) === true
+      const syncStream = (session: DenSession, enabled: boolean) => {
+        const key = fingerprint(session)
+        if (!enabled || !options.providers) { stopStream(); return }
+        if (streamKey === key) return
+        stopStream()
+        streamKey = key
+        const controller = new AbortController()
+        stream = controller
+        void subscribeSharedInventory({
+          identity: session,
+          revoked: () => {
+            if (controller.signal.aborted || disposed) return
+            revokeAuthority(key)
+          },
+          unauthorized: () => {
+            if (controller.signal.aborted || disposed) return
+            unauthorizedIdentity = key
+            generation++
+            retry.reset()
+            refreshController.abort()
+            refreshController = new AbortController()
+            queued = false
+            forceQueued = false
+            stopStream()
+            void ctx.storage.remove(INVENTORY_KEY).catch(() => {})
+            void publish(EMPTY).catch(() => {})
+          },
+          fetch: fetcher,
+          signal: controller.signal,
+          session: async () => {
+            const current = await ctx.integration.connection.active(INTEGRATION_ID).catch(() => undefined)
+            const value = current ? await ctx.integration.connection.resolve(current).catch(() => undefined) : undefined
+            if (!value || value.type !== "oauth" || controller.signal.aborted) return null
+            const metadata = readCredentialMetadata(value, options.apiBaseUrl)
+            const next = { apiBaseUrl: metadata.apiBaseUrl, token: value.access, orgId: metadata.orgId }
+            // The feature was resolved before joining. The SSE endpoint checks
+            // rollout/membership on every reconnect (404 kill vs 401/403 revoke);
+            // do not hide a revoked session behind a failed feature discovery.
+            return controller.signal.aborted ? null : next
+          },
+          changed: () => {
+            if (controller.signal.aborted || disposed) return
+            if (revokedIdentity === key) revokedIdentity = ""
+            void refresh(true)
+          },
+        }).finally(() => {
+          if (stream === controller) { stream = null; streamKey = "" }
+        })
+      }
+
+      const refreshOnce = async (force: boolean) => {
+        const ticket = inventoryRequestTicket()
+        const epoch = generation
+        const current = () => !disposed && epoch === generation
         const connection = await ctx.integration.connection.active(INTEGRATION_ID).catch(() => undefined)
+        if (!current()) return
         if (!connection) {
+          stopStream()
           await reconcileSessions(null)
+          if (!current()) return
           await ctx.storage.remove(INVENTORY_KEY).catch(() => {})
           await publish(EMPTY)
           return
@@ -275,8 +378,10 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): 
             await publish(EMPTY)
             return
           }
+          if (!current()) return
           credential = value
         } catch {
+          if (!current()) return
           // `resolve` runs our refresh(); it fails when Den ended the session.
           await setNeedsAuth(connection, "Your OpenWork sign-in expired. Run: opencode auth login openwork")
           await publish(snapshotFrom(null, options, connection))
@@ -285,22 +390,57 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): 
 
         const metadata = readCredentialMetadata(credential, options.apiBaseUrl)
         const session: DenSession = { apiBaseUrl: metadata.apiBaseUrl, token: credential.access, orgId: metadata.orgId }
-        const key = connectionKey(connection, credential.access)
+        const identity = fingerprint(session)
+        // A timer/credential event must not resurrect authority from the same
+        // denied session. Membership regrant is acknowledged by a successful
+        // stream reconnect; session denial requires an actually changed token.
+        if (identity === unauthorizedIdentity) {
+          await publish(EMPTY)
+          return
+        }
+        if (identity === revokedIdentity) {
+          // A regrant may coincide with the rollout being killed. Only a real
+          // authenticated organization response can restore legacy polling;
+          // an unavailable/denied lookup never clears the authority fence.
+          const feature = await authorizedFeatureState(session)
+          if (!current()) return
+          if (feature === false) {
+            revokedIdentity = ""
+            stopStream()
+          } else {
+            // An unrelated credential event may have aborted the recovery rail.
+            // Recreate only its subscription; successful SSE still confirms a
+            // live-mode regrant before any inventory can be published.
+            syncStream(session, true)
+            await publish(EMPTY)
+            return
+          }
+        }
+        if (revokedIdentity !== identity) revokedIdentity = ""
+        if (unauthorizedIdentity !== identity) unauthorizedIdentity = ""
+        const key = `${connectionKey(connection, credential.access)}:${hash(`${session.apiBaseUrl}:${session.orgId}`)}`
         if (connection.type === "credential") {
           await reconcileSessions({ id: connection.id, token: credential.access, apiBaseUrl: metadata.apiBaseUrl })
         }
 
         const cached = parseInventory(await ctx.storage.get(INVENTORY_KEY).catch(() => undefined))
+        if (!current()) return
         const sameAccount = cached?.connectionKey === key ? cached : null
-        if (sameAccount && now() - sameAccount.fetchedAt < FRESH_MS) {
+        if (!sameAccount) await publish(EMPTY)
+        if (!current()) return
+        if (!force && sameAccount && now() - sameAccount.fetchedAt < FRESH_MS) {
+          syncStream(session, sameAccount.liveProviderSync === true)
           await publish(snapshotFrom(sameAccount, options, connection))
           return
         }
 
         try {
+          const liveProviderSync = await featureEnabled(session)
+          if (!current()) return
+          syncStream(session, liveProviderSync)
           const [gateway, mcp] = await Promise.all([
             options.providers
-              ? fetchGatewayInventory(fetcher, session).then((inventory) => ({ providers: inventory.providers, apiKey: inventory.apiKey }))
+              ? fetchSharedGatewayInventory({ fetch: fetcher, session, scope: "den", ticket, signal: refreshController.signal }).then((inventory) => ({ providers: inventory.providers, apiKey: inventory.apiKey }))
               : Promise.resolve(null),
             options.mcp
               ? (async () => {
@@ -315,8 +455,10 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): 
                 })()
               : Promise.resolve(null),
           ])
+          if (!current()) return
           const inventory: Inventory = {
             version: 1,
+            liveProviderSync,
             connectionKey: key,
             apiBaseUrl: session.apiBaseUrl,
             fetchedAt: now(),
@@ -324,32 +466,53 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): 
             mcp,
           }
           await ctx.storage.set(INVENTORY_KEY, toJson(inventory)).catch(() => {})
+          if (!current()) return
           await setNeedsAuth(connection, null)
+          if (!current()) return
           await publish(snapshotFrom(inventory, options, connection))
+          if (current()) retry.reset()
         } catch (error) {
+          if (!current()) return
           if (error instanceof DenAuthError) {
+            if (error.status === 403 && streamKey) {
+              revokeAuthority(fingerprint(session))
+              return
+            }
+            retry.reset()
+            queued = false
+            forceQueued = false
+            stopStream()
+            await ctx.storage.remove(INVENTORY_KEY).catch(() => {})
+            if (!current()) return
             await setNeedsAuth(connection, "OpenWork rejected your sign-in. Run: opencode auth login openwork")
             await publish(EMPTY)
             return
           }
+          // A live invalidation remains dirty until it converges, even while the
+          // stream is healthy and no further revision/event will be emitted.
+          if (force || streamKey) retry.schedule()
           // Offline or Den unavailable: keep what this account last had.
           await publish(snapshotFrom(sameAccount, options, connection))
         }
       }
 
-      const refresh = (): Promise<void> => {
+      const refresh = (force = false): Promise<void> => {
         if (disposed) return Promise.resolve()
         if (running) {
           queued = true
+          forceQueued ||= force
           return running
         }
-        running = refreshOnce()
+        retry.cancel()
+        running = refreshOnce(force)
           .catch(() => {})
           .finally(() => {
             running = null
             if (queued && !disposed) {
               queued = false
-              void refresh()
+              const force = forceQueued
+              forceQueued = false
+              void refresh(force)
             }
           })
         return running
@@ -379,8 +542,15 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): 
         try {
           for await (const event of ctx.event.subscribe({ signal: events.signal })) {
             if (isCredentialEvent(event)) {
+              generation++
+              retry.reset()
+              refreshController.abort()
+              refreshController = new AbortController()
+              stopStream()
+              // Clear synchronously before a slow old-account fetch can finish.
+              void publish(EMPTY).catch(() => {})
               remote.current?.credentialsChanged()
-              void refresh()
+              void refresh(true)
             }
           }
         } catch {
@@ -393,6 +563,10 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): 
 
       return async () => {
         disposed = true
+        generation++
+        retry.reset()
+        refreshController.abort()
+        stopStream()
         clearInterval(timer)
         events.abort()
         await remoteLoading

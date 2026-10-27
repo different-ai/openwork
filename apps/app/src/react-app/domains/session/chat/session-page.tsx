@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { focusPaneComposerSoon } from "./workbench-pane-focus";
 import { newSessionDraftOwnerKey } from "./new-session-destination";
 import { usePendingConversationStore } from "./pending-conversation-store";
 import { PendingConversationView } from "./pending-conversation";
@@ -10,8 +11,7 @@ import { ArrowLeft, Cloud, FileText, Globe, Maximize2, MoreHorizontal, PanelRigh
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
-import { buildDenAuthUrl, readDenBootstrapConfig } from "../../../../app/lib/den";
-import { markDesktopSignInInitiated } from "../../../../app/lib/den-sign-in-intent";
+import { useCloudSignIn } from "../../cloud/sign-in-return";
 import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
@@ -49,7 +49,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
-import { usePlatform } from "../../../kernel/platform";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { WorkbenchPanelGroup, PRIMARY_PANEL_ID, SECONDARY_PANEL_ID } from "./workbench-panel-group";
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
@@ -90,6 +89,16 @@ import type { OpenTargetOptions } from "@/lib/target-provider";
 import { SidePanel } from "../panel/side-panel";
 import { getSidePanelSessionKey } from "../panel/side-panel-session";
 import { useCreateTab, useOpenBrowserRailPane } from "../panel/use-side-panel-tabs";
+import { useBrowserPresentationController } from "../panel/use-browser-presentation";
+import { useBrowserAgentTurns } from "../panel/agent-viewport";
+import { BrowserPresentationSurfaces, BrowserRailButton } from "../panel/browser-presentation";
+import { DebugRailProvider, DebugRailSlot } from "../panel/debug-rail-slot";
+import { SessionDebugPanel } from "../surface/debug-panel";
+import { FloatingSlotProvider, SessionFloatingLayer } from "../panel/floating-slot";
+import { useDesktopFeature } from "../status/use-desktop-feature";
+import { CloudComputerControl } from "../computer/cloud-computer-control";
+import { ComputerControl } from "../computer/computer-control";
+import { useComputerEndTurn } from "../computer/computer-store";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
@@ -442,7 +451,6 @@ export function SessionPage(props: SessionPageProps) {
     return session ? Boolean(session.time?.archived) : undefined;
   };
   const { config: shellConfig } = useShellConfig();
-  const platform = usePlatform();
   const denAuth = useDenAuth();
   const isMobile = useIsMobile();
   const bootOverlayVisible = useBootOverlayVisible();
@@ -479,12 +487,12 @@ export function SessionPage(props: SessionPageProps) {
   const browserRailActive = panelRailActive && activePanelTab?.type === "browser";
   const filesRailActive = panelRailActive && activePanelTab?.type !== "browser";
   const showCloudSignIn = shellConfig.cloudSignin && !denAuth.isSignedIn && denAuth.status !== "checking";
+  const cloudSignIn = useCloudSignIn();
+  // The browser opens on Den's sign-up tab (label stays "Sign in").
+  // This conversation stays on screen and sign-in returns to it.
   const openCloudSignIn = useCallback(() => {
-    const baseUrl = readDenBootstrapConfig().baseUrl;
-    markDesktopSignInInitiated();
-    // Label stays "Sign in"; opens the sign-up tab so new users aren't defaulted into sign-in.
-    platform.openLink(buildDenAuthUrl(baseUrl, "sign-up"));
-  }, [platform]);
+    cloudSignIn({ workspaceId: props.selectedWorkspaceId, sessionId: props.selectedSessionId });
+  }, [cloudSignIn, props.selectedSessionId, props.selectedWorkspaceId]);
 
   useReactRenderWatchdog("SessionPage", {
     selectedSessionId: props.selectedSessionId,
@@ -569,6 +577,18 @@ export function SessionPage(props: SessionPageProps) {
     setNarrowPane("chat");
   }, [focusedWorkbenchPane, isMobile, splitSession]);
 
+  // Opening a side chat (or switching it to another chat) puts the cursor in
+  // its composer, so you can type there right away. A side chat restored when
+  // the app starts does not take focus. Phones keep the keyboard closed.
+  const splitPaneKey = splitSession ? `${splitSession.workspaceId}:${splitSession.sessionId}` : null;
+  const shownSplitPaneRef = useRef(splitPaneKey);
+  useEffect(() => {
+    const previous = shownSplitPaneRef.current;
+    shownSplitPaneRef.current = splitPaneKey;
+    if (!splitPaneKey || splitPaneKey === previous || isMobile) return;
+    return focusPaneComposerSoon("secondary");
+  }, [isMobile, splitPaneKey]);
+
   useEffect(() => {
     if (isMobile && sidePanelOpen) setNarrowPane("panel");
   }, [isMobile, sidePanelOpen]);
@@ -606,6 +626,27 @@ export function SessionPage(props: SessionPageProps) {
     void (window as Window).__OPENWORK_ELECTRON__?.browser?.setVisibleSession?.(props.selectedSessionId ?? null);
   }, [props.selectedSessionId]);
 
+  // Floating / side / full-screen browser, behind its feature flag. Off, every
+  // action below reports "not handled" and the docked browser is unchanged.
+  // Declared after setVisibleSession so the host hears the session first.
+  const browserFloatingView = useDesktopFeature("browserFloatingView");
+  const browserPresentation = useBrowserPresentationController({
+    enabled: browserFloatingView && isElectronRuntime(),
+    sessionKey: sidePanelSessionKey,
+    visibleSessionId: props.selectedSessionId ?? null,
+    sidePanel: activeSidePanel,
+    setSidePanel: setCurrentSidePanel,
+  });
+  const { placeOpenedBrowser, handlePanelClosed: handleBrowserPanelClosed } = browserPresentation;
+  // Computer use on this Mac, behind its feature flag: the header Computer
+  // button, its floating view, in-chat requests and the hand-back at turn end.
+  const computerUseFeature = useDesktopFeature("computerUse");
+  const remoteComputersFeature = useDesktopFeature("remoteComputers");
+  // The button hides itself when this computer can't run it and no VM is connected.
+  const computerUse = computerUseFeature && isElectronRuntime();
+  useComputerEndTurn(props.sidebar.sessionStatusById, computerUse);
+  useBrowserAgentTurns(props.sidebar.sessionStatusById);
+
   // Open the side panel of the conversation that owns a browser event. For the
   // conversation on screen that is the visible panel; for a background
   // conversation only its own panel state is marked open, so its tabs are
@@ -634,10 +675,12 @@ export function SessionPage(props: SessionPageProps) {
         // active. Passive title/loading updates still preserve that artifact.
         openTab(ownerSessionId, payload.tab);
       }
+      if (placeOpenedBrowser(payload?.ownerSessionId)) return;
       openOwnerSidePanel(payload?.ownerSessionId);
     });
     const unsubClose = browser.onPanelClosed?.((payload) => {
       const ownerSessionId = payload?.ownerSessionId ?? null;
+      handleBrowserPanelClosed(ownerSessionId);
       const ownerKey = getSidePanelSessionKey(ownerSessionId);
       if (ownerSessionId === null || ownerKey === sidePanelSessionKey) {
         setCurrentSidePanel(null);
@@ -646,7 +689,7 @@ export function SessionPage(props: SessionPageProps) {
       setSidePanelState(ownerKey, null);
     });
     return () => { unsubOpen?.(); unsubClose?.(); };
-  }, [openOwnerSidePanel, openTab, props.selectedSessionId, setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
+  }, [handleBrowserPanelClosed, openOwnerSidePanel, openTab, placeOpenedBrowser, props.selectedSessionId, setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
   const {
     leftSidebarResizing,
     leftSidebarWidth,
@@ -761,7 +804,7 @@ export function SessionPage(props: SessionPageProps) {
         else reportOpenError(new Error("Connect to the workspace to open this file."));
         return;
       }
-      void resolveCollectibleOpenTarget(runtime.client, runtime.runtimeWorkspaceId, target)
+      void resolveCollectibleOpenTarget(runtime.client, runtime.runtimeWorkspaceId, target, sourceSessionId ?? props.selectedSessionId)
         .then((resolvedTarget) => {
           if (resolvedTarget) openFileTarget(resolvedTarget);
           else if (canOpenLocally) openLocalFile(target);
@@ -817,10 +860,10 @@ export function SessionPage(props: SessionPageProps) {
       // is a background conversation the page loads silently there; the
       // conversation on screen is never interrupted.
       const ownerSessionId = helpers.origin?.sessionId ?? props.selectedSessionId ?? null;
-      openOwnerSidePanel(ownerSessionId);
+      if (!placeOpenedBrowser(ownerSessionId)) openOwnerSidePanel(ownerSessionId);
       return window.__OPENWORK_ELECTRON__?.browser?.openUrl?.(url, provider, { sessionId: ownerSessionId });
     },
-  }), [openOwnerSidePanel, props.selectedSessionId]);
+  }), [openOwnerSidePanel, placeOpenedBrowser, props.selectedSessionId]);
   useControlAction(openBrowserUrlControlAction);
   const restoreBrowserTabControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "browser.restore_tab",
@@ -1341,6 +1384,8 @@ export function SessionPage(props: SessionPageProps) {
       workspaceRoot={props.selectedWorkspaceRoot}
       onClose={closeRightPane}
       onOpenExtensions={props.settingsSlot ? () => setCurrentSidePanel("extensions") : undefined}
+      browserPresentation={browserPresentation.enabled ? { onPresent: browserPresentation.present } : undefined}
+      browserShownElsewhere={browserPresentation.mode === "fullscreen"}
     />
   ) : null;
 
@@ -1443,6 +1488,8 @@ export function SessionPage(props: SessionPageProps) {
         <SidebarInset
           className="min-h-0 min-w-0 overflow-hidden bg-sidebar mac:bg-transparent"
         >
+          <DebugRailProvider>
+          <FloatingSlotProvider>
           {sidebarOnlyChrome ? <MobileChatNavigation /> : <header
             data-session-header
             data-sidebar-hidden={!shellConfig.sidebar || !sidebarOpen || isMobile}
@@ -1594,6 +1641,8 @@ export function SessionPage(props: SessionPageProps) {
                   Reset notifications
                 </Button>
               ) : null}
+              {!isElectronRuntime() && computerUseFeature && remoteComputersFeature && props.openworkServerClient ? <CloudComputerControl client={props.openworkServerClient} /> : null}
+              {computerUse && props.selectedSessionId ? <ComputerControl key={props.selectedSessionId} sessionId={props.selectedSessionId} /> : null}
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -1671,6 +1720,7 @@ export function SessionPage(props: SessionPageProps) {
           >
             <ResizablePanel minSize="180px" className="min-h-0">
             <div className="relative h-full min-w-0 overflow-hidden bg-dls-surface mac:bg-dls-surface/85">
+              <SessionFloatingLayer />
               {props.primarySlot ? (
                 <div className="h-full overflow-y-auto" data-workspace-primary-slot>
                   {props.primarySlot}
@@ -1958,8 +2008,9 @@ export function SessionPage(props: SessionPageProps) {
               </>
             ) : null}
           </ResizablePanelGroup>
-          <aside className={cn("hidden w-10 shrink-0 flex-col items-center gap-1 px-1 py-2 text-muted-foreground mac:titlebar-no-drag", props.primarySurface !== "flat" && "lg:flex")}>
-            {isElectronRuntime() ? (
+          <aside className={cn("w-10 shrink-0 flex-col items-center gap-1 px-1 py-2 text-muted-foreground mac:titlebar-no-drag", props.developerMode ? "flex" : "hidden", props.primarySurface !== "flat" && "lg:flex")}>
+            {/* With the floating browser on, the same button also brings back a floating page. */}
+            {isElectronRuntime() && browserPresentation.enabled ? <BrowserRailButton controller={browserPresentation} /> : isElectronRuntime() ? (
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -1994,8 +2045,18 @@ export function SessionPage(props: SessionPageProps) {
                 </span>
               ) : null}
             </Button>
+            <DebugRailSlot />
           </aside>
           </div>
+          <BrowserPresentationSurfaces sessionId={sidePanelSessionKey} controller={browserPresentation} />
+          {/* With a thread open, the session surface owns the debug panel. */}
+          {props.developerMode && !canRenderReactSurface ? <SessionDebugPanel
+            client={props.openworkServerClient} workspaceId={props.runtimeWorkspaceId ?? ""} workspaceRoot={props.selectedWorkspaceRoot}
+            opencodeBaseUrl={reactSessionBaseUrl} openworkToken={reactSessionToken} thread={null}
+            workspace={{ name: workspaceName, startupPhase: props.startupPhase, providersConnected: props.providerConnectedIds.length, mcpConnected: props.mcpConnectedCount }}
+          /> : null}
+          </FloatingSlotProvider>
+          </DebugRailProvider>
         </SidebarInset>
       </SidebarProvider>
 

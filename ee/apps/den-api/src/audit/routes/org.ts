@@ -57,6 +57,9 @@ const SEAT_SYNC = "stripe (seat/web/inference quantity sync via runPostOrganizat
 const DOMAIN = (area: string) => `audit/domain/${area}.ts`
 
 export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
+  member("GET", "/v1/org/service-readiness", "tenant_read", "service_readiness.read", "service.readiness", "service_readiness", null, { notes: "Minimal cached deployment facts, never settings or tenant credentials. Does not initiate probes." }),
+  member("GET", "/v1/org/diagnostics", "tenant_read", "diagnostics.read", "diagnostics", "diagnostic", null, { notes: "Settings > Diagnostics for the caller: sections the caller's permissions do not open are locked; installation details only for self-hosted local operators. Missing or expired provider/connector results start a rate-limited background check (read-only listings and token checks; never a model request). No credentials, upstream bodies or other members' identities." }),
+  member("POST", "/v1/org/diagnostics/check", "tenant_external", "diagnostics.check", "diagnostics", "diagnostic", null, { external: "Read-only provider model listings / AWS STS GetCallerIdentity with organization-held credentials, Slack auth.test with the assistant bot token, the caller's own Google API reads, and (operators) deployment service probes; per-organization/member rate limits shared with background checks.", notes: "Never sends a model request, a message or an email, and never uses a member's provider credential." }),
   // API keys
   member("GET", "/v1/api-keys", "tenant_read", "api_key.list", "api_key.management", "api_key", null),
   member("POST", "/v1/api-keys", "tenant_change", "api_key.create", "api_key.management", "api_key", null, { changeEvidence: DOMAIN("api-keys"), notes: "Legacy organization.api_key.created. better-auth createApiKey write: after-snapshot appended in a fresh tx; plaintext key only in the response, never captured." }),
@@ -119,12 +122,29 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("POST", "/v1/org/web-origins", "tenant_change", "web_origin.approve", "web_origin.management", "web_origin", null, { changeEvidence: DOMAIN("web-origins"), notes: "Legacy organization.web_origin.approved." }),
   member("DELETE", "/v1/org/web-origins/:webOriginId", "tenant_change", "web_origin.remove", "web_origin.management", "web_origin", "webOriginId", { changeEvidence: DOMAIN("web-origins"), notes: "Legacy organization.web_origin.removed." }),
   member("GET", "/v1/org/activity", "tenant_read", "organization.activity.read", "organization.activity", "organization", null, { notes: "Admin dashboard Activity (dashboardActivity feature): the five newest stored additions and skill versions across connections, providers, marketplaces and plugins; titles and ids only, no member identities." }),
+  member("POST", "/v1/org/workbot-settings/test-default-model", "tenant_external", "workbot.model_test", "organization.settings", "organization", null, { external: "headless_runner", notes: "Bounded paid synthetic completion only; no member content, tools, files, MCP token or stored conversation. Genuine recent user session and inference.manage required; durable diagnostic request throttle. Response excludes answer text and provider error details." }),
   member("GET", "/v1/org/workbot-settings", "tenant_read", "workbot.settings.read", "organization.settings", "organization", null),
+  member("GET", "/v1/org/workbot-settings/proactive", "tenant_read", "workbot.agent.settings.read", "organization.settings", "organization", null, { notes: "Members' agents: organization policy, the current Your agent template version and Slack connection names that can deliver; no member content." }),
+  member("GET", "/v1/org/workbot-settings/proactive/health", "tenant_read", "workbot.agent.health.read", "organization.settings", "organization", null, { notes: "Seven days of agent_check counters per responsibility and mute counts from agent_instance overrides; counts only, no member identities or content." }),
+  member("PUT", "/v1/org/workbot-settings/proactive", "tenant_change", "workbot.agent.settings.update", "organization.settings", "organization", null, { notes: "Sets organization metadata workbot.proactive (agents on/off, working hours, daily limit, members' starting choice, default destination). A responsibilities or instructions change inserts a config_object_version of the organization's Your agent config object (type agent). Members' own choices are kept." }),
+  member("GET", "/v1/org/automation-settings", "tenant_read", "automation.settings.read", "organization.settings", "organization", null),
+  member("PUT", "/v1/org/automation-settings", "tenant_change", "automation.settings.update", "organization.settings", "organization", null, { notes: "Sets organization metadata automations.desktop / automations.cloud. Turning a kind off stops creation and skips its scheduled runs; existing Automations are kept." }),
+  member("GET", "/v1/org/workbot-readiness", "tenant_read", "workbot.readiness.read", "organization.settings", "organization", null, { notes: "Any member; Den web reads it once per dashboard load before sending people to Workbot. Two booleans only (Gateway required, an active AI Gateway provider exists); no provider names, counts or ids." }),
   member("PUT", "/v1/org/workbot-settings", "tenant_change", "workbot.settings.update", "organization.settings", "organization", null, { notes: "Sets organization metadata workbot.model (the default model for Workbot, the Slack assistant and cloud-default Automations); the headless runner model catalog read is incidental." }),
   member("GET", "/v1/org/default-model", "tenant_read", "default_model.read", "organization.settings", "organization", null),
   member("GET", "/v1/org/default-model/options", "tenant_read", "default_model.options.list", "organization.settings", "organization", null, { notes: "Reads the organization's OpenWork Models, AI Gateway and provider model catalogs; no write." }),
   member("PUT", "/v1/org/default-model/everyone", "tenant_change", "default_model.everyone.update", "organization.settings", "organization", null, { notes: "Sets or clears org_default_model for everyone (the model new OpenCode v2 desktop chats start with)." }),
   member("PUT", "/v1/org/default-model/teams/:teamId", "tenant_change", "default_model.team.update", "organization.settings", "team", "teamId", { notes: "Sets or clears one team's org_default_model override; null returns the team to the organization default." }),
+  member("GET", "/v1/org/auto-router", "tenant_read", "auto_router.read", "organization.settings", "organization", null, { notes: "Auto Router (autoRouter feature): whether it is on and its routes (AI Gateway provider id, catalog model id, when-to-use text, thinking levels)." }),
+  member("GET", "/v1/org/auto-router/options", "tenant_read", "auto_router.options.list", "organization.settings", "organization", null, { notes: "Reads the organization's AI Gateway providers, model groups and catalog models; no write." }),
+  member("PUT", "/v1/org/auto-router", "tenant_change", "auto_router.update", "organization.settings", "organization", null, { notes: "Replaces auto_router and its auto_router_route rows (enabled, ordered routes); when-to-use text is not recorded." }),
+  member("GET", "/v1/org/auto-router/connect", "tenant_access", "auto_router.connect", "organization.settings", "organization", null, { notes: "Returns the caller's own AI Gateway key and the gateway base URL when the Auto Router is usable; may create the member key in a transaction (read-with-write), like inference provider connect." }),
+  member("GET", "/v1/org/prompts", "tenant_read", "prompt.list", "prompt.management", "organization", null),
+  member("PUT", "/v1/org/prompts/everyone", "tenant_change", "prompt.everyone.update", "prompt.management", "organization", null, { notes: "Creates or updates the org_prompt assigned to everyone (org_prompt_access org_wide); prompt text is not recorded." }),
+  member("DELETE", "/v1/org/prompts/everyone", "tenant_change", "prompt.everyone.delete", "prompt.management", "organization", null, { notes: "Deletes the org_prompt assigned to everyone and its assignments." }),
+  member("PUT", "/v1/org/prompts/teams/:teamId", "tenant_change", "prompt.team.update", "prompt.management", "team", "teamId", { notes: "Creates or updates the team's org_prompt and its org_prompt_access row; prompt text is not recorded." }),
+  member("DELETE", "/v1/org/prompts/teams/:teamId", "tenant_change", "prompt.team.delete", "prompt.management", "team", "teamId", { notes: "Deletes the team's org_prompt and its assignments." }),
+  member("GET", "/v1/me/prompts", "tenant_read", "prompt.effective.read", "prompt.management", "organization", null),
 
   // SCIM management
   member("GET", "/v1/scim", "tenant_read", "scim.connection.read", "scim.configuration", "scim_connection", null),
@@ -168,6 +188,7 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("GET", "/v1/diagnostics/egress", "tenant_read", "diagnostics.egress.read", "diagnostics", "diagnostic", null),
   member("POST", "/v1/diagnostics/egress", "tenant_external", "diagnostics.egress.run", "diagnostics", "diagnostic", null, { external: "diagnostics_origin (egress probe)" }),
   member("PUT", "/v1/diagnostics/egress/token", "tenant_change", "diagnostics.egress_token.update", "diagnostics", "diagnostic_credential", null, { notes: "Stores a diagnostics credential; never snapshotted." }),
+  member("POST", "/v1/diagnostics/desktop-startup", "tenant_signal", "diagnostics.desktop_startup.report", "diagnostics", "desktop_startup_report", null, { notes: "One report per desktop launch for the calling member: step timings and a fixed failure code only. Idempotent per attemptId; rate limited per member. High volume." }),
 
   // Managed deployments (customer-cloud installs)
   member("GET", "/v1/managed-deployments/configuration", "tenant_read", "managed_deployment.configuration.read", "managed_deployment", "managed_deployment", null),
@@ -177,6 +198,10 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("POST", "/v1/managed-deployments/:deploymentId/launch", "tenant_change", "managed_deployment.launch.prepare", "managed_deployment", "managed_deployment", "deploymentId", { notes: "Prepares an approval link or account-checked command; nothing runs until the customer approves in their cloud." }),
 
   // Member-facing org reads and install distribution
+  member("GET", "/v1/me/activation", "tenant_read", "activation.read", "activation.checklist", "activation_checklist", null, { notes: "The signed-in member's own setup progress in the active organization; no message content or credentials." }),
+  member("GET", "/v1/me/agent", "tenant_read", "agent.member.read", "agent.member", "agent_instance", null, { notes: "The signed-in member's own agent: their choices, the organization's responsibilities and policy, and the destination's connection name; no message content." }),
+  member("PUT", "/v1/me/agent", "tenant_change", "agent.member.update", "agent.member", "agent_instance", null, { notes: "Upserts the caller's own agent_instance choices (on/off, snooze, muted responsibilities, destination); attributed by organizationContext, never another member's row." }),
+  member("POST", "/v1/me/activation/events", "tenant_signal", "activation.event.report", "activation.checklist", "activation_checklist", null, { notes: "Idempotent client-observed setup facts or dismissal, attributed by organizationContext; bounded step and optional duration only. Does not configure providers or connections." }),
   member("GET", "/v1/me/library", "tenant_read", "library.list", "library.access", "plugin", null),
   member("GET", "/v1/me/plugin-access", "tenant_read", "plugin_access.effective.list", "library.access", "plugin", null),
   member("GET", "/v1/me/install-config", "tenant_read", "install_config.read", "install.distribution", "organization", null),
@@ -187,10 +212,15 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   admin("GET", "/v1/admin/organizations/:organizationId", "tenant_read", "organization.admin_detail.read"),
   admin("GET", "/v1/admin/organizations/:organizationId/insights", "tenant_read", "organization.admin_insights.read"),
   admin("GET", "/v1/admin/organizations/:organizationId/usage", "tenant_read", "organization.admin_usage.read"),
+  admin("GET", "/v1/admin/organizations/:organizationId/members/:memberId/capabilities", "tenant_read", "member.capabilities.read"),
+  admin("PUT", "/v1/admin/organizations/:organizationId/members/:memberId/capabilities", "tenant_change", "member.capabilities.update", { notes: "Sets or clears registry feature overrides for one active organization membership (member_feature); platform admins only." }),
   admin("GET", "/v1/admin/organizations/:organizationId/capabilities", "tenant_read", "organization.capabilities.read"),
   admin("PUT", "/v1/admin/organizations/:organizationId/capabilities", "tenant_change", "organization.capabilities.update", { notes: "Sets or clears this organization's feature overrides (organization_feature, features registry). The admin MCP tool den_set_org_capability makes the same change (service action organization.capability.set)." }),
-  admin("PATCH", "/v1/admin/organizations/:organizationId/plan", "tenant_change", "organization.plan.update"),
+  admin("PATCH", "/v1/admin/organizations/:organizationId/plan", "tenant_change", "organization.plan.update", { notes: "Sets organization metadata plan (tier, seats, optional display-only endsAt), mirrors limits.members, and the Free plan's seatsFreeAdditional. The admin MCP tool den_update_org_plan makes the same change (service action organization.plan.set). Never calls Stripe." }),
   admin("PATCH", "/v1/admin/organizations/:organizationId/free-seats", "tenant_external", "organization.free_seats.update", { external: "stripe (seat subscription quantity resync)" }),
+  admin("GET", "/v1/admin/organizations/:organizationId/enterprise-subscription", "tenant_read", "organization.enterprise_subscription.read"),
+  admin("POST", "/v1/admin/organizations/:organizationId/enterprise-subscription", "tenant_external", "organization.enterprise_subscription.create", { external: "stripe (Enterprise subscription create; Team subscription cancel)" }),
+  admin("PATCH", "/v1/admin/organizations/:organizationId/enterprise-subscription", "tenant_external", "organization.enterprise_subscription.minimum_update", { external: "stripe (Enterprise subscription metadata and quantity)" }),
   admin("PATCH", "/v1/admin/organizations/:organizationId/dpa", "tenant_change", "organization.dpa.update", { changeEvidence: DOMAIN("organization-settings"), notes: "Legacy organization.dpa_signed.updated; reason text is not snapshotted (reasonProvided only)." }),
   admin("PUT", "/v1/admin/organizations/:organizationId/openwork-web-access", "tenant_change", "organization.openwork_web_access.update", { changeEvidence: DOMAIN("organization-settings"), notes: "Legacy organization.openwork_web.complimentary_access_granted / _revoked; reason text is not snapshotted." }),
 
@@ -229,6 +259,7 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   handler("POST", "/v1/auth/device/decision", "tenant_access", "auth.device_code.decide", "auth.device", "device_code", null, "Credential issuance: approval binds the CLI session to the chosen organization. Org proof: decideDeviceUserCode verifies the session user's active membership in body organizationId, then (beforeEffect) attributes org + user + member before the code is decided (fails closed). Denials and approvals without an organization stay in the platform store (user-scoped)."),
 
   // Invitation acceptance (session user, org from the invitation)
+  handler("POST", "/v1/sandbox-join", "tenant_external", "sandbox_organization.join", "sandbox.join", "sandbox_organization", null, "Org proof: the sandbox join token -> sandbox_organization.organizationId; attributed before the membership write. Actor = the joining session user without a member id (not yet a member). Joins with the sandbox's join role (member, or admin when a platform admin chose that; never owner).", { external: SEAT_SYNC }),
   handler("POST", "/v1/orgs/invitations/accept", "tenant_external", "invitation.accept", "invitation.management", "invitation", null, "Org proof: pending invitation row whose email matches the verified session user -> invitation.organizationId; attributed through acceptInvitationForUser beforeEffect (before any write). Actor = invitee user without a member id (not yet a member).", { external: SEAT_SYNC }),
 
   // Signed webhooks

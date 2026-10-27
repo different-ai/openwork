@@ -91,6 +91,7 @@ function fixtures(options: { active?: boolean; capabilities?: AutomationDesktopR
   const app = new Hono()
   registerSessionRunnerRoutes(app, {
     service, commandStore, requestStore,
+    async readEnginePolicy() { return { upgrade: false } },
     automationService: {
       async discoverDesktopRunnerWork() { calls.push("automation-discovery"); return [{ runId: "automation_unit", executionTarget: "desktop" }] },
       async runnerNotifications() { return [] },

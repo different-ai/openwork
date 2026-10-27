@@ -10,19 +10,102 @@ OpenWork's primary private-cloud shape uses the published Helm chart, a managed 
     Deploy on EKS or ECS Fargate with Amazon RDS for MySQL.
   </Card>
   <Card title="Azure" icon="cloud" href="/self-host/deploy-to-your-cloud/azure">
-    Deploy on AKS with Azure Database for MySQL.
+    Deploy on AKS or Container Apps with Azure Database for MySQL.
   </Card>
   <Card title="Google Cloud" icon="cloud" href="/self-host/deploy-to-your-cloud/google-cloud">
     Deploy on GKE or Cloud Run with Cloud SQL for MySQL.
   </Card>
 </CardGroup>
 
+## Terraform modules (beta)
+
+<Warning>
+  OpenWork's Terraform modules are **beta**. If you hit an issue:
+
+  - **Customers with a support agreement:** contact your OpenWork team through your usual support channel.
+  - **Everyone else:** [open a GitHub issue](https://github.com/different-ai/openwork/issues/new/choose).
+  - **Security issues:** report them privately ([SECURITY.md](https://github.com/different-ai/openwork/blob/dev/SECURITY.md)).
+
+  Pin the module source to a reviewed commit and check its tested scenarios,
+  upgrade notes, and known limitations before deploying. Do not include secrets
+  or private state in reports.
+</Warning>
+
+These cloud-native options deploy the core Den web and Den API services without
+Kubernetes. They do not imply support for every optional Helm component or the
+hosted managed installer. All three modules are available on `dev` with the same
+beta support level; their tested scenarios and cloud-specific limits differ:
+
+| Cloud | What the module deploys | Support and availability | Guide and source |
+| --- | --- | --- | --- |
+| AWS | ECS Fargate services, HTTPS ALB, RDS for MySQL, Secrets Manager, and a dedicated migration task | **Beta**; on `dev` | [AWS guide](/self-host/deploy-to-your-cloud/aws), [module](https://github.com/different-ai/openwork/tree/dev/infra/terraform/modules/openwork-aws-ecs) |
+| Google Cloud | Cloud Run services, Cloud SQL for MySQL, Secret Manager, and a dedicated migration job | **Beta**; on `dev` | [Google Cloud guide](/self-host/deploy-to-your-cloud/google-cloud), [module](https://github.com/different-ai/openwork/tree/dev/infra/terraform/modules/openwork-gcp-cloud-run) |
+| Azure | Container Apps services, MySQL Flexible Server, secret references, and a dedicated migration job | **Beta**; on `dev` | [Azure guide](/self-host/deploy-to-your-cloud/azure), [module](https://github.com/different-ai/openwork/tree/dev/infra/terraform/modules/openwork-azure-container-apps) |
+
+The [shared module contract](https://github.com/different-ai/openwork/blob/dev/infra/terraform/MODULE_CONTRACT.md)
+describes migration ordering, secrets preservation, tool compatibility, and the
+per-cloud limits. A successful core smoke run is not production load, backup
+restoration, or legacy-upgrade certification. Follow the source revision's README
+for exact inputs and test coverage. Availability on `dev` does not imply a tagged
+module release or production qualification.
+
+## Small / trial sizing
+
+These **provisional defaults** cover the core Den services, based on light
+setup/sign-in measurements (one administrator and a few sign-ins), not a tested
+user count. Medium/Large tiers require load and soak tests and are not specified.
+Optional Gateway, Workbot and runner services need separate sizing.
+
+| Deployment | Den API per copy | Den web per copy | MySQL baseline | Database-update step |
+| --- | --- | --- | --- | --- |
+| AWS ECS module | 1 vCPU / 2 GiB | 0.5 vCPU / 1 GiB | db.t4g.small, 2 GiB memory, 20 GiB disk | 1 vCPU / 2 GiB |
+| Google Cloud Run module | 1 vCPU / 2 GiB | 1 vCPU / 1 GiB | db-g1-small, 1.7 GB memory, 20 GB disk | 1 vCPU / 2 GiB |
+| Azure Container Apps module | 1 vCPU / 2 GiB | 0.5 vCPU / 1 GiB | B_Standard_B1ms, 2 GiB memory, 20 GB disk | 0.5 vCPU / 1 GiB |
+
+The Helm chart sets no default resource requests or limits; set them for your cluster.
+
+Cloud modules start with one API and one web copy; use two API copies when you
+need service redundancy, with additional compute cost. This alone does not make
+the database highly available. Keep automated database backups enabled.
+Google Cloud's 1.7 GB shared-core database is a **trial-only exception** to the
+2 GB recommendation: it has no Cloud SQL SLA; choose a dedicated tier for
+production after measuring. Cloud Run's web default remains 1 CPU for its
+request-driven service configuration. Migration-job peaks were not sampled;
+the envelopes above are provisional headroom, not measured peaks.
+
+### Default changes and estimated monthly cost
+
+USD public on-demand list-price estimates checked 2026-10-19, 730 hours/month
+for hourly charges. These are **component deltas, not total deployment quotes**;
+exclude taxes, discounts/free tiers, network/backup charges and AWS CPU credits.
+
+| Change | Region | Before → after | Monthly increase (estimate) |
+| --- | --- | --- | --- |
+| AWS Single-AZ MySQL instance | us-east-1 | micro $0.016/h → small $0.032/h; $11.68 → $23.36/month | **+$11.68** |
+| Cloud SQL zonal MySQL SSD | us-central1 | 10 → 20 GB at $0.17/GB-month; $1.70 → $3.40/month | **+$1.70** |
+| AWS/GCP application sizes; Azure module | us-east-1 / us-central1 / eastus | Unchanged | **$0** |
+
+Sources: [AWS RDS pricing](https://aws.amazon.com/rds/mysql/pricing/),
+[Cloud SQL pricing](https://cloud.google.com/sql/pricing/).
+Existing direct AWS users see an in-place class change and a database restart
+when performed; [pin micro before upgrading to opt out](/self-host/deploy-to-your-cloud/aws#upgrade-notes).
+Existing direct GCP users see online storage growth, which cannot be shrunk;
+[pin 10 GB before applying to opt out](/self-host/deploy-to-your-cloud/google-cloud#upgrade-notes).
+
+Managed installers retain their own pinned **small** profiles, not a promise of
+identical sizes across clouds. AWS currently pins micro, API 1 vCPU / 2 GiB,
+web 0.5 vCPU / 1 GiB; GCP currently uses db-custom-1-3840 with 20 GB disk,
+API 2 vCPU / 2 GiB and web 1 vCPU / 1 GiB. They are untouched here.
+Aligning them needs a separately reviewed installer change that preserves
+existing sizes and obtains explicit approval for resize, restart or cost changes;
+updating direct-module defaults does not authorize a managed resize.
+
 ## Managed installation from hosted OpenWork
 
 The default-off **Deployments** rollout lets workspace owners approve an AWS
-installer in their own account and track health and approved updates. The GCP
-implementation additionally uses the default-off `managedDeploymentsGcp`
-rollout and customer-approved Google Cloud Shell. It requires a dedicated
+installer in their own account and track health and approved updates. AWS, GCP
+and deployment agent tools share the cloud-only, default-off `managedDeployments`
+rollout. GCP uses customer-approved Google Cloud Shell and requires a dedicated
 billing-enabled project, public Cloud DNS, and an operator-published immutable
 installer release. Local tests are not a live deployment receipt; the GCP
 rollout must stay off until a real release and approved installation are verified.
@@ -59,6 +142,16 @@ origin must accept traffic only from those proxies, and the proxies must overwri
 or safely append forwarded headers. This setting interprets the forwarded chain;
 it cannot verify the direct sender. Leave it unset when there is no trusted proxy.
 Keep rate limiting enabled in production.
+
+If Den Web runs on Vercel, its outgoing addresses change, so it cannot be listed
+as a trusted proxy. Set the same `DEN_WEB_CLIENT_IP_SECRET` (32+ characters) on
+Den Web and Den API instead. Den Web then signs the address Vercel saw for each
+person, and Den API accepts only a valid signature less than five minutes old.
+
+Sign-up, sign-in, and verification-code limits are counted per email address
+first, with a much larger allowance per client address. People behind one office
+network can sign up together, and a sign-up from a valid invitation link does not
+count against the shared address.
 
 ## Deployment sequence
 

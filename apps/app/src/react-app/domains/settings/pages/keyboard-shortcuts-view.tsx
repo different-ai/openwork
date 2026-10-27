@@ -5,20 +5,21 @@
 // is undoable instead of confirmed (P8).
 import { useMemo, useState } from "react";
 import type * as React from "react";
-import { Lock, Pencil, Plus, Trash2, Zap } from "lucide-react";
+import { ChevronDown, Lock, Pencil, Plus, Trash2, Zap } from "lucide-react";
 import { FAST_DEFAULT_VARIANT, FAST_VARIANT_PREFIX } from "@openwork/types/cloud-model-fast";
 
-import type { Client, ModelRef } from "@/app/types";
-import { getModelBehaviorSummary } from "@/app/lib/model-behavior";
+import type { Client, ModelOption, ModelRef } from "@/app/types";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "@/components/ui/sonner";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { ProviderIcon } from "@/react-app/design-system/provider-icon";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { modelRefKey, useModelCollectionsStore } from "@/react-app/domains/session/models/model-collections-store";
+import { ModelPickerList } from "@/react-app/domains/models/model-picker-list";
+import { runtimeModelOptions } from "@/react-app/domains/models/catalog";
 import {
   createShortcutId,
   shortcutForModel,
@@ -51,6 +52,8 @@ type CatalogModel = ModelRef & {
 
 export type KeyboardShortcutsViewProps = {
   client: Client | null;
+  /** The shared model catalog, the same list the chat's model picker shows. */
+  pickerOptions?: readonly ModelOption[];
   baseUrl: string;
   directory: string;
   onOpenProviders: () => void;
@@ -136,6 +139,8 @@ function ShortcutEditor(props: {
   target: EditorTarget;
   os: ShortcutOs;
   models: CatalogModel[];
+  /** The same rows the chat's model picker shows. */
+  pickerOptions: readonly ModelOption[];
   savedKeys: Set<string>;
   shortcuts: Shortcut[];
   onCancel: () => void;
@@ -152,6 +157,8 @@ function ShortcutEditor(props: {
   const [keys, setKeys] = useState<string | null>(target.shortcut?.keys ?? nextFreeChord(takenKeys));
   const [recording, setRecording] = useState(false);
   const [recordError, setRecordError] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState("");
 
   const model = models.find((entry) => modelRefKey(entry) === modelKey) ?? null;
   const storedTitle = target.shortcut?.action.modelTitle ?? target.shortcut?.action.modelID ?? null;
@@ -162,12 +169,8 @@ function ShortcutEditor(props: {
       && modelRefKey({ providerID: entry.action.providerID, modelID: entry.action.modelID }) !== modelKey) ?? null
     : null;
   const conflictTitle = conflict ? conflict.action.modelTitle ?? conflict.action.modelID : null;
-  const saved = models.filter((entry) => props.savedKeys.has(modelRefKey(entry)));
-  const others = models.filter((entry) => !props.savedKeys.has(modelRefKey(entry)));
-  const selectItems = Object.fromEntries([
-    ...models.map((entry) => [modelRefKey(entry), entry.title] as const),
-    ...(model || !modelKey ? [] : [[modelKey, storedTitle ?? modelKey] as const]),
-  ]);
+  const modelRef = model ?? initialModel;
+  const modelLabel = model?.title ?? (modelKey ? storedTitle ?? modelKey : null);
 
   const selectModel = (value: string) => {
     setModelKey(value);
@@ -235,27 +238,21 @@ function ShortcutEditor(props: {
     >
       <div className="flex min-h-10 items-center gap-3">
         <span className="w-24 shrink-0 text-sm text-dls-secondary">Model</span>
-        <Select value={modelKey} items={selectItems} onValueChange={(value) => { if (typeof value === "string") selectModel(value); }}>
-          <SelectTrigger className="min-w-0 flex-1" aria-label="Model">
-            <SelectValue placeholder="Choose a model" />
-          </SelectTrigger>
-          <SelectContent>
-            {saved.length > 0 ? (
-              <SelectGroup>
-                <SelectLabel>Saved</SelectLabel>
-                {saved.map((entry) => (
-                  <SelectItem key={modelRefKey(entry)} value={modelRefKey(entry)}>{entry.title}</SelectItem>
-                ))}
-              </SelectGroup>
-            ) : null}
-            <SelectGroup>
-              <SelectLabel>All models</SelectLabel>
-              {others.map((entry) => (
-                <SelectItem key={modelRefKey(entry)} value={modelRefKey(entry)}>{entry.title}</SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
+        <Popover open={pickerOpen} onOpenChange={(open) => { setPickerOpen(open); if (!open) setPickerQuery(""); }}>
+          <PopoverTrigger render={<Button variant="outline" className="min-w-0 flex-1 justify-between font-normal" aria-label="Model" />}>
+            <span className="flex min-w-0 items-center gap-2">
+              {modelRef ? <ProviderIcon providerId={modelRef.providerID} providerName={model?.providerName} size={16} /> : null}
+              <span className={cn("truncate", !modelLabel && "text-dls-secondary")}>{modelLabel ?? "Choose a model"}</span>
+            </span>
+            <ChevronDown className="size-4 shrink-0 text-dls-secondary" />
+          </PopoverTrigger>
+          <PopoverContent align="start" data-testid="shortcut-model-picker"
+            className="flex max-h-[min(var(--available-height),28rem)] w-90 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl p-0">
+            <ModelPickerList options={props.pickerOptions} current={modelRef ?? { providerID: "", modelID: "" }}
+              query={pickerQuery} onQueryChange={setPickerQuery}
+              onSelect={(option) => { selectModel(modelRefKey(option)); setPickerOpen(false); setPickerQuery(""); }} />
+          </PopoverContent>
+        </Popover>
       </div>
 
       <div className="flex min-h-10 items-center gap-3">
@@ -348,14 +345,15 @@ export function KeyboardShortcutsView(props: KeyboardShortcutsViewProps) {
   const catalog = catalogQuery.data;
   const rowCatalog = useMemo(() => (catalog ? { all: catalog.all ?? [], connected: getConnectedProviderItems(catalog) } : null), [catalog]);
 
-  const models = useMemo<CatalogModel[]>(() => getConnectedProviderItems(catalog).flatMap((provider) =>
-    Object.entries(provider.models).map(([modelID, model]) => ({
-      providerID: provider.id,
-      modelID,
-      title: model.name || modelID,
-      providerName: provider.name,
-      behaviorOptions: getModelBehaviorSummary(provider.id, model, null, provider.name).options,
-    }))).sort((a, b) => a.title.localeCompare(b.title)), [catalog]);
+  const runtimeOptions = useMemo(() => (catalog ? runtimeModelOptions(catalog) : []), [catalog]);
+  const pickerOptions = props.pickerOptions?.length ? props.pickerOptions : runtimeOptions;
+  const models = useMemo<CatalogModel[]>(() => pickerOptions.filter((option) => !option.disabled).map((option) => ({
+    providerID: option.providerID,
+    modelID: option.modelID,
+    title: option.title,
+    providerName: option.description ?? option.providerID,
+    behaviorOptions: option.behaviorOptions ?? [],
+  })).sort((a, b) => a.title.localeCompare(b.title)), [pickerOptions]);
   const modelsByKey = useMemo(() => new Map(models.map((model) => [modelRefKey(model), model])), [models]);
   const savedKeys = useMemo(() => new Set(favorites.map(modelRefKey)), [favorites]);
   const unassigned = favorites.filter((favorite) => !shortcutForModel(shortcuts, favorite) && modelsByKey.has(modelRefKey(favorite)));
@@ -372,7 +370,7 @@ export function KeyboardShortcutsView(props: KeyboardShortcutsViewProps) {
   };
 
   const chatShortcuts = [
-    { label: "New chat", keys: formatChord("Mod+N", os) },
+    { label: "New session", keys: formatChord("Mod+N", os) },
     { label: "Command palette", keys: formatChord("Mod+K", os) },
     { label: "Next saved model", keys: os === "macos" ? "⌃⇧M" : favoriteModelShortcutLabel },
     { label: "Cycle reasoning", keys: thinkingModeShortcutLabel(thinkingOs) },
@@ -396,7 +394,7 @@ export function KeyboardShortcutsView(props: KeyboardShortcutsViewProps) {
 
           {editor && editor.shortcut === null && editor.model === null ? (
             <div className="pb-3">
-              <ShortcutEditor target={editor} os={os} models={models} savedKeys={savedKeys} shortcuts={shortcuts} onCancel={() => setEditor(null)} onSave={handleSave} />
+              <ShortcutEditor target={editor} os={os} models={models} pickerOptions={pickerOptions} savedKeys={savedKeys} shortcuts={shortcuts} onCancel={() => setEditor(null)} onSave={handleSave} />
             </div>
           ) : null}
 
@@ -421,7 +419,7 @@ export function KeyboardShortcutsView(props: KeyboardShortcutsViewProps) {
               if (editor?.shortcut?.id === shortcut.id) {
                 return (
                   <li key={shortcut.id} className="border-b border-dls-border py-2">
-                    <ShortcutEditor target={editor} os={os} models={models} savedKeys={savedKeys} shortcuts={shortcuts} onCancel={() => setEditor(null)} onSave={handleSave} />
+                    <ShortcutEditor target={editor} os={os} models={models} pickerOptions={pickerOptions} savedKeys={savedKeys} shortcuts={shortcuts} onCancel={() => setEditor(null)} onSave={handleSave} />
                   </li>
                 );
               }
@@ -461,7 +459,7 @@ export function KeyboardShortcutsView(props: KeyboardShortcutsViewProps) {
               if (editor && !editor.shortcut && editor.model && modelRefKey(editor.model) === modelRefKey(favorite)) {
                 return (
                   <li key={modelRefKey(favorite)} className="border-b border-dls-border py-2">
-                    <ShortcutEditor target={editor} os={os} models={models} savedKeys={savedKeys} shortcuts={shortcuts} onCancel={() => setEditor(null)} onSave={handleSave} />
+                    <ShortcutEditor target={editor} os={os} models={models} pickerOptions={pickerOptions} savedKeys={savedKeys} shortcuts={shortcuts} onCancel={() => setEditor(null)} onSave={handleSave} />
                   </li>
                 );
               }

@@ -8,7 +8,7 @@ import type {
   Tool,
 } from "@modelcontextprotocol/client"
 
-export type { StoredOAuthClientInformation, StoredOAuthTokens } from "@modelcontextprotocol/client"
+export type { OAuthDiscoveryState, StoredOAuthClientInformation, StoredOAuthTokens } from "@modelcontextprotocol/client"
 
 /**
  * Most OAuth scopes one connection may request. Without a required scope, MCP
@@ -179,6 +179,7 @@ export type EnterpriseMcpOAuthPersistence = {
 
 export type EnterpriseMcpOAuthConfiguration = {
   applicationType: "web" | "native"
+  manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string }
   clientMetadataUrl?: string
   authorizationServerIssuer?: string
   requestedScopes?: string[]
@@ -353,6 +354,8 @@ export type EnterpriseMcpAuthorizationServerRequirement = {
 }
 
 export type EnterpriseMcpConnectionRequirements = {
+  /** Read-only suggestions, not trusted authorization servers and never auto-applied. */
+  publishedSignInAddresses?: Array<{ authorizationEndpoint: string; tokenEndpoint: string; advertisedIssuer: string; metadataIssuer: string }>
   status: "ready" | "manual_action_required" | "unsupported" | "unreachable"
   server: {
     url: string

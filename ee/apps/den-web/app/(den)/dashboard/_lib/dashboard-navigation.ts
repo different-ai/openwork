@@ -42,6 +42,7 @@ import {
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
 import { canOpenAdminRoute } from "./admin-route-access";
+import { WORKBOT_ENTRY_HREF, type WorkbotEntry, workbotNavMarker } from "./workbot-entry";
 
 export type DashboardNavChild = {
   href: string;
@@ -56,6 +57,8 @@ export type DashboardNavItem = {
   badge?: string;
   /** Quiet dot beside the label when something here is waiting on the viewer. */
   attention?: string;
+  /** Quiet lock beside the label when someone else has to unblock this entry (DESIGN.md P4, C5). */
+  locked?: string;
   testId?: string;
   /** Extra pathname prefixes that select this entry. */
   matchHrefs?: string[];
@@ -85,15 +88,13 @@ export type BuildDashboardNavSectionsInput = {
   runtimeConfigLoaded: boolean;
   /** How many Library items wait on the viewer's sign-in. */
   libraryNeedsSignIn?: number;
-  /** The organization has the `permissions` feature (orgFeatureEnabled). */
-  permissionsEnabled?: boolean;
-  /** teamRoles: roles live in Members › Roles, so Settings › Permissions steps aside. */
-  teamRoles?: boolean;
   /** The managedDeployments feature is on for this organization. */
   managedDeployments?: boolean;
-  /** Workbot is on: admins choose the organization's default model. */
-  workbotSettings?: boolean;
   desktopPolicyScreenRemoved?: boolean;
+  /** Explicit server capability, independent of organization role permissions. */
+  canManageDeploymentServices?: boolean;
+  /** What clicking Workbot does; a blocked entry stays visible with a marker. */
+  workbotEntry?: WorkbotEntry;
 };
 
 export function buildDashboardNavSections({
@@ -102,17 +103,16 @@ export function buildDashboardNavSections({
   capabilities,
   runtimeConfigLoaded,
   libraryNeedsSignIn = 0,
-  permissionsEnabled = false,
-  teamRoles = false,
   managedDeployments = false,
-  workbotSettings = false,
   desktopPolicyScreenRemoved = false,
+  canManageDeploymentServices = false,
+  workbotEntry = { kind: "open" },
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
   const workItems: DashboardNavItem[] = [
     ...(capabilities.workbot
-      ? [{ href: "/workbot", label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot" }]
+      ? [{ href: WORKBOT_ENTRY_HREF, label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot", ...workbotNavMarker(workbotEntry) }]
       : []),
     {
       href: orgSlug ? getLibraryRoute(orgSlug) : "#",
@@ -131,14 +131,14 @@ export function buildDashboardNavSections({
   ];
 
   // Admin-area entries appear only where the member holds the page's permission.
-  const canOpen = (href: string) => canOpenAdminRoute(href, access);
+  const canOpen = (href: string) => canOpenAdminRoute(href, access, canManageDeploymentServices);
   const manageItems: DashboardNavItem[] = orgSlug
     ? [
         { href: getPluginsRoute(orgSlug), label: "Plugins", icon: Box },
         { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug, badge: "MCPs" },
         { href: getAiGatewayRoute(orgSlug), label: "AI Gateway", icon: Sparkles },
         ...(!desktopPolicyScreenRemoved ? [{ href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop }] : []),
-        ...(workbotSettings ? [{ href: getWorkbotSettingsRoute(orgSlug), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot-settings" }] : []),
+        { href: getWorkbotSettingsRoute(orgSlug), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot-settings" },
         ...(managedDeployments ? [{ href: getDeploymentsRoute(orgSlug), label: "Deployments", icon: Server }] : []),
       ].filter((item) => canOpen(item.href))
     : [];
@@ -163,7 +163,7 @@ export function buildDashboardNavSections({
           { href: getBillingRoute(orgSlug), label: "Billing" },
           { href: getApiKeysRoute(orgSlug), label: "API Keys" },
         ].filter((item) => canOpen(item.href)),
-        ...permissionsNavChildren(orgSlug, access, permissionsEnabled, teamRoles ? { membersOpen: canOpen(getMembersRoute(orgSlug)) } : null),
+        ...permissionsNavChildren(orgSlug, access, canOpen(getMembersRoute(orgSlug))),
         ...(access.canViewSso ? [{ href: getSsoRoute(orgSlug), label: "SSO" }] : []),
         ...(access.canViewScim ? [{ href: getScimRoute(orgSlug), label: "SCIM" }] : []),
         ...(canOpen(getMarketplacesRoute(orgSlug))
@@ -197,19 +197,9 @@ export function buildDashboardNavSections({
   ];
 }
 
-/**
- * Permissions appears for members who hold `permissions.view` while the feature
- * is on. While it is off, people who could manage it keep a locked entry that
- * says why (DESIGN.md P4); everyone else does not see it.
- *
- * With teamRoles, roles have one home, Members › Roles: the entry is dropped
- * for people who can open Members, and named Roles for anyone who can't.
- */
-function permissionsNavChildren(orgSlug: string, access: DenOrgAccessFlags, enabled: boolean, teamRoles: { membersOpen: boolean } | null): DashboardNavChild[] {
-  const href = getPermissionsRoute(orgSlug);
-  if (enabled && teamRoles) return access.canViewPermissions && !teamRoles.membersOpen ? [{ href, label: "Roles" }] : [];
-  if (enabled) return access.canViewPermissions ? [{ href, label: "Permissions" }] : [];
-  return access.canManagePermissions ? [{ href, label: "Permissions", badge: "Enterprise" }] : [];
+/** Roles live under Members, with a Settings entry only when Members is unavailable. */
+function permissionsNavChildren(orgSlug: string, access: DenOrgAccessFlags, membersOpen: boolean): DashboardNavChild[] {
+  return access.canViewPermissions && !membersOpen ? [{ href: getPermissionsRoute(orgSlug), label: "Roles" }] : [];
 }
 
 // Alias order is ranking priority in the command palette.
@@ -225,7 +215,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   "Desktop policies": ["policy", "mdm", "lock", "desktop"],
   Deployments: ["aws", "self-hosted", "byoc", "install", "health", "status"],
   Dashboards: ["boards", "apps"],
-  Diagnostics: ["health", "debug", "troubleshooting"],
+  Diagnostics: ["health", "status", "services", "readiness", "debug", "troubleshooting", "desktop startup"],
   General: ["organization", "workspace"],
   // Agent permissions live on Members › Teams (Everyone and each team's Agents tab).
   Members: ["people", "users", "invite", "teams", "roles", "agent permissions", "commands", "websites", "allow list", "block list", "desktop", "prompt suggestions"],

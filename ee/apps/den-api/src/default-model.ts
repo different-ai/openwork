@@ -359,10 +359,9 @@ export async function readDefaultModelForMember(input: { organizationId: Organiz
  * lookup fails, so desktops keep their own default.
  */
 export async function desktopConfigDefaultModel(
-  input: { organizationId: OrganizationId; memberId: MemberId; featureOn: boolean },
+  input: { organizationId: OrganizationId; memberId: MemberId },
   read: typeof readDefaultModelForMember = readDefaultModelForMember,
 ): Promise<DesktopDefaultModel | null> {
-  if (!input.featureOn) return null
   try {
     return await read({ organizationId: input.organizationId, memberId: input.memberId })
   } catch (error) {

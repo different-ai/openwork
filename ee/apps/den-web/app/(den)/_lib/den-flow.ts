@@ -1,5 +1,6 @@
 import { workflowRunPreviewSchema, type WorkflowRunPreview } from "@openwork/types/workflows";
-import { denApiCredentials, denBrowserEndpoint } from "./den-api-origin";
+import { seatPlanQuoteSchema, type SeatPlanQuote } from "@openwork/types/den/billing-plans";
+import { denApiCredentials, denBrowserEndpoint, isSameOriginBrowserRequest } from "./den-api-origin";
 import { getAuthResumeUrl } from "./auth-resume";
 import { ORG_SCOPE_HEADER, getRequestOrgScope, shouldPinOrgScopePath } from "./org-scope";
 import { getRuntimeConfig } from "./runtime-config";
@@ -23,6 +24,8 @@ export type OrgPaymentRequiredError = {
   message: string;
   currentCount: number;
   freeSeatCount: number;
+  /** The Team plan with this person added (ENG-874); null from older Den APIs. */
+  quote: SeatPlanQuote | null;
 };
 
 export type AuthUser = {
@@ -325,7 +328,18 @@ export function getOrgPaymentRequiredError(payload: unknown): OrgPaymentRequired
     message: payload.message,
     currentCount: payload.currentCount,
     freeSeatCount: payload.freeSeatCount,
+    quote: seatPlanQuote(payload.quote),
   };
+}
+
+function seatPlanQuote(value: unknown): SeatPlanQuote | null {
+  const parsed = seatPlanQuoteSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/** What people see when an invitation would take a Free plan workspace past its user limit. */
+export function freePlanUserLimitMessage(freeSeatCount: number): string {
+  return `The Free plan is limited to ${freeSeatCount} users, counting pending invitations. Upgrade to the Team plan from Billing to invite more people.`;
 }
 
 export function getReauthRequiredError(payload: unknown, response: Response): ReauthRequiredError | null {
@@ -453,7 +467,9 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
 
   let response: Response;
   try {
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && !isSameOriginBrowserRequest(path)) {
+      // Only cross-origin Den API URLs depend on the runtime API origin. Waiting
+      // for it on same-origin requests would serialize every page load behind it.
       await getRuntimeConfig();
     }
     const endpoint = path.startsWith("/api/auth/") ? path : denBrowserEndpoint(path);

@@ -35,6 +35,10 @@ jobs:
     name: Build Web Runtime Snapshot
     if: github.repository == 'different-ai/openwork'
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    # Render deploy secrets belong to this environment; no deployment is recorded.
+    environment:
+      name: den-production
+      deployment: false
     steps:
       - name: Check channel
         id: channel

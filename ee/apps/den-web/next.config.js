@@ -70,7 +70,12 @@ const nextConfig = {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
   async redirects() {
-    return [...legacyConnectorRedirects(), ...denApiRedirects(process.env)];
+    return [
+      ...legacyConnectorRedirects(),
+      // Settings › Services moved into Settings › Diagnostics › Installation.
+      { source: "/dashboard/services", destination: "/dashboard/diagnostics", permanent: false },
+      ...denApiRedirects(process.env),
+    ];
   },
   async rewrites() {
     return [

@@ -1,5 +1,4 @@
 import type { MiddlewareHandler } from "hono"
-import { organizationFeatureEnabled } from "../features.js"
 import type { AuthContextVariables } from "../session.js"
 import type { OrganizationContextVariables } from "./organization-context.js"
 
@@ -18,10 +17,9 @@ export function bodyCarriesSecret(body: unknown, fields: readonly string[]): boo
 }
 
 /**
- * Entering a secret is human-only. The agent (internal MCP principal) is
- * always refused; with secure keys in chat on, so are API keys. Mount after
- * the organization route so the rollout can be read; reads a clone of the
- * body, so validators downstream still see it.
+ * Entering a secret is human-only. The agent (internal MCP principal) and
+ * API keys are always refused. Reads a clone of the body, so validators
+ * downstream still see it.
  */
 export function refuseMachineSecrets(fields: readonly string[]): MiddlewareHandler<{ Variables: Partial<AuthContextVariables & OrganizationContextVariables> }> {
   return async (c, next) => {
@@ -29,10 +27,6 @@ export function refuseMachineSecrets(fields: readonly string[]): MiddlewareHandl
     if (!agent && !c.get("apiKey")) return next()
     const body: unknown = await c.req.raw.clone().json().catch(() => null)
     if (!bodyCarriesSecret(body, fields)) return next()
-    const organizationId = c.get("organizationContext")?.organization.id
-    if (agent || !organizationId || await organizationFeatureEnabled(organizationId, "secureSecretFields")) {
-      return c.json(SECURE_ENTRY_REQUIRED, 400)
-    }
-    return next()
+    return c.json(SECURE_ENTRY_REQUIRED, 400)
   }
 }

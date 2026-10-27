@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import type { McpServer } from "@modelcontextprotocol/server"
 import type { McpAppToolBinding, McpAppToolDeclaration, PrepareMcpAppInput, PrepareMcpAppOutput } from "@openwork/types/mcp-app"
+import { generatedAppLibrariesNextStep } from "../generated-app-libraries.js"
 
 /**
  * OpenWork's opinionated App starters. prepare_app returns the one that fits
@@ -15,15 +16,18 @@ export type AppStarterPattern = "lookup" | "action" | "standalone"
 export const APP_STARTER_RESOURCE_ROOT = "openwork://apps/starters"
 export const appStarterResourceUri = (pattern: AppStarterPattern) => `${APP_STARTER_RESOURCE_ROOT}/${pattern}.json`
 
-/** A preparation never runs a tool or saves an App. */
-export function appAuthoringStarter(input: PrepareMcpAppInput, tools: McpAppToolBinding[]): PrepareMcpAppOutput {
+/**
+ * A preparation never runs a tool or saves an App. `libraries` is the
+ * editor's mcpAppLibraries feature; only then does it list what may be imported.
+ */
+export function appAuthoringStarter(input: PrepareMcpAppInput, tools: McpAppToolBinding[], options: { libraries?: boolean } = {}): PrepareMcpAppOutput {
   const starter = appStarter(tools)
   return {
     preparationId: randomUUID(),
     title: input.title,
     tools,
     starter: { reactSource: starter.reactSource, cssSource: starter.cssSource },
-    nextSteps: starter.nextSteps,
+    nextSteps: options.libraries ? [...starter.nextSteps, generatedAppLibrariesNextStep()] : starter.nextSteps,
   }
 }
 
@@ -689,8 +693,9 @@ export default function App({ input, hostContext }) {
 }
 `
 
-const STARTER_CSS = `body { margin: 0; }
-.app { box-sizing: border-box; container-type: inline-size; display: grid; gap: 12px; min-width: 0; padding: 12px 14px; color: var(--color-text-primary, CanvasText); font: 13px/1.5 var(--font-sans, system-ui, sans-serif); }
+const STARTER_CSS = `:root { color-scheme: light dark; }
+body { margin: 0; }
+.app { box-sizing: border-box; container-type: inline-size; display: grid; gap: 12px; min-width: 0; padding: 12px 14px; color: var(--color-text-primary, CanvasText); background: var(--color-background-primary, Canvas); font: 13px/1.5 var(--font-sans, system-ui, sans-serif); }
 .app *, .app *::before, .app *::after { box-sizing: border-box; }
 .controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
 .field { display: grid; flex: 1 1 140px; gap: 4px; min-width: 0; }

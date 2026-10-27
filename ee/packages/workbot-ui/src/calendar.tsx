@@ -1,5 +1,8 @@
 "use client";
 
+import { useWorkbotConnect, WorkbotConnectAction } from "./connect";
+
+import type { WorkbotViewContext } from "@openwork/types/workbot-context";
 import {
   addDays,
   buildAutomationCalendarItems,
@@ -39,7 +42,7 @@ import { Check as CheckMark, ChevronLeft, ChevronRight, Cloud, Lock, Monitor, Pl
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CreateAutomationCard, type CreateAnchor } from "./calendar-create";
 import { ModelPicker, ModelSummary } from "./model-picker";
-import { workbotHost } from "./host";
+import { workbotHost, useRetainedSurface } from "./host";
 import { calendarKey, useAutomationModels, useAutomationRuns, useCalendarAction, useCalendarSources, useRunReceipt, useWorkbotAutomations, type AutomationChanges } from "./calendar-data";
 
 /**
@@ -382,16 +385,19 @@ function PastRun({ run, zone }: { run: AutomationRun; zone: string }) {
 const WEEKDAYS = [["Mon", 1], ["Tue", 2], ["Wed", 3], ["Thu", 4], ["Fri", 5], ["Sat", 6], ["Sun", 0]] as const;
 
 function ScheduleFields({ draft, setDraft }: { draft: AutomationSchedule; setDraft: (schedule: AutomationSchedule) => void }) {
-  const time = draft.kind === "once" ? null : `${String(draft.hour).padStart(2, "0")}:${String(draft.minute).padStart(2, "0")}`;
+  const clock = draft.kind === "daily" || draft.kind === "weekly" ? draft : null;
+  const time = clock ? `${String(clock.hour).padStart(2, "0")}:${String(clock.minute).padStart(2, "0")}` : null;
   const setKind = (kind: "daily" | "weekly") => {
-    const hour = draft.kind === "once" ? 9 : draft.hour;
-    const minute = draft.kind === "once" ? 0 : draft.minute;
-    setDraft(kind === "daily" ? { kind, timezone: draft.timezone, hour, minute } : { kind, timezone: draft.timezone, hour, minute, daysOfWeek: draft.kind === "weekly" ? draft.daysOfWeek : [1, 2, 3, 4, 5] });
+    const hour = clock ? clock.hour : draft.kind === "interval" ? draft.startHour : 9;
+    const minute = clock ? clock.minute : 0;
+    setDraft(kind === "daily" ? { kind, timezone: draft.timezone, hour, minute } : { kind, timezone: draft.timezone, hour, minute, daysOfWeek: draft.kind === "weekly" || draft.kind === "interval" ? draft.daysOfWeek : [1, 2, 3, 4, 5] });
   };
   return (
     <>
       {draft.kind === "once" ? (
         <p className="text-[13px] text-[#687076]">This runs once, {formatInstant(draft.at, draft.timezone)}. Change it to repeat:</p>
+      ) : draft.kind === "interval" || draft.kind === "calendar" ? (
+        <p className="text-[13px] text-[#687076]">This runs {describeSchedule(draft, draft.timezone, "en-US").toLowerCase()}. Change it to run at one time:</p>
       ) : null}
       <div className="flex rounded-lg bg-[#F1F3F5] p-0.5" role="radiogroup" aria-label="Repeats">
         {(["daily", "weekly"] as const).map((kind) => (
@@ -418,7 +424,7 @@ function ScheduleFields({ draft, setDraft }: { draft: AutomationSchedule; setDra
           <span className="text-[12px] text-[#687076]">Time</span>
           <input type="time" value={time ?? "09:00"} onChange={(event) => {
             const [hour, minute] = event.currentTarget.value.split(":").map(Number);
-            if (Number.isInteger(hour) && Number.isInteger(minute)) setDraft(draft.kind === "once" ? { kind: "daily", timezone: draft.timezone, hour, minute } : { ...draft, hour, minute });
+            if (Number.isInteger(hour) && Number.isInteger(minute)) setDraft(clock ? { ...clock, hour, minute } : { kind: "daily", timezone: draft.timezone, hour, minute });
           }} className="h-8 min-w-0 w-full rounded-md px-2 text-[13px] shadow-[0_0_0_1px_var(--wb-ring)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" />
         </label>
         <label className="flex min-w-0 flex-[1.4] flex-col gap-1">
@@ -452,6 +458,7 @@ function RunsOnCard({ target }: { target: "desktop" | "cloud" }) {
  * Den's Workbot allowlist accepts the name, schedule, instructions and model.
  */
 function EditDialog({ item, busy, onClose, onSave }: { item: ListItem; busy: boolean; onClose: () => void; onSave: (changes: AutomationChanges) => void }) {
+  const surface = useRetainedSurface(true);
   const { revision } = item;
   const target = revision.executionTarget ?? "desktop";
   const agent = revision.action?.kind !== "saved_script";
@@ -466,8 +473,8 @@ function EditDialog({ item, busy, onClose, onSave }: { item: ListItem; busy: boo
   };
   const changed = Object.keys(changes).length > 0;
   return (
-    <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <Dialog.Portal>
+    <Dialog.Root open={surface.open} onOpenChange={(open) => { if (!surface.blocked && !open) onClose(); }}>
+      <Dialog.Portal {...surface.portal}>
         <Dialog.Backdrop className="workbot fixed inset-0 z-50 bg-[var(--wb-ink)]/20" />
         <Dialog.Popup
           data-calendar-edit={item.automation.id}
@@ -640,9 +647,10 @@ function weekdaysOnly(days: LocalDate[], automations: AutomationCalendarItem[], 
   return busy ? days : days.filter((day) => weekdayOf(day) !== 0 && weekdayOf(day) !== 6);
 }
 
-export function WorkbotCalendar({ connectionsHref, assistantName }: { connectionsHref: string | null; assistantName: string }) {
+export function WorkbotCalendar({ connectionsHref, assistantName, onContextChange }: { connectionsHref: string | null; assistantName: string; onContextChange?(context: WorkbotViewContext | null): void }) {
   const zone = timeZone();
   const sources = useCalendarSources();
+  const connect = useWorkbotConnect();
   const [now, setNow] = useState(() => Date.now());
   const [view, setView] = useState<CalendarView>("week");
   const [anchor, setAnchor] = useState<LocalDate>(() => localDateOf(Date.now(), zone));
@@ -684,6 +692,12 @@ export function WorkbotCalendar({ connectionsHref, assistantName }: { connection
   const selectedItem = selection?.kind === "automation" ? list.data?.items.find((entry) => entry.automation.id === selection.automationId) ?? null : null;
   const selectedBlock = selection?.kind === "automation" ? items.find((item) => item.key === selection.itemKey) ?? null : null;
   const selectedMeeting = selection?.kind === "meeting" ? meetings.find((event) => event.key === selection.key) ?? null : null;
+  useEffect(() => {
+    const selected = selectedMeeting
+      ? { kind: "meeting" as const, provider: selectedMeeting.provider, id: selectedMeeting.providerEventId, title: selectedMeeting.title.slice(0, 512) || "Untitled event" }
+      : selectedItem ? { kind: "automation" as const, id: selectedItem.automation.id, title: selectedItem.automation.name.slice(0, 512) || "Untitled automation" } : undefined;
+    onContextChange?.({ kind: "calendar", view, start: range.start, end: range.end, timeZone: zone, ...(selected ? { selected } : {}) });
+  }, [onContextChange, selectedMeeting, selectedItem, view, range.start, range.end, zone]);
   const connected = PROVIDERS.filter((provider) => meetingQueries[provider].data);
   const meetingSource = connected.length === 2 ? "Google Calendar and Outlook" : connected[0] === "microsoft" ? "Outlook Calendar" : "Google Calendar";
   const label = view === "week" && days.length === 5 ? `${formatDate(days[0]!, "en-US", { month: "short", day: "numeric" })} – ${days[4]!.month === days[0]!.month ? formatDate(days[4]!, "en-US", { day: "numeric" }) : formatDate(days[4]!, "en-US", { month: "short", day: "numeric" })}` : formatRangeLabel(range, anchor, "en-US");
@@ -727,7 +741,7 @@ export function WorkbotCalendar({ connectionsHref, assistantName }: { connection
               return (
                 <span key={provider} className="flex items-center gap-1 text-[12px] leading-4 text-[#687076]" data-calendar-provider-status={provider} data-state={error.kind} title={error.message}>
                   <Lock size={11} strokeWidth={2} aria-hidden />
-                  {text && connectionsHref ? <a href={connectionsHref} target="_blank" rel="noreferrer" className="font-medium text-black underline-offset-2 hover:underline">{text}</a>
+                  {text && (error.kind === "not_connected" || error.kind === "auth_expired") ? <WorkbotConnectAction flow={connect} provider={provider === "google" ? "google-workspace" : "microsoft-365"} label={text} fallbackHref={connectionsHref} />
                     : text ? <span>{text}</span>
                     : <button type="button" onClick={() => void meetingQueries[provider].refetch()} className="font-medium text-black hover:underline">Couldn&apos;t load {provider === "google" ? "Google Calendar" : "Outlook"} · Try again</button>}
                 </span>

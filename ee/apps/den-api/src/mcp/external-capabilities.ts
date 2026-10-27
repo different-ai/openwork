@@ -42,8 +42,9 @@ import {
   validateExternalMcpToolArguments,
   type ExternalMcpArgumentIssue,
 } from "./external-mcp-tool-arguments.js"
-import { compareCapabilityMatches, tokenize } from "./search.js"
-import type { CapabilityMatch } from "./search.js"
+import { compareCapabilityMatches, scoreText, tokenize } from "./search.js"
+import { EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT, scoreExternalTool, selectExternalMcpSearchConnections } from "./external-search-selection.js"
+import type { CapabilityMatch, CapabilityToolAnnotations } from "./search.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import {
   codemodeScriptPath,
@@ -77,7 +78,6 @@ import { fingerprintReadinessIdentity } from "../capability-sources/external-mcp
  */
 
 const EXTERNAL_CAPABILITY_PREFIX = "mcp:"
-export const EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT = 16
 export const EXTERNAL_MCP_SEARCH_CONCURRENCY = 8
 export const EXTERNAL_MCP_SEARCH_MATCH_LIMIT = 20
 const EXTERNAL_MCP_SEARCH_REQUEST_TIMEOUT_MS = 5_000
@@ -120,8 +120,6 @@ export async function resolveMcpMemberIdentity(input: {
 export async function resolveMcpMember(input: {
   userId: string
   organizationId: string
-  /** The organization's teamMembershipCache flag, when the caller already resolved its features. */
-  teamMembershipCache?: boolean
 }): Promise<{ identity: McpMemberIdentity; teams: Awaited<ReturnType<typeof listTeamsForMember>> } | null> {
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
   const member = await cache.org.membership({
@@ -129,7 +127,7 @@ export async function resolveMcpMember(input: {
     userId: normalizeDenTypeId("user", input.userId),
   })
   if (!member) return null
-  const teams = await listTeamsForMember({ organizationId, memberId: member.id, teamMembershipCache: input.teamMembershipCache })
+  const teams = await listTeamsForMember({ organizationId, memberId: member.id })
   return { identity: { orgMembershipId: member.id, teamIds: teams.map((team) => team.id) }, teams }
 }
 
@@ -144,42 +142,7 @@ function redirectUriFor(redirectUriBase: string, connectionId: string): string {
   return `${redirectUriBase}/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/callback`
 }
 
-function scoreText(nameTokens: string[], summaryTokens: string[], queryTokens: string[]): number {
-  let score = 0
-  for (const queryToken of queryTokens) {
-    if (nameTokens.includes(queryToken)) {
-      score += 5
-    } else if (nameTokens.some((token) => token.startsWith(queryToken) || queryToken.startsWith(token))) {
-      score += 3
-    }
-    if (summaryTokens.includes(queryToken)) {
-      score += 2
-    }
-  }
-  return score
-}
-
-/**
- * A capability search must never turn an unbounded org connection list into
- * unbounded remote handshakes. Prefer connections whose names match the
- * query, keep source order as the deterministic tiebreaker, and enforce one
- * hard fanout ceiling before any provider network request is started.
- */
-export function selectExternalMcpSearchConnections<T extends { name: string }>(
-  connections: readonly T[],
-  queryTokens: string[],
-  limit = EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT,
-): T[] {
-  return connections
-    .map((connection, index) => ({
-      connection,
-      index,
-      score: scoreText(tokenize(connection.name), tokenize(connection.name), queryTokens),
-    }))
-    .sort((left, right) => right.score - left.score || left.index - right.index)
-    .slice(0, Math.max(0, Math.min(limit, EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT)))
-    .map(({ connection }) => connection)
-}
+type ExternalMcpTool = Awaited<ReturnType<typeof listExternalMcpTools>>[number]
 
 export type ExternalCapabilityMatch = CapabilityMatch & {
   /** Exact MCP arguments schema returned by the provider's live tools/list. */
@@ -222,6 +185,26 @@ export type ExternalConnectionStatus = {
     surface: "openwork_your_connections" | "openwork_organization_connections" | "provider_admin_console" | "network_infrastructure" | "openwork_support"
     retry: "search_capabilities"
     url?: string
+    /** For a missing or rejected API key: the capability that shows the person a private key field in OpenWork. */
+    askForKey?: ConnectionKeyRequest
+  }
+}
+
+type ConnectionKeyRequest = {
+  capability: typeof CONNECTION_KEY_REQUEST_CAPABILITY
+  path: { connectionId: string }
+  body: { scope: "shared" | "personal" }
+}
+
+/** Den's own operation (POST /v1/mcp-connections/:connectionId/credential-prompt) as agents call it. */
+export const CONNECTION_KEY_REQUEST_CAPABILITY = "postMcpConnectionsCredentialPrompt"
+const ASK_FOR_KEY_HINT = "Ask the person for the key privately: execute connectionStatus.action.askForKey (its capability, path and body), then end your turn; OpenWork continues once the key is saved. Never request a key in chat or tool arguments."
+
+function connectionKeyRequest(connection: ConnectionStatusIdentity): ConnectionKeyRequest {
+  return {
+    capability: CONNECTION_KEY_REQUEST_CAPABILITY,
+    path: { connectionId: connection.id },
+    body: { scope: usesMemberApiKey(connection) ? "personal" : "shared" },
   }
 }
 
@@ -396,7 +379,7 @@ function actionNavigationUrl(input: {
   surface: ExternalConnectionStatus["action"]["surface"]
 }) {
   if (input.surface === "openwork_your_connections") return openworkYourConnectionsUrl(input.connectionId)
-  if (input.surface === "openwork_organization_connections") return openworkOrganizationConnectionsUrl()
+  if (input.surface === "openwork_organization_connections") return openworkOrganizationConnectionsUrl(input.connectionId)
   return undefined
 }
 
@@ -585,6 +568,8 @@ export function buildExternalConnectionStatus(input: {
           label: `${actionVerb} ${connectionName}`,
           surface,
           retry: "search_capabilities",
+          // A missing or rejected key can be entered privately in chat.
+          ...(input.connection.authType === "apikey" ? { askForKey: connectionKeyRequest(input.connection) } : {}),
         },
       }),
   }
@@ -706,6 +691,65 @@ export function externalMcpSearchCoverageHint(coverage: ExternalMcpSearchCoverag
   return `External MCP search inspected ${coverage.probedConnections} of ${coverage.eligibleConnections} eligible connections. Results may be incomplete; narrow the query using a connection name and search again.`
 }
 
+/**
+ * Where a search probe of this connection caches its tool list (the full tool
+ * view reads the same entries). Personal keys can be replaced or revoked
+ * independently of connection configuration, so a credential-dependent
+ * catalog or failure is never reused.
+ */
+export function externalToolsSearchCacheKey(connection: ExternalMcpConnectionRow, member: McpMemberIdentity): ExternalToolsSearchCacheKey | undefined {
+  if (usesMemberApiKey(connection)) return undefined
+  return {
+    organizationId: connection.organizationId,
+    connectionId: connection.id,
+    updatedAt: connection.updatedAt,
+    credentialMode: connection.credentialMode,
+    ...(connection.credentialMode === "per_member" ? { orgMembershipId: member.orgMembershipId } : {}),
+  }
+}
+
+/** Tools a recent probe listed for this member, without contacting the provider. */
+function cachedSearchTools(connection: ExternalMcpConnectionRow, member: McpMemberIdentity): ExternalMcpTool[] | undefined {
+  if (connection.toolPolicy?.allDisabled) return undefined
+  const key = externalToolsSearchCacheKey(connection, member)
+  const cached = key ? getExternalToolsSearchCache(key) : undefined
+  return cached?.outcome === "success" ? cached.tools.filter((tool) => !isToolDisabled(connection.toolPolicy, tool.name)) : undefined
+}
+
+/**
+ * The provider's tools for a member who may use this ready connection,
+ * through the search cache: a recent listing or failure is reused, and every
+ * live listing is remembered for the next caller. Tool policy is not applied.
+ */
+export async function listExternalMcpToolsThroughSearchCache(input: {
+  connection: ExternalMcpConnectionRow
+  member: McpMemberIdentity
+  redirectUriBase: string
+  deadline: ExternalMcpLifecycleDeadline
+  requestTimeoutMs?: number
+}): Promise<ExternalMcpTool[]> {
+  const { connection } = input
+  const cacheKey = externalToolsSearchCacheKey(connection, input.member)
+  const cached = cacheKey ? getExternalToolsSearchCache(cacheKey) : undefined
+  if (cached?.outcome === "failure") throw cached.error
+  if (cached?.outcome === "success") return cached.tools
+  try {
+    const tools = await listExternalMcpTools(
+      connection,
+      redirectUriFor(input.redirectUriBase, connection.id),
+      connection.credentialMode === "per_member" ? { orgMembershipId: input.member.orgMembershipId } : undefined,
+      undefined,
+      input.deadline,
+      input.requestTimeoutMs,
+    )
+    if (cacheKey) setExternalToolsSearchCache(cacheKey, { outcome: "success", tools })
+    return tools
+  } catch (error) {
+    if (cacheKey) setExternalToolsSearchCache(cacheKey, { outcome: "failure", error })
+    throw error
+  }
+}
+
 const CONNECTION_CARD_HINT = "Execute this exact capability name once: it returns the live status, renders an actionable connection card for the member in compatible hosts, and includes the action to relay in text."
 
 async function probeExternalMcpConnection(input: {
@@ -765,7 +809,7 @@ async function probeExternalMcpConnection(input: {
           summary: `[${connection.name}] ${gap.message}`,
           status: "needs_connection",
           hint: usesMemberApiKey(connection)
-            ? "Ask the user to open the member settings link in connectionStatus.action.url and add or replace their own key in Your Connections, then search again. Never request a key in chat or tool arguments. This is not an OAuth sign-in flow."
+            ? `${ASK_FOR_KEY_HINT} Clients that cannot show the field: give the person connectionStatus.action.url. This is not an OAuth sign-in flow.`
             : `Ask the user to click Connect on the "${connection.name}" card in OpenWork desktop, then search again. In clients without inline connection controls, use OpenWork Cloud -> Your Connections. ${CONNECTION_CARD_HINT}`,
           connectionStatus: gap.status,
         }))
@@ -782,45 +826,25 @@ async function probeExternalMcpConnection(input: {
         score,
         summary: `[${connection.name}] Available to your organization, but an admin hasn't connected it yet.`,
         status: "needs_connection",
-        hint: `Ask an org admin to open the OpenWork Cloud dashboard -> Connections and connect "${connection.name}", then search again. ${CONNECTION_CARD_HINT}`,
+        hint: connection.authType === "apikey"
+          ? `${ASK_FOR_KEY_HINT} Only owners and admins can enter the shared key; anyone else asks one to open connectionStatus.action.url.`
+          : `Ask an org admin to open the OpenWork Cloud dashboard -> Connections and connect "${connection.name}", then search again. ${CONNECTION_CARD_HINT}`,
         connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
       }))
     }
     return matches
   }
 
-  const member = connection.credentialMode === "per_member"
-    ? { orgMembershipId: input.member.orgMembershipId }
-    : undefined
   let tools: Awaited<ReturnType<typeof listExternalMcpTools>>
-  const cacheKey: ExternalToolsSearchCacheKey = {
-    organizationId: connection.organizationId,
-    connectionId: connection.id,
-    updatedAt: connection.updatedAt,
-    credentialMode: connection.credentialMode,
-    ...(connection.credentialMode === "per_member" ? { orgMembershipId: input.member.orgMembershipId } : {}),
-  }
-  // Personal keys can be replaced or revoked independently of connection
-  // configuration. Do not reuse a credential-dependent catalog or failure.
-  const cacheable = !usesMemberApiKey(connection)
-  const cachedProbe = cacheable ? getExternalToolsSearchCache(cacheKey) : undefined
   try {
-    if (cachedProbe?.outcome === "failure") throw cachedProbe.error
-    if (cachedProbe?.outcome === "success") {
-      tools = cachedProbe.tools
-    } else {
-      tools = await listExternalMcpTools(
-        connection,
-        redirectUriFor(input.redirectUriBase, connection.id),
-        member,
-        undefined,
-        input.deadline,
-        EXTERNAL_MCP_SEARCH_REQUEST_TIMEOUT_MS,
-      )
-      if (cacheable) setExternalToolsSearchCache(cacheKey, { outcome: "success", tools })
-    }
+    tools = await listExternalMcpToolsThroughSearchCache({
+      connection,
+      member: input.member,
+      redirectUriBase: input.redirectUriBase,
+      deadline: input.deadline,
+      requestTimeoutMs: EXTERNAL_MCP_SEARCH_REQUEST_TIMEOUT_MS,
+    })
   } catch (error) {
-    if (cacheable && !cachedProbe) setExternalToolsSearchCache(cacheKey, { outcome: "failure", error })
     const message = upstreamErrorMessage(error)
     const diagnostic = error instanceof ExternalMcpDiagnosticError ? error.diagnostic : undefined
     const nameTokens = tokenize(connection.name)
@@ -839,7 +863,9 @@ async function probeExternalMcpConnection(input: {
         score,
         summary: `[${connection.name}] This connection is set up but returned an error (${message}).`,
         status: "error",
-        hint: `${externalConnectionErrorHint(connection.name, error, message, connection.credentialMode)} ${CONNECTION_CARD_HINT}`,
+        hint: connection.authType === "apikey" && externalMcpAuthErrorCode(error, message)
+          ? `The saved key for "${connection.name}" was rejected. ${ASK_FOR_KEY_HINT}`
+          : `${externalConnectionErrorHint(connection.name, error, message, connection.credentialMode)} ${CONNECTION_CARD_HINT}`,
         connectionStatus: toolDiscoveryFailureStatus(connection, error),
       }))
     }
@@ -849,9 +875,7 @@ async function probeExternalMcpConnection(input: {
   for (const tool of tools) {
     if (isToolDisabled(connection.toolPolicy, tool.name)) continue
     const summary = tool.description ?? tool.title ?? tool.name
-    const nameTokens = tokenize(`${connection.name} ${tool.name}`)
-    const summaryTokens = tokenize(summary)
-    const score = scoreText(nameTokens, summaryTokens, input.queryTokens)
+    const score = scoreExternalTool(connection.name, tool, input.queryTokens)
     if (score <= 0) continue
     const resourceUri = externalMcpAppResourceUri(tool)
     add({
@@ -867,6 +891,7 @@ async function probeExternalMcpConnection(input: {
       schemaDigest: externalMcpToolSchemaDigest(tool.inputSchema),
       invocation: { argumentsField: "body" },
       readOnly: providerMarksReadOnly(tool.annotations),
+      ...(tool.annotations ? { annotations: providerToolAnnotations(tool.annotations) } : {}),
       ...(resourceUri ? { kind: "mcp_app" as const, mcpApp: { resourceUri } } : {}),
       ...(input.scriptNamespace ? { scriptPath: codemodeScriptPath(input.scriptNamespace, tool.name) } : {}),
     })
@@ -906,7 +931,9 @@ export async function searchExternalCapabilities(input: {
     teamIds: input.member.teamIds,
   })
   const scriptNamespaces = namespaceContext?.namespaces.externalMcp
-  const selectedConnections = selectExternalMcpSearchConnections(connections, queryTokens)
+  const member = input.member
+  const selectedConnections = selectExternalMcpSearchConnections(connections, queryTokens, EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT,
+    (connection) => cachedSearchTools(connection, member))
   input.reportCoverage?.({
     eligibleConnections: connections.length,
     probedConnections: selectedConnections.length,
@@ -1038,11 +1065,11 @@ function invalidCapabilityArguments(input: {
     capability: input.capability,
     message: input.diagnostic
       ? diagnosticAgentMessage(input.diagnostic)
-      : "The capability arguments do not match the remote MCP tool's advertised argumentsSchema.",
+      : "The capability arguments do not match the remote MCP tool's advertised inputSchema.",
     issues: input.issues ?? [{
       path: "/",
       keyword: "schema_validation",
-      message: "The remote MCP rejected these arguments as invalid. Correct them using the latest argumentsSchema.",
+      message: "The remote MCP rejected these arguments as invalid. Correct them using the latest inputSchema.",
     }],
     ...(input.schemaDigest ? { schemaDigest: input.schemaDigest } : {}),
     sameArgumentsRetryable: false,
@@ -1146,6 +1173,12 @@ export async function probeExternalConnectionStatus(input: {
  */
 export function providerMarksReadOnly(annotations: { readOnlyHint?: boolean; destructiveHint?: boolean } | undefined): boolean {
   return annotations?.readOnlyHint === true && annotations.destructiveHint !== true
+}
+
+/** The provider's MCP tool annotations, limited to the standard keys. */
+function providerToolAnnotations(annotations: CapabilityToolAnnotations): CapabilityToolAnnotations {
+  return Object.fromEntries((["title", "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"] as const)
+    .flatMap((key) => annotations[key] === undefined ? [] : [[key, annotations[key]]]))
 }
 
 type ExternalCapabilityFailure = Extract<ExternalCapabilityExecuteResult, { ok: false }>
@@ -1254,7 +1287,7 @@ async function prepareExternalCapability(input: {
         ok: false,
         error: "needs_connection",
         message: usesMemberApiKey(connection)
-          ? gap.message
+          ? `${gap.message} ${ASK_FOR_KEY_HINT}`
           : `${gap.message} Open OpenWork Cloud -> Your Connections and click Connect on "${connection.name}".`,
         connectionStatus: gap.status,
       }
@@ -1265,7 +1298,7 @@ async function prepareExternalCapability(input: {
     return {
       ok: false,
       error: "connection_not_connected",
-      message,
+      message: connection.authType === "apikey" ? `${message} ${ASK_FOR_KEY_HINT}` : message,
       connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
     }
   }
@@ -1448,7 +1481,7 @@ export async function executeExternalCapability(input: {
           message: "The provider advertised a different capability schema after discovery, but OpenWork still forwarded the call.",
           searchedSchemaDigest: input.schemaDigest,
           currentSchemaDigest: schemaDigest,
-          suggestedAction: "If the provider call failed, call search_capabilities again and retry with the latest argumentsSchema. Do not retry solely because of this warning when the provider call succeeded.",
+          suggestedAction: "If the provider call failed, call search_capabilities again and retry with the latest inputSchema. Do not retry solely because of this warning when the provider call succeeded.",
         })
       }
       return { ok: true, tool, schemaWarnings }
@@ -1525,7 +1558,7 @@ export async function executeExternalCapability(input: {
     if (!validation.ok && validation.error === "invalid_arguments") {
       schemaWarnings.push({
         code: "arguments_schema_mismatch",
-        message: "The arguments do not match the provider's advertised argumentsSchema, but OpenWork still forwarded the call because the provider may accept them.",
+        message: "The arguments do not match the provider's advertised inputSchema, but OpenWork still forwarded the call because the provider may accept them.",
         issues: validation.issues,
         suggestedAction: "If the provider call failed, correct the listed issues and retry with changed arguments. Do not retry solely because of this warning when the provider call succeeded.",
       })
@@ -1600,7 +1633,9 @@ export async function executeExternalCapability(input: {
         error: diagnostic.phase === "PROVIDER_EXECUTION" || diagnostic.phase === "PROVIDER_AUTHORIZATION"
           ? "provider_error"
           : "connection_failed",
-        message: diagnosticAgentMessage(diagnostic),
+        message: authErrorCode && connection.authType === "apikey"
+          ? `${diagnosticAgentMessage(diagnostic)} ${ASK_FOR_KEY_HINT}`
+          : diagnosticAgentMessage(diagnostic),
         ...diagnosticAgentFields(diagnostic),
         ...(schemaGuidance ? { schemaGuidance } : {}),
         ...(authErrorCode
@@ -1620,7 +1655,7 @@ export async function executeExternalCapability(input: {
       return {
         ok: false,
         error: "connection_failed",
-        message,
+        message: connection.authType === "apikey" ? `${message} ${ASK_FOR_KEY_HINT}` : message,
         ...(schemaGuidance ? { schemaGuidance } : {}),
         connectionStatus: buildExternalConnectionStatus({
           connection,

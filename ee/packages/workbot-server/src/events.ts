@@ -12,8 +12,11 @@ export const runnerEventSchema = z.discriminatedUnion("type", [
 export type WorkbotPageEvent =
   | { type: "changed"; messageId: string; status?: string }
   | { type: "text"; messageId: string; step: number; delta: string; reset?: boolean }
-  /** A step is starting: only whether it is work on Workbot's computer, never the tool's name (DESIGN C3). */
-  | { type: "working"; messageId: string; step: number; on: "computer" | "other" }
+  /**
+   * A step is starting: only whether it is work on Workbot's computer, and whether that work is in the background
+   * (commands, with no screen to watch), never the tool's name (DESIGN C3).
+   */
+  | { type: "working"; messageId: string; step: number; on: "computer" | "other"; background?: true }
 
 /** The runner names a background task after the turn that started it: `<messageId>.t1`, `.t2`, … */
 const TASK_ID = /\.t\d+$/
@@ -26,6 +29,10 @@ export function toWorkbotPageEvent(raw: unknown): WorkbotPageEvent | null {
   // A background task works out of sight: the page only re-reads when one starts, pauses or ends.
   if (TASK_ID.test(event.messageId) && !(event.type === "changed" && event.status)) return null
   const messageId = event.messageId.slice(WORKBOT_MESSAGE_PREFIX.length)
-  if (event.type === "tool") return { type: "working", messageId, step: event.step, on: event.tool === "bash" || event.tool === "look" ? "computer" : "other" }
+  if (event.type === "tool") {
+    if (event.tool === "desktop") return { type: "working", messageId, step: event.step, on: "computer" }
+    if (event.tool === "bash" || event.tool === "look") return { type: "working", messageId, step: event.step, on: "computer", background: true }
+    return { type: "working", messageId, step: event.step, on: "other" }
+  }
   return { ...event, messageId }
 }

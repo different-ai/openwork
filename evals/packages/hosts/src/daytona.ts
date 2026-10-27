@@ -27,11 +27,13 @@ export interface DaytonaHostOptions {
   reservedChromePorts?: number[];
   reservedElectronPorts?: number[];
   serverScript?: boolean;
+  /** Signed preview lifetime in seconds (1–86400); omitted keeps the CLI's one-hour default. */
+  previewExpirySeconds?: number;
   waitForCdp?: (url: string, timeoutMs: number, label: string) => Promise<void>;
 }
 
 export interface DaytonaHost extends Host, AsyncDisposable {
-  previewUrl(port: number): Promise<string>;
+  previewUrl(port: number, options?: { refresh?: boolean }): Promise<string>;
   spawnElectronRetained(name: string, opts?: ElectronSurfaceOptions): Promise<RetainedElectronSurface>;
   startDen(opts?: DenServiceOptions): Promise<DenServiceHandle>;
   share(): Promise<ShareLinks>;
@@ -296,6 +298,59 @@ function transientDaytonaCliFailure(result: DaytonaExecResult): boolean {
   const fatalMessages = [...`${result.stderr}\n${result.stdout}`.matchAll(/level=fatal msg="((?:[^"\\]|\\.)*)"/g)]
     .map((match) => match[1]);
   return fatalMessages.some((message) => TRANSIENT_DAYTONA_CLI_MESSAGES.some((pattern) => pattern.test(message)));
+}
+
+/** Optional provider limits; TTL destroys the VM even if the controller has died. */
+export interface DaytonaSandboxLimits {
+  cpu?: number;
+  memoryGiB?: number;
+  /** Wall-clock minutes since creation, not minutes after provisioning/handover. */
+  ttlMinutes?: number;
+}
+
+export function daytonaSandboxLimitArgs(options: DaytonaSandboxLimits): string[] {
+  const args: string[] = [];
+  if (options.cpu !== undefined) {
+    if (!Number.isSafeInteger(options.cpu) || options.cpu < 1 || options.cpu > 2_147_483_647) {
+      throw new Error("Daytona cpu must be a positive int32 number of cores.");
+    }
+    args.push("--cpu", String(options.cpu));
+  }
+  if (options.memoryGiB !== undefined) {
+    // CLI 0.200.1 help incorrectly says MB: a local fake-API black-box probe
+    // confirmed --memory is sent unchanged as POST /sandbox.memory. The current
+    // https://www.daytona.io/docs/openapi.json CreateSandbox.memory schema says
+    // GB (example: 1), and SDK Resources documents GiB. Never multiply by 1024.
+    if (!Number.isSafeInteger(options.memoryGiB) || options.memoryGiB < 1 || options.memoryGiB > 2_147_483_647) {
+      throw new Error("Daytona memoryGiB must be a positive int32 number of GiB.");
+    }
+    args.push("--memory", String(options.memoryGiB));
+  }
+  if (options.ttlMinutes !== undefined) {
+    if (!Number.isSafeInteger(options.ttlMinutes) || options.ttlMinutes < 1 || options.ttlMinutes > 1440) {
+      throw new Error("Daytona ttlMinutes must be a whole number from 1 through 1440.");
+    }
+    args.push("--ttl", String(options.ttlMinutes));
+  }
+  return args;
+}
+
+export function daytonaPreviewExpirySeconds(value: number | undefined, defaultSeconds = 3600): number {
+  const seconds = value ?? defaultSeconds;
+  if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 86400) {
+    throw new Error("Daytona previewExpirySeconds must be a whole number from 1 through 86400.");
+  }
+  return seconds;
+}
+
+/** Do not trust omission of --public alone: fail closed on the provider's actual state. */
+export async function assertPrivateDaytonaSandbox(exec: DaytonaExec, sandbox: string): Promise<void> {
+  const result = await checkedExec(exec, ["info", sandbox, "-f", "json"], `verify private sandbox ${sandbox}`, { timeoutMs: 60_000 });
+  let info: unknown;
+  try { info = JSON.parse(result.stdout); } catch { throw new Error(`Cannot verify private Daytona sandbox ${sandbox}: invalid info JSON.`); }
+  if (!isRecord(info) || info.public !== false) {
+    throw new Error(`Refusing Daytona sandbox ${sandbox}: provider did not confirm public:false.`);
+  }
 }
 
 export async function checkedExec(exec: DaytonaExec, args: string[], context: string, opts: { input?: string; timeoutMs?: number; retryDelayMs?: number } = {}): Promise<DaytonaExecResult> {
@@ -577,7 +632,9 @@ function encodedFile(content: string): string {
 
 export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
   const exec = options.exec ?? defaultDaytonaExec;
-  const previewCache = new Map<number, string>();
+  const previewExpirySeconds = daytonaPreviewExpirySeconds(options.previewExpirySeconds);
+  const previewCache = new Map<number, { url: string; refreshAt: number }>();
+  const previewPending = new Map<number, Promise<string>>();
   const electronPorts: PortAllocation = { primary: 9825, next: 9830, used: portSet(options.reservedElectronPorts) };
   const chromePorts: PortAllocation = { primary: 9222, next: 9230, used: portSet(options.reservedChromePorts) };
   const surfacePorts = new Map<number, string>();
@@ -592,17 +649,29 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
     return sandbox;
   }
 
-  async function previewUrl(port: number): Promise<string> {
+  async function previewUrl(port: number, request: { refresh?: boolean } = {}): Promise<string> {
+    const pending = previewPending.get(port);
+    if (pending) return pending;
     const cached = previewCache.get(port);
-    if (cached) return cached;
+    if (!request.refresh && cached && Date.now() < cached.refreshAt) return cached.url;
     const sandbox = requireSandbox();
-    const result = await checkedExec(exec, ["preview-url", sandbox, "-p", String(port)], `daytona preview-url ${sandbox} -p ${port}`);
-    const url = firstHttpsUrl(result.stdout);
-    if (!url) {
-      throw new Error(`daytona preview-url ${sandbox} -p ${port} did not print an https URL: ${result.stdout.trim()}`);
-    }
-    previewCache.set(port, url);
-    return url;
+    const startedAt = Date.now();
+    const signing = (async () => {
+      const result = await checkedExec(exec, [
+        "preview-url", sandbox, "-p", String(port),
+        ...(options.previewExpirySeconds === undefined ? [] : ["--expires", String(previewExpirySeconds)]),
+      ], `daytona preview-url ${sandbox} -p ${port}`);
+      const url = firstHttpsUrl(result.stdout);
+      if (!url) {
+        throw new Error(`daytona preview-url ${sandbox} -p ${port} did not print an https URL: ${result.stdout.trim()}`);
+      }
+      // Refresh just before expiry; concurrent consumers share one signed origin.
+      const marginMs = Math.min(30_000, previewExpirySeconds * 100);
+      previewCache.set(port, { url, refreshAt: startedAt + previewExpirySeconds * 1000 - marginMs });
+      return url;
+    })();
+    previewPending.set(port, signing);
+    try { return await signing; } finally { previewPending.delete(port); }
   }
 
   async function launchElectron(name: string, opts: ElectronSurfaceOptions, retainStartupFailure: boolean): Promise<RetainedElectronSurface> {
@@ -854,22 +923,41 @@ PYEOF`;
   }
 
   async function spawnChrome(name: string, opts: ChromeSurfaceOptions = {}): Promise<SurfaceHandle> {
+    if (opts.hostRules) throw new Error("hostRules is supported for local Chrome only.");
     const sandbox = requireSandbox();
     const safeName = sanitizeName(name);
+    const callerOwnedProfile = opts.profileDir !== undefined;
+    if (callerOwnedProfile && (!opts.profileDir?.startsWith("/") || /[\0\r\n]/.test(opts.profileDir)
+      || opts.profileDir.split("/").some(part => part === "." || part === "..") || !opts.profileDir.split("/").some(Boolean))) {
+      throw new Error("Daytona Chrome profileDir must be an absolute, non-root, single-line path without '.' or '..' components.");
+    }
+    if (callerOwnedProfile && [...spawnedSurfaces].some(surface => surface.kind === "chrome" && surface.profileDir === opts.profileDir)) {
+      throw new Error("A Daytona Chrome surface already owns this profileDir; reuse that browser instead of spawning a duplicate.");
+    }
     const port = await allocateSandboxPort(chromePorts, exec, sandbox);
     // Per-spawn profile: a second Chrome with the same name (a spec calling
     // seed.web() twice) must not hit Chromium's profile lock and lose CDP. The
     // CDP port is unique per live surface, so it keeps same-millisecond spawns apart.
     const spawnStamp = `${timestamp()}-${port}`;
-    const profileDir = `/tmp/daytona-chrome-${safeName}-${spawnStamp}`;
+    const profileDir = opts.profileDir ?? `/tmp/daytona-chrome-${safeName}-${spawnStamp}`;
     const logPath = `/tmp/daytona-chrome-${safeName}-${spawnStamp}.log`;
     const startUrl = opts.startUrl?.trim() || "about:blank";
+    const prepareProfile = callerOwnedProfile
+      ? `python3 -c ${shellQuote([
+        "import pathlib, sys",
+        "root = pathlib.Path(sys.argv[1])",
+        'if any(part.is_symlink() for part in [root, *root.parents]): raise RuntimeError("Chrome profileDir must not contain symlinks")',
+        "root.mkdir(mode=0o700, parents=True, exist_ok=True)",
+        "root.chmod(0o700)",
+      ].join("\n"))} ${shellQuote(profileDir)}`
+      : `mkdir -p ${shellQuote(profileDir)}; chmod 700 ${shellQuote(profileDir)}`;
     const command = [
       "set -euo pipefail",
-      `mkdir -p ${shellQuote(profileDir)}`,
+      "umask 077",
+      prepareProfile,
       "CHROME_BIN=\"$(command -v chromium || command -v google-chrome || command -v google-chrome-stable || true)\"",
       "if [ -z \"$CHROME_BIN\" ]; then echo 'No chromium/google-chrome binary found in sandbox.' >&2; exit 127; fi",
-      `DISPLAY=:99 nohup "$CHROME_BIN" --headless=new --window-size=1280,900 --lang=en-US --disable-features=OverlayScrollbar,FluentOverlayScrollbar --no-sandbox --disable-dev-shm-usage --ignore-gpu-blocklist --use-gl=swiftshader --enable-unsafe-swiftshader --remote-debugging-address=0.0.0.0 --remote-debugging-port=${port} --user-data-dir=${shellQuote(profileDir)} ${opts.mouse ? `${shellQuote(MOUSE_POINTER_CHROME_ARG)} ` : ""}${shellQuote(startUrl)} >${shellQuote(logPath)} 2>&1 &`,
+      `DISPLAY=:99 nohup "$CHROME_BIN" ${opts.headless === false ? "" : "--headless=new "}--window-size=1280,900 --lang=en-US --disable-features=OverlayScrollbar,FluentOverlayScrollbar --no-sandbox --disable-dev-shm-usage --ignore-gpu-blocklist --use-gl=swiftshader --enable-unsafe-swiftshader --remote-debugging-address=0.0.0.0 --remote-debugging-port=${port} --user-data-dir=${shellQuote(profileDir)} ${opts.mouse ? `${shellQuote(MOUSE_POINTER_CHROME_ARG)} ` : ""}${shellQuote(startUrl)} >${shellQuote(logPath)} 2>&1 &`,
     ].join("; ");
 
     try {
@@ -884,7 +972,7 @@ PYEOF`;
         cdpUrl,
         sandboxId: sandbox,
         profileDir,
-        meta: { cdpPort: String(port), log: logPath },
+        meta: { cdpPort: String(port), log: logPath, profileOwner: callerOwnedProfile ? "caller" : "host" },
       };
       spawnedSurfaces.add(handle);
       return handle;
@@ -1006,12 +1094,14 @@ PYEOF`;
           `verify Daytona Chrome CDP stopped ${handle.name}`,
           { timeoutMs: 15_000 },
         );
-        await checkedExec(
-          exec,
-          ["exec", sandbox, "--", `bash -lc ${shellQuote(`rm -rf ${shellQuote(profileDir)}`)}`],
-          `remove Daytona Chrome profile ${handle.name}`,
-          { timeoutMs: 15_000 },
-        );
+        if (handle.meta?.profileOwner !== "caller") {
+          await checkedExec(
+            exec,
+            ["exec", sandbox, "--", `bash -lc ${shellQuote(`rm -rf ${shellQuote(profileDir)}`)}`],
+            `remove Daytona Chrome profile ${handle.name}`,
+            { timeoutMs: 15_000 },
+          );
+        }
         releasePort(chromePorts, port);
         surfacePorts.delete(port);
       }

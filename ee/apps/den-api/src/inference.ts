@@ -41,6 +41,7 @@ import { revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecyc
 import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { MEMBER_FREE_STATUS_PATH } from "@openwork/free-auto"
 import { calculateDesktopPolicyForOrgMember } from "./desktop-policies.js"
+import { sandboxFreeAutoStopped } from "@openwork-ee/den-db"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -60,7 +61,9 @@ type Database = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
  */
 export async function freeAutoBlockedByDesktopPolicy(input: Pick<FreeMemberInput, "organizationId" | "memberId">): Promise<boolean> {
   const policy = await calculateDesktopPolicyForOrgMember({ organizationId: input.organizationId, orgMemberId: input.memberId })
-  return policy.allowZenModel === false
+  if (policy.allowZenModel === false) return true
+  // A closed or expired sandbox organization gets no Free Auto until a platform admin extends it.
+  return sandboxFreeAutoStopped(db, input.organizationId)
 }
 
 export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<InferenceAccess> {
@@ -106,6 +109,7 @@ export async function getFreeInferenceProviderSummary(organizationId: OrgId): Pr
     reason = "admin_disabled"
   }
   if (!freeInferenceOrganizationAllowed(organization.metadata)) reason = "admin_disabled"
+  if (await sandboxFreeAutoStopped(db, organizationId)) reason = "admin_disabled"
   const summary: FreeInferenceProviderSummary = {
     state: reason ? "disabled" : "available", reason,
     defaultPinned: freeInferenceDefaultPinned(organization.metadata),

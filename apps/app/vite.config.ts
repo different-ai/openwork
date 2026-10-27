@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -101,6 +102,9 @@ export default defineConfig(({ command, isPreview }) => {
       "import.meta.env.VITE_OPENWORK_APP_VERSION": JSON.stringify(buildAppVersion),
       "import.meta.env.VITE_OPENWORK_BUILD_SHA": JSON.stringify(shortBuildSha),
     },
+    // The compiler injects this import after Vite's initial dependency scan.
+    // Prebundle it before the first navigation to avoid a startup-time reload.
+    optimizeDeps: { include: ["react/compiler-runtime"] },
     plugins: [
       {
         name: "openwork-dev-server-id",
@@ -114,7 +118,7 @@ export default defineConfig(({ command, isPreview }) => {
       tailwindcss(),
       react({
         babel: {
-          plugins: [["babel-plugin-react-compiler", { compilationMode: "annotation" }]],
+          plugins: [[createRequire(import.meta.url).resolve("babel-plugin-react-compiler"), { compilationMode: "annotation" }]],
         },
       }),
     ],

@@ -3,7 +3,11 @@ import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-ico
 import { cn } from "@/lib/utils"
 import { sessionReferenceHref, type SessionReference, type SessionReferenceIdentity } from "./session-reference"
 
-export const SESSION_REFERENCE_LINK_CLASS_NAME = "inline-flex max-w-full items-center gap-1 rounded-sm px-1 align-middle font-medium text-foreground underline decoration-border underline-offset-2 hover:bg-accent hover:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+export const SESSION_REFERENCE_LINK_CLASS_NAME = "inline-flex max-w-full items-baseline gap-1 rounded-sm px-1 align-baseline font-medium text-foreground underline decoration-border underline-offset-2 hover:bg-accent hover:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+
+// Centered on the text, not on its baseline: an image's baseline is its bottom
+// edge, which would push the title below the surrounding line.
+export const SESSION_REFERENCE_ICON_CLASS_NAME = "size-4 shrink-0 self-center object-contain dark:invert"
 
 type SessionReferenceLinkProps = {
   reference: SessionReference
@@ -33,7 +37,7 @@ export function SessionReferenceLink({ reference, openReference, children, class
         src={resolveExtensionIconSrc("/openwork-sidebar-mark.svg")}
         alt=""
         aria-hidden="true"
-        className="size-4 shrink-0 object-contain dark:invert"
+        className={SESSION_REFERENCE_ICON_CLASS_NAME}
       />
       <span className="min-w-0 max-w-64 truncate">{children ?? reference.title}</span>
     </a>

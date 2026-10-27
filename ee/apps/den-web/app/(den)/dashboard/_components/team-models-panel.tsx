@@ -9,7 +9,6 @@ import {
   getAiGatewayProvidersRoute,
   getNewAiGatewayLimitRoute,
   getOrgAccessFlags,
-  orgFeatureEnabled,
   type DenOrgContext,
 } from "../../_lib/den-org";
 import { canOpenGatewayArea, gatewayAreaLockedMessage } from "../_lib/gateway-dashboard-access";
@@ -27,7 +26,7 @@ export function teamModelsAccess(orgContext: DenOrgContext | null) {
   if (!orgContext) return null;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
   const gateway = orgContext.deploymentCapabilities.version === 1 && orgContext.deploymentCapabilities.aiGateway === true;
-  const defaultModel = orgFeatureEnabled(orgContext, "orgDefaultModel") && access.canViewModelsSettings;
+  const defaultModel = access.canViewModelsSettings;
   return {
     gateway: gateway && canOpenGatewayArea(access, "any"),
     providers: gateway && access.canViewGatewayProviders,
@@ -35,14 +34,13 @@ export function teamModelsAccess(orgContext: DenOrgContext | null) {
     manageLimits: gateway && access.canViewGatewayLimits && access.canManageGatewayLimits,
     defaultModel,
     manageDefaultModel: defaultModel && access.canManageModelsSettings,
-    providerLimits: orgFeatureEnabled(orgContext, "gatewayProviderUsageLimits"),
   };
 }
 
-/** teamPageTabs: a Models tab when the viewer can see any of the AI Gateway or the default model. */
+/** a Models tab when the viewer can see any of the AI Gateway or the default model. */
 export function modelsTabVisible(orgContext: DenOrgContext | null): boolean {
   const access = teamModelsAccess(orgContext);
-  return Boolean(orgContext && orgFeatureEnabled(orgContext, "teamPageTabs") && access && (access.gateway || access.defaultModel));
+  return Boolean(orgContext && access && (access.gateway || access.defaultModel));
 }
 
 /**
@@ -69,7 +67,7 @@ export function ModelsPanel({ team }: { team: { id: string; name: string } | nul
             <ItemSection title="Can use"><DenNotice tone="neutral" icon={LockKeyhole} message={gatewayAreaLockedMessage("providers")} /></ItemSection>
           )}
           {access.limits ? (
-            <LimitsSection orgId={orgId} orgSlug={orgSlug} team={team} subject={subject} name={name} orgContext={orgContext} canManage={access.manageLimits} providerLimits={access.providerLimits} />
+            <LimitsSection orgId={orgId} orgSlug={orgSlug} team={team} subject={subject} name={name} orgContext={orgContext} canManage={access.manageLimits} />
           ) : (
             <ItemSection title="Spend limits"><DenNotice tone="neutral" icon={LockKeyhole} message={gatewayAreaLockedMessage("limits")} /></ItemSection>
           )}
@@ -138,7 +136,7 @@ function ProvidersSection({ orgId, orgSlug, subject, name, orgContext }: {
   );
 }
 
-function LimitsSection({ orgId, orgSlug, team, subject, name, orgContext, canManage, providerLimits }: {
+function LimitsSection({ orgId, orgSlug, team, subject, name, orgContext, canManage }: {
   orgId: string;
   orgSlug: string | null | undefined;
   team: { id: string; name: string } | null;
@@ -146,12 +144,11 @@ function LimitsSection({ orgId, orgSlug, team, subject, name, orgContext, canMan
   name: string;
   orgContext: DenOrgContext;
   canManage: boolean;
-  providerLimits: boolean;
 }) {
   const policies = useGatewayPolicies(orgId);
   const own = (policies.data?.policies ?? []).filter((policy) => !policy.archivedAt && policy.assignments.some((assignment) => team ? assignment.teamId === team.id : assignment.organization));
-  const hasProviderLimits = providerLimits || own.some((policy) => policy.providerId);
-  const providers = useGatewayAccessProviders(orgId, hasProviderLimits);
+
+  const providers = useGatewayAccessProviders(orgId, true);
   const effective = policies.data ? directoryLimit(policies.data.policies, subject) : null;
   return (
     <ItemSection
@@ -181,8 +178,7 @@ function LimitsSection({ orgId, orgSlug, team, subject, name, orgContext, canMan
                 orgSlug={orgSlug}
                 teams={orgContext.teams}
                 members={orgContext.members}
-                providerColumn={hasProviderLimits}
-                providerLimits={providerLimits}
+
                 providers={providers.data}
                 canEdit={canManage}
               />

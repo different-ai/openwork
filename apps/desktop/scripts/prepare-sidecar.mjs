@@ -384,8 +384,7 @@ try {
   const content = JSON.stringify(versions, null, 2) + "\n";
   writeFileSync(versionsPath, content, "utf8");
   if (resolvedTargetTriple) {
-    const targetSuffix = isWindowsTarget ? ".exe" : "";
-    const targetVersionsPath = join(sidecarDir, `versions.json-${resolvedTargetTriple}${targetSuffix}`);
+    const targetVersionsPath = join(sidecarDir, `versions.json-${resolvedTargetTriple}`);
     writeFileSync(targetVersionsPath, content, "utf8");
   }
 } catch (error) {

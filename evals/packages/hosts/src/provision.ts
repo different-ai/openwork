@@ -6,9 +6,9 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
-import { checkedExec, defaultDaytonaExec } from "./daytona.ts";
+import { assertPrivateDaytonaSandbox, checkedExec, daytonaPreviewExpirySeconds, daytonaSandboxLimitArgs, defaultDaytonaExec } from "./daytona.ts";
 import { FAULT_PROXY_SCRIPT } from "./fault-proxy-script.ts";
-import type { DaytonaExec, DaytonaExecResult } from "./daytona.ts";
+import type { DaytonaExec, DaytonaExecResult, DaytonaSandboxLimits } from "./daytona.ts";
 import type { DesktopRelease, DesktopReleaseDistribution } from "./types.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
@@ -25,10 +25,11 @@ const SANDBOX_PREPARED_FINGERPRINT_PATH = "/workspace/.openwork-daytona/source-p
 const RELEASE_REPOSITORY = "different-ai/openwork";
 const MAX_DESKTOP_RELEASE_ARCHIVE_BYTES = 1024 * 1024 * 1024;
 
-const RELEASE_ARTIFACTS: Record<DesktopReleaseDistribution, { prefix: string; binary: string }> = {
-  public: { prefix: "openwork", binary: "openwork" },
-  cloud: { prefix: "openwork-cloud", binary: "openwork-cloud" },
-  enterprise: { prefix: "openwork-enterprise", binary: "openwork-enterprise" },
+// windowsBinary is electron-builder's `${productName}.exe` from apps/desktop/electron-builder*.yml.
+const RELEASE_ARTIFACTS: Record<DesktopReleaseDistribution, { prefix: string; binary: string; windowsBinary: string }> = {
+  public: { prefix: "openwork", binary: "openwork", windowsBinary: "OpenWork.exe" },
+  cloud: { prefix: "openwork-cloud", binary: "openwork-cloud", windowsBinary: "OpenWork Cloud.exe" },
+  enterprise: { prefix: "openwork-enterprise", binary: "openwork-enterprise", windowsBinary: "OpenWork Enterprise.exe" },
 };
 
 export const DESKTOP_RELEASE_ARCHIVE_INSTALLER = `
@@ -104,7 +105,7 @@ export interface ProvisionExecOptions {
   exec?: DaytonaExec;
 }
 
-export interface DesktopSandboxOptions {
+export interface DesktopSandboxOptions extends DaytonaSandboxLimits {
   ref: string;
   name: string;
   reuse?: string;
@@ -170,7 +171,13 @@ export interface PrepareSandboxRepoOptions extends ProvisionExecOptions {
   log?: (line: string) => void;
 }
 
-export interface DenSandboxOptions {
+export interface DenSandboxOptions extends DaytonaSandboxLimits {
+  /** Skip the known demo-account seed when the caller provisions a private workshop organization. */
+  seedDemo?: boolean;
+  /** Keep all backend ports private; only signed preview URLs can reach them. */
+  private?: boolean;
+  /** Baked Den/API/Gateway signed identities; default 86400, maximum 86400 seconds. */
+  previewExpirySeconds?: number;
   ref: string;
   reuse?: string;
   /**
@@ -301,7 +308,7 @@ function desktopReleaseArtifact(release: DesktopRelease, platform: "linux" | "wi
     assetName: platform === "windows"
       ? `${artifact.prefix}-win-x64-${release.version}.exe`
       : `${artifact.prefix}-linux-x64-${release.version}.tar.gz`,
-    binaryName: platform === "windows" ? "OpenWork.exe" : artifact.binary,
+    binaryName: platform === "windows" ? artifact.windowsBinary : artifact.binary,
   };
 }
 
@@ -698,6 +705,7 @@ async function provisionSandbox(
 ): Promise<DesktopSandbox> {
   const exec = options.exec ?? defaultDaytonaExec;
   const log = options.log ?? console.error;
+  const limitArgs = daytonaSandboxLimitArgs(options);
   if (surface === "desktop" && options.release && options.secrets === true) {
     throw new Error("Published desktop release sandboxes cannot mount the shared eval secrets volume.");
   }
@@ -707,6 +715,10 @@ async function provisionSandbox(
   const ref = release ? "" : assertSafeRef(options.ref);
   const reused = options.reuse?.trim() || "";
   if (options.private === true && reused) throw new Error("Private sandbox provisioning cannot reuse an unverified sandbox.");
+  if (reused && limitArgs.length > 0) throw new Error("Sandbox resource/TTL limits apply at creation and cannot be set on reuse.");
+  if (options.cpu !== undefined || options.memoryGiB !== undefined) {
+    throw new Error("Daytona snapshot resources are fixed; omit cpu/memoryGiB and use the snapshot's baked resources.");
+  }
   let sandbox = reused;
   let created = false;
   let ownedSandbox = "";
@@ -734,6 +746,7 @@ async function provisionSandbox(
             "--snapshot", id,
             ...(options.secrets === true ? ["--volume", "openwork-eval-secrets:/daytona-secrets"] : []),
             "--auto-stop", requestedAutoStop,
+            ...limitArgs,
             ...(options.private === true ? [] : ["--public"]),
             "--target", "us",
           ],
@@ -741,6 +754,7 @@ async function provisionSandbox(
           { timeoutMs: 300_000 },
         );
         created = true;
+        if (options.private === true) await assertPrivateDaytonaSandbox(exec, sandbox);
         await options.onCreated?.(sandbox);
         log(`==> ${surface} sandbox created: ${sandbox}`);
       }
@@ -984,16 +998,27 @@ export function encodeDenExtraEnv(env: Record<string, string>): string {
   return Buffer.from(lines.join("\n"), "utf8").toString("base64");
 }
 
-export function denProvisionScriptArgs(ref: string, name: string, requestedAutoStopMinutes?: number): string[] {
-  return [".devcontainer/test-server-on-daytona.sh", ref, "--seed", "--name", name, "--auto-stop", autoStopMinutes(requestedAutoStopMinutes)];
+export function denProvisionScriptArgs(
+  ref: string,
+  name: string,
+  requestedAutoStopMinutes?: number,
+  options: DaytonaSandboxLimits & { private?: boolean; previewExpirySeconds?: number; seedDemo?: boolean } = {},
+): string[] {
+  return [
+    ".devcontainer/test-server-on-daytona.sh", ref, ...(options.seedDemo === false ? [] : ["--seed"]), "--name", name,
+    "--auto-stop", autoStopMinutes(requestedAutoStopMinutes),
+    ...(options.private === true ? ["--private"] : []),
+    ...daytonaSandboxLimitArgs(options).map(arg => arg === "--memory" ? "--memory-gib" : arg),
+    ...(options.previewExpirySeconds === undefined ? [] : ["--preview-expiry-seconds", String(daytonaPreviewExpirySeconds(options.previewExpirySeconds))]),
+  ];
 }
 
-function runDenProvisionScript(ref: string, repoRoot: string, bootstrapAdminEmail: string | undefined, extraEnv: Record<string, string> | undefined, log: (line: string) => void, urlsFile: string, requestedAutoStopMinutes?: number): Promise<LocalProcessResult> {
+function runDenProvisionScript(ref: string, repoRoot: string, bootstrapAdminEmail: string | undefined, extraEnv: Record<string, string> | undefined, log: (line: string) => void, urlsFile: string, options: DenSandboxOptions): Promise<LocalProcessResult> {
   return new Promise((resolve, reject) => {
     const env: NodeJS.ProcessEnv = { ...process.env, OPENWORK_DEN_URLS_FILE: urlsFile };
     if (bootstrapAdminEmail) env.DEN_BOOTSTRAP_ADMIN_EMAILS = bootstrapAdminEmail;
     if (extraEnv && Object.keys(extraEnv).length > 0) env.OPENWORK_DEN_EXTRA_ENV_B64 = encodeDenExtraEnv(extraEnv);
-    const child = spawn("bash", denProvisionScriptArgs(ref, serverSandboxName(), requestedAutoStopMinutes), {
+    const child = spawn("bash", denProvisionScriptArgs(ref, serverSandboxName(), options.autoStopMinutes, options), {
       cwd: repoRoot,
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -1074,13 +1099,13 @@ export function parseDenUrlsFile(content: string): { webUrl: string; apiUrl: str
 }
 
 
-async function previewUrl(exec: DaytonaExec, sandbox: string, port: number): Promise<string> {
+async function previewUrl(exec: DaytonaExec, sandbox: string, port: number, expirySeconds = 86400): Promise<string> {
   let lastError = "not attempted";
   for (let attempt = 1; attempt <= 4; attempt += 1) {
     try {
       const result = await checkedExec(
         exec,
-        ["preview-url", sandbox, "-p", String(port), "--expires", "86400"],
+        ["preview-url", sandbox, "-p", String(port), "--expires", String(expirySeconds)],
         `preview URL gate for ${sandbox}:${port}`,
         { timeoutMs: 60_000 },
       );
@@ -1133,6 +1158,10 @@ export async function provisionDenSandbox(options: DenSandboxOptions & Provision
   const log = options.log ?? console.error;
   const ref = assertSafeRef(options.ref);
   const reused = options.reuse?.trim() || "";
+  const limitArgs = daytonaSandboxLimitArgs(options);
+  const expirySeconds = daytonaPreviewExpirySeconds(options.previewExpirySeconds, 86400);
+  if (options.private === true && reused) throw new Error("Private Den provisioning cannot reuse an unverified sandbox.");
+  if (reused && limitArgs.length > 0) throw new Error("Den resource/TTL limits apply at creation and cannot be set on reuse.");
   let sandbox: string;
   let webUrl: string;
   let apiUrl: string;
@@ -1152,8 +1181,8 @@ export async function provisionDenSandbox(options: DenSandboxOptions & Provision
     // DEN_*_PUBLIC_URL identity is unknown here, so RFC 9728 validating MCP
     // clients (opencode OAuth) cannot connect to a reused Den sandbox.
     [webUrl, apiUrl] = await timedStep(log, "Den preview URL gate", () => Promise.all([
-      previewUrl(exec, sandbox, DEN_WEB_PORT),
-      previewUrl(exec, sandbox, DEN_API_PORT),
+      previewUrl(exec, sandbox, DEN_WEB_PORT, expirySeconds),
+      previewUrl(exec, sandbox, DEN_API_PORT, expirySeconds),
     ]));
   } else {
     // URLs come from the trusted runner-side URLs file the provisioning
@@ -1175,7 +1204,7 @@ export async function provisionDenSandbox(options: DenSandboxOptions & Provision
         options.env,
         log,
         urlsFile,
-        options.autoStopMinutes,
+        options,
       ));
       if (result.code !== 0) {
         throw new Error(`Den provisioning script gate failed with exit ${result.code}. Output tail:\n${textTail(result.output)}`);
@@ -1198,7 +1227,7 @@ export async function provisionDenSandbox(options: DenSandboxOptions & Provision
     }
   }
 
-  await timedStep(log, "Den seeded-org proof", () => proveDenSeed(apiUrl, webUrl, sandbox, Boolean(reused)));
+  if (options.seedDemo !== false) await timedStep(log, "Den seeded-org proof", () => proveDenSeed(apiUrl, webUrl, sandbox, Boolean(reused)));
   return { sandbox, apiUrl, webUrl, ...(gatewayUrl ? { gatewayUrl } : {}), created: !reused };
 }
 

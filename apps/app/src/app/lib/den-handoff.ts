@@ -12,6 +12,7 @@ import {
   type DenEnterpriseActivation,
 } from "./den";
 import { dispatchDenSessionUpdated } from "./den-session-events";
+import { restoreRememberedDenOrganization } from "./den-org-memory";
 import {
   clearDesktopSignInIntent,
   clearOrgSelectionPending,
@@ -19,6 +20,7 @@ import {
   markOrgSelectionPending,
   resolveHandoffOrgPlan,
 } from "./den-sign-in-intent";
+import { noteSignInReturnHandoff } from "./den-sign-in-return";
 
 export const DEN_HANDOFF_AUTO_CONTINUE_KEY = "openwork.den.handoffAutoContinueAt";
 
@@ -51,9 +53,9 @@ export type ExchangeHandoffOptions = {
   activeOrg?: HandoffActiveOrg | null;
   /**
    * How this sign-in started. Desktop-initiated flows (in-app sign-in
-   * buttons, pasted one-time codes) defer the organization choice to the org
-   * onboarding step instead of adopting the exchange-reported org. When
-   * omitted, the short-lived desktop sign-in intent marker decides;
+   * buttons, pasted one-time codes) restore a verified remembered choice or
+   * defer to org onboarding instead of adopting the exchange-reported org.
+   * When omitted, the short-lived desktop sign-in intent marker decides;
    * automation surfaces pass `false` to keep committing directly.
    */
   desktopInitiated?: boolean;
@@ -200,10 +202,30 @@ export async function exchangeHandoffAndSignIn(
     }
 
     const desktopInitiated = options.desktopInitiated ?? hasActiveDesktopSignInIntent();
+    const rememberedOrganization = desktopInitiated && !options.activeOrg?.id?.trim() && exchange.user?.id
+      ? await restoreRememberedDenOrganization({
+          serverKey: destinationKey,
+          userId: exchange.user.id,
+          client: createDenClient({
+            baseUrl: destination.baseUrl,
+            apiBaseUrl,
+            token: exchange.token,
+          }),
+          isCurrent: () => attempt === handoffAttemptCounter,
+        })
+      : null;
+    if (attempt !== handoffAttemptCounter) {
+      return fail("This sign-in was superseded by a newer attempt.", {
+        grantConsumed: true,
+        stale: true,
+        publishError: false,
+      });
+    }
     const plan = resolveHandoffOrgPlan({
       explicitActiveOrg: options.activeOrg ?? null,
       exchangeOrganization: exchange.organization ?? null,
       desktopInitiated,
+      rememberedOrganization,
     });
 
     // Phase 3: durable bootstrap commit before any active-session write. The
@@ -336,6 +358,9 @@ export async function exchangeHandoffAndSignIn(
     }
 
     // Phase 5: publish success only after the durable commit and activation.
+    // A desktop-initiated sign-in completes the recorded return target (if
+    // any); a remotely initiated one drops it so it is never reused.
+    noteSignInReturnHandoff({ desktopInitiated });
     if (typeof window !== "undefined") {
       try {
         window.sessionStorage.setItem(DEN_HANDOFF_AUTO_CONTINUE_KEY, String(Date.now()));

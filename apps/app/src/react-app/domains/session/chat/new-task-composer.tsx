@@ -8,7 +8,8 @@ import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelOption, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
 import { TaskRecovery } from "@/components/chat/task-recovery";
-import { presentOpencodeSessionError, type OpencodeSessionErrorPresentation } from "../sync/session-error";
+import { gatewayProviderAuthPresentationForFeature, presentOpencodeSessionError, type OpencodeSessionErrorPresentation } from "../sync/session-error";
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
 import type { ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import { ReactSessionComposer } from "@/react-app/domains/session/surface/composer/composer";
 import { WorkspaceRunModeMenu } from "@/react-app/domains/session/surface/composer/workspace-run-mode-menu";
@@ -44,6 +45,9 @@ import { clearSessionDraft, saveSessionDraft } from "../sync/draft-store";
  * so choices made before the session exists carry into the session that the
  * hero creates.
  */
+/** Moves the new-task draft whose `draftOwnerKey` matches to `groupId` (empty for no group). */
+export const MOVE_NEW_TASK_DRAFT_EVENT = "openwork:move-new-task-draft";
+
 export type NewTaskComposerContext = {
   destination?: NewSessionDestination;
   draftSessionId?: string;
@@ -59,6 +63,7 @@ export type NewTaskComposerContext = {
   modelOptions?: readonly ModelOption[];
   modelUnavailable?: boolean;
   modelUnavailableMessage?: string | null;
+  modelRecoveryScope?: string;
   organizationModelsEmpty?: boolean;
   onRefreshOrganizationModels?: () => void | Promise<void>;
   modelPickerOpen: boolean;
@@ -133,6 +138,7 @@ const FALLBACK_MODEL: ModelRef = { providerID: "", modelID: "" };
  * created session, where the normal send path uploads them into the workspace.
  */
 export function NewTaskComposer(props: NewTaskComposerProps) {
+  const gatewayProviderAuthEnabled = useOrgFeature("gatewayProviderAuthErrors");
   const context = props.context;
   const draftOwnerKey = context?.draftOwnerKey ?? "legacy";
   const [initialState] = useState(() => context?.draftOwnerKey ? useComposerStateStore.getState().sessions[draftOwnerKey] : undefined);
@@ -483,12 +489,35 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     }
   };
 
+  // Cmd+K > Move to Group on an empty composer: move this draft, text and
+  // attachments included, exactly as its own destination menu would.
+  const changeDestinationRef = useRef(changeDestination);
+  changeDestinationRef.current = changeDestination;
+  const moveTargetKey = context?.draftOwnerKey;
+  useEffect(() => {
+    const onMove = (event: Event) => {
+      if (!(event instanceof CustomEvent) || !moveTargetKey || event.detail?.draftOwnerKey !== moveTargetKey) return;
+      const source = context?.destination;
+      if (!source) return;
+      const groupId = typeof event.detail.groupId === "string" && event.detail.groupId ? event.detail.groupId : undefined;
+      changeDestinationRef.current({ ...source, groupId });
+    };
+    window.addEventListener(MOVE_NEW_TASK_DRAFT_EVENT, onMove);
+    return () => window.removeEventListener(MOVE_NEW_TASK_DRAFT_EVENT, onMove);
+  }, [moveTargetKey, context?.destination]);
+
+  const displayedSubmissionError = submissionError
+    ? gatewayProviderAuthPresentationForFeature(submissionError, gatewayProviderAuthEnabled)
+    : null;
+  const isGatewayProviderAuthFailure = displayedSubmissionError?.kind === "gateway-provider-authentication-failed"
+    || displayedSubmissionError?.kind === "gateway-provider-permission-denied";
+
   return (
     <div>
     {destinationError ? <div role="alert" className="mb-2 text-sm text-red-11">{destinationError}</div> : null}
-    {submissionError ? <TaskRecovery title={submissionError.kind === "generic" ? "Couldn’t send your message" : submissionError.title}
-      description={failedSubmission ? "Your unsent message is saved below." : "Your draft is still here. Try sending it again."}
-      technicalDetails={submissionError.technicalDetails} /> : null}
+    {displayedSubmissionError ? <TaskRecovery title={isGatewayProviderAuthFailure ? displayedSubmissionError.title : displayedSubmissionError.kind === "generic" ? "Couldn’t send your message" : displayedSubmissionError.title}
+      description={isGatewayProviderAuthFailure ? displayedSubmissionError.description : failedSubmission ? "Your unsent message is saved below." : "Your draft is still here. Try sending it again."}
+      technicalDetails={displayedSubmissionError.technicalDetails} /> : null}
     {failedSubmission ? <button type="button" disabled={Boolean(props.draft || attachments.length)} className="mb-2 text-sm disabled:opacity-50" onClick={() => {
       restoreComposer(failedSubmission);
       setFailedSubmission(null);
@@ -529,6 +558,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       ]}
       modelUnavailable={context?.modelUnavailable}
       modelUnavailableMessage={context?.modelUnavailableMessage}
+      modelRecoveryScope={context?.modelRecoveryScope}
       organizationModelsEmpty={context?.organizationModelsEmpty}
       statusLabel=""
       modelPickerOpen={context?.modelPickerOpen ?? false}

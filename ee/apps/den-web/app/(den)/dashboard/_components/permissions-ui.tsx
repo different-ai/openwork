@@ -10,21 +10,17 @@ import {
   type PermissionAreaKey,
   type PermissionKey,
 } from "@openwork/types/den/permissions";
-import { buttonVariants } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getOrgAccessFlags, orgFeatureEnabled, type DenOrgAccessFlags } from "../../_lib/den-org";
+import { getOrgAccessFlags, type DenOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FilterInput } from "./item-list";
 import type { PermissionStatus } from "./permissions-data";
 
-export const ENTERPRISE_CONTACT_URL =
-  process.env.NEXT_PUBLIC_ENTERPRISE_CONTACT_URL || "https://openworklabs.com/enterprise#book";
-
 export type PermissionsAccess =
-  | { state: "checking" | "error" | "feature_off" }
+  | { state: "checking" | "error" }
   | {
     state: "ready";
     orgId: string;
@@ -40,7 +36,7 @@ export function usePermissionsAccess(): PermissionsAccess {
   const { orgId, orgSlug, orgContext, orgBusy, orgError } = useOrgDashboard();
   if (orgError && !orgBusy) return { state: "error" };
   if (orgBusy || !orgContext || !orgId || orgContext.organization.id !== orgId) return { state: "checking" };
-  if (!orgFeatureEnabled(orgContext, "permissions")) return { state: "feature_off" };
+
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
   const held = new Set<string>(access.isOwner ? PERMISSION_KEYS : orgContext.currentMember.permissions ?? []);
   return { state: "ready", orgId, orgSlug, access, currentMemberId: orgContext.currentMember.id, held };
@@ -68,26 +64,8 @@ export function PermissionsPage({ title, back, action, caption, children, testId
   );
 }
 
-/** Feature off: the reason and who can change it (DESIGN.md P4, C5). */
-export function PermissionsFeatureOff() {
-  return (
-    <div className="flex flex-col items-start gap-3" data-testid="permissions-feature-off">
-      <DenNotice
-        tone="neutral"
-        icon={LockKeyhole}
-        message="Permissions is an Enterprise feature. Contact us to turn it on for your organization."
-        className="w-full"
-      />
-      <a href={ENTERPRISE_CONTACT_URL} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary", size: "sm" })}>
-        Contact us
-      </a>
-    </div>
-  );
-}
-
-/** The page body for states that come before data: checking, error, feature off. */
+/** The page body for states that come before data: checking and error. */
 export function PermissionsAccessState({ access }: { access: PermissionsAccess }) {
-  if (access.state === "feature_off") return <PermissionsFeatureOff />;
   if (access.state === "error") return <DenNotice tone="error" message="Couldn't check your access to Permissions. Reload the page to try again." />;
   return <PermissionRowsSkeleton />;
 }

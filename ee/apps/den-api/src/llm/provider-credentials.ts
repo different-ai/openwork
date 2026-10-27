@@ -1,3 +1,5 @@
+import { readProviderEnvNames, selectPrimaryCredentialEnvName, selectLegacyScalarCredentialEnvName } from "@openwork/types/managed-provider-config"
+export { readProviderEnvNames, selectPrimaryCredentialEnvName, selectLegacyScalarCredentialEnvName } from "@openwork/types/managed-provider-config"
 import { aiSdkEnvSetting } from "@openwork-ee/utils/ai-sdk-env-settings"
 import { isAwsRegion } from "@openwork-ee/utils/inference-egress"
 
@@ -25,39 +27,6 @@ export type DecodedProviderCredential = {
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-export function readProviderEnvNames(providerConfig: JsonRecord): string[] {
-  return Array.isArray(providerConfig.env)
-    ? providerConfig.env.filter(
-        (entry): entry is string => typeof entry === "string" && entry.trim().length > 0,
-      )
-    : []
-}
-
-function credentialEnvRank(name: string): number | null {
-  const normalized = name.trim().toUpperCase()
-  if (/(^|_)API_KEY$/.test(normalized)) return 0
-  if (/(^|_)ACCESS_KEY_ID$/.test(normalized)) return 1
-  if (/(^|_)BEARER_TOKEN(_|$)/.test(normalized) || /(^|_)TOKEN$/.test(normalized)) return 2
-  if (/(^|_)KEY$/.test(normalized)) return 3
-  return null
-}
-
-export function selectPrimaryCredentialEnvName(envNames: string[], availableNames: Iterable<string>): string | null {
-  const available = new Set([...availableNames].filter((name) => name.trim().length > 0))
-  const orderedNames = envNames.filter((name) => available.has(name))
-  const ranked = orderedNames
-    .map((name, index) => ({ name, index, rank: credentialEnvRank(name) }))
-    .filter((entry): entry is { name: string; index: number; rank: number } => entry.rank !== null)
-    .sort((left, right) => left.rank - right.rank || left.index - right.index)
-  if (ranked[0]) return ranked[0].name
-  if (envNames.length > 1 && envNames.some((name) => credentialEnvRank(name) !== null)) return null
-  return orderedNames[0] ?? null
-}
-
-export function selectLegacyScalarCredentialEnvName(envNames: string[]): string | null {
-  return selectPrimaryCredentialEnvName(envNames, envNames) ?? envNames[0] ?? null
 }
 
 const RUNTIME_ENV_TAG_LENGTH = 5

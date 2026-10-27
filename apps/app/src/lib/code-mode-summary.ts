@@ -41,7 +41,9 @@ export function codeModeSummary(
       const raw = input && "name" in input && typeof input.name === "string" ? input.name : call.toolName;
       const action = raw.split(/[.:/]/).at(-1) ?? "";
       const creating = options.running && (call.state === "input-available" || call.state === "input-streaming");
-      const body = input && "body" in input && typeof input.body === "object" && input.body !== null ? input.body : null;
+      const args = input && "arguments" in input && typeof input.arguments === "object" && input.arguments !== null ? input.arguments : null;
+      const nested = args && "body" in args && typeof args.body === "object" && args.body !== null ? args.body : null;
+      const body = nested ?? args ?? (input && "body" in input && typeof input.body === "object" && input.body !== null ? input.body : null);
       if (/(?:^|_)save_issue$/.test(action)) {
         const updating = body && "id" in body && typeof body.id === "string" && body.id.length > 0;
         const verb = updating ? (creating ? "Updating" : "Updated") : (creating ? "Creating" : "Created");

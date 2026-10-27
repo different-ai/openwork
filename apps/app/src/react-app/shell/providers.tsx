@@ -8,14 +8,15 @@ import { hydrateOpenworkServerSettingsFromEnv } from "@/app/lib/openwork-server"
 import { isDesktopRuntime } from "@/app/utils";
 import { ConnectLinkProvider } from "@/react-app/domains/cloud/connect-link-provider";
 import { DenAuthProvider } from "@/react-app/domains/cloud/den-auth-provider";
-import { SecretRevealFeatureProvider } from "@/react-app/domains/cloud/secret-reveal-feature-provider";
 import { AutoRejectedTurnRecoveryBridge } from "@/react-app/domains/cloud/auto-access-ui";
+import { FreeAutoAnalyticsBridge } from "@/react-app/domains/cloud/free-auto-analytics-bridge";
 import { AutomationRunnerBridge } from "@/react-app/domains/automations/automation-runner-bridge";
 import { GlobalQueueDrainerBridge } from "@/react-app/domains/session/sync/global-queue-drainer-bridge";
 import { BrandThemeProvider } from "@/react-app/domains/cloud/brand-theme";
 import { DesktopConfigProvider } from "@/react-app/domains/cloud/desktop-config-provider";
 import { RestrictionNoticeProvider } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { LocalProvider } from "@/react-app/kernel/local-provider";
+import { MermaidZoomFeatureProvider } from "@/react-app/domains/session/status/mermaid-zoom-feature";
 import { ServerProvider } from "@/react-app/kernel/server-provider";
 import { ArchitectureMismatchGate } from "./architecture-mismatch-gate";
 import { BootStateProvider } from "./boot-state";
@@ -71,7 +72,10 @@ export function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
                 <AutomationRunnerBridge />
                 <GlobalQueueDrainerBridge />
                 <AutoRejectedTurnRecoveryBridge />
-                <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
+                <FreeAutoAnalyticsBridge />
+                <MermaidZoomFeatureProvider>
+                  <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
+                </MermaidZoomFeatureProvider>
                 <LinkOpenDialog />
                 <Toaster />
               </LocalProvider>
@@ -104,9 +108,7 @@ export function AppProviders({ children }: AppProvidersProps) {
       <ServerProvider defaultUrl={defaultUrl}>
         <ArchitectureMismatchGate>
           <DenAuthProvider>
-            <SecretRevealFeatureProvider>
-              <EnterpriseAwareAppProviders>{children}</EnterpriseAwareAppProviders>
-            </SecretRevealFeatureProvider>
+            <EnterpriseAwareAppProviders>{children}</EnterpriseAwareAppProviders>
           </DenAuthProvider>
         </ArchitectureMismatchGate>
       </ServerProvider>

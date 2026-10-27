@@ -172,7 +172,8 @@ export const getModelBehaviorOptions = (
   })];
 };
 
-/** For an explicit model switch only; never sanitize a saved same-model choice. */
+/** For an explicit model switch, or the separately stored global default pair;
+ * never sanitize a conversation's saved same-model choice. */
 export const sanitizeModelBehaviorValue = (
   providerID: string,
   model: ProviderModel,

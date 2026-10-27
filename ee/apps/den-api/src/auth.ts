@@ -2,12 +2,21 @@ import * as crypto from "node:crypto";
 import { recordFreeAutoSignIn } from "@openwork-ee/den-db";
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy";
 import { invalidateTeamInferenceOAuth, revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js";
-import { ensureMemberGatewayKey } from "./gateway-keys.js";
+import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js";
+import {
+  finishScimProvisionedMember,
+  organizationAllowsProvisioning,
+  provisionSsoMembership,
+  provisionVerifiedDomainMembership,
+  SCIM_ENTERPRISE_REQUIRED_MESSAGE,
+  scimRequestOrganizationId,
+  SSO_INVITATION_REQUIRED_MESSAGE,
+} from "./identity-provisioning.js";
+import { syncOrganizationBillingQuantities } from "./stripe-billing.js";
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js";
 import { env } from "./env.js";
-import { organizationFeatureEnabled } from "./features.js";
 import { appLogger } from "./observability/logger.js";
 import {
   deleteMcpOAuthGrantFamilyForSession,
@@ -35,8 +44,11 @@ import {
   DEN_SESSION_EXPIRES_IN_SECONDS,
   DEN_SESSION_UPDATE_AGE_IN_SECONDS,
 } from "./session-lifetime.js";
-import { DEN_ACCOUNT_CONFIG } from "./account-linking-policy.js";
+import { DEN_ACCOUNT_CONFIG, DEN_USER_CONFIG } from "./account-linking-policy.js";
 import { cache } from "./cache.js";
+import { deploymentFeatureEnabled } from "./features.js";
+import { lastSignInCookieChange, lastSignInCookieWrites } from "./last-sign-in-method.js";
+import { hashSessionTokens } from "./session-token.js";
 import { auditBetterAuthAfter, auditBetterAuthBefore, auditBetterAuthRefusal, auditBetterAuthSessionAfter, auditBetterAuthSessionBefore, BETTER_AUTH_AUDIT_AFTER_PATHS, BETTER_AUTH_AUDIT_BEFORE_PATHS, BETTER_AUTH_SESSION_AFTER_PATHS, BETTER_AUTH_SESSION_BEFORE_PATHS, noteOAuthConsentReference, noteOAuthRevocation, noteOAuthTokenIssuance, type BetterAuthHookSession } from "./audit/better-auth.js";
 import { auditUserUpdateAfter, auditUserUpdateBefore, recordAccountDeleted, recordIdentityLinked, recordIdentityUnlinked } from "./audit/domain/account.js";
 import { auditSessionMethod, auditSessionRevokeReason, recordSessionCreated, recordSessionRevoked } from "./audit/domain/sessions.js";
@@ -46,6 +58,7 @@ import { isCimdClientIdUrlAllowed } from "./mcp/cimd-policy.js";
 import { withLoopbackRedirectRelaxation } from "./mcp/cimd-loopback-redirects.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
+import { organizationInviteEmailProps } from "./invitation-email.js";
 import {
   DEN_API_KEY_DEFAULT_PREFIX,
   DEN_API_KEY_EXPIRES_IN_DAYS,
@@ -70,10 +83,6 @@ import {
   organizationRoleValueIncludes,
   splitOrganizationRoles,
 } from "./organization-role-hierarchy.js";
-import {
-  getOrganizationSsoJitRole,
-  ORGANIZATION_SSO_JIT_ROLE,
-} from "./sso-jit.js";
 import { isScimDeprovisionedEmailForSsoProvider, isScimDeprovisionedIdentity, SCIM_DEPROVISIONED_SIGN_IN_MESSAGE } from "./scim-deprovisioning.js";
 import {
   ORGANIZATION_SAML_ALLOW_IDP_INITIATED,
@@ -121,6 +130,9 @@ import {
   takeDeviceSessionOrganization,
 } from "./device-authorization.js";
 import { WORKBOT_OAUTH_CLIENT_ID } from "./workbot/config.js";
+import { DEN_LIMITED_BETTER_AUTH_PATHS } from "./auth-rate-limits.js";
+import { MCP_SESSION_REVOKED_GRANT_DESCRIPTION } from "./oauth-token-rate-limit-observability.js";
+import { CLIENT_IP_IPV6_SUBNET, RESOLVED_CLIENT_IP_HEADER } from "./client-ip.js";
 import { ensureWorkbotOAuthClient } from "./workbot/oauth-client.js";
 
 const logger = appLogger.child({ component: "auth" });
@@ -199,7 +211,6 @@ export const DEN_MCP_RESOURCE_CLAIM = `${env.mcpClaimNamespace}/resource`;
 export const DEN_MCP_GRANT_ID_CLAIM = `${env.mcpClaimNamespace}/grant_id`;
 export const DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX = "ow_mcp_at_";
 const DEN_MCP_REFRESH_TOKEN_PREFIX = "ow_mcp_rt_";
-const INVALID_MCP_SESSION_GRANT_DESCRIPTION = "The authorization backing this grant has been revoked. Re-authorize the connection.";
 export { DEN_MCP_SCOPES } from "./mcp/scopes.js";
 
 export function normalizeMcpOAuthResource(resource: string): string | null {
@@ -391,6 +402,10 @@ const RAW_BETTER_AUTH_MUTATION_DENIALS: readonly (readonly [string, string])[] =
   ["/api-key/delete", "Use the Den API key API to manage organization API keys."],
   ["/scim/generate-token", "Use the Den SCIM API to manage SCIM tokens."],
   ["/scim/delete-provider-connection", "Use the Den SCIM API to manage SCIM providers."],
+  // Device sign-ins are decided only on Den web's /device page (POST /v1/auth/device/decision),
+  // which shows the requesting client from the stored code first (GHSA-q84f-53jg-9ppm).
+  ["/device/approve", "Approve command-line sign-ins on the Den device page."],
+  ["/device/deny", "Deny command-line sign-ins on the Den device page."],
 ];
 
 export function getRawBetterAuthMutationDenial(path: string) {
@@ -453,7 +468,7 @@ function readSignUpInvite(ctx: { request?: Request; query?: unknown; body?: unkn
 
 /**
  * Whether signing up from an invitation link counts as verifying the email
- * (inviteLinkVerifiesEmail). Only the join token proves it, never the
+ * for every organization. Only the join token proves it, never the
  * invitation id, which every member can see; the invitation must be pending,
  * unexpired and addressed to this email.
  */
@@ -473,7 +488,7 @@ async function invitationLinkVerifiesEmail(input: { inviteToken: string | null; 
     ))
     .limit(1);
 
-  return invitation ? organizationFeatureEnabled(invitation.organizationId, "inviteLinkVerifiesEmail") : false;
+  return Boolean(invitation);
 }
 
 async function isEmailAlreadyVerified(email: string) {
@@ -576,7 +591,7 @@ async function assertLiveMcpSessionForRefreshGrant(ctx: Parameters<Parameters<ty
     }
     throw new APIError("BAD_REQUEST", {
       error: "invalid_grant",
-      error_description: INVALID_MCP_SESSION_GRANT_DESCRIPTION,
+      error_description: MCP_SESSION_REVOKED_GRANT_DESCRIPTION,
     });
   }
 }
@@ -740,6 +755,36 @@ function getEnterpriseAuthRedirectUrl(input: {
   return url.toString();
 }
 
+const lastSignInLogger = appLogger.child({ component: "last_sign_in_method" });
+
+/**
+ * Remembers a password, Google or GitHub sign-in in a long-lived cookie, and
+ * forgets it after an SSO sign-in (feature `lastUsedSignIn`). Never fails the
+ * sign-in: a broken feature lookup only skips remembering.
+ */
+async function updateLastSignInCookie(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
+  const change = lastSignInCookieChange({
+    path: ctx.path,
+    provider: readStringProperty(ctx.params, "id") ?? readStringProperty(ctx.body, "provider"),
+    signedIn: Boolean(ctx.context.newSession),
+  });
+  if (!change) return;
+  if (change.type === "remember") {
+    const enabled = await deploymentFeatureEnabled("lastUsedSignIn").catch((error: unknown) => {
+      lastSignInLogger.warn("could not read lastUsedSignIn; not remembering the sign-in method", { auth_path: ctx.path, error_name: error instanceof Error ? error.name : typeof error });
+      return false;
+    });
+    if (!enabled) return;
+  }
+  const writes = lastSignInCookieWrites(change, {
+    secure: env.betterAuthUrl.startsWith("https:"),
+    cookieDomain: env.betterAuthCookieDomain,
+  });
+  for (const write of writes) {
+    ctx.setCookie(write.name, write.value, write.options);
+  }
+}
+
 function removeSsoTestSessionCookie(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
   const headers = ctx.context.responseHeaders;
   if (!headers) return;
@@ -767,11 +812,16 @@ export const auth = betterAuth({
       : undefined,
   socialProviders:
     Object.keys(socialProviders).length > 0 ? socialProviders : undefined,
-  database: drizzleAdapter(db, {
+  // Session tokens are stored hashed once sessionTokenHashing is on (src/session-token.ts).
+  database: hashSessionTokens(drizzleAdapter(db, {
     provider: "mysql",
     schema,
+  }), {
+    secret: env.betterAuthSecret,
+    hashTokens: () => deploymentFeatureEnabled("sessionTokenHashing"),
   }),
   account: DEN_ACCOUNT_CONFIG,
+  user: DEN_USER_CONFIG,
   session: {
     expiresIn: DEN_SESSION_EXPIRES_IN_SECONDS,
     updateAge: DEN_SESSION_UPDATE_AGE_IN_SECONDS,
@@ -856,10 +906,17 @@ export const auth = betterAuth({
     },
     member: {
       create: {
+        // Members Better Auth creates through its internal adapter (e.g. the
+        // organization plugin) join like any other member: billing follows the
+        // new user count and the member gets a gateway key. After-hooks run
+        // once the creating transaction has committed. SCIM and SSO write
+        // through the raw adapter instead; see identity-provisioning.ts.
         after: async (member: AuthMemberHookRow) => {
-          if (member.userId && !member.removedAt) await ensureMemberGatewayKey({
+          if (member.removedAt) return;
+          await runPostOrganizationMemberChangeHooks({
             organizationId: normalizeDenTypeId("organization", member.organizationId),
             memberId: normalizeDenTypeId("member", member.id),
+            change: "added",
           });
         },
       },
@@ -889,10 +946,14 @@ export const auth = betterAuth({
           });
         },
         after: async (member: AuthMemberHookRow) => {
+          const organizationId = normalizeDenTypeId("organization", member.organizationId);
           await revokeMemberGatewayCredentials({
-            organizationId: normalizeDenTypeId("organization", member.organizationId),
+            organizationId,
             memberId: normalizeDenTypeId("member", member.id),
           });
+          // One fewer user: billing follows the lower count.
+          await cache.org.deleteMembers(organizationId);
+          await syncOrganizationBillingQuantities({ organizationId });
         },
       },
     },
@@ -940,6 +1001,11 @@ export const auth = betterAuth({
         },
       },
       delete: {
+        // revoke-other-sessions keeps the caller's session by comparing tokens, but
+        // a hashed row listed by user carries a sealed reference: keep it by id.
+        before: async (session, context) => {
+          if (context?.path === "/revoke-other-sessions" && session.id === context.context.session?.session.id) return false;
+        },
         after: async (session, context) => {
           if (typeof session.token === "string") {
             // Sign-out deletes the backing session row, so cached hits must be cleared here.
@@ -964,6 +1030,14 @@ export const auth = betterAuth({
       }
 
       await assertLiveMcpSessionForRefreshGrant(ctx);
+
+      // SCIM adds people without an invitation: Enterprise only.
+      if (ctx.path === "/scim/v2/Users" && ctx.request?.method === "POST") {
+        const organizationId = await scimRequestOrganizationId(ctx.headers?.get("authorization"));
+        if (organizationId && !await organizationAllowsProvisioning(organizationId, "scim")) {
+          throw new APIError("FORBIDDEN", { message: SCIM_ENTERPRISE_REQUIRED_MESSAGE });
+        }
+      }
 
       if (ctx.path === "/oauth2/authorize") {
         const clientId = maybeString(ctx.query?.client_id);
@@ -1197,6 +1271,17 @@ export const auth = betterAuth({
         return;
       }
 
+      // A SCIM-created member joins like any other: billing follows the new
+      // user count and the member gets a gateway key.
+      if (ctx.path === "/scim/v2/Users" && ctx.request?.method === "POST") {
+        const createdUserId = readStringProperty(ctx.context.returned, "id");
+        const organizationId = await scimRequestOrganizationId(ctx.headers?.get("authorization"));
+        if (createdUserId && organizationId) {
+          await finishScimProvisionedMember({ organizationId, userId: normalizeDenTypeId("user", createdUserId) });
+        }
+        return;
+      }
+
       if (ctx.path === "/organization/leave") {
         const member = removedMemberIdentity(ctx.context.returned);
         if (member) {
@@ -1208,11 +1293,19 @@ export const auth = betterAuth({
         return;
       }
 
+      if (ctx.path === "/sign-in/email" || ctx.path === "/sign-up/email" || ctx.path === "/sign-in/social") {
+        await updateLastSignInCookie(ctx);
+        return;
+      }
+
       if (ctx.path === "/sso/callback/:providerId" || ctx.path === "/sso/saml2/sp/acs/:providerId") {
         const callbackUrl = ctx.context.responseHeaders?.get("location") ?? null;
         const intentId = getSsoTestIntentIdFromCallbackUrl(callbackUrl);
         const providerId = readStringProperty(ctx.params, "providerId");
         if (!intentId || !providerId) {
+          // A real SSO sign-in (not an admin's connection test) forgets the
+          // remembered password or social method.
+          await updateLastSignInCookie(ctx);
           return;
         }
 
@@ -1244,6 +1337,16 @@ export const auth = betterAuth({
 
       const requirement = await findEnterpriseAuthRequirementForUserId(newSession.user.id);
       if (!requirement) {
+        // Signing in (e.g. with Google) with a verified email on an
+        // organization's verified SSO domain joins it on the Team plan and up;
+        // Free organizations use invitations. Only after the enterprise sign-in
+        // requirement passed, so a refused sign-in never grants membership.
+        await provisionVerifiedDomainMembership({
+          userId: normalizeDenTypeId("user", newSession.user.id),
+          email: newSession.user.email,
+          emailVerified: newSession.user.emailVerified === true,
+        });
+        await updateLastSignInCookie(ctx);
         return;
       }
 
@@ -1268,10 +1371,11 @@ export const auth = betterAuth({
         },
       }
       : {}),
+    // Den resolves the client address once (request-client-ip.ts) and hands
+    // it over in this header, so Better Auth and Den's own limits agree.
     ipAddress: {
-      ipAddressHeaders: ["x-forwarded-for", "x-real-ip", "cf-connecting-ip"],
-      trustedProxies: env.trustedProxies,
-      ipv6Subnet: 64,
+      ipAddressHeaders: [RESOLVED_CLIENT_IP_HEADER],
+      ipv6Subnet: CLIENT_IP_IPV6_SUBNET,
     },
     database: {
       generateId: (options) => {
@@ -1348,26 +1452,15 @@ export const auth = betterAuth({
     window: 60,
     max: 20,
     customRules: {
-      "/sign-in/email": {
-        window: 300,
-        max: 5,
-      },
-      "/sign-up/email": {
-        window: 3600,
-        max: env.devMode ? 100 : 5,
-      },
-      "/email-otp/send-verification-otp": {
-        window: 3600,
-        max: 5,
-      },
-      "/email-otp/verify-email": {
-        window: 300,
-        max: 10,
-      },
+      // Limited per email, per invitation and per address in
+      // auth-rate-limits.ts; an address-only limit here would make everyone
+      // behind one office router share a handful of sign-ups.
+      ...Object.fromEntries(DEN_LIMITED_BETTER_AUTH_PATHS.map((path) => [path, false] as const)),
       "/oauth2/token": false,
-      "/request-password-reset": {
-        window: 3600,
-        max: 5,
+      // Read on every page load and session check; one office shares an address.
+      "/get-session": {
+        window: 60,
+        max: 120,
       },
     },
   },
@@ -1429,13 +1522,14 @@ export const auth = betterAuth({
         await sendEmail({
           to: data.email,
           template: "organizationInvite",
-          props: {
+          props: organizationInviteEmailProps({
             inviteLink: buildInvitationLink(data.id),
-            invitedByName: data.inviter.user.name ?? data.inviter.user.email,
-            invitedByEmail: data.inviter.user.email,
+            inviterName: data.inviter.user.name,
+            inviterEmail: data.inviter.user.email,
+            inviteeEmail: data.email,
             organizationName: data.organization.name,
             role: data.role,
-          },
+          }),
         });
       },
       organizationHooks: {
@@ -1750,10 +1844,11 @@ export const auth = betterAuth({
         enabled: true,
         tokenPrefix: SSO_DOMAIN_VERIFICATION_TOKEN_PREFIX,
       },
+      // Den provisions SSO members itself (provisionUser below and the
+      // /callback/:id hook): Better Auth writes member rows through the raw
+      // adapter, skipping billing, and would add people to any plan.
       organizationProvisioning: {
-        disabled: false,
-        defaultRole: ORGANIZATION_SSO_JIT_ROLE,
-        getRole: getOrganizationSsoJitRole,
+        disabled: true,
       },
       saml: {
         enableInResponseToValidation: true,
@@ -1810,6 +1905,12 @@ export const auth = betterAuth({
               lastSsoLoginAt: payload.lastSsoLoginAt,
             },
           });
+
+        // Invited people join on any plan; automatic sign-up needs the Team plan.
+        const membership = await provisionSsoMembership({ organizationId, userId, email });
+        if (membership === "invitation_required") {
+          throw new APIError("FORBIDDEN", { message: SSO_INVITATION_REQUIRED_MESSAGE });
+        }
       },
     }),
     // RFC 8628 device authorization for `openwork-bootstrap login` and the

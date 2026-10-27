@@ -542,16 +542,18 @@ export function McpView(props: McpViewProps) {
       return result.orgs.find((org) => org.id === identity?.organizationId)?.role ?? null;
     },
   });
-  const [checkingConnection, setCheckingConnection] = useState<string | null>(null);
+  // Per row, so one slow service never blocks checking the others.
+  const [checkingConnections, setCheckingConnections] = useState<ReadonlySet<string>>(new Set());
   async function checkAgain(connectionId: string) {
-    setCheckingConnection(connectionId);
+    setCheckingConnections((current) => new Set([...current, connectionId]));
     try {
       await cloudSession.client.checkMcpConnection(activeOrganizationId, connectionId);
-      props.onRefresh?.();
     } catch {
       toast.error("Could not check this connection. Try again.");
     } finally {
-      setCheckingConnection(null);
+      // A failed request may still have recorded a result; always show what is stored.
+      props.onRefresh?.();
+      setCheckingConnections((current) => new Set([...current].filter((id) => id !== connectionId)));
     }
   }
   const canManageCloudConnections = denAuth.isSignedIn
@@ -1499,7 +1501,8 @@ export function McpView(props: McpViewProps) {
       {detailOrgMcpItem && isOrgMcpConnectionItem(detailOrgMcpItem) ? (() => {
         const connection = detailOrgMcpItem.orgMcpConnection;
         const ready = isOrgMcpConnectionReady(connection);
-        const recordedState = recordedConnectorState(connection);
+        const recordedView = { checking: checkingConnections.has(connection.id) };
+        const recordedState = recordedConnectorState(connection, recordedView);
         const canAuthorize = canMemberAuthorizeConnection(connection);
         const canDisconnect = canDisconnectMemberConnection(connection);
         const connectingBusy = props.orgMcpConnectingId === connection.id;
@@ -1518,7 +1521,7 @@ export function McpView(props: McpViewProps) {
             presentation={detailPresentation}
             backLabel={t("extensions.title")}
             name={displayName}
-            description={recordedState ? recordedConnectorNote(connection) : (!ready && addedByMe ? ownPlugin?.description : null) ?? detailOrgMcpItem.description ?? orgMcpConnectionActionLabel(connection)}
+            description={recordedState ? recordedConnectorNote(connection, recordedView) : (!ready && addedByMe ? ownPlugin?.description : null) ?? detailOrgMcpItem.description ?? orgMcpConnectionActionLabel(connection)}
             taxonomy="connection"
             connected={recordedState ? recordedState === "Ready" : ready}
             connectedLabel={recordedState ?? orgMcpConnectionActionLabel(connection)}
@@ -1793,7 +1796,9 @@ export function McpView(props: McpViewProps) {
 
   for (const item of orgMcpItems.filter(isOrgMcpConnectionItem)) {
     const connection = item.orgMcpConnection;
-    const recordedState = recordedConnectorState(connection);
+    const recordedView = { checking: checkingConnections.has(connection.id) };
+    const recordedState = recordedConnectorState(connection, recordedView);
+    const personalSignIn = recordedState === "Sign in" && connection.credentialMode === "per_member";
     if (!recordedState && (myConnectionIds.has(connection.id) || ownedPluginNames.has(connectionPluginName(item.name)))) continue;
     const group = resolveExtensionInventoryGroup(item);
     const attention = libraryRowAttention(group);
@@ -1806,15 +1811,15 @@ export function McpView(props: McpViewProps) {
       node: (
         <ExtensionCard
           name={item.name}
-          description={recordedState ? `${recordedConnectorNote(connection)}${!canManageCloudConnections && recordedState === "Couldn't verify" ? " An admin can check again." : ""}` : item.description?.trim() || t("extensions.row_shared_connection")}
+          description={recordedState ? `${recordedConnectorNote(connection, recordedView)}${!canManageCloudConnections && (recordedState === "Couldn't verify" || recordedState === "Not checked") ? " An admin can check it." : ""}` : item.description?.trim() || t("extensions.row_shared_connection")}
           taxonomy="connection"
           url={connection.url}
           connected={recordedState ? recordedState === "Ready" : group === "ready"}
           statusChip={attention.statusChip}
-          nextActionLabel={recordedState === "Sign in" ? "Sign in" : recordedState === "Set up" ? "Set up" : recordedState ? undefined : attention.actionLabel}
-          onNextAction={recordedState === "Sign in" ? () => props.connectOrgMcp?.(connection.id) : undefined}
-          trailing={recordedState === "Couldn't verify" || recordedState === "Ready" ? (
-            <Button size="sm" variant="outline" disabled={!canManageCloudConnections || checkingConnection !== null} title={!canManageCloudConnections ? "An admin can check this connection." : undefined} onClick={() => void checkAgain(connection.id)}>Check again</Button>
+          nextActionLabel={personalSignIn ? "Sign in" : recordedState === "Set up" ? "Set up" : recordedState ? undefined : attention.actionLabel}
+          onNextAction={personalSignIn ? () => props.connectOrgMcp?.(connection.id) : undefined}
+          trailing={recordedState === "Couldn't verify" || recordedState === "Ready" || recordedState === "Not checked" || recordedState === "Checking…" ? (
+            <Button size="sm" variant="outline" disabled={!canManageCloudConnections || recordedState === "Checking…"} title={!canManageCloudConnections ? "An admin can check this connection." : undefined} onClick={() => void checkAgain(connection.id)}>{recordedState === "Checking…" ? "Checking…" : recordedState === "Not checked" ? "Check now" : "Check again"}</Button>
           ) : undefined}
           onClick={() => openDetail({ kind: "org-mcp", item })}
         />

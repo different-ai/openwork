@@ -8,6 +8,8 @@ process.env.BETTER_AUTH_SECRET ??= "synthetic-team-cache-unit-test-secret"
 process.env.DEN_DB_ENCRYPTION_KEY ??= "synthetic-team-cache-unit-test-key"
 process.env.OPENWORK_DEV_MODE ??= "1"
 process.env.DATABASE_REDIS_URL = ""
+process.env.DEN_DEPLOYMENT = "self_hosted"
+process.env.DEN_FEATURE_TEAM_MEMBERSHIP_CACHE = "false"
 const { db } = await import("../src/db.js")
 const { cache, setCacheDependenciesForTest } = await import("../src/cache.js")
 const { listTeamsForMember } = await import("../src/member-teams.js")
@@ -52,7 +54,7 @@ function setup() {
     return chain
   })
   const restore = setCacheDependenciesForTest({ redis })
-  mock.method(cache.features, "state", async () => ({ rollouts: {}, overrides: { teamMembershipCache: true } }))
+  mock.method(cache.features, "state", async () => ({ rollouts: {}, overrides: { teamMembershipCache: false } }))
   return {
     input, team, values, restore, joins: () => joins, checks: () => checks,
     revoke: () => { teams = []; revision = "revoked" },
@@ -75,15 +77,15 @@ test("repeated reads cache the team join, restore dates and read only the DB rev
   } finally { h.restore() }
 })
 
-test("turning the rollout off bypasses already-populated cache entries", async () => {
+test("stale off overrides and self-hosted operator locks cannot disable the generally available cache", async () => {
   const h = setup()
   try {
     await listTeamsForMember(h.input)
     mock.method(cache.features, "state", async () => ({ rollouts: {}, overrides: { teamMembershipCache: false } }))
     assert.deepEqual(await listTeamsForMember(h.input), [h.team])
     assert.deepEqual(await listTeamsForMember(h.input), [h.team])
-    assert.equal(h.joins(), 3)
-    assert.equal(h.checks(), 1)
+    assert.equal(h.joins(), 1)
+    assert.equal(h.checks(), 3)
   } finally { h.restore() }
 })
 

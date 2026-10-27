@@ -38,13 +38,13 @@
     "@openwork/world": "link:../packages/world"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "dependency-cruiser": "18.1.0",
     "typescript": "^5.9.3",
-    "vite": "^6.4.3",
-    "vitest": "^4.1.11",
+    "vite": "^6.4.4",
+    "vitest": "^4.1.12",
     "xml-crypto": "6.1.2",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "packageManager": "pnpm@11.4.0"
 }

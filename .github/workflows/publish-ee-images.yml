@@ -76,6 +76,14 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
 
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+
+      - name: Check Node security baseline and Helm runtime probe
+        run: node --test scripts/tests/node-runtime-baseline.test.mjs packaging/helm/openwork-ee/tests/node-runtime.mjs
+
       - name: Lint chart
         run: helm lint packaging/helm/openwork-ee
 
@@ -424,6 +432,10 @@ jobs:
     needs: [artifact-version, ee-images]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
     runs-on: ubuntu-latest
+    # Render deploy secrets belong to this environment; no deployment is recorded.
+    environment:
+      name: den-production
+      deployment: false
     steps:
       - name: Redeploy den-gateway on Render
         shell: bash

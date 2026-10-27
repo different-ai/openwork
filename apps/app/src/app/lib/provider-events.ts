@@ -8,7 +8,12 @@
  */
 export const newProvidersEvent = "openwork-new-providers-available";
 
-type ProviderCatalogScope = { baseUrl: string; directory?: string };
+export type ProviderCatalogScope = {
+  baseUrl: string;
+  directory?: string;
+  /** New V2 notifications require confirmed live-sync ownership; omitted is legacy. */
+  reason?: "native" | "reconnect";
+};
 const catalogListeners = new Set<(scope: ProviderCatalogScope) => void>();
 
 export function subscribeProviderCatalogChanges(listener: (scope: ProviderCatalogScope) => void) {

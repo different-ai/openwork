@@ -22,13 +22,19 @@ function supportsWebGl2(): boolean {
 /**
  * Paper first-load spec: subtle pixel-dither mosaic over the page ground.
  * Renders nothing without WebGL2, leaving the plain page background.
+ *
+ * Drawn once (speed 0): Paper Shaders then stops requestAnimationFrame. An
+ * animated full-window shader re-renders every frame, and without a GPU
+ * (virtual desktops, Windows VMs) Chromium renders WebGL in software, which
+ * pinned two CPU cores on the sign-in screens and starved the sign-in
+ * request until it timed out. The drift at the old speed was invisible.
  */
 export function DitherBackdrop() {
   if (!supportsWebGl2()) return null;
   return (
     <Dithering
       className="size-full"
-      speed={0.01}
+      speed={0}
       shape="warp"
       type="2x2"
       size={20.3}

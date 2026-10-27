@@ -260,7 +260,7 @@ function validateAgentWorkloads(value) {
       if (!step.arguments || typeof step.arguments !== "object" || Array.isArray(step.arguments)) {
         throw new Error(`agent workload ${promptMarker} tool ${step.tool} needs object arguments`);
       }
-      if (step.argumentsFrom !== undefined && !["computer-mention", "skill-catalog", "capability-search", "skill-list", "app-preparation", "app-starter", "app-read"].includes(step.argumentsFrom)) {
+      if (step.argumentsFrom !== undefined && !["computer-mention", "skill-catalog", "capability-search", "skill-list", "app-preparation", "app-starter", "app-read", "browser-page"].includes(step.argumentsFrom)) {
         throw new Error(`agent workload ${promptMarker} has an unknown argument source`);
       }
       if (step.allowUnadvertisedTool !== undefined && typeof step.allowUnadvertisedTool !== "boolean") {
@@ -556,6 +556,42 @@ function appReadStepArguments(messages, argumentsValue) {
   return { ...argumentsValue, expectedRevisionId: app.revisionId };
 }
 
+// Browser handoff: fixture steps name page controls; each call uses the tab,
+// observation and refs the shipped browser tools actually returned this turn.
+function browserPageArguments(messages, argumentsValue) {
+  let tabId = null, observationId = null;
+  const refs = new Map();
+  for (const message of messages) {
+    if (message?.role !== "tool") continue;
+    let payload;
+    try {
+      payload = JSON.parse(agentContentText(message));
+      if (Array.isArray(payload?.content)) payload = JSON.parse(agentContentText(payload));
+    } catch { continue; }
+    if (!payload || typeof payload !== "object") continue;
+    if (typeof payload.tabId === "string") tabId = payload.tabId;
+    for (const observation of [payload, payload.observation]) {
+      if (typeof observation?.observationId !== "string") continue;
+      observationId = observation.observationId;
+      for (const element of Array.isArray(observation.elements) ? observation.elements : []) {
+        if (typeof element?.name === "string" && typeof element.ref === "string") refs.set(element.name, element.ref);
+      }
+    }
+  }
+  const resolve = (action) => {
+    if (typeof action?.name !== "string") return action;
+    const { name, ...rest } = action;
+    if (!refs.has(name)) throw new Error(`the browser returned no control named ${name}`);
+    return { ...rest, ref: refs.get(name) };
+  };
+  const value = structuredClone(argumentsValue);
+  if (value.tabId === "__TAB__") value.tabId = tabId ?? (() => { throw new Error("the browser returned no tab"); })();
+  if (value.observationId === "__OBSERVATION__") value.observationId = observationId ?? (() => { throw new Error("the browser returned no observation"); })();
+  if (value.action) value.action = resolve(value.action);
+  if (Array.isArray(value.actions)) value.actions = value.actions.map(resolve);
+  return value;
+}
+
 // list_skills handoff: the next get_skill reads the one skill the catalog returned.
 function skillListArguments(messages) {
   let payload = JSON.parse(lastToolText(messages));
@@ -724,7 +760,8 @@ async function handleAgentCompletion(req, res, entry) {
     : step.argumentsFrom === "skill-list" ? { ...step.arguments, ...skillListArguments(scopedMessages) }
     : step.argumentsFrom === "app-preparation" ? appPreparationStepArguments(scopedMessages, step.arguments)
     : step.argumentsFrom === "app-starter" ? appStarterStepArguments(scopedMessages, step.arguments)
-    : step.argumentsFrom === "app-read" ? appReadStepArguments(scopedMessages, step.arguments) : step.arguments;
+    : step.argumentsFrom === "app-read" ? appReadStepArguments(scopedMessages, step.arguments)
+    : step.argumentsFrom === "browser-page" ? browserPageArguments(scopedMessages, step.arguments) : step.arguments;
   if (step.argumentsFrom === "skill-catalog" && toolArguments === null) {
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
     agentStream(res, model, [agentChunk(model, { role: "assistant" }),

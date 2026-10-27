@@ -65,6 +65,7 @@ function invalidCredentialHealth(
 }
 
 function oauthIssuer(configuration: ExternalMcpOAuthConfiguration | null | undefined): string | undefined {
+  if (configuration?.manualOAuthEndpoints) return new URL(configuration.manualOAuthEndpoints.authorizationEndpoint).origin
   const discovery = configuration?.discovery
   const metadata = discovery?.authorizationServerMetadata
   const metadataIssuer = metadata
@@ -320,7 +321,10 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
           `The pre-registered OAuth client must allowlist the callback URL ${currentRedirectUri}.`,
         )
       }
-      const clientInformation = restoredClientInformation({ ...row, extra })
+      const restored = restoredClientInformation({ ...row, extra })
+      const clientInformation = this.connection.oauthConfiguration?.manualOAuthEndpoints
+        ? { ...restored, issuer: oauthIssuer(this.connection.oauthConfiguration) }
+        : restored
       return {
         clientInformation,
         revision: clientRevision(row),

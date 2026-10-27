@@ -64,6 +64,11 @@ import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usag
 import { createOpenAiResponsesSseUsageParser, parseOpenAiResponsesJsonUsage } from "./usage/openai-responses.js"
 import { createJsonBodyUsageParser, emptyUsage } from "./usage/shared.js"
 import type { ParsedUsage, UsageParser } from "./usage/shared.js"
+import { AUTO_ROUTER_MODEL_ID } from "@openwork/types/den/auto-router"
+import { loadAutoRouterConfigFromDb, type LoadAutoRouterConfig } from "./auto-router/config.js"
+import { handleAutoRequest } from "./auto-router/handler.js"
+import { createJevClient, type AskJev } from "./auto-router/jev.js"
+import { createDbReasoningStore, type ReasoningStore } from "./auto-router/reasoning-store.js"
 
 export type { GatewayCredential, GatewayProvider } from "./provider-credentials.js"
 
@@ -91,6 +96,10 @@ export type GatewayDependencies = {
   mintAwsRoleCredentials: MintAwsRoleCredentials
   catalog: ProviderCatalog
   now: () => Date
+  /** Auto Router (feature `autoRouter`): the organization's routes, and Jev. */
+  loadAutoRouterConfig: LoadAutoRouterConfig
+  askJev: AskJev
+  autoRouterReasoning: ReasoningStore
 }
 
 export type GatewayRouteDependencies =
@@ -159,6 +168,46 @@ function isJsonObject(value: unknown): value is JsonObject {
 
 function gatewayError(status: number, code: string, message: string, extra: JsonObject = {}) {
   return Response.json({ error: { message, type: status >= 500 ? "api_error" : "invalid_request_error", code, ...extra } }, { status })
+}
+
+/** A sanitized, actionable response for generic upstream credential rejection. */
+export function genericProviderAuthError(input: {
+  status: 401 | 403
+  providerId: string
+  providerName: string
+  credentialMode: "org" | "member"
+  requestId: string
+}) {
+  const denied = input.status === 403
+  const message = input.credentialMode === "member"
+    ? denied
+      ? `${input.providerName} denied access for your credential. Ask your administrator to check provider permissions, or replace your credential if it has changed.`
+      : `${input.providerName} rejected your credential. Sign in again or replace your credential in AI Gateway.`
+    : denied
+      ? `${input.providerName} denied access for your organization's provider credential. Ask your administrator to check the ${input.providerName} connection in AI Gateway.`
+      : `${input.providerName} rejected your organization's API credential. Ask your administrator to check the ${input.providerName} connection in AI Gateway.`
+  const errorCode = denied ? "provider_permission_denied" : "provider_authentication_failed"
+  const response = Response.json({ error: {
+    source: "openwork_gateway",
+    message,
+    type: "invalid_request_error",
+    code: errorCode,
+    provider_id: input.providerId,
+  } }, { status: input.status })
+  response.headers.set("x-openwork-request-id", input.requestId)
+  return { response, errorCode }
+}
+
+function displayProviderName(providerId: string) {
+  const knownNames: Record<string, string> = {
+    openrouter: "OpenRouter",
+    openai: "OpenAI",
+    anthropic: "Anthropic",
+    deepseek: "DeepSeek",
+    google: "Google",
+    mistral: "Mistral",
+  }
+  return knownNames[providerId.toLowerCase()] ?? providerId.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
 function readBaseUrl(provider: GatewayProvider, catalog: CatalogProvider | null, family: ProtocolFamily) {
@@ -648,6 +697,8 @@ type ModelRouteTarget = {
   request: Request
   model: string
   rest: string
+  /** Query string for the upstream (with `?`); provider-less routes otherwise forward the caller's. */
+  search?: string
   protocol: GatewayRequestProtocol
 }
 
@@ -697,6 +748,23 @@ async function routeByModel(raw: Request, organizationId: string, resolveProvide
   return { inferenceProviderId, request, model }
 }
 
+/**
+ * Reads a provider-less chat request once. Auto requests (model
+ * `openwork-auto`) come back with their parsed body; others with a rebuilt
+ * request for routeByModel.
+ */
+async function readAutoBody(raw: Request): Promise<{ request: Request; body: JsonObject | null } | { error: Response }> {
+  let bytes: Uint8Array<ArrayBuffer>
+  try { bytes = await readBoundedBody(raw) } catch (error) {
+    const limited = error instanceof RequestBodyLimitError
+    return { error: gatewayError(limited ? 413 : 400, limited ? "request_too_large" : "request_body_failed", "Could not read the request body within gateway limits.") }
+  }
+  const request = new Request(raw.url, { method: raw.method, headers: raw.headers, body: bytes, signal: raw.signal })
+  let body: unknown = null
+  try { body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) } catch { return { request, body: null } }
+  return { request, body: isJsonObject(body) && body.model === AUTO_ROUTER_MODEL_ID ? body : null }
+}
+
 function restOfPath(pathname: string, inferenceProviderId: string) {
   const prefix = `${gatewayPathPrefix}/${inferenceProviderId}`
   return pathname.startsWith(`${prefix}/`) ? pathname.slice(prefix.length + 1) : ""
@@ -719,6 +787,15 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     mintAwsRoleCredentials: input.mintAwsRoleCredentials ?? createAwsSsoRoleCredentialMinter(),
     catalog: input.catalog ?? loadProviderCatalogFromFile(),
     now: input.now ?? (() => new Date()),
+    loadAutoRouterConfig: input.loadAutoRouterConfig ?? loadAutoRouterConfigFromDb,
+    askJev: input.askJev ?? createJevClient({
+      apiKey: env.autoRouter.typesafeApiKey ?? null,
+      baseUrl: env.autoRouter.typesafeBaseUrl,
+      model: env.autoRouter.jevModel,
+      timeoutMs: env.autoRouter.jevTimeoutMs,
+      fetch: input.fetch,
+    }),
+    autoRouterReasoning: input.autoRouterReasoning ?? createDbReasoningStore(),
   }
 
   // `target` is set by the provider-less routes, which pick the provider from the model alias.
@@ -755,7 +832,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       c.header("cache-control", "no-store")
       return c.json({ object: "list", data: accessibleGatewayModels(grantId === undefined ? accessRows : accessRows.filter((row) => row.grant.id === grantId)) })
     }
-    const resolved = resolveUpstream(provider, catalog, rest, requestUrl.search)
+    const resolved = resolveUpstream(provider, catalog, rest, target?.search ?? requestUrl.search)
     let selection: GatewayGrantSelection | null = null
     const headerModel = c.req.header(GATEWAY_REQUEST_MODEL_HEADER)
     const modelHint = parseGatewayModelAlias(headerModel) ? headerModel ?? null : null
@@ -1103,6 +1180,20 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         return response
       }
 
+      if (upstream.status === 401 || upstream.status === 403) {
+        const result = genericProviderAuthError({
+          status: upstream.status,
+          providerId: provider.id,
+          providerName: displayProviderName(provider.provider_id),
+          credentialMode: selection.row.credentialSet.credential_mode,
+          requestId: openworkRequestId,
+        })
+        void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode: result.errorCode, upstreamRequestId: upstreamRequestId(upstream.headers) })
+        lifetime.dispose()
+        await upstream.body?.cancel().catch(() => {})
+        return result.response
+      }
+
       const responseHeaders = relayHeaders(upstream, openworkRequestId)
       if (!upstream.ok) return relayErrorResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
       return relayStreamResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
@@ -1140,6 +1231,41 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     api.post(path, async (c, next) => {
       const identity = c.get("inference")
       if (identity.kind !== "gateway") return next()
+      if (endpoint.protocol === "openai_chat") {
+        const auto = await readAutoBody(c.req.raw)
+        if ("error" in auto) {
+          auto.error.headers.set("x-openwork-request-id", c.get("openworkRequestId"))
+          return auto.error
+        }
+        if (auto.body) {
+          const response = await handleAutoRequest({
+            request: auto.request,
+            body: auto.body,
+            identity,
+            dependencies: {
+              loadConfig: dependencies.loadAutoRouterConfig,
+              loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
+              catalog: dependencies.catalog,
+              askJev: dependencies.askJev,
+              reasoningStore: dependencies.autoRouterReasoning,
+              forward: (target) => handleGatewayRequest(c, target),
+              onJevError: (error) => console.warn("[gateway] Auto Router could not ask Jev; using the fallback route", {
+                openworkRequestId: c.get("openworkRequestId"),
+                organizationId: identity.organizationId,
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            },
+          })
+          response.headers.set("x-openwork-request-id", c.get("openworkRequestId"))
+          return response
+        }
+        const routed = await routeByModel(auto.request, identity.organizationId, dependencies.resolveGatewayModelProvider)
+        if ("error" in routed) {
+          routed.error.headers.set("x-openwork-request-id", c.get("openworkRequestId"))
+          return routed.error
+        }
+        return handleGatewayRequest(c, { ...routed, rest: endpoint.rest, protocol: endpoint.protocol })
+      }
       const routed = await routeByModel(c.req.raw, identity.organizationId, dependencies.resolveGatewayModelProvider)
       if ("error" in routed) {
         routed.error.headers.set("x-openwork-request-id", c.get("openworkRequestId"))

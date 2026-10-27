@@ -1,10 +1,8 @@
 import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { denFetch } from "@openwork/behaviors";
 import { allocateFreePorts } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 import { configureProvider } from "./chat.ts";
-import { seededOrganizationId } from "./organization-capabilities.ts";
 
 /** One command the agent leaves running, and how its run ends. */
 type BackgroundJob = { name: string; command: string; output: string; prompt: string; started: string; wake: string };
@@ -14,8 +12,8 @@ function job(name: string, output: string, prompt: string, started: string, wake
 }
 
 /**
- * A signed-in member whose organization has `backgroundShellTasks` on, and
- * whose agent starts commands with the shell tool's `background: true`.
+ * A signed-in member whose agent starts commands with the generally available
+ * shell tool's `background: true`.
  * Background commands only exist on OpenCode v2, so the app runs on v2
  * whatever engine the lane defaults to. Each command is a real process that
  * waits until the world releases it; when it ends, the engine wakes the agent
@@ -43,15 +41,6 @@ export async function backgroundTasksShimmer(seed: Seed) {
   const [webPort] = await allocateFreePorts(1);
   if (!webPort) throw new Error("No app-web port available for the background tasks world");
   const den = await seed.den({ trustedOrigins: [`http://127.0.0.1:${webPort}`] });
-  const organizationId = await seededOrganizationId(seed, den.admin);
-  if (!organizationId) throw new Error("Could not resolve the seeded organization");
-  // The platform admin turns the feature on for the member's organization, as /admin does.
-  const enabled = await denFetch(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
-    method: "PUT",
-    headers: { authorization: `Bearer ${den.admin.token}` },
-    body: JSON.stringify({ capabilities: { backgroundShellTasks: true } }),
-  });
-  if (!enabled.response.ok) throw new Error(`Turning backgroundShellTasks on failed: HTTP ${enabled.response.status} ${enabled.text.slice(0, 300)}`);
 
   const providerId = "background-shell-mock";
   const modelId = "background-shell-model";

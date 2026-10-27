@@ -118,11 +118,10 @@ export type RoleSetLike = {
  * role is named after its team, or by its own name when roles are shared
  * between teams (sharedRoles).
  */
-export function roleName(set: RoleSetLike, options: { shared?: boolean } = {}): string {
+export function roleName(set: RoleSetLike): string {
   if (set.kind === "member_default") return TEAM_ROLE_LABELS.member;
   if (set.kind === "admin_default") return TEAM_ROLE_LABELS.admin;
-  if (options.shared) return set.name;
-  return set.team?.name ?? set.name;
+  return set.name;
 }
 
 /** "Built-in role" or "Custom role", for captions next to a role's name. */
@@ -140,7 +139,7 @@ export type PermissionSourceLike = {
   set?: string;
 };
 
-export function permissionSourceRoleLabel(source: PermissionSourceLike, options: { shared?: boolean } = {}): string {
+export function permissionSourceRoleLabel(source: PermissionSourceLike): string {
   switch (source.kind) {
     case "owner":
       return "Owner";
@@ -149,7 +148,7 @@ export function permissionSourceRoleLabel(source: PermissionSourceLike, options:
     case "admin_default":
       return source.via === "team" && source.teamName ? `Admin via ${source.teamName}` : TEAM_ROLE_LABELS.admin;
     case "team":
-      if (options.shared && source.setName) return source.teamName ? `${source.setName} via ${source.teamName}` : source.setName;
+      if (source.setName) return source.teamName ? `${source.setName} via ${source.teamName}` : source.setName;
       return source.teamName ?? source.label;
     case "code_default":
       return source.set === "admin" ? TEAM_ROLE_LABELS.admin : TEAM_ROLE_LABELS.member;
@@ -168,7 +167,7 @@ export function teamRoleLabels(input: {
   ownRole: "owner" | "admin" | "member";
   teams: readonly { id: string; name: string; memberIds: readonly string[]; grantsOrganizationAdmin: boolean }[];
   customTeamIds: ReadonlySet<string>;
-  /** sharedRoles: each custom role's own name by team, shown instead of the team's name. */
+  /** each custom role's own name by team, shown instead of the team's name. */
   customRoleNameByTeam?: ReadonlyMap<string, string>;
 }): string[] {
   if (input.ownRole === "owner") return [];
@@ -210,8 +209,6 @@ export type MemberRoleOption = {
  * custom roles always keep the person's organization role Member.
  */
 export function memberRoleOptions(input: {
-  sharedRoles: boolean;
-  customRoleTeams: readonly { id: string; name: string; managedByScim?: boolean }[];
   canManageTeams: boolean;
   customRoles?: readonly { id: string; name: string; teams: readonly { id: string; name: string | null }[] }[];
   lockReasons?: ReadonlyMap<string, string | null>;
@@ -221,19 +218,11 @@ export function memberRoleOptions(input: {
     { value: "member", label: TEAM_ROLE_LABELS.member, caption: null, disabled: false },
     { value: "admin", label: TEAM_ROLE_LABELS.admin, caption: null, disabled: Boolean(input.adminLockReason), lockReason: input.adminLockReason },
   ];
-  if (input.sharedRoles) return [...builtIn, ...(input.customRoles ?? []).map((role): MemberRoleOption => {
+  return [...builtIn, ...(input.customRoles ?? []).map((role): MemberRoleOption => {
     const lockReason = !input.canManageTeams ? "Needs Manage teams. Ask the organization owner." : input.lockReasons?.get(role.id) ?? null;
     return { value: `role:${role.id}`, label: role.name, caption: role.teams.length ? `On ${role.teams.map((team) => team.name ?? "A deleted team").join(", ")}` : "No teams yet", disabled: lockReason !== null, lockReason };
   })];
-  return [
-    ...builtIn,
-    ...input.customRoleTeams.map((team): MemberRoleOption => ({
-      value: customRoleChoice(team.id),
-      label: team.name,
-      caption: "Custom role",
-      disabled: !input.canManageTeams || team.managedByScim === true,
-    })),
-  ];
+
 }
 
 export type TeamRoleAbilities = {
@@ -241,8 +230,6 @@ export type TeamRoleAbilities = {
   canManageAdminTeams: boolean;
   /** permissions.manage: create, change and remove team permission sets. */
   canManagePermissions: boolean;
-  /** The Permissions feature is on for the organization (team sets exist only then). */
-  permissionsFeature: boolean;
 };
 
 /** Why the person can't move the team to `next`, or null when they can. */
@@ -253,7 +240,6 @@ export function teamRoleLockReason(current: TeamRoleState, next: TeamRole, abili
       return "Needs the “Manage Admin teams” permission. Ask the organization owner.";
     }
     if (step.kind !== "set-admin") {
-      if (!abilities.permissionsFeature) return "Custom roles need Permissions, an Enterprise feature.";
       if (!abilities.canManagePermissions) return "Needs the “Manage permissions” permission. Ask the organization owner.";
     }
   }

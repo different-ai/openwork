@@ -2,8 +2,8 @@ import { z } from "zod"
 
 /**
  * The model new desktop chats start with, chosen by organization admins for
- * everyone and optionally per team (feature `orgDefaultModel`, OpenCode v2
- * engine only). Members can still change the model in each chat.
+ * everyone and optionally per team (OpenCode v2 engine only).
+ * Members can still change the model in each chat.
  *
  * A choice names a provider the way the desktop does: `openwork` for OpenWork
  * Models, an `lpr_…` organization provider, or an `ipr_…` AI Gateway provider.

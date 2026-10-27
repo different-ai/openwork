@@ -85,8 +85,6 @@ test("a script using an API key is attributed to the key by id; the key's value 
 })
 
 test("changing agent permissions records how many patterns changed, never the patterns themselves", async () => {
-  const enabled = await den.setFeature(orgId, "agentPermissions", true)
-  assert.equal(enabled.status, 200, summary(enabled))
   const secretHost = `internal-${randomBytes(6).toString("hex")}.example.test`
   const secretCommand = `deploy-${randomBytes(6).toString("hex")}`
   const saved = await den.as(owner, orgId)("PUT", "/v1/agent-permissions/everyone", {

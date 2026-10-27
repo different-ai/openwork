@@ -1,7 +1,7 @@
 "use client";
 
-import { ArrowUp, Check, CircleAlert, Copy, FileText, Lock, Pencil } from "lucide-react";
-import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
+import { ArrowUp, Check, CircleAlert, Copy, FileText, Globe, Lock, Monitor, Pencil } from "lucide-react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
 import { ChatsButton, ChatsDrawer, chatTitle, RemoveChatButton, SideChatTitle, useChatLocation } from "./chats";
@@ -16,37 +16,45 @@ import {
   useWorkbotLive,
   useWorkbotThread,
   WorkbotChatProvider,
+  WorkbotSendError,
   workbotFilesKey,
+  uploadWorkbotFile,
   type LiveText,
   type WorkbotAttachment,
+  type WorkbotPart,
   type WorkbotStep,
+  type WorkbotPage,
   type WorkbotTask,
   type WorkbotTurn,
 } from "./data";
-import { AppMark, AttachButton, FileBadge, FilesButton, FilesPanel, ImageThumb, isImage, kindLabel, SentAttachments, UploadTray, useFileDrop, useUploads, type Upload } from "./files";
+import { AppMark, AttachButton, FileBadge, FilesButton, FilesPanel, ImageThumb, isImage, kindLabel, SentAttachments, UploadTray, useFileDrop, type Upload } from "./files";
+import { createComposerState, type ComposerState, type Pending } from "./composer-state";
 import { initials } from "./format";
-import { WorkbotMarkdown } from "./markdown";
+import { documentLinks, WorkbotMarkdown } from "./markdown";
 import { OpenFileContext } from "./open-file";
 import { PreviewPanel } from "./preview";
 import { Welcome } from "./welcome";
+import { ModelRecovery, AccessRecovery } from "./model-recovery";
+import { hasAnsweredTurn, WorkbotSetupChip } from "./activation";
 import { WorkbotCalendar } from "./calendar";
+import { WorkbotDocuments } from "./documents";
+import { LiveGlimpse, openBrowserPage, WorkbotComputer } from "./computer";
+import { readBrowserSkillRunPrompt, type BrowserTeachingContext } from "@openwork/types/browser-demonstration";
+import { readWorkbotCorrectionPrompt, workbotCorrectionPrompt, workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
+import type { DocumentOpenOutcome, DocumentOpenRequest } from "@openwork/documents";
+import { ComputerNavigationContext, ComputerOffer, DocumentNavigationContext, DocumentNavigationStatus, DocumentOffers, type DocumentNavigationState, OpenDocumentContext, SentContext, WorkspaceAssistant, WorkspaceMenu, WorkspaceNavigationContext } from "./workspace";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNativeDictation } from "@openwork/ui/react";
+import { WorkbotDictation } from "./native-dictation";
+import { WorkbotCommandPalette, type WorkbotPaletteTab } from "./command-palette";
 
 /**
  * Workbot: one thread, instant. Layout and values follow the Paper file "WorkBot — one chat, set up once",
  * page v4 (screens 1–4) for the thread and v5 (screens 5–8) for files.
  */
 
-type Pending = {
-  id: string;
-  text: string;
-  sentAt: number;
-  /** Files still uploading, shown from the tray until the turn exists. */
-  uploads: Upload[];
-  failed: string | null;
-};
-
 const PAGE_TURNS = 30;
+const MAX_TURNS = 200;
 const COLUMN = "min-w-0 w-full max-w-[640px]";
 
 function newMessageId() {
@@ -66,7 +74,10 @@ type ChatNavigation = {
 export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   setWorkbotHost(host);
   const sideChats = host.sideChats === true;
-  const [chat, openChat] = useChatLocation(sideChats);
+  const composers = useMemo(() => new Map<string | null, ComposerState>(), [host.identity?.organizationId, host.identity?.principalId]);
+  useEffect(() => () => { for (const owner of composers.values()) owner.dispose(); }, [composers]);
+  const [workspaceDrafts, setWorkspaceDrafts] = useState(false);
+  const [chat, openChat] = useChatLocation(sideChats, workspaceDrafts ? () => false : undefined);
   const [chatsOpen, setChatsOpen] = useState(false);
   const chats = useWorkbotChats(sideChats);
   const refetchChats = chats.refetch;
@@ -77,10 +88,15 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   const navigation: ChatNavigation | null = sideChats
     ? { chat, title: chat ? chatTitle(chats.data?.side.find((entry) => entry.id === chat)?.title) : "Main chat", openChats: () => setChatsOpen(true), openChat }
     : null;
+  let composer = composers.get(chat);
+  if (!composer) {
+    composer = createComposerState((file, progress, signal) => uploadWorkbotFile(file, progress, signal, chat));
+    composers.set(chat, composer);
+  }
   return (
     <WorkbotChatProvider value={chat}>
-      {/* Each chat starts fresh: its own unsent messages, files to send and open file. */}
-      <ChatScreen key={chat ?? "main"} host={host} navigation={navigation} />
+      {/* Screen lifecycles never own a person's unsent work. */}
+      <ChatScreen key={`${host.identity?.organizationId ?? ""}:${host.identity?.principalId ?? ""}:${chat ?? "main"}`} host={host} composerState={composer} navigation={navigation} onDraftsChange={setWorkspaceDrafts} />
       {sideChats ? (
         <ChatsDrawer
           open={chatsOpen}
@@ -98,14 +114,89 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
 }
 
 /** One chat: the main chat, or one of the person's side chats. */
-function ChatScreen({ host, navigation }: { host: WorkbotHost; navigation: ChatNavigation | null }) {
+function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host: WorkbotHost; composerState: ComposerState; navigation: ChatNavigation | null; onDraftsChange(dirty: boolean): void }) {
   const { user } = host;
   const side = navigation?.chat != null;
   const queryClient = useQueryClient();
-  const [pending, setPending] = useState<Pending[]>([]);
+  const draft = useSyncExternalStore(composerState.subscribe, composerState.getSnapshot, composerState.getSnapshot);
+  const { pending } = draft;
   const [turnWindow, setTurnWindow] = useState(PAGE_TURNS);
   const [filesOpen, setFilesOpen] = useState(false);
-  const [tab, setTab] = useWorkbotTab();
+  // Once activated, keep this shell mounted even when the flag is revoked: draft editors must survive.
+  const [teaching, setTeaching] = useState<BrowserTeachingContext>();
+  const [workspaceShell, setWorkspaceShell] = useState(host.workspaceAssistant === true || host.browserDemonstrations === true);
+  useEffect(() => { if (host.workspaceAssistant || host.browserDemonstrations) setWorkspaceShell(true); }, [host.workspaceAssistant, host.browserDemonstrations]);
+  const [documentContext, setDocumentContext] = useState<WorkbotViewContext | null>(null);
+  const [calendarContext, setCalendarContext] = useState<WorkbotViewContext | null>(null);
+  const [includeContext, setIncludeContext] = useState(true);
+  const [openDocument, setOpenDocument] = useState<DocumentOpenRequest>();
+  const [documentsDirty, setDocumentsDirty] = useState(false);
+  const reportDocumentDirty = useCallback((dirty: boolean) => { setDocumentsDirty(dirty); onDraftsChange(dirty); }, [onDraftsChange]);
+  useEffect(() => () => onDraftsChange(false), [onDraftsChange]);
+  const [leavingDocuments, setLeavingDocuments] = useState<WorkbotTab | null>(null);
+  const [tab, setTab] = useWorkbotTab((next) => {
+    if (!workspaceShell && documentsDirty && next !== "documents") { setLeavingDocuments(next); return false; }
+    return true;
+  }, workspaceShell);
+  const [computerVisited, setComputerVisited] = useState(tab === "computer");
+  useEffect(() => { if (tab === "computer") setComputerVisited(true); }, [tab]);
+  const [documentsVisited, setDocumentsVisited] = useState(tab === "documents");
+  const [calendarVisited, setCalendarVisited] = useState(tab === "calendar");
+  useEffect(() => { if (tab === "documents") setDocumentsVisited(true); if (tab === "calendar") setCalendarVisited(true); }, [tab]);
+  const currentContext = tab === "documents" ? documentContext : tab === "calendar" ? calendarContext : null;
+  // Excluding a view applies to that view only: whatever the person looks at next is shared again.
+  const viewKey = !currentContext ? null : currentContext.kind === "document" ? `document:${currentContext.fileId}`
+    : currentContext.kind === "documents" ? `documents:${currentContext.view}:${currentContext.folderId}`
+    : `calendar:${currentContext.view}:${currentContext.start}:${currentContext.selected?.id ?? ""}`;
+  useEffect(() => { if (viewKey) setIncludeContext(true); }, [viewKey]);
+  // Den reports guidedNavigation only with the workspace assistant; each destination keeps its own switch.
+  const guided = host.workspaceAssistant === true && host.guidedNavigation === true;
+  const [revealChat, setRevealChat] = useState(0);
+  // Which reply asked for each open request, and what became of it. Kept for this page only: history never replays.
+  const [navigationStatus, setNavigationStatus] = useState<Readonly<Record<string, DocumentNavigationState>>>({});
+  const navigationRequests = useRef(new Map<string, string>());
+  const currentRequest = useRef<string | null>(null);
+  const settleNavigation = useCallback((requestId: string, outcome: DocumentOpenOutcome) => {
+    const receipt = navigationRequests.current.get(requestId);
+    if (!receipt) return;
+    // Only a request still opening can be set aside; one that opened or failed keeps saying so.
+    setNavigationStatus(current => outcome === "superseded" && current[receipt] !== "opening" ? current : { ...current, [receipt]: outcome });
+  }, []);
+  const navigateDocument = (fileId: string) => {
+    if (!host.workspaceAssistant || !host.documents) return null;
+    const requestId = newMessageId();
+    // A newer request replaces one still opening; that one never opens.
+    if (currentRequest.current) settleNavigation(currentRequest.current, "superseded");
+    currentRequest.current = requestId;
+    setOpenDocument({ fileId, requestId });
+    setTab("documents");
+    return requestId;
+  };
+  // Guided navigation from a conversation: the same chat stays open beside the document, sharing that view.
+  const navigateFromChat = (fileId: string) => {
+    const requestId = navigateDocument(fileId);
+    if (!guided) return requestId;
+    setIncludeContext(true);
+    setRevealChat(count => count + 1);
+    return requestId;
+  };
+  const followNavigation = (receipt: { id: string; fileId: string }) => {
+    const requestId = navigateFromChat(receipt.fileId);
+    if (!requestId) return;
+    navigationRequests.current.set(requestId, receipt.id);
+    setNavigationStatus(current => ({ ...current, [receipt.id]: "opening" }));
+  };
+  // What the person is looking at, so a late answer only navigates if they are still where they asked from.
+  const view = tab !== "documents" ? tab : documentContext?.kind === "document" ? `documents:${documentContext.fileId}` : documentContext?.kind === "documents" ? `documents:${documentContext.folderId}:${documentContext.query}` : "documents";
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  // Turns sent from this page, with the view they were sent from. Receipts on any other turn are never followed.
+  const sentFrom = useRef(new Map<string, string>());
+  const followed = useRef(new Set<string>());
+  // The same move for Workbot's computer: open it and keep the conversation beside it. Null while it is on screen.
+  const navigateComputerFromChat = guided && host.computer === true && tab !== "computer"
+    ? () => { setTab("computer"); setRevealChat(count => count + 1); }
+    : null;
   const [preview, setPreview] = useState<WorkbotAttachment | null>(null);
   // The welcome shows once, while there's no conversation yet; leaving it, Workbot starts the conversation itself.
   // "pending" until the conversation is first read: then it shows (no conversation yet) or never does. Side chats
@@ -119,10 +210,19 @@ function ChatScreen({ host, navigation }: { host: WorkbotHost; navigation: ChatN
   const retry = useRetryWorkbotMessage();
   const stop = useStopWorkbot();
   const editMessage = useEditWorkbotMessage();
-  // Messages replaced by an edit leave the page at once; the conversation catches up on its next read.
-  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
-  const uploads = useUploads();
+  const uploads = { uploads: draft.uploads, add: composerState.add, remove: composerState.removeUpload, retry: composerState.retryUpload };
   const data = thread.data?.available ? thread.data : null;
+  useEffect(() => {
+    if (!guided || !host.documents || !data) return;
+    for (const turn of data.turns) {
+      const from = sentFrom.current.get(turn.id);
+      const target = turn.navigation.at(-1);
+      if (from === undefined || !target || followed.current.has(target.id)) continue;
+      for (const receipt of turn.navigation) followed.current.add(receipt.id);
+      if (from === viewRef.current) followNavigation(target);
+      else setNavigationStatus(current => ({ ...current, [target.id]: "superseded" }));
+    }
+  });
   // The open file at its newest version: when Workbot revises it, the preview follows (same id, newer updatedAt).
   const previewFile = useMemo(() => {
     if (!preview || !data) return preview;
@@ -136,6 +236,33 @@ function ChatScreen({ host, navigation }: { host: WorkbotHost; navigation: ChatN
   }, [preview, data]);
   const filesEnabled = data?.filesEnabled ?? false;
   const addFiles = uploads.add;
+  const paletteChats = useWorkbotChats(navigation !== null);
+  const paletteTasks = useMemo(() => (data?.turns ?? []).flatMap((turn) => turn.tasks), [data?.turns]);
+  const palette = (
+    <WorkbotCommandPalette
+      name={data?.name ?? "Workbot"}
+      tab={tab}
+      tabs={paletteTabs(host)}
+      onTab={(next) => setTab(next)}
+      chats={navigation ? {
+        current: navigation.chat,
+        list: paletteChats.data,
+        loading: paletteChats.isPending,
+        failed: paletteChats.isError,
+        retry: () => void paletteChats.refetch(),
+        open: navigation.openChat,
+        locked: documentsDirty,
+      } : null}
+      busy={data?.status === "busy" || pending.some((entry) => !entry.failed)}
+      onStop={data ? () => stop.mutate() : null}
+      onOpenFiles={filesEnabled ? () => { if (!workspaceShell && tab !== "home") setTab("home"); setFilesOpen(true); } : null}
+      tasks={paletteTasks}
+      onFocusComposer={data ? focusComposer : null}
+      onShowTask={showTask}
+      homeHref={host.homeHref}
+      connectionsHref={host.connectionsHref ?? null}
+    />
+  );
   const dragging = useFileDrop(filesEnabled, addFiles);
 
   useEffect(() => {
@@ -150,75 +277,120 @@ function ChatScreen({ host, navigation }: { host: WorkbotHost; navigation: ChatN
     if (welcome === "done" && hello?.greeting && hello.sentAt) rememberWelcomed(hello.sentAt);
   }, [data, welcome]);
 
-  // Once the conversation no longer has a hidden message, it needn't be hidden any more.
+  // Acceptance is witnessed by the server conversation, not by hiding/recreating local messages.
   useEffect(() => {
-    if (!data || hidden.size === 0) return;
-    const present = new Set(data.turns.map((turn) => turn.id));
-    if ([...hidden].some((id) => !present.has(id))) setHidden((current) => new Set([...current].filter((id) => present.has(id))));
-  }, [data, hidden]);
+    if (data) composerState.acknowledge(new Set(data.turns.map(turn => turn.id)));
+  }, [data, composerState]);
 
-  // A sent message stays on screen as written until the conversation shows it.
-  useEffect(() => {
-    if (!data) return;
-    const known = new Set(data.turns.map((turn) => turn.id));
-    setPending((current) => (current.some((entry) => known.has(entry.id)) ? current.filter((entry) => !known.has(entry.id)) : current));
-  }, [data]);
-
-  const submit = (text: string, retry?: Pending) => {
+  const sendPending = (id: string, again = false) => {
+    sentFrom.current.set(id, viewRef.current);
+    return composerState.send(id, async (entry, attachments) => {
+      const input = { text: entry.text, context: entry.context, attachments };
+      if (entry.correctionOf) await editMessage.mutateAsync({ ...input, id: entry.correctionOf, newId: entry.id });
+      else await send.mutateAsync({ ...input, id: entry.id, ...(entry.teachingId ? { teachingId: entry.teachingId, teachingStepId: entry.teachingStepId } : {}) });
+      void queryClient.invalidateQueries({ queryKey: workbotFilesKey });
+    }, again);
+  };
+  // `plain`: a request about how Workbot works (Show me, Carry on without me), never tied to the open view or a teaching
+  // step (a message with view context runs read-only, without the computer it is asking about), and leaving the draft
+  // being typed alone.
+  const submit = (text: string, retry?: Pending, runSkill = false, plain = false) => {
+    if (retry) { sendPending(retry.id, true); return; }
     const trimmed = text.trim();
-    const id = retry?.id ?? newMessageId();
-    const fromTray = retry ? { taken: retry.uploads, settled: Promise.resolve(retry.uploads.flatMap((upload) => (upload.saved ? [upload.saved] : []))) } : uploads.take();
-    if (!trimmed && fromTray.taken.length === 0) return;
-    setPending((current) => [...current.filter((entry) => entry.id !== id), { id, text: trimmed, sentAt: Date.now(), uploads: fromTray.taken, failed: null }]);
-    const fail = (message: string) => setPending((current) => current.map((entry) => (entry.id === id ? { ...entry, failed: message } : entry)));
-    // The message waits for its files, then goes out with their ids.
-    void fromTray.settled.then((saved) => {
-      if (fromTray.taken.length > 0 && saved.length < fromTray.taken.length) {
-        fail("A file didn't upload.");
-        return;
-      }
-      send.mutate({ id, text: trimmed, attachments: saved.map((file) => file.id) }, {
-        onError: (error) => fail(error.message),
-        onSuccess: () => void queryClient.invalidateQueries({ queryKey: workbotFilesKey }),
-      });
+    if (!trimmed && (plain || draft.uploads.length === 0)) return;
+    const parsed = workbotViewContextSchema.safeParse(includeContext && !plain ? currentContext : undefined);
+    const context = host.workspaceAssistant && parsed.success && (parsed.data.kind === "calendar" || host.documents) ? parsed.data : undefined;
+    const id = composerState.enqueue({ id: newMessageId(), text: trimmed, context, keepDraft: plain, ...(!runSkill && !plain && teaching ? { teachingId: teaching.id, teachingStepId: teaching.stepId } : {}) });
+    const delivery = sendPending(id);
+    if (runSkill) return delivery.then(() => {
+      const failure = composerState.getSnapshot().pending.find(entry => entry.id === id)?.failed;
+      if (failure) throw new Error(failure);
     });
   };
 
-  /**
-   * Why an edit didn't go through, by message. Kept here rather than in the message: the message leaves the page while
-   * its edit is sent and comes back new if the edit fails, so its own state wouldn't survive to say why.
-   */
-  const [editErrors, setEditErrors] = useState<Readonly<Record<string, string>>>({});
+  /** Failed answer retries are reported on their original message. Unaccepted sends stay with their pending owner. */
+  const [editErrors, setEditErrors] = useState<Readonly<Record<string, Error | string>>>({});
 
-  /** Sends an edited message in place of the old one: it and everything after it make way for the new answer. */
+  /** A correction is an ordinary new message. Earlier messages and answers stay truthful and recoverable. */
   const editTurn = (turn: WorkbotTurn, text: string) => {
     const trimmed = text.trim();
     if (!trimmed && turn.attachments.length === 0) return;
-    const turns = data?.turns ?? [];
-    const from = turns.findIndex((entry) => entry.id === turn.id);
-    const replaced = from === -1 ? [turn.id] : turns.slice(from).map((entry) => entry.id);
-    const id = newMessageId();
-    setEditErrors((current) => {
-      if (!(turn.id in current)) return current;
-      const next = { ...current };
-      delete next[turn.id];
-      return next;
-    });
-    setHidden((current) => new Set([...current, ...replaced]));
-    setPending((current) => [...current, { id, text: trimmed, sentAt: Date.now(), uploads: [], failed: null }]);
-    editMessage.mutate(
-      { id: turn.id, newId: id, text: trimmed, attachments: turn.attachments.map((file) => file.id) },
-      {
-        onError: (error) => {
-          setHidden((current) => new Set([...current].filter((entry) => !replaced.includes(entry))));
-          setPending((current) => current.filter((entry) => entry.id !== id));
-          setEditErrors((current) => ({ ...current, [turn.id]: error.message }));
-        },
-      },
-    );
+    const context = host.workspaceAssistant && (turn.context?.kind === "calendar" || host.documents) ? turn.context : undefined;
+    const correctionReference = { messageId: `wb_${turn.id}`, quote: readWorkbotCorrectionPrompt(turn.text).text.slice(0, 1000), sentAt: turn.sentAt };
+    const id = composerState.enqueue({ id: newMessageId(), text: trimmed, context, correctionOf: turn.id, correctionReference, attachments: turn.attachments });
+    sendPending(id);
   };
 
-  if (tab === "calendar" && host.calendar) {
+  if (workspaceShell) {
+    const name = data?.name ?? "Workbot";
+    const busy = data?.status === "busy" || pending.some(entry => !entry.failed);
+    const empty = !data?.turns.length && !pending.length;
+    const starting = empty && (start.isPending || greetingAwaited);
+    const conversation = data ? <Conversation
+      turns={data.turns}
+      canChange={!busy} onEdit={editTurn} editErrors={editErrors} pending={pending} live={stream.live}
+      hasEarlier={data.hasEarlier} earlierLimit={turnWindow >= MAX_TURNS && !thread.isPlaceholderData} loadingEarlier={thread.isFetching && thread.isPlaceholderData}
+      onLoadEarlier={() => setTurnWindow(current => Math.min(MAX_TURNS, current + PAGE_TURNS))}
+      onRetry={entry => submit(entry.text, entry)}
+      onRetryTurn={turn => {
+        if (turn.greeting) { setGreetingAwaited(true); start.mutate(); return; }
+        // A retry may ask again; what it asked before is never replayed.
+        for (const receipt of turn.navigation) followed.current.add(receipt.id);
+        sentFrom.current.set(turn.id, viewRef.current);
+        retry.mutate(turn.id, { onSuccess: () => setEditErrors(current => { const next = { ...current }; delete next[turn.id]; return next; }), onError: error => setEditErrors(current => ({ ...current, [turn.id]: error })) });
+      }}
+      onSuggestion={text => submit(text)} onSwitch={text => submit(text, undefined, false, true)} starting={starting} intro={null}
+    /> : null;
+    const composer = <WorkbotComposer teaching={teaching} text={draft.text} onText={composerState.setText} name={name} busy={busy} stopping={stop.isPending} filesEnabled={filesEnabled} nativeDictation={host.nativeDictation}
+      uploads={uploads.uploads} onFiles={addFiles} onRemoveUpload={uploads.remove} onRetryUpload={uploads.retry}
+      onSend={text => submit(text)} onStop={() => stop.mutate()} autoFocus={false} disabled={!data} />;
+    const firstName = user?.name?.trim().split(/\s+/)[0] ?? null;
+    const home = thread.isPending ? <div className="flex flex-1 items-center justify-center" aria-busy="true" aria-label="Loading conversation"><span className="h-5 w-40 rounded bg-[var(--wb-chip)]" /></div>
+      : !data ? <div className="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center text-[13px] text-[var(--wb-muted)]" role="status"><p>Couldn't load your conversation.</p><button type="button" className="rounded-lg px-3 py-2 underline focus-visible:shadow-[var(--wb-focus)]" onClick={() => void thread.refetch()}>Try again</button></div>
+      : welcome === "showing" ? <Welcome name={name} firstName={firstName} onBegin={() => { if (start.isIdle) { setGreetingAwaited(true); start.mutate(); } }} onDone={() => setWelcome("done")} />
+      : empty && side ? <SideChatStart name={name} organizationName={data.organizationName}>{composer}</SideChatStart>
+      : empty && !starting ? <FirstOpen name={name} organizationName={data.organizationName} firstName={firstName} onSuggestion={text => submit(text)} error={start.isError ? start.error instanceof WorkbotSendError && start.error.accessReason ? <AccessRecovery reason={start.error.accessReason} onRetry={() => { setGreetingAwaited(true); start.mutate(); }} /> : <ErrorLine action={{ label: "Try again", onClick: () => { setGreetingAwaited(true); start.mutate(); } }}>{HELLO_FAILED}</ErrorLine> : null}>{composer}</FirstOpen>
+      : <>{conversation}<div className="flex shrink-0 justify-center px-3 pb-4 pt-3"><div className={COLUMN}>{composer}</div></div></>;
+    return <OpenFileContext.Provider value={setPreview}>
+      <OpenDocumentContext.Provider value={tab === "documents" && documentContext?.kind === "document" ? documentContext.fileId : null}>
+      <WorkspaceNavigationContext.Provider value={host.workspaceAssistant && host.documents ? navigateFromChat : null}>
+      <ComputerNavigationContext.Provider value={navigateComputerFromChat}>
+      <DocumentNavigationContext.Provider value={guided && host.documents ? { status: navigationStatus, open: followNavigation } : null}>
+        <div className="workbot flex h-dvh flex-col bg-[var(--wb-bg)] antialiased" data-workbot-workspace>
+          <WorkbotHeader name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} search={palette}
+            files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
+            chats={host.workspaceAssistant ? <WorkspaceMenu page={tab} onPage={setTab} onDocument={navigateDocument} drafts={documentsDirty} onChats={navigation?.openChats} /> : navigation ? <ChatsButton onOpen={navigation.openChats} /> : null}
+            nav={host.workspaceAssistant ? null : <WorkbotNav tab={tab} onTab={setTab} />}
+            remove={navigation?.chat && data && data.turns.length > 0 ? <RemoveChatButton disabled={documentsDirty} chatId={navigation.chat} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
+            title={navigation?.chat ? <SideChatTitle title={navigation.title} disabled={documentsDirty} onBack={() => navigation.openChat(null)} /> : undefined}
+          />
+          <div className="flex min-h-0 min-w-0 flex-1">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col" style={{ display: tab === "home" ? undefined : "none" }} hidden={tab !== "home"}>{home}</div>
+          <div className="flex min-h-0 min-w-0 flex-1 border-t border-[var(--wb-hairline)]" style={{ display: tab === "documents" ? undefined : "none" }} hidden={tab !== "documents"}>
+            {(documentsVisited || tab === "documents") && <WorkbotDocuments onDirtyChange={reportDocumentDirty} onContextChange={setDocumentContext} openDocument={openDocument} onOpenSettled={settleNavigation} />}
+          </div>
+          <div className="flex min-h-0 min-w-0 flex-1 border-t border-[var(--wb-hairline)]" style={{ display: tab === "calendar" ? undefined : "none" }} hidden={tab !== "calendar"}>
+            {host.calendar && (calendarVisited || tab === "calendar") && <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={name} onContextChange={setCalendarContext} />}
+          </div>
+          <div className="flex min-h-0 min-w-0 flex-1" style={{ display: tab === "computer" ? undefined : "none" }} hidden={tab !== "computer"}>
+            {computerVisited && host.computer && <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} />}
+          </div>
+          </div>
+          {previewFile && <PreviewPanel file={previewFile} onClose={() => setPreview(null)} />}
+          </div>
+          <div hidden={!(host.workspaceAssistant || host.browserDemonstrations && tab === "computer") || tab === "home"}><WorkspaceAssistant name={name} context={currentContext} includeContext={includeContext} onIncludeContext={setIncludeContext}
+            composer={composer} conversation={conversation} onDocument={navigateFromChat} onComputer={navigateComputerFromChat} unavailable={!data} active={(host.workspaceAssistant === true || host.browserDemonstrations === true && tab === "computer") && tab !== "home"}
+            reveal={revealChat} stayOpen={guided} /></div>
+          {filesEnabled && <FilesPanel open={filesOpen} onClose={() => setFilesOpen(false)} assistantName={name} onOpenFile={file => { setFilesOpen(false); setPreview(file); }} />}
+        </div>
+      </DocumentNavigationContext.Provider>
+      </ComputerNavigationContext.Provider>
+      </WorkspaceNavigationContext.Provider>
+      </OpenDocumentContext.Provider>
+    </OpenFileContext.Provider>;
+  }
+  if ((tab === "calendar" && host.calendar) || tab === "documents" || (tab === "computer" && host.computer)) {
     return (
       <div className="workbot flex h-dvh flex-col bg-[var(--wb-bg)] antialiased">
         <WorkbotHeader
@@ -227,9 +399,12 @@ function ChatScreen({ host, navigation }: { host: WorkbotHost; navigation: ChatN
           userName={user?.name ?? null}
           files={null}
           nav={<WorkbotNav tab={tab} onTab={setTab} />}
+          answered={hasAnsweredTurn(data?.turns)}
+          search={palette}
         />
+        {leavingDocuments && <div className="border-t border-[var(--wb-hairline)] px-4 py-2 text-[13px]" role="status">You have unsaved document edits. <button type="button" className="ml-3 underline" onClick={() => setLeavingDocuments(null)}>Keep editing</button><button type="button" className="ml-3 underline" onClick={() => { const next = leavingDocuments; setLeavingDocuments(null); setDocumentsDirty(false); setTab(next, true); }}>Discard edits and leave Documents</button></div>}
         <div className="flex min-h-0 flex-1 border-t border-[#01162712]">
-          <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={data?.name ?? "Workbot"} />
+          {tab === "computer" ? <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} /> : tab === "documents" ? <WorkbotDocuments onDirtyChange={setDocumentsDirty} /> : <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={data?.name ?? "Workbot"} />}
         </div>
       </div>
     );
@@ -278,7 +453,10 @@ function ChatScreen({ host, navigation }: { host: WorkbotHost; navigation: ChatN
   // Right after the welcome: the conversation, with Workbot typing its hello. If that can't start, the drawn greeting.
   const starting = empty && (start.isPending || (greetingAwaited && start.data?.started === true));
   const composer = (
-    <Composer
+    <WorkbotComposer
+      nativeDictation={host.nativeDictation}
+      text={draft.text}
+      onText={composerState.setText}
       name={data.name}
       busy={busy}
       stopping={stop.isPending}
@@ -303,8 +481,10 @@ function ChatScreen({ host, navigation }: { host: WorkbotHost; navigation: ChatN
         files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
         chats={navigation && !chatId ? <ChatsButton onOpen={navigation.openChats} /> : null}
         title={navigation && chatId ? <SideChatTitle title={navigation.title} onBack={() => navigation.openChat(null)} /> : null}
-        remove={navigation && chatId && data.turns.length > 0 ? <RemoveChatButton chatId={chatId} title={navigation.title} onRemoved={() => navigation.openChat(null)} /> : null}
-        nav={host.calendar && !chatId ? <WorkbotNav tab={tab} onTab={setTab} /> : null}
+        remove={navigation && chatId && data.turns.length > 0 ? <RemoveChatButton chatId={chatId} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
+        nav={!chatId ? <WorkbotNav tab={tab} onTab={setTab} /> : null}
+        answered={hasAnsweredTurn(data.turns)}
+        search={palette}
       />
       <div className="flex min-h-0 flex-1">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -316,22 +496,23 @@ function ChatScreen({ host, navigation }: { host: WorkbotHost; navigation: ChatN
           organizationName={data.organizationName}
           firstName={firstName}
           onSuggestion={(text) => submit(text)}
-          error={start.isError ? <ErrorLine action={{ label: "Try again", onClick: () => { setGreetingAwaited(true); start.mutate(); } }}>{HELLO_FAILED}</ErrorLine> : null}
+          error={start.isError ? start.error instanceof WorkbotSendError && start.error.accessReason ? <AccessRecovery reason={start.error.accessReason} onRetry={() => { setGreetingAwaited(true); start.mutate(); }} /> : <ErrorLine action={{ label: "Try again", onClick: () => { setGreetingAwaited(true); start.mutate(); } }}>{HELLO_FAILED}</ErrorLine> : null}
         >
           {composer}
         </FirstOpen>
       ) : (
         <>
           <Conversation
-            turns={hidden.size ? data.turns.filter((turn) => !hidden.has(turn.id)) : data.turns}
+            turns={data.turns}
             canChange={!busy}
             onEdit={editTurn}
             editErrors={editErrors}
             pending={pending}
             live={stream.live}
             hasEarlier={data.hasEarlier}
-            loadingEarlier={thread.isFetching && turnWindow > data.turns.length}
-            onLoadEarlier={() => setTurnWindow((current) => Math.min(200, current + PAGE_TURNS))}
+            earlierLimit={turnWindow >= MAX_TURNS && !thread.isPlaceholderData}
+            loadingEarlier={thread.isFetching && thread.isPlaceholderData}
+            onLoadEarlier={() => setTurnWindow((current) => Math.min(MAX_TURNS, current + PAGE_TURNS))}
             onRetry={(entry) => submit(entry.text, entry)}
             onRetryTurn={(turn) => {
               if (turn.greeting) {
@@ -340,9 +521,10 @@ function ChatScreen({ host, navigation }: { host: WorkbotHost; navigation: ChatN
                 return;
               }
               // The same message is answered again in place, so the conversation keeps one copy of it.
-              retry.mutate(turn.id, { onError: (error) => setEditErrors((current) => ({ ...current, [turn.id]: error.message })) });
+              retry.mutate(turn.id, { onSuccess: () => setEditErrors(current => { const next = { ...current }; delete next[turn.id]; return next; }), onError: (error) => setEditErrors((current) => ({ ...current, [turn.id]: error })) });
             }}
             onSuggestion={(text) => submit(text)}
+            onSwitch={(text) => submit(text, undefined, false, true)}
             starting={starting}
             intro={
               data.hasEarlier
@@ -456,23 +638,57 @@ function useConnectedApps() {
   return workbotHost().useConnectedApps();
 }
 
-type WorkbotTab = "home" | "calendar";
+type WorkbotTab = WorkbotPaletteTab;
+
+/** The pages this person has, in the header's order. */
+function paletteTabs(host: WorkbotHost): WorkbotTab[] {
+  return ["home", ...(host.calendar ? ["calendar" as const] : []), ...(host.documents ? ["documents" as const] : []), ...(host.computer ? ["computer" as const] : [])];
+}
+
+/** Puts the caret in the message box on screen (the Home composer, or the workspace chat's). */
+function focusComposer() {
+  for (const box of document.querySelectorAll<HTMLTextAreaElement>("[data-workbot-composer] textarea")) {
+    if (box.offsetParent !== null && !box.disabled) { box.focus(); return; }
+  }
+}
+
+/** Brings a background task's card into view and onto its own action (Stop, Try again). */
+function showTask(taskId: string) {
+  const card = document.querySelector<HTMLElement>(`[data-workbot-task="${CSS.escape(taskId)}"]`);
+  if (!card) return;
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  card.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
+  card.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
+}
 
 function tabFromLocation(): WorkbotTab {
-  return typeof window !== "undefined" && window.location.pathname.replace(/\/+$/, "") === "/calendar" ? "calendar" : "home";
+  const path = typeof window !== "undefined" ? window.location.pathname.replace(/\/+$/, "") : "";
+  return path === "/computer" || path === "/browser" || path.startsWith("/browser/") ? "computer" : path === "/documents" ? "documents" : path === "/calendar" ? "calendar" : "home";
 }
 
 /** Home (the conversation) and Calendar, as paths so a reload or a shared link opens the same tab. */
-function useWorkbotTab() {
+function useWorkbotTab(beforeLeave?: (next: WorkbotTab) => boolean, preserveSearch = false) {
+  const beforeLeaveRef = useRef(beforeLeave);
+  beforeLeaveRef.current = beforeLeave;
   const [tab, setTabState] = useState<WorkbotTab>(tabFromLocation);
+  const computerEnabled = workbotHost().computer === true;
   useEffect(() => {
-    const sync = () => setTabState(tabFromLocation());
+    if (!computerEnabled && tab === "computer") { window.history.replaceState(null, "", `/${preserveSearch ? window.location.search : ""}`); setTabState("home"); }
+  }, [computerEnabled, tab, preserveSearch]);
+  useEffect(() => {
+    const sync = () => {
+      const next = tabFromLocation();
+      if (beforeLeaveRef.current?.(next) === false) { window.history.pushState(null, "", "/documents"); return; }
+      setTabState(next);
+    };
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
   }, []);
-  const setTab = (next: WorkbotTab) => {
+  const setTab = (next: WorkbotTab, discard = false) => {
     if (next === tab) return;
-    window.history.pushState(null, "", next === "calendar" ? "/calendar" : "/");
+    if (!discard && beforeLeaveRef.current?.(next) === false) return;
+    // The Computer tab opens on its Browser view, which has its own path (see WorkbotComputer).
+    window.history.pushState(null, "", `${next === "home" ? "/" : next === "computer" ? "/browser" : `/${next}`}${preserveSearch ? window.location.search : ""}`);
     setTabState(next);
   };
   return [tab, setTab] as const;
@@ -482,7 +698,7 @@ function useWorkbotTab() {
 function WorkbotNav({ tab, onTab }: { tab: WorkbotTab; onTab: (tab: WorkbotTab) => void }) {
   return (
     <nav className="ml-4 flex items-center gap-0.5" aria-label="Workbot">
-      {(["home", "calendar"] as const).map((entry) => (
+      {(["home", ...(workbotHost().calendar ? ["calendar" as const] : []), ...(workbotHost().documents ? ["documents" as const] : []), ...(workbotHost().computer ? ["computer" as const] : [])] as const).map((entry) => (
         <button
           key={entry}
           type="button"
@@ -490,7 +706,7 @@ function WorkbotNav({ tab, onTab }: { tab: WorkbotTab; onTab: (tab: WorkbotTab) 
           onClick={() => onTab(entry)}
           className={`flex h-8 items-center rounded-lg px-3 text-[13px] leading-4 transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${tab === entry ? "bg-[#EDF0F2] font-semibold text-[#11181C]" : "font-medium text-[#687076] hover:text-[#11181C]"}`}
         >
-          {entry === "home" ? "Home" : "Calendar"}
+          {entry === "home" ? "Home" : entry === "calendar" ? "Calendar" : entry === "documents" ? "Documents" : "Computer"}
         </button>
       ))}
     </nav>
@@ -510,13 +726,17 @@ function WorkbotHeader(props: {
   remove?: ReactNode;
   /** Home / Calendar, after the name (where the Calendar is on). */
   nav?: ReactNode;
+  /** Whether an answer to the person has finished, for the Get set up chip (shown only after the first answer). */
+  answered?: boolean;
+  /** The command palette's button (and the palette), where it is on. */
+  search?: ReactNode;
 }) {
   const { name, organizationName, userName, files } = props;
   const apps = useConnectedApps();
   const names = apps.map((app) => app.name);
   return (
     <header className="flex h-13 shrink-0 items-center justify-between gap-3 px-4 sm:px-5">
-      {props.title ?? (
+      {props.title ? <div className="flex min-w-0 items-center gap-2">{props.chats}{props.title}{props.nav}</div> : (
         <div className="flex min-w-0 items-center gap-2" title={organizationName}>
           {props.chats}
           <Mark name={name} size="header" />
@@ -525,7 +745,9 @@ function WorkbotHeader(props: {
         </div>
       )}
       <div className="flex shrink-0 items-center gap-2.5 sm:gap-3.5">
+        {props.search}
         {props.remove}
+        <WorkbotSetupChip answered={props.answered === true} />
         {files}
         {apps.length > 0 ? (
           <span className="flex h-7 items-center gap-[7px] rounded-full bg-[var(--wb-chip)] pl-2 pr-2.5" title={names.join(", ")} aria-label={`Connected: ${names.join(", ")}`}>
@@ -672,6 +894,7 @@ function Conversation(props: {
   pending: Pending[];
   live: Record<string, LiveText>;
   hasEarlier: boolean;
+  earlierLimit: boolean;
   loadingEarlier: boolean;
   onLoadEarlier: () => void;
   onRetry: (entry: Pending) => void;
@@ -680,13 +903,15 @@ function Conversation(props: {
   /** `joined`: the next row is the failed hello's line, which sits right under the greeting as on the first open. */
   intro: { at: number; joined: boolean; node: ReactNode } | null;
   onSuggestion: (text: string) => void;
+  /** Asks Workbot to show its work on screen or carry on without the person, without the open view's context. */
+  onSwitch: (text: string) => void;
   /** Workbot is about to say hello (right after the welcome). */
   starting: boolean;
   /** Whether the person's messages can be edited now (not while Workbot is answering). */
   canChange: boolean;
   onEdit: (turn: WorkbotTurn, text: string) => void;
   /** Why an edit of a message didn't go through, by message id. */
-  editErrors: Readonly<Record<string, string>>;
+  editErrors: Readonly<Record<string, Error | string>>;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -752,7 +977,9 @@ function Conversation(props: {
     >
       <div ref={content} className="flex min-h-full flex-col items-center justify-end px-4 pb-2 pt-6 sm:px-10">
         <div className={`${COLUMN} flex flex-col`}>
-          {props.hasEarlier ? (
+          {props.hasEarlier && props.earlierLimit ? (
+            <p className="mb-6 text-center text-[12px] text-[var(--wb-muted)]" role="status">History limit reached. Earlier messages aren&apos;t available here.</p>
+          ) : props.hasEarlier ? (
             <button
               type="button"
               onClick={() => {
@@ -786,6 +1013,7 @@ function Conversation(props: {
                       previews={previews.current}
                       onRetry={() => row.turn && props.onRetryTurn(row.turn)}
                       onSuggestion={props.onSuggestion}
+                      onSwitch={props.onSwitch}
                     />
                   ) : row.pending ? (
                     <PendingView
@@ -831,7 +1059,8 @@ function Reaction({ emoji }: { emoji: string }) {
 }
 
 function UserBubble({ text, muted = false, reaction = null, action }: { text: string; muted?: boolean; reaction?: string | null; action?: ReactNode }) {
-  if (!text) {
+  const visible = readWorkbotCorrectionPrompt(text);
+  if (!visible.text && !visible.correction) {
     return reaction ? (
       <div className="flex justify-end">
         <Reaction emoji={reaction} />
@@ -841,8 +1070,12 @@ function UserBubble({ text, muted = false, reaction = null, action }: { text: st
   return (
     <div className="flex justify-end">
       <div className="group/own relative max-w-[85%] sm:max-w-[480px]">
+        {visible.correction && <div className="mb-1 px-3 text-[12px] text-[var(--wb-muted)]" data-workbot-correction-reference>
+          <p>Correction to your message{visible.correction.sentAt !== null ? ` from ${new Date(visible.correction.sentAt).toLocaleString()}` : ""}</p>
+          {visible.correction.quote && <blockquote className="line-clamp-3 border-l-2 border-[var(--wb-hairline)] pl-2" title={visible.correction.quote}>{visible.correction.quote}{visible.correction.quote.length === 1000 ? "…" : ""}</blockquote>}
+        </div>}
         <p className={`whitespace-pre-wrap break-words rounded-[20px] bg-[var(--wb-user-bubble)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] transition-opacity duration-150 ${muted ? "opacity-60" : ""}`}>
-          {text}
+          {visible.text}
         </p>
         {action ? <span className={ownAction}>{action}</span> : null}
         {reaction ? (
@@ -872,7 +1105,7 @@ const ownAction =
  */
 function EditButton({ disabled, onClick }: { disabled: boolean; onClick?: () => void }) {
   return (
-    <button type="button" aria-label="Edit message" title="Edit" disabled={disabled} onClick={onClick} className={`${iconButton} disabled:hover:bg-transparent disabled:hover:text-[var(--wb-muted)] [@media(hover:none)]:-my-2 [@media(hover:none)]:-mr-2 [@media(hover:none)]:size-11`}>
+    <button type="button" aria-label="Correct message" title="Send a correction" disabled={disabled} onClick={onClick} className={`${iconButton} disabled:hover:bg-transparent disabled:hover:text-[var(--wb-muted)] [@media(hover:none)]:-my-2 [@media(hover:none)]:-mr-2 [@media(hover:none)]:size-11`}>
       <Pencil size={14} strokeWidth={1.75} aria-hidden />
     </button>
   );
@@ -887,8 +1120,9 @@ function OwnMessage(props: {
   error: string | null;
 }) {
   const { turn, error } = props;
+  const originalText = readWorkbotCorrectionPrompt(turn.text).text;
   const [mode, setMode] = useState<"idle" | "editing">("idle");
-  const [draft, setDraft] = useState(turn.text);
+  const [draft, setDraft] = useState(originalText);
   const field = useRef<HTMLTextAreaElement>(null);
 
   useLayoutEffect(() => {
@@ -908,7 +1142,7 @@ function OwnMessage(props: {
     const text = draft.trim();
     if (!text) return;
     setMode("idle");
-    if (text === turn.text.trim()) return;
+    if (text === originalText.trim()) return;
     props.onEdit(turn, text);
   };
 
@@ -916,16 +1150,17 @@ function OwnMessage(props: {
     return (
       <div className="flex justify-end">
         <div className="flex w-full max-w-[85%] flex-col gap-2 sm:max-w-[480px]">
+          <blockquote className="line-clamp-3 border-l-2 border-[var(--wb-hairline)] pl-2 text-[12px] text-[var(--wb-muted)]" title={originalText}>Correcting: {originalText}</blockquote>
           <textarea
             ref={field}
             value={draft}
             rows={1}
-            aria-label="Edit your message"
+            aria-label="Correct your message"
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 event.preventDefault();
-                setDraft(turn.text);
+                setDraft(originalText);
                 setMode("idle");
               } else if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();
@@ -934,11 +1169,12 @@ function OwnMessage(props: {
             }}
             className="w-full resize-none rounded-[20px] bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[var(--wb-composer-shadow)] outline-none"
           />
+          <p className="text-right text-[12px] text-[var(--wb-muted)]">Earlier messages stay in the conversation.</p>
           <div className="flex items-center justify-end gap-1.5">
             <button
               type="button"
               onClick={() => {
-                setDraft(turn.text);
+                setDraft(originalText);
                 setMode("idle");
               }}
               className="h-8 rounded-full px-3 text-[13px] font-medium text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
@@ -951,7 +1187,7 @@ function OwnMessage(props: {
               disabled={!draft.trim()}
               className="h-8 rounded-full bg-[var(--wb-ink)] px-3.5 text-[13px] font-medium text-[var(--wb-on-ink)] transition-opacity duration-150 hover:opacity-90 disabled:opacity-40 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
             >
-              Send
+              Send correction
             </button>
           </div>
         </div>
@@ -961,6 +1197,7 @@ function OwnMessage(props: {
 
   return (
     <div className="flex flex-col items-end gap-1">
+      <SentContext context={turn.context} />
       <UserBubble text={turn.text} reaction={turn.reaction} action={<EditButton disabled={!props.canChange} onClick={() => setMode("editing")} />} />
       {error ? <ErrorLine align="end">{error}</ErrorLine> : null}
     </div>
@@ -1064,7 +1301,7 @@ function pendingAttachments(entry: Pending): { attachments: WorkbotAttachment[];
     urls[id] = upload.previewUrl;
     return { id, name: upload.file.name, mediaType: upload.file.type || "application/octet-stream", size: upload.file.size };
   });
-  return { attachments, urls };
+  return { attachments: [...entry.attachments, ...attachments], urls };
 }
 
 /** `waiting`: this message's answer comes next, so it shows the waiting dots its turn will show. */
@@ -1075,9 +1312,10 @@ function PendingView({ entry, onRetry, waiting }: { entry: Pending; onRetry: () 
     <>
       <SentAttachments attachments={attachments} localUrls={urls} />
       {/* Holds Edit's place while sending, so the bubble doesn't move when its turn arrives. */}
-      <UserBubble text={entry.text} muted={Boolean(entry.failed)} action={entry.failed ? undefined : <EditButton disabled />} />
+      <SentContext context={entry.context} />
+      <UserBubble text={entry.correctionReference ? workbotCorrectionPrompt(readBrowserSkillRunPrompt(entry.text), entry.correctionReference) : readBrowserSkillRunPrompt(entry.text)} muted={Boolean(entry.failed)} action={entry.failed ? undefined : <EditButton disabled />} />
       {entry.failed ? (
-        <ErrorLine align="end" action={{ label: "Send again", onClick: onRetry }}>{entry.failed}</ErrorLine>
+        entry.accessIssue ? <AccessRecovery reason={entry.accessIssue} onRetry={onRetry} /> : <ErrorLine align="end" action={{ label: "Send again", onClick: onRetry }}>{entry.failed}</ErrorLine>
       ) : uploading || waiting ? (
         // The rows its turn will show, so nothing moves when the turn arrives.
         <>
@@ -1213,7 +1451,8 @@ function usedApps(steps: WorkbotStep[], starting: LiveText["working"] | null): U
     if (!used.some((existing) => existing.key === entry.key)) used.push(entry);
   };
   for (const step of steps) {
-    if (step.icon === "computer") add({ key: "computer", name: "my computer", computer: true });
+    if (step.icon === "computer" && step.surface === "browser") add({ key: "browser", name: "the browser", computer: true });
+    else if (step.icon === "computer") add({ key: "computer", name: "my computer", computer: true });
     else if (step.app) add({ key: step.app, name: step.app, computer: false });
   }
   if (starting?.on === "computer") add({ key: "computer", name: "my computer", computer: true });
@@ -1250,34 +1489,12 @@ function useHeld<T>(value: T, key: string, minMs: number): T {
 const UPDATE_HOLD_MS = 1_600;
 
 /**
- * Work done between two things Workbot said, where it happened: its computer as a card (the little person at work,
- * what it is doing, how long), or one quiet line for apps alone ("Using Gmail", then "Used Gmail"). `live` while
- * nothing has been said after it yet, so a card doesn't blink between two commands (DESIGN C3, T1, V6).
+ * Work in connected apps between two things Workbot said, as one quiet line ("Using Gmail", then "Used Gmail"), `live`
+ * while nothing has been said after it yet (DESIGN C3, T1). Work on its computer is a card of its own (computerWork).
  */
 function StepsSegment({ steps, live }: { steps: WorkbotStep[]; live: boolean }) {
-  const used = usedApps(steps, null);
-  const computer = steps.filter((step) => step.icon === "computer");
-  const updates = computer.flatMap((step) => step.updates);
-  const latest = updates.at(-1) ?? null;
-  const update = useHeld(latest, latest ?? "", UPDATE_HOLD_MS);
-  if (used.length === 0) return null;
-  const others = used.filter((app) => !app.computer);
-  if (computer.length > 0) {
-    return (
-      <div className="py-1 pl-1">
-        <WorkCard
-          title={live ? "Using my computer" : "Used my computer"}
-          detail={(live ? update : latest) ?? (live ? "Getting started" : "Done")}
-          running={live}
-          outcome={live ? null : "done"}
-          startedAt={computer.find((step) => step.startedAt)?.startedAt ?? null}
-          finishedAt={live ? null : ([...computer].reverse().find((step) => step.finishedAt)?.finishedAt ?? null)}
-          updates={live ? [] : updates}
-          action={<AppLogos apps={others} />}
-        />
-      </div>
-    );
-  }
+  const others = usedApps(steps, null).filter((app) => !app.computer);
+  if (others.length === 0) return null;
   const label = `${live ? "Using" : "Used"} ${joinNames(others.map((app) => app.name))}`;
   return (
     <p
@@ -1294,6 +1511,135 @@ function StepsSegment({ steps, live }: { steps: WorkbotStep[]; live: boolean }) 
       </span>
       <span key={label} className={`truncate ${live ? "workbot-shimmer text-[13px]" : ""}`}>{label}</span>
     </p>
+  );
+}
+
+/** Where on its computer Workbot works: its browser, its screen, or commands in the background with nothing to watch. */
+type ComputerSurface = "browser" | "computer" | "background";
+
+function surfaceOf(step: WorkbotStep): ComputerSurface {
+  return step.surface === "browser" ? "browser" : step.background ? "background" : "computer";
+}
+
+/** The other way of working, offered on a live card: one tap sends it as a follow-up. */
+type SwitchTo = { label: string; text: string; send(text: string): void };
+
+/**
+ * Workbot's computer work in one reply, as one card per kind of work (its browser, its screen, its background
+ * commands), however often it stops to say what it is doing. While it works, the cards it is using go below its latest
+ * words: the one it is on now, and the screen it was last on, whose live view stays up for the rest of the reply.
+ * The others stay where that work last happened.
+ */
+function computerWork(parts: WorkbotPart[], { working, starting, lastIsLive }: { working: boolean; starting: LiveText["working"] | null; lastIsLive: boolean }) {
+  const cards = new Map<ComputerSurface, { steps: WorkbotStep[]; last: number }>();
+  let screen: ComputerSurface | null = null;
+  let current: ComputerSurface | null = null;
+  for (const [index, part] of parts.entries()) {
+    if (part.kind !== "steps") continue;
+    for (const step of part.steps) {
+      if (step.icon !== "computer") continue;
+      const surface = surfaceOf(step);
+      const card = cards.get(surface) ?? { steps: [], last: index };
+      card.steps.push(step);
+      card.last = index;
+      cards.set(surface, card);
+      if (surface !== "background") screen = surface;
+      if (lastIsLive && index === parts.length - 1) current = surface;
+    }
+  }
+  if (working && starting) {
+    // A step starting before it is stored: commands in the background, or the screen it was last on.
+    const surface: ComputerSurface = starting.background ? "background" : screen ?? "computer";
+    if (!cards.has(surface)) {
+      cards.set(surface, { steps: [{ label: "Using my computer", icon: "computer", status: "running", app: null, startedAt: null, finishedAt: null, updates: [], ...(starting.background ? { background: true as const } : {}) }], last: parts.length });
+    }
+    current = surface;
+    if (surface !== "background") screen = surface;
+  }
+  const watch = working ? screen : null;
+  const live = new Set<ComputerSurface>();
+  if (working && current) live.add(current);
+  if (watch) live.add(watch);
+  const placed = new Map<number, ComputerSurface[]>();
+  for (const [surface, card] of cards) if (!live.has(surface)) placed.set(card.last, [...(placed.get(card.last) ?? []), surface]);
+  // Below its latest words: background work first, then the screen it is watched on.
+  const trailing = [...live].sort((a, b) => Number(a === watch) - Number(b === watch));
+  return { cards, live, watch, placed, trailing };
+}
+
+/** Opens the full view of Workbot's browser or computer, without reloading Workbot. */
+function openSurface(surface: Exclude<ComputerSurface, "background">) {
+  window.history.pushState(null, "", `/${surface}${window.location.search}`);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+/**
+ * Work in Workbot's browser or on the rest of its computer, as one card: what it is doing now in its own words, and
+ * while it works on a screen a small live view of it (when the computer is on for the person). Commands in the
+ * background (running Blender from the command line) have no screen to watch, so their card never connects one. The
+ * browser card links the pages it opened.
+ */
+function SurfaceCard({ surface, steps, live, others, switchTo = null }: { surface: ComputerSurface; steps: WorkbotStep[]; live: boolean; others: UsedApp[]; switchTo?: SwitchTo | null }) {
+  const [asked, setAsked] = useState(false);
+  const updates = steps.flatMap((step) => step.updates);
+  const latest = updates.at(-1) ?? null;
+  const update = useHeld(latest, latest ?? "", UPDATE_HOLD_MS);
+  const pages = steps.flatMap((step) => step.pages ?? []).filter((page, index, all) => all.findIndex((entry) => entry.id === page.id) === index);
+  const watchable = workbotHost().computer === true;
+  const title = surface === "browser" ? `${live ? "Using" : "Used"} the browser`
+    : surface === "background" ? `${live ? "Working" : "Worked"} on my computer`
+    : `${live ? "Using" : "Used"} my computer`;
+  const starting = surface === "browser" ? "Opening the browser" : surface === "background" ? "Running in the background" : "Starting up";
+  return (
+    <WorkCard
+      title={title}
+      detail={(live ? update : latest) ?? (live ? starting : "Done")}
+      running={live}
+      outcome={live ? null : "done"}
+      startedAt={steps.find((step) => step.startedAt)?.startedAt ?? null}
+      finishedAt={live ? null : ([...steps].reverse().find((step) => step.finishedAt)?.finishedAt ?? null)}
+      updates={live ? [] : updates}
+      action={<AppLogos apps={others} />}
+      footer={
+        <>
+          {live && watchable && surface !== "background" ? <div className="px-2.5"><LiveGlimpse view={surface} onOpen={() => openSurface(surface)} /></div> : null}
+          {live && watchable && switchTo && !asked ? (
+            <div className="flex px-2.5 pb-2.5 pt-2" data-workbot-computer-switch>
+              <button
+                type="button"
+                onClick={() => { setAsked(true); switchTo.send(switchTo.text); }}
+                className="inline-flex h-7 items-center gap-1.5 rounded-full bg-[var(--wb-surface)] px-2.5 text-[12px] text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] transition-shadow duration-150 hover:shadow-[0_0_0_1px_var(--wb-disabled)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
+              >
+                {surface === "background" ? <Monitor size={12} aria-hidden className="shrink-0 text-[var(--wb-muted)]" /> : null}
+                {switchTo.label}
+              </button>
+            </div>
+          ) : null}
+          {watchable && pages.length > 0 ? <BrowserPageLinks pages={pages} /> : null}
+        </>
+      }
+    />
+  );
+}
+
+/** The pages Workbot opened, each opening in its Browser view (/browser/<id>). */
+function BrowserPageLinks({ pages }: { pages: WorkbotPage[] }) {
+  return (
+    <ul aria-label="Pages Workbot opened" className="flex flex-wrap gap-1 px-2.5 pb-2.5 pt-2">
+      {pages.map((page) => (
+        <li key={page.id} className="min-w-0">
+          <a
+            href={`/browser/${page.id}${window.location.search}`}
+            title={page.url}
+            onClick={(event) => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return; event.preventDefault(); openBrowserPage(page.id); }}
+            className="inline-flex h-7 max-w-[15rem] items-center gap-1.5 rounded-full bg-[var(--wb-chip)] px-2.5 text-[12px] text-[var(--wb-text)] hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
+          >
+            <Globe size={12} aria-hidden className="shrink-0 text-[var(--wb-muted)]" />
+            <span className="truncate">{page.title}</span>
+          </a>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -1332,10 +1678,10 @@ function replyProgress(turn: WorkbotTurn, live: LiveText | null) {
   // Live text is trimmed like the stored text, so a finished bubble carries on instead of starting over.
   const liveText = withoutNextLine((current?.text ?? "").trimStart());
   const last = turn.parts.at(-1);
-  // Its computer starting before the step is stored: the card shows right away, after what it just said.
-  const startingCard = working && !turn.greeting && current?.working?.on === "computer" && !(last?.kind === "steps" && last.steps.some((step) => step.icon === "computer"));
-  const lastIsLive = working && last?.kind === "steps" && !liveText && !startingCard;
-  return { working, liveText, startingCard, lastIsLive };
+  // Its computer starting before the step is stored: its card shows right away, after what it just said.
+  const starting = working && !turn.greeting && current?.working?.on === "computer" ? current.working : null;
+  const lastIsLive = working && last?.kind === "steps" && !liveText;
+  return { working, liveText, starting, lastIsLive };
 }
 
 
@@ -1353,13 +1699,14 @@ function useSettled(flag: boolean, ms: number) {
   return flag && settled;
 }
 
-/** One thing a turn shows: a model call's words (one bubble each) or the steps between them. */
-type TurnItem = { kind: "text"; key: string; text: string } | { kind: "steps"; key: string; steps: WorkbotStep[]; live: boolean };
+/** One thing a turn shows: a model call's words (one bubble each), work in apps between them, or a computer card. */
+type TurnItem = { kind: "text"; key: string; text: string } | { kind: "steps"; key: string; steps: WorkbotStep[]; live: boolean }
+  | { kind: "card"; key: string; surface: ComputerSurface; steps: WorkbotStep[]; live: boolean; others: UsedApp[]; switchTo: SwitchTo | null };
 
 function TurnView(props: {
   canChange: boolean;
   onEdit: (turn: WorkbotTurn, text: string) => void;
-  editError: string | null;
+  editError: Error | string | null;
   turn: WorkbotTurn;
   live: LiveText | null;
   latest: boolean;
@@ -1368,9 +1715,10 @@ function TurnView(props: {
   previews: Record<string, string | null>;
   onRetry: () => void;
   onSuggestion: (text: string) => void;
+  onSwitch: (text: string) => void;
 }) {
   const { turn } = props;
-  const { working, liveText, startingCard, lastIsLive } = replyProgress(turn, props.live);
+  const { working, liveText, starting, lastIsLive } = replyProgress(turn, props.live);
   // An answer watched while it was written keeps revealing at its pace once it's stored; answers already done when the
   // page opened show at once.
   const watched = useRef(working);
@@ -1380,10 +1728,32 @@ function TurnView(props: {
   // One bubble per model call, keyed by that call from its first streamed word to its stored copy, so a bubble never
   // swaps, jumps to its full length or starts over when the conversation is read again (DESIGN P11). Words streamed for
   // an earlier call stay until the stored copy arrives.
+  // The newest message is answered next; a follow-up interrupts the older answer, which only finishes its step.
+  const answering = props.latest && working;
+  // While it answers, the person can ask it to show its work on screen or carry on without them. (Not `canChange`:
+  // that is false while Workbot answers, which is exactly when these are offered.)
+  const switchMode = answering ? props.onSwitch : undefined;
+  // A computer card keeps its key wherever it sits, so moving below Workbot's newest words never restarts its live view.
+  const work = computerWork(parts, { working, starting, lastIsLive });
+  const card = (surface: ComputerSurface, others: UsedApp[] = []): TurnItem => {
+    const isLive = work.live.has(surface);
+    const switchTo = !isLive || !switchMode ? null
+      : surface === work.watch ? { label: "Carry on without me", text: "Carry on without me in the background; no need to show me.", send: switchMode }
+      : surface === "background" && work.watch === null ? { label: "Show me", text: "Show me what you're doing on screen.", send: switchMode }
+      : null;
+    return { kind: "card", key: `card-${surface}`, surface, steps: work.cards.get(surface)?.steps ?? [], live: isLive, others, switchTo };
+  };
   const items: TurnItem[] = [];
   parts.forEach((part, index) => {
-    if (part.kind === "text") items.push({ kind: "text", key: `text-${part.step ?? `part-${index}`}`, text: part.text });
-    else items.push({ kind: "steps", key: `steps-${index}`, steps: part.steps, live: working && index === parts.length - 1 && lastIsLive });
+    if (part.kind === "text") {
+      items.push({ kind: "text", key: `text-${part.step ?? `part-${index}`}`, text: part.text });
+      return;
+    }
+    const here = work.placed.get(index) ?? [];
+    const apps = part.steps.filter((step) => step.icon === "app");
+    // Apps used beside computer work show as logos on its card; on their own, as a quiet line.
+    here.forEach((surface, at) => items.push(card(surface, at === here.length - 1 ? usedApps(apps, null) : [])));
+    if (apps.length > 0 && here.length === 0) items.push({ kind: "steps", key: `steps-${index}`, steps: apps, live: working && index === parts.length - 1 && lastIsLive });
   });
   if (working && props.live) {
     for (const entry of props.live.earlier ?? []) {
@@ -1392,8 +1762,7 @@ function TurnView(props: {
     }
   }
   if (live && liveText) items.push({ kind: "text", key: `text-${live.step}`, text: liveText });
-  // The newest message is answered next; a follow-up interrupts the older answer, which only finishes its step.
-  const answering = props.latest && working;
+  for (const surface of work.trailing) items.push(card(surface));
   // The place Workbot's next words will take, one message line tall: the typing dots, or the app step running right now
   // ("Using Gmail"), then the words themselves, each replacing the last without moving the conversation. Once it has
   // shown, it keeps its place until the words arrive.
@@ -1401,7 +1770,7 @@ function TurnView(props: {
   const runningApps = answering && tail?.kind === "steps" && tail.live && tail.steps.every((step) => step.icon === "app") ? tail : null;
   if (runningApps) items.pop();
   const lastText = items.reduce((found, item, index) => (item.kind === "text" ? index : found), -1);
-  const waiting = answering && !liveText && !startingCard && !lastIsLive;
+  const waiting = answering && !liveText && !lastIsLive && work.live.size === 0;
   const fresh = items.length === 0 && !runningApps;
   const settled = useSettled(waiting && !fresh, 350);
   const dots = waiting && (fresh || settled);
@@ -1413,15 +1782,20 @@ function TurnView(props: {
   }, [dots, running, answering, liveText]);
   const slot = answering && !liveText && (dots || held || running);
   const copyText = parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])).join("\n\n");
+  const offers = useMemo(() => (turn.status === "done" ? documentLinks(copyText) : []), [turn.status, copyText]);
+  // One computer, so only the newest reply that used its screen offers to open it, already while it works. Commands run
+  // in the background leave nothing on the screen to open.
+  const onScreen = (step: WorkbotStep) => step.icon === "computer" && !step.background;
+  const usedComputer = props.latest && ((starting !== null && !starting.background) || parts.some((part) => part.kind === "steps" && part.steps.some(onScreen)));
   return (
     <>
       <SentAttachments attachments={turn.attachments} localUrls={props.previews} />
       {turn.text && !turn.greeting ? (
-        <OwnMessage turn={turn} canChange={props.canChange && turn.status !== "queued"} onEdit={props.onEdit} error={props.editError} />
+        <OwnMessage turn={turn} canChange={props.canChange && turn.status !== "queued"} onEdit={props.onEdit} error={props.editError instanceof WorkbotSendError && props.editError.accessReason ? null : props.editError instanceof Error ? props.editError.message : props.editError} />
       ) : (
         <UserBubble text={turn.text} reaction={turn.reaction} />
       )}
-      {items.length > 0 || startingCard || slot ? <Gap /> : null}
+      {items.length > 0 || slot ? <Gap /> : null}
       {/* What it said and what it did, in the order it happened: "On it." · the computer card · the answer. */}
       <div className="group/answer flex flex-col">
         {items.map((item, index) =>
@@ -1430,13 +1804,19 @@ function TurnView(props: {
             <AssistantBubble key={item.key} trailing={turn.status === "done" && index === lastText ? <CopyAnswer text={copyText} /> : null}>
               <StreamingText text={item.text} instant={!(props.newestText && index === lastText && watched.current)} />
             </AssistantBubble>
+          ) : item.kind === "card" ? (
+            <div key={item.key} className="py-1 pl-1">
+              <SurfaceCard surface={item.surface} steps={item.steps} live={item.live} others={item.others} switchTo={item.switchTo} />
+            </div>
           ) : (
             <StepsSegment key={item.key} steps={item.steps} live={item.live} />
           ),
         )}
-        {startingCard ? <StepsSegment steps={[{ label: "Using my computer", icon: "computer", status: "running", app: null, startedAt: null, finishedAt: null, updates: [] }]} live /> : null}
         {slot ? <WaitingSlot>{runningApps ? <StepsSegment steps={runningApps.steps} live /> : dots ? <TypingDots /> : null}</WaitingSlot> : null}
       </div>
+      <DocumentOffers links={offers} />
+      <DocumentNavigationStatus receipts={turn.navigation} />
+      {usedComputer ? <ComputerOffer /> : null}
       {turn.outputs.length ? <OutputFiles files={turn.outputs} /> : null}
       {turn.tasks.length ? <TaskCards tasks={turn.tasks} canRetry={props.canChange} onRetry={(task) => props.onSuggestion(`Try the "${task.title}" background task again.`)} /> : null}
       {/* Workbot's hello offers what to ask next, only while it is still the latest message. */}
@@ -1455,7 +1835,11 @@ function TurnView(props: {
           ))}
         </ul>
       ) : null}
-      {turn.status === "failed" ? (
+      {turn.status === "failed" && props.editError instanceof WorkbotSendError && props.editError.accessReason ? (
+        <AccessRecovery reason={props.editError.accessReason} onRetry={props.latest ? props.onRetry : undefined} />
+      ) : turn.status === "failed" && turn.modelIssue && workbotHost().usageRecovery ? (
+        <ModelRecovery issue={turn.modelIssue} onRetry={props.latest ? props.onRetry : undefined} />
+      ) : turn.status === "failed" ? (
         <ErrorLine action={props.latest && (turn.greeting || turn.retryable) ? { label: "Try again", onClick: props.onRetry } : null}>{turn.greeting ? HELLO_FAILED : turn.error}</ErrorLine>
       ) : null}
       {/* Natural replies: an answer cut short by a follow-up or by Stop just ends where it was. */}
@@ -1489,6 +1873,8 @@ function WorkCard(props: {
   finishedAt: number | null;
   updates: string[];
   action?: ReactNode;
+  /** Shown under the card's row: a live view, links. */
+  footer?: ReactNode;
 }) {
   const now = useNow();
   const [open, setOpen] = useState(false);
@@ -1544,6 +1930,7 @@ function WorkCard(props: {
           ))}
         </ol>
       ) : null}
+      {props.footer}
     </div>
   );
 }
@@ -1616,8 +2003,14 @@ function OutputFiles({ files }: { files: WorkbotAttachment[] }) {
   );
 }
 
-function Composer(props: {
+export function WorkbotComposer(props: {
+  teaching?: BrowserTeachingContext;
+  nativeDictation?: boolean;
+  text: string;
+  onText: (text: string) => void;
   name: string;
+  autoFocus?: boolean;
+  disabled?: boolean;
   busy: boolean;
   stopping: boolean;
   filesEnabled: boolean;
@@ -1628,26 +2021,40 @@ function Composer(props: {
   onSend: (text: string) => void;
   onStop: () => void;
 }) {
-  const [text, setText] = useState("");
+  const { text } = props;
   const input = useRef<HTMLTextAreaElement>(null);
+  const dictation = useNativeDictation({ enabled: props.nativeDictation === true, text, onText: props.onText,
+    selection: () => ({ start: input.current?.selectionStart ?? text.length, end: input.current?.selectionEnd ?? text.length }),
+    focusInput: () => input.current?.focus() });
   const hasFiles = props.uploads.length > 0;
   const canSend = text.trim().length > 0 || (hasFiles && props.uploads.every((upload) => upload.status !== "failed"));
 
   useLayoutEffect(() => {
     const node = input.current;
     if (!node) return;
-    node.style.height = "auto";
-    node.style.height = `${Math.min(node.scrollHeight, 200)}px`;
+    const fit = () => {
+      node.style.height = "auto";
+      node.style.height = `${Math.min(node.scrollHeight, 200)}px`;
+    };
+    fit();
+    let width = node.getBoundingClientRect().width;
+    const observer = new ResizeObserver(() => {
+      const next = node.getBoundingClientRect().width;
+      if (next === width) return;
+      width = next;
+      fit();
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
   }, [text]);
 
   const sendNow = () => {
-    if (!canSend) return;
-    props.onSend(text);
-    setText("");
+    if (!canSend || props.disabled) return;
+    props.onSend(props.nativeDictation === true ? dictation.commit() : text);
     input.current?.focus();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
       event.preventDefault();
       sendNow();
     } else if (event.key === "Escape" && props.busy) {
@@ -1663,7 +2070,11 @@ function Composer(props: {
   const showStop = props.busy && !canSend;
   const multiline = hasFiles || text.includes("\n") || text.length > 70;
 
-  return (
+  return <>
+    {props.teaching && <div role="status" className="mb-2 flex flex-col gap-0.5 px-3 text-[12px] text-[var(--wb-muted)]" data-workbot-teaching-context>
+      <span>{props.teaching.phase === "recording" ? `Teaching ${props.name}` : props.teaching.phase === "paused" ? "Recording paused · Still teaching" : "Reviewing the skill"}</span>
+      <span className="truncate">{props.teaching.label}</span>
+    </div>}
     <div
       data-workbot-composer
       className={`flex bg-[var(--wb-surface)] shadow-[var(--wb-composer-shadow)] transition-[border-radius] duration-150 ${
@@ -1671,24 +2082,26 @@ function Composer(props: {
       }`}
     >
       {hasFiles ? <UploadTray uploads={props.uploads} onRemove={props.onRemoveUpload} onRetry={props.onRetryUpload} /> : null}
-      <div className={hasFiles ? "flex min-w-0 flex-1 items-end gap-1" : "contents"}>
+      <div className={hasFiles ? "flex w-full min-w-0 flex-1 items-end gap-1" : "contents"}>
         <AttachButton enabled={props.filesEnabled} onFiles={props.onFiles} />
         <textarea
           ref={input}
           value={text}
           rows={1}
-          autoFocus
-          onChange={(event) => setText(event.target.value)}
+          autoFocus={props.autoFocus ?? true}
+          disabled={props.disabled}
+          onChange={(event) => dictation.edit(event.target.value)}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
-          placeholder={`Message ${props.name}`}
+          placeholder={props.teaching ? "Explain this step or ask a question" : `Message ${props.name}`}
           aria-label={`Message ${props.name}`}
           className="max-h-[200px] min-h-9 min-w-0 flex-1 resize-none bg-transparent px-1.5 py-[7px] text-[16px] leading-[22px] text-[var(--wb-text)] outline-none placeholder:text-[var(--wb-faint)] sm:py-[9px] sm:text-[14px] sm:leading-[18px]"
         />
+        {props.nativeDictation === true ? <WorkbotDictation dictation={dictation} disabled={props.disabled} text={text} /> : null}
         <button
           type="button"
           onClick={showStop ? props.onStop : sendNow}
-          disabled={showStop ? props.stopping : !canSend}
+          disabled={props.disabled || (showStop ? props.stopping : !canSend)}
           aria-label={showStop ? "Stop" : "Send"}
           aria-keyshortcuts={showStop ? "Escape" : "Enter"}
           title={showStop ? "Stop (esc)" : "Send (⏎)"}
@@ -1698,5 +2111,5 @@ function Composer(props: {
         </button>
       </div>
     </div>
-  );
+  </>;
 }

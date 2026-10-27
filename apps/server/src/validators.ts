@@ -1,3 +1,4 @@
+import { parse as parseJsonc } from "jsonc-parser";
 import { ApiError } from "./errors.js";
 import { isOrganizationMcpName } from "./organization-mcp-names.js";
 
@@ -37,6 +38,44 @@ export function validateCommandName(name: string): void {
 export function validateMcpName(name: string): void {
   if (!name || name.startsWith("-") || !MCP_NAME_REGEX.test(name)) {
     throw new ApiError(400, "invalid_mcp_name", "MCP name must be alphanumeric and not start with -");
+  }
+}
+
+/**
+ * Provider ids only OpenWork's own sync may define. The Auto Router passes the
+ * "only your organization's providers" policy by id, so a client write that
+ * defines it could point Auto at any endpoint; such writes are refused. Removing
+ * one (`null`) stays allowed.
+ */
+const RESERVED_PROVIDER_IDS = new Set(["openwork-auto"]);
+
+export function isReservedProviderId(id: string): boolean {
+  return RESERVED_PROVIDER_IDS.has(id.trim().toLowerCase());
+}
+
+export function validateUserProviderUpdate(update: Record<string, unknown>): void {
+  for (const [id, value] of Object.entries(update)) {
+    if (value !== null && isReservedProviderId(id)) {
+      throw new ApiError(409, "reserved_provider_id", `${id} is managed by your organization and can't be changed here`);
+    }
+  }
+}
+
+function hasReservedProviderKey(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasReservedProviderKey);
+  if (typeof value !== "object" || value === null) return false;
+  return Object.entries(value).some(([key, child]) => isReservedProviderId(key) || hasReservedProviderKey(child));
+}
+
+/**
+ * Refuses OpenCode config text (JSON or JSONC) that defines a reserved
+ * provider. Keys are checked after JSONC decoding, so escaped spellings
+ * (`openwork-\u0061uto`) are caught too.
+ */
+export function validateUserOpencodeConfigText(content: string): void {
+  const parsed: unknown = parseJsonc(content, [], { allowTrailingComma: true, disallowComments: false });
+  if (hasReservedProviderKey(parsed)) {
+    throw new ApiError(409, "reserved_provider_id", "openwork-auto is managed by your organization and can't be defined in OpenCode config");
   }
 }
 

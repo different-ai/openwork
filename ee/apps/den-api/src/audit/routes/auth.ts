@@ -157,8 +157,8 @@ export const authAuditRoutes: readonly AuditRouteDeclaration[] = [
   platform("GET", "/device", "auth.device.verify", "platform.device", "device_code", null, ANONYMOUS),
   platform("POST", "/device/code", "auth.device.code.issue", "platform.device", "device_code", null, ANONYMOUS),
   userScoped("POST", "/device/token", "auth.device.token.issue", "platform.device", "device_code", null, SESSIONS, `${TOKEN} Session org is staged from the Den decision (stageDeviceSessionOrganization); the poller has no verified tenant actor, so request evidence stays platform. ${SESSION_CREATED} (method device)`),
-  platform("POST", "/device/approve", "auth.device.approve", "platform.device", "device_code", null, `${TOKEN} ${USER_ONLY} Kept platform: the raw endpoint stages no organization (it writes status/userId only; device_code.organizationId is set solely by Den POST /v1/auth/device/decision, which is already attributed to the chosen member's organization before the code is decided). A code decided through Den is no longer pending, so this endpoint cannot act on a staged organization.`),
-  platform("POST", "/device/deny", "auth.device.deny", "platform.device", "device_code", null, `${USER_ONLY} Kept platform: denial binds no organization (Den POST /v1/auth/device/decision is the org-aware path).`),
+  refused("/device/approve", "auth.device.approve", "device_code", "Den POST /v1/auth/device/decision (the /device page, after showing the requesting client)"),
+  refused("/device/deny", "auth.device.deny", "device_code", "Den POST /v1/auth/device/decision"),
   // Organization plugin: user-scoped
   platform("POST", "/organization/create", "auth.organization.create", "platform.organization", "organization", null, "Creates a new org that has no audit policy yet; alternate route to POST /v1/org."),
   readOnly("/organization/list", "auth.organization.list", "platform.organization", "organization", null, USER_ONLY),

@@ -75,7 +75,8 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       const batch = c.req.valid("json")
 
       try {
-        const accepted = batch.events.filter((event) => isKnownTelemetryEventType(event.type))
+        const accepted = batch.events.filter((event) => isKnownTelemetryEventType(event.type)
+          && !event.type.startsWith("workbot.") && !event.type.startsWith("activation.") && event.type !== "connection.connected" && event.source !== "workbot")
 
         const eventRows = accepted.map((event) => ({
           id: createDenTypeId("telemetryEvent"),

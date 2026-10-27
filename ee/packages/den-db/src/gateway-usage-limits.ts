@@ -156,11 +156,8 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     scope: GatewayUsageScope,
     providerId: string | null,
     previous: string | null,
-    enabled: boolean,
   ) {
     if (providerId === null) return null
-    if (!enabled && providerId !== previous)
-      return fail("feature_disabled", 404, "Usage limits per provider are not turned on.")
     if (!isDenTypeId("inferenceProvider", providerId))
       return fail("invalid_provider", 400, "Invalid provider ID.")
     if (providerId === previous) return providerId
@@ -190,7 +187,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
       input: GatewayUsagePolicyWrite,
       id?: string,
       revision?: number,
-      options: { providerLimits?: boolean } = {},
+      _options: { providerLimits?: boolean } = {},
     ) {
       return transaction(async (tx, now) => {
         const members = id ? await usagePolicyMembers(tx, scope.organizationId, id) : []
@@ -213,7 +210,6 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
                 ? (previous?.inferenceProviderId ?? null)
                 : input.providerId,
               previous?.inferenceProviderId ?? null,
-              options.providerLimits === true,
             )
             const fields = {
               name: input.name,
@@ -437,7 +433,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     getStatus(
       scope: GatewayUsageScope,
       memberId?: GatewayUsageScope["memberId"],
-      options: { providerLimits?: boolean } = {},
+      _options: { providerLimits?: boolean } = {},
     ) {
       return transaction(async (tx, now) => {
         // Another member's usage: share-lock the caller's active membership for the read.
@@ -446,7 +442,6 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           tx,
           { ...scope, memberId: memberId ?? scope.memberId },
           now,
-          { providerLimits: options.providerLimits === true },
         )
       })
     },
@@ -460,7 +455,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
       return transaction(async (tx, admittedAt) => {
         // A provider limit for this provider governs the request instead of the default.
         const scopes =
-          options.providerLimits && options.providerId
+          options.providerId
             ? await effectiveUsagePolicyScopes(tx, scope)
             : null
         const providerScope = scopes

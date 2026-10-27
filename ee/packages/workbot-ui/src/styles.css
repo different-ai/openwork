@@ -1,3 +1,4 @@
+@import "@openwork/documents/styles.css";
 /* Workbot (Paper: "WorkBot — one chat, set up once", pages v4 and v5). */
 .workbot {
   --wb-bg: #fbfcfd;
@@ -157,7 +158,15 @@
   35%, 80% { transform: scaleX(1); opacity: 1; }
   100% { transform: scaleX(1); opacity: .35; }
 }
+/* The live view in a work card: a soft blue ring, like OpenWork Desktop's presence, and a dot that breathes. */
+.workbot-glimpse { box-shadow: 0 0 0 1.5px #3b82f6, 0 0 0 5px #3b82f61f; }
+.workbot-presence-dot { background: #3b82f6; animation: workbot-presence 1.6s ease-in-out infinite; }
+@keyframes workbot-presence {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
 @media (prefers-reduced-motion: reduce) {
+  .workbot-presence-dot { animation: none; }
   .workbot-shimmer { animation: none; -webkit-text-fill-color: var(--wb-muted); }
   .workbot-computer.is-working .workbot-computer-line { animation: none; }
   .workbot-worker.is-working .workbot-worker-arm, .workbot-worker.is-working .workbot-worker-head,

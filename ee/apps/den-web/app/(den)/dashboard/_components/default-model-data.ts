@@ -9,7 +9,6 @@ import {
 } from "@openwork/types/den/default-model";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
-import { orgFeatureEnabled } from "../../_lib/den-org";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
@@ -22,12 +21,6 @@ export function defaultModelQueryKey(orgId: string): string[] {
 
 function defaultModelOptionsQueryKey(orgId: string): string[] {
   return ["org-default-model", orgId, "options"];
-}
-
-/** Whether this organization has the default model feature on (`orgDefaultModel`). */
-export function useDefaultModelFeatureOn(): boolean {
-  const { orgContext } = useOrgDashboard();
-  return orgContext ? orgFeatureEnabled(orgContext, "orgDefaultModel") : false;
 }
 
 /** The organization default and every team's override. */

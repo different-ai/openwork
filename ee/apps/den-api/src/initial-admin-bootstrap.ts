@@ -4,6 +4,7 @@ import { AdminAllowlistTable, AuthSessionTable, AuthUserTable } from "@openwork-
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { cache } from "./cache.js"
 import { db } from "./db.js"
+import { sessionTokenMatches } from "./session-token.js"
 import { env } from "./env.js"
 import { ensureSingletonOrganizationForUser, setSessionActiveOrganization } from "./orgs.js"
 
@@ -176,7 +177,7 @@ async function readSessionByToken(token: string) {
   const rows = await db
     .select({ id: AuthSessionTable.id, userId: AuthSessionTable.userId, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)
-    .where(eq(AuthSessionTable.token, token))
+    .where(sessionTokenMatches(token))
     .limit(1)
   return rows[0] ?? null
 }

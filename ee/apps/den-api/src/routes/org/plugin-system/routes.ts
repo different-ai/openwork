@@ -4,7 +4,6 @@ import type { Context, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { credentialPromptResponseFields, pluginConnectionKeyPrompt } from "../../../credential-prompt.js"
-import { organizationFeatureEnabled } from "../../../features.js"
 import { SECURE_ENTRY_REQUIRED } from "../../../middleware/refuse-machine-secrets.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { queryValidator, jsonValidator, orgMemberRoute, paramValidator, resolveMemberTeamsMiddleware } from "../../../middleware/index.js"
@@ -276,11 +275,9 @@ async function configurePluginMcpConnectionResponse(c: OrgContext) {
     }
     const denied = await requirePermissionWithFreshSession(c, "connections.manage")
     if (denied) return denied
-    const organizationId = actorContext(c).organizationContext.organization.id
-    const secureEntry = await organizationFeatureEnabled(organizationId, "secureSecretFields")
-    if (secureEntry && c.get("apiKey") && body.apiKey) return c.json(SECURE_ENTRY_REQUIRED, 400)
+    if (c.get("apiKey") && body.apiKey) return c.json(SECURE_ENTRY_REQUIRED, 400)
     const { awaitingKey, connectionRow, ...item } = await configureMarketplacePluginMcpRequirement({
-      awaitKey: secureEntry,
+      awaitKey: true,
       authType: body.authType,
       apiKey: body.apiKey,
       configObjectId: body.configObjectId,

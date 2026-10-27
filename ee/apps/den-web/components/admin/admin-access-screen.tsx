@@ -23,7 +23,7 @@ export function AdminAccessScreen({ state, message, onRetry }: {
       {detail ? <p className="mt-3 text-sm text-gray-600">{detail}</p> : null}
       {state !== "checking" ? (
         <div className="mt-6 flex flex-wrap gap-3">
-          <a href="/" className={buttonVariants()}>Open sign-in page</a>
+          <a href="/?mode=sign-in" className={buttonVariants()}>Open sign-in page</a>
           {onRetry ? <DenButton variant="secondary" onClick={onRetry}>Retry</DenButton> : null}
         </div>
       ) : null}

@@ -84,6 +84,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmSwitch, setConfirmSwitch] = useState(false);
+  const [showOAuthApp, setShowOAuthApp] = useState(false);
   const setup = useConnectorSetup({
     mode: "admin",
     target,
@@ -125,11 +126,24 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const me = orgContext.members.find((member) => member.id === viewerId);
   const viewerName = me?.user.name || me?.user.email || "You";
   const switchingToShared = signsIn && chosenMode === "shared" && connection?.credentialMode === "per_member";
-  const ready = setup.allDone && Boolean(connection);
+  const ready = (setup.allDone || setup.skipped) && Boolean(connection);
 
   const checks = setup.checks.map((check) => {
-    if (check.id === "sign-in" && setup.canSignIn) {
-      return { ...check, action: <DenButton size="sm" onClick={() => void setup.startSignIn()}>{`Sign in with ${name}`}</DenButton> };
+    if (check.id === "sign-in" && (setup.canSignIn || setup.signInFailed)) {
+      return {
+        ...check,
+        ...(setup.canSignIn ? { action: <DenButton size="sm" onClick={() => void setup.startSignIn()}>{`Sign in with ${name}`}</DenButton> } : {}),
+        ...(setup.signInFailed ? {
+          body: showOAuthApp ? (
+            <div className="flex flex-col gap-2" data-testid="connector-setup-own-oauth-app">
+              <p className="text-[13px] leading-[18px] text-gray-500">{`Add the client ID and secret from your ${name} OAuth app, then sign in again.`}</p>
+              <OAuthAppFields url={target.url} discovery={setup.discovery} secretRequired={setup.secretRequired} saving={setup.saving} error={setup.saveError} onSave={(input) => void setup.saveOAuthApp(input)} />
+            </div>
+          ) : (
+            <DenButton size="sm" variant="secondary" onClick={() => setShowOAuthApp(true)}>Use your own OAuth app</DenButton>
+          ),
+        } : {}),
+      };
     }
     if (check.id === "sign-in-method" && setup.needsInput) {
       return {
@@ -149,7 +163,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
               )}
             </div>
           )
-          : <OAuthAppFields secretRequired={setup.secretRequired} saving={setup.saving} error={setup.saveError} onSave={(input) => void setup.saveOAuthApp(input)} />,
+          : <OAuthAppFields url={target.url} discovery={setup.discovery} secretRequired={setup.secretRequired} saving={setup.saving} error={setup.saveError} onSave={(input) => void setup.saveOAuthApp(input)} />,
       };
     }
     return check;
@@ -183,11 +197,16 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
       await saveAccess(connection.id, access);
       // Individual-key setup publishes the connection; each person's key is
       // checked when they enroll it, not against an admin's nonexistent key.
-      const checked = !usesIndividualKeys
-        ? await checkConnection.mutateAsync(connection.id) : null;
+      // Added anyway: a failing check is expected, so it never blocks the add.
+      const checked = usesIndividualKeys
+        ? null
+        : setup.skipped
+        ? await checkConnection.mutateAsync(connection.id).catch(() => null)
+        : await checkConnection.mutateAsync(connection.id);
       const connectionId = connection.id;
+      const unverified = checked?.status === "could_not_verify" || (setup.skipped && checked?.status !== "ready");
       toast({
-        title: usesIndividualKeys ? `${name} is set up` : checked?.status === "could_not_verify" ? `${name} couldn't be verified` : `${name} is ready`,
+        title: usesIndividualKeys ? `${name} is set up` : unverified ? `${name} couldn't be verified` : `${name} is ready`,
         description: `${reached > 0 ? `${peopleLabel(reached)} will find it in My Library.` : "Only you have it so far."}`,
         action: { label: "View", onClick: () => router.push(getMcpConnectionRoute(orgSlug, connectionId)) },
       });
@@ -208,8 +227,12 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
           title={`Add ${name}`}
         />
         <SetupChecks checks={checks} />
-        <StepFooter note={`Step ${setup.stepNumber} of ${checks.length}`}>
-          <DenButton variant="secondary" loading={busy} onClick={() => void cancel()}>Cancel</DenButton>
+        {setup.skipError ? <p className="text-[13px] text-red-600" role="alert">{setup.skipError}</p> : null}
+        <StepFooter note={setup.canSkip ? "You can add it anyway and finish its settings on its page." : `Step ${setup.stepNumber} of ${checks.length}`}>
+          <DenButton variant="secondary" loading={busy} disabled={setup.skipping} onClick={() => void cancel()}>Cancel</DenButton>
+          {setup.canSkip ? (
+            <DenButton loading={setup.skipping} disabled={busy} onClick={() => void setup.skipChecks()} data-testid="connector-setup-add-anyway">Add anyway</DenButton>
+          ) : null}
         </StepFooter>
       </ItemPage>
     );
@@ -220,7 +243,8 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
       <ItemHeader
         back={back}
         logo={<ConnectorLogo name={name} url={target.url} size="md" />}
-        title={usesIndividualKeys ? `${name} is set up` : `${name} passed all ${checks.length} checks`}
+        title={usesIndividualKeys ? `${name} is set up` : setup.allDone ? `${name} passed all ${checks.length} checks` : `Add ${name} anyway`}
+        description={setup.allDone ? undefined : `Some checks did not pass. Finish its settings, like its OAuth app, on its page after you add it.`}
       />
       {signsIn || usesKey ? (
         <section className="flex flex-col gap-2.5">

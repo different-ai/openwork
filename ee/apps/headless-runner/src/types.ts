@@ -1,4 +1,6 @@
 import { z } from "zod"
+import { headlessModelAccessSchema } from "@openwork-ee/headless-protocol"
+export { headlessModelAccessSchema, type HeadlessModelAccess } from "@openwork-ee/headless-protocol"
 
 /** A saved file as messages refer to it. */
 export const attachmentSchema = z.object({ id: z.string(), name: z.string(), mediaType: z.string(), size: z.number() })
@@ -73,15 +75,40 @@ export const RESUMABLE: ReadonlySet<TurnStatus> = new Set(["failed", "interrupte
 export const ACTIVE: ReadonlySet<TurnStatus> = new Set(["queued", "running"])
 
 /**
+ * How a turn runs. `steps`: one step at a time from stored state (see steps.ts), so a runner deploy can switch a
+ * cell between steps instead of cutting a step off. Absent: the whole turn runs in one go, as it always has.
+ */
+export const executionSchema = z.enum(["steps"])
+export type Execution = z.infer<typeof executionSchema>
+
+/** Den's index capability: opaque, base64url parts joined by dots, at most 2 KiB. */
+export const INDEX_CAPABILITY = /^[A-Za-z0-9_.-]{1,2048}$/
+
+/** Den's resume grant for one turn: `hrg_` and 32 random bytes as base64url. */
+export const RESUME_GRANT = /^hrg_[A-Za-z0-9_-]{43}$/
+
+/**
  * Credentials a trusted caller supplies with each turn. They are held in
- * memory for the life of that turn only and are never written to disk.
+ * memory for the life of that turn only and are never written to disk, except
+ * `resumeGrant`, which is stored encrypted when self-resume is configured.
  */
 export const turnCredentialsSchema = z
   .object({
     modelApiKey: z.string().min(1).max(4096).optional(),
+    modelAccess: headlessModelAccessSchema.optional(),
     mcpToken: z.string().min(1).max(16_384).optional(),
     /** Trusted caller policy, also enforced for the runner's local tools. */
     readOnly: z.boolean().optional(),
+    /**
+     * Exchanged with Den for a fresh MCP token for this turn (and its tasks and reports), so the runner refreshes the
+     * token in place and resumes the turn itself after a restart. Accepted always; ignored without self-resume.
+     */
+    resumeGrant: z.string().regex(RESUME_GRANT).optional(),
+    /**
+     * Den's index capability for this session: kept with the session (`store.setIndexCapability`) for the Den index
+     * flusher (den-index.ts), never held with the turn, logged or exported. Opaque to the runner: only its size and characters are checked.
+     */
+    indexCapability: z.string().regex(INDEX_CAPABILITY).optional(),
   })
   .strict()
 export type TurnCredentials = z.infer<typeof turnCredentialsSchema>
@@ -96,6 +123,12 @@ export type SessionComputer = {
   toolNames: ReadonlySet<string>
   /** The snapshot new computers boot from, for logs. */
   image: string
+  desktopTools?: ToolSpec[]
+  desktopRun?(sessionId: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult>
+  /** Desktop failures may carry `desktopCode` (`desktop_outdated`, `desktop_unresponsive`), which the runner reports as its error code. */
+  desktopViewer?(sessionId: string, input: { view: "browser" | "computer"; control: boolean; origin: string }): Promise<{ state: "paused" } | { state: "connected"; url: string; expiresAt: number; paused: boolean }>
+  browserDemonstration?(sessionId: string, command: import("@openwork/types/browser-demonstration").DemonstrationCommand): Promise<import("@openwork/types/browser-demonstration").DemonstrationReply>
+  desktopAction?(sessionId: string, action: "continue" | "pause" | "resume" | "rebuild"): Promise<{ ok: boolean }>
   run(sessionId: string, name: string, input: Record<string, unknown>): Promise<ToolResult>
   known(sessionId: string): boolean
   prewarm(sessionId: string): void

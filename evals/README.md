@@ -111,6 +111,7 @@ Skills own mechanics; this README owns the map and vocabulary.
 | Author a spec | `write-a-spec` | Add a step to a core journey in `evals/core`, or a proof in `evals/proofs`. |
 | Run tests | `run-tests` | Run a selected spec; the CLI chooses and reports placement. |
 | Failing or red run | `diagnose-a-red-run` | Classify a failure before changing code. |
+| Slow CI or slow spec | `speed-up-ci` | Measure time to green, find where a job's seconds go, land one measured speedup at a time. |
 | Design notes on a PR | `fix-design-notes` | Read the design notes in the Evidence preview check, fix what they found, prove the note is gone. |
 | Missing secret or environment variable | `get-env-var` | Load a required team secret into the shell. |
 | Drive the app by hand over CDP | `drive-desktop-cdp` | Check a UI change in `dev-app-web --browser` (headless) or, when the desktop shell matters, a desktop window. |

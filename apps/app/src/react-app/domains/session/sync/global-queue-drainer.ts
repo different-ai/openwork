@@ -1,6 +1,9 @@
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 
 import { markTaskRunStart } from "@/app/lib/analytics";
+import { getReactQueryClient } from "@/react-app/infra/query-client";
+import { ensureProviderListQuery } from "@/react-app/infra/provider-list-query";
+import { sendWithModelUnavailableRetry } from "./model-unavailable-retry";
 import { createClient, createPromptMessageID, isPromptAdmissionUnknown, readPromptAdmission } from "@/app/lib/opencode";
 import { shellInSession } from "@/app/lib/opencode-session";
 import { composeNativeSessionSnapshot, getNativeSession } from "@/app/lib/opencode-session-native";
@@ -159,14 +162,29 @@ async function performQueuedDraftSend(
     });
     assertQueuedSendCurrent(sessionId, generation);
     if (sessionWorkHeld(context.opencodeBaseUrl, sessionId) || context.isCurrent?.() === false) return "cancelled";
-    const result = await opencodeClient.session.promptAsync({
-      sessionID: sessionId,
-      messageID: draft.messageId,
-      parts,
-      model: sendModel ?? undefined,
-      agent: context.agent ?? undefined,
-      ...(sendVariant ? { variant: sendVariant } : {}),
-      system,
+    const result = await sendWithModelUnavailableRetry({
+      request: {
+        sessionID: sessionId,
+        messageID: draft.messageId,
+        parts,
+        model: sendModel ?? undefined,
+        agent: context.agent ?? undefined,
+        ...(sendVariant ? { variant: sendVariant } : {}),
+        system,
+      },
+      send: (request) => opencodeClient.session.promptAsync(request),
+      refreshModels: () => ensureProviderListQuery(getReactQueryClient(), {
+        client: opencodeClient,
+        baseUrl: context.opencodeBaseUrl,
+        directory: context.workspaceRoot,
+        force: true,
+      }),
+      assertCurrent: () => {
+        assertQueuedSendCurrent(sessionId, generation);
+        if (sessionWorkHeld(context.opencodeBaseUrl, sessionId) || context.isCurrent?.() === false) {
+          throw new Error("Send context changed.");
+        }
+      },
     });
     if (result.error) {
       if (isPromptAdmissionUnknown(result.error)) throw result.error;

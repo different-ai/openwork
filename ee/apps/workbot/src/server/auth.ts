@@ -3,7 +3,8 @@ import type { Context, Hono, MiddlewareHandler } from "hono"
 import { deleteCookie, getCookie, setCookie } from "hono/cookie"
 import { z } from "zod"
 import type { Config } from "./config.js"
-import { DenSignedOutError, type Den, type DenSession } from "./den.js"
+import { DenRateLimitedError, DenSignedOutError, type Den, type DenSession } from "./den.js"
+import { reportError } from "./error-reporting.js"
 import { createSealer, MAX_COOKIE_VALUE, randomToken, sessionSchema, type Tokens } from "./sealed.js"
 
 /**
@@ -34,10 +35,17 @@ const SESSION_MAX_AGE_S = 30 * 24 * 60 * 60
  */
 const REFRESHED_REUSE_MS = 2 * 60_000
 
-/** A path on this site to return to after signing in; anything else (another site, `//host`) becomes `/`. */
-function safeReturnPath(value: string | undefined) {
-  if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) return "/"
-  return value.slice(0, 1_000)
+/** Validate before sealing: browsers strip controls and interpret backslashes as path separators. */
+function safeReturnPath(value: string | undefined, publicUrl: string) {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || /[\u0000-\u0020\u007f\\]|\s/u.test(value)) return "/"
+  const path = value.slice(0, 1_000)
+  try {
+    const origin = new URL(publicUrl).origin
+    if (new URL(path, origin).origin !== origin) return "/"
+    return path
+  } catch {
+    return "/"
+  }
 }
 
 function page(title: string, message: string, action: { href: string; label: string }) {
@@ -52,7 +60,7 @@ a{display:inline-block;background:#011627;color:#fff;text-decoration:none;font-s
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex")
 
 /** What sign-in needs from Den. */
-export type DenAuth = Pick<Den, "authorizeUrl" | "exchangeCode" | "session" | "refresh" | "revoke">
+export type DenAuth = Pick<Den, "authorizeUrl" | "exchangeCode" | "session" | "refresh" | "revoke"> & Partial<Pick<Den, "recordSignIn">>
 
 export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCookies" | "sessionSecret">; den: DenAuth; now?: () => number }) {
   const { config, den } = input
@@ -67,7 +75,9 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
   /** Keyed by the refresh token being spent: Den rotates refresh tokens, so each one is spent once. */
   const refreshing = new Map<string, Promise<Tokens>>()
   const refreshed = new Map<string, { at: number; tokens: Tokens }>()
-  const denSessions = new Map<string, { at: number; value: DenSession }>()
+  /** Refresh tokens Den asked Workbot to wait on, and until when: no call reaches Den before then. */
+  const coolingDown = new Map<string, number>()
+  const denSessions = new Map<string, { at: number; tokenHash: string; value: DenSession }>()
 
   const readSession = (c: Context) => sealer.open(SESSION_PURPOSE, getCookie(c, sessionCookie), sessionSchema)
   const writeSession = (c: Context, session: Session) => {
@@ -87,8 +97,21 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
     if (!refreshToken) throw new DenSignedOutError()
     const key = hashToken(refreshToken)
     for (const [entry, value] of refreshed) if (now() - value.at > REFRESHED_REUSE_MS) refreshed.delete(entry)
+    for (const [entry, until] of coolingDown) if (until <= now()) coolingDown.delete(entry)
     const recent = refreshed.get(key)
     if (recent) return { tokens: recent.tokens, changed: true }
+    try {
+      return { tokens: await refreshOnce(key, refreshToken), changed: true }
+    } catch (error) {
+      // While Den asks Workbot to wait, an access token that is still good keeps working.
+      if (error instanceof DenRateLimitedError && session.tokens.expiresAt > now()) return { tokens: session.tokens, changed: false }
+      throw error
+    }
+  }
+
+  const refreshOnce = (key: string, refreshToken: string) => {
+    const until = coolingDown.get(key)
+    if (until !== undefined) return Promise.reject(new DenRateLimitedError(Math.max(1, Math.ceil((until - now()) / 1000))))
     let pending = refreshing.get(key)
     if (!pending) {
       pending = den
@@ -96,43 +119,83 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
         .then((tokens) => {
           refreshed.set(key, { at: now(), tokens })
           return tokens
+        }, (error: unknown) => {
+          if (error instanceof DenRateLimitedError) {
+            coolingDown.set(key, now() + error.retryAfter * 1000)
+            reportError("token_refresh_failed", error, { response: "den_unavailable", reason: "rate_limited" })
+          }
+          throw error
         })
         .finally(() => refreshing.delete(key))
       refreshing.set(key, pending)
     }
-    return { tokens: await pending, changed: true }
+    return pending
   }
 
   const denSession = async (sessionId: string, accessToken: string) => {
+    const tokenHash = hashToken(accessToken)
     const cached = denSessions.get(sessionId)
-    if (cached && now() - cached.at < DEN_SESSION_CACHE_MS) return cached.value
+    if (cached && cached.tokenHash === tokenHash && now() - cached.at < DEN_SESSION_CACHE_MS) return cached.value
     const value = await den.session(accessToken)
-    denSessions.set(sessionId, { at: now(), value })
+    denSessions.set(sessionId, { at: now(), tokenHash, value })
     if (denSessions.size > 10_000) {
       for (const [entry, cachedValue] of denSessions) if (now() - cachedValue.at >= DEN_SESSION_CACHE_MS) denSessions.delete(entry)
     }
     return value
   }
 
-  /** Requires a signed-in person; 401 `signed_out` sends the page to /auth/login. */
+  /** Requires a current session; a scope-bound tab may only see its original identity. */
   const member: MiddlewareHandler<AppEnv> = async (c, next) => {
     const session = readSession(c)
     if (!session) {
       if (getCookie(c, sessionCookie)) deleteCookie(c, sessionCookie, cookieOptions)
       return c.json({ error: "signed_out" }, 401)
     }
+    // Which call failed, so a refresh failure is reported as one rather than as Den being unavailable.
+    let stage: "refresh" | "session" = "refresh"
+    // Den has already rotated the refresh token, so the cookie must stop carrying the old one whatever happens next.
+    let rotated: Session | null = null
     try {
       const { tokens, changed } = await freshTokens(session)
+      stage = "session"
       const current = { ...session, tokens }
-      if (changed) writeSession(c, current)
+      if (changed) rotated = current
       const value = await denSession(session.id, tokens.accessToken)
+      if (value.user.id !== session.userId || value.organization.id !== session.organizationId) {
+        // Never write another subject's tokens into this sign-in. If a refresh just spent its refresh token, the
+        // sign-in can't be resumed anyway, so end it rather than leave a token Den has rotated away in the cookie.
+        if (rotated) endSession(c, session.id)
+        return c.json({ error: "identity_changed", message: "The signed-in account or workspace changed. Sign in again before restoring work." }, 401)
+      }
+      if (rotated) writeSession(c, rotated)
+      const expectedUser = c.req.header("x-openwork-client-user")
+      const expectedOrganization = c.req.header("x-openwork-client-organization")
+      if ((expectedUser !== undefined || expectedOrganization !== undefined)
+        && (expectedUser !== value.user.id || expectedOrganization !== value.organization.id)) {
+        // A stale tab cannot receive a newly signed-in person's data. These
+        // claims only restrict the authenticated identity; they never select it.
+        return c.json({ error: "identity_changed", message: "The signed-in account or workspace changed. Check sign-in before restoring work." }, 401)
+      }
       c.set("member", { session: current, accessToken: tokens.accessToken, den: value })
     } catch (error) {
       if (error instanceof DenSignedOutError) {
         endSession(c, session.id)
         return c.json({ error: "signed_out" }, 401)
       }
+      // Den couldn't say who this is, but keep what the refresh produced: the next request uses those tokens.
+      if (rotated) {
+        try {
+          writeSession(c, rotated)
+        } catch {
+          // Too large to write; the failure itself is reported below.
+        }
+      }
+      if (error instanceof DenRateLimitedError) {
+        // Reported once, when Den answered; requests during the wait don't reach Den.
+        return c.json({ error: "den_unavailable" }, 503, { "Retry-After": String(error.retryAfter) })
+      }
       console.error("[workbot] den unavailable", { error: error instanceof Error ? error.message : "unknown" })
+      reportError(stage === "refresh" ? "token_refresh_failed" : "den_unavailable", error, { response: "den_unavailable" })
       return c.json({ error: "den_unavailable" }, 503)
     }
     await next()
@@ -152,12 +215,13 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
       const state = randomToken()
       const verifier = randomToken()
       // Ties the sign-in to this browser, so a link someone else started can't sign it in as them.
-      const login = { state, verifier, returnTo: safeReturnPath(c.req.query("return")), createdAt: now() }
+      const login = { state, verifier, returnTo: safeReturnPath(c.req.query("return"), config.publicUrl), createdAt: now() }
       setCookie(c, loginCookie, sealer.seal(LOGIN_PURPOSE, login), { ...cookieOptions, maxAge: LOGIN_TTL_MS / 1000 })
       try {
-        return c.redirect(await den.authorizeUrl({ state, verifier }), 302)
+        return c.redirect(await den.authorizeUrl({ state, verifier, chooseWorkspace: c.req.query("workspace") === "choose" }), 302)
       } catch (error) {
         console.error("[workbot] sign-in unavailable", { error: error instanceof Error ? error.message : "unknown" })
+        reportError("sign_in_unavailable", error)
         return c.html(page("Workbot can't reach OpenWork", "Signing in isn't working right now. Try again in a minute.", { href: "/auth/login", label: "Try again" }), 503)
       }
     })
@@ -173,10 +237,14 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
       try {
         const tokens = await den.exchangeCode(code, login.verifier)
         const who = await den.session(tokens.accessToken)
-        writeSession(c, { id: randomToken(), userId: who.user.id, organizationId: who.organization.id, tokens, createdAt: now() })
+        const id = randomToken()
+        writeSession(c, { id, userId: who.user.id, organizationId: who.organization.id, tokens, createdAt: now() })
+        void den.recordSignIn?.(tokens.accessToken, id).catch(() => undefined)
         return c.redirect(login.returnTo, 302)
       } catch (error) {
         console.error("[workbot] sign-in failed", { error: error instanceof Error ? error.message : "unknown" })
+        // Den refusing the code (a reused or expired link) is tagged apart from Den failing.
+        reportError("sign_in_failed", error, { reason: error instanceof DenSignedOutError ? "rejected" : "error" })
         return c.html(page("Let's try that again", "OpenWork didn't finish signing you in.", { href: "/auth/login", label: "Sign in" }), 400)
       }
     })

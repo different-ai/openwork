@@ -10,6 +10,7 @@ export default defineConfig({
     "gateway-routing": "src/gateway-routing.ts",
     "gateway-env": "src/gateway-env.ts",
     "gateway-rollups": "src/gateway-rollups.ts",
+    "client-ip-signature": "src/client-ip-signature.ts",
     "inference-egress": "src/inference-egress.ts",
     "inference-credentials": "src/inference-credentials.ts",
     "bedrock-mantle-catalog": "src/bedrock-mantle-catalog.ts",

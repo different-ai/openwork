@@ -1,9 +1,9 @@
-name: Alpha Channel (macOS arm64)
+name: Alpha Channels (macOS arm64 + Windows x64)
 
-# Every app-related push to `dev` publishes a fresh macOS arm64 build to the
-# single rolling `alpha-macos-latest` release. Each run appends
-# uniquely-versioned dmg, zip, and blockmap assets, then re-uploads
-# `latest-mac.yml` last so the manifest never references missing assets.
+# Every app-related push to `dev` publishes fresh builds to the rolling
+# `alpha-macos-latest` and `alpha-windows-latest` releases. Each run appends
+# uniquely-versioned installers and blockmaps, then re-uploads the updater
+# manifest last so it never references missing assets.
 #
 # Assets older than the retention window are pruned. Per-run GitHub releases
 # are no longer created.
@@ -20,6 +20,7 @@ on:
       - apps/server/**
       - packages/docs/**
       - packages/enterprise-mcp-client/**
+      - packages/computer-use/**
       - packages/install-config/**
       - packages/paths/**
       - packages/types/**
@@ -33,29 +34,51 @@ on:
       - .github/workflows/alpha-macos-aarch64.yml
   workflow_dispatch:
     inputs:
+      platform:
+        description: "Platform to build (pushes to dev build both)"
+        required: false
+        type: choice
+        default: all
+        options:
+          - all
+          - macos-arm64
+          - windows-x64
       publish:
         description: "Publish the packaged build to the alpha channel release (leave off for build-only validation)"
         required: false
         type: boolean
         default: false
       channel_tag:
-        description: "Channel release tag to publish to (override for staging validation)"
+        description: "macOS channel release tag (override for staging validation)"
         required: false
         type: string
         default: "alpha-macos-latest"
+      windows_channel_tag:
+        description: "Windows channel release tag (override for staging validation)"
+        required: false
+        type: string
+        default: "alpha-windows-latest"
 
 permissions:
   contents: write
 
 concurrency:
-  group: alpha-macos-aarch64-${{ github.ref }}
+  group: alpha-desktop-${{ github.ref }}-${{ inputs.platform || 'all' }}
   cancel-in-progress: true
 
 jobs:
   publish-alpha-macos-aarch64:
+    if: github.event_name == 'push' || inputs.platform != 'windows-x64'
     name: Build + Publish alpha (aarch64-apple-darwin)
     runs-on: macos-14
+    # Apple signing secrets belong to this environment; no deployment is recorded.
+    environment:
+      name: macos-signing
+      deployment: false
     timeout-minutes: 180
+    concurrency:
+      group: alpha-macos-${{ inputs.channel_tag || 'alpha-macos-latest' }}
+      cancel-in-progress: false
 
     env:
       ALPHA_RELEASE_NAME: OpenWork Alpha (macOS arm64)
@@ -78,7 +101,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -246,3 +269,218 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CHANNEL_TAG: ${{ inputs.channel_tag || 'alpha-macos-latest' }}
         run: node scripts/release/prune-alpha-assets.mjs --repo "$GITHUB_REPOSITORY" --tag "$CHANNEL_TAG" --keep 100
+
+  publish-alpha-windows-x64:
+    if: github.event_name == 'push' || inputs.platform != 'macos-arm64'
+    name: Build + Publish alpha (x86_64-pc-windows-msvc)
+    runs-on: blacksmith-8vcpu-windows-2025
+    environment: windows-signing
+    timeout-minutes: 120
+    permissions:
+      contents: write
+      id-token: write
+    # Different refs/platform dispatches must not race the rolling manifest.
+    concurrency:
+      group: alpha-windows-${{ inputs.windows_channel_tag || 'alpha-windows-latest' }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
+    env:
+      ALPHA_RELEASE_NAME: OpenWork Alpha (Windows x64)
+      CHANNEL_TAG: ${{ inputs.windows_channel_tag || 'alpha-windows-latest' }}
+      PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false"
+      OPENWORK_DESKTOP_SENTRY_DSN: ${{ secrets.OPENWORK_DESKTOP_SENTRY_DSN || vars.OPENWORK_DESKTOP_SENTRY_DSN }}
+      OPENWORK_DESKTOP_SENTRY_TRACES_SAMPLE_RATE: ${{ vars.OPENWORK_DESKTOP_SENTRY_TRACES_SAMPLE_RATE || '0.01' }}
+
+    steps:
+      - name: Validate Windows alpha channel tag
+        run: |
+          set -euo pipefail
+          case "$CHANNEL_TAG" in
+            alpha-windows-*) ;;
+            *)
+              echo "Refusing to publish alpha assets to non-Windows-alpha tag: $CHANNEL_TAG" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Enable git long paths
+        run: git config --global core.longpaths true
+
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        continue-on-error: true
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: Windows-electron-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            Windows-electron-pnpm-
+
+      - name: Install dependencies
+        run: pnpm --filter @openwork/desktop... --filter @openwork/app... --filter openwork-server... install --frozen-lockfile --prefer-offline
+
+      - name: Resolve alpha version
+        id: alpha-version
+        run: |
+          set -euo pipefail
+          base="$(node scripts/release/versions.mjs next --bump patch)"
+          sha="$(printf '%.7s' "$GITHUB_SHA")"
+          # Reruns re-sign different bytes: never reuse a versioned asset name.
+          version="${base}-alpha.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          echo "alpha_version=${version}+${sha}" >> "$GITHUB_OUTPUT"
+          # Electron Builder omits semver build metadata in artifact filenames.
+          echo "artifact_version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Write alpha Electron package version
+        env:
+          ALPHA_VERSION: ${{ steps.alpha-version.outputs.alpha_version }}
+        run: node scripts/release/stamp-version.mjs --version "$ALPHA_VERSION"
+
+      - name: Build Electron alpha app
+        id: alpha-build
+        env:
+          TARGET: x86_64-pc-windows-msvc
+        run: |
+          set -euo pipefail
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "started_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+          pnpm --filter @openwork/desktop build:electron
+
+      - name: Test Windows signing scripts
+        shell: pwsh
+        run: |
+          node --test apps/desktop/test/windows-sign.test.cjs
+          if ($LASTEXITCODE) { throw 'Signing hook tests failed' }
+          ./scripts/release/windows-signatures.test.ps1
+
+      # Signing must be configured BEFORE builder creates the app and NSIS uninstaller.
+      - name: Configure Windows lifecycle signing
+        uses: ./.github/actions/windows-signing
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT || secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          account: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT || secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE || secrets.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE }}
+
+      - name: Package Electron alpha (Windows x64)
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.yml \
+            --config.detectUpdateChannel=false \
+            --win --x64 \
+            --publish never
+
+      - name: Verify Windows signature and version
+        shell: pwsh
+        env:
+          ALPHA_VERSION: ${{ steps.alpha-version.outputs.artifact_version }}
+        run: |
+          $dist = Join-Path $env:GITHUB_WORKSPACE "apps\desktop\dist-electron"
+          $installers = @(Get-ChildItem $dist -Filter "*.exe")
+          if ($installers.Count -ne 1 -or $installers[0].Name -ne "openwork-win-x64-$($env:ALPHA_VERSION).exe") {
+            throw "Expected exactly one x64 installer carrying alpha version $($env:ALPHA_VERSION)"
+          }
+          $signature = Get-AuthenticodeSignature $installers[0].FullName
+          Write-Host "$($installers[0].Name): $($signature.Status) - $($signature.SignerCertificate.Subject)"
+          if ($signature.Status -ne "Valid") {
+            throw "$($installers[0].Name) signature is $($signature.Status)"
+          }
+
+      - name: Verify every packaged and installed Windows PE
+        shell: pwsh
+        run: ./scripts/release/windows-signatures.ps1 -Mode VerifyPackage -Path apps/desktop/dist-electron
+
+      - name: Refresh signed installer blockmap and manifest
+        run: node scripts/release/refresh-signed-windows-artifacts.mjs apps/desktop/dist-electron 1
+
+      - name: Retain Windows alpha build
+        if: github.event_name == 'workflow_dispatch' && inputs.publish != true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: openwork-alpha-windows-x64
+          path: |
+            apps/desktop/dist-electron/openwork-win-x64-*.exe
+            apps/desktop/dist-electron/openwork-win-x64-*.exe.blockmap
+            apps/desktop/dist-electron/latest.yml
+            apps/desktop/dist-electron/signature-evidence/**
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish Windows alpha build to rolling release
+        id: publish-windows
+        if: github.event_name == 'push' || inputs.publish == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALPHA_COMMIT: ${{ steps.alpha-build.outputs.commit }}
+          ALPHA_BUILD_STARTED_AT: ${{ steps.alpha-build.outputs.started_at }}
+          ALPHA_VERSION: ${{ steps.alpha-version.outputs.artifact_version }}
+        run: |
+          set -euo pipefail
+          installer="apps/desktop/dist-electron/openwork-win-x64-${ALPHA_VERSION}.exe"
+          # Require all assets before creating the release or uploading anything.
+          for asset in "$installer" "$installer.blockmap" apps/desktop/dist-electron/latest.yml; do
+            test -s "$asset" || { echo "Missing Windows alpha asset: $asset" >&2; exit 1; }
+          done
+          published_assets="$(mktemp)"
+          trap 'rm -f "$published_assets"' EXIT
+          if gh release view "$CHANNEL_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' > "$published_assets"; then
+            # Under the channel lock, do not move the feed behind any uploaded build.
+            if [ "$(node scripts/release/check-windows-alpha-version.mjs "$ALPHA_VERSION" "$published_assets")" != publish ]; then
+              echo "Skipping alpha $ALPHA_VERSION: an equal or newer build is already uploaded."
+              exit 0
+            fi
+          else
+            gh release create "$CHANNEL_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$ALPHA_RELEASE_NAME" \
+              --notes "Rolling alpha channel for OpenWork Windows x64 builds. Each publish adds signed, versioned updater assets and advances the channel manifest." \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --latest=false
+          fi
+          labeled_assets=()
+          for asset in "$installer" "$installer.blockmap"; do
+            labeled_assets+=("$asset#${asset##*/} (commit $ALPHA_COMMIT; build started $ALPHA_BUILD_STARTED_AT)")
+          done
+          # Versioned installers are immutable; only the rolling manifest is replaced.
+          gh release upload "$CHANNEL_TAG" "${labeled_assets[@]}" \
+            --repo "$GITHUB_REPOSITORY"
+          # Publish last: never advertise bytes that have not been uploaded.
+          gh release upload "$CHANNEL_TAG" apps/desktop/dist-electron/latest.yml \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          echo "published=true" >> "$GITHUB_OUTPUT"
+
+      - name: Prune Windows alpha assets beyond retention window
+        if: (github.event_name == 'push' || inputs.publish == true) && steps.publish-windows.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/prune-alpha-assets.mjs --repo "$GITHUB_REPOSITORY" --tag "$CHANNEL_TAG" --keep 100 --protect-run "$GITHUB_RUN_NUMBER"

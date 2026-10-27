@@ -1,5 +1,5 @@
-import { and, asc, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
-import { AuthUserTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
+import { and, asc, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { AuthUserTable, MemberTable, OrganizationTable, OrgSubscriptionTable } from "@openwork-ee/den-db/schema"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { adminOrganizationDetailSchema, adminOrganizationInsightsSchema, adminOrganizationUsageSchema } from "@openwork/types/den/admin-organization"
 import type { Hono } from "hono"
@@ -10,6 +10,9 @@ import { parseOrganizationPlan } from "../../entitlements.js"
 import { adminRoute, queryValidator } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata } from "../../organization-limits.js"
+import { getOrganizationPlanStates } from "../../organization-plan-state.js"
+import { readAdminOpenWorkWebAccess } from "./openwork-web-access-state.js"
+import { getOrganizationPeopleCounts } from "../../stripe-billing.js"
 import type { AuthContextVariables } from "../../session.js"
 import { readAdminOrganizationInsights, readAdminOrganizationUsage } from "../org/gateway-usage.js"
 import { buildAdminPageInfo, normalizeAdminPageRequest, sanitizeAdminSearchForLike, type AdminPageRequest } from "./scale-performance.js"
@@ -32,11 +35,29 @@ async function organizationDetail(id: typeof OrganizationTable.$inferSelect.id, 
     db.select({ total: sql<number>`count(*)` }).from(MemberTable).leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id)).where(filter),
   ])
   const metadata = normalizeOrganizationMetadata(organization.metadata).metadata
+  const [planStates, people, subscriptionRows] = await Promise.all([
+    getOrganizationPlanStates([organization]),
+    getOrganizationPeopleCounts(id),
+    db.select({
+      type: OrgSubscriptionTable.type, status: OrgSubscriptionTable.status, stripe_price_id: OrgSubscriptionTable.stripe_price_id,
+      payment_failed: OrgSubscriptionTable.payment_failed, currentPeriodEnd: OrgSubscriptionTable.current_period_end, cancelAtPeriodEnd: OrgSubscriptionTable.cancel_at_period_end,
+    }).from(OrgSubscriptionTable).where(and(eq(OrgSubscriptionTable.organization_id, id), inArray(OrgSubscriptionTable.type, ["seat", "enterprise", "web"]))),
+  ])
+  const plan = planStates.get(organization.id)
+  const subscription = (type: "seat" | "enterprise") => {
+    const row = subscriptionRows.find((entry) => entry.type === type)
+    return row ? { status: row.status, currentPeriodEnd: row.currentPeriodEnd?.toISOString() ?? null, cancelAtPeriodEnd: row.cancelAtPeriodEnd } : null
+  }
+  const web = readAdminOpenWorkWebAccess(metadata, subscriptionRows.find((entry) => entry.type === "web") ?? null)
   return {
     organization: {
       id: organization.id, name: organization.name, slug: organization.slug, createdAt: organization.createdAt.toISOString(),
       planTier: parseOrganizationPlan(metadata).tier, seatLimit: metadata.limits.members ?? DEFAULT_ORGANIZATION_LIMITS.members,
       memberCount: Number(totals[0]?.total ?? 0),
+      ...(plan ? { plan } : {}),
+      people: { joined: people.joined, invited: people.invited },
+      subscriptions: { team: subscription("seat"), enterprise: subscription("enterprise") },
+      openworkWeb: { complimentaryAccess: web.complimentaryAccess, hasAccess: web.hasAccess, hasOngoingSubscription: web.hasOngoingSubscription, subscriptionStatus: web.subscriptionStatus },
     },
     members: members.map((member) => ({ ...member, joinedAt: member.joinedAt?.toISOString() ?? null })),
     page: buildAdminPageInfo(request, Number(matching[0]?.total ?? 0), members.length, Date.now() - started),
@@ -51,7 +72,7 @@ export function registerAdminOrganizationDetailRoutes<T extends { Variables: Aut
     app.get(`/v1/admin/organizations/:organizationId${section === "members" ? "" : `/${section}`}`,
       describeRoute({
         tags: ["Admin"], summary: insights ? "Get organization activity, people and model insights" : usage ? "Get organization usage and a bounded member page" : "Get an organization and a bounded member page",
-        description: insights ? "Returns two 30-day UTC usage periods, 30 daily totals, at most eight people and eight models ranked by requests. Adoption counts current non-setup memberships with recorded gateway use. Totals include historical members, preserve unknown accounting coverage and never read prompts or conversation content." : usage ? "Returns the organization's last 30 UTC days of gateway usage, with requests, reported tokens, recorded cost and accounting coverage. Member usage is bounded to the requested member page; organization totals include all members, including removed members. Raw and retained usage use the same accounting as the organization dashboard." : "Returns organization identity, plan, seats and active memberships. Members are searched and paginated on the server. Does not calculate usage or resolve feature maps.",
+        description: insights ? "Returns two 30-day UTC usage periods, 30 daily totals, at most eight people and eight models ranked by requests. Adoption counts current non-setup memberships with recorded gateway use. Totals include historical members, preserve unknown accounting coverage and never read prompts or conversation content." : usage ? "Returns the organization's last 30 UTC days of gateway usage, with requests, reported tokens, recorded cost and accounting coverage. Member usage is bounded to the requested member page; organization totals include all members, including removed members. Raw and retained usage use the same accounting as the organization dashboard." : "Returns organization identity, the resolved plan (tier, who pays, users and the user limit every join path enforces, optional end date), and active memberships. Members are searched and paginated on the server. Does not calculate usage or resolve feature maps.",
         responses: {
           200: jsonResponse("Organization detail returned.", insights ? adminOrganizationInsightsSchema : usage ? adminOrganizationUsageSchema : adminOrganizationDetailSchema),
           400: jsonResponse("Invalid organization id or pagination query.", invalidRequestSchema),
@@ -62,9 +83,15 @@ export function registerAdminOrganizationDetailRoutes<T extends { Variables: Aut
         c.header("Cache-Control", "no-store")
         const id = c.req.param("organizationId")
         if (!isDenTypeId("organization", id)) return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
-        const detail = await organizationDetail(id, normalizeAdminPageRequest(c.req.valid("query")))
+        const request = normalizeAdminPageRequest(c.req.valid("query"))
+        if (insights) {
+          // Insights do not depend on the member page, so read both at once.
+          const [detail, report] = await Promise.all([organizationDetail(id, request), readAdminOrganizationInsights(id)])
+          if (!detail) return c.json({ error: "not_found", message: "Organization not found." }, 404)
+          return c.json({ ...detail, insights: report })
+        }
+        const detail = await organizationDetail(id, request)
         if (!detail) return c.json({ error: "not_found", message: "Organization not found." }, 404)
-        if (insights) return c.json({ ...detail, insights: await readAdminOrganizationInsights(id) })
         if (!usage) return c.json(detail)
         return c.json({ ...detail, usage: await readAdminOrganizationUsage(id, detail.members.map((member) => member.id)) })
       })

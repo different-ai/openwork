@@ -47,6 +47,16 @@ test("a platform admin identifies accounts and paid customers who came back afte
     evidence.recordAssertionEvidence("Repeated limit status checks do not add people", "Two exhausted responses from the real Gateway produce one anonymous journey and no attributed account.", report.totals.reachedLimit === 1 && report.rows[0]?.userId === null);
   });
 
+  await step("a repeated exhausted check answers without waiting on analytics storage", async () => {
+    const result = await world.exhaustedCheckWhileAnalyticsLocked(newJourney);
+    expect(result).toMatchObject({ status: 200, state: "exhausted" });
+    expect(result.elapsedMs).toBeLessThan(3_000);
+    expect((await world.report()).totals.reachedLimit).toBe(1);
+    evidence.recordAssertionEvidence("Limit analytics stay off the free Auto request path",
+      `With this network's analytics row locked for 8 s, a repeat check for an already recorded journey answered "${String(result.state)}" in ${result.elapsedMs} ms and added no observation.`,
+      result.state === "exhausted" && result.elapsedMs < 3_000);
+  });
+
   await step("after: the admin can distinguish a new account from an existing free member returning", async () => {
     expect((await world.exhaustGuest(returningJourney)).body.state).toBe("exhausted");
     await world.createAccountAndReturn(newJourney);

@@ -144,27 +144,27 @@ test("effective admin: direct admin, legacy super-admin, or an Admin team", () =
 })
 
 test("the owner holds every catalog key", () => {
-  const permissions = memberPermissionsFromGrants({ featureEnabled: true, isOwner: true, isAdmin: false, grants: ownerPermissionGrants() })
+  const permissions = memberPermissionsFromGrants({ isOwner: true, isAdmin: false, grants: ownerPermissionGrants() })
   assert.equal(permissions.keys.size, PERMISSION_KEYS.length)
   for (const key of PERMISSION_KEYS) assert.ok(permissions.has(key))
   assert.deepEqual(allPermissionKeys(), [...PERMISSION_KEYS].sort())
 })
 
 test("the owner holds every key even when grants are empty", () => {
-  const permissions = memberPermissionsFromGrants({ featureEnabled: true, isOwner: true, isAdmin: false, grants: [] })
+  const permissions = memberPermissionsFromGrants({ isOwner: true, isAdmin: false, grants: [] })
   assert.equal(permissions.keys.size, PERMISSION_KEYS.length)
 })
 
 function featureOffKeys(input: { directRole: string; adminTeamIds: string[] }): ReadonlySet<PermissionKey> {
   const isAdmin = isEffectiveOrganizationAdmin(input)
-  return memberPermissionsFromGrants({ featureEnabled: false, isOwner: false, isAdmin, grants: codeDefaultPermissionGrants({ isAdmin }) }).keys
+  return memberPermissionsFromGrants({ isOwner: false, isAdmin, grants: codeDefaultPermissionGrants({ isAdmin }) }).keys
 }
 
-test("feature off: members get Member code defaults only", () => {
+test("database fallback: members get Member code defaults only", () => {
   assert.deepEqual([...featureOffKeys({ directRole: "member", adminTeamIds: [] })].sort(), [...permissionDefaultKeys("member")].sort())
 })
 
-test("feature off: admins and Admin team members also get Admin code defaults", () => {
+test("database fallback: admins and Admin team members also get Admin code defaults", () => {
   const expected = [...new Set([...permissionDefaultKeys("member"), ...permissionDefaultKeys("admin")])].sort()
   assert.deepEqual([...featureOffKeys({ directRole: "admin", adminTeamIds: [] })].sort(), expected)
   assert.deepEqual([...featureOffKeys({ directRole: "member", adminTeamIds: ["tem_1"] })].sort(), expected)
@@ -172,7 +172,7 @@ test("feature off: admins and Admin team members also get Admin code defaults", 
   assert.equal(featureOffKeys({ directRole: "member", adminTeamIds: [] }).has("permissions.view"), false)
 })
 
-test("feature off: former super-admin actions stay with the owner, not admins", () => {
+test("database fallback: former super-admin actions stay with the owner, not admins", () => {
   for (const key of ["permissions.manage", "members.update", "teams.manage_admin", "sso.manage", "scim.manage", "api_keys.manage", "connections.update", "connections.delete", "billing_portal.use"] as const) {
     assert.equal(featureOffKeys({ directRole: "admin", adminTeamIds: [] }).has(key), false, key)
     assert.equal(featureOffKeys({ directRole: "member", adminTeamIds: ["tem_1"] }).has(key), false, key)
@@ -184,7 +184,7 @@ test("permissions are the union of grants, and explanations list every source", 
     { source: { kind: "member_default" as const, setId: "pms_m", setName: "Member permissions" }, keys: new Set<PermissionKey>(["billing.view"]) },
     { source: { kind: "team" as const, setId: "pms_t", setName: "Support Permissions", teamId: "tem_s", teamName: "Support" }, keys: new Set<PermissionKey>(["billing.view", "audit.view"]) },
   ]
-  const permissions = memberPermissionsFromGrants({ featureEnabled: true, isOwner: false, isAdmin: false, grants })
+  const permissions = memberPermissionsFromGrants({ isOwner: false, isAdmin: false, grants })
   assert.deepEqual([...permissions.keys].sort(), ["audit.view", "billing.view"])
   assert.equal(permissions.has("billing.manage"), false)
   assert.deepEqual(explainPermissionGrants(grants), [

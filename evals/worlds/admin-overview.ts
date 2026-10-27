@@ -1,5 +1,5 @@
 import { queryDenDatabase, type Seed } from "@openwork/env";
-import { adminDashboardSchema, adminOrganizationDetailSchema, adminOrganizationInsightsSchema, adminOrganizationUsageSchema } from "@openwork/types/den/admin-organization";
+import { adminActiveUsersSchema, adminDashboardSchema, adminOrganizationDetailSchema, adminOrganizationInsightsSchema, adminOrganizationUsageSchema } from "@openwork/types/den/admin-organization";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -64,6 +64,12 @@ export async function adminOverviewWorld(seed: Seed) {
   await queryDenDatabase(databaseUrl, "UPDATE gateway_usage_rollups SET upstream_model = 'test-active-model' WHERE dimension_key = 'admin-organization-retained' AND organization_id = ?", [organizationId]);
   await queryDenDatabase(databaseUrl, "INSERT INTO gateway_usage_rollups (id, granularity, bucket_start, dimension_key, organization_id, org_membership_id, route, protocol, upstream_provider_id, upstream_model, request_count, ok_count, total_tokens, total_tokens_count, cost_micro_usd, cost_count) VALUES (?, 'day', DATE_SUB(UTC_DATE(), INTERVAL 40 DAY), 'admin-organization-prior', ?, ?, 'org_provider', 'openai_chat', 'fixture', 'previous-period-model', 3, 3, 300, 3, 750000, 3)", [`iur_${"3".padStart(26, "0")}`, organizationId, memberId]);
   await queryDenDatabase(databaseUrl, "INSERT INTO gateway_usage_rollups (id, granularity, bucket_start, dimension_key, organization_id, org_membership_id, route, protocol, upstream_provider_id, upstream_model, request_count, ok_count, total_tokens, total_tokens_count, cost_micro_usd, cost_count) VALUES (?, 'day', DATE_SUB(UTC_DATE(), INTERVAL 70 DAY), 'admin-organization-outside', ?, ?, 'org_provider', 'openai_chat', 'fixture', 'outside-window-model', 100, 100, 10000, 100, 90000000, 100)", [`iur_${"4".padStart(26, "0")}`, organizationId, memberId]);
+  const overrides = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
+    method: "PUT", body: JSON.stringify({ capabilities: { liveProviderSync: false, workbotDocuments: true } }),
+  });
+  if (!overrides.response.ok) throw new Error("Could not set up organization feature overrides.");
+  const killed = await seed.api(den.admin, "/v1/admin/features/automationCalendar", { method: "PUT", body: JSON.stringify({ killed: true }) });
+  if (!killed.response.ok) throw new Error("Could not set up a globally disabled feature.");
   const viewport = { width: 1280, height: 700 };
   const anonymous = await seed.web({ den, startPath: "/admin/users?search=Routing&page=2", headless: true, viewport });
   const admin = await seed.web({ den, signedInAs: den.admin, startPath: "/admin/users", headless: true, viewport: { width: 1280, height: 200 } });
@@ -73,6 +79,13 @@ export async function adminOverviewWorld(seed: Seed) {
     detailPath: `/admin/organizations/${organizationId}`,
     emptyDetailPath: `/admin/organizations/${emptyOrganizationId}`,
     unpricedMemberId: unpricedId,
+    async featureState(key: string, foreign = false) {
+      const result = await seed.api(den.admin, `/v1/admin/organizations/${foreign ? foreignOrganizationId : organizationId}/capabilities`);
+      if (!result.response.ok || !isRecord(result.body) || !isRecord(result.body.featureStates)) throw new Error("Could not read organization features.");
+      const state = result.body.featureStates[key];
+      if (!isRecord(state)) throw new Error(`Missing feature state for ${key}.`);
+      return state;
+    },
     async organizationMembers(query = "") {
       const result = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}?${query}`);
       if (!result.response.ok) throw new Error(`Organization members failed (${result.response.status}).`);
@@ -88,6 +101,14 @@ export async function adminOverviewWorld(seed: Seed) {
       if (!result.response.ok) throw new Error(`Dashboard failed (${result.response.status}).`);
       return adminDashboardSchema.parse(result.body);
     },
+    async activeUsers() {
+      const result = await seed.api(den.admin, "/v1/admin/dashboard/active-users");
+      if (!result.response.ok) throw new Error(`Active users failed (${result.response.status}).`);
+      return adminActiveUsersSchema.parse(result.body);
+    },
+    async activeUsersAccess() {
+      return (await seed.api(den.members.member, "/v1/admin/dashboard/active-users")).response.status;
+    },
     async dashboardAccess() {
       return (await seed.api(den.members.member, "/v1/admin/dashboard")).response.status;
     },
@@ -99,6 +120,7 @@ export async function adminOverviewWorld(seed: Seed) {
     async organizationAccess() {
       return {
         member: (await seed.api(den.members.member, `/v1/admin/organizations/${organizationId}`)).response.status,
+        memberFeatures: (await seed.api(den.members.member, `/v1/admin/organizations/${organizationId}/capabilities`)).response.status,
         memberInsights: (await seed.api(den.members.member, `/v1/admin/organizations/${organizationId}/insights`)).response.status,
         memberUsage: (await seed.api(den.members.member, `/v1/admin/organizations/${organizationId}/usage`)).response.status,
         missing: (await seed.api(den.admin, `/v1/admin/organizations/org_${"0".repeat(26)}`)).response.status,
@@ -147,6 +169,7 @@ export async function adminOverviewWorld(seed: Seed) {
           overview: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/admin/overview")).length,
           usage: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/inference-usage")).length,
           dashboard: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/admin/dashboard")).length,
+          activeUsers: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/admin/dashboard/active-users")).length,
           metrics: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/admin/metrics")).length,
           organizationInsights: resources.filter((entry) => /\/v1\/admin\/organizations\/[^/]+\/insights$/.test(new URL(entry.name).pathname)).length,
           organizationUsage: resources.filter((entry) => /\/v1\/admin\/organizations\/[^/]+\/usage$/.test(new URL(entry.name).pathname)).length,

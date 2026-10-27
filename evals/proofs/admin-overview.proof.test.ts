@@ -49,38 +49,97 @@ test("an admin navigates organizations and member usage without loading every de
     await admin.screenshot();
   });
 
-  await step("the admin opens one organization's feature editor on demand", async () => {
+  await step("before: the organization list links to features without loading the editors", async () => {
     await admin.click({ role: "link", label: "Organizations" });
     await admin.see({ role: "heading", label: "Organizations" });
-    await admin.see({ testId: "admin-organization-features" });
-    const before = await adminProbe.dom('[data-testid^="admin-capability-"]');
-    expect(before.elements.length).toBe(0);
-    const initialTraffic = await world.traffic("admin");
-    expect(initialTraffic.features).toBe(0);
-    expect(initialTraffic.lightOrganizations).toBe(1);
+    await admin.see({ testId: "admin-organization-features-link" });
+    const controls = await adminProbe.dom('[data-testid^="admin-capability-"]');
+    const traffic = await world.traffic("admin");
     const payloads = await world.organizationPayloads();
-    expect(payloads.fullCount).toBeGreaterThan(0);
-    expect(payloads.lightCount).toBe(payloads.fullCount);
-    expect(payloads.fullWithFeatures).toBe(payloads.fullCount);
-    expect(payloads.lightWithFeatures).toBe(0);
-    await admin.click({ testId: "admin-organization-features-toggle", nth: 0 });
-    const after = await adminProbe.eventually(() => adminProbe.dom('[data-testid^="admin-capability-"]'), { within: 10_000, until: (value) => value.elements.length > 0, label: "expanded feature controls" });
-    const loadedTraffic = await world.traffic("admin");
-    const ok = loadedTraffic.features === 1 && after.elements.length > 0 && payloads.lightBytes < payloads.fullBytes;
-    evidence.recordAssertionEvidence("Only the expanded organization fetches features, and the list omits them", `feature reads ${initialTraffic.features} → ${loadedTraffic.features}; controls ${before.elements.length} → ${after.elements.length}; page payload ${payloads.fullBytes} → ${payloads.lightBytes} characters; existing clients retain feature data`, ok);
+    const ok = controls.elements.length === 0 && traffic.features === 0 && traffic.lightOrganizations === 1
+      && payloads.fullCount > 0 && payloads.lightCount === payloads.fullCount && payloads.fullWithFeatures === payloads.fullCount
+      && payloads.lightWithFeatures === 0 && payloads.lightBytes < payloads.fullBytes;
+    evidence.recordAssertionEvidence("The organization list stays light and gives feature settings a dedicated destination", `controls=${controls.elements.length}; feature reads=${traffic.features}; page payload=${payloads.fullBytes} → ${payloads.lightBytes} characters`, ok);
     expect(ok).toBe(true);
     await admin.screenshot();
   });
 
-  await step("the admin reopens an organization's features without fetching them again", async () => {
-    await admin.click({ testId: "admin-organization-features-toggle", nth: 0 });
-    await adminProbe.eventually(() => adminProbe.dom('[data-testid^="admin-capability-"]'), { within: 10_000, until: (value) => value.elements.length === 0, label: "collapsed feature controls" });
-    await admin.click({ testId: "admin-organization-features-toggle", nth: 0 });
-    const controls = await adminProbe.eventually(() => adminProbe.dom('[data-testid^="admin-capability-"]'), { within: 10_000, until: (value) => value.elements.length > 0, label: "cached feature controls" });
+  await step("after: the admin controls features inside the organization", async () => {
+    await admin.type({ role: "textbox", label: "Search organizations" }, "Overview workspace", { replace: true });
+    await admin.see({ role: "link", label: "Overview workspace" });
+    await admin.click({ testId: "admin-organization-features-link" });
+    await admin.see({ role: "heading", label: "Overview workspace" });
+    await admin.see({ role: "heading", label: "Features" });
+    await admin.see({ testId: "admin-breadcrumb-current" }, { text: "Features" });
+    await admin.see({ testId: "admin-capability-liveProviderSync" });
+    const tabs = await adminProbe.dom('nav[aria-label="Organization sections"] [aria-current="page"]');
     const traffic = await world.traffic("admin");
-    evidence.recordAssertionEvidence("Reopening features reuses the loaded organization state", `feature reads=${traffic.features}; controls=${controls.elements.length}`, traffic.features === 1);
-    expect(traffic.features).toBe(1);
+    const location = await world.location();
+    const blocked = await adminProbe.dom('[data-testid="admin-capability-automationCalendar"][disabled]');
+    const ok = location.pathname === `${world.detailPath}/features` && tabs.elements[0]?.text === "Features"
+      && traffic.features === 1 && traffic.organizationUsage === 0 && traffic.organizationInsights === 0 && blocked.elements.length === 1;
+    evidence.recordAssertionEvidence("The Features tab loads only this organization's flags and keeps the global kill switch locked", `${JSON.stringify(location)}; feature reads=${traffic.features}; locked controls=${blocked.elements.length}`, ok);
+    expect(ok).toBe(true);
     await admin.screenshot();
+  });
+
+  await step("the admin's override survives refresh and leaves other organizations unchanged", async () => {
+    const otherBefore = await world.featureState("liveProviderSync", true);
+    await admin.click({ testId: "admin-capability-liveProviderSync" });
+    const saved = await adminProbe.eventually(() => world.featureState("liveProviderSync"), { within: 10_000, until: (value) => value.override === true, label: "saved organization override" });
+    await admin.reload();
+    await admin.see({ testId: "admin-capability-source-liveProviderSync" }, { text: "Set for this organization" });
+    const enabled = await adminProbe.dom('[data-testid="admin-capability-liveProviderSync"][aria-checked="true"]');
+    const otherAfter = await world.featureState("liveProviderSync", true);
+    const ok = saved.enabled === true && enabled.elements.length === 1 && JSON.stringify(otherAfter) === JSON.stringify(otherBefore);
+    evidence.recordAssertionEvidence("A feature override persists for the selected organization only", `own=${JSON.stringify(saved)}; other=${JSON.stringify(otherAfter)}; checked controls=${enabled.elements.length}`, ok);
+    expect(ok).toBe(true);
+    await admin.screenshot();
+  });
+
+  await step("long feature names, descriptions and reset actions fit a phone", async () => {
+    await admin.resizeViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
+    await admin.see({ testId: "admin-capability-reset-workbotDocuments" });
+    const phone = await adminProbe.dom('[data-testid="admin-organization-features"] li, [data-testid="admin-organization-features"] label, [data-testid="admin-organization-features"] button');
+    const phoneFits = phone.documentWidth <= phone.viewportWidth && phone.elements.every((entry) => entry.rect.left >= 0 && entry.rect.left + entry.rect.width <= phone.viewportWidth);
+    expect(phoneFits).toBe(true);
+    await admin.screenshot();
+    await admin.resizeViewport({ width: 320, height: 740, deviceScaleFactor: 1 });
+    await admin.see({ testId: "admin-capability-workbotDocuments" });
+    const compact = await adminProbe.dom('[data-testid="admin-organization-features"] li, [data-testid="admin-organization-features"] label, [data-testid="admin-organization-features"] button, nav[aria-label="Organization sections"] a');
+    const ok = compact.documentWidth <= compact.viewportWidth && compact.elements.length > 0 && compact.elements.every((entry) => entry.rect.left >= 0 && entry.rect.left + entry.rect.width <= compact.viewportWidth);
+    evidence.recordAssertionEvidence("Feature text, full-size switches, reset actions and tabs stay inside 390px and 320px screens", `390px document=${phone.documentWidth}; 320px document=${compact.documentWidth}; checked elements=${compact.elements.length}`, phoneFits && ok);
+    expect(ok).toBe(true);
+    await admin.screenshot();
+  });
+
+  await step("the admin can turn a feature off and then return to everyone's setting", async () => {
+    await admin.click({ testId: "admin-capability-liveProviderSync" });
+    const off = await adminProbe.eventually(() => world.featureState("liveProviderSync"), { within: 10_000, until: (value) => value.override === false, label: "disabled organization override" });
+    expect(off.enabled).toBe(false);
+    await admin.click({ testId: "admin-capability-reset-liveProviderSync" });
+    const reset = await adminProbe.eventually(() => world.featureState("liveProviderSync"), { within: 10_000, until: (value) => value.override === null, label: "reset organization override" });
+    await admin.reload();
+    await admin.see({ testId: "admin-capability-source-liveProviderSync" }, { text: "Off for everyone" });
+    const resetButtons = await adminProbe.dom('[data-testid="admin-capability-reset-liveProviderSync"]');
+    const ok = reset.override === null && reset.source === "everyone" && reset.enabled === false && resetButtons.elements.length === 0;
+    evidence.recordAssertionEvidence("Both an explicit off override and reset to the deployment default survive saving", `off=${JSON.stringify(off)}; reset=${JSON.stringify(reset)}; reset buttons=${resetButtons.elements.length}`, ok);
+    expect(ok).toBe(true);
+    await admin.screenshot();
+    await admin.resizeViewport({ width: 1280, height: 700, deviceScaleFactor: 1 });
+  });
+
+  await step("deployment-wide rollout controls also fit a narrow screen", async () => {
+    await admin.resizeViewport({ width: 320, height: 740, deviceScaleFactor: 1 });
+    await admin.navigate(world.url("/admin/features"));
+    await admin.see({ role: "heading", label: "Features" });
+    await admin.see({ testId: "admin-feature-liveProviderSync" });
+    const layout = await adminProbe.dom('li[data-testid^="admin-feature-"], li[data-testid^="admin-feature-"] button');
+    const ok = layout.documentWidth <= layout.viewportWidth && layout.elements.length > 0 && layout.elements.every((entry) => entry.rect.left >= 0 && entry.rect.left + entry.rect.width <= layout.viewportWidth);
+    evidence.recordAssertionEvidence("The global rollout and kill-switch actions wrap without horizontal overflow at 320px", `document=${layout.documentWidth}; viewport=${layout.viewportWidth}; controls=${layout.elements.length}`, ok);
+    expect(ok).toBe(true);
+    await admin.screenshot();
+    await admin.resizeViewport({ width: 1280, height: 700, deviceScaleFactor: 1 });
   });
 
   await step("a direct Users link and refresh restore its search and second page", async () => {
@@ -188,7 +247,10 @@ test("an admin navigates organizations and member usage without loading every de
     const location = await world.location();
     const layout = await adminProbe.dom("body");
     const navigation = await adminProbe.dom('[data-testid="admin-navigation"] a');
-    const visibleSections = navigation.elements.length === 5 && navigation.elements.every((link) => link.rect.left >= 0 && link.rect.left + link.rect.width <= navigation.viewportWidth);
+    expect(navigation.elements.map((link) => link.text)).toEqual([
+      "Overview", "Users", "Organizations", "Opportunities", "Feature rollouts", "Free Auto usage", "Services",
+    ]);
+    const visibleSections = navigation.elements.every((link) => link.rect.left >= 0 && link.rect.left + link.rect.width <= navigation.viewportWidth);
     const ok = location.page === 1 && location.search === "Routing organization 00" && layout.documentWidth <= layout.viewportWidth && visibleSections;
     evidence.recordAssertionEvidence("Every admin destination fits the compact navigation without sideways scrolling", `${JSON.stringify(location)}; sections=${navigation.elements.length}; document=${layout.documentWidth}px; viewport=${layout.viewportWidth}px`, ok);
     expect(ok).toBe(true);
@@ -263,12 +325,22 @@ test("an admin navigates organizations and member usage without loading every de
   });
 
   await step("after: organization insights rank people and models, compare periods and show an activity chart", async () => {
-    await admin.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
-    await admin.click({ role: "link", label: "Insights" });
-    await admin.see({ testId: "admin-organization-insights" }, { text: /Active member adoption/ });
+    // Keep the models section beyond the observer's 400px prefetch margin,
+    // including while the earlier lazy charts are still settling their layout.
+    await admin.resizeViewport({ width: 1280, height: 700, deviceScaleFactor: 1 });
+    // A fresh deep link starts at the top, independent of the preceding Usage
+    // page's pagination/viewport scroll restoration during client navigation.
+    await admin.navigate(world.url(`${world.detailPath}/insights`));
+    // Target the top statistic: locating the entire tall panel scrolls down
+    // and loads charts before the deferred-loading assertion can observe them.
+    await admin.see({ text: "Active member adoption" });
     await admin.see({ testId: "admin-breadcrumb-current" }, { text: "Insights" });
-    const deferredModels = await adminProbe.dom('[aria-label="Most used models"] [data-admin-deferred="pending"]');
+    const deferredModels = await adminProbe.eventually(
+      () => adminProbe.dom('[aria-label="Most used models"] [data-admin-deferred="pending"]'),
+      { within: 10_000, until: (value) => value.elements.length === 1, label: "the below-prefetch model chart placeholder is mounted" },
+    );
     expect(deferredModels.elements).toHaveLength(1);
+    expect(deferredModels.elements[0].rect.top).toBeGreaterThan(700 + 400);
     expect((await adminProbe.dom('[aria-label="Top eight models by AI requests"]')).elements).toHaveLength(0);
     const report = await world.organizationInsights();
     const { current, previous, daily, people, models } = report.insights;
@@ -278,16 +350,16 @@ test("an admin navigates organizations and member usage without loading every de
       && models[0].name === "test-active-model" && models[0].requests === 4
       && !models.some((model) => model.name.includes("previous-period") || model.name.includes("outside-window"))
       && current.costMicroUsd === 2000000 && current.unpricedRequests === null;
-    evidence.recordAssertionEvidence("Insights preserve organization scope, retained usage, period bounds, current-member adoption and leader rankings", JSON.stringify({ current, previous, people: people.length, models }), ok);
+    evidence.recordAssertionEvidence("Insights preserve organization scope, retained usage, period bounds, current-member adoption and leader rankings", JSON.stringify({ current, previous, people: people.length, models, deferredModelChartTop: deferredModels.elements[0].rect.top, prefetchBoundary: 700 + 400 }), ok);
     expect(ok).toBe(true);
     await admin.click({ role: "button", label: "Chart metric" });
     await admin.click({ role: "option", label: "Active members" });
     await admin.see({ testId: "admin-dashboard-chart-activeMembers" });
     await admin.screenshot();
-    await admin.wheelAt({ x: 1000, y: 700, deltaY: 700 });
+    await admin.wheelAt({ x: 1000, y: 600, deltaY: 700 });
     await admin.see({ role: "heading", label: "Most active people" });
     await admin.screenshot();
-    await admin.wheelAt({ x: 1000, y: 700, deltaY: 700 });
+    await admin.wheelAt({ x: 1000, y: 600, deltaY: 700 });
     await admin.see({ role: "heading", label: "Most used models" });
     const modelChart = await adminProbe.eventually(() => adminProbe.dom('[aria-label="Top eight models by AI requests"]'), { within: 10_000, until: (value) => value.elements.length === 1, label: "visible model chart" });
     expect(modelChart.elements).toHaveLength(1);
@@ -346,6 +418,24 @@ test("an admin navigates organizations and member usage without loading every de
     await admin.screenshot();
   });
 
+  await step("after: platform active users are counted only when the admin asks", async () => {
+    await admin.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
+    await admin.see({ testId: "admin-dashboard-active-users" }, { text: /Count active users/ });
+    const before = await world.traffic("admin");
+    expect(before.dashboard).toBeGreaterThan(0);
+    expect(before.activeUsers).toBe(0);
+    await admin.click({ role: "button", label: "Count active users" });
+    const expected = await world.activeUsers();
+    await admin.see({ testId: "admin-dashboard-active-users" }, { text: new RegExp(`${expected.days7} in 7 days`) });
+    const after = await adminProbe.eventually(() => world.traffic("admin"), { within: 10_000, until: (value) => value.activeUsers === 1, label: "requested active-user count" });
+    const memberStatus = await world.activeUsersAccess();
+    const ok = before.activeUsers === 0 && after.activeUsers === 1 && expected.days30 > 0 && memberStatus === 403;
+    evidence.recordAssertionEvidence("Loading the overview no longer scans platform activity",
+      `overview loads=${before.dashboard}; active-user counts before asking=${before.activeUsers}, after=${after.activeUsers}; 30-day active users=${expected.days30}; member access=${memberStatus}`, ok);
+    expect(ok).toBe(true);
+    await admin.screenshot();
+  });
+
   await step("signed-out organization links show sign-in without fetching member or usage data", async () => {
     await anonymous.navigate(world.url(`${world.detailPath}/usage`));
     await anonymous.see({ role: "heading", label: "Sign in required" });
@@ -365,21 +455,33 @@ test("an admin navigates organizations and member usage without loading every de
     await anonymous.screenshot();
   });
 
+  await step("signed-out organization feature links never load editable flags", async () => {
+    await anonymous.navigate(world.url(`${world.detailPath}/features`));
+    await anonymous.see({ role: "heading", label: "Sign in required" });
+    const traffic = await world.traffic("anonymous");
+    const controls = await anonymousProbe.dom('[data-testid^="admin-capability-"], [aria-busy="true"]');
+    const ok = traffic.features === 0 && traffic.organizationDetail === 0 && controls.elements.length === 0;
+    evidence.recordAssertionEvidence("Signed-out visitors cannot load organization feature data or controls", `feature reads=${traffic.features}; detail reads=${traffic.organizationDetail}; controls=${controls.elements.length}`, ok);
+    expect(ok).toBe(true);
+    await anonymous.screenshot();
+  });
+
   await step("the signed-out overview never fetches platform analytics", async () => {
     await anonymous.navigate(world.url("/admin"));
     await anonymous.see({ role: "heading", label: "Sign in required" });
     const traffic = await world.traffic("anonymous");
     expect(traffic.dashboard).toBe(0);
+    expect(traffic.activeUsers).toBe(0);
     expect(traffic.metrics).toBe(0);
     await anonymous.screenshot();
   });
 
   await step("a signed-in member without platform access still sees a locked page", async () => {
-    await member.navigate(world.url(world.detailPath));
+    await member.navigate(world.url(`${world.detailPath}/features`));
     await member.see({ role: "heading", label: "Admin access required" }, { timeoutMs: 60_000 });
     const access = await world.organizationAccess();
-    expect(access).toEqual({ member: 403, memberUsage: 403, memberInsights: 403, missing: 404, invalid: 400 });
-    const controls = await probe.on(world.member).dom('[data-testid^="admin-user-row-"], [aria-busy="true"]');
+    expect(access).toEqual({ member: 403, memberUsage: 403, memberInsights: 403, memberFeatures: 403, missing: 404, invalid: 400 });
+    const controls = await probe.on(world.member).dom('[data-testid^="admin-user-row-"], [data-testid^="admin-capability-"], [aria-busy="true"]');
     evidence.recordAssertionEvidence("A non-admin session never mounts the dashboard", `dashboard rows and skeletons=${controls.elements.length}; endpoint status=${JSON.stringify(access)}`, controls.elements.length === 0);
     expect(controls.elements.length).toBe(0);
     await member.screenshot();

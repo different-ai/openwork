@@ -1,4 +1,6 @@
+import { readBrowserTeachingPrompt, readBrowserSkillRunPrompt } from "@openwork/types/browser-demonstration"
 import type { RunnerMessage, RunnerSnapshot, RunnerTurn } from "@openwork-ee/headless-protocol"
+import { readWorkbotContextPrompt, workbotDocumentNavigationSchema, type WorkbotViewContext } from "@openwork/types/workbot-context"
 
 /**
  * Workbot is one conversation per person. The runner keeps the transcript;
@@ -59,7 +61,18 @@ export type WorkbotStep = {
   finishedAt: number | null
   /** What it did, in its own plain words: the updates it gave while working on its computer. */
   updates: string[]
+  /** Work in the computer's browser rather than its other apps; absent for the rest. */
+  surface?: "browser"
+  /**
+   * Commands and file reads on its computer (bash, look), with no screen to watch: running Blender from the command
+   * line needs no live view. Absent while it works on the screen (the desktop tool) and from older servers.
+   */
+  background?: true
+  /** The web pages it opened in the browser, oldest first, so the person can open them too. */
+  pages?: WorkbotPage[]
 }
+/** A web page Workbot opened in its browser. `id` is short and stable, for the page's own link (/browser/<id>). */
+export type WorkbotPage = { id: string; url: string; title: string }
 /**
  * What Workbot said and did, in order. A text part is one model call's words, `step` being that call (counted from 0
  * within the turn): the page keeps one bubble per call, from its first streamed word to its stored copy.
@@ -85,6 +98,9 @@ export type WorkbotTask = {
 export type WorkbotTurn = {
   id: string
   text: string
+  context?: WorkbotViewContext
+  /** Accepted requests to open a document beside the chat. Only requests: whether one opened is the page's to say. */
+  navigation?: Array<{ id: string; fileId: string }>
   sentAt: number | null
   finishedAt: number | null
   status: WorkbotTurnStatus
@@ -102,6 +118,8 @@ export type WorkbotTurn = {
    */
   modelSteps: number
   error: string | null
+  /** A closed recovery vocabulary; no provider text, account identifiers or credentials. */
+  modelIssue?: "free_limit" | "usage_limit" | "payment_required"
   /** A failed turn that can work if sent again: the page offers "Try again", which answers it again in place. */
   retryable: boolean
   /** Background tasks this message started, oldest first. */
@@ -132,8 +150,12 @@ function tasksOf(snapshot: RunnerSnapshot, parent: string, byTurn: Map<string, R
       // Its plain-language updates: the description it gave each command on its computer.
       const updates = (byTurn.get(entry.messageId) ?? [])
         .flatMap((message) => (message.role === "assistant" ? message.toolCalls : []))
-        .filter((call) => COMPUTER_TOOLS.has(call.name) && typeof call.input.description === "string" && call.input.description.trim())
-        .map((call) => String(call.input.description).trim())
+        .flatMap((call) => {
+          if (!COMPUTER_TOOLS.has(call.name)) return []
+          const said = typeof call.input.description === "string" && call.input.description.trim() ? call.input.description.trim() : call.name === "desktop" ? desktopUpdate(call.input) : null
+          return said ? [said.slice(0, 80)] : []
+        })
+        .filter((update, index, all) => update !== all[index - 1])
       const update = open ? (updates.at(-1) ?? null) : null
       return {
         id: entry.messageId.slice(WORKBOT_MESSAGE_PREFIX.length),
@@ -158,7 +180,14 @@ const MISCONFIGURED = /^model_(credentials_missing|http_(401|402|403|404)|stream
  */
 export function retryableError(code: string | null): boolean {
   if (!code) return true
-  return !REFUSED.test(code) && !MISCONFIGURED.test(code) && code !== "max_steps_exceeded" && code !== "stuck_repeating"
+  return !REFUSED.test(code) && !MISCONFIGURED.test(code) && !modelIssue(code) && code !== "max_steps_exceeded" && code !== "stuck_repeating" && code !== "output_limit"
+}
+
+function modelIssue(code: string | null): WorkbotTurn["modelIssue"] {
+  if (code === "model_free_allowance_exhausted") return "free_limit"
+  if (code === "model_usage_limit_exceeded") return "usage_limit"
+  if (code === "model_payment_required") return "payment_required"
+  return undefined
 }
 
 /**
@@ -174,6 +203,7 @@ function friendlyError(code: string | null): string {
   if (code === "turn_timeout") return "That took too long, so I stopped."
   if (code === "max_steps_exceeded") return "That needed more steps than I can take at once. Try a smaller piece of it."
   if (code === "stuck_repeating") return "I kept getting the same result, so I stopped. Try asking a different way."
+  if (code === "output_limit") return "My answer kept getting too long to finish. Try a smaller piece of it."
   return "Something went wrong on my side."
 }
 
@@ -224,21 +254,101 @@ function appOf(name: string, input: Record<string, unknown>): string | null {
 /** The conversation's kept files, so the ones Workbot made show under the answer that made them. */
 export type FileNames = ReadonlyMap<string, { name: string; createdAt: number; updatedAt?: number; mediaType?: string; size?: number; source?: "user" | "agent" }>
 
-const COMPUTER_TOOLS: ReadonlySet<string> = new Set(["bash", "look"])
+const COMPUTER_TOOLS: ReadonlySet<string> = new Set(["bash", "look", "desktop"])
+
+/** The page's address when it is an ordinary web page; anything else is never shown or linked. */
+function webAddress(value: unknown): URL | null {
+  if (typeof value !== "string") return null
+  try {
+    const url = new URL(value)
+    return url.protocol === "https:" || url.protocol === "http:" ? url : null
+  } catch {
+    return null
+  }
+}
+
+/** A short, stable id for a page's address (FNV-1a), so its link survives reloads and new messages. */
+export function workbotPageId(url: string) {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < url.length; index++) hash = Math.imul(hash ^ url.charCodeAt(index), 0x01000193)
+  return (hash >>> 0).toString(36)
+}
+
+function pageOf(url: URL): WorkbotPage {
+  const host = url.hostname.replace(/^www\./, "")
+  const path = url.pathname.replace(/\/+$/, "")
+  const title = path ? `${host}${path.length > 40 ? `${path.slice(0, 39)}…` : path}` : host
+  return { id: workbotPageId(url.href), url: url.href, title }
+}
+
+const BROWSER_ACTIONS: Array<[RegExp, string]> = [
+  [/^(fill|select|set_checked)$/, "Filling in the form"],
+  [/^click$/, "Clicking through the page"],
+  [/^scroll$/, "Scrolling the page"],
+  [/^key$/, "Typing on the page"],
+]
+
+/**
+ * What a `desktop` call is doing, in plain words, when the model didn't say: never the values it typed, only where it
+ * is and the kind of thing it is doing. Its own `description` comes first.
+ */
+function desktopUpdate(input: Record<string, unknown>): string | null {
+  const args = typeof input.args === "object" && input.args !== null ? (input.args as Record<string, unknown>) : {}
+  const operation = typeof input.operation === "string" ? input.operation : ""
+  if (input.view === "browser") {
+    const url = webAddress(args.url)
+    if ((operation === "open" || operation === "navigate") && url) return `Opening ${pageOf(url).title}`
+    if (operation === "observe") return "Looking at the page"
+    if (operation === "extract") return "Reading the page"
+    if (operation === "tabs") return "Checking open tabs"
+    if (operation === "act" && Array.isArray(args.actions)) {
+      const types = args.actions.map((action) => (typeof action === "object" && action !== null ? String((action as Record<string, unknown>).type ?? "") : ""))
+      for (const [pattern, label] of BROWSER_ACTIONS) if (types.some((type) => pattern.test(type))) return label
+    }
+    return "Working in the browser"
+  }
+  const app = typeof args.app === "string" && /^[a-z][a-z0-9-]{0,30}$/i.test(args.app) ? args.app : null
+  if (operation === "computer_launch") return app ? `Opening ${app[0]!.toUpperCase()}${app.slice(1)}` : "Opening an app"
+  if (operation === "computer_app_script") return app ? `Working in ${app[0]!.toUpperCase()}${app.slice(1)}` : "Working in an app"
+  if (operation === "computer_observe" || operation === "computer_zoom") return "Looking at the screen"
+  if (operation === "computer_apps" || operation === "computer_discover") return "Checking what's installed"
+  if (operation === "computer_act") return "Working in the app"
+  return null
+}
 
 /**
  * Work on Workbot's computer reads as one step, however many commands it took: the person sees that it is using
- * its computer, never commands, retries or failures it recovered from (DESIGN C3, T2). What it is doing, in its
- * own words, travels in `updates`; the page shows the newest one under the step.
+ * its computer, never commands, retries or failures it recovered from (DESIGN C3, T2). Work in its browser is its own
+ * step ("Using the browser"), with the pages it opened, and so is work on its screen apart from commands run in the
+ * background ("Working on my computer"), which has nothing to watch. What it is doing, in its own words, travels in `updates`; the
+ * page shows the newest one under the step.
  */
-function addComputerStep(parts: WorkbotPart[], input: Record<string, unknown>, result: RunnerMessage | undefined, at: number | null) {
+function addComputerStep(parts: WorkbotPart[], name: string, input: Record<string, unknown>, result: RunnerMessage | undefined, at: number | null) {
   const running = result === undefined
-  const doing = typeof input.description === "string" && input.description.trim() ? input.description.trim().slice(0, 80) : null
+  const browser = name === "desktop" && input.view === "browser"
+  const background = name !== "desktop"
+  const described = typeof input.description === "string" && input.description.trim() ? input.description.trim() : null
+  const said = described ?? (name === "desktop" ? desktopUpdate(input) : null)
+  const doing = said ? said.slice(0, 80) : null
   const last = parts.at(-1)
   const previous = last?.kind === "steps" ? last.steps.at(-1) : undefined
   const step: WorkbotStep =
-    previous?.icon === "computer" ? previous : { label: "Using my computer", icon: "computer", status: "done", app: null, startedAt: at, finishedAt: null, updates: [] }
+    previous?.icon === "computer" && (previous.surface === "browser") === browser && (previous.background === true) === background
+      ? previous
+      : {
+          label: browser ? "Using the browser" : background ? "Working on my computer" : "Using my computer",
+          icon: "computer", status: "done", app: null, startedAt: at, finishedAt: null, updates: [],
+          ...(browser ? { surface: "browser" as const } : {}),
+          ...(background ? { background: true as const } : {}),
+        }
   if (doing && step.updates.at(-1) !== doing) step.updates.push(doing)
+  const args = typeof input.args === "object" && input.args !== null ? (input.args as Record<string, unknown>) : {}
+  const url = browser && (input.operation === "open" || input.operation === "navigate") ? webAddress(args.url) : null
+  if (url) {
+    const page = pageOf(url)
+    const pages = (step.pages ??= [])
+    if (!pages.some((entry) => entry.id === page.id) && pages.length < 12) pages.push(page)
+  }
   // The time it actually worked: a command cut off by a restart or a sleeping laptop says nothing about the work.
   const before = workedMs.get(step) ?? 0
   const ended = result?.createdAt ?? null
@@ -315,6 +425,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
     const results = new Map(messages.flatMap((message) => (message.role === "tool" ? [[message.callId, message] as const] : [])))
 
     const parts: WorkbotPart[] = []
+    const navigation: Array<{ id: string; fileId: string }> = []
     let reaction: string | null = null
     let modelSteps = 0
     const greeting = isGreetingRunnerId(turn.messageId)
@@ -326,6 +437,12 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
       // stored. The greeting follows the same streaming contract as other replies.
       if (text) parts.push({ kind: "text", text, step: modelSteps - 1 })
       for (const call of message.toolCalls) {
+        if (call.name === "open_document") {
+          const target = workbotDocumentNavigationSchema.safeParse(call.input)
+          const result = results.get(call.id)
+          if (turn.kind === undefined && !greeting && target.success && result?.role === "tool" && !result.isError) navigation.push({ id: call.id, fileId: target.data.fileId })
+          continue
+        }
         if (call.name === "react") {
           const result = results.get(call.id)
           const emoji = reactionOf(call.input)
@@ -333,7 +450,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
           continue
         }
         if (COMPUTER_TOOLS.has(call.name)) {
-          addComputerStep(parts, call.input, results.get(call.id), message.createdAt ?? null)
+          addComputerStep(parts, call.name, call.input, results.get(call.id), message.createdAt ?? null)
           continue
         }
         // Only work in a connected app is worth a line ("Searching Slack"); lookups, notes to self and files stay
@@ -371,9 +488,11 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
     const outputs = outputsOf(files, turn.createdAt ?? null, working ? null : (turn.updatedAt ?? null))
     // A report is Workbot speaking first: the task's notes to it stay hidden, and it brings back what the task made.
     const task = turn.kind === "report" ? snapshot.turns.find((entry) => entry.messageId === turn.parent) : undefined
+    const visible = readWorkbotContextPrompt(readBrowserSkillRunPrompt(readBrowserTeachingPrompt(user.text)))
     turns.push({
       id: turn.messageId.slice(WORKBOT_MESSAGE_PREFIX.length),
-      text: turn.kind === "report" || greeting ? "" : user.text,
+      text: turn.kind === "report" || greeting ? "" : visible.text,
+      ...(!greeting && turn.kind !== "report" && visible.context ? { context: visible.context } : {}),
       sentAt: turn.createdAt ?? null,
       finishedAt: working ? null : turn.updatedAt ?? null,
       status,
@@ -382,9 +501,11 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
         ? [...new Map([...outputsOf(files, task.createdAt ?? null, task.updatedAt ?? null), ...outputs].map((file) => [file.id, file])).values()]
         : outputs,
       reaction,
+      ...(navigation.length ? { navigation } : {}),
       parts,
       modelSteps,
       error: status === "failed" ? friendlyError(turn.error) : null,
+      ...(status === "failed" && modelIssue(turn.error) ? { modelIssue: modelIssue(turn.error) } : {}),
       retryable: status === "failed" && retryableError(turn.error),
       tasks: turn.kind === undefined ? tasksOf(snapshot, turn.messageId, byTurn) : [],
       greeting,

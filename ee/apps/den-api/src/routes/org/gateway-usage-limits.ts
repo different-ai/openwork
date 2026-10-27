@@ -17,7 +17,6 @@ import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Context, Hono, MiddlewareHandler } from "hono"
 import { z } from "zod"
 import { db } from "../../db.js"
-import { organizationFeatureEnabled } from "../../features.js"
 import { gatewayManagementUnavailable } from "../../gateway-deployment.js"
 import {
   jsonValidator,
@@ -123,10 +122,7 @@ const limitsPermission = (
     )
   await next()
 }
-/** Per-provider limits (`gatewayProviderUsageLimits`) for the caller's organization. */
-async function providerLimits(actor: GatewayUsageScope) {
-  return { providerLimits: await organizationFeatureEnabled(actor.organizationId, "gatewayProviderUsageLimits") }
-}
+
 const viewLimits = limitsPermission("gateway_limits.view")
 const manageLimits = limitsPermission("gateway_limits.manage")
 export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRouteVariables }>(
@@ -148,7 +144,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     available,
     manageLimits,
     jsonValidator(gatewayUsagePolicyWriteSchema),
-    (c) => respond(c, async () => service.savePolicy(scope(c), c.req.valid("json"), undefined, undefined, await providerLimits(scope(c)))),
+    (c) => respond(c, async () => service.savePolicy(scope(c), c.req.valid("json"))),
   )
   app.patch(
     "/v1/gateway/usage-limit-policies/:policyId",
@@ -161,7 +157,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     (c) =>
       respond(c, async () => {
         const { revision, ...input } = c.req.valid("json")
-        return service.savePolicy(scope(c), input, c.req.valid("param").policyId, revision, await providerLimits(scope(c)))
+        return service.savePolicy(scope(c), input, c.req.valid("param").policyId, revision)
       }),
   )
   app.post(
@@ -283,7 +279,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     route("Read own Gateway usage limits", gatewayUsageStatusSchema),
     orgMemberRoute(),
     available,
-    (c) => respond(c, async () => service.getStatus(scope(c), undefined, await providerLimits(scope(c)))),
+    (c) => respond(c, async () => service.getStatus(scope(c))),
   )
   app.get(
     "/v1/gateway/usage-limits/members/:memberId",
@@ -297,7 +293,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
         const { memberId } = c.req.valid("param")
         if (!isDenTypeId("member", memberId))
           throw new GatewayUsageError("invalid_member", 400, "Invalid membership ID.")
-        return service.getStatus(scope(c), memberId, await providerLimits(scope(c)))
+        return service.getStatus(scope(c), memberId)
       }),
   )
   app.post(

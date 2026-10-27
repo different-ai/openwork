@@ -16,6 +16,9 @@ export function createUiControlServer({
   listWebMcpTools,
   executeWebMcpTool,
   browserTask = undefined,
+  computerTask = undefined,
+  computerProgram = undefined,
+  computerScript = undefined,
 }) {
   let uiControlServer = null;
   let uiControlDiscoveryPath = null;
@@ -165,6 +168,27 @@ export function createUiControlServer({
           const controller = new AbortController();
           response.once("close", () => { if (!response.writableEnded) controller.abort(); });
           sendJsonResponse(response, 200, await browserTask(await readJsonRequestBody(request), { signal: controller.signal }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/computer/program") {
+          if (typeof computerProgram !== "function") { sendJsonResponse(response, 503, { ok: false, code: "computer_unavailable" }); return; }
+          const controller = new AbortController();
+          response.once("close", () => { if (!response.writableEnded) controller.abort(); });
+          sendJsonResponse(response, 200, await computerProgram(await readJsonRequestBody(request), { signal: controller.signal }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/computer/script") {
+          if (typeof computerScript !== "function") { sendJsonResponse(response, 503, { ok: false, code: "computer_unavailable" }); return; }
+          const controller = new AbortController();
+          response.once("close", () => { if (!response.writableEnded) controller.abort(); });
+          sendJsonResponse(response, 200, await computerScript(await readJsonRequestBody(request), { signal: controller.signal }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/computer/task") {
+          if (typeof computerTask !== "function") { sendJsonResponse(response, 503, { ok: false, code: "computer_unavailable" }); return; }
+          const controller = new AbortController();
+          response.once("close", () => { if (!response.writableEnded) controller.abort(); });
+          sendJsonResponse(response, 200, await computerTask(await readJsonRequestBody(request), { signal: controller.signal }));
           return;
         }
         if (request.method === "POST" && url.pathname === "/webmcp/tools") {

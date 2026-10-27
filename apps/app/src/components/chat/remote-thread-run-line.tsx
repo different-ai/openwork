@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import type { DynamicToolUIPart } from "ai"
 import { ArrowUpRight, ShieldAlert, Square } from "lucide-react"
 
@@ -10,7 +10,7 @@ import { remoteToolCallStartedAt, type RemoteThreadStart } from "@/lib/remote-se
 import { cn } from "@/lib/utils"
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store"
 import { stopRemoteThread } from "@/react-app/domains/session/remote-threads/remote-thread-actions"
-import { useFollowRemoteThread, useRemoteThread } from "@/react-app/domains/session/remote-threads/remote-thread-store"
+import { useFollowRemoteThread, useRemoteThread, useRemoteThreadViewEnabled } from "@/react-app/domains/session/remote-threads/remote-thread-store"
 import { remoteThreadView } from "@/react-app/domains/session/remote-threads/remote-thread-view"
 import { useUiStateStore } from "@/react-app/shell/ui-state-store"
 
@@ -28,15 +28,17 @@ export function openRemoteThreadPanel(sessionId: string, workspaceId: string, st
 
 /**
  * A task the agent started on another computer, shown like a sub-agent: line 1
- * names the task and where it runs, line 2 says what it is doing now. The row
- * opens its conversation in the side panel, where the person follows up; its
- * own Stop ends just that task. Its state comes from the chat's one shared
- * follower (remote-thread-store), never a poll of its own.
+ * names the task and where it runs, line 2 says what it is doing now. With
+ * `remoteSessionThreadView` the row opens its conversation in the side panel,
+ * where the person follows up; its own Stop ends just that task. Its state
+ * comes from the chat's one shared follower (remote-thread-store), never a
+ * poll of its own.
  */
 export function RemoteThreadRunLine({ start, part, className }: { start: RemoteThreadStart; part: DynamicToolUIPart; className?: string }) {
   const { workspaceId, sessionId, readOnly } = useMessageList()
   useFollowRemoteThread(start, { workspaceId, sessionId }, remoteToolCallStartedAt(part))
   const entry = useRemoteThread(start.key)
+  const threadView = useRemoteThreadViewEnabled()
   const [stopping, setStopping] = useState(false)
   const [stoppedHere, setStoppedHere] = useState(false)
   const [now, setNow] = useState(() => Date.now())
@@ -56,11 +58,9 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
       // The open button stays a direct child of the row, like a sub-agent row.
       className={cn("flex min-w-0 max-w-full items-start gap-2", className)}
     >
-      <button
-        type="button"
-        className="group flex min-w-0 max-w-full cursor-pointer flex-col gap-0.5 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
-        aria-label={t("session.remote_task_open", { title: view.title, computer: view.computer })}
-        onClick={() => openRemoteThreadPanel(sessionId, workspaceId, start, view.title)}
+      <RemoteThreadSummary
+        open={threadView ? () => openRemoteThreadPanel(sessionId, workspaceId, start, view.title) : null}
+        label={t("session.remote_task_open", { title: view.title, computer: view.computer })}
       >
         <span className="flex min-w-0 items-center gap-2">
           <span className={cn("min-w-0 truncate", ticking && "ow-text-shimmer")}>
@@ -70,16 +70,18 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
           {view.waitingFor === "permission" ? (
             <ShieldAlert aria-hidden="true" className="size-3.5 shrink-0 text-amber-10" />
           ) : null}
-          <ArrowUpRight
-            aria-hidden="true"
-            className="size-3.5 shrink-0 text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
-          />
+          {threadView ? (
+            <ArrowUpRight
+              aria-hidden="true"
+              className="size-3.5 shrink-0 text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+            />
+          ) : null}
         </span>
         <span className={cn("min-w-0 truncate text-xs", view.waitingFor ? "font-medium text-amber-11" : "text-muted-foreground/70")}>
           {view.status}
           {view.lastChecked ? ` · ${view.lastChecked}` : ""}
         </span>
-      </button>
+      </RemoteThreadSummary>
       {/* Stop just this task; the turn's own Stop stays in the composer. */}
       {view.active && view.started && entry && !readOnly ? (
         <button
@@ -99,5 +101,20 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
         </button>
       ) : null}
     </div>
+  )
+}
+
+/** The row's two lines: a button that opens the conversation, or just progress. */
+function RemoteThreadSummary({ open, label, children }: { open: (() => void) | null; label: string; children: ReactNode }) {
+  if (!open) return <div className="flex min-w-0 max-w-full flex-col gap-0.5 text-sm text-muted-foreground">{children}</div>
+  return (
+    <button
+      type="button"
+      className="group flex min-w-0 max-w-full cursor-pointer flex-col gap-0.5 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
+      aria-label={label}
+      onClick={open}
+    >
+      {children}
+    </button>
   )
 }

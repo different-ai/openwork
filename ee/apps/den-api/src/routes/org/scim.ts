@@ -9,6 +9,8 @@ import { appendDomainChangesAfterCommit, finishLegacyAuditAction } from "../../a
 import { scimReconciledEvent, scimTokenRotatedEvent } from "../../audit/domain/scim.js"
 import { auditChangeCapture } from "../../audit/request-capture.js"
 import { jsonValidator, orgPermissionRoute } from "../../middleware/index.js"
+import { checkEntitlement } from "../../entitlements.js"
+import { enterprisePlanRequiredSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { permissionDeniedResponse, permissionFailureHeaders } from "./shared.js"
 import { PermissionRevokedError } from "../../permissions/in-transaction.js"
@@ -215,6 +217,14 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
             },
           },
         },
+        402: {
+          description: "SCIM provisioning requires an Enterprise plan.",
+          content: {
+            "application/json": {
+              schema: resolver(enterprisePlanRequiredSchema),
+            },
+          },
+        },
         409: {
           description: "An enabled SSO connection is required before creating or rotating a SCIM token.",
           content: {
@@ -236,6 +246,10 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
     orgPermissionRoute("scim.manage"),
     async (c) => {
       const payload = c.get("organizationContext")
+      const entitlement = checkEntitlement(payload.organization.metadata, "scim")
+      if (!entitlement.ok) {
+        return c.json(entitlement.response, entitlement.status)
+      }
       const ssoReady = await hasEnabledOrganizationSsoConnection(payload.organization.id)
       if (!ssoReady) {
         return c.json({

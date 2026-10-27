@@ -13,3 +13,24 @@ test("Daytona requires its own key and prepared computer snapshot", () => {
   assert.throws(() => loadConfig({ ...base, HEADLESS_COMPUTER: "daytona", DAYTONA_API_KEY: "test" }), /HEADLESS_COMPUTER_SNAPSHOT/)
   assert.equal(loadConfig({ ...base, HEADLESS_COMPUTER: "daytona", DAYTONA_API_KEY: "test", HEADLESS_COMPUTER_SNAPSHOT: "computer-image" }).computer?.kind, "daytona")
 })
+
+test("VM and desktop capabilities require explicit operator configuration", () => {
+  const env = { ...base, HEADLESS_COMPUTER: "daytona", DAYTONA_API_KEY: "test", HEADLESS_COMPUTER_SNAPSHOT: "computer-image" }
+  assert.equal(loadConfig(env).computer?.desktop, false)
+  assert.equal(loadConfig(env).computer?.sandboxClass, "container")
+  const vm = loadConfig({ ...env, HEADLESS_COMPUTER_CLASS: "linux-vm", HEADLESS_COMPUTER_DESKTOP: "true" }).computer
+  assert.equal(vm?.desktop, true)
+  assert.equal(vm?.sandboxClass, "linux-vm")
+  assert.throws(() => loadConfig({ ...env, HEADLESS_COMPUTER_DESKTOP: "true" }), /HEADLESS_COMPUTER_CLASS=linux-vm/)
+})
+
+test("a Freestyle desktop needs its desktop snapshot, and persistence and the viewer domain come from env", () => {
+  const env = { ...base, HEADLESS_COMPUTER: "freestyle", FREESTYLE_API_KEY: "test", HEADLESS_COMPUTER_DESKTOP: "true" }
+  assert.throws(() => loadConfig(env), /snapshot:build:freestyle-desktop/)
+  const computer = loadConfig({ ...env, HEADLESS_COMPUTER_SNAPSHOT: "workbot-desktop-freestyle", HEADLESS_COMPUTER_PERSISTENT: "true", HEADLESS_COMPUTER_DOMAIN: "computers.example.com" }).computer
+  assert.equal(computer?.desktop, true)
+  assert.equal(computer?.persistent, true)
+  assert.equal(computer?.endpointDomain, "computers.example.com")
+  assert.equal(loadConfig({ ...env, HEADLESS_COMPUTER_SNAPSHOT: "desktop" }).computer?.persistent, false)
+  assert.throws(() => loadConfig({ ...env, HEADLESS_COMPUTER_SNAPSHOT: "desktop", HEADLESS_COMPUTER_DOMAIN: "https://bad" }), /lowercase domain/)
+})

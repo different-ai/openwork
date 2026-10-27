@@ -89,6 +89,31 @@ def load_release_images():
     return release_images(manifest, os.environ["VERSION"])
 
 
+def canonical_image_reference(reference):
+    if not isinstance(reference, str):
+        return None
+    repository, separator, digest = reference.partition("@")
+    if not separator or not re.fullmatch(r"sha256:[a-f0-9]{64}", digest):
+        return None
+    parts = repository.split("/")
+    if parts[0] in ("docker.io", "index.docker.io"):
+        parts = parts[1:]
+    elif "." in parts[0] or ":" in parts[0] or parts[0] == "localhost":
+        # Other registries must match verbatim, including their namespace.
+        return reference
+    if len(parts) == 1:
+        parts = ["library", parts[0]]
+    if len(parts) != 2 or not all(parts):
+        return None
+    return "docker.io/" + "/".join(parts) + "@" + digest
+
+
+def image_source_matches(source, repo_digests):
+    expected = canonical_image_reference(source)
+    return (expected is not None and isinstance(repo_digests, list)
+            and any(canonical_image_reference(observed) == expected for observed in repo_digests))
+
+
 def mirror_images():
     pinned = load_release_images()  # reject missing/invalid pins before cloud writes
     project, region = os.environ["PROJECT_ID"], os.environ["REGION"]
@@ -113,7 +138,7 @@ def mirror_images():
         local = json.loads(subprocess.run(["docker", "image", "inspect", source], env=environment,
                            check=True, capture_output=True, text=True).stdout)
         if (not isinstance(local, list) or len(local) != 1 or local[0].get("Os") != "linux"
-                or local[0].get("Architecture") != "amd64" or source not in local[0].get("RepoDigests", [])
+                or local[0].get("Architecture") != "amd64" or not image_source_matches(source, local[0].get("RepoDigests"))
                 or not re.fullmatch(r"sha256:[a-f0-9]{64}", local[0].get("Id", ""))):
             raise ValueError("pulled image does not match release pin/platform")
         # Tag the inspected immutable local config ID, not any mutable source tag.

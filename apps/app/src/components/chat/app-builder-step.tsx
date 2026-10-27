@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Blocks, CircleCheck, CircleDashed, CircleX } from "lucide-react";
 import { formatToolCallDuration } from "@/lib/tool-call-duration";
-import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
-import { useAppBuildProgressEnabled } from "@/react-app/domains/apps/use-app-build-progress-feature";
 import { isToolPartInFlight } from "@/lib/tool-activity";
 import { useOptionalMessageList } from "./message-list-provider";
 import { useCurrentSessionActivityStatus } from "./current-tool-lifecycle-context";
@@ -166,8 +164,6 @@ export function AppBuilderStep({
   const beganAt = run.startedAt ?? (starts.length ? Math.min(...starts) : startedAt ?? firstObservedAt.current);
   const [now, setNow] = useState(Date.now);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  // The staged checklist is behind appBuildProgress; off keeps the one-line step.
-  const staged = useAppBuildProgressEnabled();
   // Earlier rejected builds are progress on the same app, not new apps.
   const fixedProblems = [...(run.attempts ?? []), ...run.builds.slice(0, -1)].flatMap((part) => {
     const problem = appBuildProblem(part);
@@ -204,52 +200,6 @@ export function AppBuilderStep({
       : null;
   const shownElapsed = elapsed !== null && (active || terminal || starts.length > 0) ? formatToolCallDuration(elapsed) : null;
 
-  if (!staged) {
-    // One plain rail row, like every other step: what is happening to which
-    // app, a short state, Open when there is something to open, and the raw
-    // calls behind the details icon.
-    const legacySentence = built
-      ? `${editing ? "Updated" : "Created"} artifact${title}`
-      : progress.failed
-        ? `Couldn’t ${editing ? "update" : "create"} artifact${title}`
-        : progress.stage === "checking"
-          ? `Checking artifact${title}`
-          : progress.stage === "writing"
-            ? `${editing ? "Updating" : "Writing"} artifact${title}`
-            : `Preparing artifact${title}`;
-    const legacyState = progress.failed
-      ? latestProblem
-      : state ?? (fixedProblems.length > 0 && progress.running
-        ? `fixed ${fixedProblems.length} ${fixedProblems.length === 1 ? "problem" : "problems"}`
-        : null);
-    return (
-      <section
-        className="group/step min-w-0"
-        data-app-builder-step
-        data-app-creation-stage={progress.stage}
-        aria-label={legacySentence}
-      >
-        <div className="flex min-h-6 min-w-0 items-center gap-2 text-sm text-muted-foreground">
-          <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="" className="size-4 shrink-0 opacity-80 dark:invert" />
-          <span className={`shrink-0 ${progress.running ? "ow-text-shimmer motion-reduce:animate-none" : ""}`}>{legacySentence}</span>
-          {legacyState ? <span className="min-w-0 truncate text-xs text-muted-foreground">{legacyState}</span> : null}
-          {shownElapsed ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70" data-app-builder-elapsed>{shownElapsed}</span> : null}
-          {progress.app && progress.build ? <BuiltAppChatPreview part={progress.build} compact /> : null}
-          <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={legacySentence} alwaysVisible={progress.failed} />
-        </div>
-        {detailsOpen ? (
-          <div className="mt-1 flex flex-col gap-2">
-            {fixedProblems.map((problem, index) => (
-              <p key={index} className="text-xs text-muted-foreground">Fixed: {problem}</p>
-            ))}
-            {parts.map((part) => (
-              <TechnicalDetailsPanel key={part.toolCallId} part={part} />
-            ))}
-          </div>
-        ) : null}
-      </section>
-    );
-  }
   // The stages show while the agent works, or after it failed or paused; a
   // ready App folds them into one row.
   const stages = built ? [] : appCreationStages(run, progress, editing, fixedProblems, latestProblem);

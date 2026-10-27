@@ -1,16 +1,17 @@
 import { LandingEnterprise } from "../../components/landing-enterprise";
+import { StructuredData } from "../../components/structured-data";
+import { enterpriseFaq } from "../../lib/enterprise";
 import { getGithubData } from "../../lib/github";
-import { baseOpenGraph, withSocialMetadata } from "../../lib/seo";
+import { withSocialMetadata } from "../../lib/seo";
 
 export const metadata = withSocialMetadata({
-  title: "OpenWork Enterprise — Self-hosted AI agents for teams",
+  title: "OpenWork Enterprise — AI governance, gateway and SSO",
   description:
-    "Deploy shared skills, MCPs, and agent workflows across your org. Self-hosted or managed, 50+ LLM providers, SOC 2 Type II audit complete.",
+    "Give teams an approved AI path with company SSO, SCIM, permissions, AWS Bedrock, and usage visibility. Local-first desktop, cloud management, and deployment options.",
   alternates: {
     canonical: "/enterprise"
   },
   openGraph: {
-    ...baseOpenGraph,
     url: "https://openworklabs.com/enterprise"
   }
 });
@@ -20,9 +21,19 @@ export default async function Enterprise() {
   const cal = process.env.NEXT_PUBLIC_CAL_URL ?? "";
 
   return (
-    <LandingEnterprise
-      stars={github.stars}
-      calUrl={cal}
-    />
+    <>
+      <StructuredData
+        data={{
+          "@context": "https://schema.org",
+          "@type": "FAQPage",
+          mainEntity: enterpriseFaq.map(entry => ({
+            "@type": "Question",
+            name: entry.question,
+            acceptedAnswer: { "@type": "Answer", text: entry.answer }
+          }))
+        }}
+      />
+      <LandingEnterprise stars={github.stars} calUrl={cal} />
+    </>
   );
 }

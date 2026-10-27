@@ -1,0 +1,59 @@
+# Build and push this image first; create a linux-vm Daytona snapshot from its registry digest.
+# Default to the verified official Node 24.22.1 multi-platform image; operators may override with a pinned digest.
+ARG OPENWORK_COMPUTER_BASE_IMAGE=node:24.22.1-bookworm-slim@sha256:1681862882da07ee5476fee047bcf34138833f1df42633bb25bcb0f438d5bf3d
+FROM ${OPENWORK_COMPUTER_BASE_IMAGE} AS desktop-vnc-builder
+USER root
+COPY ee/packages/headless-computer/scripts/build-desktop-vnc.sh /tmp/build-desktop-vnc.sh
+RUN bash /tmp/build-desktop-vnc.sh
+
+FROM ${OPENWORK_COMPUTER_BASE_IMAGE} AS desktop-bridge-builder
+WORKDIR /src
+COPY . .
+RUN corepack enable && corepack pnpm install --frozen-lockfile --ignore-scripts --filter @openwork-ee/headless-computer...
+RUN corepack pnpm --filter @openwork/types build \
+    && corepack pnpm --filter @openwork/computer-use build \
+    && corepack pnpm --filter @openwork-ee/headless-computer exec node scripts/build-desktop.mjs
+
+FROM ${OPENWORK_COMPUTER_BASE_IMAGE}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash sudo python3 python3-pip ca-certificates curl chromium chromium-sandbox xvfb xauth x11-utils \
+    openbox xdotool x11vnc util-linux dbus-x11 iptables nftables \
+    && usermod -l ubuntu -d /home/ubuntu -m node && groupmod -n ubuntu node \
+    && useradd --create-home --shell /bin/sh openwork-browser \
+    && useradd --create-home --shell /bin/sh openwork-app \
+    && useradd --create-home --shell /bin/bash openwork-command \
+    && printf 'ubuntu ALL=(root) NOPASSWD: /usr/local/sbin/openwork-desktop-bridge\n' > /etc/sudoers.d/ubuntu \
+    && printf 'openwork-command ALL=(root) NOPASSWD: /usr/local/sbin/openwork-install\n' > /etc/sudoers.d/openwork-command \
+    && chmod 0440 /etc/sudoers.d/ubuntu /etc/sudoers.d/openwork-command
+COPY ee/packages/headless-computer/src/image.ts /tmp/openwork-computer-image.ts
+COPY ee/packages/headless-computer/requirements-desktop.lock /usr/local/share/openwork-computer/requirements-desktop.lock
+RUN node --input-type=module -e "import { DESKTOP_COMPUTER_INSTALL_SCRIPT } from '/tmp/openwork-computer-image.ts'; import { writeFileSync } from 'node:fs'; writeFileSync('/tmp/install-computer.sh', DESKTOP_COMPUTER_INSTALL_SCRIPT)" \
+    && bash /tmp/install-computer.sh && rm /tmp/install-computer.sh /tmp/openwork-computer-image.ts
+COPY ee/packages/headless-computer/src/desktop-apps.mjs /usr/local/share/openwork-desktop/apps.mjs
+COPY ee/packages/headless-computer/src/desktop-scripting.mjs /usr/local/share/openwork-desktop/desktop-scripting.mjs
+COPY ee/packages/headless-computer/scripts/configure-desktop-files.sh /usr/local/share/openwork-desktop/configure-files.sh
+COPY ee/packages/headless-computer/scripts/install-desktop-apps.sh /tmp/install-desktop-apps.sh
+RUN bash /tmp/install-desktop-apps.sh && rm /tmp/install-desktop-apps.sh
+# App scripting bridges run as the isolated app user; see desktop-scripting.mjs.
+COPY ee/packages/headless-computer/src/scripting/ /usr/local/share/openwork-desktop/scripting/
+RUN chmod 0755 /usr/local/share/openwork-desktop/scripting && chmod 0644 /usr/local/share/openwork-desktop/scripting/*
+COPY --from=desktop-bridge-builder /src/ee/packages/headless-computer/dist/desktop-guest.mjs /usr/local/share/openwork-desktop/guest.mjs
+COPY --from=desktop-bridge-builder /src/ee/packages/headless-computer/dist/desktop-guest.version /usr/local/share/openwork-desktop/guest.version
+COPY ee/apps/den-worker-runtime/scripts/cloud-desktop.sh /usr/local/share/openwork-desktop/start.sh
+COPY ee/packages/headless-computer/scripts/desktop-bridge.py /usr/local/sbin/openwork-desktop-bridge
+COPY ee/packages/headless-computer/scripts/vnc-stdio.py /usr/local/share/openwork-desktop/vnc-stdio.py
+RUN chmod 0755 /usr/local/sbin/openwork-desktop-bridge \
+    && chown -R root:root /usr/local/share/openwork-desktop /usr/local/sbin/openwork-desktop-bridge \
+    && chmod -R go-w /usr/local/share/openwork-desktop
+# Daytona's OCI-to-microVM import clears setuid bits. Restore only the two
+# packaged helpers as root before its unprivileged command daemon starts.
+COPY ee/packages/headless-computer/scripts/daytona-desktop-permissions.service /etc/systemd/system/daytona-desktop-permissions.service
+COPY ee/packages/headless-computer/scripts/daytona-desktop-permissions.conf /etc/systemd/system/daytona.service.d/desktop-permissions.conf
+RUN mkdir -p /etc/systemd/system/multi-user.target.wants \
+    && ln -s ../daytona-desktop-permissions.service /etc/systemd/system/multi-user.target.wants/daytona-desktop-permissions.service
+COPY --from=desktop-vnc-builder /usr/local/bin/x11vnc /usr/local/bin/x11vnc
+COPY --from=desktop-vnc-builder /usr/local/share/doc/openwork-x11vnc /usr/local/share/doc/openwork-x11vnc
+RUN ldd /usr/local/bin/x11vnc | grep -q libXcomposite
+USER ubuntu
+WORKDIR /workspace

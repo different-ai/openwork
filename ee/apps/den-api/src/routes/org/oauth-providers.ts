@@ -4,6 +4,7 @@ import { z } from "zod"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { attributeOAuthCallbackMember } from "../../audit/request-capture.js"
 import { env } from "../../env.js"
+import { recordWorkbotConnection } from "../../workbot/telemetry.js"
 import {
   jsonValidator,
   orgMemberRoute,
@@ -18,12 +19,14 @@ import {
   createOAuthStateToken,
   createPkcePair,
   exchangeCodeForTokens,
+  getValidAccessToken,
   OAuthClientConfigurationError,
   OAuthTokenExchangeError,
   resolvePublicOrigin,
   verifyOAuthStateToken,
 } from "../../capability-sources/generic-oauth.js"
 import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
+import { workbotConnectReturn, workbotCallbackReturn } from "../../workbot/connect-return.js"
 import { revokeAccountsBeforeOAuthClientIdentityChange } from "../../capability-sources/oauth-client-rotation.js"
 import {
   clientSelectedFeatures,
@@ -47,6 +50,7 @@ import { resolveDefaultNativeProviderCredentialId, resolveManageableNativeProvid
 import { listTeamsForMember } from "../../orgs.js"
 import type { MemberTeamSummary } from "../../orgs.js"
 import { ensureFreshPrivilegedSession } from "../../privileged-session.js"
+import { checkGoogleConnectorApis, requiredGoogleApis } from "./google-api-check.js"
 import { CONNECTIONS_READ_SESSION_MAX_AGE_MS, orgAccessFailureStatus } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 
@@ -73,6 +77,21 @@ const clientConfigResponseSchema = z.object({
   features: z.array(z.string()),
   tenantId: z.string().nullable(),
 }).meta({ ref: "OAuthClientConfigResponse" })
+
+const apiCheckResponseSchema = z.object({
+  providerId: z.string(),
+  /** False when the caller has no sign-in on this connector to check with. */
+  checked: z.boolean(),
+  apis: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    service: z.string(),
+    features: z.array(z.string()),
+    status: z.enum(["enabled", "disabled", "unknown"]),
+    enableUrl: z.string().nullable(),
+    detail: z.string().nullable(),
+  })),
+}).meta({ ref: "OAuthProviderApiCheck" })
 
 const clientConfigDetailResponseSchema = z.object({
   providerId: z.string(),
@@ -206,6 +225,7 @@ export async function beginNativeProviderConnect(input: OrgIds & {
     orgMembershipId: input.orgMembershipId,
     providerId: input.credentialProviderId,
     binding: input.provider.providerId,
+    workbotReturn: workbotConnectReturn(input.request),
     secret: env.betterAuthSecret,
   })
 
@@ -448,6 +468,50 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
   )
 
   app.get(
+    "/v1/oauth-providers/:providerId/api-check",
+    describeRoute({
+      tags: ["Authentication"],
+      summary: "Check which Google APIs a Google Workspace connector can reach",
+      description: "Requires the View OAuth apps permission and a sign-in within the last 24 hours. For each Google API the connector's saved permissions call, makes one read with the caller's own sign-in on this connector and reports whether the API is turned on in the Google Cloud project that owns the OAuth client, with Google's link to turn it on. Returns no Google content. Without a sign-in, lists the APIs as unchecked.",
+      responses: {
+        200: jsonResponse("Each needed Google API and whether it is turned on.", apiCheckResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks the View OAuth apps permission.", forbiddenSchema),
+        404: jsonResponse("Unknown providerId, or not a Google Workspace connector.", oauthNotFoundSchema),
+      },
+    }),
+    orgPermissionRoute("oauth_clients.view"),
+    paramValidator(providerParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const fresh = ensureFreshPrivilegedSession(c, CONNECTIONS_READ_SESSION_MAX_AGE_MS)
+      if (!fresh.ok) return c.json(fresh.response, orgAccessFailureStatus(fresh.response))
+
+      const { providerId } = c.req.valid("param")
+      const resolved = await resolveNativeProviderCredential({
+        organizationId: payload.organization.id,
+        providerOrConnectionId: providerId,
+      })
+      if (!resolved || resolved.provider.providerId !== "google-workspace") {
+        return c.json({ error: "unknown_oauth_provider", message: `"${providerId}" is not a Google Workspace connector.` }, 404)
+      }
+      const { provider, credentialProviderId } = resolved
+
+      const client = await getOrgOAuthClient(payload.organization.id, credentialProviderId)
+      const features = clientSelectedFeatures(provider, client?.extra ?? null)
+      c.header("cache-control", "no-store")
+      const token = client
+        ? await getValidAccessToken({ provider, credentialProviderId, organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id }).catch(() => null)
+        : null
+      if (!token || "error" in token) {
+        const apis = requiredGoogleApis(features).map((api) => ({ id: api.id, name: api.name, service: api.service, features: [...api.features], status: "unknown" as const, enableUrl: null, detail: null }))
+        return c.json({ providerId, checked: false, apis })
+      }
+      return c.json({ providerId, checked: true, apis: await checkGoogleConnectorApis({ accessToken: token.accessToken, features, baseUrl: env.googleApiBaseUrl }) })
+    },
+  )
+
+  app.get(
     "/v1/oauth-providers/:providerId/connect/start",
     describeRoute({
       tags: ["Authentication"],
@@ -579,8 +643,8 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       const url = new URL(c.req.url)
       const code = url.searchParams.get("code")
       const state = url.searchParams.get("state")
-      if (!code || !state) {
-        return c.json({ error: "invalid_request", message: "Missing code or state." }, 400)
+      if (!state) {
+        return c.json({ error: "invalid_request", message: "Missing state." }, 400)
       }
 
       const statePayload = verifyOAuthStateToken({ token: state, secret: env.betterAuthSecret })
@@ -591,6 +655,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ error: "invalid_request", message: "Invalid or expired state." }, 400)
       }
 
+      const completionPage = (result: Parameters<typeof connectCallbackPage>[0]) => connectCallbackPage(result, workbotCallbackReturn(statePayload.workbotReturn, statePayload.providerId))
       const memberTeams = await listTeamsForMember({
         organizationId: statePayload.organizationId,
         memberId: statePayload.orgMembershipId,
@@ -619,6 +684,10 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       // organization and initiating member: attribute before the token exchange.
       const auditBlocked = await attributeOAuthCallbackMember(c, { organizationId: statePayload.organizationId, memberId: statePayload.orgMembershipId })
       if (auditBlocked) return auditBlocked
+
+      if (url.searchParams.has("error") || !code) {
+        return c.html(completionPage({ ok: false, name: provider.displayName, message: "The account was not connected. Try Connect again and approve the requested access." }), 400)
+      }
 
       let grantedScopes: string[] = []
       try {
@@ -658,7 +727,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
             providerId,
             code: "connection_request_superseded",
           })
-          return c.html(connectCallbackPage({
+          return c.html(completionPage({
             ok: false,
             name: provider.displayName,
             message: "This OpenWork connection request is no longer active.",
@@ -675,7 +744,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
             code: error.code,
             ...error.details,
           })
-          return c.html(connectCallbackPage({
+          return c.html(completionPage({
             ok: false,
             name: provider.displayName,
             message: error.message,
@@ -691,7 +760,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           code: "oauth_callback_failed",
           errorName: error instanceof Error ? error.name : "UnknownError",
         })
-        return c.html(connectCallbackPage({
+        return c.html(completionPage({
           ok: false,
           name: provider.displayName,
           message: "OpenWork could not finish the OAuth connection. Try Connect again; if it still fails, contact support with the diagnostic reference.",
@@ -710,7 +779,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           providerId,
           missingScopes,
         })
-        return c.html(connectCallbackPage({
+        return c.html(completionPage({
           ok: false,
           name: provider.displayName,
           message: `You signed in, but ${provider.displayName} did not grant: ${missingScopes.join(", ")}. Ask your administrator to grant these permissions to the OpenWork app with your identity provider, or to turn off the matching features, then connect again.`,
@@ -718,7 +787,10 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         }), 200)
       }
 
-      return c.html(connectCallbackPage({ ok: true, name: provider.displayName }))
+      void recordWorkbotConnection({ organizationId: statePayload.organizationId, memberId: statePayload.orgMembershipId }, {
+        attemptId: statePayload.nonce, connectionId: credentialProviderId, appId: provider.providerId,
+      })
+      return c.html(completionPage({ ok: true, name: provider.displayName }))
     },
   )
 

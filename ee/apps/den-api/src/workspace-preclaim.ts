@@ -22,6 +22,7 @@ import { recordUserSessionsRevokedBySystem } from "./audit/domain/sessions.js"
 import { cache } from "./cache.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { sessionTokenDigest } from "./session-token.js"
 import { getDenAuthIssuer } from "./mcp/jwt-policy.js"
 
 /**
@@ -187,7 +188,8 @@ export async function exchangePreclaimAssertion(assertion: string, now = new Dat
     id: sessionId,
     userId: agentUserId,
     activeOrganizationId: bootstrap.organizationId,
-    token: randomBytes(32).toString("base64url"),
+    // Never presented by anyone (the JWT names the session id), so it is stored hashed from the start.
+    token: sessionTokenDigest(randomBytes(32).toString("base64url")),
     expiresAt,
     ipAddress: null,
     userAgent: "openwork-preclaim",
