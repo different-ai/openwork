@@ -174,6 +174,13 @@ test("Differently's error codes map onto OpenWork's taxonomy without reading mes
   }
 })
 
+test("trailing slashes are trimmed from the URL and from stat paths, however many there are", async () => {
+  const { fake, p } = provider({}, { url: `https://differently.test${"/".repeat(50_000)}` })
+  const h = await p.create(spec(), { timeoutMs: 5_000 })
+  assert.ok(fake.requests.every(r => r.path.startsWith("/v1/")))
+  assert.deepEqual(await withBlocks(p, ["files"]).files.stat(h, `/tmp${"/".repeat(50_000)}`, { timeoutMs: 5_000 }), null)
+})
+
 test("a wrong key surfaces as an auth error", async () => {
   const fake = fakeDifferently()
   const p = createDifferentlyProvider({ url: "https://differently.test", apiKey: "dly_wrong" }, { ...quick, fetch: fake.fetch })

@@ -54,6 +54,13 @@ const codes: Record<string, SandboxErrorCode> = {
   internal: "transient",
 }
 
+/** Drops trailing slashes in linear time, with no backtracking pattern over caller input. */
+function trimTrailingSlashes(value: string): string {
+  let end = value.length
+  while (end > 0 && value[end - 1] === "/") end--
+  return value.slice(0, end)
+}
+
 /** Maps Differently's stable error codes (never its messages) onto OpenWork's taxonomy. */
 export function differentlyError(status: number, body: ErrorBody | null): SandboxError {
   const code = codes[body?.error?.code ?? ""] ?? (status === 404 ? "not_found" : status === 409 ? "conflict" : status === 401 || status === 403 ? "auth" : status === 429 ? "rate_limited" : status >= 500 ? "transient" : "unknown")
@@ -65,7 +72,7 @@ export function differentlyError(status: number, body: ErrorBody | null): Sandbo
 export function createDifferentlyProvider(options: DifferentlyProviderOptions, deps: DifferentlyProviderDeps = {}): SandboxProvider {
   if (!options.url || !options.apiKey) throw new Error("Differently requires url and apiKey")
   const id = DIFFERENTLY_PROVIDER_ID
-  const base = options.url.replace(/\/+$/, "")
+  const base = trimTrailingSlashes(options.url)
   const send = deps.fetch ?? fetch
   const now = deps.now ?? Date.now
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)))
@@ -248,7 +255,7 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
         },
         // Differently has no stat yet: list the parent directory and read the entry.
         async stat(h, file, opts) {
-          const trimmed = file.replace(/\/+$/, "") || "/"
+          const trimmed = trimTrailingSlashes(file) || "/"
           if (trimmed === "/") return { size: 0, kind: "directory" }
           const parent = trimmed.slice(0, trimmed.lastIndexOf("/")) || "/"
           const name = trimmed.slice(trimmed.lastIndexOf("/") + 1)
