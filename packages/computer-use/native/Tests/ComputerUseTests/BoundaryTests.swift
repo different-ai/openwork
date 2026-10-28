@@ -13,7 +13,15 @@ final class BoundaryTests: XCTestCase {
     func testHostIdentityCannotWidenTheSigningRequirement() {
         // The test runner's Apple-signed parent would satisfy "anchor apple".
         XCTAssertFalse(HostTrust.process(getppid(), isSignedAs: "x\" or anchor apple or identifier \"y", team: "F5DJWB4CCV"))
-        XCTAssertFalse(HostTrust.process(getppid(), isSignedAs: HostTrust.desktopIdentifier, team: "F5DJWB4CCV"))
+        for host in HostTrust.desktopIdentifiers {
+            XCTAssertFalse(HostTrust.process(getppid(), isSignedAs: host, team: "F5DJWB4CCV"))
+        }
+    }
+
+    func testOnlyTheSignedDesktopAppsCanHostTheHelper() {
+        // Every app that bundles the helper must be listed, or its computer use stops
+        // working; sidecars and other team-signed code must not be.
+        XCTAssertEqual(Set(HostTrust.desktopIdentifiers), ["com.differentai.openwork", "com.differentai.opencoworker"])
     }
 
     func testOffWindowAndPartiallyClippedAccessibilityTextCannotBeExposed() throws {

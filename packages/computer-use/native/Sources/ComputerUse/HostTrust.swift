@@ -8,8 +8,9 @@ import Security
 /// sidecars, is not a host. After the responsibility relaunch the parent is
 /// this helper's own first process, which already checked the desktop.
 enum HostTrust {
-    /// The appId of every signed desktop distribution. Demo builds are unsigned.
-    static let desktopIdentifier = "com.differentai.openwork"
+    /// The appIds of the signed desktop apps that bundle this helper: every OpenWork
+    /// distribution, and Open Coworker. Demo builds are unsigned.
+    static let desktopIdentifiers = ["com.differentai.openwork", "com.differentai.opencoworker"]
 
     static func embeddedHostIsTrusted() -> Bool {
         guard let signer = signingIdentity() else {
@@ -17,8 +18,8 @@ enum HostTrust {
             // require a signed peer; standalone mode is no bypass.
             return false
         }
-        let host = Responsibility.relaunched ? signer.identifier : desktopIdentifier
-        return process(getppid(), isSignedAs: host, team: signer.team)
+        let hosts = Responsibility.relaunched ? [signer.identifier] : desktopIdentifiers
+        return hosts.contains { process(getppid(), isSignedAs: $0, team: signer.team) }
     }
 
     static func process(_ pid: pid_t, isSignedAs identifier: String, team: String) -> Bool {
