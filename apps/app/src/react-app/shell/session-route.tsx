@@ -3952,7 +3952,7 @@ export function SessionRoute() {
       primarySurface={activityRouteActive || dashboardRouteActive || automationsRouteActive || calendarRouteActive || codeRouteActive || extensionsMainOpen ? "flat" : undefined}
       primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation)}
       primarySlot={activityRouteActive ? <ActivityPage onTrySkill={trySkillInNewSession} /> : codeRouteActive ? (
-        <CodePage openworkServerClient={selectedWorkspaceEndpoint?.client ?? null} />
+        <CodePage openworkServerClient={client} />
       ) : pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
         <WorkspaceProvider
           client={opencodeClient}

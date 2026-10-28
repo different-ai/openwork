@@ -2913,7 +2913,7 @@ function createRoutes(
     resolveWorkspaceWithoutBootstrap,
   });
 
-  registerCodeSessionsRoutes({ routes, jsonResponse });
+  registerCodeSessionsRoutes({ routes, jsonResponse, requireClientScope });
 
   registerCloudMcpRoutes({
     nativeEngineForWorkspace,

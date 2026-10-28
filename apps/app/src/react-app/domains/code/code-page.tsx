@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Folder, RefreshCw, Search, SquareTerminal } from "lucide-react";
 
@@ -91,9 +92,18 @@ function SessionRow({
 
 export function CodePage({ openworkServerClient: client }: { openworkServerClient: OpenworkServerClient | null }) {
   const queryClient = useQueryClient();
+  const location = useLocation();
   const [filter, setFilter] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(() =>
+    new URLSearchParams(window.location.search).get("session"));
   const [now, setNow] = useState(() => Date.now());
+
+  // ?session=<id> deep-links a transcript; following the link replaces the
+  // selection instead of fighting it.
+  const linkedSessionId = new URLSearchParams(location.search).get("session");
+  useEffect(() => {
+    if (linkedSessionId) setSelectedId(linkedSessionId);
+  }, [linkedSessionId]);
 
   const listQuery = useQuery({
     queryKey: ["code-sessions"],

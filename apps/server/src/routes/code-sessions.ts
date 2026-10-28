@@ -6,7 +6,8 @@ import {
   type CodeSessionClient,
 } from "../code-sessions/types.js";
 import { createCodeSessionsService, type CodeSessionsService } from "../code-sessions/index.js";
-import { addRoute, type Route } from "./registry.js";
+import { addRoute, type RequestContext, type Route } from "./registry.js";
+import type { TokenScope } from "../types.js";
 
 const clientToggleSchema = z.object({ enabled: z.boolean() }).strict();
 
@@ -19,6 +20,7 @@ function statusOf(error: CodeSessionsError): number {
 interface RegisterCodeSessionsRoutesOptions {
   routes: Route[];
   jsonResponse: (data: unknown, status?: number) => Response;
+  requireClientScope: (ctx: RequestContext, required: TokenScope) => void;
   /** Injectable for tests; defaults to the shared in-memory service. */
   service?: CodeSessionsService;
 }
@@ -31,11 +33,13 @@ interface RegisterCodeSessionsRoutesOptions {
  * - GET /code-sessions/:client/:folder/:file returns one session's transcript.
  * - PUT /code-sessions/clients/:client turns a client's mirror on or off.
  *
- * These routes are host-scoped on purpose: transcripts cover every project on
- * the machine, not one workspace. Nothing here writes to the clients' data.
+ * Client-scoped auth like the Claude Code import routes: the desktop owner
+ * and the headless-web owner both hold a collaborator client token, and the
+ * browser bundle deliberately never receives the host token. Nothing here
+ * writes to the clients' data.
  */
 export function registerCodeSessionsRoutes(options: RegisterCodeSessionsRoutesOptions): void {
-  const { routes, jsonResponse } = options;
+  const { routes, jsonResponse, requireClientScope } = options;
   const service = options.service ?? createCodeSessionsService();
 
   const toApiError = (error: unknown): unknown => {
@@ -50,12 +54,14 @@ export function registerCodeSessionsRoutes(options: RegisterCodeSessionsRoutesOp
     throw new ApiError(400, "code_session_client_unknown", "This coding agent is not supported yet.");
   };
 
-  addRoute(routes, "GET", "/code-sessions", "host", async () => {
+  addRoute(routes, "GET", "/code-sessions", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
     const items = await service.list();
     return jsonResponse({ clients: service.clients(), items });
   });
 
-  addRoute(routes, "GET", "/code-sessions/:client/:folder/:file", "host", async (ctx) => {
+  addRoute(routes, "GET", "/code-sessions/:client/:folder/:file", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
     const client = parseClient(ctx.params.client);
     try {
       return jsonResponse({ item: await service.read(client, `${ctx.params.folder}/${ctx.params.file}`) });
@@ -64,7 +70,8 @@ export function registerCodeSessionsRoutes(options: RegisterCodeSessionsRoutesOp
     }
   });
 
-  addRoute(routes, "PUT", "/code-sessions/clients/:client", "host", async (ctx) => {
+  addRoute(routes, "PUT", "/code-sessions/clients/:client", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
     const client = parseClient(ctx.params.client);
     let body: unknown;
     try {
