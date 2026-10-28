@@ -150,12 +150,68 @@ test("the v2 bridge runs group commands and refuses unregistered commands", asyn
     assert.equal(moved.status, 200);
     assert.equal(moved.body.ok, true, JSON.stringify(moved.body));
     assert.equal(state.assignments.s1, "g1");
-    const refused = await post({ id: "session.create", args: { sessions: [{ title: "x", prompt: "y" }] } });
+    const refused = await post({ id: "settings.panel.open", args: {} });
     assert.equal(refused.status, 400);
     assert.match(refused.body.error, /not available here/);
   } finally {
     await bridge.close();
   }
+});
+
+test("the v2 bridge creates and messages sessions through the native engine routes", async () => {
+  const { createV2ContextBridge } = await import("../src/opencode-v2-context-bridge.js");
+  const writes: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const window: string[] = [];
+  const bridge = await createV2ContextBridge(async (path, init) => {
+    const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+    if (path === "/workspaces") return { items: [{ id: "ws1", name: "Enterprise", path: "/work" }] };
+    if (path === "/workspace/ws1/opencode2/api/session/s1") return { data: { id: "s1", title: "Caller" } };
+    if (path === "/experimental/ui-control/request") {
+      window.push(body.input.id);
+      return { ok: true };
+    }
+    if (init?.method === "POST") {
+      writes.push({ path, body });
+      return path === "/workspace/ws1/opencode2/api/session" ? { data: { id: "s2", title: body.title } } : {};
+    }
+    throw new Error(`unexpected ${init?.method ?? "GET"} ${path}`);
+  });
+  const post = async (input: unknown) => {
+    const response = await fetch(bridge.url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${bridge.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "openwork_execute", input, sessionId: "s1" }),
+    });
+    return { status: response.status, body: await response.json() };
+  };
+  try {
+    const created = await post({ id: "session.create", args: { sessions: [{ title: "Review PRs", prompt: "List open PRs" }] } });
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    assert.equal(created.body.result.ok, true, JSON.stringify(created.body));
+    assert.equal(created.body.result.created[0].sessionId, "s2");
+    const sent = await post({ id: "session.send", args: { sessionId: "s1", text: "Any update?" } });
+    assert.equal(sent.body.result.ok, true, JSON.stringify(sent.body));
+    assert.deepEqual(writes.map(({ path, body }) => [path, body.title ?? body.text, body.delivery]), [
+      ["/workspace/ws1/opencode2/api/session", "Review PRs", undefined],
+      ["/workspace/ws1/opencode2/api/session/s2/prompt", "List open PRs", "steer"],
+      ["/workspace/ws1/opencode2/api/session/s1/prompt", "Any update?", "steer"],
+    ]);
+    assert.equal(writes[2]?.body.id, sent.body.result.messageId);
+    assert.deepEqual(window, ["workspace.reload_sessions"]);
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("the v2 bridge writes only session create and prompt routes", async () => {
+  const { postV2SessionWrite } = await import("../src/opencode-v2-context-bridge.js");
+  const refuse = async () => { throw new Error("must not write"); };
+  for (const path of [
+    "/workspace/ws1/opencode/session/s1/abort",
+    "/workspace/ws1/opencode/session/s1/prompt_async?x=1",
+    "/workspace/ws1/opencode/session/../prompt_async",
+    "/workspace/ws1/opencode/session/s1/message",
+  ]) assert.equal(await postV2SessionWrite(path, {}, refuse), undefined, path);
 });
 
 test("the v2 bridge advertises automation proposals without exposing other app commands", async () => {
@@ -176,7 +232,7 @@ test("the v2 bridge advertises automation proposals without exposing other app c
     const { context } = await response.json();
     const commands = context.availableAffordances.filter((item: { kind: string }) => item.kind === "command");
     assert.deepEqual(commands.map((item: { id: string }) => item.id).sort(), [
-      "automation.propose", "session.group.create", "session.group.move", "session.group.remove",
+      "automation.propose", "session.create", "session.group.create", "session.group.move", "session.group.remove", "session.send",
     ]);
     const proposal = context.contributions.find((item: { featureId: string }) => item.featureId === "automations");
     assert.equal(proposal.affordances[0].id, "automation.propose");
@@ -228,7 +284,7 @@ test("a v2 automation proposal is validated and returned for review without crea
     const malformed = await post("automation.propose", { ...args, schedule: { ...args.schedule, hour: 25 } });
     assert.equal(malformed.status, 400);
     assert.match(malformed.body.error, /hour/);
-    for (const id of ["automation.create", "automation.activate", "automation.run", "extension.call", "session.create"]) {
+    for (const id of ["automation.create", "automation.activate", "automation.run", "extension.call", "settings.panel.open"]) {
       const refused = await post(id);
       assert.equal(refused.status, 400, id);
       assert.match(refused.body.error, /not available here/);

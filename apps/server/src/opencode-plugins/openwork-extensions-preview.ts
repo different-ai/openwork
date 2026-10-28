@@ -1269,6 +1269,11 @@ async function resolveContextWorkspace(workspaceId: string | undefined, context:
       .at(0);
     if (match) return match;
   }
+  // The v2 engine passes only the calling session, not its directory.
+  if (context.sessionID) {
+    const located = await locateOpenWorkSession(context.sessionID, undefined);
+    if (!("error" in located)) return located.workspace;
+  }
   const only = workspaces.at(0);
   if (workspaces.length === 1 && only) return only;
   throw new Error(`Multiple OpenWork workspaces match; pass workspaceId. Available: ${workspaces.map((workspace) => workspaceLabel(workspace)).join(", ")}`);

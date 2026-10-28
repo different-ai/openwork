@@ -79,10 +79,10 @@ export default {
         addProviderSafeTool(editor, {
           name,
           description: name === "openwork_context"
-            ? "Read OpenWork app context and available affordances. Use this to discover session.search and session.read for other conversations, session.group commands for sidebar groups, and automation.propose for scheduled work."
+            ? "Read OpenWork app context and available affordances. Use this to discover session.search and session.read for other conversations, session.group commands for sidebar groups, session.create and session.send to start or message other sessions, and automation.propose for scheduled work."
             : name === "openwork_query"
               ? "Read an OpenWork affordance without changing the app or navigating. Use the exact id and arguments from openwork_context; session.read includes live background-agent activity."
-              : "Run an OpenWork command listed in openwork_context: change sidebar groups or propose an Automation for the person to review and create. A proposal does not create, activate, or run anything. Use the exact id and arguments from openwork_context.",
+              : "Run an OpenWork command listed in openwork_context: change sidebar groups, create or message sessions, or propose an Automation for the person to review and create. A proposal does not create, activate, or run anything. Use the exact id and arguments from openwork_context.",
           input: name === "openwork_context" ? { type: "object", properties: {}, additionalProperties: false } : {
             type: "object", properties: { id: { type: "string" }, args: { type: "object", additionalProperties: true } },
             required: ["id"], additionalProperties: false,
