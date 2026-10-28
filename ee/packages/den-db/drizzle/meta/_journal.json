@@ -1163,6 +1163,13 @@
       "when": 1793162803488,
       "tag": "0166_mcp_registration_status",
       "breakpoints": true
+    },
+    {
+      "idx": 167,
+      "version": "5",
+      "when": 1793202414862,
+      "tag": "0167_agent_member_check_sources",
+      "breakpoints": true
     }
   ]
 }

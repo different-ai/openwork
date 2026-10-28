@@ -73,6 +73,9 @@ export const AgentDeliveryTable = mysqlTable(
 /** The DM a check sent, so the member can open it in Slack. No message text. */
 export type AgentMemberCheckMessage = { channelId: string; messageTs: string; permalink: string | null }
 
+/** A source a check was about: what a message drew on, or what couldn't be read (and the connection to fix). */
+export type AgentMemberCheckSource = { id: string; name: string; connectionId: string | null }
+
 /**
  * One row per check of one member's agent, for the member only ("My agent", `workbotAgentLibrary`): when it looked,
  * what came of it (`sent`, `quiet`, `waited`, `failed`), a reason code and the sentence the member reads, which
@@ -92,6 +95,8 @@ export const AgentMemberCheckTable = mysqlTable(
     reason: varchar("reason", { length: 32 }).notNull(),
     summary: varchar("summary", { length: 400 }).notNull(),
     responsibilities: compatJsonColumn<string[]>("responsibilities"),
+    /** The sources it was about (null on rows from before sources). */
+    sources: compatJsonColumn<AgentMemberCheckSource[]>("sources"),
     message: compatJsonColumn<AgentMemberCheckMessage>("message"),
   },
   (t) => [
