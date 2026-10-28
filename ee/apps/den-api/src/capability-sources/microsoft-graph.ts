@@ -8,6 +8,28 @@ const DEFAULT_MAX_CONTENT_CHARACTERS = 200_000
 /** Graph attaches a file in one request only below 3 MB; larger files need an attachment upload session. */
 export const MICROSOFT_MAIL_ATTACHMENT_MAX_BYTES = 3_000_000
 
+export type Microsoft365BodyContentType = "text" | "html"
+
+/** Graph's itemBody; plain text unless HTML is asked for, so markup is never stored as literal text by accident of a default. */
+function graphItemBody(content: string, contentType: Microsoft365BodyContentType | undefined) {
+  return { contentType: contentType === "html" ? "HTML" : "Text", content }
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+}
+
+/** The member's HTML reply placed above the quoted original that createReply prepared. */
+export function htmlReplyBody(reply: string, quoted: string, quotedContentType: string): string {
+  const block = `<div>${reply}</div>`
+  if (!quoted) return block
+  if (quotedContentType.toLowerCase() !== "html") return `${block}<br>${escapeHtml(quoted).replace(/\r?\n/g, "<br>")}`
+  const bodyTag = /<body\b[^>]*>/i.exec(quoted)
+  if (!bodyTag) return `${block}${quoted}`
+  const at = bodyTag.index + bodyTag[0].length
+  return `${quoted.slice(0, at)}${block}${quoted.slice(at)}`
+}
+
 export type Microsoft365EmailAddress = {
   name: string
   address: string
@@ -678,11 +700,12 @@ export class MicrosoftGraphClient {
     bcc?: string[]
     subject: string
     body: string
+    bodyContentType?: Microsoft365BodyContentType
   }): Promise<Microsoft365MailMessage> {
     const recipient = (address: string) => ({ emailAddress: { address } })
     return extractMicrosoftMailMessage(await this.requestMutation("Microsoft 365 mail draft create", "me/messages", "POST", 201, {
       subject: input.subject,
-      body: { contentType: "Text", content: input.body },
+      body: graphItemBody(input.body, input.bodyContentType),
       toRecipients: input.to.map(recipient),
       ccRecipients: (input.cc ?? []).map(recipient),
       bccRecipients: (input.bcc ?? []).map(recipient),
@@ -704,12 +727,30 @@ export class MicrosoftGraphClient {
     return { draftId: messageId, status: "accepted" }
   }
 
-  async createMailReplyDraft(messageId: string, comment: string): Promise<Microsoft365MailMessage> {
-    const draft = extractMicrosoftMailMessage(await this.requestMutation(
-      "Microsoft 365 mail reply draft create", `me/messages/${encodeURIComponent(messageId)}/createReply`, "POST", 201, { comment },
-    ))
+  async createMailReplyDraft(messageId: string, comment: string, bodyContentType: Microsoft365BodyContentType = "text"): Promise<Microsoft365MailMessage> {
+    const path = `me/messages/${encodeURIComponent(messageId)}/createReply`
+    if (bodyContentType === "text") {
+      const draft = extractMicrosoftMailMessage(await this.requestMutation("Microsoft 365 mail reply draft create", path, "POST", 201, { comment }))
+      if (!draft.isDraft) throw new MicrosoftGraphMutationOutcomeUnknownError("Microsoft 365 mail reply draft create")
+      return draft
+    }
+    // createReply's comment is always plain text. For HTML, create the reply
+    // without one, then write the comment above the quoted original in one
+    // body update, so the reply context Outlook built is kept.
+    const created = await this.requestMutation("Microsoft 365 mail reply draft create", path, "POST", 201, {})
+    const draft = extractMicrosoftMailMessage(created)
     if (!draft.isDraft) throw new MicrosoftGraphMutationOutcomeUnknownError("Microsoft 365 mail reply draft create")
-    return draft
+    try {
+      const quoted = (isRecord(created) ? readRecord(created, "body") : null) ?? {}
+      return extractMicrosoftMailMessage(await this.requestMutation(
+        "Microsoft 365 mail reply draft body update", `me/messages/${encodeURIComponent(draft.id)}`, "PATCH", 200,
+        { body: { contentType: "HTML", content: htmlReplyBody(comment, readString(quoted, "content"), readString(quoted, "contentType")) } },
+      ))
+    } catch (error) {
+      // Never leave a reply draft without the member's words in their Drafts folder.
+      await this.deleteMailDraft(draft.id).catch(() => undefined)
+      throw error
+    }
   }
 
   async listMailAttachments(messageId: string): Promise<Microsoft365MailAttachment[]> {
@@ -764,6 +805,7 @@ export class MicrosoftGraphClient {
   async updateCalendarEvent(eventId: string, input: {
     subject?: string
     body?: string
+    bodyContentType?: Microsoft365BodyContentType
     start?: string
     end?: string
     location?: string
@@ -771,7 +813,7 @@ export class MicrosoftGraphClient {
     return extractMicrosoftCalendarEvent(await this.requestMutation(
       "Microsoft 365 calendar event update", `me/events/${encodeURIComponent(eventId)}`, "PATCH", 200, {
         subject: input.subject,
-        body: input.body === undefined ? undefined : { contentType: "Text", content: input.body },
+        body: input.body === undefined ? undefined : graphItemBody(input.body, input.bodyContentType),
         start: input.start === undefined ? undefined : { dateTime: input.start, timeZone: "UTC" },
         end: input.end === undefined ? undefined : { dateTime: input.end, timeZone: "UTC" },
         location: input.location === undefined ? undefined : { displayName: input.location },
@@ -792,6 +834,7 @@ export class MicrosoftGraphClient {
   async createCalendarEvent(input: {
     subject: string
     body?: string
+    bodyContentType?: Microsoft365BodyContentType
     start: string
     end: string
     timeZone: string
@@ -800,7 +843,7 @@ export class MicrosoftGraphClient {
   }): Promise<Microsoft365CalendarEvent> {
     return extractMicrosoftCalendarEvent(await this.requestMutation("Microsoft 365 calendar event create", "me/events", "POST", 201, {
       subject: input.subject,
-      body: { contentType: "Text", content: input.body ?? "" },
+      body: graphItemBody(input.body ?? "", input.bodyContentType),
       start: { dateTime: input.start, timeZone: input.timeZone },
       end: { dateTime: input.end, timeZone: input.timeZone },
       location: { displayName: input.location ?? "" },

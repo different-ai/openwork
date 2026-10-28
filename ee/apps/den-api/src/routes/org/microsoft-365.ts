@@ -72,13 +72,17 @@ const mailMessageResponseSchema = z.object({
   message: mailMessageSchema,
 }).meta({ ref: "Microsoft365MailMessageResponse" })
 
+const bodyContentTypeSchema = z.enum(["text", "html"]).default("text")
+  .describe("How Outlook stores body: text (default) or html. Use html for links, line breaks, tables, or an HTML signature; markup sent as text shows as literal tags.")
+
 const mailDraftBodySchema = z.object({
   to: z.array(z.string().email()).min(1).max(50),
   cc: z.array(z.string().email()).max(50).optional(),
   bcc: z.array(z.string().email()).max(50).optional(),
   subject: z.string().trim().min(1).max(998),
   body: z.string().max(200_000),
-}).meta({ ref: "Microsoft365MailDraftBody" })
+  bodyContentType: bodyContentTypeSchema,
+}).strict().meta({ ref: "Microsoft365MailDraftBody" })
 
 const mailDraftResponseSchema = z.object({
   ok: z.literal(true),
@@ -97,6 +101,7 @@ const mailSendResponseSchema = z.object({
 
 const mailReplyDraftBodySchema = z.object({
   comment: z.string().trim().min(1).max(20_000).describe("Reply text to save in a draft for user review; this does not send mail."),
+  bodyContentType: bodyContentTypeSchema,
 }).strict().meta({ ref: "Microsoft365MailReplyDraftBody" })
 
 const MAIL_DRAFT_UPLOAD_MAX_FILES = 10
@@ -136,7 +141,7 @@ const connectionIdSchema = z.string().regex(/^(microsoft-365|emc_[A-Za-z0-9]+)$/
 // The multipart payload of a draft with attachments: a new message, or a reply to one.
 const mailDraftUploadPayloadSchema = z.union([
   mailDraftBodySchema.extend({ connectionId: connectionIdSchema }).strict(),
-  z.object({ replyToMessageId: graphItemIdSchema, comment: mailReplyDraftBodySchema.shape.comment, connectionId: connectionIdSchema }).strict(),
+  z.object({ replyToMessageId: graphItemIdSchema, comment: mailReplyDraftBodySchema.shape.comment, bodyContentType: bodyContentTypeSchema, connectionId: connectionIdSchema }).strict(),
 ])
 
 const mailDraftUploadResponseSchema = z.object({
@@ -189,6 +194,7 @@ const calendarEventsResponseSchema = z.object({
 const calendarEventBodySchema = z.object({
   subject: z.string().trim().min(1).max(255),
   body: z.string().max(20_000).optional(),
+  bodyContentType: bodyContentTypeSchema,
   start: z.string().datetime(),
   end: z.string().datetime(),
   timeZone: z.string().trim().min(1).max(100).default("UTC"),
@@ -213,6 +219,7 @@ const calendarEventUpdateBodySchema = z.object({
   confirmNotifications: z.literal(true).describe("The user explicitly authorized this update and potential attendee email notifications from Microsoft Graph."),
   subject: z.string().trim().min(1).max(255).optional(),
   body: z.string().max(20_000).optional(),
+  bodyContentType: z.enum(["text", "html"]).optional().describe("How Outlook stores body: text (default) or html. Only allowed together with body."),
   start: z.string().max(40).datetime().optional().describe("New UTC start, with Z suffix. Rescheduling requires both start and end."),
   end: z.string().max(40).datetime().optional().describe("New UTC end, with Z suffix."),
   location: z.string().trim().max(255).optional(),
@@ -221,6 +228,10 @@ const calendarEventUpdateBodySchema = z.object({
   .refine((value) => (value.start === undefined && value.end === undefined)
     || (value.start !== undefined && value.end !== undefined && Date.parse(value.end) > Date.parse(value.start)),
   "Rescheduling requires both start and end, with end after start.")
+  .refine((value) => value.bodyContentType === undefined || value.body !== undefined, {
+    message: "bodyContentType needs body.",
+    path: ["bodyContentType"],
+  })
   .meta({ ref: "Microsoft365CalendarEventUpdateBody" })
 
 const calendarCancelBodySchema = z.object({
@@ -540,13 +551,13 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
 
   app.post(
     "/v1/capabilities/microsoft-365/mail-message/:messageId/reply-draft",
-    describeMutation("createMicrosoft365ReplyDraft", "Create a reply draft for a selected Outlook message", "Uses Graph createReply with Mail.ReadWrite and mailDraft. Preserves the selected message's reply context. Saves a draft for user review and never sends it.", mailDraftResponseSchema),
+    describeMutation("createMicrosoft365ReplyDraft", "Create a reply draft for a selected Outlook message", "Uses Graph createReply with Mail.ReadWrite and mailDraft. Preserves the selected message's reply context. With bodyContentType html, the comment is written as HTML above the quoted message. Saves a draft for user review and never sends it.", mailDraftResponseSchema),
     orgMemberRouteMiddleware, boundedMutationBody, paramValidator(mailMessageParamSchema), jsonValidator(mailReplyDraftBodySchema),
     async (c) => {
       const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["mailDraft"], "Outlook draft creation")
       if (client instanceof Response) return client
       try {
-        return c.json({ ok: true, draft: await client.createMailReplyDraft(c.req.valid("param").messageId, c.req.valid("json").comment) })
+        return c.json({ ok: true, draft: await client.createMailReplyDraft(c.req.valid("param").messageId, c.req.valid("json").comment, c.req.valid("json").bodyContentType) })
       } catch (error) { return c.json(graphError(error), 502) }
     },
   )
@@ -650,7 +661,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       let draft: Awaited<ReturnType<MicrosoftGraphClient["createMailDraft"]>>
       try {
         draft = "replyToMessageId" in parsed.data
-          ? await client.createMailReplyDraft(parsed.data.replyToMessageId, parsed.data.comment)
+          ? await client.createMailReplyDraft(parsed.data.replyToMessageId, parsed.data.comment, parsed.data.bodyContentType)
           : await client.createMailDraft(parsed.data)
       } catch (error) { return c.json(graphError(error), 502) }
 
