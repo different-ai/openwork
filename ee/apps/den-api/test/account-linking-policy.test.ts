@@ -57,7 +57,7 @@ const auth = betterAuth({
       // The id token is the email Google vouches for.
       getUserInfo: async (token) => {
         const email = token.idToken ?? ""
-        return { user: { id: `google-${email}`, email, emailVerified: true, name: "Synthetic Person" }, data: {} }
+        return { user: { id: `google-${email}`, email, emailVerified: true, name: "Synthetic Person" }, data: { sub: `google-${email}` } }
       },
     },
   },

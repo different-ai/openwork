@@ -1184,6 +1184,13 @@
       "when": 1793211225894,
       "tag": "0169_admin_metric_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 170,
+      "version": "5",
+      "when": 1793214410124,
+      "tag": "0170_better_auth_1_7_7_oauth_client",
+      "breakpoints": true
     }
   ]
 }

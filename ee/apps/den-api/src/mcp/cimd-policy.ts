@@ -49,3 +49,16 @@ export async function isCimdClientIdUrlAllowed(clientIdUrl: string): Promise<boo
     throw error
   }
 }
+
+/**
+ * Fetch transport for Client ID Metadata Documents and the `jwks_uri` they
+ * name. Applies the same URL policy to every request and never follows a
+ * redirect, so a public document cannot bounce the fetch to a private host.
+ */
+export async function fetchCimdMetadataResource(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+  if (!(await isCimdClientIdUrlAllowed(url))) {
+    throw new Error("Client metadata URL is not permitted by the server's fetch policy")
+  }
+  return fetch(url, { ...init, redirect: "error" })
+}
