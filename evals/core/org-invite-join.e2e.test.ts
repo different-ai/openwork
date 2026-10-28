@@ -85,7 +85,12 @@ test("OPE-82: cloud invitations retain identity and organization through authent
     const ownerActor = user.on(ownerSurface);
     await ownerActor.see({ text: person.email }, { timeoutMs: 90_000 });
     await ownerActor.see({ text: "Pending" });
-    await user.navigate(invite.link);
+    // A real desktop-requested invitation stops at membership confirmation;
+    // no native handoff is opened in this headless proof.
+    const desktopInvite = new URL(invite.link);
+    desktopInvite.searchParams.set("desktopAuth", "1");
+    desktopInvite.searchParams.set("desktopScheme", "openwork");
+    await user.navigate(desktopInvite.toString());
     await user.see({ text: person.email }, { timeoutMs: 90_000 });
     await user.type({ role: "textbox", label: /^name$/i }, person.name);
     await user.type({ role: "textbox", label: /^password$/i }, person.password);
@@ -94,6 +99,10 @@ test("OPE-82: cloud invitations retain identity and organization through authent
     await user.see({ role: "button", label: `Join ${text(world.organization.name)}` }, { timeoutMs: 30_000 });
     await user.click({ role: "button", label: `Join ${text(world.organization.name)}` });
     await joined(person.email);
+    await user.see({ testId: "join-org-joined" });
+    await user.notSee({ testId: "join-org-connected" });
+    await user.notSee({ testId: "desktop-connected" });
+    await user.screenshot();
     await user.notSee({ role: "button", label: "Resend code" });
     expect(await witnesses.emails("verification", person.email)).toEqual(verificationBefore);
     // The member list does not refresh on its own; the owner reloads it.

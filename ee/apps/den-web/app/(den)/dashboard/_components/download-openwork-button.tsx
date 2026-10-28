@@ -12,7 +12,7 @@ export function DownloadOpenWorkButton({
   organization?: { id: string; name: string };
 }) {
   if (organization) {
-    return <OrganizationDownloadPopover organizationName={organization.name} />;
+    return <OrganizationDownloadPopover />;
   }
 
   return (
@@ -29,7 +29,7 @@ export function DownloadOpenWorkButton({
   );
 }
 
-function OrganizationDownloadPopover({ organizationName }: { organizationName: string }) {
+function OrganizationDownloadPopover() {
   const [copying, setCopying] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,9 +80,9 @@ function OrganizationDownloadPopover({ organizationName }: { organizationName: s
             className="w-[360px] max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white p-4 text-gray-900"
             data-testid="workspace-install-popover"
           >
-            <Popover.Title className="text-[13px] font-semibold">Download for this workspace</Popover.Title>
+            <Popover.Title className="text-[13px] font-semibold">Download OpenWork</Popover.Title>
             <Popover.Description className="mt-1 text-[13px] text-gray-500">
-              Teammates get OpenWork already connected to {organizationName}.
+              Recipients sign in and choose an organization they can access. This link does not grant access.
             </Popover.Description>
             {error ? (
               <p className="mt-3 text-[13px] text-red-600" role="alert">
