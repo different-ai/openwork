@@ -6,9 +6,13 @@ locals {
   custom_domain = var.domain_name != ""
   api_host      = var.api_domain_name != "" ? var.api_domain_name : "api.${var.domain_name}"
 
-  api_service_name = "${var.name}-den-api"
-  web_service_name = "${var.name}-den-web"
-  migrate_job_name = "${var.name}-den-migrate"
+  api_service_name = var.managed_legacy ? "${var.name}-api" : "${var.name}-den-api"
+  web_service_name = var.managed_legacy ? "${var.name}-web" : "${var.name}-den-web"
+  migrate_job_name = var.managed_legacy ? "${var.name}-migrate" : "${var.name}-den-migrate"
+  managed_secret_names = {
+    DATABASE_URL          = "database-url", BETTER_AUTH_SECRET = "auth",
+    DEN_DB_ENCRYPTION_KEY = "encryption", DEN_INITIAL_ADMIN_BOOTSTRAP_CODE = "bootstrap"
+  }
 
   # Cloud Run's deterministic default URL is https://<service>-<project number>.<region>.run.app,
   # so both origins are known before the services exist (no second apply).
@@ -155,7 +159,7 @@ resource "random_password" "db_encryption" {
 
 resource "random_password" "bootstrap_code" {
   count   = var.write_only_secrets ? 0 : 1
-  length  = 24
+  length  = var.managed_legacy ? 48 : 24
   special = false
 }
 
@@ -165,7 +169,7 @@ resource "google_secret_manager_secret" "app" {
   for_each = local.secret_keys
 
   project   = var.project_id
-  secret_id = "${var.name}-den-${replace(lower(each.key), "_", "-")}"
+  secret_id = var.managed_legacy ? "${var.name}-${local.managed_secret_names[each.key]}" : "${var.name}-den-${replace(lower(each.key), "_", "-")}"
   labels    = var.labels
 
   replication {
@@ -193,7 +197,7 @@ resource "google_service_account" "run" {
 }
 
 resource "google_project_iam_member" "cloudsql_client" {
-  count = var.grant_iam_roles ? 1 : 0
+  count = var.grant_iam_roles && !var.managed_legacy ? 1 : 0
 
   project = var.project_id
   role    = "roles/cloudsql.client"
@@ -204,7 +208,7 @@ resource "google_secret_manager_secret_iam_member" "app" {
   for_each = var.grant_iam_roles ? local.secret_keys : toset([])
 
   project   = var.project_id
-  secret_id = google_secret_manager_secret.app[each.key].secret_id
+  secret_id = var.managed_legacy ? google_secret_manager_secret.app[each.key].id : google_secret_manager_secret.app[each.key].secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${local.service_account_email}"
 }

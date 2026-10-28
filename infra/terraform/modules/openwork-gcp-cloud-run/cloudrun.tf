@@ -97,6 +97,10 @@ resource "google_cloud_run_v2_job" "migrate" {
 
   lifecycle {
     precondition {
+      condition     = !var.managed_legacy || (!var.write_only_secrets && var.web_service_account_email != "" && var.smtp.password == "" && var.resend_api_key == "")
+      error_message = "Managed compatibility requires legacy secrets, a separate web identity, and no new optional generated secrets."
+    }
+    precondition {
       condition     = var.create_database || var.write_only_secrets || nonsensitive(var.database_url != "")
       error_message = "Set database_url when create_database = false."
     }
@@ -133,6 +137,24 @@ resource "google_cloud_run_v2_service" "api" {
   default_uri_disabled = local.custom_domain && var.restrict_ingress_to_load_balancer
   labels               = var.labels
 
+  # On adoption, prepare API-only revisions while still disabled. The runner
+  # verifies latest-ready/traffic ownership before a separate autoscaling apply.
+  dynamic "scaling" {
+    for_each = var.managed_legacy ? [1] : []
+    content {
+      scaling_mode          = var.managed_maintenance ? "MANUAL" : "AUTOMATIC"
+      manual_instance_count = var.managed_maintenance ? 0 : null
+    }
+  }
+
+  dynamic "traffic" {
+    for_each = var.managed_legacy ? [1] : []
+    content {
+      type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+      percent = 100
+    }
+  }
+
   template {
     service_account = local.service_account_email
     timeout         = "300s"
@@ -143,7 +165,9 @@ resource "google_cloud_run_v2_service" "api" {
     }
 
     containers {
-      image = local.den_api_image
+      image   = local.den_api_image
+      command = var.managed_legacy ? ["node"] : null
+      args    = var.managed_legacy ? ["/app/ee/apps/den-api/dist/main.js"] : null
 
       ports {
         container_port = 8788
@@ -233,8 +257,26 @@ resource "google_cloud_run_v2_service" "web" {
   default_uri_disabled = local.custom_domain && var.restrict_ingress_to_load_balancer
   labels               = var.labels
 
+  # On adoption, prepare API-only revisions while still disabled. The runner
+  # verifies latest-ready/traffic ownership before a separate autoscaling apply.
+  dynamic "scaling" {
+    for_each = var.managed_legacy ? [1] : []
+    content {
+      scaling_mode          = var.managed_maintenance ? "MANUAL" : "AUTOMATIC"
+      manual_instance_count = var.managed_maintenance ? 0 : null
+    }
+  }
+
+  dynamic "traffic" {
+    for_each = var.managed_legacy ? [1] : []
+    content {
+      type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+      percent = 100
+    }
+  }
+
   template {
-    service_account = local.service_account_email
+    service_account = var.managed_legacy ? var.web_service_account_email : local.service_account_email
     timeout         = "300s"
 
     scaling {
@@ -275,7 +317,7 @@ resource "google_cloud_run_v2_service" "web" {
 
 
       dynamic "env" {
-        for_each = local.secret_refs
+        for_each = var.managed_legacy ? {} : local.secret_refs
         content {
           name = env.key
           value_source {

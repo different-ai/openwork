@@ -138,10 +138,13 @@ export function buildRelease(argv = process.argv.slice(2)) {
       "infra/managed-deployments/gcp/runner/install.py",
       "infra/managed-deployments/gcp/runner/runner.py",
       "infra/managed-deployments/gcp/health/health_agent.py",
-      ...files("infra/managed-deployments/gcp/terraform", terraform),
+      ...files("infra/managed-deployments/gcp/terraform", terraform).filter((path) => !path.includes("/tests/")),
+      ...files("infra/terraform/modules/openwork-gcp-cloud-run", (name) => name.endsWith(".tf"))
+        .filter((path) => !path.includes("/examples/") && !path.includes("/tests/")),
     ]),
   ];
-  if (provider === "aws") validateModuleReferences(included.filter((path) => path.startsWith("infra/terraform/modules/openwork-aws-ecs/")));
+  const sharedModule = provider === "aws" ? "openwork-aws-ecs" : "openwork-gcp-cloud-run";
+  validateModuleReferences(included.filter((path) => path.startsWith(`infra/terraform/modules/${sharedModule}/`)));
   assertRegularInsideRoot(`infra/managed-deployments/${provider}/terraform/.terraform.lock.hcl`);
   if (provider === "gcp") {
     assertRegularInsideRoot("infra/managed-deployments/gcp/bootstrap/tutorial.md");
