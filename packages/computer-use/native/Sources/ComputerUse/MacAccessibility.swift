@@ -120,6 +120,29 @@ enum AXChildScan {
             throw UseError("privacy_incomplete", "Accessible descendants could not be verified. No screenshot can be captured.", next: "observe")
         }
     }
+    /// Where a read result leaves the attribute. Mac apps commonly answer a
+    /// display-only read with a generic failure (an outline's value, a
+    /// splitter's actions). Those reads never decide a mask, so the control is
+    /// listed without that detail. Reads that decide masks stay strict.
+    enum Outcome: Equatable { case value, absent, elementGone, unverified }
+    static func outcome(_ result: AXError, displayOnly: Bool) -> Outcome {
+        switch result {
+        case .success: return .value
+        case .attributeUnsupported, .noValue: return .absent
+        // The element was destroyed, so nothing of it is on screen to mask.
+        case .invalidUIElement: return .elementGone
+        case .failure, .cannotComplete: return displayOnly ? .absent : .unverified
+        default: return .unverified
+        }
+    }
+    /// Only a text input can carry the secure text field subrole. When another
+    /// role fails that read, AXProtectedContent still decides its mask.
+    static func subroleDecidesMask(role: String) -> Bool {
+        ElementRecord.textRoles.contains(role) || !knownRoles.contains(role)
+    }
+    static let knownRoles: Set<String> = leafRoles.union(["AXWindow", "AXGroup", "AXSplitGroup", "AXScrollArea",
+        "AXOutline", "AXTable", "AXList", "AXRow", "AXCell", "AXColumn", "AXButton", "AXToolbar", "AXTabGroup",
+        "AXPopUpButton", "AXMenuButton", "AXDisclosureTriangle", "AXLayoutArea", "AXLayoutItem", "AXBusyIndicator"])
     static func requireStable<T: Equatable>(expectedCount: Int?, currentCount: Int?, expected: [T], current: [T]) throws {
         guard expectedCount == currentCount, expected == current else {
             throw UseError("stale_observation", "The accessible children changed during the bounded read.", next: "observe")
@@ -379,12 +402,13 @@ final class MacAccessibility {
             try Task.checkCancellation(); try check()
             guard depth < 24, visited.count < 1500, records.count < 300 else { issue = "tree_limit"; break }
             guard visited.insert(element).inserted else { continue }
+            let recordCount = records.count, maskCount = protectedFrames.count
             do {
                 try budget.check()
                 guard let role = try checkedString(element, kAXRoleAttribute, budget) else {
                     throw UseError("accessibility_unavailable", "An accessible role could not be verified.", next: "observe")
                 }
-                let secure = try isProtected(element, budget)
+                let secure = try isProtected(element, role: role, budget)
                 let bounds = try checkedFrame(element, budget)
                 if secure {
                     guard let bounds, Geometry.valid(bounds) else {
@@ -392,12 +416,12 @@ final class MacAccessibility {
                     }
                     protectedFrames.append(bounds)
                 } else {
-                    let label = try checkedString(element, kAXTitleAttribute, budget)
-                        ?? checkedString(element, kAXDescriptionAttribute, budget) ?? ""
-                    let value = try checkedString(element, kAXValueAttribute, budget)
+                    let label = try checkedString(element, kAXTitleAttribute, budget, displayOnly: true)
+                        ?? checkedString(element, kAXDescriptionAttribute, budget, displayOnly: true) ?? ""
+                    let value = try checkedString(element, kAXValueAttribute, budget, displayOnly: true)
                     let actions = try actionNames(element, budget)
-                    let settable = try valueSettable(element, budget)
-                    let enabled = try checkedBool(element, kAXEnabledAttribute, budget) != false
+                    let settable = try valueSettable(element, budget, displayOnly: true)
+                    let enabled = try checkedBool(element, kAXEnabledAttribute, budget, displayOnly: true) != false
                     if let bounds, Geometry.valid(bounds), !label.isEmpty || !(value ?? "").isEmpty || !actions.isEmpty || settable || ElementRecord.interactiveRoles.contains(role) {
                         records.append(ElementRecord(ref: "e\(records.count + 1)", element: element, role: role,
                             label: String(label.prefix(180)), value: value.map { String($0.prefix(500)) }, frame: bounds,
@@ -410,6 +434,12 @@ final class MacAccessibility {
                     pending += descendants.elements.reversed().map { ($0, depth + 1) }
                 }
             } catch is CancellationError { throw CancellationError() }
+            catch let error as UseError where error.code == Self.elementGone {
+                // Apps keep destroyed elements in child lists while views load.
+                // Nothing of a destroyed element is drawn, so it needs no mask.
+                records.removeSubrange(recordCount...); protectedFrames.removeSubrange(maskCount...)
+                continue
+            }
             catch {
                 issue = (error as? UseError)?.code ?? "accessibility_unavailable"
                 break
@@ -430,6 +460,7 @@ final class MacAccessibility {
                 guard AXUIElementGetPid(target.element, &pid) == .success else { throw UseError("window_unavailable", "The window exited.", next: "observe") }
                 focused = try checkedElement(AXUIElementCreateApplication(pid), kAXFocusedUIElementAttribute, budget)
             } catch is CancellationError { throw CancellationError() }
+            catch let error as UseError where error.code == Self.elementGone { issue = "stale_observation" }
             catch { issue = (error as? UseError)?.code ?? "accessibility_unavailable" }
         }
         try check()
@@ -440,17 +471,19 @@ final class MacAccessibility {
     func validateRecord(_ record: ElementRecord, target: WindowTarget) throws {
         let budget = AXReadBudget()
         try validateAncestry(record.element, target: target, budget: budget)
-        let label = try checkedString(record.element, kAXTitleAttribute, budget)
-            ?? checkedString(record.element, kAXDescriptionAttribute, budget) ?? ""
-        let value = try checkedString(record.element, kAXValueAttribute, budget)
+        // Read display-only attributes as the observation did, so a control
+        // listed without a detail macOS failed to report can still be used.
+        let label = try checkedString(record.element, kAXTitleAttribute, budget, displayOnly: true)
+            ?? checkedString(record.element, kAXDescriptionAttribute, budget, displayOnly: true) ?? ""
+        let value = try checkedString(record.element, kAXValueAttribute, budget, displayOnly: true)
         guard !record.protected, record.enabled,
               try checkedFrame(record.element, budget) == record.frame,
               try checkedString(record.element, kAXRoleAttribute, budget) == record.role,
               textHash(label) == (record.labelHash ?? textHash(record.label)),
               value.map(textHash) == (record.valueHash ?? record.value.map(textHash)),
-              try checkedBool(record.element, kAXEnabledAttribute, budget) != false,
+              try checkedBool(record.element, kAXEnabledAttribute, budget, displayOnly: true) != false,
               try actionNames(record.element, budget) == record.actions,
-              try valueSettable(record.element, budget) == record.settable else {
+              try valueSettable(record.element, budget, displayOnly: true) == record.settable else {
             throw UseError("stale_element", "The exact accessible element changed or is unavailable. Observe again.", next: "observe")
         }
     }
@@ -525,7 +558,8 @@ final class MacAccessibility {
             guard AXUIElementGetPid(node, &pid) == .success, pid == owner else {
                 throw UseError("outside_window", "The target belongs to another app.", next: "human_takeover")
             }
-            guard try !isProtected(node, budget) else {
+            let role = try checkedString(node, kAXRoleAttribute, budget) ?? ""
+            guard try !isProtected(node, role: role, budget) else {
                 throw UseError("protected_input", "This control or an ancestor contains protected content. Take over for this step.", next: "human_takeover")
             }
             if CFEqual(node, target.element) { return }
@@ -608,24 +642,29 @@ final class MacAccessibility {
             throw UseError("accessibility_unavailable", "Could not bound this accessibility operation.", next: "observe")
         }
     }
-    private func accepted(_ result: AXError, _ budget: AXReadBudget) throws -> Bool {
+    static let elementGone = "element_gone"
+    private func accepted(_ result: AXError, _ budget: AXReadBudget, displayOnly: Bool = false) throws -> Bool {
         try budget.check()
-        if result == .success { return true }
-        if result == .attributeUnsupported || result == .noValue { return false }
-        throw UseError("accessibility_unavailable", "An accessibility read failed; its content or privacy state is unverified.", next: "observe")
+        switch AXChildScan.outcome(result, displayOnly: displayOnly) {
+        case .value: return true
+        case .absent: return false
+        case .elementGone: throw UseError(Self.elementGone, "The accessible element was destroyed during the read.", next: "observe")
+        case .unverified:
+            throw UseError("accessibility_unavailable", "An accessibility read failed; its content or privacy state is unverified.", next: "observe")
+        }
     }
-    private func checkedAttribute(_ element: AXUIElement, _ name: String, _ budget: AXReadBudget) throws -> CFTypeRef? {
+    private func checkedAttribute(_ element: AXUIElement, _ name: String, _ budget: AXReadBudget, displayOnly: Bool = false) throws -> CFTypeRef? {
         try prepare(element, budget)
         var value: CFTypeRef?
-        return try accepted(AXUIElementCopyAttributeValue(element, name as CFString, &value), budget) ? value : nil
+        return try accepted(AXUIElementCopyAttributeValue(element, name as CFString, &value), budget, displayOnly: displayOnly) ? value : nil
     }
     private func checkedElement(_ element: AXUIElement, _ name: String, _ budget: AXReadBudget) throws -> AXUIElement? {
         guard let value = try checkedAttribute(element, name, budget) else { return nil }
         guard CFGetTypeID(value) == AXUIElementGetTypeID() else { throw UseError("accessibility_unavailable", "An accessibility target has an invalid type.", next: "observe") }
         return (value as! AXUIElement)
     }
-    private func checkedString(_ element: AXUIElement, _ name: String, _ budget: AXReadBudget) throws -> String? {
-        guard let value = try checkedAttribute(element, name, budget) else { return nil }
+    private func checkedString(_ element: AXUIElement, _ name: String, _ budget: AXReadBudget, displayOnly: Bool = false) throws -> String? {
+        guard let value = try checkedAttribute(element, name, budget, displayOnly: displayOnly) else { return nil }
         if let string = value as? String { return string }
         if name == kAXValueAttribute {
             if let number = value as? NSNumber { return number.stringValue }
@@ -633,15 +672,16 @@ final class MacAccessibility {
         }
         throw UseError("accessibility_unavailable", "An accessibility identity or protection attribute has an invalid type.", next: "observe")
     }
-    private func checkedBool(_ element: AXUIElement, _ name: String, _ budget: AXReadBudget) throws -> Bool? {
-        guard let value = try checkedAttribute(element, name, budget) else { return nil }
+    private func checkedBool(_ element: AXUIElement, _ name: String, _ budget: AXReadBudget, displayOnly: Bool = false) throws -> Bool? {
+        guard let value = try checkedAttribute(element, name, budget, displayOnly: displayOnly) else { return nil }
         guard CFGetTypeID(value) == CFBooleanGetTypeID(), let flag = value as? Bool else {
             throw UseError("accessibility_unavailable", "An accessibility protection or enablement flag has an invalid type.", next: "observe")
         }
         return flag
     }
-    private func isProtected(_ element: AXUIElement, _ budget: AXReadBudget) throws -> Bool {
-        try checkedString(element, kAXSubroleAttribute, budget) == "AXSecureTextField"
+    private func isProtected(_ element: AXUIElement, role: String, _ budget: AXReadBudget) throws -> Bool {
+        let subroleDisplayOnly = !AXChildScan.subroleDecidesMask(role: role)
+        return try checkedString(element, kAXSubroleAttribute, budget, displayOnly: subroleDisplayOnly) == "AXSecureTextField"
             || checkedBool(element, "AXProtectedContent", budget) == true
     }
     private func actionNames(_ element: AXUIElement, _ budget: AXReadBudget) throws -> [String] {
@@ -649,14 +689,15 @@ final class MacAccessibility {
         var names: CFArray?
         let result = AXUIElementCopyActionNames(element, &names)
         if result == .notImplemented { try budget.check(); return [] }
-        guard try accepted(result, budget) else { return [] }
+        guard try accepted(result, budget, displayOnly: true) else { return [] }
         guard let names = names as? [String] else { throw UseError("accessibility_unavailable", "Accessible actions could not be verified.", next: "observe") }
         return names.filter { $0 == kAXPressAction }
     }
-    func valueSettable(_ element: AXUIElement, _ budget: AXReadBudget = AXReadBudget()) throws -> Bool {
+    func valueSettable(_ element: AXUIElement, _ budget: AXReadBudget = AXReadBudget(), displayOnly: Bool = false) throws -> Bool {
         try prepare(element, budget)
         var settable = DarwinBoolean(false)
-        return try accepted(AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable), budget) && settable.boolValue
+        return try accepted(AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable), budget, displayOnly: displayOnly)
+            && settable.boolValue
     }
     private func children(_ element: AXUIElement, limit: Int, budget: AXReadBudget, check: () throws -> Void) throws -> AXChildrenSnapshot {
         try check(); try prepare(element, budget)
