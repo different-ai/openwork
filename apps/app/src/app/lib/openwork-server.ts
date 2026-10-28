@@ -2358,14 +2358,17 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       codeSessionsListSchema.parse(
         await requestJson<unknown>(baseUrl, "/code-sessions", { token, hostToken, timeoutMs: 120_000 }),
       ),
-    readCodeSession: async (client: string, folder: string, file: string) =>
-      codeSessionDetailEnvelopeSchema.parse(
-        await requestJson<unknown>(
-          baseUrl,
-          `/code-sessions/${encodeURIComponent(client)}/${encodeURIComponent(folder)}/${encodeURIComponent(file)}`,
-          { token, hostToken, timeoutMs: 120_000 },
-        ),
-      ).item,
+    readCodeSession: async (client: string, sessionId: string) => {
+      // Path-scoped clients (Claude Code, Codex, Pi) carry composite ids and
+      // read through the three-segment route; flat ids (OpenCode's ses_…)
+      // read through the two-segment one. Both decode to the same service id.
+      const path = sessionId.includes("/")
+        ? `/code-sessions/${encodeURIComponent(client)}/${sessionId.split("/").map(encodeURIComponent).join("/")}`
+        : `/code-sessions/${encodeURIComponent(client)}/${encodeURIComponent(sessionId)}`;
+      return codeSessionDetailEnvelopeSchema.parse(
+        await requestJson<unknown>(baseUrl, path, { token, hostToken, timeoutMs: 120_000 }),
+      ).item;
+    },
     setCodeSessionClientEnabled: async (client: string, enabled: boolean) => {
       const result = codeSessionsClientsSchema.parse(
         await requestJson<unknown>(baseUrl, `/code-sessions/clients/${encodeURIComponent(client)}`, {

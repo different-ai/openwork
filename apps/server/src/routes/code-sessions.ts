@@ -70,6 +70,19 @@ export function registerCodeSessionsRoutes(options: RegisterCodeSessionsRoutesOp
     }
   });
 
+  // Clients whose session ids are a single opaque token (OpenCode's ses_…)
+  // read through the flat route; path-scoped clients keep the three-segment
+  // one above.
+  addRoute(routes, "GET", "/code-sessions/:client/:id", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const client = parseClient(ctx.params.client);
+    try {
+      return jsonResponse({ item: await service.read(client, ctx.params.id) });
+    } catch (error) {
+      throw toApiError(error);
+    }
+  });
+
   addRoute(routes, "PUT", "/code-sessions/clients/:client", "client", async (ctx) => {
     requireClientScope(ctx, "collaborator");
     const client = parseClient(ctx.params.client);

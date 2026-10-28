@@ -42,12 +42,6 @@ function folderOf(projectPath: string): string {
   return parts[parts.length - 1] ?? projectPath;
 }
 
-function splitSessionId(sessionId: string): { folder: string; file: string } | null {
-  const separator = sessionId.indexOf("/");
-  if (separator <= 0 || separator === sessionId.length - 1) return null;
-  return { folder: sessionId.slice(0, separator), file: sessionId.slice(separator + 1) };
-}
-
 type ProjectGroup = { projectPath: string; items: CodeSessionSummary[] };
 
 function groupByProject(items: CodeSessionSummary[]): ProjectGroup[] {
@@ -128,16 +122,15 @@ export function CodePage({ openworkServerClient: client }: { openworkServerClien
   const groups = useMemo(() => groupByProject(filtered), [filtered]);
 
   const selected = items.find((item) => item.sessionId === selectedId) ?? null;
-  const selectedParts = selected ? splitSessionId(selected.sessionId) : null;
   const detailQuery = useQuery({
     queryKey: ["code-session", selectedId],
     queryFn: () => {
-      if (!client || !selected || !selectedParts) {
+      if (!client || !selected) {
         throw new Error("This session is no longer listed.");
       }
-      return client.readCodeSession(selected.client, selectedParts.folder, selectedParts.file);
+      return client.readCodeSession(selected.client, selected.sessionId);
     },
-    enabled: Boolean(client && selected && selectedParts),
+    enabled: Boolean(client && selected),
     refetchInterval: DETAIL_REFETCH_MS,
   });
 
