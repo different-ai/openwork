@@ -344,7 +344,7 @@ export function CodePage({ openworkServerClient: client }: { openworkServerClien
               </ul>
             ) : null}
             <CodeTranscript messages={detailQuery.data.messages} />
-            {selected.client === "claude-code" ? (
+            {selected.client === "claude-code" || selected.client === "opencode" ? (
               <div className="mt-2 flex flex-col gap-2 rounded-[16px] border border-border bg-background p-2">
                 {driveRunning ? (
                   <p className="px-1 text-xs text-muted-foreground" data-code-drive-running>

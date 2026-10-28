@@ -48,12 +48,29 @@ export type StartDriveInput = {
 };
 
 export type DriveRegistry = {
-  start(input: StartDriveInput): DriveRun;
+  start(input: StartDriveInput, spawnSpec?: DriveSpawnSpec): DriveRun;
   list(): DriveRun[];
   get(runId: string): DriveRun | undefined;
   abort(runId: string): DriveRun;
   isRunning(client: string, sessionId: string): boolean;
 };
+
+/** Claude Code: one headless turn appended to the resumed session. */
+export function claudeRunSpec(input: StartDriveInput): DriveSpawnSpec {
+  const resume = input.uuid ? ["--resume", input.uuid] : [];
+  return {
+    file: "cmd.exe",
+    args: ["/d", "/s", "/c", "claude", "-p", "--output-format", "stream-json", "--verbose", ...resume],
+  };
+}
+
+/** OpenCode: one headless turn continued on the given session (prompt via stdin). */
+export function opencodeRunSpec(input: StartDriveInput): DriveSpawnSpec {
+  return {
+    file: "cmd.exe",
+    args: ["/d", "/s", "/c", "opencode", "run", "--session", input.sessionId],
+  };
+}
 
 export function createDriveRegistry(options: {
   /** Spawn spec builder; injectable for tests. Defaults to the Claude CLI. */
@@ -65,16 +82,15 @@ export function createDriveRegistry(options: {
   const order: string[] = [];
 
   const defaultSpec = (input: StartDriveInput): DriveSpawnSpec => {
-    const command = options.command ?? "claude";
-    const resume = input.uuid ? ["--resume", input.uuid] : [];
-    return {
-      file: "cmd.exe",
-      args: ["/d", "/s", "/c", command, "-p", "--output-format", "stream-json", "--verbose", ...resume],
-    };
+    const base = options.spawnSpec?.(input) ?? claudeRunSpec(input);
+    if (options.command) {
+      return { file: base.file, args: [...base.args.slice(0, base.args.indexOf(input.client === "opencode" ? "opencode" : "claude")), options.command, ...base.args.slice(base.args.indexOf(input.client === "opencode" ? "opencode" : "claude") + 1)] };
+    }
+    return base;
   };
 
   return {
-    start(input: StartDriveInput): DriveRun {
+    start(input: StartDriveInput, spawnSpec?: DriveSpawnSpec): DriveRun {
       const running = order.some((id) => {
         const run = runs.get(id);
         return run?.status === "running" && run.client === input.client && run.sessionId === input.sessionId;
@@ -83,7 +99,7 @@ export function createDriveRegistry(options: {
         throw new CodeSessionsError("code_session_drive_running", "This session is already running a prompt.");
       }
 
-      const spec = (options.spawnSpec ?? defaultSpec)(input);
+      const spec = spawnSpec ?? defaultSpec(input);
       const id = `drive_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
       const child = spawn(spec.file, spec.args, {
         cwd: input.cwd,

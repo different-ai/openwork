@@ -99,6 +99,33 @@ export type OpenCodeReadOptions = {
   dbPath?: string;
 };
 
+/** What driving needs from a session: confirmation it exists and its project directory. */
+export async function opencodeDriveContext(
+  sessionId: string,
+  options: OpenCodeReadOptions = {},
+): Promise<{ directory: string }> {
+  const dbPath = options.dbPath ?? defaultOpenCodeDbPath();
+  const cleanId = assertSessionId(sessionId);
+  let db: Database.Database;
+  try {
+    db = openReadOnly(dbPath);
+  } catch {
+    throw new CodeSessionsError("code_session_not_found", "The OpenCode database is gone or cannot be read.");
+  }
+  try {
+    const row = db
+      .prepare("SELECT directory FROM session WHERE id = ?")
+      .get(cleanId) as { directory?: unknown } | undefined;
+    const directory = str(row?.directory);
+    if (!directory) {
+      throw new CodeSessionsError("code_session_not_found", "This OpenCode session is gone or cannot be read.");
+    }
+    return { directory };
+  } finally {
+    db.close();
+  }
+}
+
 export async function readOpenCodeSessionEverywhere(
   id: string,
   options: OpenCodeReadOptions = {},

@@ -3,6 +3,8 @@ import { z } from "zod";
 import { ApiError } from "../errors.js";
 import { claudeDriveContext } from "../code-sessions/claude-code.js";
 import { claudeConfigDir } from "../claude-import.js";
+import { opencodeDriveContext } from "../code-sessions/opencode.js";
+import { opencodeRunSpec } from "../code-sessions/drive.js";
 import {
   CodeSessionsError,
   type CodeSessionClient,
@@ -30,6 +32,8 @@ interface RegisterCodeSessionsRoutesOptions {
   drives?: DriveRegistry;
   /** Claude's data folder resolver, for drive context lookups. */
   claudeConfigDir?: () => string;
+  /** OpenCode's database path resolver, for drive context lookups. */
+  opencodeDbPath?: () => string;
 }
 
 /**
@@ -113,7 +117,7 @@ export function registerCodeSessionsRoutes(options: RegisterCodeSessionsRoutesOp
 
   const drives = options.drives ?? createDriveRegistry();
   const driveSchema = z.object({
-    client: z.enum(["claude-code"]),
+    client: z.enum(["claude-code", "opencode"]),
     sessionId: z.string().min(1).max(400),
     prompt: z.string().min(1).max(100_000),
   }).strict();
@@ -122,7 +126,9 @@ export function registerCodeSessionsRoutes(options: RegisterCodeSessionsRoutesOp
 
   // Driven mode: run one prompt headlessly against a stored session. The
   // agent appends to its own transcript, so the mirror's next poll shows the
-  // turn while it runs. v1 drives Claude Code only.
+  // turn while it runs. Claude Code resumes via its CLI; OpenCode continues
+  // via `opencode run --session`. Codex (app-server) joins through the same
+  // route once its driver lands.
   addRoute(routes, "POST", "/code-sessions/drives", "client", async (ctx) => {
     requireClientScope(ctx, "collaborator");
     let body: unknown;
@@ -135,24 +141,32 @@ export function registerCodeSessionsRoutes(options: RegisterCodeSessionsRoutesOp
     if (!parsed.success) {
       throw new ApiError(400, "invalid_payload", "Send { client, sessionId, prompt }.");
     }
-    if (parsed.data.client !== "claude-code") {
-      throw new ApiError(409, "drive_unsupported", "Writing to this agent is not wired yet.");
-    }
-    let context: { uuid: string; cwd: string };
     try {
-      context = await claudeDriveContext(parsed.data.sessionId, { configDir: options.claudeConfigDir?.() ?? claudeConfigDir() });
-    } catch (error) {
-      throw toApiError(error);
-    }
-    try {
+      if (parsed.data.client === "claude-code") {
+        const context = await claudeDriveContext(parsed.data.sessionId, { configDir: options.claudeConfigDir?.() ?? claudeConfigDir() });
+        return jsonResponse({
+          run: drives.start({
+            client: parsed.data.client,
+            sessionId: parsed.data.sessionId,
+            prompt: parsed.data.prompt,
+            cwd: context.cwd,
+            uuid: context.uuid,
+          }),
+        }, 202);
+      }
+      const context = await opencodeDriveContext(parsed.data.sessionId, { dbPath: options.opencodeDbPath?.() });
       return jsonResponse({
         run: drives.start({
           client: parsed.data.client,
           sessionId: parsed.data.sessionId,
           prompt: parsed.data.prompt,
-          cwd: context.cwd,
-          uuid: context.uuid,
-        }),
+          cwd: context.directory,
+        }, opencodeRunSpec({
+          client: parsed.data.client,
+          sessionId: parsed.data.sessionId,
+          prompt: parsed.data.prompt,
+          cwd: context.directory,
+        })),
       }, 202);
     } catch (error) {
       throw toApiError(error);
