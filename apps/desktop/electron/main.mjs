@@ -2741,6 +2741,9 @@ async function createMainWindowInner() {
     flushPendingDeepLinks();
   });
 
+  // Windows only: never start a staged update while the session is ending.
+  mainWindow.on("session-end", () => holdInstallForSessionEnd());
+
   mainWindow.on("closed", () => {
     browserPanel.destroy();
     mainWindow = null;
@@ -2964,7 +2967,7 @@ if (isDevMode && !app.isPackaged) {
   });
 }
 registerMigrationIpc({ app, ipcMain });
-const { ensureAutoUpdater } = registerUpdaterIpc({
+const { ensureAutoUpdater, holdInstallForSessionEnd } = registerUpdaterIpc({
   app,
   ipcMain,
   getMainWindow: () => mainWindow,
