@@ -1142,6 +1142,34 @@
       "when": 1793118453819,
       "tag": "0163_auto_router",
       "breakpoints": true
+    },
+    {
+      "idx": 164,
+      "version": "5",
+      "when": 1793132906444,
+      "tag": "0164_agent_member_check",
+      "breakpoints": true
+    },
+    {
+      "idx": 165,
+      "version": "5",
+      "when": 1793152029098,
+      "tag": "0165_feature_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 166,
+      "version": "5",
+      "when": 1793162803488,
+      "tag": "0166_mcp_registration_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 167,
+      "version": "5",
+      "when": 1793202414862,
+      "tag": "0167_agent_member_check_sources",
+      "breakpoints": true
     }
   ]
 }

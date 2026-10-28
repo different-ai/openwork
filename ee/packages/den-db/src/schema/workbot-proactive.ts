@@ -5,6 +5,12 @@ import { compatJsonColumn, denTypeIdColumn, encryptedMediumTextColumn } from "..
 export type AgentInstanceOverrides = {
   /** Responsibilities the member turned off. */
   muted?: string[]
+  /** Narrower working hours than the organization's (`workbotAgentLibrary`); read clamped to the organization's. */
+  hours?: { startHour: number; endHour: number }
+  /** A lower daily limit than the organization's (`workbotAgentLibrary`). */
+  dailyCap?: number
+  /** Inside the working day, only messages the agent marks urgent go out (`workbotAgentLibrary`). */
+  quietWindow?: { startHour: number; endHour: number }
 }
 
 /**
@@ -25,6 +31,11 @@ export const AgentInstanceTable = mysqlTable(
     snoozedUntil: timestamp("snoozed_until", { fsp: 3 }),
     /** The event source's calendar checkpoint, last looks and schedule. Member content, so encrypted. */
     state: encryptedMediumTextColumn("state"),
+    /**
+     * What the member told their agent in their own words (always, never, when, how) and the short log of changes
+     * (field, value, chat or page, when) behind "Saved from chat" and Undo. Member content, so encrypted.
+     */
+    preferences: encryptedMediumTextColumn("preferences"),
     /** The member's calendar time zone, from the last look. */
     timeZone: varchar("time_zone", { length: 64 }),
     nextWakeAt: timestamp("next_wake_at", { fsp: 3 }).notNull().defaultNow(),
@@ -57,6 +68,41 @@ export const AgentDeliveryTable = mysqlTable(
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (t) => [index("agent_delivery_member").on(t.memberId, t.createdAt)],
+)
+
+/** The DM a check sent, so the member can open it in Slack. No message text. */
+export type AgentMemberCheckMessage = { channelId: string; messageTs: string; permalink: string | null }
+
+/** A source a check was about: what a message drew on, or what couldn't be read (and the connection to fix). */
+export type AgentMemberCheckSource = { id: string; name: string; connectionId: string | null }
+
+/**
+ * One row per check of one member's agent, for the member only ("My agent", `workbotAgentLibrary`): when it looked,
+ * what came of it (`sent`, `quiet`, `waited`, `failed`), a reason code and the sentence the member reads, which
+ * responsibilities it was about, and a reference to the DM it sent. No email or message content. Written by the
+ * wake; kept about 14 days. The id makes a repeated skip (Google still disconnected) one row whose time moves.
+ */
+export const AgentMemberCheckTable = mysqlTable(
+  "agent_member_check",
+  {
+    id: varchar("id", { length: 64 }).primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    memberId: denTypeIdColumn("member", "member_id").notNull(),
+    checkedAt: timestamp("checked_at", { fsp: 3 }).notNull(),
+    /** What started it: `morning`, `scheduled` or `calendar`. */
+    kind: varchar("kind", { length: 16 }).notNull(),
+    outcome: varchar("outcome", { length: 8 }).notNull(),
+    reason: varchar("reason", { length: 32 }).notNull(),
+    summary: varchar("summary", { length: 400 }).notNull(),
+    responsibilities: compatJsonColumn<string[]>("responsibilities"),
+    /** The sources it was about (null on rows from before sources). */
+    sources: compatJsonColumn<AgentMemberCheckSource[]>("sources"),
+    message: compatJsonColumn<AgentMemberCheckMessage>("message"),
+  },
+  (t) => [
+    index("agent_member_check_member").on(t.memberId, t.checkedAt),
+    index("agent_member_check_time").on(t.checkedAt),
+  ],
 )
 
 /**

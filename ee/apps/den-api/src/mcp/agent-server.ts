@@ -81,6 +81,12 @@ function slackSendAsBotInstructions(toolView: ConnectToolView = "search"): strin
 }
 
 /**
+ * Rolled out with My agent (`workbotAgentLibrary`) for members who may write: chat is the main way to change Your
+ * agent, and "why so quiet?" is answered from its check records.
+ */
+export const MY_AGENT_INSTRUCTIONS = "To change what Your agent tells the user, use putMeAgent; to explain why it was quiet, read the user's agent checks."
+
+/**
  * A full-view tools/list is the member's own, so clients may reuse it only for
  * the same authorization, and briefly: tools/list_changed reaches streams on
  * this replica only, so other replicas' clients refetch after this.
@@ -92,6 +98,8 @@ export function createAgentMcpServer(options: {
   remoteSessionStatus?: boolean
   /** slack_send_as_bot is available to this caller (feature on, a member, and the write scope). */
   slackSendAsBot?: boolean
+  /** My agent is on for this member and they may change it (`workbotAgentLibrary`, a member, and the write scope). */
+  myAgent?: boolean
   /** Which tools/list this request gets; see connect-tool-view.ts. */
   toolView?: ConnectToolView
   /** Describe search matches as MCP tools (part of `connectStandardTools`). */
@@ -120,6 +128,7 @@ export function createAgentMcpServer(options: {
     instructions: [agentMcpInstructions(options.appServers !== false, options.toolView, options.toolShapes),
       ...(options.remoteSessionStatus ? [REMOTE_SESSION_STATUS_INSTRUCTIONS] : []),
       ...(options.slackSendAsBot ? [slackSendAsBotInstructions(options.toolView)] : []),
+      ...(options.myAgent ? [MY_AGENT_INSTRUCTIONS] : []),
       ...(options.skillIndex ? [options.skillIndex] : [])].join("\n"),
     ...(options.toolView === "full" ? { cacheHints: FULL_TOOL_VIEW_CACHE_HINTS } : {}),
   })

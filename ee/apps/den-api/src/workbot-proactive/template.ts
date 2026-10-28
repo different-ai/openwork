@@ -21,7 +21,7 @@ import { db } from "../db.js"
 export const AGENT_TEMPLATE_PATH = "openwork/agents/your-agent.md"
 export const AGENT_TEMPLATE_SCHEMA_VERSION = "openwork-agent/1"
 const TEMPLATE_TITLE = "Your agent"
-const TEMPLATE_DESCRIPTION = "Reads each member's Gmail and Google Calendar on a schedule and tells them only what needs them."
+const TEMPLATE_DESCRIPTION = "Reads each member's calendar, email, team chat and the connections they turn on, on a schedule, and tells them only what needs them."
 
 export type AgentTemplateVersion = AgentTemplateContent & {
   /** The saved version, or null for the built-in default. */
@@ -39,7 +39,7 @@ export function renderAgentTemplate(content: AgentTemplateContent): string {
     "name: your-agent",
     `description: ${TEMPLATE_DESCRIPTION}`,
     "mode: primary",
-    "sources: gmail, google_calendar",
+    "sources: calendar, email, chat, connections",
     `responsibilities: ${enabledResponsibilities(content).join(", ") || "none"}`,
     `schedule: morning pass, then every ${hours} hours in working hours`,
     "---",

@@ -2851,6 +2851,37 @@ async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: Request
   }
 }
 
+const FEATURE_USAGE_FLUSH_MS = 2_000;
+const reportedFeatureUsage = new Set<string>();
+const pendingFeatureUsage = new Set<string>();
+let featureUsageTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushFeatureUsage() {
+  featureUsageTimer = null;
+  const features = [...pendingFeatureUsage];
+  pendingFeatureUsage.clear();
+  const settings = readDenSettings();
+  const token = settings.authToken?.trim() ?? "";
+  const orgId = settings.activeOrgId?.trim() ?? "";
+  if (features.length === 0) return;
+  if (!token || !orgId) {
+    // Signed out: let the next use after sign-in report it.
+    for (const key of features) reportedFeatureUsage.delete(key);
+    return;
+  }
+  void createDenClient({ ...settings, token }).reportFeatureUsage(orgId, features).catch(() => {
+    // Best effort: a lost report only hides one use from /admin.
+  });
+}
+
+/** Report that the member just used a registry feature, for /admin; call where the feature is exercised, not on render. Batched, once per key per app session. */
+export function markFeatureUsed(key: string): void {
+  if (reportedFeatureUsage.has(key)) return;
+  reportedFeatureUsage.add(key);
+  pendingFeatureUsage.add(key);
+  featureUsageTimer ??= setTimeout(flushFeatureUsage, FEATURE_USAGE_FLUSH_MS);
+}
+
 async function requestJsonRaw<T>(
   input: string | DenBaseUrls,
   path: string,
@@ -3142,6 +3173,11 @@ export function createDenClient(options: {
         if (error instanceof DenApiError && error.status === 404) return null;
         throw error;
       }
+    },
+
+    /** Reports registry features the member just used (POST /v1/org/feature-usage); Den keeps only keys that are on for them. */
+    async reportFeatureUsage(orgId: string, features: readonly string[]): Promise<void> {
+      await requestJson<unknown>(baseUrls, "/v1/org/feature-usage", { method: "POST", token, organizationId: orgId, body: { features }, unobserved: true });
     },
 
     async getGatewayUsageStatus(orgId: string) {

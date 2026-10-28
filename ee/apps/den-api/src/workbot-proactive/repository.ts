@@ -1,14 +1,20 @@
 import { createHash, randomUUID } from "node:crypto"
-import { and, asc, count, eq, gte, inArray, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
-import { AgentCheckTable as Check, AgentDeliveryTable as Delivery, AgentInstanceTable as Instance } from "@openwork-ee/den-db/schema"
+import { and, asc, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
+import {
+  AgentCheckTable as Check,
+  AgentDeliveryTable as Delivery,
+  AgentInstanceTable as Instance,
+  AgentMemberCheckTable as MemberCheck,
+} from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { agentLedgerKey, type AgentItem } from "@openwork/automations/proactive"
 import { db } from "../db.js"
 import { automationAffectedRows, automationUpdateChangedRows } from "../automations/update-result.js"
+import { memberCheckId, type AgentCheckRecord, type MemberCheckRow } from "./checks.js"
 
 /**
  * The only module that reads or writes the agent tables: each member's agent (template version, choices, state,
- * lease) and the delivery ledger that makes every item at most one message.
+ * lease), the delivery ledger that makes every item at most one message, and each member's check records.
  */
 
 export type AgentInstanceRow = typeof Instance.$inferSelect
@@ -30,13 +36,39 @@ export async function ensureAgentInstances(organizationId: DenTypeId<"organizati
   await db.insert(Instance).ignore().values(memberIds.map((memberId) => ({ memberId, organizationId, nextWakeAt: now, createdAt: now, updatedAt: now })))
 }
 
-export type MemberChoiceChange = Partial<Pick<AgentInstanceRow, "status" | "overrides" | "snoozedUntil">>
+export type MemberChoiceChange = Partial<Pick<AgentInstanceRow, "status" | "overrides" | "snoozedUntil" | "preferences">>
+
+function choiceSet(change: MemberChoiceChange, now: Date, wakeNow = false) {
+  const wake = wakeNow || change.status === "on" || change.snoozedUntil === null
+  return { ...change, ...(wake ? { nextWakeAt: now } : {}), updatedAt: now }
+}
 
 /** Saves a member's own choice. Turning on or resuming makes the agent due now. */
 export async function saveMemberChoices(organizationId: DenTypeId<"organization">, memberId: DenTypeId<"member">, change: MemberChoiceChange, now = new Date()) {
-  const wake = change.status === "on" || change.snoozedUntil === null
-  const set = { ...change, ...(wake ? { nextWakeAt: now } : {}), updatedAt: now }
+  const set = choiceSet(change, now)
   await db.insert(Instance).values({ memberId, organizationId, nextWakeAt: now, createdAt: now, ...set }).onDuplicateKeyUpdate({ set })
+}
+
+/**
+ * A member's change that depends on what they have now (their words, the change log, undo): read and written under
+ * the row's lock, so two saves at once never lose a change. `decide` returns the change (null for none), whether the
+ * agent should look again now, and the caller's result.
+ */
+export async function changeMemberAgent<Result>(
+  organizationId: DenTypeId<"organization">,
+  memberId: DenTypeId<"member">,
+  decide: (row: AgentInstanceRow | null) => { change: MemberChoiceChange | null; wake: boolean; result: Result },
+  now = new Date(),
+): Promise<Result> {
+  return db.transaction(async (tx) => {
+    const [row] = await tx.select().from(Instance).where(eq(Instance.memberId, memberId)).limit(1).for("update")
+    const decided = decide(row ?? null)
+    if (decided.change) {
+      const set = choiceSet(decided.change, now, decided.wake)
+      await tx.insert(Instance).values({ memberId, organizationId, nextWakeAt: now, createdAt: now, ...set }).onDuplicateKeyUpdate({ set })
+    }
+    return decided.result
+  })
 }
 
 /** Claims up to `limit` due agents for this instance. */
@@ -108,7 +140,8 @@ export async function reserveAgentDelivery(input: {
     id,
     organizationId: input.organizationId,
     memberId: input.memberId,
-    responsibility: input.item.responsibility,
+    // The preset it fell under, or "anything_else" (a column name kept from before sources).
+    responsibility: input.item.preset ?? "anything_else",
     outcome: input.outcome ?? "pending",
     createdAt: input.now ?? new Date(),
   })
@@ -176,4 +209,63 @@ export async function readAgentMutes(organizationId: DenTypeId<"organization">):
   const muted = new Map<string, number>()
   for (const row of rows) for (const responsibility of new Set(row.overrides?.muted ?? [])) muted.set(responsibility, (muted.get(responsibility) ?? 0) + 1)
   return { members: rows.length, muted }
+}
+
+// ---- Each member's checks (My agent) ---------------------------------------------------------------------------
+
+/**
+ * Records one check. A repeated skip with the same key (Google still disconnected at the same scheduled pass) stays
+ * one row whose time and sentence move forward.
+ */
+export async function recordMemberCheck(record: AgentCheckRecord) {
+  const checkedAt = new Date(record.at)
+  await db
+    .insert(MemberCheck)
+    .values({
+      id: memberCheckId(record.memberId, record.key),
+      organizationId: record.organizationId,
+      memberId: record.memberId,
+      checkedAt,
+      kind: record.kind,
+      outcome: record.outcome,
+      reason: record.reason,
+      summary: record.summary,
+      responsibilities: record.responsibilities,
+      sources: record.sources,
+      message: record.message,
+    })
+    .onDuplicateKeyUpdate({ set: { checkedAt, summary: record.summary } })
+}
+
+const memberCheckColumns = {
+  id: MemberCheck.id,
+  checkedAt: MemberCheck.checkedAt,
+  kind: MemberCheck.kind,
+  outcome: MemberCheck.outcome,
+  reason: MemberCheck.reason,
+  summary: MemberCheck.summary,
+  responsibilities: MemberCheck.responsibilities,
+  sources: MemberCheck.sources,
+  message: MemberCheck.message,
+}
+
+/** The member's checks since `since`, newest first. */
+export async function readMemberChecks(memberId: DenTypeId<"member">, since: Date, limit = 300): Promise<MemberCheckRow[]> {
+  return db
+    .select(memberCheckColumns)
+    .from(MemberCheck)
+    .where(and(eq(MemberCheck.memberId, memberId), gte(MemberCheck.checkedAt, since)))
+    .orderBy(desc(MemberCheck.checkedAt))
+    .limit(limit)
+}
+
+/** The member's most recent check, however long ago. */
+export async function readLastMemberCheck(memberId: DenTypeId<"member">): Promise<MemberCheckRow | null> {
+  const [row] = await db.select(memberCheckColumns).from(MemberCheck).where(eq(MemberCheck.memberId, memberId)).orderBy(desc(MemberCheck.checkedAt)).limit(1)
+  return row ?? null
+}
+
+/** Check records are for "what did it do this week": keep about two weeks. */
+export async function pruneMemberChecks(before: Date) {
+  await db.delete(MemberCheck).where(lt(MemberCheck.checkedAt, before))
 }

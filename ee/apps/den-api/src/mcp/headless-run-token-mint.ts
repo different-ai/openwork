@@ -12,7 +12,7 @@ import { DEN_MCP_HEADLESS_RUN_CLIENT_ID, DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS }
  * code that has already authorized the member for this run may call it; the
  * token is handed to the headless runner for that run and never stored.
  */
-export async function mintHeadlessRunMcpToken(input: { userId: string; organizationId: string; ttlMs?: number; readOnly?: boolean }) {
+export async function mintHeadlessRunMcpToken(input: { userId: string; organizationId: string; ttlMs?: number; readOnly?: boolean; scopes?: readonly string[] }) {
   const ttlMs = Math.min(input.ttlMs ?? DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS, DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS)
   const secret = crypto.randomBytes(32).toString("base64url")
   const now = new Date()
@@ -31,7 +31,8 @@ export async function mintHeadlessRunMcpToken(input: { userId: string; organizat
     referenceId: normalizeDenTypeId("organization", input.organizationId),
     createdAt: now,
     expiresAt,
-    scopes: JSON.stringify(input.readOnly ? ["mcp:read"] : ["mcp:read", "mcp:write"]),
+    // Extra scopes (a background agent's sources, agent-read-sources.ts) only ever narrow a read-only token.
+    scopes: JSON.stringify(input.readOnly ? ["mcp:read", ...(input.scopes ?? [])] : ["mcp:read", "mcp:write"]),
   })
   return { token: `${DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX}${secret}`, tokenId: id, expiresAt }
 }

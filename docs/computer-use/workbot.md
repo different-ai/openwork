@@ -135,17 +135,32 @@ Render service variables alone are not Worker bindings. Deploy with the existing
 runner workflow and wait for every node to adopt the bundle. Keep its compatibility
 and real-turn checks enabled.
 
-The headless computer build embeds the same guest identity in the image and
-runner bundle, so celld needs no local package asset files. The identity covers
-the files esbuild bundles into the guest, the versions of the packages it
-bundles, and the files the image installs (`scripts/desktop-identity.mjs`). The
-rest of the lockfile, Mac-only code and tests do not change it. The root-owned
-bridge is already installed in the snapshot; it rejects incompatible runners.
-The runner then logs the bridge's reason and Workbot tells the person their
-computer needs an update (`desktop_outdated`) instead of asking them to
-reconnect. Existing computers and their files are not replaced automatically:
-after a snapshot upgrade, each person can use **Rebuild computer**, which erases
-that computer's disk, so tell people to keep anything they need in Files first.
+A computer has two identities (`scripts/desktop-identity.mjs`). The image's
+covers the files the image installs, including the root-owned bridge; it names
+the snapshot. The guest's covers the files esbuild bundles into the guest and
+the versions of the packages it bundles. The rest of the lockfile, Mac-only code
+and tests change neither. The headless computer build embeds both, and the
+compressed guest, in the runner bundle, so celld needs no local package asset
+files.
+
+New runner builds reach existing computers without erasing them:
+
+- **Same image, new guest** (most changes): the runner hands the bridge its
+  guest, which the bridge checks against the image and its checksum, then
+  restarts the guest. The browser, its tabs and the disk stay as they were.
+- **Older image that speaks the same protocol** (`DESKTOP_PROTOCOL`): the runner
+  keeps using the computer's own desktop and replaces the computer the next
+  time it is idle.
+- **Older image it can't drive**: the runner replaces the computer as soon as
+  no other command or background job is running on it. Until then the person
+  sees "Updating your computer" and the model is told to try again shortly
+  (`desktop_updating`).
+
+A replacement comes from the current snapshot and carries the browser profile
+(signed-in sites, without caches) and `/workspace` over, each up to 100 MB; the
+person's Files are copied in again on next use. Computers from before this
+existed carry only `/workspace`. An idle replacement happens only when both
+carry over. **Rebuild computer** still starts clean, carrying nothing.
 
 ### Freestyle instead of Daytona
 
@@ -169,13 +184,20 @@ HEADLESS_COMPUTER_PERSISTENT=true
 HEADLESS_COMPUTER_DOMAIN=computers.example.com
 ```
 
-The production deploy (`celld-runner-deploy.yml`) stops before the fleet
-changes when the configured slug was built for a different guest, for example
-after a dependency bump changes a package the guest bundles. Build the new
-snapshot at that commit, set the `HEADLESS_COMPUTER_SNAPSHOT` variable in the
-`celld-production` GitHub environment, then rerun the deploy. This plain
-environment variable overrides the same field in `CELLD_RUNNER_VARS`; when it
-is unset, the JSON secret remains the fallback for existing setups.
+The production deploy (`celld-runner-deploy.yml`) builds the snapshot itself
+when the configured slug was built for a different image. A guest-only change
+builds nothing: the runner installs its guest into the computers it starts. It
+uses the runner's `FREESTYLE_API_KEY`, names the snapshot after the new image,
+and bundles the runner with that slug. A later run with the same image finds the
+snapshot already built. If the build fails, the deploy stops before the fleet
+changes. Building a snapshot also gives the earlier `workbot-desktop-freestyle-…`
+snapshots a 14-day deletion window: Freestyle deletes one once no computer has
+been created from it for 14 days, so a recent one stays available to roll back
+to.
+The plain `HEADLESS_COMPUTER_SNAPSHOT` variable in the `celld-production`
+GitHub environment overrides the same field in `CELLD_RUNNER_VARS`; set it to a
+slug not named by the builder to choose a snapshot by hand, which the deploy
+then uses without checking.
 
 Keep `FREESTYLE_API_KEY` in the runner's secrets. Each desktop computer
 publishes only its viewer port, at a random host under that domain; the guest's
@@ -183,8 +205,8 @@ single-use, origin-bound viewer tickets still gate every connection. Freestyle
 pauses a computer with its memory after the runner's idle period, and resumes it
 for the next turn. The builder installs the desktop on Freestyle's Ubuntu base,
 with Chromium for Testing in place of Debian's package and patched Node 24.x
-(24.22.1 or newer). Rebuild the snapshot and existing computers to adopt the
-updated runtime; changing runner configuration does not patch an existing VM.
+(24.22.1 or newer). A runtime change is an image change: deploying it builds a
+new snapshot, and existing computers move to it as described above.
 
 ## Transport and rollout
 

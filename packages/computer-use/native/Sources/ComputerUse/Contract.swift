@@ -77,14 +77,15 @@ enum RuntimePolicy: Equatable {
 }
 
 struct ObservationOptions {
-    let image: Bool
+    /// nil leaves it to the session: background delivery reads the accessibility tree first.
+    let image: Bool?
     let elements: String
     init(_ values: [String: Any], policy: RuntimePolicy) throws {
         let a = Arguments(values: values)
-        try a.only(policy == .embedded ? ["session_id", "include_image", "elements"] : ["session_id", "include_image"])
-        image = try a.bool("include_image", default: true)
+        try a.only(policy == .embedded ? ["session_id", "include_image", "elements", "file_panel_access"] : ["session_id", "include_image"])
         elements = values["elements"] == nil ? policy.defaultElements : try a.string("elements", max: 16)
-        guard ["interactive", "all", "none"].contains(elements), image || elements != "none" else {
+        image = values["include_image"] == nil ? (elements == "none" ? true : nil) : try a.bool("include_image", default: true)
+        guard ["interactive", "all", "none"].contains(elements), image != false || elements != "none" else {
             throw UseError("invalid_arguments", "Request an image or accessible elements; elements must be interactive, all or none.")
         }
     }
@@ -273,6 +274,110 @@ enum ObservationPreparation {
         let value = try await read()
         try check()
         return value
+    }
+}
+
+/// Shares the Mac with the person using it. The agent takes the front only for
+/// the moment it needs to look or act, then gives it back to the app that had it.
+/// Moving the mouse never holds the agent up; a click or key press during its
+/// moment stops that step. Only Take over pauses the agent for Continue.
+enum SharedDesktop {
+    static let refocusLimit = 2
+    /// Keys this recent mean the person is mid-typing.
+    static let typingGap: TimeInterval = 0.2
+    /// The longest the agent defers to typing or a held button before it goes anyway.
+    static let deferLimit: TimeInterval = 0.5
+    /// Calls closer together than this are one moment, with no hand-back between them.
+    static let handBackDelay: TimeInterval = 0.4
+    static let poll: TimeInterval = 0.05
+
+    // Input times come from the HID system state, which only physical devices
+    // update. The agent's events go to one process and never enter it, so every
+    // time read here is the person's: nothing is discounted by timing.
+
+    /// Mid-keystroke or holding a button: raising another window now would send the
+    /// person's next key or drag into it.
+    static func personBusy(keyAt: TimeInterval, buttonDown: Bool, now: TimeInterval) -> Bool {
+        buttonDown || now - keyAt < typingGap
+    }
+
+    /// A click or key press of the person's after the agent's moment began.
+    static func personInterrupted(inputAt: TimeInterval, since start: TimeInterval) -> Bool {
+        inputAt > start
+    }
+    static let interrupted = UseError("person_interrupted", "The person clicked or typed, so this step stopped and the computer is theirs for now. Observe again to continue.", next: "observe")
+
+    /// Takes the next gap in the person's typing or the release of a held button,
+    /// waiting `deferLimit` at most. Moving the mouse never delays the agent.
+    @MainActor static func takeGap(busy: () -> Bool, now: () -> TimeInterval, check: () throws -> Void,
+        sleep: (TimeInterval) async throws -> Void) async throws {
+        let started = now()
+        while busy(), now() - started < deferLimit {
+            try check()
+            try await sleep(poll)
+        }
+        try check()
+    }
+
+    /// Brings the selected window forward, then stops if the person clicked or typed
+    /// while it came forward: that input may have landed in the agent's window, so
+    /// no control or observation follows. Never raises under a held button, however
+    /// long it is held: the release of a drag begun in another app would land in the
+    /// agent's window as a drop.
+    @MainActor static func acquire(now: () -> TimeInterval, buttonDown: () -> Bool, focus: () async throws -> Void,
+        interrupted: (TimeInterval) -> Bool) async throws {
+        if buttonDown() { throw SharedDesktop.interrupted }
+        let baseline = now()
+        try await focus()
+        if interrupted(baseline) { throw SharedDesktop.interrupted }
+    }
+
+    /// Brings the selected window back when something else is in front, at most
+    /// `refocusLimit` times in one call, so the agent never fights the person for it.
+    /// A person who clicked or typed since the step began keeps the front: the step
+    /// stops before the window is raised, not after.
+    @MainActor static func returnFocus(used: inout Int, inFront: () -> Bool, personActed: () -> Bool = { false },
+        focus: () async throws -> Void) async throws -> Bool {
+        if inFront() { return false }
+        if personActed() { throw interrupted }
+        guard used < refocusLimit else { throw contested }
+        used += 1
+        do { try await focus() }
+        catch let error as UseError where error.code == "window_not_frontmost" { throw contested }
+        return true
+    }
+    static let contested = UseError("focus_contested", "Another window keeps coming to the front, so nothing more was sent. Observe again in a few seconds.", next: "observe")
+
+    /// The app the agent took the front from, given back once its moment ends.
+    struct HandBack {
+        private(set) var pid: pid_t?
+        private(set) var takenAt: TimeInterval?
+        /// The first app in front wins: one moment can raise the target more than once.
+        mutating func record(frontmost: pid_t?, target: pid_t, own: pid_t, at now: TimeInterval) {
+            guard pid == nil, let frontmost, frontmost != target, frontmost != own else { return }
+            pid = frontmost; takenAt = now
+        }
+        /// Returns the app to give the front back to, only while the agent's window
+        /// still has it and the person has not clicked or typed since it was taken.
+        /// `lastPersonInput` is unfiltered: input that might be the agent's own still
+        /// keeps the front where it is, so typing never moves to another app.
+        mutating func take(frontmost: pid_t?, target: pid_t, lastPersonInput: TimeInterval) -> pid_t? {
+            defer { forget() }
+            guard frontmost == target, let takenAt, lastPersonInput <= takenAt else { return nil }
+            return pid
+        }
+        mutating func forget() { pid = nil; takenAt = nil }
+    }
+
+    /// A window in front of the selected one is the person or another app at work,
+    /// not a takeover, so the model looks again instead of waiting for Continue.
+    static func yielding(_ error: UseError) -> UseError {
+        guard error.code == "window_not_frontmost" else { return error }
+        return UseError("focus_lost", "Another window came to the front, so input stopped there. Observe again; the selected window is brought back first.", next: "observe")
+    }
+    static func yielding(_ error: Error) -> Error {
+        guard let use = error as? UseError else { return error }
+        return yielding(use) as UseError
     }
 }
 

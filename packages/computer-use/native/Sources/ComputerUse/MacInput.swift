@@ -14,6 +14,13 @@ final class MacInput {
         guard let symbol = dlsym(library, "CGEventSetWindowLocation") else { return nil }
         return unsafeBitCast(symbol, to: SetWindowLocation.self)
     }()
+    private typealias GetWindowLocation = @convention(c) (CGEvent) -> CGPoint
+    private static let windowLocation: GetWindowLocation? = {
+        guard let library = dlopen(nil, RTLD_LAZY) else { return nil }
+        defer { dlclose(library) }
+        guard let symbol = dlsym(library, "CGEventGetWindowLocation") else { return nil }
+        return unsafeBitCast(symbol, to: GetWindowLocation.self)
+    }()
     private typealias PostToPid = @convention(c) (pid_t, CGEvent) -> Void
     // SkyLight's post runs WindowServer's activity monitoring, which Chromium,
     // Electron and Catalyst require before they treat input as live. AppKit
@@ -80,13 +87,11 @@ final class MacInput {
     }
     func execute(_ action: Action, app: AppIdentity, target: WindowTarget, lease: ObservationLease,
                  access: MacAccessibility, records: [ElementRecord], focus: ElementRecord?, pointerTarget: AXUIElement?,
-                 check: () throws -> Void, checkWindow: () throws -> Void,
+                 check: () throws -> Void, checkWindow: () throws -> Void, background: Bool = false,
                  feedback send: @escaping (InputFeedback) -> Void = { _ in }) async throws -> String {
         feedback = DispatchFeedback(action: action.name, frame: lease.frame, send: send)
         gesture = Int64(UInt32.random(in: 1...UInt32.max))
-        if routes[app.pid] == nil {
-            routes[app.pid] = PointerRoute.classify(bundleID: app.bundleID, info: app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:])
-        }
+        _ = route(for: app)
         var finished = false
         defer {
             if !finished { releaseAll() }
@@ -126,7 +131,7 @@ final class MacInput {
                 path = "waited"
             case .move(let point):
                 let screen = try lease.screenPoint(point)
-                try access.checkHit(screen, target: target, app: app, expected: pointerTarget)
+                try access.checkHit(screen, target: target, app: app, expected: pointerTarget, background: background)
                 // Hover menus and tracking areas respond to the pointer arriving, not appearing.
                 var steps = [screen]
                 if let last = lastPointer, last.pid == app.pid, last.windowID == target.id, lease.frame.contains(last.point) {
@@ -140,14 +145,15 @@ final class MacInput {
                 report(.move, point: screen, force: true)
             case .click(let point, let count, let flags):
                 let screen = try lease.screenPoint(point)
-                let hit = try access.checkHit(screen, target: target, app: app, expected: pointerTarget)
+                let hit = try access.checkHit(screen, target: target, app: app, expected: pointerTarget, background: background)
                 try modifiers(flags, pid: app.pid, check: check)
                 try await InputDispatch.press(clicks: count, check: check, validate: {
                     try checkWindow()
-                    try access.checkHit(screen, target: target, app: app, expected: hit)
+                    try access.checkHit(screen, target: target, app: app, expected: hit, background: background)
                 }, move: {
                     try self.mouse(.mouseMoved, screen, app.pid, 0, target.id, lease.frame, flags, check: check)
                 }, down: { click in
+                    if click == 1, background { try self.primeUserActivation(app.pid, target.id, lease.frame, check: check) }
                     try self.mouse(.leftMouseDown, screen, app.pid, click, target.id, lease.frame, flags, check: check)
                 }, up: { click in
                     try self.mouse(.leftMouseUp, screen, app.pid, click, target.id, lease.frame, flags)
@@ -155,7 +161,7 @@ final class MacInput {
                 releaseModifiers()
             case .scroll(let point, let dx, let dy):
                 let screen = try lease.screenPoint(point)
-                try access.checkHit(screen, target: target, app: app, expected: pointerTarget)
+                try access.checkHit(screen, target: target, app: app, expected: pointerTarget, background: background)
                 // Views scroll what is under the pointer: put it there, then scroll in steps.
                 try mouse(.mouseMoved, screen, app.pid, 0, target.id, lease.frame, check: check)
                 for (index, step) in PointerMotion.scrollSteps(dx: dx, dy: dy).enumerated() {
@@ -165,7 +171,7 @@ final class MacInput {
                 }
                 report(.dispatched, point: screen)
             case .key(let key, let flags):
-                try access.checkFocus(focus, target: target, app: app, requireField: ["backspace", "delete"].contains(key))
+                try access.checkFocus(focus, target: target, app: app, requireField: ["backspace", "delete"].contains(key), requireFront: !background)
                 let code = try keyCode(key, flags: flags)
                 try modifiers(flags, pid: app.pid, check: check)
                 try keyboard(code, flags: flags, text: nil, pid: app.pid, check: check)
@@ -173,7 +179,7 @@ final class MacInput {
             case .type(let text):
                 try await InputDispatch.type(text, check: check, validate: {
                     try checkWindow()
-                    try access.checkFocus(focus, target: target, app: app, requireField: true)
+                    try access.checkFocus(focus, target: target, app: app, requireField: true, requireFront: !background)
                 }, send: { character in
                     // Line breaks and tabs stay text: as real Return or Tab keys they could
                     // submit or move focus mid-text, which only a separate key action may do.
@@ -182,7 +188,7 @@ final class MacInput {
             case .drag(let points):
                 let points = try points.map(lease.screenPoint)
                 for point in points {
-                    try check(); try access.checkHit(point, target: target, app: app)
+                    try check(); try access.checkHit(point, target: target, app: app, background: background)
                     await Task.yield()
                 }
                 guard let first = points.first else { throw UseError("invalid_arguments", "Drag path is empty.") }
@@ -191,9 +197,9 @@ final class MacInput {
                 try await InputDispatch.drag(from: first, through: PointerMotion.path(points), check: check, validate: { point in
                     try checkWindow()
                     if point == first {
-                        try access.checkHit(point, target: target, app: app, expected: pointerTarget)
+                        try access.checkHit(point, target: target, app: app, expected: pointerTarget, background: background)
                     } else if points.contains(point) {
-                        try access.checkHit(point, target: target, app: app)
+                        try access.checkHit(point, target: target, app: app, background: background)
                     }
                 }, move: { point in
                     try self.mouse(.mouseMoved, point, app.pid, 0, target.id, lease.frame, check: check)
@@ -213,6 +219,20 @@ final class MacInput {
             throw InputFailure(cause: cause, mayHaveActed: feedback?.didDispatch == true)
         }
     }
+    func route(for app: AppIdentity) -> PointerRoute {
+        if let route = routes[app.pid] { return route }
+        let route = PointerRoute.classify(bundleID: app.bundleID, info: app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:])
+        routes[app.pid] = route
+        return route
+    }
+    /// Chromium acts on a background click only after a recent user gesture. A
+    /// press outside every window advances that gate and is itself discarded.
+    private func primeUserActivation(_ pid: pid_t, _ windowID: CGWindowID, _ frame: CGRect, check: () throws -> Void) throws {
+        guard routes[pid] == .skyLight else { return }
+        let outside = CGPoint(x: -1, y: -1)
+        try mouse(.leftMouseDown, outside, pid, 1, windowID, frame, check: check, quiet: true)
+        try mouse(.leftMouseUp, outside, pid, 1, windowID, frame, quiet: true)
+    }
     private func post(_ event: CGEvent, _ pid: pid_t, pointer: Bool = false) {
         event.setIntegerValueField(.eventSourceUnixProcessID, value: Int64(ProcessInfo.processInfo.processIdentifier))
         event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
@@ -222,7 +242,26 @@ final class MacInput {
             event.postToPid(pid)
         }
     }
-    private func mouse(_ type: CGEventType, _ point: CGPoint, _ pid: pid_t, _ count: Int, _ windowID: CGWindowID, _ frame: CGRect, _ flags: CGEventFlags = [], check: () throws -> Void = {}) throws {
+    /// `quiet` posts the event without tracking or showing it, for presses no person should see.
+    private func mouse(_ type: CGEventType, _ point: CGPoint, _ pid: pid_t, _ count: Int, _ windowID: CGWindowID, _ frame: CGRect, _ flags: CGEventFlags = [], check: () throws -> Void = {}, quiet: Bool = false) throws {
+        let event = try Self.pointerEvent(type, point, count: count, windowID: windowID, frame: frame, flags: flags)
+        if let gestureField = Self.gestureField { event.setIntegerValueField(gestureField, value: gesture) }
+        if type == .mouseMoved || type == .leftMouseDragged, let last = lastPointer, last.pid == pid, last.windowID == windowID {
+            // Canvases and games read relative motion from these fields.
+            event.setIntegerValueField(.mouseEventDeltaX, value: Int64((point.x - last.point.x).rounded()))
+            event.setIntegerValueField(.mouseEventDeltaY, value: Int64((point.y - last.point.y).rounded()))
+        }
+        try Self.verifyTargeted(event, point, windowID: windowID, frame: frame)
+        if type != .leftMouseUp { try Task.checkCancellation(); try check() }
+        post(event, pid, pointer: true)
+        guard !quiet else { return }
+        lastPointer = (pid, windowID, point)
+        if type == .leftMouseDown || type == .leftMouseDragged { heldPointer = (pid, point, windowID, frame, flags) }
+        if type == .leftMouseUp { heldPointer = nil }
+        report(type == .leftMouseDown ? .down : type == .leftMouseUp ? .up : .move, point: point)
+    }
+    /// A left-button or move event addressed to `windowID` at the screen `point`.
+    static func pointerEvent(_ type: CGEventType, _ point: CGPoint, count: Int, windowID: CGWindowID, frame: CGRect, flags: CGEventFlags = []) throws -> CGEvent {
         guard let setWindowLocation = Self.setWindowLocation else {
             throw UseError("unsupported_pointer_input", "This macOS version does not support scoped pointer input. Use accessible app controls instead.", next: "human_takeover")
         }
@@ -253,21 +292,16 @@ final class MacInput {
         event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(windowID))
         event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(windowID))
         event.setIntegerValueField(.mouseEventClickState, value: Int64(count))
-        if let gestureField = Self.gestureField { event.setIntegerValueField(gestureField, value: gesture) }
-        if type == .mouseMoved || type == .leftMouseDragged, let last = lastPointer, last.pid == pid, last.windowID == windowID {
-            // Canvases and games read relative motion from these fields.
-            event.setIntegerValueField(.mouseEventDeltaX, value: Int64((point.x - last.point.x).rounded()))
-            event.setIntegerValueField(.mouseEventDeltaY, value: Int64((point.y - last.point.y).rounded()))
-        }
-        try verifyTargeted(event, windowID: windowID, local: location)
-        if type != .leftMouseUp { try Task.checkCancellation(); try check() }
-        post(event, pid, pointer: true)
-        lastPointer = (pid, windowID, point)
-        if type == .leftMouseDown || type == .leftMouseDragged { heldPointer = (pid, point, windowID, frame, flags) }
-        if type == .leftMouseUp { heldPointer = nil }
-        report(type == .leftMouseDown ? .down : type == .leftMouseUp ? .up : .move, point: point)
+        return event
     }
     private func scroll(_ point: CGPoint, dx: Int32, dy: Int32, pid: pid_t, windowID: CGWindowID, frame: CGRect) throws {
+        let event = try Self.scrollEvent(point, dx: dx, dy: dy, windowID: windowID, frame: frame)
+        if let gestureField = Self.gestureField { event.setIntegerValueField(gestureField, value: gesture) }
+        try Self.verifyTargeted(event, point, windowID: windowID, frame: frame)
+        post(event, pid, pointer: true)
+        feedback?.didDispatch = true
+    }
+    static func scrollEvent(_ point: CGPoint, dx: Int32, dy: Int32, windowID: CGWindowID, frame: CGRect) throws -> CGEvent {
         guard let setWindowLocation = Self.setWindowLocation, let windowNumberField = Self.windowNumberField else {
             throw UseError("unsupported_pointer_input", "This macOS version does not support scoped pointer input. Use accessible app controls instead.", next: "human_takeover")
         }
@@ -279,16 +313,19 @@ final class MacInput {
         event.setIntegerValueField(windowNumberField, value: Int64(windowID))
         event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(windowID))
         event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(windowID))
-        if let gestureField = Self.gestureField { event.setIntegerValueField(gestureField, value: gesture) }
-        try verifyTargeted(event, windowID: windowID, local: NSPoint(x: point.x - frame.minX, y: frame.maxY - point.y))
-        post(event, pid, pointer: true)
-        feedback?.didDispatch = true
+        return event
     }
-    /// Reads the event back the way AppKit will on receipt, so input that would
-    /// reach another window or point is never posted.
-    private func verifyTargeted(_ event: CGEvent, windowID: CGWindowID, local: NSPoint) throws {
-        guard let native = NSEvent(cgEvent: event), native.windowNumber == Int(windowID),
-              abs(native.locationInWindow.x - local.x) < 1, abs(native.locationInWindow.y - local.y) < 1 else {
+    /// Reads back what the app's AppKit routes the event by, its window number
+    /// and window-local point, so input that would reach another window or
+    /// point is never posted. `NSEvent(cgEvent:)` here gives only the window
+    /// number: for another process's window its location is the flipped screen
+    /// point, which matches the window-local one only for a window at the
+    /// main screen's bottom-left corner.
+    static func verifyTargeted(_ event: CGEvent, _ point: CGPoint, windowID: CGWindowID, frame: CGRect) throws {
+        let local = CGPoint(x: point.x - frame.minX, y: point.y - frame.minY)
+        guard let windowLocation = Self.windowLocation, let native = NSEvent(cgEvent: event), native.windowNumber == Int(windowID),
+              abs(event.location.x - point.x) < 1, abs(event.location.y - point.y) < 1,
+              abs(windowLocation(event).x - local.x) < 1, abs(windowLocation(event).y - local.y) < 1 else {
             throw UseError("unsupported_pointer_input", "This macOS version did not address pointer input to the selected window. Use accessible app controls instead.", next: "human_takeover")
         }
     }

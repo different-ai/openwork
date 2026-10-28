@@ -388,8 +388,8 @@ export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T
   }
 }
 
-export function connectorSetupToolResult() {
-  return capabilitySearchToolResult([], undefined, connectorCatalogForQuery("", true))
+export function connectorSetupToolResult(options: { expandedMcpPresets?: boolean } = {}) {
+  return capabilitySearchToolResult([], undefined, connectorCatalogForQuery("", true, options))
 }
 
 function capabilityTimeoutResult(capability: string): ExecuteCapabilityToolResult {
@@ -754,6 +754,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       toolShapes,
       remoteSessionStatus: Boolean(memberIdentity && organizationFeatures.remoteSessionSubagents),
       slackSendAsBot: slackSendAsBotAvailable(capabilityContext),
+      myAgent: Boolean(memberIdentity && organizationFeatures.workbotProactive && organizationFeatures.workbotAgentLibrary && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
       skillsExtension,
       skillIndex: skillsExtension && advertisesInstructions && !listsSkillsNatively ? skillIndexInstructions(await loadRemoteSkills()) : undefined,
     })
@@ -908,14 +909,14 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           outputSchema: toolShapes ? MCP_TOOL_SEARCH_CAPABILITIES_OUTPUT_SCHEMA : SEARCH_CAPABILITIES_OUTPUT_SCHEMA,
         },
         async ({ query, limit, type, intent }) => {
-          if (type === "connectors") return connectorSetupToolResult()
+          if (type === "connectors") return connectorSetupToolResult({ expandedMcpPresets: organizationFeatures.expandedMcpPresets })
           const boundedLimit = limit ?? 5
           const includeApps = appServersEnabled && (type === undefined || type === "all" || type === "mcp" || type === "marketplace")
           // Generic Marketplace search excludes authored Apps in every rollout state.
           const result = await searchCapabilityRegistry(capabilityContext, { query, limit: boundedLimit, type })
           const openable = includeApps ? await loadOpenableApps() : []
           const matches = [...result.matches, ...searchMcpApps(openable, query, redirectUriBase)].sort(compareCapabilityMatches).slice(0, boundedLimit)
-          return capabilitySearchToolResult(matches, result.externalCoverageHint, intent === "connect" && (type === undefined || type === "all" || type === "mcp") && !matches.some(match => match.name.startsWith("mcp:")) ? connectorCatalogForQuery(query) : null, intent === "connect", toolShapes)
+          return capabilitySearchToolResult(matches, result.externalCoverageHint, intent === "connect" && (type === undefined || type === "all" || type === "mcp") && !matches.some(match => match.name.startsWith("mcp:")) ? connectorCatalogForQuery(query, false, { expandedMcpPresets: organizationFeatures.expandedMcpPresets }) : null, intent === "connect", toolShapes)
         },
       )
 

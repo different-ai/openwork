@@ -19,7 +19,7 @@ function jevEnvironment(typesafe: string | undefined): Record<string, string> {
  * Auto Router: a real Den (cloud deployment, `autoRouter` on for the seeded
  * organization), a real AI Gateway with one Anthropic-protocol provider whose
  * only upstream is the deterministic Acme mock, and the owner signed in on
- * AI Gateway › AI Providers. Jev is real when TYPESAFE_API_KEY is set in the
+ * AI Gateway › Auto Router. Jev is real when TYPESAFE_API_KEY is set in the
  * test's environment; otherwise Auto takes its fallback route.
  */
 export async function autoRouterWorld(seed: Seed) {
@@ -34,7 +34,7 @@ export async function autoRouterWorld(seed: Seed) {
     await startAcmeGateway(stack, den.database.url, { baseUrl: gateway.baseUrl, env });
     const provider = await seedAcmeGateway(den.admin, upstream);
     const organizationId = await enableOrganizationCapabilities(seed, den.admin, { autoRouter: true });
-    const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/ai-gateway?tab=ai-providers", headless: true, viewport: { width: 1440, height: 1100 } });
+    const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/ai-gateway?tab=auto-router", headless: true, viewport: { width: 1440, height: 1100 } });
     return {
       den,
       web,
@@ -54,7 +54,7 @@ export async function autoRouterWorld(seed: Seed) {
 /**
  * Auto Router when the AI Gateway has no TypeSafe key: the same real Den and
  * gateway with the feature on, but no routing key, and the owner on
- * AI Gateway › AI Providers.
+ * AI Gateway › Auto Router.
  */
 export async function autoRouterMissingKeyWorld(seed: Seed) {
   const stack = new AsyncDisposableStack();
@@ -65,15 +65,15 @@ export async function autoRouterMissingKeyWorld(seed: Seed) {
     const den = stack.use(await seed.den({ env, org: { name: "Auto Router setup proof", admin: { name: "Router owner" } } }));
     if (!den.database) throw new Error("The Auto Router world needs its disposable local database.");
     await startAcmeGateway(stack, den.database.url, { baseUrl: gateway.baseUrl, env });
-    await seedAcmeGateway(den.admin, upstream);
+    const provider = await seedAcmeGateway(den.admin, upstream);
     await enableOrganizationCapabilities(seed, den.admin, { autoRouter: true });
-    const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/ai-gateway?tab=ai-providers", headless: true, viewport: { width: 1440, height: 1100 } });
+    const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/ai-gateway?tab=auto-router", headless: true, viewport: { width: 1440, height: 1100 } });
     return {
       den,
       web,
       /** Asks Den to turn Auto on through the API, as a script would; returns the HTTP status. */
       async tryEnable() {
-        const result = await seed.api(den.admin, "/v1/org/auto-router", { method: "PUT", body: JSON.stringify({ enabled: true, routes: [] }) });
+        const result = await seed.api(den.admin, "/v1/org/auto-router", { method: "PUT", body: JSON.stringify({ enabled: true, routes: [{ providerId: provider.providerId, modelId: ACME_MODEL, thinkingLevel: "default" }] }) });
         return result.response.status;
       },
       async [Symbol.asyncDispose]() { await stack.disposeAsync(); },
@@ -86,8 +86,8 @@ export async function autoRouterMissingKeyWorld(seed: Seed) {
 
 /**
  * Auto Router on the desktop: the same real Den (cloud, `autoRouter` on) and
- * real AI Gateway over the deterministic Acme upstream, with one Auto route
- * saved by the admin through Den's API, and the app in headless Chrome
+ * real AI Gateway over the deterministic Acme upstream, with the default
+ * model (the only route) saved by the admin through Den's API, and the app in headless Chrome
  * signed in as that admin on the native v2 engine. The desktop learns Auto
  * from Den like any organization model and chats through the gateway.
  */
@@ -110,11 +110,11 @@ export async function autoRouterDesktopWorld(seed: Seed) {
       : undefined;
     const offered = Array.isArray(option?.thinkingLevels) ? option.thinkingLevels.filter((level): level is string => typeof level === "string") : [];
     if (!options.response.ok || typeof option?.providerId !== "string") throw new Error(`Auto Router options are missing the Acme model: HTTP ${options.response.status}`);
-    // One route at one non-default level, so the answered-by label shows a thinking level.
+    // The default model at one non-default level, so the answered-by label shows a thinking level.
     const thinking = offered.includes("high") ? "high" : offered.find((level) => level !== "default") ?? "default";
     const saved = await seed.api(den.admin, "/v1/org/auto-router", {
       method: "PUT",
-      body: JSON.stringify({ enabled: true, routes: [{ providerId: option.providerId, modelId: ACME_MODEL, prompt: "Everyday questions, small edits and short answers", thinkingLevels: [thinking] }] }),
+      body: JSON.stringify({ enabled: true, routes: [{ providerId: option.providerId, modelId: ACME_MODEL, thinkingLevel: thinking }] }),
     });
     if (!saved.response.ok) throw new Error(`Saving the Auto route failed: HTTP ${saved.response.status} ${saved.text.slice(0, 300)}`);
     // The host token lets the app's server sync the organization's models (Auto among them) from Den.

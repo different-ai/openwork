@@ -40,19 +40,33 @@ export function foregroundTabEmulationCommands() {
 
 /**
  * Sizes a tab lays out at while the agent controls it. Resizing the panel then
- * only rescales the page, so the agent's view of it stays the same.
+ * only rescales the page, so the agent's view of it stays the same. `panel`
+ * keeps the size the page already has on screen (`lockedAgentViewport`), so
+ * nothing rescales when a turn starts or ends; its size here is the fallback
+ * for a page that is off screen.
  */
 export const AGENT_VIEWPORTS = Object.freeze({
+  panel: Object.freeze({ label: "Panel", width: BACKGROUND_TAB_VIEWPORT.width, height: BACKGROUND_TAB_VIEWPORT.height, mobile: false, fitsPanel: true }),
   desktop: Object.freeze({ label: "Desktop", width: BACKGROUND_TAB_VIEWPORT.width, height: BACKGROUND_TAB_VIEWPORT.height, mobile: false }),
   tablet: Object.freeze({ label: "Tablet", width: 820, height: 1180, mobile: false }),
   phone: Object.freeze({ label: "Phone", width: 390, height: 844, mobile: true }),
 });
 
-export const DEFAULT_AGENT_VIEWPORT = "desktop";
+export const DEFAULT_AGENT_VIEWPORT = "panel";
 
 /** @param {unknown} key */
 export function agentViewportFor(key) {
   return typeof key === "string" && Object.hasOwn(AGENT_VIEWPORTS, key) ? AGENT_VIEWPORTS[key] : AGENT_VIEWPORTS[DEFAULT_AGENT_VIEWPORT];
+}
+
+/**
+ * The size a tab locks to when the agent takes it: the chosen size, or for
+ * `panel` the page's on-screen `bounds` (the fallback size when it has none).
+ */
+export function lockedAgentViewport(key, bounds) {
+  const viewport = agentViewportFor(key);
+  if (!viewport.fitsPanel || !bounds) return viewport;
+  return Object.freeze({ ...viewport, width: bounds.width, height: bounds.height });
 }
 
 /**

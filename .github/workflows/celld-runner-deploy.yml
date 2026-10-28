@@ -18,6 +18,14 @@ on:
       - "ee/apps/headless-runner/**"
       - "ee/packages/headless-protocol/**"
       - "ee/packages/headless-computer/**"
+      # What the computer's desktop guest bundles from outside headless-computer (desktop-identity.mjs): a change
+      # here changes the guest, so it needs a new runner, which installs that guest into the computers it starts.
+      - "packages/computer-use/*.mjs"
+      - "packages/computer-use/*.py"
+      - "packages/computer-use/src/**"
+      - "packages/codemode/**"
+      - "packages/types/src/browser-demonstration.ts"
+      - "ee/apps/den-worker-runtime/scripts/cloud-desktop.sh"
       - "packages/sandbox-daytona/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/celld-runner-deploy.yml"
@@ -106,13 +114,15 @@ jobs:
           pnpm install --filter "@openwork-ee/headless-runner..." --frozen-lockfile
           pnpm --filter "@openwork-ee/headless-runner^..." --if-present run build
 
-      # The runner only accepts a computer whose desktop guest has its identity (dist/desktop-guest.version), and
-      # rebuilding a computer starts it again from the configured snapshot. A runner whose guest changed (its code, or a
-      # package it bundles, such as a lockfile bump) would turn every computer "out of date" until a new snapshot exists,
-      # so stop before the fleet changes. Build the snapshot with snapshot:build:freestyle-desktop at this commit, set
-      # HEADLESS_COMPUTER_SNAPSHOT in CELLD_RUNNER_VARS, then rerun this run.
-      - name: Check the computer snapshot was built for this runner
+      # New computers start from the configured snapshot, named after its desktop image (dist/desktop-image.version).
+      # The runner installs its own guest into a computer built from the same image, keeps driving one from an older
+      # image while their protocols match, and replaces that one once it is idle. A runner whose image changed needs a
+      # snapshot of it, so build that snapshot here, with the runner's own Freestyle key, and bundle the runner with it.
+      # A later run with the same image finds it already built; a guest-only change builds nothing. If the build fails,
+      # stop before the fleet changes.
+      - name: Use a computer snapshot built for this runner
         id: snapshot
+        timeout-minutes: 20
         run: |
           set -euo pipefail
           computer="$(printf '%s' "$RUNNER_VARS" | jq -r '.HEADLESS_COMPUTER // ""')"
@@ -123,16 +133,27 @@ jobs:
             echo "No Freestyle desktop computers configured; nothing to check."
             exit 0
           fi
-          identity="$(head -c 16 ee/packages/headless-computer/dist/desktop-guest.version)"
+          identity="$(head -c 16 ee/packages/headless-computer/dist/desktop-image.version)"
           if ! [[ "$snapshot" =~ ^workbot-desktop-freestyle-([0-9a-f]{16})$ ]]; then
             echo "::warning title=Computer snapshot not checked::$snapshot isn't named by snapshot:build:freestyle-desktop, so its desktop can't be compared with this runner's ($identity)."
             exit 0
           fi
-          if [ "${BASH_REMATCH[1]}" != "$identity" ]; then
-            echo "::error title=Computer snapshot is out of date::$snapshot was built for desktop ${BASH_REMATCH[1]}, but this runner's desktop is $identity. Build workbot-desktop-freestyle-$identity with snapshot:build:freestyle-desktop at this commit, set it as HEADLESS_COMPUTER_SNAPSHOT in CELLD_RUNNER_VARS, then rerun."
+          built="${BASH_REMATCH[1]}"
+          if [ "$built" = "$identity" ]; then
+            echo "$snapshot was built for this runner's desktop."
+            exit 0
+          fi
+          expected="workbot-desktop-freestyle-$identity"
+          key="$(printf '%s' "$RUNNER_VARS" | jq -r '.FREESTYLE_API_KEY // ""')"
+          if [ -z "$key" ]; then
+            echo "::error title=Computer snapshot is out of date::$snapshot was built for desktop $built, but this runner's desktop is $identity, and CELLD_RUNNER_VARS has no FREESTYLE_API_KEY to build $expected with."
             exit 1
           fi
-          echo "$snapshot was built for this runner's desktop."
+          echo "::add-mask::$key"
+          echo "$snapshot was built for desktop $built; this runner's desktop is $identity, so it needs $expected."
+          FREESTYLE_API_KEY="$key" HEADLESS_COMPUTER_SNAPSHOT="$expected" \
+            pnpm --filter @openwork-ee/headless-computer snapshot:build:freestyle-desktop
+          echo "name=$expected" >> "$GITHUB_OUTPUT"
 
       - name: Check model and smoke result boundaries
         run: pnpm --filter @openwork-ee/headless-runner exec tsx --test scripts/model-responses.test.ts scripts/celld-smoke-result.test.ts
@@ -183,6 +204,7 @@ jobs:
       # GitHub masks the whole secret, not the values inside it.
       - name: Bundle the runner
         env:
+          HEADLESS_COMPUTER_SNAPSHOT: ${{ steps.snapshot.outputs.name || vars.HEADLESS_COMPUTER_SNAPSHOT }}
           HEADLESS_SENTRY_DSN: ${{ secrets.HEADLESS_SENTRY_DSN }}
           HEADLESS_DEN_API_URL: ${{ vars.HEADLESS_DEN_API_URL }}
           HEADLESS_DEN_CALLBACK_TOKEN: ${{ secrets.HEADLESS_DEN_CALLBACK_TOKEN }}
@@ -197,7 +219,7 @@ jobs:
           set -euo pipefail
           umask 077
           printf '%s' "$RUNNER_VARS" > "$RUNNER_TEMP/vars.json"
-          # Snapshot rotation is a plain environment variable; when unset, keep the secret's existing value.
+          # The snapshot this run built, else the plain environment variable; when neither, keep the secret's value.
           if [ -n "${HEADLESS_COMPUTER_SNAPSHOT:-}" ]; then
             jq --arg snapshot "$HEADLESS_COMPUTER_SNAPSHOT" '. + { HEADLESS_COMPUTER_SNAPSHOT: $snapshot }' \
               "$RUNNER_TEMP/vars.json" > "$RUNNER_TEMP/vars.merged.json"
@@ -363,7 +385,7 @@ jobs:
             summary=":red_circle: Runner \`$VERSION\` is in the fleet bucket but only ${ADOPTED:-?} of ${INSTANCES:-?} nodes adopted it (was \`$previous\`)."
           elif [ "$SNAPSHOT_OUTCOME" = "failure" ]; then
             outcome="failed"
-            summary=":red_circle: Runner deploy stopped: its computer desktop changed and the configured snapshot was built for the old one. Build a new snapshot, set it in CELLD_RUNNER_VARS and rerun. The fleet stays on \`$previous\`."
+            summary=":red_circle: Runner deploy stopped: its computer desktop changed and building the new snapshot failed. Rerun once the run's snapshot step says why. The fleet stays on \`$previous\`."
           elif [ "$COMPAT_OUTCOME" = "failure" ]; then
             outcome="failed"
             summary=":red_circle: Runner deploy stopped: the live runner and this one can't serve each other during a switch. The fleet stays on \`$previous\`."

@@ -10,7 +10,7 @@ import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { isJsonObject, type JsonObject } from "./chat.js"
 
 /** What one provider needs to continue after a tool call. */
-export type ReasoningPayload = { kind: "anthropic" | "bedrock" | "google" | "openai"; blocks: JsonObject[] }
+export type ReasoningPayload = { kind: "anthropic" | "bedrock" | "google" | "openai" | "turn"; blocks: JsonObject[] }
 
 export type ReasoningStore = {
   /** Every remembered payload for these tool call ids, by id. */
@@ -25,7 +25,7 @@ const MEMORY_LIMIT = 5_000
 const TOOL_CALL_ID = /^[A-Za-z0-9_.:-]{1,191}$/
 
 function parsePayload(value: unknown): ReasoningPayload | null {
-  if (!isJsonObject(value) || (value.kind !== "anthropic" && value.kind !== "bedrock" && value.kind !== "google" && value.kind !== "openai") || !Array.isArray(value.blocks)) return null
+  if (!isJsonObject(value) || (value.kind !== "anthropic" && value.kind !== "bedrock" && value.kind !== "google" && value.kind !== "openai" && value.kind !== "turn") || !Array.isArray(value.blocks)) return null
   return { kind: value.kind, blocks: value.blocks.filter(isJsonObject) }
 }
 

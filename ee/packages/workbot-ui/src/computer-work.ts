@@ -20,6 +20,8 @@ export function surfaceOf(step: WorkbotStep): ComputerSurface {
  *
  * Only a screen Workbot chose to show (the desktop tool's `show`) is `shown` with its live view: working on the screen
  * is not by itself a reason to put it in front of the person.
+ *
+ * `starts` is the card a step starting before it is stored belongs to, so what that step says it is doing shows there.
  */
 export function computerWork(parts: WorkbotPart[], { working, starting, lastIsLive }: { working: boolean; starting: LiveText["working"] | null; lastIsLive: boolean }) {
   const cards = new Map<ComputerSurface, { steps: WorkbotStep[]; last: number }>();
@@ -29,6 +31,7 @@ export function computerWork(parts: WorkbotPart[], { working, starting, lastIsLi
   let latest: ComputerSurface | null = null;
   // Whether Workbot is showing each screen: the last `show` it gave there in this reply.
   const showing = new Map<ComputerSurface, boolean>();
+  let starts: ComputerSurface | null = null;
   for (const [index, part] of parts.entries()) {
     if (part.kind !== "steps") continue;
     for (const step of part.steps) {
@@ -52,6 +55,7 @@ export function computerWork(parts: WorkbotPart[], { working, starting, lastIsLi
     }
     current = surface;
     latest = surface;
+    starts = surface;
   }
   const watch = working && latest !== "background" ? latest : null;
   const shown = watch && showing.get(watch) ? watch : null;
@@ -62,5 +66,5 @@ export function computerWork(parts: WorkbotPart[], { working, starting, lastIsLi
   for (const [surface, card] of cards) if (!live.has(surface)) placed.set(card.last, [...(placed.get(card.last) ?? []), surface]);
   // Below its latest words: background work first, then the screen it is watched on.
   const trailing = [...live].sort((a, b) => Number(a === watch) - Number(b === watch));
-  return { cards, live, watch, shown, placed, trailing };
+  return { cards, live, watch, shown, placed, trailing, starts };
 }

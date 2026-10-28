@@ -12,10 +12,12 @@ import { agentPermissionEngineMcpDenial, agentPermissionRulesOf } from "./agent-
 import { CONNECT_MCP_APP_HOST_CAPABILITY_HEADER, registeredOrganizationMcpServers } from "./connect-mcp-server-catalog.js";
 import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
 import { MCP_READINESS_RPC_ID } from "./opencode-v2-mcp-readiness.js";
+import { captureServerException } from "./telemetry.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import constants from "../../../constants.json" with { type: "json" };
@@ -72,11 +74,15 @@ const CATALOG_MIRROR_TIMEOUT_MS = 60_000;
 // connection that failed to start, is retried after `mcpRetryMs`, or at once
 // when its configuration changes. Every `mcpHealthMs` known folders are
 // checked for connections that failed or went missing.
-export const ENGINE_V2_UPKEEP_WAITS: Readonly<Record<"providerPushJoinMs" | "workspaceProviderReadyMs" | "mcpRetryMs" | "mcpHealthMs", number>> = Object.freeze({
+export const ENGINE_V2_UPKEEP_WAITS: Readonly<Record<"providerPushJoinMs" | "workspaceProviderReadyMs" | "mcpRetryMs" | "mcpHealthMs" | "engineRestartMs" | "engineRestartMaxMs", number>> = Object.freeze({
   providerPushJoinMs: 10_000,
   workspaceProviderReadyMs: 8_000,
   mcpRetryMs: 60_000,
   mcpHealthMs: 60_000,
+  // First wait before starting an engine that failed or exited again; it
+  // doubles per attempt up to the maximum.
+  engineRestartMs: 2_000,
+  engineRestartMaxMs: 300_000,
 });
 
 function delay(ms: number): Promise<void> {
@@ -151,9 +157,11 @@ export interface EngineV2Preview {
    * changed ones, remove revoked ones, and restart failed ones after a back-off.
    * Healthy and starting connections are left alone. `reconnect` names are
    * restarted now, without the back-off, when they are not healthy.
+   * The call rejects only for the connections it names (`reconnect`, or
+   * `servers` to check them without a restart); with neither, for any.
    * Background upkeep: prompts never wait on it.
    */
-  syncWorkspaceMcp(workspaceId: string, directory: string, options?: { reconnect?: string[] }): Promise<void>;
+  syncWorkspaceMcp(workspaceId: string, directory: string, options?: { reconnect?: string[]; servers?: string[] }): Promise<void>;
   /** Explicit mutations join the native client's executable MCP registry. */
   settleWorkspaceMcp(workspaceId: string, directory: string, server: string): Promise<void>;
   /** Start a folder's upkeep in the background the first time it is seen. Never waits or throws. */
@@ -206,6 +214,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+const ENGINE_FAILURE_TITLES = {
+  start: "OpenCode v2 did not start",
+  exit: "OpenCode v2 stopped unexpectedly",
+  upgrade: "OpenCode v2 upgrade did not finish",
+} as const;
+
+/**
+ * Error reporting gets the first line of an engine failure, with the home
+ * folder shortened to ~, and never the engine output that follows it.
+ */
+function reportEngineFailure(stage: keyof typeof ENGINE_FAILURE_TITLES, error: unknown): void {
+  const home = homedir();
+  const firstLine = errorMessage(error).split("\n", 1)[0] ?? "";
+  const reason = (home ? firstLine.split(home).join("~") : firstLine).slice(0, 300);
+  captureServerException(new Error(`${ENGINE_FAILURE_TITLES[stage]}: ${reason}`), { method: "ENGINE", route: `engine.v2.${stage}` });
 }
 
 function statePath(config: Pick<ServerConfig, "configPath">): string {
@@ -589,9 +614,22 @@ interface McpLocation {
   /** Last rejected registration or restart per name, for the back-off. */
   attempts: Map<string, { fingerprint: string; at: number }>;
   /** The latest run; the next one starts after it. */
-  tail?: Promise<void>;
+  tail?: Promise<McpFailures>;
   /** A run that has not started yet; later triggers join it. */
-  queued?: { promise: Promise<void>; reconnect: Set<string> };
+  queued?: { promise: Promise<McpFailures>; reconnect: Set<string> };
+}
+
+/** One run's failure message per connection name. */
+type McpFailures = ReadonlyMap<string, string>;
+
+/**
+ * A run serves every caller that joined it. Each one hears only about the
+ * connections it named, so one broken server never fails another's request;
+ * background upkeep names none and hears about all of them.
+ */
+async function rejectMcpFailures(run: Promise<McpFailures>, names?: readonly string[]): Promise<void> {
+  const failures = [...await run].filter(([name]) => !names || names.includes(name));
+  if (failures.length) throw new Error(failures.map(([name, message]) => `${name}: ${message}`).join("; "));
 }
 
 /** Live MCP status per name for one location, or undefined when unknown. */
@@ -693,6 +731,9 @@ export function createEngineV2Preview(options: {
   let providerSessionBridge: Awaited<ReturnType<typeof createV2ProviderSessionBridge>> | undefined;
   let unsubscribe: (() => void) | undefined;
   let startPromise: Promise<void> | undefined;
+  let restartAttempts = 0;
+  let restartTimer: ReturnType<typeof setTimeout> | undefined;
+  let healthySince: number | undefined;
   let mirrorInFlight: Promise<void> | undefined;
   // Settles once a mirror has pushed providers to the engine, before its
   // catalog confirmation; readiness joins this, never the whole mirror.
@@ -718,7 +759,8 @@ export function createEngineV2Preview(options: {
     });
   }
 
-  function syncWorkspaceMcp(workspaceId: string, directory: string, options: { reconnect?: string[] } = {}): Promise<void> {
+  function syncWorkspaceMcp(workspaceId: string, directory: string, options: { reconnect?: string[]; servers?: string[] } = {}): Promise<void> {
+    const named = options.servers ?? options.reconnect;
     let location = mcpLocations.get(directory);
     if (!location) {
       location = { workspaceId, applied: new Map(), attempts: new Map() };
@@ -730,7 +772,7 @@ export function createEngineV2Preview(options: {
     // burst coalesces and never reuses a snapshot taken before a change.
     if (location.queued) {
       for (const name of options.reconnect ?? []) location.queued.reconnect.add(name);
-      return location.queued.promise;
+      return rejectMcpFailures(location.queued.promise, named);
     }
     const owner = location;
     const reconnect = new Set(options.reconnect);
@@ -740,10 +782,10 @@ export function createEngineV2Preview(options: {
     });
     owner.queued = { promise, reconnect };
     owner.tail = promise;
-    return promise;
+    return rejectMcpFailures(promise, named);
   }
 
-  async function reconcileWorkspaceMcp(directory: string, location: McpLocation, reconnect: ReadonlySet<string>): Promise<void> {
+  async function reconcileWorkspaceMcp(directory: string, location: McpLocation, reconnect: ReadonlySet<string>): Promise<McpFailures> {
     const active = sidecar;
     if (!active) throw new Error("OpenCode v2 is not running");
     const effective = await readEffectiveRuntimeOpencodeConfig(config, location.workspaceId);
@@ -771,7 +813,6 @@ export function createEngineV2Preview(options: {
       const attempt = attempts.get(name);
       return !reconnect.has(name) && attempt?.fingerprint === fingerprint && Date.now() - attempt.at < waits.mcpRetryMs;
     };
-    const failures: string[] = [];
     const remove = async (name: string) => {
       const result = await active.fetchJson(`/api/experimental/mcp/${encodeURIComponent(name)}`, { method: "DELETE", directory, timeoutMs: 15_000 });
       if (result.status !== 204 && result.status !== 404) throw new Error(`OpenCode v2 MCP removal failed (${result.status})`);
@@ -799,15 +840,15 @@ export function createEngineV2Preview(options: {
       const result = await active.fetchJson(`/api/experimental/mcp/${encodeURIComponent(name)}/connect`, { method: "POST", directory, timeoutMs: 30_000 });
       if (result.status !== 204) warn(`MCP ${name}: reconnect failed (${result.status})`);
     };
-    const tasks: Array<Promise<void>> = [];
+    const tasks: Array<[string, Promise<void>]> = [];
     // Only registrations owned by this mirror are removed. A changed config is
     // removed before it is registered again, so a failed replacement cannot
     // leave an old credential or revoked tool active.
     for (const name of applied.keys()) {
       const wanted = desired.get(name);
-      if (!wanted) tasks.push(remove(name));
+      if (!wanted) tasks.push([name, remove(name)]);
       else if (wanted.fingerprint !== applied.get(name) && !backedOff(name, wanted.fingerprint)) {
-        tasks.push(remove(name).then(() => register(name, wanted.config, wanted.fingerprint)));
+        tasks.push([name, remove(name).then(() => register(name, wanted.config, wanted.fingerprint))]);
       }
     }
     for (const [name, { config: mcpConfig, fingerprint }] of desired) {
@@ -815,27 +856,31 @@ export function createEngineV2Preview(options: {
       if (applied.has(name) && applied.get(name) !== fingerprint) continue;
       if (!applied.has(name) || (live && status === undefined)) {
         // New, or the engine lost it (an identical PUT to a live entry is a no-op).
-        if (!backedOff(name, fingerprint)) tasks.push(register(name, mcpConfig, fingerprint));
+        if (!backedOff(name, fingerprint)) tasks.push([name, register(name, mcpConfig, fingerprint)]);
         continue;
       }
       // Connected and starting connections are left alone. `disabled` is only
       // ever set by an OpenWork repair, and needs_auth is retried only on request.
       const unhealthy = status === "failed" || status === "disabled" || (status === "needs_auth" && reconnect.has(name));
       if (status === "connected") attempts.delete(name);
-      else if (unhealthy && !backedOff(name, fingerprint)) tasks.push(restart(name, fingerprint));
-    }
-    for (const result of await Promise.allSettled(tasks)) {
-      if (result.status === "rejected") failures.push(errorMessage(result.reason));
+      else if (unhealthy && !backedOff(name, fingerprint)) tasks.push([name, restart(name, fingerprint)]);
     }
     // A failed run keeps its record as is: only successful registrations are
     // recorded, and the live status check catches anything unhealthy.
-    if (failures.length) throw new Error(failures.join("; "));
+    const failures = new Map<string, string>();
+    const results = await Promise.allSettled(tasks.map(([, task]) => task));
+    results.forEach((result, index) => {
+      if (result.status === "rejected") failures.set(tasks[index][0], errorMessage(result.reason));
+    });
+    return failures;
   }
 
   async function settleWorkspaceMcp(workspaceId: string, directory: string, server: string): Promise<void> {
-    if (!enabled) return;
+    // While v1 serves chats, or v2 is not up, the saved config is the whole
+    // change: v2 reads each folder's connections from it when it opens the folder.
+    if (!sidecar || !chatRouting) return;
     await ensureWorkspaceReady(directory);
-    await syncWorkspaceMcp(workspaceId, directory);
+    await syncWorkspaceMcp(workspaceId, directory, { servers: [server] });
     if (!enabled) return;
     const active = sidecar;
     if (!active) throw new ApiError(503, "mcp_tools_not_ready", "This connection is saved, but its tools are not ready yet. Retry.");
@@ -1017,6 +1062,8 @@ export function createEngineV2Preview(options: {
 
   async function closeSidecar(): Promise<void> {
     const active = sidecar;
+    unsubscribe?.();
+    unsubscribe = undefined;
     workspaceReadiness.clear();
     sidecar = undefined;
     mcpLocations.clear();
@@ -1074,6 +1121,7 @@ export function createEngineV2Preview(options: {
         const workspaceIds = (await listRuntimeOpencodeConfigRows(config)).map((row) => row.workspaceId);
         return { rules, organizationMcp: await registeredOrganizationMcpServers(config, workspaceIds) };
       },
+      onExit: (error) => engineExited(managed, error),
     });
     sidecar = managed;
     if (!enabled || !allowRunning) {
@@ -1085,6 +1133,8 @@ export function createEngineV2Preview(options: {
       version = health.version;
       pid = health.pid;
       running = health.healthy;
+      healthySince = Date.now();
+      lastError = undefined;
       const unsubscribeConfig = onRuntimeOpencodeConfigWrite((_writeConfig, workspaceId) => {
         const global = isEngineGlobalRuntimeConfigId(workspaceId);
         if (global) scheduleMirror();
@@ -1137,7 +1187,12 @@ export function createEngineV2Preview(options: {
   function recordStartError(error: unknown): void {
     running = false;
     lastError = `${errorMessage(error)} Set OPENWORK_OPENCODE2_BIN to a working opencode2 binary to override resolution.`;
-    if (!engineForced || engineOrigin !== "fresh") return;
+    // One report per incident: retries of an engine that keeps failing stay local.
+    if (restartAttempts === 0) reportEngineFailure("start", error);
+    if (!engineForced || engineOrigin !== "fresh") {
+      scheduleRestart();
+      return;
+    }
     // Fresh selection is saved before startup, just like the desktop default.
     // A failed forced start must not strand that profile on an unavailable v2.
     chatRouting = false;
@@ -1150,8 +1205,37 @@ export function createEngineV2Preview(options: {
     startFailureJob = persistState().catch(error => warn(`Automatic fresh upgrade state: ${errorMessage(error)}`));
   }
 
+  // An engine that serves chats and failed to start, or exited on its own,
+  // starts again after a wait that doubles per attempt. A history copy, the
+  // background upgrade and an explicit stop keep v2 down on purpose.
+  function scheduleRestart(): void {
+    if (restartTimer || stopping || !allowRunning || !enabled || !chatRouting) return;
+    if (v1HistoryCopyStartedAt !== undefined || migration.state === "running") return;
+    const wait = Math.min(waits.engineRestartMs * 2 ** restartAttempts, waits.engineRestartMaxMs);
+    restartAttempts += 1;
+    restartTimer = setTimeout(() => {
+      restartTimer = undefined;
+      if (stopping || !allowRunning || !enabled || !chatRouting) return;
+      void start().catch(recordStartError);
+    }, wait);
+    restartTimer.unref?.();
+  }
+
+  // The engine stopped without being asked. Drop it so callers see that v2 is
+  // not running, then start a new one. An engine that stayed up longer than
+  // the longest wait starts over at the first wait.
+  function engineExited(exited: ManagedOpencodeV2Server, error: Error): void {
+    if (sidecar !== exited) return;
+    if (healthySince !== undefined && Date.now() - healthySince >= waits.engineRestartMaxMs) restartAttempts = 0;
+    lastError = errorMessage(error);
+    reportEngineFailure("exit", error);
+    void closeSidecar().then(scheduleRestart);
+  }
+
   async function stopRuntime(): Promise<void> {
     allowRunning = false;
+    if (restartTimer) clearTimeout(restartTimer);
+    restartTimer = undefined;
     unsubscribe?.();
     unsubscribe = undefined;
     mirrorDirty = false;
@@ -1445,6 +1529,7 @@ export function createEngineV2Preview(options: {
         startedAt: attemptedCopy ? migration.startedAt ?? attemptStartedAt : attemptStartedAt };
       lastError = message;
       autoUpgradeRetry = engineAutoUpgradeRetry(autoUpgradeRetry?.attempts ?? 0);
+      reportEngineFailure("upgrade", error);
       options.autoUpgradeError?.(message);
       await persistState().catch((error) => warn(`Automatic upgrade state: ${errorMessage(error)}`));
       return false;

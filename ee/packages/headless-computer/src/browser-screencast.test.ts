@@ -13,8 +13,9 @@ async function fakeChromium({ listDelayMs = 10 } = {}) {
   const answers = new Map<string, unknown>()
   const tabs = new Map<string, import("ws").WebSocket>()
   let list: { id: string; url: string; title: string }[] = []
+  // Read once: a poll on a kept-alive connection can still arrive after close(), when the server has no address.
+  let port = 0
   const server = createServer(async (request, response) => {
-    const { port } = server.address() as AddressInfo
     // Like Chromium, listing tabs takes a moment, so polls overlap with whatever else happens.
     if (request.url === "/json/list") await new Promise(resolve => setTimeout(resolve, listDelayMs))
     requests.push(request.method === "GET" ? request.url! : `${request.method} ${request.url}`)
@@ -32,7 +33,7 @@ async function fakeChromium({ listDelayMs = 10 } = {}) {
     })
   })
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
-  const { port } = server.address() as AddressInfo
+  port = (server.address() as AddressInfo).port
   return {
     endpoint: `http://127.0.0.1:${port}`,
     commands,

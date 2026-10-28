@@ -1,6 +1,7 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import {
+  AUTO_ROUTER_DEFAULT_PROMPT,
   AUTO_ROUTER_MODEL_ID,
   AUTO_ROUTER_PROVIDER_ID,
   AUTO_ROUTER_RESPONSE_MODEL_HEADER,
@@ -20,38 +21,73 @@ const desktopTest = spec.world(autoRouterDesktopWorld, {
   needs: { commands: ["bun"] }, timeout: 900_000,
 });
 
-test("an admin enables the Auto Router and Auto answers through the chosen Gateway model", async ({ world, user, probe, step, evidence }) => {
-  await step("before: the AI Providers tab offers the Auto Router above Providers", async () => {
+test("an admin turns on the Auto Router with a default model and Auto answers through it", async ({ world, user, probe, step, evidence }) => {
+  await step("before: AI Gateway has an Auto Router tab, off until a default model is chosen", async () => {
+    await user.see({ testId: "ai-gateway-panel-auto-router" }, { timeoutMs: 60_000 });
+    await user.see({ role: "tab", text: "Auto Router" });
     await user.see({ testId: "auto-router-section" }, { timeoutMs: 60_000 });
-    await user.see({ text: "Auto Router" });
-    await user.see({ testId: "auto-router-enable" });
+    await user.see({ testId: "auto-router-enable" }, { text: "Turn on" });
     const connect = await probe.api(world.den.admin, "/v1/org/auto-router/connect");
     expect(connect.response.status).toBe(404);
     evidence.recordAssertionEvidence("desktops get no Auto before it is configured", `connect HTTP ${connect.response.status}`, connect.response.status === 404);
     await user.screenshot();
   });
 
-  await step("an admin enables it and saves a route with two thinking levels", async () => {
+  let offered: string[] = [];
+  let defaultLevel = "default";
+  await step("the admin turns it on by choosing the default model at one thinking level", async () => {
     await user.click({ testId: "auto-router-enable" });
     await user.see({ testId: "auto-router-editor" }, { timeoutMs: 30_000 });
+    const editor = await probe.dom('[data-testid="auto-router-editor"][data-default="true"]');
+    expect(editor.elements).toHaveLength(1);
+    await user.see({ testId: "auto-router-prompt" }, { text: AUTO_ROUTER_DEFAULT_PROMPT });
+    const prompt = await probe.dom('[data-testid="auto-router-prompt"]');
+    const readOnly = prompt.elements[0]?.tag === "p";
+    expect(readOnly).toBe(true);
     await user.see({ role: "combobox", label: "Model" }, { value: world.provider.modelName.replace(/ \(.*\)$/, ""), timeoutMs: 30_000 });
     const levels = await probe.dom('[data-testid^="auto-router-thinking-"]');
-    const offered = levels.elements.map((entry) => entry.text);
-    if (offered.includes("High")) await user.click({ testId: "auto-router-thinking-high" });
-    await user.type({ testId: "auto-router-prompt" }, "Everyday questions, small edits and short answers");
+    offered = levels.elements.map((entry) => entry.text);
+    if (offered.includes("High")) {
+      defaultLevel = "high";
+      await user.click({ testId: "auto-router-thinking-high" });
+    }
+    evidence.recordAssertionEvidence("the default model's prompt is fixed and shown read only", `prompt tag=${prompt.elements[0]?.tag ?? "none"}; text="${prompt.elements[0]?.text ?? ""}"; offered=${offered.join("/")}`, readOnly);
     await user.screenshot();
+    await user.see({ testId: "auto-router-save-route" }, { text: "Turn on" });
     await user.click({ testId: "auto-router-save-route" });
     await user.see({ testId: "auto-router-route" }, { timeoutMs: 30_000 });
+  });
+
+  await step("after: the admin adds a second route with its own prompt and level", async () => {
+    const secondLevel = defaultLevel === "high" ? "default" : offered.includes("Low") ? "low" : "default";
+    await user.click({ testId: "auto-router-add" });
+    await user.see({ testId: "auto-router-editor" }, { timeoutMs: 30_000 });
+    await user.type({ testId: "auto-router-prompt" }, "Quick questions, small edits and short answers");
+    await user.click({ testId: `auto-router-thinking-${secondLevel}` });
+    await user.click({ testId: "auto-router-save-route" });
+    const rows = await probe.eventually(() => probe.dom('[data-testid="auto-router-route"]'), {
+      within: 30_000, label: "two Auto Router routes", until: (value) => value.elements.length === 2,
+    });
     const saved = await probe.api(world.den.admin, "/v1/org/auto-router");
     const routes = isRecord(saved.body) && Array.isArray(saved.body.routes) ? saved.body.routes.filter(isRecord) : [];
     expect(saved.response.ok).toBe(true);
     expect(isRecord(saved.body) && saved.body.enabled).toBe(true);
-    expect(routes).toHaveLength(1);
+    expect(routes).toHaveLength(2);
+    expect(routes[0]?.isDefault).toBe(true);
+    expect(routes[0]?.prompt).toBe(AUTO_ROUTER_DEFAULT_PROMPT);
     expect(routes[0]?.modelId).toBe(ACME_MODEL);
-    expect(routes[0]?.prompt).toBe("Everyday questions, small edits and short answers");
-    const thinking = Array.isArray(routes[0]?.thinkingLevels) ? routes[0].thinkingLevels : [];
-    expect(thinking).toContain("default");
-    evidence.recordAssertionEvidence("the route is stored with its prompt, model and thinking levels", `offered=${offered.join("/")}; stored model=${String(routes[0]?.modelId)} levels=${thinking.join(",")}`, routes.length === 1 && routes[0]?.modelId === ACME_MODEL);
+    expect(routes[0]?.thinkingLevel).toBe(defaultLevel);
+    expect(routes[0]).not.toHaveProperty("thinkingLevels");
+    expect(routes[1]?.isDefault).toBe(false);
+    expect(routes[1]?.prompt).toBe("Quick questions, small edits and short answers");
+    expect(routes[1]?.thinkingLevel).toBe(secondLevel);
+    const firstRow = await probe.dom('[data-testid="auto-router-route"][data-default="true"]');
+    expect(rows.elements[0]?.text).toBe(firstRow.elements[0]?.text);
+    evidence.recordAssertionEvidence(
+      "route 0 is the default model with the fixed prompt and one thinking level",
+      routes.map((route, index) => `#${index} default=${String(route.isDefault)} model=${String(route.modelId)} level=${String(route.thinkingLevel)} prompt="${String(route.prompt)}"`).join("; "),
+      routes.length === 2 && routes[0]?.isDefault === true && routes[0]?.prompt === AUTO_ROUTER_DEFAULT_PROMPT && routes[0]?.thinkingLevel === defaultLevel,
+    );
     await user.screenshot();
   });
 
@@ -155,19 +191,19 @@ desktopTest("a member picks Auto and sees which model answered their question", 
   });
 });
 
-missingKeyTest("without the gateway's routing key, Enable explains how to add it instead of turning Auto on", async ({ world, user, probe, step, evidence }) => {
-  await step("before: Enable is muted and says why", async () => {
+missingKeyTest("without the gateway's routing key, Turn on explains how to add it instead of turning Auto on", async ({ world, user, probe, step, evidence }) => {
+  await step("before: Turn on is muted and says why", async () => {
     await user.see({ testId: "auto-router-section" }, { timeoutMs: 60_000 });
     await user.see({ testId: "auto-router-missing-key" }, { timeoutMs: 30_000 });
     const settings = await probe.api(world.den.admin, "/v1/org/auto-router");
     expect(isRecord(settings.body) && settings.body.routing).toBe("missing_key");
     const enable = await probe.dom('[data-testid="auto-router-enable"][data-blocked="missing-key"]');
     expect(enable.elements).toHaveLength(1);
-    evidence.recordAssertionEvidence("Den knows the gateway has no routing key", `routing=${String(isRecord(settings.body) ? settings.body.routing : null)}; Enable blocked=${enable.elements.length === 1}`, enable.elements.length === 1);
+    evidence.recordAssertionEvidence("Den knows the gateway has no routing key", `routing=${String(isRecord(settings.body) ? settings.body.routing : null)}; Turn on blocked=${enable.elements.length === 1}`, enable.elements.length === 1);
     await user.screenshot();
   });
 
-  await step("after: clicking Enable opens the setup dialog and nothing is enabled", async () => {
+  await step("after: clicking Turn on opens the setup dialog and nothing is enabled", async () => {
     await user.click({ testId: "auto-router-enable" });
     await user.see({ testId: "auto-router-setup-dialog" }, { timeoutMs: 10_000 });
     await user.see({ text: "Auto Router needs a routing key" });

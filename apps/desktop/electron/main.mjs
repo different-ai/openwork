@@ -1214,6 +1214,8 @@ const pendingDeepLinks = [];
 const nativeContextMenus = createNativeContextMenus({ Menu, clipboard, getWindow: () => mainWindow });
 
 browserPanel = createBrowserPanel({
+  // A page gets files only after the person approves them in the chat, like a native file panel.
+  approveFiles: (sessionId, request, signal) => computerControl.approveFiles({ sessionId, app: request.app, files: request.files }, { signal }),
   showNativeContextMenu: nativeContextMenus.show,
   closeNativeContextMenu: nativeContextMenus.close,
   remoteDebugPort,
@@ -2073,6 +2075,10 @@ const desktopCommandHandlers = {
   "computerSetRemoteEnabled": async (event, enabled) => {
       assertComputerSender(event);
       return computerControl.setRemoteEnabled(enabled === true);
+  },
+  "computerSetBackgroundEnabled": async (event, enabled) => {
+      assertComputerSender(event);
+      return computerControl.setBackgroundEnabled(enabled === true);
   },
   "computerResetPermission": async (event, permission) => {
       assertComputerSender(event);

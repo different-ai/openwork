@@ -90,21 +90,23 @@ function AgentViewportMenu({ viewport }: { viewport: { key: AgentViewportKey; sc
       <PopoverTrigger
         render={(
           <Button variant="ghost" size="sm" className="h-6 shrink-0 px-2 text-xs text-muted-foreground"
-            aria-label={`Agent page size: ${AGENT_VIEWPORTS[active].label}. Change it`}>
+            aria-label={`Agent page size: ${AGENT_VIEWPORTS[active].label}. Change it`} data-testid="browser-agent-page-size">
             {AGENT_VIEWPORTS[active].label}{viewport && viewport.scale < 1 ? ` · ${Math.round(viewport.scale * 100)}%` : ""}
           </Button>
         )}
       />
       <PopoverContent align="end" side="bottom" sideOffset={8} className="w-64 gap-0 p-1">
         <p className="px-2 pb-1.5 pt-1 text-xs text-muted-foreground">
-          While the agent works, pages keep this size and scale to fit the panel.
+          While the agent works, pages keep this size. A fixed size scales to fit the panel.
         </p>
         {(Object.keys(AGENT_VIEWPORTS) as AgentViewportKey[]).map((key) => (
-          <button key={key} type="button" aria-pressed={key === active}
+          <button key={key} type="button" aria-pressed={key === active} data-testid={`browser-agent-page-size-${key}`}
             className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted aria-pressed:bg-muted"
             onClick={() => { setChosen(key); chooseAgentViewport(key); }}>
             <span className="font-medium">{AGENT_VIEWPORTS[key].label}</span>
-            <span className="text-muted-foreground">{AGENT_VIEWPORTS[key].width} × {AGENT_VIEWPORTS[key].height}</span>
+            <span className="text-muted-foreground">
+              {AGENT_VIEWPORTS[key].fitsPanel ? "Fits the panel" : `${AGENT_VIEWPORTS[key].width} × ${AGENT_VIEWPORTS[key].height}`}
+            </span>
           </button>
         ))}
       </PopoverContent>
@@ -511,12 +513,12 @@ export function BrowserPanelContent({
             <Tooltip>
               <TooltipTrigger
                 render={(
-                  <Button variant="ghost" size="icon-sm" aria-label="Float browser" data-testid="browser-mode-float" onClick={() => presentation.onPresent("floating")}>
+                  <Button variant="ghost" size="icon-sm" aria-label="Pop out browser" data-testid="browser-mode-float" onClick={() => presentation.onPresent("floating")}>
                     <PictureInPicture2 />
                   </Button>
                 )}
               />
-              <TooltipContent>Float over chat</TooltipContent>
+              <TooltipContent>Pop out into its own window</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger

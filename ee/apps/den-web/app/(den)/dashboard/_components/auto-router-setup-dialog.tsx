@@ -33,7 +33,7 @@ export function AutoRouterSetupDialog({ open, onOpenChange }: { open: boolean; o
                 Add it to the AI Gateway as <code className="rounded bg-gray-100 px-1 text-[12px] text-gray-800">TYPESAFE_API_KEY</code>.
                 With the Helm chart, set <code className="rounded bg-gray-100 px-1 text-[12px] text-gray-800">secret.values.typesafeApiKey</code>.
               </li>
-              <li>Restart the AI Gateway, then come back here and select Enable.</li>
+              <li>Restart the AI Gateway, then come back here and select Turn on.</li>
             </ol>
           </div>
           <div className="mt-5 flex justify-end gap-2">

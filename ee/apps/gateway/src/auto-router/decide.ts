@@ -1,4 +1,4 @@
-// Picks the route and thinking level for one Auto request.
+// Picks the route for one Auto request; the route runs at its own thinking level.
 //
 // A turn starts with a user message and may continue through many requests
 // (tool results). Jev is asked once per turn; continuations reuse the turn's
@@ -7,52 +7,68 @@ import { autoRouterOptionKey, type AutoRouterThinkingLevel } from "@openwork/typ
 import type { AskJev, JevOption } from "./jev.js"
 
 export type AutoCandidate = {
-  /** Index of the route in the organization's configuration. */
+  /** Index of the route in the organization's configuration; 0 is the default model. */
   routeIndex: number
   routeId: string
   modelName: string
   prompt: string
-  thinkingLevels: AutoRouterThinkingLevel[]
+  thinkingLevel: AutoRouterThinkingLevel
 }
 
 export type AutoDecision = {
   candidate: AutoCandidate
+  /** Always the chosen route's own level. */
   thinkingLevel: AutoRouterThinkingLevel
   reason: "jev" | "turn" | "fallback"
 }
 
-type CachedChoice = { routeId: string; thinkingLevel: AutoRouterThinkingLevel; expires: number }
+type CachedChoice = { routeId: string; expires: number }
 
 const TURN_CACHE_MS = 60 * 60_000
 const TURN_CACHE_LIMIT = 20_000
 const turnChoices = new Map<string, CachedChoice>()
 
-/** The fallback: the first route that allows High thinking, at High; else the first route at its first level. */
-export function fallbackDecision(candidates: AutoCandidate[]): AutoDecision | null {
-  const high = candidates.find((candidate) => candidate.thinkingLevels.includes("high"))
-  if (high) return { candidate: high, thinkingLevel: "high", reason: "fallback" }
-  const first = candidates[0]
-  const level = first?.thinkingLevels[0]
-  return first && level ? { candidate: first, thinkingLevel: level, reason: "fallback" } : null
+function decision(candidate: AutoCandidate, reason: AutoDecision["reason"]): AutoDecision {
+  return { candidate, thinkingLevel: candidate.thinkingLevel, reason }
 }
 
+/**
+ * The fallback: the default model, meaning the first route the member can use
+ * in configured order (the first route itself when the member can use it).
+ * Candidates arrive in configured order.
+ */
+export function fallbackDecision(candidates: AutoCandidate[]): AutoDecision | null {
+  const first = [...candidates].sort((a, b) => a.routeIndex - b.routeIndex)[0]
+  return first ? decision(first, "fallback") : null
+}
+
+/** One Jev option per route, including the default model with its fixed prompt. */
 export function jevOptions(candidates: AutoCandidate[]): JevOption[] {
-  return candidates.flatMap((candidate) => candidate.thinkingLevels.map((thinkingLevel) => ({
-    key: autoRouterOptionKey(candidate.routeIndex, thinkingLevel),
+  return candidates.map((candidate) => ({
+    key: autoRouterOptionKey(candidate.routeIndex),
     modelName: candidate.modelName,
     useWhen: candidate.prompt,
-    thinkingLevel,
-  })))
+  }))
 }
 
-function remember(turnKey: string, decision: AutoDecision, now: number) {
+function remember(turnKey: string, chosen: AutoDecision, now: number) {
   turnChoices.delete(turnKey)
-  turnChoices.set(turnKey, { routeId: decision.candidate.routeId, thinkingLevel: decision.thinkingLevel, expires: now + TURN_CACHE_MS })
+  turnChoices.set(turnKey, { routeId: chosen.candidate.routeId, expires: now + TURN_CACHE_MS })
   while (turnChoices.size > TURN_CACHE_LIMIT) {
     const oldest = turnChoices.keys().next().value
     if (oldest === undefined) break
     turnChoices.delete(oldest)
   }
+}
+
+/**
+ * The turn's choice shared by every gateway instance, so a continuation that
+ * lands on another instance keeps the turn's model (and its replayable
+ * reasoning) instead of asking Jev again.
+ */
+export type SharedTurnChoices = {
+  recall(turnKey: string): Promise<string | null>
+  remember(turnKey: string, routeId: string): Promise<void>
 }
 
 export async function decideAutoRoute(input: {
@@ -67,36 +83,37 @@ export async function decideAutoRoute(input: {
   signal?: AbortSignal
   now?: number
   onJevError?: (error: unknown) => void
+  shared?: SharedTurnChoices
 }): Promise<AutoDecision | null> {
   const now = input.now ?? Date.now()
   if (input.continuation && input.turnKey) {
     const cached = turnChoices.get(input.turnKey)
-    const candidate = cached && cached.expires > now ? input.candidates.find((entry) => entry.routeId === cached.routeId) : undefined
-    if (cached && candidate && candidate.thinkingLevels.includes(cached.thinkingLevel)) {
-      return { candidate, thinkingLevel: cached.thinkingLevel, reason: "turn" }
+    const routeId = cached && cached.expires > now ? cached.routeId : await input.shared?.recall(input.turnKey).catch(() => null) ?? null
+    const candidate = routeId ? input.candidates.find((entry) => entry.routeId === routeId) : undefined
+    if (candidate) {
+      remember(input.turnKey, decision(candidate, "turn"), now)
+      return decision(candidate, "turn")
     }
   }
-  let decision: AutoDecision | null = null
-  if (input.candidates.length === 1 && input.candidates[0]?.thinkingLevels.length === 1) {
-    const only = input.candidates[0]
-    const level = only.thinkingLevels[0]
-    if (level) decision = { candidate: only, thinkingLevel: level, reason: "jev" }
+  let chosen: AutoDecision | null = null
+  const only = input.candidates.length === 1 ? input.candidates[0] : undefined
+  if (only) {
+    chosen = decision(only, "jev")
   } else if (input.prompt.trim()) {
     try {
-      const options = jevOptions(input.candidates)
-      const choice = await input.askJev({ prompt: input.prompt, context: input.context, options, signal: input.signal })
-      if (choice) {
-        const candidate = input.candidates.find((entry) => entry.thinkingLevels.some((level) => autoRouterOptionKey(entry.routeIndex, level) === choice.key))
-        const thinkingLevel = candidate?.thinkingLevels.find((level) => autoRouterOptionKey(candidate.routeIndex, level) === choice.key)
-        if (candidate && thinkingLevel) decision = { candidate, thinkingLevel, reason: "jev" }
-      }
+      const choice = await input.askJev({ prompt: input.prompt, context: input.context, options: jevOptions(input.candidates), signal: input.signal })
+      const candidate = choice ? input.candidates.find((entry) => autoRouterOptionKey(entry.routeIndex) === choice.key) : undefined
+      if (candidate) chosen = decision(candidate, "jev")
     } catch (error) {
       input.onJevError?.(error)
     }
   }
-  decision ??= fallbackDecision(input.candidates)
-  if (decision && input.turnKey) remember(input.turnKey, decision, now)
-  return decision
+  chosen ??= fallbackDecision(input.candidates)
+  if (chosen && input.turnKey) {
+    remember(input.turnKey, chosen, now)
+    await input.shared?.remember(input.turnKey, chosen.candidate.routeId).catch(() => undefined)
+  }
+  return chosen
 }
 
 /** Test hook: forget every remembered turn. */

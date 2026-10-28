@@ -2,8 +2,8 @@ import { z } from "zod"
 
 /**
  * Auto Router (feature `autoRouter`): organization admins list AI Gateway
- * models, describe when each one should be used, and choose which thinking
- * levels it may run at. Members pick "Auto" in the desktop model picker; for
+ * models, describe when each one should be used, and choose the one thinking
+ * level it runs at. Members pick "Auto" in the desktop model picker; for
  * every prompt the gateway asks Jev (TypeSafe System One) which route fits,
  * then forwards the request as if the member had picked that model.
  *
@@ -91,7 +91,7 @@ export const AUTO_ROUTER_THINKING_LABELS: Record<AutoRouterThinkingLevel, string
   max: "Max",
 }
 
-/** Most routes an organization can have; each route and level is one Jev option (at most 255). */
+/** Most routes an organization can have; each route is one Jev option. */
 export const AUTO_ROUTER_MAX_ROUTES = 24
 export const AUTO_ROUTER_PROMPT_MAX_LENGTH = 2000
 
@@ -149,6 +149,12 @@ export function autoRouterThinkingLevels(modelId: string, modelConfig: Record<st
   return AUTO_ROUTER_THINKING_LEVELS.filter((level) => levels.has(level))
 }
 
+/**
+ * The first route is the default model: Auto uses it when no other route's
+ * prompt matches, and whenever Jev cannot answer. Its prompt is fixed.
+ */
+export const AUTO_ROUTER_DEFAULT_PROMPT = "Use this model when no other prompts and models match the input"
+
 export const autoRouterRouteSchema = z
   .object({
     id: z.string(),
@@ -158,7 +164,10 @@ export const autoRouterRouteSchema = z
     modelId: z.string(),
     /** When to use this model, in the admin's words. Sent to Jev as the option's description. */
     prompt: z.string(),
-    thinkingLevels: z.array(autoRouterThinkingLevelSchema).min(1),
+    /** The one thinking level this route always runs at. */
+    thinkingLevel: autoRouterThinkingLevelSchema,
+    /** True for the first route: the default model, with the fixed prompt. */
+    isDefault: z.boolean(),
   })
   .meta({ ref: "AutoRouterRoute" })
 export type AutoRouterRoute = z.infer<typeof autoRouterRouteSchema>
@@ -176,6 +185,7 @@ export const autoRouterSettingsSchema = z
     /** False until an admin enables the Auto Router for the organization. */
     enabled: z.boolean(),
     routing: z.enum(AUTO_ROUTER_ROUTING_STATES),
+    /** Ordered; the first is the default model. */
     routes: z.array(autoRouterRouteSchema),
     canEdit: z.boolean(),
   })
@@ -186,20 +196,32 @@ export const autoRouterRouteWriteSchema = z
   .object({
     providerId: z.string().trim().min(1).max(128),
     modelId: z.string().trim().min(1).max(255),
-    prompt: z.string().trim().min(1).max(AUTO_ROUTER_PROMPT_MAX_LENGTH),
-    thinkingLevels: z.array(autoRouterThinkingLevelSchema).min(1).max(AUTO_ROUTER_THINKING_LEVELS.length),
+    /** Required for every route but the first; the first (default) always gets AUTO_ROUTER_DEFAULT_PROMPT. */
+    prompt: z.string().trim().max(AUTO_ROUTER_PROMPT_MAX_LENGTH).optional(),
+    thinkingLevel: autoRouterThinkingLevelSchema,
   })
   .strict()
   .meta({ ref: "AutoRouterRouteWrite" })
 export type AutoRouterRouteWrite = z.infer<typeof autoRouterRouteWriteSchema>
 
-/** Replaces the whole configuration; routes are tried in this order when Jev cannot answer. */
+/**
+ * Replaces the whole configuration. The first route is the default model;
+ * enabling requires one.
+ */
 export const autoRouterWriteSchema = z
   .object({
     enabled: z.boolean(),
     routes: z.array(autoRouterRouteWriteSchema).max(AUTO_ROUTER_MAX_ROUTES),
   })
   .strict()
+  .superRefine((value, context) => {
+    if (value.enabled && value.routes.length === 0) {
+      context.addIssue({ code: "custom", path: ["routes"], message: "Choose a default model to turn on the Auto Router." })
+    }
+    value.routes.forEach((route, index) => {
+      if (index > 0 && !route.prompt) context.addIssue({ code: "custom", path: ["routes", index, "prompt"], message: "Describe when to use this model." })
+    })
+  })
   .meta({ ref: "AutoRouterWrite" })
 export type AutoRouterWrite = z.infer<typeof autoRouterWriteSchema>
 
@@ -234,7 +256,7 @@ export const autoRouterConnectSchema = z
   .meta({ ref: "AutoRouterConnect" })
 export type AutoRouterConnect = z.infer<typeof autoRouterConnectSchema>
 
-/** The jev option key for a route at one thinking level. Jev never sees ids, only keys and descriptions. */
-export function autoRouterOptionKey(routeIndex: number, level: AutoRouterThinkingLevel) {
-  return `route_${routeIndex + 1}_${level}`
+/** The Jev option key for a route. Jev never sees ids, only keys and descriptions. */
+export function autoRouterOptionKey(routeIndex: number) {
+  return `route_${routeIndex + 1}`
 }

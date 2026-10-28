@@ -6,6 +6,7 @@ import { ArrowLeft, ArrowRight, ExternalLink, Globe, Loader2, Lock, Maximize2, M
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { z } from "zod";
 import type { BrowserTeachingContext } from "@openwork/types/browser-demonstration";
+import type { WorkbotViewContext } from "@openwork/types/workbot-context";
 import { WorkbotTeaching } from "./teaching";
 import { addressFor, ScreencastViewer, type ScreencastPage } from "./screencast";
 import { computerViews, errorMessage, workbotHost } from "./host";
@@ -34,7 +35,7 @@ export function openBrowserPage(id: string) {
  * Both views belong to the main conversation's computer. noVNC carries pixels and native input; with the browser live
  * view on, watching the browser streams the page itself instead.
  */
-export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true }: { onTeachingChange?(context: BrowserTeachingContext | undefined): void; onRun?(text: string): void | Promise<void>; canTeach?: boolean }) {
+export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onViewChange, onContextChange }: { onTeachingChange?(context: BrowserTeachingContext | undefined): void; onRun?(text: string): void | Promise<void>; canTeach?: boolean; onViewChange?(view: ComputerView): void; /** The tab in front of the Browser view, for the chat beside it; null when none is on screen. */ onContextChange?(context: WorkbotViewContext | null): void }) {
   const host = workbotHost();
   const [teaching, setTeaching] = useState<BrowserTeachingContext>();
   const teachingChange = useCallback((context: BrowserTeachingContext | undefined) => { setTeaching(context); onTeachingChange?.(context); }, [onTeachingChange]);
@@ -53,11 +54,13 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true }: { 
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
   }, []);
+  useEffect(() => { onViewChange?.(view); }, [view, onViewChange]);
   const [control, setControl] = useState(false);
   const [agentPaused, setAgentPaused] = useState(false);
   const [paused, setPaused] = useState(false);
   const [connected, setConnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [changing, setChanging] = useState(false);
@@ -66,18 +69,26 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true }: { 
   const [stream, setStream] = useState<ScreencastViewer | null>(null);
   const identity = host.identity ? `${host.identity.organizationId}:${host.identity.principalId}` : "";
   const away = useAway(30_000) && !recording;
+  // Only the page stream says which tab is in front; noVNC shows pixels alone.
+  const frontId = view === "browser" && !paused && !error ? livePage?.id ?? null : null;
+  const frontUrl = livePage?.url ?? "", frontTitle = livePage?.title ?? "";
+  useEffect(() => {
+    onContextChange?.(frontId ? { kind: "browser", tabId: frontId, url: frontUrl.slice(0, 2048), title: frontTitle.slice(0, 512) } : null);
+  }, [frontId, frontUrl, frontTitle, onContextChange]);
+  useEffect(() => () => onContextChange?.(null), [onContextChange]);
 
   useEffect(() => {
     const target = screen.current;
     // Nobody watching a hidden tab, so stop streaming until it is shown again.
     if (!target || paused || away) return;
-    setError(null); setConnected(false); setReconnecting(false); setLivePage(null); setStream(null);
+    setError(null); setConnected(false); setReconnecting(false); setUpdating(false); setLivePage(null); setStream(null);
     return connectDesktopViewer(target, host, { view, control, wake: true, screencast: host.browserLiveView === true }, {
       paused: () => setPaused(true),
       agentPaused: setAgentPaused,
-      connected: () => { setConnected(true); setReconnecting(false); setError(null); },
+      connected: () => { setConnected(true); setReconnecting(false); setUpdating(false); setError(null); },
       reconnecting: () => { setConnected(false); setReconnecting(true); },
-      failed: (message) => { setConnected(false); setError(message); },
+      updating: () => { setConnected(false); setUpdating(true); },
+      failed: (message) => { setConnected(false); setUpdating(false); setError(message); },
       page: setLivePage,
       stream: setStream,
     });
@@ -118,7 +129,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true }: { 
       <div ref={screen} className={`relative h-full w-full ${paused || error ? "hidden" : ""}`} aria-label={`${view === "browser" ? "Browser" : "Computer"} live view`} />
       {!paused && !error && !connected ? <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
         <ComputerLoading />
-        <span className="workbot-shimmer text-[13px]">{rebuilding ? "Rebuilding your computer" : reconnecting ? "Reconnecting" : view === "browser" ? "Connecting to the browser" : "Connecting to your computer"}</span>
+        <span className="workbot-shimmer text-[13px]">{rebuilding ? "Rebuilding your computer" : updating ? "Updating your computer" : reconnecting ? "Reconnecting" : view === "browser" ? "Connecting to the browser" : "Connecting to your computer"}</span>
       </div> : null}
       {paused || error ? <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
         <Monitor size={24} strokeWidth={1.5} className="text-[var(--wb-muted)]" aria-hidden />
@@ -137,6 +148,8 @@ type ViewerEvents = {
   agentPaused(paused: boolean): void;
   connected(): void;
   reconnecting(): void;
+  /** The computer is moving to a new version once its current work finishes; the view keeps asking until it has. */
+  updating?(): void;
   failed(message: string): void;
   /** The address and title of the tab the screencast shows. noVNC shows the browser's own toolbar instead. */
   page?(page: ScreencastPage): void;
@@ -161,6 +174,7 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
   let renewal: ReturnType<typeof setTimeout> | undefined;
   const controller = new AbortController();
   let failures = 0;
+  let updates = 0;
   /** `renewing` keeps the current picture on screen until the replacement connects. */
   const connect = async (renewing = false) => {
     if (disposed) return;
@@ -176,6 +190,12 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
       if (!response.ok) {
         // A failed early renewal is retried when the live connection closes.
         if (renewing && client) return;
+        // Waiting for an update is expected and short: keep asking, for up to three minutes, instead of failing.
+        if (typeof payload === "object" && payload !== null && "error" in payload && payload.error === "desktop_updating" && updates++ < 36) {
+          events.updating?.();
+          retry = setTimeout(() => void connect(), 5_000);
+          return;
+        }
         events.failed(errorMessage(payload, response.status === 403 ? "Computer access is off for your organization." : "Your computer is unavailable. Try reconnecting."));
         return;
       }

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { spec } from "@openwork/testkit";
 import { computerShortcutsWorld } from "../worlds/computer-shortcuts.ts";
 
-const test = spec.world(computerShortcutsWorld, { timeout: 420_000, resources: { surfaces: ["desktop"], services: ["den"], nativeReason: "The program operates Electron's built-in page view through the desktop computer broker." } });
+const test = spec.world(computerShortcutsWorld, { timeout: 420_000, resources: { surfaces: ["desktop"], services: ["den", "mock"], nativeReason: "The program operates Electron's built-in page view through the desktop computer broker." } });
 const resultSchema = z.object({ ok: z.boolean(), value: z.unknown().optional(), metrics: z.object({ actions: z.number(), transportCalls: z.number() }).optional() }).passthrough();
 
 test("an agent fills a report, finds a project and saves once in one UI program", async ({ world, user, agent, probe, step, evidence }) => {

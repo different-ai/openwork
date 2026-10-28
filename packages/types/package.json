@@ -303,6 +303,14 @@
       "development": "./src/den/workbot-settings.ts",
       "default": "./src/den/workbot-settings.ts"
     },
+    "./den/mcp-registration": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/mcp-registration.d.ts",
+        "default": "./src/den/mcp-registration.ts"
+      },
+      "development": "./src/den/mcp-registration.ts",
+      "default": "./src/den/mcp-registration.ts"
+    },
     "./den/workbot-proactive": {
       "types": {
         "openwork-build": "./dist/types/src/den/workbot-proactive.d.ts",

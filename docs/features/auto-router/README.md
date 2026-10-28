@@ -7,26 +7,36 @@
 
 ## What people get
 
-**Organization admins** see an **Auto Router** section above Providers on
-AI Gateway › AI Providers. Until it is enabled it explains what it does and
-offers **Enable**. Once enabled it lists routes, edited like the desktop's
-keyboard shortcuts:
+**Organization admins** get an **Auto Router** tab on AI Gateway, right
+after AI Providers (`/dashboard/ai-gateway?tab=auto-router`). Until it is on,
+the tab explains what it does and offers **Turn on**, which opens the
+**default model** editor: turning on requires choosing one.
 
+Routes are listed with their "Use when" text as the main line and the model,
+provider and thinking level below it. The first route is the **default
+model**: its prompt is fixed to "Use this model when no other prompts and
+models match the input" (`AUTO_ROUTER_DEFAULT_PROMPT`) and cannot be edited,
+it can be changed to another model but not removed while the router is on,
+and Auto uses it whenever nothing else fits. **Add model** adds more routes.
+Each route's editor has, in order:
+
+- **Use when**: a full-width description of the prompts this model should get
+  (read only for the default model).
 - **Model**: any model already added to the AI Gateway (active provider,
   in an active model group) whose protocol Auto can translate to.
-- **Thinking**: one or more levels, limited to what that model allows
-  (`default` plus the effort values in its catalog entry).
-- **Use when**: a full-width description of the prompts this model should get.
+- **Thinking**: exactly one level, chosen by the admin, limited to what that
+  model allows (`default` plus the effort values in its catalog entry). The
+  route always runs at that level.
 
-![Auto Router before it is enabled](auto-router-off.png)
+![Auto Router before it is turned on](auto-router-off.png)
 
-![Editing a route](auto-router-editor.png)
+![Choosing the default model](auto-router-editor.png)
 
-![A saved route](auto-router-routes.png)
+![The default model and a second route](auto-router-routes.png)
 
 Saving writes `auto_router` (one row per organization, `enabled`) and
-`auto_router_route` (the provider id, catalog model id, prompt, thinking levels
-array and position).
+`auto_router_route` (the provider id, catalog model id, prompt, thinking
+level and position; position 0 is the default model).
 
 **Members** whose organization has an enabled Auto Router, and who can use at
 least one of its models, get **Auto** as the first option in the desktop model
@@ -49,14 +59,17 @@ the reply (for example "Claude Haiku 5.5 · High").
 2. The gateway loads the organization's routes (feature checked, 15s cache)
    and keeps only routes the member's access grants allow.
 3. At the start of a turn (the last message is the user's) it asks Jev one
-   Choice question: each option is one route at one thinking level, keyed
-   `route_<n>_<level>`, described by the model name, the admin's "Use when"
-   text and the level. Jev never sees provider or model ids. Requests that
+   Choice question: each option is one route, keyed `route_<n>`, described by
+   the admin's "Use when" text. Jev picks only the route; the route runs at
+   its own thinking level. Jev never sees provider or model ids. Requests that
    continue the turn (tool results) reuse the turn's choice for an hour, so the
-   model, its thinking and its prompt cache stay consistent.
-4. If Jev is not configured, fails, times out (4s) or answers nothing usable,
-   the first route that allows **High** is used at High (else the first route
-   at its first level).
+   model, its thinking and its prompt cache stay consistent. The choice is
+   kept in memory and in `auto_router_reasoning` (keyed by a hash of the turn),
+   so a continuation that lands on another gateway instance keeps it too.
+4. If Jev fails, times out (4s) or answers nothing usable (without the
+   TypeSafe key Auto is off altogether, see below),
+   the default model (the first route, or the first one the member can use
+   when their access excludes it) is used at its thinking level.
 5. The request is rewritten under the member's own `gwm_…` alias for that
    model and handed to the normal Gateway pipeline, so access checks, usage
    limits, credentials, request logs and spend work exactly as if the member
@@ -82,8 +95,13 @@ the reply (for example "Claude Haiku 5.5 · High").
    encrypted reasoning items) cannot travel
    through Chat Completions. The gateway stores it for an hour, encrypted, in
    `auto_router_reasoning` keyed by organization and tool call id, so any
-   gateway instance can continue the turn. If it is missing anyway, that
-   request runs with thinking off rather than failing.
+   gateway instance can continue the turn. If it is missing anyway (for
+   example the turn's earlier steps ran on another model), a model whose
+   catalog allows `none` runs that request with thinking off; a model that only
+   takes adaptive thinking (newer Claude, which rejects `thinking.type:
+   "disabled"`) keeps thinking on and gets that turn's unsigned tool calls and
+   results as plain text instead. `disabled` is never sent to a model whose
+   catalog does not offer `none`.
 
 ## The key
 
@@ -105,6 +123,9 @@ Every Auto response carries it:
   `openwork_route: { provider, model, thinking, reason, name }`, and Anthropic
   responses use the real model id as the chunk `model`.
 - The gateway request log records the real provider, model and usage.
+- Errors from the chosen model, as JSON or mid-stream, end with "(Auto chose
+  <model name> · <thinking> thinking.)" and carry `openwork_route`, so the
+  member always knows which model failed.
 
 The desktop shows it under each Auto reply, beside the provider's logo, as
 "<model name> · <thinking>" (no thinking part for `default`). Opaque
@@ -138,13 +159,17 @@ the feature is on.
 ## Proof
 
 `evals/proofs/auto-router.proof.test.ts` boots a real Den, AI Gateway and Den
-web against a deterministic Anthropic upstream: the admin enables the router and
-saves a route in the UI, then a chat request for `openwork-auto` with the
+web against a deterministic Anthropic upstream: on the Auto Router tab the
+admin turns the router on by choosing the default model at one thinking level,
+adds a second route with its own "Use when" prompt and level, and Den's API
+shows route 0 as the default with the fixed prompt; then a chat request for `openwork-auto` with the
 member's Gateway key is answered by that model (with real Jev when
 `TYPESAFE_API_KEY` is set). A second test signs the app (headless Chrome, v2
 engine) in to the same kind of Den and gateway: the member picks Auto (first in
 the picker), asks a question, gets the upstream's reply, and sees which model
-answered it, before and after reloading the chat. Run them with
+answered it, before and after reloading the chat. A third test runs the gateway
+without the TypeSafe key: **Turn on** is muted, opens the setup dialog, and Den
+refuses turning on and the desktop connect. Run them with
 `pnpm evals:e2e auto-router --local`.
 
 ## Operating it
@@ -166,7 +191,7 @@ Only the gateway holds the key. Den asks it through `GET /auto-router/status`
 (a boolean, cached for a minute) and reports `routing: "ready" | "missing_key" |
 "unknown"` on `GET /v1/org/auto-router`. While the key is missing:
 
-- **Enable** is muted with "Needs a routing key on the AI Gateway", and clicking
+- **Turn on** is muted with "Needs a routing key on the AI Gateway", and clicking
   it opens a dialog telling the admin to ask whoever runs the instance to add
   `TYPESAFE_API_KEY` (Helm: `secret.values.typesafeApiKey`) and restart the gateway.
 - An already enabled router shows "Auto is paused" with the same steps, and
@@ -177,7 +202,7 @@ Only the gateway holds the key. Den asks it through `GET /auto-router/status`
 
 `unknown` (the gateway could not be reached) does not block anything.
 
-![Enable without the key](auto-router-missing-key.png)
+![Turn on without the key](auto-router-missing-key.png)
 
 ![The setup dialog](auto-router-setup-dialog.png)
 

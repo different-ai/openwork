@@ -21,7 +21,7 @@
     "worker:compat": "tsx scripts/compat-check.ts",
     "worker:e2e": "pnpm --filter @openwork-ee/headless-protocol build && tsx scripts/owner-cells-e2e.ts",
     "worker:e2e:celld": "pnpm --filter @openwork-ee/headless-protocol build && tsx scripts/owner-cells-e2e.ts --celld",
-    "test:conversation": "tsx --test scripts/conversation.test.ts scripts/workbot-telemetry.test.ts",
+    "test:conversation": "tsx --test scripts/conversation.test.ts scripts/workbot-telemetry.test.ts scripts/turn-timing.test.ts",
     "test:transfer": "tsx --test scripts/transfer.test.ts",
     "test:storage": "tsx --test scripts/storage-migrations.test.ts scripts/storage-seal.test.ts scripts/storage-bodies.test.ts scripts/storage-outbox.test.ts",
     "session": "tsx scripts/session-cli.ts",

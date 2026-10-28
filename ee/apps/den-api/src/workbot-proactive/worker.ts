@@ -1,3 +1,5 @@
+import { libraryConnectorLink } from "../agent-links.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { appLogger } from "../observability/logger.js"
 import { readMemberGoogleCalendar } from "../routes/org/google-workspace.js"
 import { organizationCloudModel } from "../workbot/model.js"
@@ -11,10 +13,13 @@ import {
   finishAgentDelivery,
   holdsAgentLease,
   pruneAgentDeliveries,
+  pruneMemberChecks,
+  recordMemberCheck,
   reserveAgentDelivery,
   settleAgent,
   toldAgentItems,
 } from "./repository.js"
+import { listMemberConnections } from "./sources-repository.js"
 import { readAgentTemplate } from "./template.js"
 import { agentMessageId, agentSessionId, defaultAgentTurnDeps, runAgentTurn } from "./turn.js"
 import { wakeAgent, type AgentWakeDeps } from "./wake.js"
@@ -29,6 +34,8 @@ const TICK_MS = 15_000
 const MAX_CONCURRENT_WAKES = 4
 const DISCOVERY_MS = 10 * 60_000
 const LEDGER_RETENTION_MS = 30 * 24 * 3_600_000
+/** Members read about this week's checks; two weeks covers "Earlier this week" on any day. */
+const CHECK_RETENTION_MS = 14 * 24 * 3_600_000
 
 export function defaultAgentWakeDeps(): AgentWakeDeps {
   const turnDeps = defaultAgentTurnDeps()
@@ -52,6 +59,10 @@ export function defaultAgentWakeDeps(): AgentWakeDeps {
     destinationBlock: (input) => destinationBlock(input),
     deliver: (input) => deliverAgentMessage(input),
     recordChecks: recordAgentChecks,
+    library: (organizationId, userId) => organizationFeatureEnabled(organizationId, "workbotAgentLibrary", { userId }),
+    recordCheck: recordMemberCheck,
+    connections: listMemberConnections,
+    connectLink: libraryConnectorLink,
   }
 }
 
@@ -74,6 +85,7 @@ export function startWorkbotProactiveWorker(deps: AgentWakeDeps = defaultAgentWa
         lastDiscovery = now
         await discoverAgents()
         await pruneAgentDeliveries(new Date(now - LEDGER_RETENTION_MS))
+        await pruneMemberChecks(new Date(now - CHECK_RETENTION_MS))
       }
       const capacity = MAX_CONCURRENT_WAKES - running
       if (capacity <= 0) return

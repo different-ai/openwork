@@ -69,10 +69,11 @@ Hooks never commit, push, or change CI/Warden policy; CI remains authoritative.
   100% necessary or instructed.
 * Prefer Tailwind, React, shadcn/ui (Base UI), TanStack Query, Zustand, Zod,
   Drizzle, Better-Auth. Reuse `@/components`; end users are non-technical.
-* New feature or a change users would notice? Declare it, off, in
-  `packages/features/src/registry.ts` before writing the code, make it safe
-  to turn off, then roll it out from `/admin`. Follow
-  `.opencode/skills/add-a-feature`.
+* Feature flags are the exception, not the default: ship directly unless the
+  change is big (new product area, engine, or rewrite of a core flow) and
+  turning it off without a deploy would actually matter. Never flag `/admin`
+  tooling, additive UI, polish, fixes or refactors. When unsure, don't flag.
+  If one is warranted, follow `.opencode/skills/add-a-feature`.
 * Any user-facing UI (desktop app, Den web, MCP Apps, artifact views) follows
   `DESIGN.md`: read it before designing, cite its rule ids in PRs, and attach
   screenshots of new UI. The optional

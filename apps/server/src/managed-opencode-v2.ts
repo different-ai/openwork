@@ -72,6 +72,8 @@ export interface ManagedOpencodeV2ServerOptions {
    * registered, which they leave alone.
    */
   agentPermissions?: () => Promise<{ rules: AgentPermissionRule[]; organizationMcp: OrganizationMcpServers }>;
+  /** Called once when the engine exits after it became healthy, unless `close()` stopped it. */
+  onExit?: (error: Error) => void;
 }
 
 export interface OpencodeV2Health {
@@ -187,10 +189,11 @@ async function readBoundedText(response: Response, limit: number): Promise<strin
   return Buffer.concat(chunks, bytes).toString("utf8");
 }
 
-function diagnostics(exitCode: number | null, stdout: string, stderr: string): Error {
+function diagnostics(exitCode: number | null, stdout: string, stderr: string, signal?: NodeJS.Signals | null): Error {
   const tail = (value: string) => value.slice(-4_000);
+  const reason = signal ? `signal ${signal}` : `code ${String(exitCode)}`;
   return new Error(
-    `OpenCode v2 server exited with code ${String(exitCode)}\nstdout:\n${tail(stdout)}\nstderr:\n${tail(stderr)}`,
+    `OpenCode v2 server exited with ${reason}\nstdout:\n${tail(stdout)}\nstderr:\n${tail(stderr)}`,
   );
 }
 
@@ -492,10 +495,13 @@ async function createManagedOpencodeV2ServerInner(
   });
   // A close event, unlike exit, includes the final bytes from both pipes.
   let closed = false;
-  child.once("close", () => {
+  let ready = false;
+  let closing = false;
+  child.once("close", (code, signal) => {
     closed = true;
     lines.stop();
     void historyLease.release();
+    if (ready && !closing) options.onExit?.(diagnostics(code, stdout, stderr, signal));
   });
   child.stdout?.on("data", (chunk) => {
     const text = String(chunk);
@@ -583,6 +589,7 @@ async function createManagedOpencodeV2ServerInner(
   }
 
   async function close(): Promise<void> {
+    closing = true;
     lines.stop();
     if (child.connected) child.disconnect();
     if (closed || child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
@@ -670,7 +677,10 @@ async function createManagedOpencodeV2ServerInner(
     }
     try {
       const state = await health();
-      if (state.healthy) return managed;
+      if (state.healthy) {
+        ready = true;
+        return managed;
+      }
     } catch {
       // The engine can return 503 or refuse connections while booting.
     }

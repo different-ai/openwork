@@ -3,6 +3,11 @@ import { test } from "node:test"
 import { createFakeProvider } from "@openwork/sandbox/testing"
 import { SandboxError } from "@openwork/sandbox"
 import { Computers } from "./computer.js"
+import { DesktopError } from "./desktop.js"
+import { createHash } from "node:crypto"
+import type { RunSpec, SandboxHandle, SandboxProvider } from "@openwork/sandbox"
+import identity from "../dist/desktop-identity.mjs"
+import { DESKTOP_PROTOCOL } from "./desktop-protocol.mjs"
 
 function fixture(input: { timeout?: boolean } = {}) {
   let launches = 0
@@ -118,14 +123,14 @@ test("rebuilding replaces the conversation's VM and starts the desktop on the ne
   assert.equal(provider.fake.count("create"), 2)
   const after = await computers.vm("rebuild")
   assert.notDeepEqual(after.ref, before.ref)
-  assert.ok(commands.some(command => / start [a-f0-9]{64}$/.test(command)), "the new VM's desktop is started")
+  assert.ok(commands.some(command => / start [a-f0-9]{64} [a-f0-9]{64}$/.test(command)), "the new VM's desktop is started")
   await computers.delete("rebuild")
 })
 
 test("opening and resuming a desktop log one line with where the time went", async t => {
   let desktopUp = false
   const provider = createFakeProvider({ capabilities: { platform: { os: "linux", isolation: "microvm" } }, onRun(spec) {
-    if (/ start [a-f0-9]{64}$/.test(spec.command)) desktopUp = true
+    if (/ start [a-f0-9]{64} [a-f0-9]{64}$/.test(spec.command)) desktopUp = true
     if (spec.command.includes("call '/health'")) return desktopUp ? { exitCode: 0, stdout: JSON.stringify({ version: "running" }), stderr: "" } : { exitCode: 1, stdout: "", stderr: "" }
     return { exitCode: 0, stdout: "0", stderr: "" }
   } })
@@ -218,4 +223,124 @@ test("a desktop call's description and show are for the person and never reach t
   assert.equal(result.isError, false)
   assert.deepEqual(sent, [{ path: "/browser/task", body: { sessionId: "narrated", operation: "open", args: { url: "https://example.test" } } }])
   await computers.delete("narrated")
+})
+
+/** Desktop computers whose helper behaves like desktop-bridge.py: the first one made was built from another image. */
+function upgradeFixture(old: { helper: "current" | "old"; protocol?: number }) {
+  const base = createFakeProvider({ capabilities: { platform: { os: "linux", isolation: "microvm" } } })
+  const image = identity.image.trim(), guest = identity.guest.trim()
+  const current = createHash("sha256").update(identity.image).update(identity.guest).digest("hex")
+  type Vm = { image: string; guest: string; helper: "current" | "old"; protocol?: number; running: boolean; files: Map<string, Uint8Array>; imported: string[]; tasks: number }
+  const vms = new Map<string, Vm>()
+  const state = { jobs: 0, gate: Promise.resolve() }
+  const vmOf = (box: SandboxHandle) => {
+    const key = JSON.stringify(box.ref)
+    let vm = vms.get(key)
+    if (!vm) {
+      vm = vms.size === 0
+        ? { image: "e".repeat(64), guest: "f".repeat(64), helper: old.helper, protocol: old.protocol, running: true, files: new Map(), imported: [], tasks: 0 }
+        : { image, guest, helper: "current", protocol: DESKTOP_PROTOCOL, running: true, files: new Map(), imported: [], tasks: 0 }
+      vms.set(key, vm)
+    }
+    return vm
+  }
+  const ok = (stdout = "") => ({ exitCode: 0, stdout, stderr: "" })
+  const fail = (stderr: string) => ({ exitCode: 1, stdout: "", stderr })
+  const run = async (box: SandboxHandle, spec: RunSpec) => {
+    const vm = vmOf(box)
+    const { command } = spec
+    if (command.endsWith("openwork-desktop-bridge command")) { await state.gate; return ok("done") }
+    if (command.startsWith("ls /workspace/.jobs/*.running")) return ok(String(state.jobs))
+    if (command.startsWith("rm -f")) return ok()
+    if (command.includes("call '/health'")) return vm.running ? ok(JSON.stringify({ version: vm.image === image && vm.guest === guest ? current : "other", ...(vm.protocol === undefined ? {} : { protocol: vm.protocol }) })) : fail("")
+    if (command.includes("call '/browser/task'")) { vm.tasks++; return ok(JSON.stringify({ ok: true })) }
+    if (command.includes("call '/viewer'")) return ok(JSON.stringify({ token: "t".repeat(43), paused: false }))
+    const packed = command.match(/^tar -czf (\S+) /)
+    if (packed) { vm.files.set(packed[1]!, new TextEncoder().encode("workspace packed")); return ok() }
+    if (vm.helper === "old") return fail("Use command, start VERSION or call with a supported desktop route.")
+    if (command.endsWith(" versions")) return ok(JSON.stringify({ image: vm.image, guest: vm.guest }))
+    const exported = command.match(/ export (\w+) > (\S+)$/)
+    if (exported) { vm.files.set(exported[2]!, new TextEncoder().encode(`${exported[1]} from the old computer`)); return ok() }
+    const imported = command.match(/ import (\w+) < (\S+)$/)
+    if (imported) { vm.imported.push(`${imported[1]}: ${new TextDecoder().decode(vm.files.get(imported[2]!))}`); return ok() }
+    const start = command.match(/ start ([a-f0-9]{64}) ([a-f0-9]{64})$/)
+    if (start) {
+      if (start[1] !== vm.image) return fail("The desktop image is out of date. Rebuild its snapshot for this runner.")
+      if (start[2] !== vm.guest) return fail("The desktop guest is out of date. Install this runner's guest.")
+      vm.running = true
+      return ok()
+    }
+    return ok("0")
+  }
+  const files = {
+    read: async (box: SandboxHandle, path: string) => { const bytes = vmOf(box).files.get(path); if (!bytes) throw new Error(`no ${path}`); return bytes },
+    write: async (box: SandboxHandle, path: string, bytes: Uint8Array) => { vmOf(box).files.set(path, bytes) },
+    stat: async (box: SandboxHandle, path: string) => { const bytes = vmOf(box).files.get(path); return bytes ? { size: bytes.byteLength, kind: "file" as const } : null },
+  }
+  const provider = { ...base, blocks: { ...base.blocks, run, files } } as SandboxProvider
+  const computers = new Computers({ provider, idlePauseMs: 20, keepDays: 1, desktop: true }, { readFile: async () => ({ text: "" }) })
+  const vm = (index: number) => [...vms.values()][index]
+  return { base, computers, state, vm }
+}
+
+const browse = { view: "browser", operation: "open", args: {} }
+
+test("an outdated computer is replaced when nothing else runs on it, carrying its workspace and browser profile", async t => {
+  const f = upgradeFixture({ helper: "current", protocol: DESKTOP_PROTOCOL + 1 })
+  t.after(() => f.computers.delete("upgrade"))
+  t.mock.method(console, "log", () => {})
+  const result = await f.computers.desktopRun("upgrade", browse)
+  assert.equal(result.isError, false)
+  assert.equal(f.base.fake.count("destroy"), 1)
+  assert.deepEqual(f.vm(1)?.imported, ["workspace: workspace from the old computer", "profile: profile from the old computer"])
+  assert.deepEqual([f.vm(0)?.tasks, f.vm(1)?.tasks], [0, 1], "the step ran on the new computer")
+})
+
+test("a computer from before carrying keeps its workspace but never its private browser profile", async t => {
+  const f = upgradeFixture({ helper: "old" })
+  t.after(() => f.computers.delete("legacy"))
+  t.mock.method(console, "log", () => {})
+  assert.equal((await f.computers.desktopRun("legacy", browse)).isError, false)
+  assert.deepEqual(f.vm(1)?.imported, ["workspace: workspace packed"])
+})
+
+test("an outdated computer with other work running says it is updating instead of replacing it", async t => {
+  const f = upgradeFixture({ helper: "current", protocol: DESKTOP_PROTOCOL + 1 })
+  t.after(() => f.computers.delete("busy"))
+  let release = () => {}
+  f.state.gate = new Promise<void>(resolve => { release = resolve })
+  const command = f.computers.run("busy", "bash", { command: "sleep 1", timeout_seconds: 10 })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  // The runner hands this message to the model as the step's result (desktop_updating to Workbot).
+  const updating = (error: unknown) => error instanceof DesktopError && error.desktopCode === "desktop_updating" && /updating to a new version/.test(error.message)
+  await assert.rejects(f.computers.desktopRun("busy", browse), updating)
+  release()
+  await command
+  f.state.jobs = 1
+  await assert.rejects(f.computers.desktopRun("busy", browse), updating, "a background job counts as work")
+  assert.equal(f.base.fake.count("destroy"), 0)
+})
+
+test("a computer from an older image that still speaks the protocol is used, then replaced once idle", async t => {
+  const f = upgradeFixture({ helper: "current", protocol: DESKTOP_PROTOCOL })
+  t.after(() => f.computers.delete("stale"))
+  const lines: string[] = []
+  t.mock.method(console, "log", (line: string) => { lines.push(line) })
+  assert.equal((await f.computers.desktopRun("stale", browse)).isError, false)
+  assert.deepEqual([f.base.fake.count("destroy"), f.vm(0)?.tasks], [0, 1], "it kept working on the computer it had")
+  for (let waited = 0; f.base.fake.sandboxes().at(-1)?.state !== "stopped" && waited < 2000; waited += 10) await new Promise(resolve => setTimeout(resolve, 10))
+  assert.equal(f.base.fake.count("destroy"), 1)
+  assert.deepEqual(f.vm(1)?.imported, ["workspace: workspace from the old computer", "profile: profile from the old computer"])
+  assert.deepEqual(f.base.fake.sandboxes().map(record => record.state), ["missing", "stopped"], "and the new one is paused like the old one would have been")
+  assert.ok(lines.some(line => line.startsWith("[headless-computer] computer replaced")))
+})
+
+test("the view and the chat's glimpse opening an outdated computer together replace it once", async t => {
+  const f = upgradeFixture({ helper: "current", protocol: DESKTOP_PROTOCOL + 1 })
+  t.after(() => f.computers.delete("together"))
+  t.mock.method(console, "log", () => {})
+  const open = () => f.computers.desktopViewer("together", { view: "browser", control: false, origin: "https://chat.example.test" })
+  const [view, glimpse] = await Promise.all([open(), open()])
+  assert.deepEqual([view.state, glimpse.state], ["connected", "connected"])
+  assert.deepEqual([f.base.fake.count("destroy"), f.base.fake.count("create")], [1, 2])
 })

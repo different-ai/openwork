@@ -2751,6 +2751,8 @@ export function createClientV2(
         `/api/session/${encodeURIComponent(parameters.sessionID)}/prompt`,
         {
           text,
+          ...(parameters.messageID ? { id: parameters.messageID } : {}),
+          delivery: "steer",
           ...(skills.length ? { skills } : {}),
           // Settings › Show model reasoning. The engine plugin asks the provider
           // for readable reasoning only while this is on.

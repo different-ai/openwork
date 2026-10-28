@@ -11,6 +11,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
+  AUTO_ROUTER_DEFAULT_PROMPT,
   AUTO_ROUTER_SUPPORTED_NPM,
   AUTO_ROUTER_THINKING_LEVELS,
   autoRouterThinkingLevels,
@@ -96,15 +97,18 @@ export async function readAutoRouter(organizationId: OrganizationId): Promise<{ 
   const rows = await db.select().from(AutoRouterRouteTable)
     .where(and(eq(AutoRouterRouteTable.autoRouterId, router.id), eq(AutoRouterRouteTable.organizationId, organizationId)))
     .orderBy(asc(AutoRouterRouteTable.position))
+  // `thinking_levels` is a JSON array from when a route could run at several
+  // levels; a route now runs at its first valid one.
   return {
     enabled: router.enabled,
-    routes: rows.map((row) => ({
+    routes: rows.map((row, index) => ({
       id: row.id,
       providerId: row.gatewayProviderId,
       modelId: row.modelId,
-      prompt: row.prompt,
-      thinkingLevels: row.thinkingLevels.filter(isThinkingLevel),
-    })).filter((route) => route.thinkingLevels.length > 0),
+      prompt: index === 0 ? AUTO_ROUTER_DEFAULT_PROMPT : row.prompt,
+      thinkingLevel: row.thinkingLevels.find(isThinkingLevel) ?? "default",
+      isDefault: index === 0,
+    })),
   }
 }
 
@@ -115,13 +119,17 @@ export function checkAutoRouterWrite(input: AutoRouterWrite, options: AutoRouter
   for (const [index, route] of input.routes.entries()) {
     const option = options.find((candidate) => candidate.providerId === route.providerId && candidate.modelId === route.modelId)
     if (!option) return { route: index, error: "unknown_model", message: "That model isn't one your AI Gateway offers. Choose one from the list." }
-    const unsupported = route.thinkingLevels.find((level) => !option.thinkingLevels.includes(level))
-    if (unsupported) return { route: index, error: "unsupported_thinking_level", message: `${option.modelName} can't think at the "${unsupported}" level.` }
+    if (!option.thinkingLevels.includes(route.thinkingLevel)) {
+      return { route: index, error: "unsupported_thinking_level", message: `${option.modelName} can't think at the "${route.thinkingLevel}" level.` }
+    }
   }
   return null
 }
 
-/** Replaces the organization's Auto Router configuration in one transaction. */
+/**
+ * Replaces the organization's Auto Router configuration in one transaction.
+ * The first route is the default model and always stores the fixed prompt.
+ */
 export async function saveAutoRouter(input: {
   organizationId: OrganizationId
   memberId: MemberId
@@ -144,8 +152,8 @@ export async function saveAutoRouter(input: {
         organizationId: input.organizationId,
         gatewayProviderId: normalizeDenTypeId("inferenceProvider", route.providerId),
         modelId: route.modelId,
-        prompt: route.prompt,
-        thinkingLevels: [...new Set(route.thinkingLevels)],
+        prompt: position === 0 ? AUTO_ROUTER_DEFAULT_PROMPT : route.prompt ?? "",
+        thinkingLevels: [route.thinkingLevel],
         position,
       })))
     }

@@ -5,6 +5,7 @@
  * so an org admin can add them once, org-wide, in Den, instead of every
  * device connecting to them separately.
  */
+import { mcpRegistrationStatusSchema, type McpRegistrationStatus } from "@openwork/types/den/mcp-registration"
 import { z } from "zod"
 
 export type ExternalMcpPreset = {
@@ -19,6 +20,8 @@ export type ExternalMcpPreset = {
   defaultOAuthClientId?: string
   authorizationServerIssuer?: string
   defaultOAuthScopes?: readonly string[]
+  /** What OpenWork last learned about signing in to this provider; absent until it has been checked. */
+  registrationStatus?: McpRegistrationStatus
 }
 
 export const externalMcpPresetResponseSchema = z.object({
@@ -32,6 +35,7 @@ export const externalMcpPresetResponseSchema = z.object({
   defaultOAuthClientId: z.string().min(1).optional(),
   authorizationServerIssuer: z.string().url().optional(),
   defaultOAuthScopes: z.array(z.string()).optional(),
+  registrationStatus: mcpRegistrationStatusSchema.optional(),
 }).meta({ ref: "ExternalMcpPresetResponse" })
 
 export const externalMcpPresetListResponseSchema = z.object({
@@ -137,3 +141,149 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
     authType: "none",
   },
 ]
+
+/**
+ * Additional reviewed official MCP server presets, gated behind the
+ * `expandedMcpPresets` feature flag (default off). Each URL and its OAuth
+ * protected-resource metadata were verified by probing the public
+ * `/.well-known/oauth-protected-resource` endpoint; advertisement is not a
+ * successful connection. OAuth presets reuse the existing CIMD/DCR pipeline
+ * (`packages/enterprise-mcp-client`); no new auth path is added.
+ *
+ * With the flag off these never appear in the catalog or preset list; existing
+ * connections made while the flag was on keep working because
+ * `external-mcp-auth-policy` matches against `ALL_EXTERNAL_MCP_PRESETS`
+ * (every known preset), not just the gated catalog list.
+ */
+export const EXTERNAL_MCP_PRESETS_EXPANDED: readonly ExternalMcpPreset[] = [
+  {
+    presetId: "airtable",
+    displayName: "Airtable",
+    description: "Read and update Airtable bases, tables, and records. Sign in with your Airtable account.",
+    url: "https://mcp.airtable.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "amplitude",
+    displayName: "Amplitude",
+    description: "Inspect Amplitude analytics, events, and product insights. Sign in with your Amplitude account.",
+    url: "https://mcp.amplitude.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "cal",
+    displayName: "Cal.com",
+    description: "Manage Cal.com scheduling, event types, and bookings. Sign in with your Cal.com account.",
+    url: "https://mcp.cal.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "canva",
+    displayName: "Canva",
+    description: "Search and create Canva designs, folders, and assets. Sign in with your Canva account.",
+    url: "https://mcp.canva.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "figma",
+    displayName: "Figma",
+    description: "Read Figma files, designs, and dev mode details. Sign in with your Figma account.",
+    url: "https://mcp.figma.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "fireflies",
+    displayName: "Fireflies",
+    description: "Search your Fireflies meeting notes and transcripts. Sign in with your Fireflies account.",
+    url: "https://api.fireflies.ai/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "huggingface",
+    displayName: "Hugging Face",
+    description: "Browse Hugging Face models, datasets, and Spaces. Sign in with your Hugging Face account.",
+    url: "https://huggingface.co/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "honeycomb",
+    displayName: "Honeycomb",
+    description: "Query Honeycomb traces, events, and SLOs. Sign in with your Honeycomb account.",
+    url: "https://mcp.honeycomb.io/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "klaviyo",
+    displayName: "Klaviyo",
+    description: "Inspect Klaviyo campaigns, flows, and contact data. Sign in with your Klaviyo account.",
+    url: "https://mcp.klaviyo.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "lucid",
+    displayName: "Lucid",
+    description: "Open and update Lucidchart and Lucidspark documents. Sign in with your Lucid account.",
+    url: "https://mcp.lucid.app/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "monday",
+    displayName: "monday.com",
+    description: "Manage monday.com boards, items, and workspaces. Sign in with your monday.com account.",
+    url: "https://mcp.monday.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "mural",
+    displayName: "Mural",
+    description: "Read and update Mural canvases, rooms, and workspaces. Sign in with your Mural account.",
+    url: "https://mcp-canvas.mural.co/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "posthog",
+    displayName: "PostHog",
+    description: "Inspect PostHog events, persons, and insights. Sign in with your PostHog account.",
+    url: "https://mcp.posthog.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "semgrep",
+    displayName: "Semgrep",
+    description: "Run Semgrep security scans and review findings. Sign in with your Semgrep account.",
+    url: "https://mcp.semgrep.ai/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "tavily",
+    displayName: "Tavily",
+    description: "Web search and research for agents. Uses your Tavily API key from app.tavily.com; provider rate limits and billing apply.",
+    url: "https://mcp.tavily.com/mcp",
+    authType: "apikey",
+  },
+  {
+    presetId: "vercel",
+    displayName: "Vercel",
+    description: "Manage Vercel projects, deployments, and logs. Sign in with your Vercel account.",
+    url: "https://mcp.vercel.com",
+    authType: "oauth",
+  },
+]
+
+/**
+ * Every known preset (core + expanded), used by `external-mcp-auth-policy`
+ * so an existing connection to an expanded-preset server keeps its preset
+ * auth behavior even when the `expandedMcpPresets` flag is off.
+ */
+export const ALL_EXTERNAL_MCP_PRESETS: readonly ExternalMcpPreset[] = [
+  ...EXTERNAL_MCP_PRESETS,
+  ...EXTERNAL_MCP_PRESETS_EXPANDED,
+]
+
+/** Presets shown in the connector catalog and the add-connection preset list. */
+export function externalMcpPresetsForCatalog(options: { expanded?: boolean } = {}): ExternalMcpPreset[] {
+  const { expanded = false } = options
+  return expanded
+    ? [...EXTERNAL_MCP_PRESETS, ...EXTERNAL_MCP_PRESETS_EXPANDED]
+    : [...EXTERNAL_MCP_PRESETS]
+}

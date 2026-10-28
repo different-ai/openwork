@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenPageHeader } from "../../_components/ui/page-header";
+import { UnderlineTabs } from "../../_components/ui/tabs";
 import {
   getLibraryAddConnectorRoute,
   getLibraryConnectorRoute,
@@ -14,27 +15,27 @@ import {
   getLibraryPluginRoute,
   getLibraryPluginShareRoute,
   getYourConnectionsRoute,
-  orgFeatureEnabled,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { FilterInput, ItemMenu, ItemPanel, ItemRow, removeEntry, ItemSection, ItemSectionSkeleton } from "./item-list";
+import { FilterInput, ItemMenu, ItemPanel, removeEntry } from "./item-list";
 import { ItemPage } from "./item-header";
-import { ConnectorLogo, PluginLogo } from "./item-logo";
+import { ConnectorLogo } from "./item-logo";
 import { LibraryAddDialog, type LibraryAddChoice } from "./library-add-dialog";
 import { type LibraryItem, libraryQueryKeys, useLibrary } from "./library-data";
 import {
   groupLibrary,
   isOwnedByViewer,
-  isSingleSkill,
   LIBRARY_FILTERS,
   type LibraryFilter,
   libraryItemDescription,
+  libraryFilterOf,
   libraryItemReady,
-  NEEDS_SIGN_IN_STATUS,
   needsViewerSignIn,
   parseLibraryFilter,
   parseNeedsSignIn,
+  receivedStatus,
 } from "./library-view";
+import { LibraryCompactRow, LibraryCompactSection, LibraryCompactSkeleton, LibraryCompactSurface, LibraryKindIcon } from "./library-compact";
 import { useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
 import { usePrefetchConnectorCatalog } from "./connector-catalog-screen";
 import { useMemberSignIn } from "./connector-setup";
@@ -45,17 +46,14 @@ import { MemberApiKeyDialog } from "./member-api-key-dialog";
 import { useDenToast } from "./den-toast";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
 import { pluginQueryKeys } from "./plugin-data";
-import { LibraryPluginSkills } from "./library-plugin-skills";
+
+/** Show the name filter once a Library holds more than this many items. */
+const FILTER_AFTER = 10;
 
 function itemHref(orgSlug: string | null, item: LibraryItem): string {
   if (item.type === "connection") return getLibraryConnectorRoute(orgSlug, item.id);
   if (item.type === "plugin") return getLibraryPluginRoute(orgSlug, item.id);
   return `/dashboard/library/workflows/${encodeURIComponent(item.id)}`;
-}
-
-function ItemLogo({ item }: { item: LibraryItem }) {
-  if (item.type === "connection") return <ConnectorLogo name={item.name} url={item.url} />;
-  return <PluginLogo name={item.name} />;
 }
 
 function LibraryItemRow({ item, mine, signIn }: {
@@ -83,6 +81,8 @@ function LibraryItemRow({ item, mine, signIn }: {
   }
 
   const needsSignIn = item.type === "connection" && item.state === "needs_signin";
+  const ready = libraryItemReady(item);
+  const status = ready ? "Ready" : item.type !== "plugin" && item.state === "needs_signin" ? "Sign in" : "Set up";
   const apiKeyStatus = item.type === "connection" ? signIn.apiKeyStatus(item.id) : null;
   const action = needsSignIn && item.type === "connection" ? (
     item.transport === "native" ? (
@@ -105,26 +105,19 @@ function LibraryItemRow({ item, mine, signIn }: {
   );
 
   return (
-    <div data-library-item={item.name} data-library-kind={item.type} title={libraryItemDescription(item)}>
-      <ItemRow
-        compact
-        wideAction={needsSignIn}
-        href={href}
-        logo={<ItemLogo item={item} />}
-        title={item.name}
-        description={libraryItemDescription(item)}
-        status={needsSignIn ? undefined : libraryItemReady(item) ? "Ready" : item.type !== "plugin" && item.state === "needs_signin" ? "Sign in" : "Set up"}
-        action={action}
-      />
-      {item.type === "plugin" && item.componentKinds.some((kind) => kind.toLowerCase() === "skill") && orgFeatureEnabled(orgContext, "libraryConnectorNavigation") ? (
-        <LibraryPluginSkills
-          pluginId={item.id}
-          name={item.name}
-          single={isSingleSkill(item)}
-          knownCount={item.componentKinds.every((kind) => kind.toLowerCase() === "skill") ? item.componentCount : null}
-        />
-      ) : null}
-    </div>
+    <LibraryCompactRow
+      href={href}
+      kind={item.type}
+      testName={item.name}
+      logo={item.type === "connection"
+        ? <ConnectorLogo name={item.name} url={item.url} size="xs" />
+        : <LibraryKindIcon kind={item.type === "workflow" ? "workflow" : libraryFilterOf(item) === "skills" ? "skill" : "plugin"} />}
+      name={item.name}
+      description={item.description ? libraryItemDescription(item) : undefined}
+      source={mine ? "You" : receivedStatus(item.edges)}
+      action={needsSignIn ? action : ready || item.type === "plugin" ? action : <span className="text-[12px] text-[var(--dls-text-secondary)]">{status}</span>}
+      revealAction={!needsSignIn && (ready || item.type === "plugin")}
+    />
   );
 }
 
@@ -186,14 +179,6 @@ function LibraryContent() {
     router.replace(suffix ? `?${suffix}` : "?", { scroll: false });
   }
 
-  function toggleNeedsSignIn() {
-    const params = new URLSearchParams(searchParams.toString());
-    if (onlyNeedsSignIn) params.delete("status");
-    else params.set("status", NEEDS_SIGN_IN_STATUS);
-    const suffix = params.toString();
-    router.replace(suffix ? `?${suffix}` : "?", { scroll: false });
-  }
-
   function openAdd() {
     prefetchCatalog();
     setAddOpen(true);
@@ -208,16 +193,32 @@ function LibraryContent() {
   const modelRows = showModels
     ? (models.data ?? []).filter((provider) => matchesModelQuery(provider, query) && (!onlyNeedsSignIn || provider.state === "needs_signin"))
     : [];
-  const needsSignInCount = items.filter(needsViewerSignIn).length
-    + (models.data ?? []).filter((provider) => provider.state === "needs_signin").length;
   const hasModels = (models.data ?? []).length > 0;
   const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels;
+  // A short Library is read at a glance; the filter earns its place once the list runs long.
+  const showFilter = items.length + (models.data ?? []).length > FILTER_AFTER || query !== "";
+
+  // What waits on you first, then one section per kind.
+  const mineKeys = new Set(groups.mine.map((item) => `${item.type}:${item.id}`));
+  const visible = [...groups.mine, ...groups.received].sort((left, right) => left.name.localeCompare(right.name));
+  const kindSections: { key: string; title: string; match: (item: LibraryItem) => boolean }[] = [
+    { key: "connectors", title: "Connectors", match: (item) => libraryFilterOf(item) === "connectors" },
+    { key: "skills", title: "Skills", match: (item) => libraryFilterOf(item) === "skills" },
+    { key: "plugins", title: "Plugins", match: (item) => libraryFilterOf(item) === "plugins" },
+    { key: "workflows", title: "Workflows", match: (item) => libraryFilterOf(item) === null },
+  ];
+  const sections = [
+    { key: "attention", title: "Needs your sign-in", items: visible.filter(needsViewerSignIn), models: modelRows.filter((provider) => provider.state === "needs_signin") },
+    ...kindSections.map((section) => ({ ...section, items: visible.filter((item) => !needsViewerSignIn(item) && section.match(item)), models: [] as typeof modelRows })),
+    { key: "models", title: "Models", items: [] as LibraryItem[], models: modelRows.filter((provider) => provider.state !== "needs_signin") },
+  ].filter((section) => section.items.length + section.models.length > 0);
 
   return (
-    <ItemPage testId="library-screen">
+    <ItemPage testId="library-screen" wide>
       <DenPageHeader
         title="My Library"
         size="compact"
+        action={!empty ? <DenButton size="sm" icon={Plus} onClick={openAdd}>Add</DenButton> : undefined}
       />
 
       {library.error ? (
@@ -230,70 +231,29 @@ function LibraryContent() {
 
       {!empty && !library.error ? (
         <>
-          <div className="-mt-1 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Show">
-              {LIBRARY_FILTERS.map((entry) => {
-                const active = entry.value === filter;
-                return (
-                  <button
-                    key={entry.value}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => setFilter(entry.value)}
-                    className={`h-7 rounded-full px-3 text-[12px] transition-colors ${active ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200/70"}`}
-                  >
-                    {entry.label}
-                  </button>
-                );
-              })}
-              {needsSignInCount > 0 || onlyNeedsSignIn ? (
-                <>
-                  <span className="mx-1 h-4 w-px bg-gray-200" aria-hidden="true" />
-                  <button
-                    type="button"
-                    aria-pressed={onlyNeedsSignIn}
-                    onClick={toggleNeedsSignIn}
-                    data-testid="library-needs-sign-in-filter"
-                    className={`flex h-7 items-center gap-1.5 rounded-full px-3 text-[12px] transition-colors ${onlyNeedsSignIn ? "bg-gray-900 text-white" : "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"}`}
-                  >
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
-                    Needs sign-in
-                    <span className={onlyNeedsSignIn ? "text-white/70" : "text-gray-500"}>{needsSignInCount}</span>
-                  </button>
-                </>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <FilterInput value={query} onChange={setQuery} className="w-[200px] max-w-full" />
-              <DenButton size="sm" icon={Plus} onClick={openAdd}>Add to library</DenButton>
-            </div>
+          <div className="flex flex-wrap items-end" data-testid="library-compact-toolbar">
+            <UnderlineTabs tabs={LIBRARY_FILTERS} activeTab={filter} onChange={setFilter} className="min-w-0 flex-1" />
+            {showFilter ? (
+              <div className="w-full border-b border-gray-200 pb-2 pt-3 sm:w-auto sm:pl-4 sm:pt-0">
+                <FilterInput value={query} onChange={setQuery} className="w-full sm:w-56" />
+              </div>
+            ) : null}
           </div>
 
-          {library.isLoading ? <ItemSectionSkeleton label="Loading your Library" /> : null}
+          {library.isLoading ? <LibraryCompactSurface><LibraryCompactSkeleton label="Loading your Library" /></LibraryCompactSurface> : null}
 
-          {groups.mine.length > 0 ? (
-            <ItemSection title="Added by you" testId="library-section-mine" variant="rule">
-              <ItemPanel>
-                {groups.mine.map((item) => (
-                  <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine signIn={signIn} />
+          {sections.length > 0 ? <LibraryCompactSurface testId="library-compact-sections">
+            {sections.map((section) => (
+              <LibraryCompactSection key={section.key} title={section.title} count={section.items.length + section.models.length} tone={section.key === "attention" ? "attention" : "default"} testId={`library-section-${section.key}`}>
+                {section.items.map((item) => (
+                  <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine={mineKeys.has(`${item.type}:${item.id}`)} signIn={signIn} />
                 ))}
-              </ItemPanel>
-            </ItemSection>
-          ) : null}
-
-          {groups.received.length > 0 || modelRows.length > 0 ? (
-            <ItemSection title="From OpenWork" testId="library-section-received" variant="rule">
-              <ItemPanel>
-                {groups.received.map((item) => (
-                  <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine={false} signIn={signIn} />
-                ))}
-                {modelRows.map((provider) => (
+                {section.models.map((provider) => (
                   <LibraryModelRow key={`model:${provider.id}`} provider={provider} signIn={modelSignIn} />
                 ))}
-              </ItemPanel>
-            </ItemSection>
-          ) : null}
+              </LibraryCompactSection>
+            ))}
+          </LibraryCompactSurface> : null}
 
           {filter === "models" && models.error ? (
             <p className="rounded-2xl border border-gray-100 bg-white px-5 py-4 text-[13px] text-gray-600">

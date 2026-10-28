@@ -10,6 +10,8 @@ const action = z.discriminatedUnion("type", [
   z.object({ type: z.literal("fill"), ref, text: z.string().max(8000) }),
   z.object({ type: z.literal("select"), ref, values: z.array(z.string().max(8000)).max(200).describe("Option values from the observed native select. Use [] to clear the selection.") }),
   z.object({ type: z.literal("set_checked"), ref, checked: z.boolean().describe("The desired checkbox, radio or switch state; checked radios cannot be cleared directly.") }),
+  z.object({ type: z.literal("attach"), ref: ref.describe("The page's upload button or file input."),
+    files: z.array(z.string().max(4096)).min(1).max(10).describe("Absolute paths of the files to upload. The person approves them first; the system file picker never opens.") }),
   z.object({ type: z.literal("key"), key: z.string().max(16).describe("Enter, Tab, Escape, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Backspace, Delete, Space, Home, End, PageUp, PageDown, or a letter or digit held with control or command."),
     modifiers: z.array(z.enum(["control", "command", "shift", "option"])).max(3).optional(),
     ref: ref.optional().describe("Focus this observed control first. Without it, the focused control receives the key.") }),

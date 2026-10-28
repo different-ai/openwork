@@ -138,6 +138,8 @@ export async function mintHeadlessTurnCredentials(input: {
   organizationId: string
   ttlMs?: number
   readOnly?: boolean
+  /** Extra scopes for a read-only token (a background agent's sources); never on a writing one. */
+  scopes?: readonly string[]
   sessionId?: string
   messageId?: string
   /** Exact selected alias; never an upstream credential or client-supplied route. */

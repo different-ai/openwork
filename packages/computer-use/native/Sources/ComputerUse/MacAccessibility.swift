@@ -33,7 +33,8 @@ struct AppIdentity {
         guard isAllowed(app) else { throw UseError("protected_app", "This app cannot be operated through Computer Use.", next: "use_structured_tool") }
         return AppIdentity(app: app, bundleID: bundleID, executable: executable, launched: launched)
     }
-    @MainActor static func open(_ bundleID: String, pid: pid_t?) async throws -> AppIdentity {
+    /// `activates: false` launches the app behind the person's work, for background control.
+    @MainActor static func open(_ bundleID: String, pid: pid_t?, activates: Bool = true) async throws -> AppIdentity {
         guard isAllowed(bundleID: bundleID) else { throw UseError("protected_app", "This app cannot be operated through Computer Use.", next: "use_structured_tool") }
         // A PID pins a running instance. Never replace it with a newly launched app.
         if pid != nil || NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).count > 0 {
@@ -46,7 +47,7 @@ struct AppIdentity {
             throw UseError("app_unavailable", "This app is not installed. Choose an app from computer_discover.", next: "discover")
         }
         let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
+        configuration.activates = activates
         let launched = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
         // Launch Services can complete before the app enters its UI run loop.
         for _ in 0..<30 {
@@ -218,11 +219,14 @@ struct AXReadBudget {
     init(seconds: TimeInterval = 0.35, clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.clock = clock; deadline = clock() + seconds
     }
+    /// Each call may use whatever time the read has left. A fixed per-call cap made
+    /// one slow answer fail as `cannotComplete`, which stops a fail-closed read and
+    /// withholds its screenshot even when the read had time to spare.
     func timeout() throws -> Float {
         try Task.checkCancellation()
         let remaining = deadline - clock()
         guard remaining >= 0.001 else { throw UseError("accessibility_timeout", "The bounded accessibility read did not finish. Observe again or take over.", next: "observe") }
-        return Float(min(0.05, remaining))
+        return Float(remaining)
     }
     func check() throws { _ = try timeout() }
 }
@@ -273,8 +277,9 @@ final class MacAccessibility {
         return []
     }
 
-    func focusedWindowID(_ app: AppIdentity, windows: [WindowTarget]) -> Int? {
-        guard app.app.isActive,
+    /// An app in the background still has a focused window: the one its keys go to.
+    func focusedWindowID(_ app: AppIdentity, windows: [WindowTarget], requireActive: Bool = true) -> Int? {
+        guard app.app.isActive || !requireActive,
               let focused = elementAttribute(AXUIElementCreateApplication(app.pid), kAXFocusedWindowAttribute) else { return nil }
         return windows.first(where: { CFEqual(focused, $0.element) }).map { Int($0.id) }
     }
@@ -293,6 +298,17 @@ final class MacAccessibility {
             else if layer < Int(CGWindowLevelForKey(.dockWindow)) { changes.panels.insert(id) }
         }
         return changes
+    }
+
+    /// The window its app sends keys to, whether or not the app is in front.
+    func isFocusedWindow(_ target: WindowTarget, app: AppIdentity) -> Bool {
+        guard let focused = try? checkedElement(AXUIElementCreateApplication(app.pid), kAXFocusedWindowAttribute, AXReadBudget()) else { return false }
+        return CFEqual(focused, target.element)
+    }
+    /// Another window of the app has its focus: usually a dialog the last action opened.
+    func focusesAnotherWindow(than target: WindowTarget, app: AppIdentity) -> Bool {
+        guard let focused = try? checkedElement(AXUIElementCreateApplication(app.pid), kAXFocusedWindowAttribute, AXReadBudget()) else { return false }
+        return !CFEqual(focused, target.element)
     }
 
     func validate(_ target: WindowTarget, app: AppIdentity, requireFrontmost: Bool = false) throws -> CGRect {
@@ -426,9 +442,12 @@ final class MacAccessibility {
     private func textHash(_ text: String) -> Data { Data(SHA256.hash(data: Data(text.utf8))) }
 
     @discardableResult
-    func checkHit(_ point: CGPoint, target: WindowTarget, app: AppIdentity, expected: AXUIElement? = nil) throws -> AXUIElement {
+    /// `background` asks the app, not the screen, what is at the point: another
+    /// app's window may cover the selected one and targeted input still reaches
+    /// it. A window of the same app on top still fails the ancestry check.
+    func checkHit(_ point: CGPoint, target: WindowTarget, app: AppIdentity, expected: AXUIElement? = nil, background: Bool = false) throws -> AXUIElement {
         let budget = AXReadBudget()
-        let root = AXUIElementCreateSystemWide()
+        let root = background ? AXUIElementCreateApplication(app.pid) : AXUIElementCreateSystemWide()
         try prepare(root, budget)
         var hit: AXUIElement?
         guard AXUIElementCopyElementAtPosition(root, Float(point.x), Float(point.y), &hit) == .success,
@@ -442,13 +461,13 @@ final class MacAccessibility {
         return hit
     }
 
-    func checkFocus(_ expected: ElementRecord?, target: WindowTarget, app: AppIdentity, requireField: Bool) throws {
+    func checkFocus(_ expected: ElementRecord?, target: WindowTarget, app: AppIdentity, requireField: Bool, requireFront: Bool = true) throws {
         guard let expected, !expected.protected, expected.enabled, !requireField || expected.textField else {
             throw UseError("focus_required", "Observe a focused normal text field or control before using the keyboard.", next: "observe")
         }
         let budget = AXReadBudget()
         let root = AXUIElementCreateApplication(app.pid)
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.pid,
+        guard !requireFront || NSWorkspace.shared.frontmostApplication?.processIdentifier == app.pid,
               let window = try checkedElement(root, kAXFocusedWindowAttribute, budget), CFEqual(window, target.element),
               let focused = try checkedElement(root, kAXFocusedUIElementAttribute, budget), CFEqual(focused, expected.element),
               try checkedString(focused, kAXRoleAttribute, budget) == expected.role,

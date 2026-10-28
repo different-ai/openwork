@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
-import { workbotOwner, workbotSessionId, workbotCellSessionId } from "@openwork-ee/workbot-server"
+import { toWorkbotPageEvent, workbotOwner, workbotSessionId, workbotCellSessionId } from "@openwork-ee/workbot-server"
 import { createHeadlessRunnerClient } from "@openwork-ee/headless-protocol"
 import { createDen, denSessionSchema } from "../src/server/den.js"
 import { loadConfig } from "../src/server/config.js"
@@ -267,6 +267,35 @@ test("Computer asks to reconnect for other desktop failures", async t => {
   assert.deepEqual(await response.json(), { error: "desktop_unavailable", message: "Your computer is unavailable. Try reconnecting." })
 })
 
+test("Computer waits out an update instead of rebuilding, and asks again once when the runner drops a request", async t => {
+  const signed = member("updating")
+  const viewers: string[] = []
+  let replies: Array<() => Response> = []
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
+    const parsed = new URL(url instanceof Request ? url.url : url)
+    if (parsed.pathname.endsWith("/desktop/viewer")) { viewers.push("viewer"); return replies.shift()!() }
+    if (parsed.pathname.endsWith("/desktop/action")) throw new Error("no rebuild while the runner updates the computer")
+    if (init?.method === "PUT") return Response.json({ id: parsed.pathname.split("/").at(-1) })
+    return Response.json({ turns: [], messages: [], finalAssistantText: "" })
+  })
+  t.mock.method(console, "error", () => {})
+  const app = new Hono<AppEnv>()
+  registerWorkbotRoutes(app, {
+    config, den: { ...createDen({ apiUrl: config.denApiUrl, publicUrl: config.publicUrl }), session: async () => signed.den },
+    member: async (c, next) => { c.set("member", signed); await next() }, sameOrigin: async (_c, next) => next(),
+  })
+  const open = async () => (await app.request("/v1/workbot/computer/viewer", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ view: "browser" }) })).json()
+
+  replies = [() => Response.json({ error: "desktop_updating" }, { status: 409 })]
+  assert.deepEqual(await open(), { error: "desktop_updating", message: "Your computer is updating. It will be ready when its current work finishes." })
+  assert.equal(viewers.length, 1)
+
+  viewers.length = 0
+  replies = [() => Response.json({ error: "desktop_unavailable" }, { status: 409 }), () => Response.json({ state: "connected", url: "wss://computer.example.test/vnc/" + "t".repeat(43), expiresAt: Date.now() + 60_000, paused: false })]
+  assert.equal((await open()).state, "connected")
+  assert.equal(viewers.length, 2)
+})
+
 test("the browser and the native desktop are separate rollouts", async t => {
   let signed = member("alice", false, true)
   let fresh: Member | null = null
@@ -313,10 +342,12 @@ test("the screen's live view stays up while Workbot works on it, not once it tur
   const browsed = [{ kind: "text" as const, text: "Checking listings." }, { kind: "steps" as const, steps: [step({ surface: "browser" })] }, { kind: "text" as const, text: "The browser isn't responding, so I'll pull them another way." }]
   // Saying what it is doing between browser steps keeps the browser's live view up below its words.
   const narrating = computerWork(browsed, { working: true, starting: null, lastIsLive: false })
-  assert.deepEqual([narrating.watch, [...narrating.live], narrating.trailing], ["browser", ["browser"], ["browser"]])
+  assert.deepEqual([narrating.watch, [...narrating.live], narrating.trailing, narrating.starts], ["browser", ["browser"], ["browser"], null])
   // Commands in the background: only their card is live, and the browser card goes back to where it was used.
   const starting = computerWork(browsed, { working: true, starting: { on: "computer", since: 2, background: true }, lastIsLive: false })
   assert.deepEqual([starting.watch, [...starting.live], starting.trailing, starting.placed.get(1)], [null, ["background"], ["background"], ["browser"]])
+  // What a step not yet stored says it is doing belongs on the card it starts on.
+  assert.equal(starting.starts, "background")
   const running = computerWork([...browsed, { kind: "steps", steps: [step({ background: true }, "running")] }], { working: true, starting: null, lastIsLive: true })
   assert.deepEqual([running.watch, [...running.live], running.placed.get(1)], [null, ["background"], ["browser"]])
   // Still no screen while it says what the background work found.
@@ -324,7 +355,7 @@ test("the screen's live view stays up while Workbot works on it, not once it tur
   assert.deepEqual([after.watch, after.live.size], [null, 0])
   // Back on the screen, its live view returns below Workbot's latest words.
   const back = computerWork([...browsed, { kind: "steps", steps: [step({ background: true })] }], { working: true, starting: { on: "computer", since: 3 }, lastIsLive: false })
-  assert.deepEqual([back.watch, back.trailing], ["browser", ["browser"]])
+  assert.deepEqual([back.watch, back.trailing, back.starts], ["browser", ["browser"], "browser"])
 })
 
 test("the screen is in the chat only while Workbot chooses to show it", () => {
@@ -405,4 +436,12 @@ test("Opening the full view resumes a paused computer, but the chat's glimpse le
   assert.deepEqual(actions, ["resume"])
   // The runner gets the view it always did; waking is Workbot's step.
   assert.deepEqual(viewers.at(-1), { view: "browser", control: false, origin: "http://localhost:3020" })
+})
+
+test("what computer work is doing reaches the page as it starts, and other tools' words never do", () => {
+  const tool = (name: string, description?: string) => toWorkbotPageEvent({ type: "tool", messageId: "wb_1", step: 2, tool: name, ...(description === undefined ? {} : { description }) })
+  assert.deepEqual(tool("desktop", `  Drawing the ground and trunk${" ".repeat(3)}${"x".repeat(100)}`), { type: "working", messageId: "1", step: 2, on: "computer", update: `Drawing the ground and trunk   ${"x".repeat(49)}` })
+  assert.deepEqual(tool("bash", "Rendering the scene"), { type: "working", messageId: "1", step: 2, on: "computer", background: true, update: "Rendering the scene" })
+  assert.deepEqual(tool("desktop"), { type: "working", messageId: "1", step: 2, on: "computer" })
+  assert.deepEqual(tool("execute_capability", "Searching Gmail for invoices"), { type: "working", messageId: "1", step: 2, on: "other" })
 })

@@ -1,14 +1,14 @@
 ---
 title: "Auto Model Routing"
-description: "Let OpenWork pick the right model and thinking level for every prompt, from the AI Gateway models you choose."
+description: "Let OpenWork pick the right model for every prompt, from the AI Gateway models you choose."
 ---
 
-Auto Model Routing lets members choose **Auto** instead of a specific model. For every prompt, OpenWork picks one of the models you listed, and how hard it should think, based on what the prompt asks for. Quick questions go to a fast, inexpensive model. Hard coding, planning or debugging goes to your strongest model with more thinking.
+Auto Model Routing lets members choose **Auto** instead of a specific model. For every prompt, OpenWork picks one of the models you listed, based on what the prompt asks for. Each model runs at the thinking level you chose for it. Quick questions go to a fast, inexpensive model. Hard coding, planning or debugging goes to your strongest model with more thinking. Anything else goes to your default model.
 
-You set it up once for the organization in OpenWork Cloud under **AI Gateway → AI Providers**. Members don't configure anything: Auto appears at the top of their model picker.
+You set it up once for the organization in OpenWork Cloud under **AI Gateway → Auto Router**. Members don't configure anything: Auto appears at the top of their model picker.
 
 <Note>
-Auto Model Routing is rolling out on OpenWork Cloud. If you don't see the **Auto Router** section, ask OpenWork to turn it on for your organization.
+Auto Model Routing is rolling out on OpenWork Cloud. If you don't see the **Auto Router** tab, ask OpenWork to turn it on for your organization.
 </Note>
 
 ## Why use it
@@ -24,31 +24,35 @@ Auto Model Routing is rolling out on OpenWork Cloud. If you don't see the **Auto
   <Step title="Add the models to your AI Gateway">
     Auto can only use models that are already in your AI Gateway, in an active model group. If you haven't yet, [add a provider](/cloud/share-with-your-team/managed-llm-provider) and its models first.
   </Step>
-  <Step title="Enable the Auto Router">
-    Open **AI Gateway → AI Providers**. The **Auto Router** section sits above your providers. Select **Enable**.
+  <Step title="Turn on the Auto Router and choose a default model">
+    Open **AI Gateway → Auto Router**, the tab right after AI Providers, and select **Turn on**.
 
-    <Frame caption="Before it is enabled, the Auto Router section explains what it does.">
-      <img src="/images/auto-model-routing/auto-router-off.png" alt="The AI Providers tab with the Auto Router section and its Enable button above the providers list" />
+    <Frame caption="Before it is turned on, the Auto Router tab explains what it does.">
+      <img src="/images/auto-model-routing/auto-router-off.png" alt="The Auto Router tab with its Turn on button" />
     </Frame>
-  </Step>
-  <Step title="Add a model and describe when to use it">
-    For each model you want Auto to use:
+
+    You start by choosing the **default model**. Auto uses it whenever no other model's description matches the prompt, and whenever it can't decide. Its description is fixed: "Use this model when no other prompts and models match the input".
 
     - **Model**: choose one of your AI Gateway models.
-    - **Thinking**: choose every thinking level Auto may use with this model. Only the levels the model supports are shown. **Default** uses the model's own setting.
-    - **Use when**: describe, in plain words, the prompts this model should get. For example "Everyday questions, small edits and short answers", or "Hard coding tasks, architecture, debugging complex failures".
+    - **Thinking**: choose the one thinking level this model always runs at. Only the levels the model supports are shown. **Default** uses the model's own setting.
 
-    Select **Save route**.
+    Select **Turn on**.
 
-    <Frame caption="Each route names a model, the thinking levels Auto may use with it, and when to use it.">
-      <img src="/images/auto-model-routing/auto-router-editor.png" alt="The route editor with Claude Haiku 5.5 selected, Default and High thinking turned on, and a Use when description" />
+    <Frame caption="The default model has a fixed description; you choose the model and its thinking level.">
+      <img src="/images/auto-model-routing/auto-router-editor.png" alt="The default model editor with the fixed Use when text, Claude Haiku 5.5 selected and High thinking" />
     </Frame>
   </Step>
-  <Step title="Add more models">
-    Add a route for each model you want in the mix. Two or three routes with clearly different descriptions usually work best: a fast model for everyday work, a strong model for hard work, and optionally a model for a specialty such as reading images or long documents.
+  <Step title="Add more models and describe when to use them">
+    Select **Add model** for each other model you want Auto to use:
 
-    <Frame caption="Saved routes show the model, its provider, when to use it and its thinking levels.">
-      <img src="/images/auto-model-routing/auto-router-routes.png" alt="The Auto Router section listing one saved route for Claude Haiku 5.5 with Default and High thinking" />
+    - **Use when**: describe, in plain words, the prompts this model should get. For example "Everyday questions, small edits and short answers", or "Hard coding tasks, architecture, debugging complex failures".
+    - **Model**: choose one of your AI Gateway models.
+    - **Thinking**: choose the thinking level this model runs at.
+
+    Select **Save route**. Two or three routes with clearly different descriptions usually work best: a fast model for everyday work, a strong model for hard work, and optionally a model for a specialty such as reading images or long documents.
+
+    <Frame caption="Each route leads with when to use it; the default model is always first.">
+      <img src="/images/auto-model-routing/auto-router-routes.png" alt="The Auto Router tab listing the default model and a second route for quick questions, each with its model and thinking level" />
     </Frame>
   </Step>
 </Steps>
@@ -59,7 +63,7 @@ Write descriptions that separate the routes from each other. "Simple questions" 
 
 ## What members see
 
-Members whose organization has the Auto Router enabled, and who have access to at least one of its models, see **Auto** as the first option in the desktop model picker. Auto manages thinking itself, so the effort control shows **Managed by Auto**.
+Members whose organization has the Auto Router turned on, and who have access to at least one of its models, see **Auto** as the first option in the desktop model picker. Auto manages thinking itself, so the effort control shows **Managed by Auto**.
 
 <Frame caption="Auto is the first option in the model picker.">
   <img src="/images/auto-model-routing/auto-router-picker.png" alt="The desktop model picker with Auto, Picks the best model for each task, selected at the top" />
@@ -83,22 +87,22 @@ sequenceDiagram
   participant P as Chosen model's provider
   App->>GW: Prompt, model "Auto", member's AI Gateway key
   GW->>GW: Keep only your routes this member can use
-  GW->>Jev: Latest prompt + each route's model, "Use when" and thinking level
-  Jev-->>GW: Best route and thinking level
+  GW->>Jev: Latest prompt + each route's model and "Use when"
+  Jev-->>GW: Best route
   GW->>P: The same request, as if the member picked that model
   P-->>GW: Response
   GW-->>App: Response, plus which model and thinking level answered
 ```
 
 1. **Only your models, only theirs.** The gateway starts from your routes and drops any model the member doesn't have access to.
-2. **One decision per task.** At the start of each task (when the member sends a message), the gateway asks [Jev](https://docs.typesafe.ai/introduction/coding-agents), a fast routing model from TypeSafe, to choose one route and one thinking level. Jev sees the member's latest message and a short excerpt of the conversation, your route descriptions, model names and thinking levels. It never sees your provider ids or keys. The decision usually takes well under a second.
+2. **One decision per task.** At the start of each task (when the member sends a message), the gateway asks [Jev](https://docs.typesafe.ai/introduction/coding-agents), a fast routing model from TypeSafe, to choose one route. The route runs at the thinking level you set for it. Jev sees the member's latest message and a short excerpt of the conversation, your route descriptions and model names. It never sees your provider ids or keys. The decision usually takes well under a second.
 3. **Consistent within a task.** The steps that follow while the agent works on the task (tool results, follow-up calls) keep the same model and thinking level, so the model's context and prompt cache stay intact.
 4. **Sent like a normal request.** The gateway forwards the request to the chosen provider exactly as if the member had picked that model: the same access checks, [limits](/ai-gateway/limits), [usage counting](/ai-gateway/counting-usage) and [costs](/ai-gateway/token-costs) apply, and the request log records the real model. Auto translates the request for the provider when needed, so Anthropic, OpenAI, Google Gemini, Amazon Bedrock, Azure OpenAI and OpenAI-compatible providers can all be mixed.
-5. **A safe fallback.** If Jev can't answer in time, Auto uses the first route that allows **High** thinking, at High. If no route allows High, it uses your first route.
+5. **A safe fallback.** If Jev can't answer in time, Auto uses your default model.
 
 ### Thinking levels
 
-Each route can allow several thinking levels. More thinking gives better answers to hard problems but is slower and uses more tokens. Auto picks the least thinking it expects to answer the prompt well.
+Each route runs at one thinking level you choose. More thinking gives better answers to hard problems but is slower and uses more tokens, so pair fast, low-thinking routes with everyday work and high-thinking routes with hard work.
 
 | Level | Typical use |
 | --- | --- |
@@ -111,8 +115,8 @@ Each route can allow several thinking levels. More thinking gives better answers
 
 ## Turn it off
 
-Select **Turn off** in the Auto Router section. Auto disappears from members' model pickers the next time their app syncs with your organization, and requests already set to Auto stop routing. Your routes are kept, so turning it on again brings them back.
+Select **Turn off** on the Auto Router tab. Auto disappears from members' model pickers the next time their app syncs with your organization, and requests already set to Auto stop routing. Your routes, including the default model, are kept, so turning it on again brings them back.
 
 ## Self-hosted
 
-Auto Model Routing is offered on OpenWork Cloud first. Where it is available on a self-hosted install, give the AI Gateway a TypeSafe API key through the Helm chart's `secret.values.typesafeApiKey` (or the `TYPESAFE_API_KEY` key in your existing Secret). Without a key, Auto always uses its fallback route. See the chart's README for details.
+Auto Model Routing is offered on OpenWork Cloud first. Where it is available on a self-hosted install, give the AI Gateway a TypeSafe API key through the Helm chart's `secret.values.typesafeApiKey` (or the `TYPESAFE_API_KEY` key in your existing Secret). Without a key, Auto is off: the Auto Router tab explains how to add the key, and members don't see Auto. See the chart's README for details.

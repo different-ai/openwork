@@ -159,6 +159,8 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   platform("POST", "/v1/admin/opportunities/accounts/:organizationId/actions", "platform.opportunities.account.follow_up.record", "platform.admin", "organization", "organizationId", `${ADMIN} Records an internal follow-up step in account_follow_up tables. Platform evidence only: sales notes are not tenant activity and never reach the organization's audit log. Sends no message.`),
   platform("GET", "/v1/admin/metrics", "platform.metrics.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/free-auto/usage", "platform.free_auto_usage.read", "platform.admin", "platform_report", null, ADMIN),
+  platform("GET", "/v1/admin/mcp-registration", "platform.mcp_registration.read", "platform.admin", "platform_report", null, ADMIN),
+  platform("POST", "/v1/admin/mcp-registration/check", "platform.mcp_registration.check", "platform.admin", "platform_report", null, `${ADMIN} Reads preset providers' sign-in metadata and, when asked, registers and deletes a test OAuth client with them.`),
   platform("GET", "/v1/admin/free-auto/conversions", "platform.free_auto_conversions.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/security", "platform.security_report.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/security/requests", "platform.security_requests.read", "platform.admin", "platform_report", null, ADMIN),

@@ -32,15 +32,21 @@ export const useComputerRequest = (sessionId: string | null | undefined) =>
 
 /**
  * Connects the desktop's computer broker to the app, once per window and on
- * every route, Settings included: reports the `computerUse` and
- * `remoteComputers` features and keeps in-chat requests current.
+ * every route, Settings included: reports the `computerUse`,
+ * `remoteComputers` and `computerUseBackground` features and keeps in-chat
+ * requests current.
  */
 export function ComputerBridge() {
   const enabled = useDesktopFeature("computerUse")
   const remote = useDesktopFeature("remoteComputers")
+  const background = useDesktopFeature("computerUseBackground")
   useEffect(() => {
     void desktopBridge.computerSetRemoteEnabled(enabled && remote).catch(() => {})
   }, [enabled, remote])
+
+  useEffect(() => {
+    void desktopBridge.computerSetBackgroundEnabled(enabled && background).catch(() => {})
+  }, [enabled, background])
 
   useEffect(() => {
     void desktopBridge.computerSetFeatureEnabled(enabled).catch(() => {})
