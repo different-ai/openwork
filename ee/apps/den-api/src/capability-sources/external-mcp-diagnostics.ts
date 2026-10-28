@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { isEnterpriseMcpLifecycleDeadline } from "@openwork/enterprise-mcp-client"
 import { PrivateUrlError } from "./url-guard.js"
+import { slackMcpAccessGuidance } from "./slack-mcp-guidance.js"
 
 export const EXTERNAL_MCP_DIAGNOSTIC_PHASES = [
   "CONFIGURATION",
@@ -91,7 +92,7 @@ const SLACK_CREDENTIAL = /\bxox[a-z]-[A-Za-z0-9-]+|\bxoxe(?:-\d)?-[A-Za-z0-9-]+/
 const AUTHORIZATION_CREDENTIAL = /(\b(?:Bearer|Token)\s+)[\x21-\x7e]+/gi
 const GITHUB_CREDENTIAL = /\bgh[pousr]_[A-Za-z0-9]{20,}/gi
 const LONG_OPAQUE_CREDENTIAL = /[A-Za-z0-9_~+/=-]{40,}/g
-const PROVIDER_RESPONSE_STRING_FIELDS = ["error_description", "error_uri", "message"]
+const PROVIDER_RESPONSE_STRING_FIELDS = ["error_description", "error_uri", "error_message", "message"]
 const PROVIDER_RESPONSE_CONTENT_TYPE_CHARS = 120
 
 type ProviderResponseLog = {
@@ -247,6 +248,9 @@ function structuredProviderResponseExcerpt(text: string): string | undefined {
     if (!isRecord(parsed)) return undefined
     const allowed: Record<string, unknown> = {}
     if (typeof parsed.ok === "boolean") allowed.ok = parsed.ok
+    if (typeof parsed.error_code === "number" && Number.isSafeInteger(parsed.error_code) && String(parsed.error_code).length <= 16) {
+      allowed.error_code = parsed.error_code
+    }
     if (typeof parsed.error === "string") {
       allowed.error = redactSensitiveString(parsed.error)
     } else if (isRecord(parsed.error)) {
@@ -1839,17 +1843,24 @@ export class ExternalMcpDiagnosticTracker {
       ?? capturedOAuthProviderDetail
     const providerErrorMessage = providerEvidence?.message ?? safeOAuthProviderDetail
     const providerErrorData = providerEvidence?.dataExcerpt
+    const slackGuidance = slackMcpAccessGuidance({
+      phase: classification.phase,
+      httpStatus: this.lastHttpStatus ?? undefined,
+      outbound: this.outbound ?? undefined,
+      providerResponseExcerpt: this.providerResponseExcerpt ?? undefined,
+    })
     const diagnosticWithoutMessage = {
       referenceId: this.referenceId,
       highestPassed: this.highestPassed,
       ...classification,
+      ...(slackGuidance ? { code: "MCP_SLACK_ACCESS_DISABLED", operatorAction: slackGuidance.message } : {}),
       ...(jsonRpcCode === undefined ? {} : { jsonRpcCode }),
       ...(providerErrorMessage ? { providerErrorMessage } : {}),
       ...(providerErrorData ? { providerErrorData } : {}),
     }
     const diagnostic: ExternalMcpDiagnostic = {
       ...diagnosticWithoutMessage,
-      message: safeMessageFor({
+      message: slackGuidance?.message ?? safeMessageFor({
         ...diagnosticWithoutMessage,
         ...(this.lastHttpStatus === null ? {} : { httpStatus: this.lastHttpStatus }),
         ...(safeOAuthProviderDetail ? { providerDetail: safeOAuthProviderDetail } : {}),

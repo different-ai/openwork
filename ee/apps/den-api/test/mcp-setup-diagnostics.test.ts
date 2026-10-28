@@ -4,20 +4,22 @@ import {
   ExternalMcpDiagnosticTracker,
   createExternalMcpDiagnosticFetch,
 } from "../src/capability-sources/external-mcp-diagnostics.ts"
+import { connectCallbackPage } from "../src/capability-sources/oauth-callback-page.ts"
+import { slackMcpAccessGuidance } from "../src/capability-sources/slack-mcp-guidance.ts"
 
 const endpoint = "https://gateway.example/mcp"
 const sentinel = "fixture-private-key-0123456789"
 
 /** Runs one initialize request against a canned answer and returns what the person and logs would see. */
-async function initializeFailure(status: number, body: string, contentType = "text/plain") {
+async function initializeFailure(status: number, body: string, contentType = "text/plain", serverUrl = endpoint) {
   const tracker = new ExternalMcpDiagnosticTracker("ref-fixture", { authType: "apikey", credentialMode: "shared" })
   const fetch = createExternalMcpDiagnosticFetch({
-    endpoint,
+    endpoint: serverUrl,
     tracker,
     fetch: async () => new Response(body, { status, headers: { "content-type": contentType } }),
   })
   tracker.begin("MCP_INITIALIZE")
-  await fetch(endpoint, {
+  await fetch(serverUrl, {
     method: "POST",
     headers: { authorization: `Bearer ${sentinel}`, "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }),
@@ -59,6 +61,40 @@ test("generic initialize refusals keep their status and are not guessed to be se
   const refused = await initializeFailure(400, "bad request")
   assert.match(refused.message, /refused to start a session \(HTTP 400\)/)
   for (const diagnostic of [unavailable, throttled, refused]) assert.notEqual(diagnostic.code, "MCP_SESSION_LIMIT")
+})
+
+test("Slack MCP access disabled gives the member a safe setup action instead of HTTP 400", async () => {
+  const diagnostic = await initializeFailure(400, JSON.stringify({
+    error_code: -32600,
+    error_message: "App is not enabled for Slack MCP server access. Please enable it here: https://api.slack.com/apps/A0123456789/app-assistant",
+    client_secret: sentinel,
+  }), "application/json", "https://mcp.slack.com/mcp")
+  assert.equal(diagnostic.code, "MCP_SLACK_ACCESS_DISABLED")
+  assert.equal(diagnostic.actionOwner, "provider_admin")
+  assert.equal(diagnostic.retryable, false)
+  assert.match(diagnostic.message, /MCP access is disabled for this Slack app/)
+  assert.match(diagnostic.message, /person who manages.*Agents.*MCP.*try connecting again/)
+  assert.doesNotMatch(diagnostic.message, /HTTP 400|untrusted|error_code/)
+  const page = connectCallbackPage({ ok: false, name: "Slack", message: diagnostic.message, referenceId: diagnostic.referenceId, providerSetupUrl: slackMcpAccessGuidance(diagnostic)?.settingsUrl })
+  assert.match(page, /href="https:\/\/api\.slack\.com\/apps\/A0123456789\/app-assistant" target="_blank" rel="noopener noreferrer">Open Slack app settings/)
+  assert.match(page, /MCP access is disabled for this Slack app/)
+  assert.match(page, /Diagnostic reference/)
+  assert.ok(!JSON.stringify(diagnostic).includes(sentinel))
+  assert.ok(!page.includes(sentinel))
+})
+
+test("Slack guidance is not guessed from a status or an untrusted endpoint's message", async () => {
+  const body = JSON.stringify({ error_code: -32600, error_message: "App is not enabled for Slack MCP server access." })
+  const cases: [number, string, string][] = [
+    [400, body, "https://mcp.slack.com.evil.example/mcp"],
+    [403, body, "https://mcp.slack.com/mcp"],
+    [400, JSON.stringify({ error_code: -32600, error_message: "Unknown request" }), "https://mcp.slack.com/mcp"],
+  ]
+  for (const [status, response, url] of cases) {
+    const diagnostic = await initializeFailure(status, response, "application/json", url)
+    assert.notEqual(diagnostic.code, "MCP_SLACK_ACCESS_DISABLED")
+    assert.doesNotMatch(diagnostic.message, /Agents|MCP access is disabled/)
+  }
 })
 
 test("a rejected key is an authentication failure for the organization's admin, never echoed", async () => {

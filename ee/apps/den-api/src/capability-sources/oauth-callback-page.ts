@@ -4,6 +4,7 @@
  */
 
 import type { WorkbotOAuthReturn } from "../workbot/connect-return-schema.js"
+import { safeSlackMcpSettingsUrl } from "./slack-mcp-guidance.js"
 
 export function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
@@ -11,7 +12,8 @@ export function escapeHtml(value: string): string {
 
 export function connectCallbackPage(input:
   | { ok: true; name: string }
-  | { ok: false; name: string; message: string; referenceId?: string }, workbotReturn?: WorkbotOAuthReturn & { connectionId: string }): string {
+  | { ok: false; name: string; message: string; referenceId?: string; providerSetupUrl?: string }, workbotReturn?: WorkbotOAuthReturn & { connectionId: string }): string {
+  const providerSetupUrl = !input.ok && !workbotReturn ? safeSlackMcpSettingsUrl(input.providerSetupUrl) : undefined
   const brand = workbotReturn ? "Workbot" : "OpenWork"
   // Finishing OAuth is not a readiness check. Workbot verifies the usable connection on return.
   const title = workbotReturn ? input.ok ? `Signed in to ${input.name}` : "Connection not verified" : input.ok ? "You're connected" : "Connection failed"
@@ -32,6 +34,7 @@ export function connectCallbackPage(input:
         <span class="status-icon" aria-hidden="true">!</span>
         <span><strong>${escapeHtml(input.name)}</strong><small>${escapeHtml(input.message)}</small></span>
       </div>
+      ${providerSetupUrl ? `<p><a href="${escapeHtml(providerSetupUrl)}" target="_blank" rel="noopener noreferrer">Open Slack app settings</a></p>` : ""}
       ${input.referenceId ? `<p class="reference">Diagnostic reference: <code>${escapeHtml(input.referenceId)}</code></p>` : ""}
       <p>Return to OpenWork to try connecting again. You can close this window.</p>`
   // No token, account detail, or provider error crosses the popup boundary. The opener must re-read readiness.
@@ -55,6 +58,7 @@ export function connectCallbackPage(input:
       .brand svg { width: 26px; height: 26px; flex: 0 0 auto; }
       h1 { margin: 56px 0 0; font-size: 38px; font-weight: 600; line-height: 46px; letter-spacing: -.03em; }
       p { margin: 24px 0 0; color: var(--dls-text-secondary); font-size: 15px; line-height: 23px; }
+      a { color: var(--dls-text-primary); text-underline-offset: .2em; }
       .status-row { margin-top: 36px; display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid var(--dls-border); border-radius: 12px; }
       .status-row > span:last-child { min-width: 0; display: grid; gap: 3px; }
       .status-row strong { font-size: 15px; font-weight: 500; line-height: 22px; overflow-wrap: anywhere; }

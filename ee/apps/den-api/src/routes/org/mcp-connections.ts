@@ -99,6 +99,7 @@ import { EXECUTE_CAPABILITY_TOOL_NAME, SEARCH_CAPABILITIES_TOOL_NAME } from "../
 import { listNativeProviderUsableEntries } from "../../capability-sources/native-provider-connections.js"
 import { getNativeOAuthProvider } from "../../capability-sources/provider-registry.js"
 import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
+import { slackMcpAccessGuidance } from "../../capability-sources/slack-mcp-guidance.js"
 import { workbotConnectReturn, workbotCallbackReturn } from "../../workbot/connect-return.js"
 import { getConnectedAccount, getConnectedAccountForListing, getOrgOAuthClient, upsertOrgOAuthClient } from "../../capability-sources/oauth-credentials.js"
 import { assertPublicUrl, createGuardedFetch, createRealmSafeFetch } from "../../capability-sources/url-guard.js"
@@ -1777,6 +1778,7 @@ async function handleExternalMcpOAuthCallback(input: {
       name: connection.name,
       message: diagnostic.message,
       referenceId: diagnostic.referenceId,
+      providerSetupUrl: slackMcpAccessGuidance(diagnostic)?.settingsUrl,
     }), 400)
   }
   // Re-grants invalidate earlier checks. Ordinary SDK refresh writes never
