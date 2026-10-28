@@ -134,4 +134,8 @@ test("what agents read: each row shows the admin's choice, and is locked for peo
   const locked = sources(view, false);
   assert.equal((locked.match(/<button[^>]*disabled=""/g) ?? []).length, 5, "every choice is locked without Manage");
   assert.match(text(sources({ ...ready, sourceConnections: { calendar: [], email: [], chat: [], other: [] } })), /No team chat connected .*Other connections \(0\)/);
+  const hidden = text(sources({ ...ready, sourceConnections: null }));
+  assert.match(hidden, /Calendar Google Calendar or Outlook On for everyone/, "without View connections: what each source reads through, not the organization's connections");
+  assert.match(hidden, /Other connections: Needs the “.+” permission\./);
+  assert.doesNotMatch(hidden, /Meeting notes|Issue tracker|mcp\./);
 })

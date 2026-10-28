@@ -67,14 +67,15 @@ const workbotProactiveInputDocumentSchema = workbotProactiveSettingsInputSchema.
 const invalidHoursSchema = z.object({ error: z.literal("invalid_working_hours"), message: z.string() }).meta({ ref: "WorkbotProactiveInvalidHoursError" })
 export const INVALID_WORKING_HOURS_MESSAGE = "The workday must end after it starts."
 
-async function proactiveView(organizationId: DenTypeId<"organization">, settings: WorkbotProactiveSettings, template: AgentTemplateVersion): Promise<WorkbotProactiveView> {
+async function proactiveView(organizationId: DenTypeId<"organization">, settings: WorkbotProactiveSettings, template: AgentTemplateVersion, canViewConnections: boolean): Promise<WorkbotProactiveView> {
   const { versionId, version, responsibilities, instructions } = template
   return {
     settings,
     template: { versionId, version, responsibilities, instructions },
     slackReady: await workbotSlackAppReady(organizationId),
     runnerReady: proactiveRunnerReady(),
-    sourceConnections: groupSourceConnections(await listOrganizationSourceConnections(organizationId)),
+    // Connection names and URLs only for callers who may view the organization's connections.
+    sourceConnections: canViewConnections ? groupSourceConnections(await listOrganizationSourceConnections(organizationId)) : null,
   }
 }
 
@@ -89,7 +90,7 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       tags: ["Organizations"],
       summary: "Get the settings for members' agents",
       description:
-        "Returns how members' agents work in this organization (Manage › Workbot): whether they are on, working hours, the daily limit per member, whether members start opted in, the default place messages go (a DM from the Workbot Slack app), what agents may read (`settings.sources`: calendar, email and team chat, and each other connection by id: `everyone` = on for everyone, `members` = members choose, `off` = not allowed; agents only ever read) with the organization's connections behind each (`sourceConnections`), and the current \"Your agent\" template version (preset responsibilities and organization instructions). Also says whether the Workbot Slack app is installed to send those DMs and whether the headless runner the agents run on is configured. Requires the workbotProactive feature, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
+        "Returns how members' agents work in this organization (Manage › Workbot): whether they are on, working hours, the daily limit per member, whether members start opted in, the default place messages go (a DM from the Workbot Slack app), what agents may read (`settings.sources`: calendar, email and team chat, and each other connection by id: `everyone` = on for everyone, `members` = members choose, `off` = not allowed; agents only ever read) with the organization's connections behind each (`sourceConnections`, null without View connections), and the current \"Your agent\" template version (preset responsibilities and organization instructions). Also says whether the Workbot Slack app is installed to send those DMs and whether the headless runner the agents run on is configured. Requires the workbotProactive feature, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
       responses: {
         200: jsonResponse("Agent settings returned.", workbotProactiveViewDocumentSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -104,7 +105,8 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
     async (c) => {
       c.header("Cache-Control", "no-store")
       const organizationId = c.get("organizationContext").organization.id
-      return c.json(await proactiveView(organizationId, await readProactiveSettings(organizationId), await readAgentTemplate(organizationId)))
+      const canViewConnections = (await memberPermissionsForRequest(c))?.has("connections.view") ?? false
+      return c.json(await proactiveView(organizationId, await readProactiveSettings(organizationId), await readAgentTemplate(organizationId), canViewConnections))
     },
   )
 
@@ -183,7 +185,7 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       const current = await readAgentTemplate(organization.id)
       const content = mergeAgentTemplate(current, change)
       const template = content ? await saveAgentTemplate({ organizationId: organization.id, memberId: currentMember.id, content }) : current
-      return c.json(await proactiveView(organization.id, result.settings, template))
+      return c.json(await proactiveView(organization.id, result.settings, template, (await memberPermissionsForRequest(c))?.has("connections.view") ?? false))
     },
   )
 

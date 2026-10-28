@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Lock } from "lucide-react";
 import { useId } from "react";
 import {
   AGENT_CORE_SOURCES,
@@ -15,6 +15,7 @@ import {
   type WorkbotProactiveSettingsInput,
   type WorkbotProactiveView,
 } from "@openwork/types/den/workbot-proactive";
+import { permissionLockReason } from "../../_lib/den-org";
 import { DenSelect } from "../../_components/ui/select";
 import { ConnectorLogo } from "./item-logo";
 import { SourceIcon } from "./source-icon";
@@ -79,23 +80,30 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange }: {
   const headingId = useId();
   const locked = !canManage || saving;
   const { sources } = view.settings;
-  const others = view.sourceConnections.other;
+  const connections = view.sourceConnections;
+  const others = connections?.other ?? [];
 
   return (
     <section aria-labelledby={headingId} className="grid gap-2" data-section="workbot-proactive-sources">
       <h2 id={headingId} className="px-1 text-[13px] font-medium text-gray-500">What agents read</h2>
       <div className="divide-y divide-gray-100 overflow-hidden rounded-2xl border border-gray-100 bg-white" data-testid="workbot-proactive-sources">
         {AGENT_CORE_SOURCES.map((kind) => {
-          const connections = view.sourceConnections[kind];
-          const first = connections[0];
+          const behind = connections?.[kind] ?? [];
+          const first = behind[0];
           return (
-            <SourceRow key={kind} name={AGENT_CORE_SOURCE_COPY[kind].label} testId={`workbot-source-${kind}`} state={viaLabel(kind, connections)}
+            <SourceRow key={kind} name={AGENT_CORE_SOURCE_COPY[kind].label} testId={`workbot-source-${kind}`} state={connections ? viaLabel(kind, behind) : AGENT_CORE_SOURCE_COPY[kind].via}
               logo={first ? <ConnectorLogo name={first.name} url={first.url} size="xs" /> : <SourceIcon kind={kind} />}>
               <PolicySelect label={AGENT_CORE_SOURCE_COPY[kind].label} value={sources[kind]} disabled={locked} onChange={(policy) => onChange({ sources: corePolicy(kind, policy) })} />
             </SourceRow>
           );
         })}
-        <details className="group" data-testid="workbot-source-others">
+        {connections ? null : (
+          <p className="flex items-center gap-2 px-6 py-3 text-[12px] text-gray-500" data-testid="workbot-source-others-locked">
+            <Lock size={14} strokeWidth={1.5} aria-hidden="true" className="shrink-0" />
+            {`Other connections: ${permissionLockReason("connections.view")}`}
+          </p>
+        )}
+        {connections ? <details className="group" data-testid="workbot-source-others">
           <summary className="flex min-h-[48px] cursor-pointer list-none items-center gap-1.5 px-6 text-[13px] font-medium text-gray-900 [&::-webkit-details-marker]:hidden">
             <ChevronRight className="h-4 w-4 text-gray-500 transition-transform duration-150 ease-out group-open:rotate-90 motion-reduce:transition-none" aria-hidden />
             {`Other connections (${others.length})`}
@@ -110,7 +118,7 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange }: {
               </SourceRow>
             ))}
           </div>
-        </details>
+        </details> : null}
         <p className="px-6 py-3 text-[12px] text-gray-500" data-testid="workbot-source-footer">Read only. Agents never send, edit or delete through these.</p>
       </div>
     </section>

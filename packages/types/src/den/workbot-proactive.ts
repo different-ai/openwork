@@ -208,14 +208,17 @@ export const workbotProactiveViewSchema = z.object({
   slackReady: z.boolean(),
   /** The deployment's headless runner is configured; the agent runs on it. */
   runnerReady: z.boolean(),
-  /** The organization's connections behind each source, for "What agents read". */
+  /**
+   * The organization's connections behind each source, for "What agents read"; null for a caller who can't view the
+   * organization's connections.
+   */
   sourceConnections: z.object({
     calendar: z.array(agentSourceConnectionSchema),
     email: z.array(agentSourceConnectionSchema),
     chat: z.array(agentSourceConnectionSchema),
-    /** Every other connection, each its own source. */
+    /** Every other connection agents can read (a service with reviewed read tools), each its own source. */
     other: z.array(agentSourceConnectionSchema),
-  }),
+  }).nullable(),
 })
 export type WorkbotProactiveView = z.infer<typeof workbotProactiveViewSchema>
 
