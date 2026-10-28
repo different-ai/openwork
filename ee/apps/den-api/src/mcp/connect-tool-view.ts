@@ -42,12 +42,14 @@ export const CONNECT_FULL_TOOL_CLIENTS: ReadonlySet<string> = new Set(["claude-c
 /**
  * OpenWork Desktop, Web and headless runs drive the same engine as standalone
  * OpenCode and report its name, so a request is OpenWork's own when it also
- * holds a token Den minted for OpenWork. OpenWork keeps the search view: its
- * instructions pin search_capabilities and execute_capability, and Den's
- * search ranks capabilities better than the engine's own. A first-party token
- * copied into another client, as test harnesses do, follows that client.
+ * holds a token Den minted for OpenWork. A first-party token copied into
+ * another client, as test harnesses do, follows that client.
  */
 const OPENWORK_ENGINE_CLIENT = "opencode"
+
+export function isOpenWorkEngineClient(clientInfo: ConnectClientInfo | null, firstPartyToken: boolean): boolean {
+  return firstPartyToken && clientInfo?.name.trim().toLowerCase() === OPENWORK_ENGINE_CLIENT
+}
 
 /** The `?tools=full|search` override; anything else is no override. */
 export function connectToolViewOverride(url: string): ConnectToolView | null {
@@ -65,13 +67,22 @@ export function requestClientInfo(params: unknown): ConnectClientInfo | null {
   return { name: info.name, ...("version" in info && typeof info.version === "string" ? { version: info.version } : {}) }
 }
 
+/**
+ * OpenWork's own engine has its own rollout, `connectEngineTools`
+ * (engine-tool-view.ts): with it on, the engine gets the full view; without it,
+ * the search view, whose search ranks capabilities better than the engine's
+ * own and which its instructions pin. `enabled` is `connectStandardTools`, the
+ * rollout for every other client. The override decides while either applies.
+ */
 export function connectToolView(
   clientInfo: ConnectClientInfo | null,
-  flags: { enabled: boolean; override?: ConnectToolView | null; firstPartyToken?: boolean },
+  flags: { enabled: boolean; override?: ConnectToolView | null; firstPartyToken?: boolean; engineTools?: boolean },
 ): ConnectToolView {
+  const openworkEngine = isOpenWorkEngineClient(clientInfo, flags.firstPartyToken === true)
+  if (openworkEngine && flags.engineTools) return flags.override ?? "full"
   if (!flags.enabled) return "search"
   if (flags.override) return flags.override
+  if (openworkEngine) return "search"
   const clientName = clientInfo?.name.trim().toLowerCase()
-  if (flags.firstPartyToken && clientName === OPENWORK_ENGINE_CLIENT) return "search"
   return clientName && CONNECT_FULL_TOOL_CLIENTS.has(clientName) ? "full" : "search"
 }

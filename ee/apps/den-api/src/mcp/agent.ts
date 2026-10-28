@@ -27,9 +27,10 @@ import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import { getCatalog, protectedResourceMetadata, protectedResourceMetadataRoute } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { createScopedAgentMcpHttpHandlers, type AgentMcpAudience } from "./agent-http.js"
-import { connectToolView, connectToolViewOverride, requestClientInfo, type ConnectClientInfo } from "./connect-tool-view.js"
+import { connectToolView, connectToolViewOverride, isOpenWorkEngineClient, requestClientInfo, type ConnectClientInfo } from "./connect-tool-view.js"
 import { CONNECTION_STATUS_TOOL_NAME, registerConnectFullTools, registerConnectionStatusTool, type CapabilityCall } from "./connect-full-tools.js"
-import { connectFullToolNamespace, loadConnectFullTools, type ConnectFullToolScope } from "./connect-full-tool-sources.js"
+import { connectFullToolNamespace, loadConnectFullTools, loadConnectServices, type ConnectFullToolScope } from "./connect-full-tool-sources.js"
+import { engineToolName, withRelatedWords } from "./engine-tool-view.js"
 import { rejectStandaloneSseResponse } from "./standalone-sse.js"
 import { appLogger } from "../observability/logger.js"
 import {
@@ -584,11 +585,16 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     const connectMcpAppHostSupported = supportsConnectMcpAppHost(
       c.req.header(CONNECT_MCP_APP_HOST_CAPABILITY_HEADER),
     ) && principal.scopes.has(DEN_MCP_APP_HOST_SCOPE)
+    const firstPartyToken = isFirstPartyMcpPrincipal(principal)
     const toolView = connectToolView(requestInfo.clientInfo, {
       enabled: organizationFeatures.connectStandardTools,
       override: connectToolViewOverride(c.req.url),
-      firstPartyToken: isFirstPartyMcpPrincipal(principal),
+      firstPartyToken,
+      engineTools: organizationFeatures.connectEngineTools,
     })
+    // OpenWork's own engine on its rollout: the full view, plus search for what has no tool (engine-tool-view.ts).
+    const engineTools = toolView === "full" && organizationFeatures.connectEngineTools
+      && isOpenWorkEngineClient(requestInfo.clientInfo, firstPartyToken)
     const audience: AgentMcpAudience = { organizationId, userId: principal.userId, fullTools: toolView === "full" }
     const redirectUriBase = resolvePublicOrigin(c.req.raw, env.apiPublicUrl)
     // Direct service mutations below are audited for the verified token caller
@@ -758,6 +764,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       myAgent: Boolean(memberIdentity && organizationFeatures.workbotProactive && organizationFeatures.workbotAgentLibrary && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
       skillsExtension,
       skills: skillsExtension && advertisesInstructions && !listsSkillsNatively ? await loadRemoteSkills() : undefined,
+      engine: engineTools,
+      services: engineTools && advertisesInstructions ? await loadConnectServices(capabilityContext) : undefined,
     })
     if (skillsExtension) registerSkillsExtension(server, loadResolvedSkills)
     registerAgentConnectionActionApp(server, { organizationId: principal.organizationId, member: memberIdentity })
@@ -786,11 +794,14 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       }
       const resolveTools = (tools: Parameters<typeof resolveMcpAppTools>[1]) => resolveMcpAppTools(capabilityContext, tools)
       // In the full view an App's tools may name full-view tools; Apps store the capability.
+      // OpenWork's engine shows `linear.list_issues` as `linear_list_issues`, so either name works there.
       const withCapabilities = async <Request extends { tools?: Parameters<typeof resolveMcpAppTools>[1] }>(request: Request): Promise<Request> => {
         const declared = request.tools ?? []
         const namespaces = new Set(declared.flatMap((tool) => connectFullToolNamespace(tool.capability) ?? []))
-        if (toolView !== "full" || namespaces.size === 0) return request
-        const capabilities = new Map((await loadFullTools({ namespaces })).tools.map((tool) => [tool.name, tool.capability]))
+        const engineNames = engineTools && declared.some((tool) => !/[.:]/.test(tool.capability))
+        if (toolView !== "full" || (namespaces.size === 0 && !engineNames)) return request
+        const tools = (await loadFullTools(engineNames ? "list" : { namespaces })).tools
+        const capabilities = new Map(tools.flatMap((tool) => [[tool.name, tool.capability], [engineToolName(tool.name), tool.capability]] as const))
         return { ...request, tools: declared.map((tool) => ({ ...tool, capability: capabilities.get(tool.capability) ?? tool.capability })) }
       }
       registerAppBuilderTools({
@@ -877,23 +888,28 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     }
 
     finishIndexTiming()
-    if (toolView === "search") {
+    // The search view, and OpenWork's engine for what has no tool of its own.
+    if (toolView === "search" || engineTools) {
       server.registerTool(
         SEARCH_CAPABILITIES_TOOL_NAME,
         {
           title: "Search capabilities",
           description: [
-            "Search connection actions, saved Workflows, and skills by keyword.",
+            engineTools
+              ? "Search OpenWork's own operations and skills by keyword. Connection actions, Workflows, Apps and remote sessions are tools of their own: find those in the Code Mode catalog or with search()."
+              : "Search connection actions, saved Workflows, and skills by keyword.",
             appServersEnabled
               ? "Direct tools such as create_skill, get_skill, and the App builders prepare_app, create_app, read_app, and update_app are outside this search; call them directly."
               : "Direct MCP tools such as create_skill and save_artifact_view are outside this search; call an available direct tool itself. For an app, dashboard, or artifact view of Workflow results, use save_artifact_view and follow its prerequisites.",
-            "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
-            "Accessible Workflows appear as marketplace matches with kind workflow and execute through execute_capability like every other exact search result.",
+            ...(engineTools ? [] : [
+              "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
+              "Accessible Workflows appear as marketplace matches with kind workflow and execute through execute_capability like every other exact search result.",
+            ]),
             "Try 2-4 keyword variants before deciding a capability is unavailable.",
             ...(toolShapes ? [] : ["Native API matches include a connector-namespaced name, pathParams, queryParams, querySchema, hasBody, and bodySchema. External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField."]),
-            appServersEnabled
+            ...(engineTools ? [] : [appServersEnabled
               ? "A match with kind mcp_app is a standard MCP App launch capability, either an App built in OpenWork (also its own MCP server, named in its description) or an App from a connected MCP server; execute it normally and the OpenWork host will render its advertised ui:// resource."
-              : "A match with kind mcp_app is a standard MCP App launch capability from a connected MCP server; execute it normally and the OpenWork host will render its advertised ui:// resource.",
+              : "A match with kind mcp_app is a standard MCP App launch capability from a connected MCP server; execute it normally and the OpenWork host will render its advertised ui:// resource."]),
             toolShapes
               ? "Each match is an MCP tool (name, description, inputSchema, optional outputSchema and annotations) with its kind and connection status where available; call execute_capability with that name and arguments matching inputSchema."
               : "Returns matches with exact name, summary, kind, invocation schemas, and connection status where available.",
@@ -912,9 +928,11 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         async ({ query, limit, type, intent }) => {
           if (type === "connectors") return connectorSetupToolResult({ expandedMcpPresets: organizationFeatures.expandedMcpPresets })
           const boundedLimit = limit ?? 5
-          const includeApps = appServersEnabled && (type === undefined || type === "all" || type === "mcp" || type === "marketplace")
+          const includeApps = !engineTools && appServersEnabled && (type === undefined || type === "all" || type === "mcp" || type === "marketplace")
           // Generic Marketplace search excludes authored Apps in every rollout state.
-          const result = await searchCapabilityRegistry(capabilityContext, { query, limit: boundedLimit, type })
+          // An explicit connect request still finds the connection, so its card can show.
+          const unlistedOnly = engineTools && intent !== "connect"
+          const result = await searchCapabilityRegistry(capabilityContext, { query, limit: boundedLimit, type, unlistedOnly })
           const openable = includeApps ? await loadOpenableApps() : []
           const matches = [...result.matches, ...searchMcpApps(openable, query, redirectUriBase)].sort(compareCapabilityMatches).slice(0, boundedLimit)
           return capabilitySearchToolResult(matches, result.externalCoverageHint, intent === "connect" && (type === undefined || type === "all" || type === "mcp") && !matches.some(match => match.name.startsWith("mcp:")) ? connectorCatalogForQuery(query, false, { expandedMcpPresets: organizationFeatures.expandedMcpPresets }) : null, intent === "connect", toolShapes)
@@ -960,16 +978,20 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         },
         executeCapabilityTool,
       )
-    } else if (method === "tools/list" || method === "tools/call") {
-      // The full view replaces search_capabilities and execute_capability. A
-      // tools/call loads only what it names; tools/list loads every tool.
+    }
+    if (toolView === "full" && (method === "tools/list" || method === "tools/call")) {
+      // The full view replaces search_capabilities and execute_capability (except
+      // for OpenWork's engine, above). A tools/call loads only what it names;
+      // tools/list loads every tool.
       const namespace = requestInfo.toolName ? connectFullToolNamespace(requestInfo.toolName) : null
       const scope: ConnectFullToolScope | null = method === "tools/list" ? "list"
         : requestInfo.toolName === CONNECTION_STATUS_TOOL_NAME ? "status"
           : namespace ? { namespaces: new Set([namespace]) } : null
       if (scope) {
         const full = await loadFullTools(scope)
-        registerConnectFullTools({ server, tools: full.tools, execute: executeCapabilityTool })
+        // The engine's search knows no synonyms, so its descriptions carry related words.
+        const tools = engineTools ? full.tools.map((tool) => ({ ...tool, description: withRelatedWords(tool.description, tool.toolName) })) : full.tools
+        registerConnectFullTools({ server, tools, execute: executeCapabilityTool })
         // Only the list and its own call load what is not ready yet.
         if (typeof scope !== "object") registerConnectionStatusTool({ server, pending: full.pending, show: full.showPending })
       }

@@ -57,6 +57,16 @@ the engine's own. `?tools=full` or `?tools=search` overrides the choice only
 while the flag is on. Unknown, missing and 2025-era clients keep the search
 view unless explicitly opted in. Off always restores the search view.
 
+OpenWork's own engine has its own rollout, `connectEngineTools`
+(`engine-tool-view.ts`, docs/features/connect-engine-tools). With it on, the
+engine gets the full view whatever `connectStandardTools` says, plus
+`search_capabilities` and `execute_capability` for OpenWork's own operations and
+skills, which have no tool of their own (search leaves out every source the
+full view lists, except for an explicit connect request). Its instructions list
+the member's connected services by tool-name prefix, and its tool descriptions
+carry related words from Den's synonym table, because the engine's own search
+ranks plain keywords.
+
 Tools are named like their Code Mode calls (`linear.list_issues`), at most 64
 characters, and run through the executor `execute_capability` uses. Only
 external MCP tools advertise an output schema: the provider promises structured
