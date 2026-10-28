@@ -1,6 +1,9 @@
 import assert from "node:assert/strict"
 import { mock, test } from "node:test"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { FEATURE_KEYS, featureDefinition, OUTCOME_FEATURE_KEYS } from "@openwork/features"
+import type { AgentInstanceRow } from "../src/workbot-proactive/repository.js"
+import type { AgentWakeOutcome } from "../src/workbot-proactive/wake.js"
 
 process.env.DATABASE_URL ??= "mysql://test:test@127.0.0.1:3306/feature_outcomes_unit_test"
 process.env.BETTER_AUTH_URL ??= "http://unit.test"
@@ -19,6 +22,8 @@ await auth.$context
 bootstrapSelect.mock.restore()
 const { FEATURE_OUTCOME_READERS, featureOutcomeReader } = await import("../src/feature-outcomes/readers.js")
 const { featureHealth, featureOutcomeRange, summarizeFeatureOutcomes } = await import("../src/feature-outcomes/outcomes.js")
+const { createFeatureUsageMarker } = await import("../src/feature-usage.js")
+const { wakeAndMarkUse } = await import("../src/workbot-proactive/worker.js")
 type Reading = Parameters<typeof summarizeFeatureOutcomes>[0]
 
 const NOW = new Date("2026-10-28T15:00:00.000Z")
@@ -110,4 +115,39 @@ test("one plain health state: not used, failing, limited, mostly skipped, health
   assert.deepEqual(featureHealth({ membersUsing: 1, outcomes: totals({ runs: 40, succeeded: 40, limited: 2 }) }), { status: "limited", count: 2 })
   assert.deepEqual(featureHealth({ membersUsing: 1, outcomes: totals({ runs: 10, succeeded: 3, skipped: 7 }) }), { status: "mostly_skipped" })
   assert.deepEqual(featureHealth({ membersUsing: 1, outcomes: totals({ runs: 10, succeeded: 5, skipped: 5 }) }), { status: "healthy" })
+})
+
+/** A marker with the real once-per-day dedupe, writing to an array; `setDay` moves its clock. */
+function recordingMarker() {
+  let now = new Date("2026-10-28T09:00:00.000Z")
+  const writes: string[] = []
+  const mark = createFeatureUsageMarker(async (input) => {
+    writes.push(...input.keys.map((key) => `${input.at.toISOString().slice(0, 10)} ${input.memberId} ${key}`))
+  }, () => now)
+  return { mark, writes, setDay: (day: string) => { now = new Date(`${day}T10:00:00.000Z`) } }
+}
+
+const settle = () => new Promise((resolve) => setImmediate(resolve))
+
+const organizationId = createDenTypeId("organization")
+const memberId = createDenTypeId("member")
+
+function agentRow(): AgentInstanceRow {
+  return {
+    memberId, organizationId, templateVersionId: null, status: null, overrides: null, snoozedUntil: null, state: null, preferences: null,
+    timeZone: null, nextWakeAt: NOW, failures: 0, leaseOwner: "lease-1", leaseUntil: NOW, createdAt: NOW, updatedAt: NOW,
+  }
+}
+
+test("Your agent: a pass that ran marks the member's use once per day; skipped wakes do not", async () => {
+  const { mark, writes, setDay } = recordingMarker()
+  const ran = async (): Promise<AgentWakeOutcome> => ({ status: "ran", reasons: ["scheduled"], reply: "quiet", delivered: null })
+  const skipped = async (): Promise<AgentWakeOutcome> => ({ status: "skipped", reason: "outside_hours" })
+  await wakeAndMarkUse(agentRow(), skipped, mark)
+  await wakeAndMarkUse(agentRow(), ran, mark)
+  await wakeAndMarkUse(agentRow(), ran, mark)
+  setDay("2026-10-29")
+  await wakeAndMarkUse(agentRow(), ran, mark)
+  await settle()
+  assert.deepEqual(writes, [`2026-10-28 ${memberId} workbotProactive`, `2026-10-29 ${memberId} workbotProactive`])
 })
