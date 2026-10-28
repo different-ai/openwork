@@ -84,4 +84,5 @@ export const CODE_SESSION_CLIENT_LABELS: Record<string, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
   pi: "Pi",
+  opencode: "OpenCode",
 };

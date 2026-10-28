@@ -1,10 +1,15 @@
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { claudeConfigDir } from "../claude-import.js";
 import { listClaudeCodeSessionsEverywhere, readClaudeCodeSessionEverywhere } from "./claude-code.js";
 import { listCodexSessionsEverywhere, readCodexSessionEverywhere } from "./codex.js";
+import {
+  defaultOpenCodeDbPath,
+  listOpenCodeSessionsEverywhere,
+  readOpenCodeSessionEverywhere,
+} from "./opencode.js";
 import { listPiSessionsEverywhere, readPiSessionEverywhere } from "./pi.js";
 import {
   CodeSessionsError,
@@ -14,7 +19,7 @@ import {
   type CodeSessionsClientState,
 } from "./types.js";
 
-const CLIENT_IDS: readonly CodeSessionClient[] = ["claude-code", "codex", "pi"];
+const CLIENT_IDS: readonly CodeSessionClient[] = ["claude-code", "codex", "pi", "opencode"];
 
 /**
  * Machine-wide view of the coding-agent sessions stored on this computer.
@@ -57,10 +62,13 @@ export function createCodeSessionsService(options: {
   codexConfigDir?: () => string;
   /** Pi's sessions root resolver; injectable for tests. */
   piSessionsDir?: () => string;
+  /** OpenCode v2 database path resolver; injectable for tests. */
+  opencodeDbPath?: () => string;
 } = {}): CodeSessionsService {
   const claudeDir = options.claudeConfigDir ?? claudeConfigDir;
   const codexDir = options.codexConfigDir ?? defaultCodexDir;
   const piDir = options.piSessionsDir ?? defaultPiSessionsDir;
+  const ocDb = options.opencodeDbPath ?? defaultOpenCodeDbPath;
 
   const enabled = new Map<CodeSessionClient, boolean>();
   const availability = new Map<CodeSessionClient, boolean>();
@@ -78,6 +86,12 @@ export function createCodeSessionsService(options: {
     availability.set("claude-code", await directoryExists(join(claudeDir(), "projects")));
     availability.set("codex", await directoryExists(join(codexDir(), "sessions")));
     availability.set("pi", await directoryExists(piDir()));
+    try {
+      await stat(ocDb());
+      availability.set("opencode", true);
+    } catch {
+      availability.set("opencode", false);
+    }
   };
 
   return {
@@ -94,34 +108,40 @@ export function createCodeSessionsService(options: {
       enabled.set(client, value);
     },
 
-    async list(): Promise<CodeSessionSummary[]> {
-      await probeAvailability();
-      const groups = await Promise.all([
-        isEnabled("claude-code") && (availability.get("claude-code") ?? true)
-          ? listClaudeCodeSessionsEverywhere({ configDir: claudeDir() })
-          : Promise.resolve([] as CodeSessionSummary[]),
-        isEnabled("codex") && (availability.get("codex") ?? true)
-          ? listCodexSessionsEverywhere({ configDir: codexDir() })
-          : Promise.resolve([] as CodeSessionSummary[]),
-        isEnabled("pi") && (availability.get("pi") ?? true)
-          ? listPiSessionsEverywhere({ sessionsDir: piDir() })
-          : Promise.resolve([] as CodeSessionSummary[]),
-      ]);
-      return groups.flat().sort((a, b) => b.updatedAt - a.updatedAt);
-    },
+  async list(): Promise<CodeSessionSummary[]> {
+    await probeAvailability();
+    const groups = await Promise.all([
+      isEnabled("claude-code") && (availability.get("claude-code") ?? true)
+        ? listClaudeCodeSessionsEverywhere({ configDir: claudeDir() })
+        : Promise.resolve([] as CodeSessionSummary[]),
+      isEnabled("codex") && (availability.get("codex") ?? true)
+        ? listCodexSessionsEverywhere({ configDir: codexDir() })
+        : Promise.resolve([] as CodeSessionSummary[]),
+      isEnabled("pi") && (availability.get("pi") ?? true)
+        ? listPiSessionsEverywhere({ sessionsDir: piDir() })
+        : Promise.resolve([] as CodeSessionSummary[]),
+      isEnabled("opencode") && (availability.get("opencode") ?? true)
+        ? listOpenCodeSessionsEverywhere({ dbPath: ocDb() })
+        : Promise.resolve([] as CodeSessionSummary[]),
+    ]);
+    return groups.flat().sort((a, b) => b.updatedAt - a.updatedAt);
+  },
 
-    async read(client: CodeSessionClient, sessionId: string): Promise<CodeSessionDetail> {
-      assertKnown(client);
-      if (!isEnabled(client)) {
-        throw new CodeSessionsError("code_session_client_disabled", `${client} is turned off in the Code tab.`);
-      }
-      if (client === "claude-code") {
-        return readClaudeCodeSessionEverywhere(sessionId, { configDir: claudeDir() });
-      }
-      if (client === "codex") {
-        return readCodexSessionEverywhere(sessionId, { configDir: codexDir() });
-      }
-      return readPiSessionEverywhere(sessionId, { sessionsDir: piDir() });
-    },
-  };
+  async read(client: CodeSessionClient, sessionId: string): Promise<CodeSessionDetail> {
+    assertKnown(client);
+    if (!isEnabled(client)) {
+      throw new CodeSessionsError("code_session_client_disabled", `${client} is turned off in the Code tab.`);
+    }
+    if (client === "claude-code") {
+      return readClaudeCodeSessionEverywhere(sessionId, { configDir: claudeDir() });
+    }
+    if (client === "codex") {
+      return readCodexSessionEverywhere(sessionId, { configDir: codexDir() });
+    }
+    if (client === "opencode") {
+      return readOpenCodeSessionEverywhere(sessionId, { dbPath: ocDb() });
+    }
+    return readPiSessionEverywhere(sessionId, { sessionsDir: piDir() });
+  },
+};
 }
