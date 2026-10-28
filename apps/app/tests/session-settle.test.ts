@@ -5,6 +5,7 @@ import {
   filterSettledSessions,
   isSessionSettled,
   sessionActivityAt,
+  settleWorkspaceIds,
   type SessionSettleInput,
 } from "../src/react-app/domains/session/sidebar/session-settle";
 import { isSettleSessionShortcut } from "../src/react-app/shell/settle-session-shortcut";
@@ -82,6 +83,21 @@ describe("settled sessions", () => {
       now: NOW,
     });
     expect(result.map((session) => session.id)).toEqual(["manual", "recent", "old"]);
+  });
+});
+
+describe("OpenCode v2 only", () => {
+  test("only workspaces whose chat runs on the v2 engine can settle", () => {
+    const urls: Record<string, string | null> = {
+      v2: "http://127.0.0.1:8787/workspace/v2/opencode2",
+      v1: "http://127.0.0.1:8787/workspace/v1/opencode",
+      unprobed: null,
+    };
+    const ids = settleWorkspaceIds(
+      [{ id: "v2" }, { id: "v1" }, { id: "unprobed" }],
+      (workspace) => urls[workspace.id],
+    );
+    expect([...ids]).toEqual(["v2"]);
   });
 });
 

@@ -679,6 +679,7 @@ export type AppSidebarProps = {
   selectedSessionId: string | null;
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
+  settleWorkspaceIds?: ReadonlySet<string>;
   sessionAttentionLabelById?: Record<string, string>;
   sessionAttentionSourceById?: Record<string, "child" | "descendant">;
   connectingWorkspaceId: string | null;
@@ -791,6 +792,7 @@ export function AppSidebar(props: AppSidebarProps) {
     developerMode: props.developerMode,
     showSessionActions: props.showSessionActions,
     sessionStatusById: props.sessionStatusById,
+    settleWorkspaceIds: props.settleWorkspaceIds,
     sessionAttentionLabelById: props.sessionAttentionLabelById,
     sessionAttentionSourceById: props.sessionAttentionSourceById,
     newTaskDisabled: props.newTaskDisabled,
@@ -1251,14 +1253,15 @@ function WorkspaceSidebarGroup({
     () => partitionArchivedSessions(group.sessions),
     [group.sessions],
   );
-  const settledSessions = React.useMemo(() => filterSettledSessions(getRootSessions(activeSessions), {
+  const settleEnabled = ctx.settleWorkspaceIds?.has(workspace.id) ?? false;
+  const settledSessions = React.useMemo(() => settleEnabled ? filterSettledSessions(getRootSessions(activeSessions), {
     settledById,
     statusById: ctx.sessionStatusById,
     pinnedIds,
     unreadIds,
     autoSettleDays,
     now: settleNow,
-  }), [activeSessions, autoSettleDays, ctx.sessionStatusById, pinnedIds, settleNow, settledById, unreadIds]);
+  }) : [], [activeSessions, autoSettleDays, ctx.sessionStatusById, pinnedIds, settleEnabled, settleNow, settledById, unreadIds]);
   // Pinned sessions live in the global Pinned section and settled ones at the
   // end of the workspace, so neither appears in the group lists.
   const hiddenRootIds = React.useMemo(
@@ -2033,7 +2036,12 @@ export function SessionMenuItem({
   const isStarting = useSessionStarting(workspaceId, session.id, sessionActivityStatus);
   const isUnread = unreadIds.has(session.id) && !isSelected;
   const isArchived = isSessionArchived(session);
-  const settle = useSessionSettleState(session, sessionActivityStatus, displayTitle);
+  const settle = useSessionSettleState(
+    session,
+    sessionActivityStatus,
+    displayTitle,
+    ctx.settleWorkspaceIds?.has(workspaceId) ?? false,
+  );
   const relativeTime = formatSessionRelativeTime(session.time?.updated ?? session.time?.created);
   const shortcutDigit = ctx.sessionNumberShortcutByTarget.get(
     sessionNumberShortcutTargetKey(workspaceId, session.id),

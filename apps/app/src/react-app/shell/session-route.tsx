@@ -32,7 +32,7 @@ import { composeNativeSessionHistory } from "@/app/lib/opencode-session-native";
 import { prefetchOpeningSessionHistory, sessionHistoryIdentity, sessionHistoryRuntimeOwner, useSessionHistoryRuntimeOwners } from "@/react-app/domains/session/surface/session-history";
 import { sendSessionCommand, sessionWorkHeld } from "@/app/lib/opencode-interruption";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
-import { useSessionSettleState } from "@/react-app/domains/session/sidebar/session-settle";
+import { settleWorkspaceIds, useSessionSettleState } from "@/react-app/domains/session/sidebar/session-settle";
 import { getDisplaySessionTitle } from "@/app/lib/session-title";
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
 import { buildOpenworkWorkspaceBaseUrl } from "@/app/lib/openwork-server";
@@ -939,6 +939,11 @@ export function SessionRoute() {
     return { statusById, labelById, sourceById };
   }, [attentionLocale, remoteAttentionKey, selectWorkspaceAttention, sessionActivityByWorkspaceId, sessionWaitingByWorkspaceId, sessionChildIdsByWorkspaceId, workspaceSessionGroups]);
   const sidebarSessionStatusById = sidebarSessionAttention.statusById;
+  // Settling ships for OpenCode v2 only; v1 workspaces keep today's sidebar.
+  const settleWorkspaceIdSet = useMemo(
+    () => settleWorkspaceIds(workspaces, (workspace) => endpointForSessionWorkspace(workspace)?.opencodeBaseUrl),
+    [endpointForSessionWorkspace, workspaces],
+  );
   const selectedSidebarSession = useMemo(() => {
     if (!selectedWorkspaceId || !selectedSessionId) return null;
     return workspaceSessionGroups.find((group) => group.workspace.id === selectedWorkspaceId)
@@ -949,6 +954,7 @@ export function SessionRoute() {
     selectedSidebarSession,
     selectedSessionId ? sidebarSessionStatusById[selectedSessionId] : undefined,
     getDisplaySessionTitle(selectedSidebarSession?.title),
+    settleWorkspaceIdSet.has(selectedWorkspaceId),
   );
 
   const sidebarActiveWorkspaceId = useMemo(() => {
@@ -4035,6 +4041,7 @@ export function SessionRoute() {
         selectedSessionId,
         developerMode: false,
         sessionStatusById: sidebarSessionStatusById,
+        settleWorkspaceIds: settleWorkspaceIdSet,
         sessionAttentionLabelById: sidebarSessionAttention.labelById,
         sessionAttentionSourceById: sidebarSessionAttention.sourceById,
         connectingWorkspaceId: null,

@@ -4,6 +4,7 @@
 import { useMemo, useSyncExternalStore } from "react";
 import { CheckCheck, Undo2 } from "lucide-react";
 
+import { isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import { toast } from "@/components/ui/sonner";
 import { t } from "@/i18n";
 import {
@@ -54,6 +55,23 @@ export function isSessionSettled(input: SessionSettleInput): boolean {
   if (input.autoSettleDays <= 0 || input.unread) return false;
   const idleSince = Math.max(input.activityAt, entry?.unsettledAt ?? 0);
   return idleSince > 0 && input.now - idleSince >= input.autoSettleDays * DAY_MS;
+}
+
+/**
+ * Settling ships for OpenCode v2 only. A workspace qualifies once its server
+ * routes chat to the v2 engine; v1 and not-yet-probed workspaces keep today's
+ * sidebar.
+ */
+export function settleWorkspaceIds<T extends { id: string }>(
+  workspaces: readonly T[],
+  engineBaseUrlFor: (workspace: T) => string | null | undefined,
+): Set<string> {
+  return new Set(workspaces
+    .filter((workspace) => {
+      const baseUrl = engineBaseUrlFor(workspace);
+      return Boolean(baseUrl && isOpencodeV2BaseUrl(baseUrl));
+    })
+    .map((workspace) => workspace.id));
 }
 
 export type SettledSessionContext = Omit<SessionSettleInput, "activityAt" | "entry" | "status" | "pinned" | "unread"> & {
@@ -117,6 +135,8 @@ export function useSessionSettleState(
   session: SessionTimes | null | undefined,
   status: string | undefined,
   title: string,
+  /** False outside OpenCode v2 workspaces: no Settle, and nothing counts as settled. */
+  enabled: boolean,
 ): SessionSettleState {
   const sessionId = session?.id ?? "";
   const entry = useSessionManagementStore((state) => state.settledById[sessionId]);
@@ -126,7 +146,7 @@ export function useSessionSettleState(
   const now = useSettleNow();
   return useMemo(() => {
     // Sub-agent sessions never get their own sidebar row, so only root sessions settle.
-    if (!session || (session.time?.archived ?? 0) > 0 || session.parentID?.trim()) return NOT_SETTLEABLE;
+    if (!enabled || !session || (session.time?.archived ?? 0) > 0 || session.parentID?.trim()) return NOT_SETTLEABLE;
     const activityAt = sessionActivityAt(session);
     const settled = isSessionSettled({ activityAt, entry, status, pinned, unread, autoSettleDays, now });
     return {
@@ -137,7 +157,7 @@ export function useSessionSettleState(
         else if (canSettleSessionStatus(status)) settleSession(session.id, title, activityAt);
       },
     };
-  }, [autoSettleDays, entry, now, pinned, session, status, title, unread]);
+  }, [autoSettleDays, enabled, entry, now, pinned, session, status, title, unread]);
 }
 
 const NOT_SETTLEABLE: SessionSettleState = { settled: false, canSettle: false, toggle: () => undefined };
