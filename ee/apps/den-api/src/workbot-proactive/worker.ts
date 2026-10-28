@@ -12,6 +12,7 @@ import {
   ensureAgentInstances,
   finishAgentDelivery,
   holdsAgentLease,
+  MEMBER_CHECK_RETENTION_MS,
   pruneAgentDeliveries,
   pruneMemberChecks,
   recordMemberCheck,
@@ -34,8 +35,6 @@ const TICK_MS = 15_000
 const MAX_CONCURRENT_WAKES = 4
 const DISCOVERY_MS = 10 * 60_000
 const LEDGER_RETENTION_MS = 30 * 24 * 3_600_000
-/** Members read about this week's checks; two weeks covers "Earlier this week" on any day. */
-const CHECK_RETENTION_MS = 14 * 24 * 3_600_000
 
 export function defaultAgentWakeDeps(): AgentWakeDeps {
   const turnDeps = defaultAgentTurnDeps()
@@ -85,7 +84,7 @@ export function startWorkbotProactiveWorker(deps: AgentWakeDeps = defaultAgentWa
         lastDiscovery = now
         await discoverAgents()
         await pruneAgentDeliveries(new Date(now - LEDGER_RETENTION_MS))
-        await pruneMemberChecks(new Date(now - CHECK_RETENTION_MS))
+        await pruneMemberChecks(new Date(now - MEMBER_CHECK_RETENTION_MS))
       }
       const capacity = MAX_CONCURRENT_WAKES - running
       if (capacity <= 0) return

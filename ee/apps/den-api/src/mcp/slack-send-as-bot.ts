@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { and, lte, sql } from "@openwork-ee/den-db/drizzle"
+import { and, gte, lte, sql } from "@openwork-ee/den-db/drizzle"
 import { RateLimitTable } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
@@ -229,16 +229,73 @@ function destinationFor(body: z.infer<typeof bodySchema>): Destination | string 
   return { target: "channel", channelId: body.channelId, ...threadTs }
 }
 
+/**
+ * The rate_limit keys a member's messages leave: `day` counts what the daily window admitted (its last_request is the
+ * window's start), `same` is one row per message that went out (a hash, never the text). /admin › Features reads them
+ * back with readSlackSendAsBotWindows.
+ */
+const LIMIT_KEYS = { day: "slack-send-as-bot:day:", minute: "slack-send-as-bot:minute:", same: "slack-send-as-bot:same:" } as const
+
 function limitKeys(input: { organizationId: string; userId: string; destination: Destination; text: string }) {
   const member = `${input.organizationId}:${input.userId}`
   const place = input.destination.target === "me" ? "me" : `channel:${input.destination.channelId}`
-  const sameMessagePrefix = `slack-send-as-bot:same:${member}:`
+  const sameMessagePrefix = `${LIMIT_KEYS.same}${member}:`
   return {
-    day: `slack-send-as-bot:day:${member}`,
-    minute: `slack-send-as-bot:minute:${member}`,
+    day: `${LIMIT_KEYS.day}${member}`,
+    minute: `${LIMIT_KEYS.minute}${member}`,
     sameMessagePrefix,
     sameMessage: `${sameMessagePrefix}${createHash("sha256").update(JSON.stringify([place, input.destination.threadTs ?? "", input.text])).digest("hex")}`,
   }
+}
+
+/** One member's latest daily window: what it admitted and how many of those went out. */
+export type SlackSendAsBotWindow = {
+  organizationId: string
+  userId: string
+  start: number
+  admitted: number
+  delivered: number
+  lastDeliveredAt: number | null
+}
+
+/** `org:user` (day) or `org:user:hash` (same) after the prefix; ids never contain a colon. */
+function keyMember(key: string, prefix: string, parts: number): { organizationId: string; userId: string } | null {
+  if (!key.startsWith(prefix)) return null
+  const [organizationId, userId, ...rest] = key.slice(prefix.length).split(":")
+  return organizationId && userId && rest.length === parts - 2 ? { organizationId, userId } : null
+}
+
+/**
+ * Every member's daily window that started at or after `since`, across organizations. A window keeps every message
+ * it admitted, and each one that went out leaves a same-message row inside the window (they are only pruned once a
+ * day old), so admitted minus delivered are the sends Slack refused. Only the latest window per member exists, so
+ * callers ask for the last day. Indexed: prefix ranges on rate_limit_key; reads keys and counters only.
+ */
+export async function readSlackSendAsBotWindows(since: number): Promise<SlackSendAsBotWindow[]> {
+  const prefixed = (prefix: string) => and(sql`${RateLimitTable.key} LIKE ${`${escapeLike(prefix)}%`}`, gte(RateLimitTable.lastRequest, since))
+  const days = await db.select({ key: RateLimitTable.key, count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
+    .from(RateLimitTable).where(prefixed(LIMIT_KEYS.day))
+  const sent = await db.select({ key: RateLimitTable.key, lastRequest: RateLimitTable.lastRequest })
+    .from(RateLimitTable).where(prefixed(LIMIT_KEYS.same))
+  const deliveries = new Map<string, number[]>()
+  for (const row of sent) {
+    const member = keyMember(row.key, LIMIT_KEYS.same, 3)
+    if (!member) continue
+    const id = `${member.organizationId}:${member.userId}`
+    deliveries.set(id, [...deliveries.get(id) ?? [], row.lastRequest])
+  }
+  return days.flatMap((row) => {
+    const member = keyMember(row.key, LIMIT_KEYS.day, 2)
+    if (!member) return []
+    const inWindow = (deliveries.get(`${member.organizationId}:${member.userId}`) ?? []).filter((at) => at >= row.lastRequest && at < row.lastRequest + DAY_MS)
+    return [{
+      ...member,
+      start: row.lastRequest,
+      admitted: row.count,
+      delivered: inWindow.length,
+      lastDeliveredAt: inWindow.length ? Math.max(...inWindow) : null,
+    }]
+  })
 }
 
 export type SlackSendAsBotInput = {
