@@ -19,6 +19,7 @@ import type { AgentInstanceRow, AgentSettle } from "../src/workbot-proactive/rep
 import type { AgentTurnResult } from "../src/workbot-proactive/turn.js"
 import type { AgentWakeDeps } from "../src/workbot-proactive/wake.js"
 import type { AgentCheckRecord } from "../src/workbot-proactive/checks.js"
+import type { MemberConnection } from "../src/workbot-proactive/sources.js"
 
 // No database, runner, Google or Connect is contacted: every boundary is injected or faked below.
 process.env.DATABASE_URL ??= "mysql://test:test@127.0.0.1:3306/workbot_proactive_unit_test"
@@ -34,6 +35,8 @@ const { SlackApiError } = await import("../src/slack-assistant/protocol.js")
 const { createHeadlessRunnerClient } = await import("../src/headless-runner/client.js")
 const { renderAgentTemplate } = await import("../src/workbot-proactive/template.js")
 const policy = await import("../src/workbot-proactive/policy.js")
+const agentRead = await import("../src/mcp/agent-read-sources.js")
+const { resolveMemberSources } = await import("../src/workbot-proactive/sources.js")
 const preferences = await import("../src/workbot-proactive/preferences.js")
 const { checkHeadline, describeAgentCheck, memberAgentCheck } = await import("../src/workbot-proactive/checks.js")
 
@@ -86,7 +89,12 @@ function agentRow(overrides: Partial<AgentInstanceRow> = {}): AgentInstanceRow {
   }
 }
 
-const message = (text: string, items: { responsibility: string; ref: string }[]) => JSON.stringify({ message: text, items })
+const message = (text: string, items: ({ responsibility: string; ref: string } | { source: string; id: string; preset?: string })[]) => JSON.stringify({ message: text, items })
+
+/** The member's connections: Google Workspace and Slack, both connected, unless a test says otherwise. */
+const GOOGLE: MemberConnection = { id: "google-workspace", name: "Google Workspace", url: "https://google.com", native: "google-workspace", state: "connected" }
+const SLACK: MemberConnection = { id: "emc_01k8z5wq0s0000000000000001", name: "Slack", url: "https://mcp.slack.com/mcp", native: null, state: "connected" }
+const NOTES: MemberConnection = { id: "emc_01k8z5wq0s0000000000000002", name: "Meeting notes", url: "https://mcp.granola.ai/mcp", native: null, state: "connected" }
 
 type HarnessState = {
   records: AgentCheckRecord[]
@@ -97,13 +105,13 @@ type HarnessState = {
   row: AgentInstanceRow
   ledger: Map<string, string>
   delivered: string[]
-  turns: { prompt: string; sessionId: string; instructions: string }[]
+  turns: { prompt: string; sessionId: string; instructions: string; scopes: readonly string[] }[]
   calendarReads: number
   settles: AgentSettle[]
 }
 
 /** An in-memory agent, ledger and destination; `events`, `clock` and the reply change between runs. */
-function harness(input: { settings?: Partial<WorkbotProactiveSettings>; row?: Partial<AgentInstanceRow>; replies?: (string | AgentTurnResult)[]; sentToday?: number; allowed?: boolean[]; blocked?: AgentDestinationBlock; library?: boolean; google?: "ok" | "needs_connection"; sendFails?: boolean }) {
+function harness(input: { settings?: Partial<WorkbotProactiveSettings>; row?: Partial<AgentInstanceRow>; replies?: (string | AgentTurnResult)[]; sentToday?: number; allowed?: boolean[]; blocked?: AgentDestinationBlock; library?: boolean; google?: "ok" | "needs_connection"; sendFails?: boolean; connections?: MemberConnection[] }) {
   const state: HarnessState = { records: [], checks: [], destinations: [], clock: NOW, events: [meeting()], row: agentRow(input.row), ledger: new Map(), delivered: [], turns: [], calendarReads: 0, settles: [] }
   const replies = [...(input.replies ?? ["NO_REPLY"])]
   let allowedCalls = 0
@@ -123,7 +131,7 @@ function harness(input: { settings?: Partial<WorkbotProactiveSettings>; row?: Pa
     },
     model: async () => "openai/gpt-6-luna",
     turn: async (call) => {
-      state.turns.push({ prompt: call.prompt, sessionId: call.sessionId, instructions: call.instructions })
+      state.turns.push({ prompt: call.prompt, sessionId: call.sessionId, instructions: call.instructions, scopes: call.scopes })
       const reply = replies.shift() ?? "NO_REPLY"
       return typeof reply === "string" ? parseAgentReply(reply) : reply
     },
@@ -154,6 +162,8 @@ function harness(input: { settings?: Partial<WorkbotProactiveSettings>; row?: Pa
       return { ok: true, message: { channelId: "D0DM", messageTs: "1700000000.0001", permalink: "https://example.slack.com/archives/D0DM/p17000000000001" } }
     },
     library: async () => input.library ?? false,
+    connections: async () => input.connections ?? [GOOGLE, SLACK],
+    connectLink: (connectionId) => `https://den.example/dashboard/library/connectors/${connectionId}`,
     recordCheck: async (record) => {
       const index = state.records.findIndex((entry) => entry.key === record.key)
       if (index >= 0) state.records[index] = record
@@ -172,12 +182,12 @@ describe("waking a member's agent", () => {
     assert.equal(h.state.turns[0]?.sessionId, agentSessionId(organizationId, memberId))
     assert.match(h.state.turns[0]?.sessionId ?? "", /^hs_agent_[a-f0-9]{40}$/)
     assert.ok(h.state.turns[0]?.prompt.startsWith(`${AGENT_WAKE_MARKER} Scheduled check: the morning pass.`), "the first pass of the day is the morning pass")
-    assert.match(h.state.turns[0]?.prompt ?? "", /Gmail: never/)
+    assert.match(h.state.turns[0]?.prompt ?? "", /- email: Email through Gmail: their inbox\. never read yet\./)
     assert.deepEqual(h.state.delivered, [])
     const saved = parseAgentState(h.state.row.state)
     assert.equal(saved.lastPassAt, NOW)
     assert.equal(saved.nextPassAt, NOW + 3 * 3_600_000, "the next check is in about three hours")
-    assert.equal(saved.lastLook.gmail, NOW)
+    assert.deepEqual(saved.lastLook, { calendar: NOW, email: NOW, chat: NOW }, "every source it read, by id")
     assert.equal(h.state.row.nextWakeAt.getTime(), NOW + 5 * 60_000, "the calendar is looked at again in five minutes")
   })
 
@@ -200,7 +210,7 @@ describe("waking a member's agent", () => {
     const outcome = await h.run()
     assert.deepEqual(outcome, { status: "ran", reasons: ["calendar"], reply: "message", delivered: "sent" })
     assert.match(h.state.turns[1]?.prompt ?? "", /Woken early by the calendar/)
-    assert.match(h.state.turns[1]?.prompt ?? "", /A meeting \(calendar event evt1\) moved to tomorrow at 3:00 PM .*ref evt1:2026-10-20T17:47:00Z/)
+    assert.match(h.state.turns[1]?.prompt ?? "", /A meeting \(calendar event evt1\) moved to tomorrow at 3:00 PM .*\(source calendar, id evt1:2026-10-20T17:47:00Z, preset calendar_changes\)/)
     assert.doesNotMatch(h.state.turns[1]?.prompt ?? "", /Quarterly review|Northwind/, "invite text never reaches the prompt")
     h.state.clock = NOW + 10 * 60_000
     assert.deepEqual(await h.run(), { status: "skipped", reason: "nothing_due" }, "one event wakes it once")
@@ -227,7 +237,7 @@ describe("waking a member's agent", () => {
     const h = harness({ sentToday: 3, replies: [message("Two threads are waiting on you.", [{ responsibility: "waiting_on_you", ref: "t1" }])] })
     assert.deepEqual(await h.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "daily_limit" })
     assert.deepEqual(h.state.delivered, [])
-    assert.equal(h.state.ledger.get("waiting_on_you:t1"), "capped")
+    assert.equal(h.state.ledger.get("email:t1"), "capped")
   })
 
   test("a muted responsibility is neither asked about nor delivered", async () => {
@@ -529,13 +539,12 @@ describe("My agent: every check is recorded for the member (workbotAgentLibrary)
     assert.deepEqual(only(snoozed), { outcome: "waited", reason: "snoozed", summary: "Waited: snoozed.", kind: "scheduled", responsibilities: [] })
   })
 
-  test("couldn't read Gmail, couldn't reach Slack, couldn't send, couldn't run: failed, with what to do", async () => {
+  test("couldn't read Google, couldn't reach Slack, couldn't send, couldn't run: failed, with what to do", async () => {
     const google = harness({ library: true, google: "needs_connection" })
     await google.run()
-    google.state.clock = NOW + 3_600_000
-    await google.run()
-    assert.deepEqual(only(google), { outcome: "failed", reason: "google_disconnected", summary: "Couldn't read Gmail: reconnect Google.", kind: "scheduled", responsibilities: [] })
-    assert.equal(google.state.records[0]?.at, NOW + 3_600_000, "the same cause again is one record whose time moves")
+    const notice = google.state.records.find((record) => record.reason === "source_disconnected")
+    assert.deepEqual([notice?.outcome, notice?.summary, notice?.sources.map((source) => source.name)], ["failed", "Couldn't read Google Calendar and Gmail: connect your account again.", ["Google Calendar", "Gmail"]])
+    assert.equal(google.state.records.find((record) => record.key.startsWith("ran:"))?.reason, "nothing_new", "it still read Slack")
 
     const unlinked = harness({ library: true, blocked: "member_not_linked" })
     await unlinked.run()
@@ -566,9 +575,9 @@ describe("My agent: every check is recorded for the member (workbotAgentLibrary)
   })
 
   test("a stored record reads back with a headline, a Slack link and what to do", () => {
-    const view = memberAgentCheck({ id: "c1", checkedAt: new Date(NOW), kind: "scheduled", outcome: "failed", reason: "google_disconnected", summary: "Couldn't read Gmail: reconnect Google.", responsibilities: ["waiting_on_you", "send_email"], message: null })
-    assert.deepEqual(view, { id: "c1", at: new Date(NOW).toISOString(), kind: "scheduled", outcome: "failed", reason: "google_disconnected", headline: "Couldn't read Gmail", summary: "Couldn't read Gmail: reconnect Google.", responsibilities: ["waiting_on_you"], slackUrl: null, fix: "reconnect_google" })
-    assert.equal(memberAgentCheck({ id: "c2", checkedAt: new Date(NOW), kind: "scheduled", outcome: "exploded", reason: "nothing_new", summary: "x", responsibilities: null, message: null }), null, "a row this version can't read is left out")
+    const view = memberAgentCheck({ id: "c1", checkedAt: new Date(NOW), kind: "scheduled", outcome: "failed", reason: "google_disconnected", summary: "Couldn't read Gmail: reconnect Google.", responsibilities: ["waiting_on_you", "send_email"], sources: null, message: null })
+    assert.deepEqual(view, { id: "c1", at: new Date(NOW).toISOString(), kind: "scheduled", outcome: "failed", reason: "google_disconnected", headline: "Couldn't read Gmail", summary: "Couldn't read Gmail: reconnect Google.", responsibilities: ["waiting_on_you"], sources: [], slackUrl: null, fix: "reconnect_google" })
+    assert.equal(memberAgentCheck({ id: "c2", checkedAt: new Date(NOW), kind: "scheduled", outcome: "exploded", reason: "nothing_new", summary: "x", responsibilities: null, sources: null, message: null }), null, "a row this version can't read is left out")
     assert.equal(checkHeadline("Sent you a message about calendar changes."), "Sent you a message about calendar changes")
     const limits = { startHour: 8, endHour: 19, dailyCap: 3, quietWindow: null }
     assert.equal(describeAgentCheck({ reason: "sent", responsibilities: ["meeting_prep", "calendar_changes", "waiting_on_you"], limits }).summary, "Sent you a message about meeting prep, calendar changes and waiting on you.")
@@ -655,5 +664,174 @@ describe("My agent: the member's words, narrower limits and undo", () => {
     assert.deepEqual(twice.lines, [])
     assert.equal(preferences.savedReply({ lines: [], undid: false, undoable: false }, "L"), "Nothing changed. My bot: L")
     assert.deepEqual(preferences.choiceLines({ on: false, snooze: "tomorrow" }), ["Turned off", "Snoozed until your next working morning"])
+  })
+})
+
+describe("sources, not categories", () => {
+  const SLACK_LINK = "https://example.slack.com/archives/C0SALES/p1792500000000100"
+  const withChoices = (sources: Record<string, { on?: boolean; instruction?: string }>) => JSON.stringify({ v: 1, words: { always: "", never: "", when: "", how: "" }, sources, log: [] })
+  const scopeFor = (id: string) => `openwork:agent-connection:${id}`
+
+  test("a Slack-only ask is delivered once, with its Slack link kept, and never again", async () => {
+    const reply = message(`Worth catching: a pricing question came in on Slack before your 2 PM call. I haven't checked the email thread yet. <${SLACK_LINK}|Slack message>`, [{ source: "chat", id: SLACK_LINK }])
+    const h = harness({ replies: [reply, reply] })
+    assert.deepEqual(await h.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "sent" })
+    assert.match(h.state.delivered[0] ?? "", new RegExp(`<${SLACK_LINK.replaceAll(".", "\\.")}\\|Slack message>`), "a link to the Slack message it read stays")
+    assert.equal(h.state.ledger.get(`chat:${SLACK_LINK}`), "sent")
+    h.state.clock = NOW + 3 * 3_600_000
+    assert.deepEqual(await h.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "nothing_new" })
+    assert.equal(h.state.delivered.length, 1)
+    assert.ok(h.state.turns[0]?.scopes.includes(scopeFor(SLACK.id)) && h.state.turns[0]?.scopes.includes("openwork:agent-source:chat"), "the turn's token may read Slack")
+  })
+
+  test("an item naming its source the way people do (\"slack\") is the same source; one from a source it didn't read is dropped", async () => {
+    const h = harness({ replies: [message("Worth catching: x.", [{ source: "slack", id: "C1:1" }, { source: "emc_unknown", id: "X-1" }])] })
+    await h.run()
+    assert.deepEqual([...h.state.ledger.keys()], ["chat:C1:1"])
+  })
+
+  test("the member's source switches and instructions change the allowlist and the prompt; the admin's \"not allowed\" wins", async () => {
+    const settings = { sources: { calendar: "everyone" as const, email: "everyone" as const, chat: "members" as const, connections: {} } }
+    const h = harness({
+      library: true,
+      settings,
+      connections: [GOOGLE, SLACK, NOTES],
+      row: { preferences: withChoices({ chat: { on: false }, [NOTES.id]: { on: true, instruction: "Use my meeting notes for context and action items." } }) },
+      replies: [message("Worth catching: x.", [{ source: "chat", id: "C1:2" }])],
+    })
+    assert.deepEqual(await h.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "nothing_new" }, "chat is off for them, so its item is dropped")
+    const turn = h.state.turns[0]
+    assert.ok(turn)
+    assert.ok(!turn.scopes.includes(scopeFor(SLACK.id)) && !turn.scopes.includes("openwork:agent-source:chat"), "no Slack on the token")
+    assert.ok(turn.scopes.includes(scopeFor(NOTES.id)), "the connection they turned on is")
+    assert.doesNotMatch(turn.prompt, /- chat:/)
+    assert.match(turn.prompt, new RegExp(`- ${NOTES.id}: Meeting notes\\. never read yet\\. .*The person's instruction for it, in their own words: """Use my meeting notes for context and action items\\."""`))
+
+    const blocked = harness({ library: true, connections: [GOOGLE, SLACK, NOTES], settings: { sources: { calendar: "everyone", email: "everyone", chat: "everyone", connections: { [NOTES.id]: "off" } } }, row: { preferences: withChoices({ [NOTES.id]: { on: true } }) } })
+    await blocked.run()
+    assert.ok(!blocked.state.turns[0]?.scopes.includes(scopeFor(NOTES.id)), "not allowed by the admin, whatever the member chose")
+    const off = harness({ library: false, connections: [GOOGLE, SLACK, NOTES], row: { preferences: withChoices({ [NOTES.id]: { on: true } }) } })
+    await off.run()
+    assert.ok(!off.state.turns[0]?.scopes.includes(scopeFor(NOTES.id)), "without My agent, other connections stay off")
+  })
+
+  test("mutes still apply: a muted preset's item is dropped, anything else still goes out", async () => {
+    const muted = { overrides: { muted: ["waiting_on_you"] } }
+    const presetOnly = harness({ row: muted, replies: [message("Worth catching: x.", [{ source: "email", id: "t1", preset: "waiting_on_you" }])] })
+    assert.deepEqual(await presetOnly.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "nothing_new" })
+    const other = harness({ row: muted, replies: [message("Quick check: a security notice.", [{ source: "email", id: "t2" }])] })
+    await other.run()
+    assert.equal(other.state.delivered.length, 1)
+  })
+
+  test("a source that can't be read gets one message with the action that fixes it, is paused, and is told again only after it worked", async () => {
+    const broken: MemberConnection = { ...GOOGLE, state: "reconnect" }
+    const h = harness({ library: true, connections: [broken, SLACK] })
+    await h.run()
+    assert.deepEqual(h.state.delivered, ["Quick check: I can't read your Google Calendar and Gmail, so I've paused checking them and kept reading the rest. <https://den.example/dashboard/library/connectors/google-workspace|Reconnect Google Workspace>"])
+    assert.ok(!h.state.turns[0]?.scopes.includes(scopeFor(GOOGLE.id)), "the paused source isn't on the token")
+    assert.match(h.state.turns[0]?.prompt ?? "", /Turned on but not readable now, so don't try: Calendar \(needs reconnecting\), Email \(needs reconnecting\)\./)
+    h.state.clock = NOW + 3 * 3_600_000
+    await h.run()
+    assert.equal(h.state.delivered.length, 1, "not repeated every run")
+    const fixed = harness({ library: true, row: { state: JSON.stringify({ ...parseAgentState(h.state.row.state), nextPassAt: null }) } })
+    await fixed.run()
+    assert.deepEqual(parseAgentState(fixed.state.row.state).notices, {}, "working again: forgotten, so a later failure is told again")
+  })
+
+  test("with nothing readable, no turn: one message, a record, and checks pause", async () => {
+    const h = harness({ library: true, connections: [{ ...GOOGLE, state: "needs_connection" }] })
+    assert.deepEqual(await h.run(), { status: "skipped", reason: "no_sources" })
+    assert.equal(h.state.turns.length, 0)
+    assert.match(h.state.delivered[0] ?? "", /so I've paused your checks until it's fixed\. <https:\/\/den\.example\/dashboard\/library\/connectors\/google-workspace\|Connect Google Workspace>$/)
+    assert.equal(h.state.records[0]?.reason, "source_disconnected")
+    h.state.clock = NOW + 60 * 60_000
+    await h.run()
+    assert.equal(h.state.delivered.length, 1)
+  })
+
+  test("the calendar turned off by the admin is neither read by Den nor offered to the agent", async () => {
+    const h = harness({ settings: { sources: { calendar: "off", email: "everyone", chat: "everyone", connections: {} } } })
+    await h.run()
+    assert.equal(h.state.calendarReads, 0)
+    assert.doesNotMatch(h.state.turns[0]?.prompt ?? "", /- calendar:/)
+    assert.ok(!h.state.turns[0]?.scopes.includes("openwork:agent-source:calendar"))
+  })
+})
+
+describe("Connect's read allowlist for an agent's token", () => {
+  test("only Den adds it; a plain read token keeps its rules", () => {
+    assert.equal(agentRead.agentReadAllowlist(new Set(["mcp:read"])), null)
+    const allowlist = agentRead.agentReadAllowlist(new Set(["mcp:read", ...agentRead.agentReadScopes({ kinds: ["email", "chat"], connectionIds: ["google-workspace", SLACK.id] })]))
+    assert.deepEqual(allowlist && [[...allowlist.kinds], [...allowlist.connectionIds]], [["email", "chat"], ["google-workspace", SLACK.id]])
+  })
+
+  test("native reads: GETs of a core source that is on, through its connection; nothing else", () => {
+    const allowlist = { kinds: new Set(["email" as const]), connectionIds: new Set(["google-workspace"]) }
+    const get = (path: string) => ({ method: "GET", path })
+    assert.equal(agentRead.agentMayUseNative(allowlist, "google-workspace", get("/v1/capabilities/google-workspace/gmail-messages")), true)
+    assert.equal(agentRead.agentMayUseNative(allowlist, "google-workspace", get("/v1/capabilities/google-workspace/calendar-events")), false, "calendar is off")
+    assert.equal(agentRead.agentMayUseNative(allowlist, "google-workspace", get("/v1/capabilities/google-workspace/drive-files")), false, "files are not a source")
+    assert.equal(agentRead.agentMayUseNative(allowlist, "google-workspace", { method: "POST", path: "/v1/capabilities/google-workspace/gmail-drafts" }), false)
+    assert.equal(agentRead.agentMayUseNative(allowlist, "other-google", get("/v1/capabilities/google-workspace/gmail-messages")), false)
+    assert.equal(agentRead.nativeSourceKind("/v1/capabilities/microsoft-365/teams-chats/:chatId/messages"), "chat")
+  })
+
+  test("a connection's tools: its reviewed reads, or a tool its provider marks read-only whose name reads; never one that writes", () => {
+    const allowlist = { kinds: new Set(["chat" as const]), connectionIds: new Set([SLACK.id, NOTES.id, "emc_crm"]) }
+    const slack = { id: SLACK.id, url: SLACK.url }
+    assert.equal(agentRead.agentMayUseExternalTool(allowlist, slack, { name: "slack_read_thread" }), true, "reviewed, without hints")
+    assert.equal(agentRead.agentMayUseExternalTool(allowlist, slack, { name: "slack_send_message", annotations: { readOnlyHint: true } }), false, "a write is never a read, whatever the hint says")
+    assert.equal(agentRead.agentMayUseExternalTool(allowlist, slack, { name: "slack_add_reaction" }), false)
+    const crm = { id: "emc_crm", url: "https://mcp.crm.example/mcp" }
+    assert.equal(agentRead.agentMayUseExternalTool(allowlist, crm, { name: "search_contacts", annotations: { readOnlyHint: true } }), true)
+    assert.equal(agentRead.agentMayUseExternalTool(allowlist, crm, { name: "search_contacts" }), false, "an unknown service's tool needs its read-only hint")
+    assert.equal(agentRead.agentMayUseExternalTool(allowlist, crm, { name: "list_contacts", annotations: { readOnlyHint: true, destructiveHint: true } }), false)
+    assert.equal(agentRead.agentMayUseExternalTool(allowlist, crm, { name: "updateContact", annotations: { readOnlyHint: true } }), false)
+    assert.equal(agentRead.agentMayUseExternalTool(allowlist, { id: "emc_other", url: crm.url }, { name: "search_contacts", annotations: { readOnlyHint: true } }), false, "not one of its sources")
+  })
+})
+
+describe("a member's sources, in chat or on the page", () => {
+  const admin = { ...settingsOn }
+  let next = 0
+  const newId = () => `chg_s${++next}`
+  const connections = [GOOGLE, SLACK, NOTES, { id: "emc_01k8z5wq0s0000000000000003", name: "Issue tracker", url: "https://mcp.linear.app/mcp", native: null, state: "needs_connection" as const }]
+  const resolved = (policy = admin.sources, stored = preferences.emptyStoredPreferences()) => resolveMemberSources({ connections, policy, choices: stored.sources, lastLook: {} })
+  const change = (request: Parameters<typeof preferences.applyMemberAgentChange>[0]["request"], stored = preferences.emptyStoredPreferences(), policy = admin.sources) =>
+    preferences.applyMemberAgentChange({ request, overrides: null, stored, settings: { ...admin, sources: policy }, source: "chat", now: NOW, newId, sources: resolved(policy, stored) })
+
+  test("\"also look at my meeting notes for action items, and skip the issue tracker\": saved by name, one line per source, Connect where needed", () => {
+    const saved = change({ sources: [{ source: "Meeting notes", on: true, instruction: "Use for meeting context and action items after meetings." }, { source: "issue tracker", on: false }, { source: "Wiki", on: true }] })
+    assert.ok(saved.ok)
+    assert.deepEqual(saved.lines, ["Meeting notes on, for “Use for meeting context and action items after meetings.”", "Issue tracker off"])
+    assert.deepEqual(saved.connect, [{ name: "Wiki", connectionId: null }], "a source nobody has connected is one Connect line")
+    assert.deepEqual(saved.stored.sources[NOTES.id], { on: true, instruction: "Use for meeting context and action items after meetings.", changedFrom: "chat", changedAt: NOW })
+    assert.equal(preferences.savedReply({ lines: saved.lines, undid: false, undoable: true, connect: [{ name: "Wiki", href: "https://den.example/dashboard/library/connectors/new" }] }, "https://den.example/dashboard/my-bot"),
+      "Saved:\n- Meeting notes on, for “Use for meeting context and action items after meetings.”\n- Issue tracker off\nConnect Wiki: https://den.example/dashboard/library/connectors/new\nReply \"undo\" to revert. My bot: https://den.example/dashboard/my-bot")
+    const tracker = change({ sources: [{ source: "Issue tracker", on: true }] })
+    assert.ok(tracker.ok)
+    assert.deepEqual(tracker.connect, [{ name: "Issue tracker", connectionId: "emc_01k8z5wq0s0000000000000003" }], "on, but their account isn't connected yet")
+  })
+
+  test("the admin's policy is enforced on the server: no widening, no turning off what is on for everyone", () => {
+    assert.deepEqual(change({ sources: [{ source: "Meeting notes", on: true }] }, preferences.emptyStoredPreferences(), { ...admin.sources, connections: { [NOTES.id]: "off" } }),
+      { ok: false, status: 400, error: "source_not_allowed", message: "Meeting notes isn't allowed for agents in your organization. An admin can change it in Manage › Workbot." })
+    assert.deepEqual(change({ sources: [{ source: "Slack", on: false }] }),
+      { ok: false, status: 400, error: "source_locked", message: "Team chat is on for everyone in your organization. An admin can change it in Manage › Workbot." })
+    const steer = change({ sources: [{ source: "email", instruction: "Skip newsletters." }] })
+    assert.ok(steer.ok, "an instruction on a source that is on for everyone is fine")
+    assert.deepEqual(steer.lines, ["Email: “Skip newsletters.”"])
+  })
+
+  test("undo reverts a source change like any other", () => {
+    const saved = change({ sources: [{ source: "Meeting notes", on: true }] })
+    assert.ok(saved.ok)
+    const undone = change({ undo: "last" }, saved.stored)
+    assert.ok(undone.ok && undone.undid)
+    assert.equal(undone.stored.sources[NOTES.id]?.on, undefined, "back to the default")
+    assert.deepEqual(undone.lines, ["Meeting notes: back to your organization's default"])
+    const changes = preferences.memberAgentChanges(saved.stored, admin, new Map([[NOTES.id, "Meeting notes"]]))
+    assert.deepEqual(changes.map((entry) => [entry.field, entry.sourceId, entry.summary]), [["source", NOTES.id, "Meeting notes on"]])
   })
 })

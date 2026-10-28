@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import type { AgentMemberCheckMessage } from "@openwork-ee/den-db/schema"
+import type { AgentMemberCheckMessage, AgentMemberCheckSource } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import {
   AGENT_CHECK_KINDS,
@@ -34,6 +34,7 @@ const OUTCOME_OF: Record<AgentCheckReason, AgentCheckOutcome> = {
   quiet_window: "waited",
   snoozed: "waited",
   google_disconnected: "failed",
+  source_disconnected: "failed",
   slack_app_not_installed: "failed",
   member_not_linked: "failed",
   no_destination: "failed",
@@ -43,6 +44,7 @@ const OUTCOME_OF: Record<AgentCheckReason, AgentCheckOutcome> = {
 
 const FIX_OF: Partial<Record<AgentCheckReason, AgentCheckFix>> = {
   google_disconnected: "reconnect_google",
+  source_disconnected: "reconnect",
   member_not_linked: "link_slack",
   slack_app_not_installed: "ask_admin",
   no_destination: "ask_admin",
@@ -55,17 +57,29 @@ function about(responsibilities: readonly AgentResponsibility[]) {
   return `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`
 }
 
+/** "Slack", "Gmail and Slack". */
+function names(sources: readonly AgentMemberCheckSource[]) {
+  const labels = [...new Set(sources.map((source) => source.name))]
+  if (labels.length <= 1) return labels[0] ?? ""
+  return `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`
+}
+
 export type AgentCheckDescription = { outcome: AgentCheckOutcome; summary: string }
 
 export function describeAgentCheck(input: {
   reason: AgentCheckReason
   responsibilities?: readonly AgentResponsibility[]
+  /** What a message drew on, or what couldn't be read (with the connection to fix). */
+  sources?: readonly AgentMemberCheckSource[]
   limits: { startHour: number; endHour: number; dailyCap: number; quietWindow: AgentHourWindow | null }
 }): AgentCheckDescription {
   const topic = about(input.responsibilities ?? [])
-  const held = topic ? ` Held a message about ${topic}.` : ""
+  const from = names(input.sources ?? [])
+  const subject = topic ? ` about ${topic}` : from ? ` from ${from}` : ""
+  const held = subject ? ` Held a message${subject}.` : ""
+  const unread = input.reason === "source_disconnected" ? from || "a source" : ""
   const summaries: Record<AgentCheckReason, string> = {
-    sent: topic ? `Sent you a message about ${topic}.` : "Sent you a message.",
+    sent: `Sent you a message${subject}.`,
     nothing_new: "Stayed quiet: nothing new.",
     already_told: "Stayed quiet: nothing you hadn't heard.",
     unreadable_reply: "Stayed quiet: nothing it could send.",
@@ -75,6 +89,7 @@ export function describeAgentCheck(input: {
     quiet_window: `Waited: only urgent messages ${input.limits.quietWindow ? hoursLabel(input.limits.quietWindow) : "now"}.${held}`,
     snoozed: "Waited: snoozed.",
     google_disconnected: "Couldn't read Gmail: reconnect Google.",
+    source_disconnected: `Couldn't read ${unread}: connect your account again.`,
     slack_app_not_installed: "Couldn't reach you: the Workbot Slack app isn't installed. Ask your admin.",
     member_not_linked: "Couldn't reach you: link your Slack account to Workbot.",
     no_destination: "Couldn't reach you: your admin hasn't chosen where messages go.",
@@ -103,6 +118,7 @@ export type MemberCheckRow = {
   reason: string
   summary: string
   responsibilities: string[] | null
+  sources: AgentMemberCheckSource[] | null
   message: AgentMemberCheckMessage | null
 }
 
@@ -128,6 +144,7 @@ export function memberAgentCheck(row: MemberCheckRow): MemberAgentCheck | null {
       const parsed = agentResponsibilitySchema.safeParse(value)
       return parsed.success ? [parsed.data] : []
     }),
+    sources: row.sources ?? [],
     slackUrl: row.message?.permalink ?? null,
     fix: FIX_OF[reason] ?? null,
   }
@@ -144,5 +161,6 @@ export type AgentCheckRecord = {
   outcome: AgentCheckOutcome
   summary: string
   responsibilities: AgentResponsibility[]
+  sources: AgentMemberCheckSource[]
   message: AgentMemberCheckMessage | null
 }

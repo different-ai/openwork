@@ -118,7 +118,7 @@ test("each member reads only their own checks: today's, the last one, and the we
   const organizationId = normalizeDenTypeId("organization", space.orgId)
   const memberId = normalizeDenTypeId("member", space.member.memberId)
   const now = Date.now()
-  const base: Pick<AgentCheckRecord, "organizationId" | "memberId" | "kind" | "responsibilities" | "message"> = { organizationId, memberId, kind: "scheduled", responsibilities: [], message: null }
+  const base: Pick<AgentCheckRecord, "organizationId" | "memberId" | "kind" | "responsibilities" | "sources" | "message"> = { organizationId, memberId, kind: "scheduled", responsibilities: [], sources: [], message: null }
   await repository.recordMemberCheck({ ...base, key: "old", at: now - 20 * 86_400_000, reason: "nothing_new", outcome: "quiet", summary: "Stayed quiet: nothing new." })
   await repository.recordMemberCheck({ ...base, key: "earlier", at: now - 3 * 86_400_000, reason: "google_disconnected", outcome: "failed", summary: "Couldn't read Gmail: reconnect Google." })
   await repository.recordMemberCheck({ ...base, key: "today", at: now - 1_000, reason: "sent", outcome: "sent", summary: "Sent you a message about waiting on you.", responsibilities: ["waiting_on_you"], message: { channelId: "D0DM", messageTs: "1.1", permalink: "https://example.slack.com/archives/D0DM/p11" } })

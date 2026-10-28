@@ -37,3 +37,13 @@ export function connectionRemovalLink(connectionId: string) {
 export function myAgentLink() {
   return new URL("/dashboard/my-bot", env.betterAuthUrl).toString()
 }
+
+/** A connection in the member's Library, where they connect or reconnect their own account. */
+export function libraryConnectorLink(connectionId: string) {
+  return new URL(`/dashboard/library/connectors/${encodeURIComponent(connectionId)}`, env.betterAuthUrl).toString()
+}
+
+/** The Library's connector catalog, where a member adds a connection their organization doesn't have yet. */
+export function libraryCatalogLink() {
+  return new URL("/dashboard/library/connectors/new", env.betterAuthUrl).toString()
+}

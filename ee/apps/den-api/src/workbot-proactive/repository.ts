@@ -140,7 +140,8 @@ export async function reserveAgentDelivery(input: {
     id,
     organizationId: input.organizationId,
     memberId: input.memberId,
-    responsibility: input.item.responsibility,
+    // The preset it fell under, or "anything_else" (a column name kept from before sources).
+    responsibility: input.item.preset ?? "anything_else",
     outcome: input.outcome ?? "pending",
     createdAt: input.now ?? new Date(),
   })
@@ -230,6 +231,7 @@ export async function recordMemberCheck(record: AgentCheckRecord) {
       reason: record.reason,
       summary: record.summary,
       responsibilities: record.responsibilities,
+      sources: record.sources,
       message: record.message,
     })
     .onDuplicateKeyUpdate({ set: { checkedAt, summary: record.summary } })
@@ -243,6 +245,7 @@ const memberCheckColumns = {
   reason: MemberCheck.reason,
   summary: MemberCheck.summary,
   responsibilities: MemberCheck.responsibilities,
+  sources: MemberCheck.sources,
   message: MemberCheck.message,
 }
 
