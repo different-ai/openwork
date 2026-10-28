@@ -7,6 +7,7 @@ keywords: ["slack", "@openwork", "slack bot not showing", "slack autocomplete", 
 
 | Symptom | Check |
 | --- | --- |
+| Connecting your account fails with “The MCP server refused to start a session (HTTP 400)” | Check that **Agents › MCP** is enabled in the same Slack app whose client ID is saved in OpenWork. This is separate from enabling the assistant bot. See [Slack MCP connection troubleshooting](/cloud/share-with-your-team/shared-mcp-connections#connection-failed-http-400). |
 | Setup is unavailable | Private-alpha capability, runtime access, and Individual accounts mode. See [step 1](/slack/set-up-the-slack-app#1-check-alpha-access-and-the-existing-connector). |
 | Bot missing from mention autocomplete | Bot installation completed and the bot is invited into that channel with `/invite @openwork`. |
 | Slack events URL unverified | Public HTTPS URL, correct connector ID, saved signing secret, and Slack's **Retry** then **Save Changes**. |
