@@ -183,6 +183,9 @@ const EnvSchema = z.object({
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
   LIFECYCLE_EMAILS_ENABLED: z.string().optional(),
   LIFECYCLE_EMAILS_INTERVAL_MS: z.string().optional(),
+  MCP_REGISTRATION_PROBE_ENABLED: z.string().optional(),
+  MCP_REGISTRATION_PROBE_TRY_REGISTRATION: z.string().optional(),
+  MCP_REGISTRATION_PROBE_INTERVAL_MS: z.string().optional(),
   DAYTONA_API_URL: z.string().optional(),
   DAYTONA_API_KEY: z.string().optional(),
   DAYTONA_TARGET: z.string().optional(),
@@ -755,6 +758,14 @@ export const env = {
   lifecycleEmails: {
     enabled: parsed.LIFECYCLE_EMAILS_ENABLED?.trim() === "1",
     intervalMs: Number(parsed.LIFECYCLE_EMAILS_INTERVAL_MS ?? "900000"),
+  },
+  // Scheduled check of which preset MCP providers let OpenWork register (mcp-registration/probe.ts). Off unless
+  // MCP_REGISTRATION_PROBE_ENABLED=1; registering a test client with providers is a further opt-in, so self-hosted
+  // installs never create registrations with third parties on their own.
+  mcpRegistrationProbe: {
+    enabled: parsed.MCP_REGISTRATION_PROBE_ENABLED?.trim() === "1",
+    tryRegistration: parsed.MCP_REGISTRATION_PROBE_TRY_REGISTRATION?.trim() === "1",
+    intervalMs: Math.max(3_600_000, Number(parsed.MCP_REGISTRATION_PROBE_INTERVAL_MS ?? "86400000") || 86_400_000),
   },
   requireEmailVerification,
   passwordBreachScreeningEnabled,

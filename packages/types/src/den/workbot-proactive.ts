@@ -2,7 +2,8 @@ import { z } from "zod"
 
 /**
  * "Your agent" (behind the `workbotProactive` feature): one persistent background agent per member that reads their
- * Gmail and Google Calendar on a schedule and messages them only when something needs them.
+ * sources (calendar, email, team chat and any other connection they turn on) on a schedule and messages them only
+ * when something needs them.
  *
  * Three kinds of settings, kept apart on purpose:
  * - Organization policy (Den › Manage › Workbot), in the organization's metadata under `workbot.proactive`: on/off,
@@ -17,12 +18,15 @@ export const AGENT_RESPONSIBILITIES = ["morning_brief", "meeting_prep", "calenda
 export type AgentResponsibility = (typeof AGENT_RESPONSIBILITIES)[number]
 export const agentResponsibilitySchema = z.enum(AGENT_RESPONSIBILITIES)
 
-/** What admins and members read about each responsibility: "what the agent will tell you about". */
+/**
+ * What admins and members read about each responsibility: "what the agent will tell you about". These are presets the
+ * agent always watches for; it also tells people about anything else worth catching in their sources.
+ */
 export const AGENT_RESPONSIBILITY_COPY: Record<AgentResponsibility, { label: string; tells: string }> = {
   morning_brief: { label: "Morning brief", tells: "Your meetings for the day, what overlaps and what needs prep, at the start of your workday." },
   meeting_prep: { label: "Meeting prep", tells: "Before a meeting with people from outside the company: the last email thread with them and what they're waiting on." },
   calendar_changes: { label: "Calendar changes", tells: "Meetings today or tomorrow that someone else added, moved or cancelled." },
-  waiting_on_you: { label: "Waiting on you", tells: "Email from people outside the company that has waited more than about 4 hours for your reply, with an offer to draft one." },
+  waiting_on_you: { label: "Waiting on you", tells: "Messages from people outside the company that have waited more than about 4 hours for your reply." },
 }
 
 export const WORKBOT_PROACTIVE_LEAD_MINUTES = [5, 10, 15, 30, 60] as const
@@ -36,6 +40,88 @@ const leadMinutesSchema = z.number().int().refine((value) => WORKBOT_PROACTIVE_L
 /** Why a Workbot DM can't reach a member yet. */
 export const AGENT_DESTINATION_BLOCKS = ["slack_app_not_installed", "member_not_linked"] as const
 export type AgentDestinationBlock = (typeof AGENT_DESTINATION_BLOCKS)[number]
+
+// ---- Sources: what agents read --------------------------------------------------------------------------------------
+
+/** What every agent reads when the member has it connected: their calendar, email and team chat. */
+export const AGENT_CORE_SOURCES = ["calendar", "email", "chat"] as const
+export type AgentCoreSource = (typeof AGENT_CORE_SOURCES)[number]
+export const agentCoreSourceSchema = z.enum(AGENT_CORE_SOURCES)
+
+export const AGENT_CORE_SOURCE_COPY: Record<AgentCoreSource, { label: string; via: string }> = {
+  calendar: { label: "Calendar", via: "Google Calendar or Outlook" },
+  email: { label: "Email", via: "Gmail or Outlook" },
+  chat: { label: "Team chat", via: "Slack or Teams: DMs, mentions and threads they're in" },
+}
+
+/** How an admin lets agents read a source: on for everyone, members choose, or not allowed. */
+export const AGENT_SOURCE_POLICIES = ["everyone", "members", "off"] as const
+export type AgentSourcePolicy = (typeof AGENT_SOURCE_POLICIES)[number]
+export const agentSourcePolicySchema = z.enum(AGENT_SOURCE_POLICIES)
+export const AGENT_SOURCE_POLICY_COPY: Record<AgentSourcePolicy, string> = {
+  everyone: "On for everyone",
+  members: "Members choose",
+  off: "Not allowed",
+}
+
+/** A core source (`calendar`, `email`, `chat`) or another connection's id. */
+const agentSourceIdSchema = z.string().trim().min(1).max(64)
+const AGENT_SOURCE_CONNECTIONS_MAX = 200
+
+/**
+ * The organization's policy per source. Calendar, email and team chat are on for everyone by default; every other
+ * connection is up to members (off for them until they turn it on). Agents only ever read, whatever the policy.
+ */
+export const agentSourcesPolicySchema = z.object({
+  calendar: agentSourcePolicySchema,
+  email: agentSourcePolicySchema,
+  chat: agentSourcePolicySchema,
+  /** Other connections by id; one that isn't listed is up to members. */
+  connections: z.record(agentSourceIdSchema, agentSourcePolicySchema)
+    .refine((value) => Object.keys(value).length <= AGENT_SOURCE_CONNECTIONS_MAX, { message: "Too many connections." }),
+})
+export type AgentSourcesPolicy = z.infer<typeof agentSourcesPolicySchema>
+
+export const DEFAULT_AGENT_SOURCES_POLICY: AgentSourcesPolicy = { calendar: "everyone", email: "everyone", chat: "everyone", connections: {} }
+
+/** An admin's change: any core source, and connections by id (null goes back to "members choose"). */
+export const agentSourcesPolicyInputSchema = z
+  .object({
+    calendar: agentSourcePolicySchema.optional(),
+    email: agentSourcePolicySchema.optional(),
+    chat: agentSourcePolicySchema.optional(),
+    connections: z.record(agentSourceIdSchema, agentSourcePolicySchema.nullable())
+      .refine((value) => Object.keys(value).length <= AGENT_SOURCE_CONNECTIONS_MAX, { message: "Too many connections." })
+      .optional(),
+  })
+  .strict()
+export type AgentSourcesPolicyInput = z.infer<typeof agentSourcesPolicyInputSchema>
+
+/** One of the organization's connections, as a source. */
+export const agentSourceConnectionSchema = z.object({ id: z.string(), name: z.string(), url: z.string() })
+export type AgentSourceConnection = z.infer<typeof agentSourceConnectionSchema>
+
+/** The policy for one source: a core source's own, or a connection's (members choose unless an admin decided). */
+export function agentSourcePolicy(policy: AgentSourcesPolicy, sourceId: string): AgentSourcePolicy {
+  const core = agentCoreSourceSchema.safeParse(sourceId)
+  if (core.success) return policy[core.data]
+  return policy.connections[sourceId] ?? "members"
+}
+
+export function mergeAgentSourcesPolicy(current: AgentSourcesPolicy, change: AgentSourcesPolicyInput | undefined): AgentSourcesPolicy {
+  if (!change) return current
+  const connections = { ...current.connections }
+  for (const [id, value] of Object.entries(change.connections ?? {})) {
+    if (value === null || value === "members") delete connections[id]
+    else connections[id] = value
+  }
+  return {
+    calendar: change.calendar ?? current.calendar,
+    email: change.email ?? current.email,
+    chat: change.chat ?? current.chat,
+    connections,
+  }
+}
 
 const workbotProactiveFieldsSchema = z.object({
   /** Your agent, for the whole organization. */
@@ -55,6 +141,8 @@ const workbotProactiveFieldsSchema = z.object({
    * Never a channel: the agent reads private email, and a channel is not the member's own.
    */
   destination: z.enum(["workbot_dm"]).nullable(),
+  /** What agents may read, per source (Manage › Workbot › What agents read). */
+  sources: agentSourcesPolicySchema,
 })
 
 const hoursInOrder = (value: { startHour: number; endHour: number }) => value.endHour > value.startHour
@@ -72,6 +160,7 @@ export const DEFAULT_WORKBOT_PROACTIVE_SETTINGS: WorkbotProactiveSettings = {
   dailyCap: 3,
   membersStart: "opted_in",
   destination: "workbot_dm",
+  sources: DEFAULT_AGENT_SOURCES_POLICY,
 }
 
 /** The template's editable content: what the agent is responsible for, and short organization instructions. */
@@ -101,6 +190,7 @@ export const workbotProactiveSettingsInputSchema = workbotProactiveFieldsSchema
   .extend({
     responsibilities: agentTemplateContentSchema.shape.responsibilities.partial().optional(),
     instructions: z.string().trim().max(AGENT_INSTRUCTIONS_MAX).optional(),
+    sources: agentSourcesPolicyInputSchema.optional(),
   })
   .strict()
 export type WorkbotProactiveSettingsInput = z.infer<typeof workbotProactiveSettingsInputSchema>
@@ -118,6 +208,14 @@ export const workbotProactiveViewSchema = z.object({
   slackReady: z.boolean(),
   /** The deployment's headless runner is configured; the agent runs on it. */
   runnerReady: z.boolean(),
+  /** The organization's connections behind each source, for "What agents read". */
+  sourceConnections: z.object({
+    calendar: z.array(agentSourceConnectionSchema),
+    email: z.array(agentSourceConnectionSchema),
+    chat: z.array(agentSourceConnectionSchema),
+    /** Every other connection, each its own source. */
+    other: z.array(agentSourceConnectionSchema),
+  }),
 })
 export type WorkbotProactiveView = z.infer<typeof workbotProactiveViewSchema>
 
@@ -166,8 +264,11 @@ export const agentHourWindowSchema = z
   .refine(hoursInOrder, hoursMessage)
 export type AgentHourWindow = z.infer<typeof agentHourWindowSchema>
 
-/** Everything a member's change can touch: their words, their narrower limits, and each responsibility's mute. */
-export const AGENT_CHANGE_FIELDS = [...AGENT_PREFERENCE_FIELDS, "hours", "dailyCap", "quietWindow", ...AGENT_RESPONSIBILITIES] as const
+/**
+ * Everything a member's change can touch: their words, their narrower limits, each responsibility's mute, and per
+ * source whether it is read (`source`) and their instruction for it (`sourceInstruction`).
+ */
+export const AGENT_CHANGE_FIELDS = [...AGENT_PREFERENCE_FIELDS, "hours", "dailyCap", "quietWindow", ...AGENT_RESPONSIBILITIES, "source", "sourceInstruction"] as const
 export type AgentChangeField = (typeof AGENT_CHANGE_FIELDS)[number]
 export const agentChangeFieldSchema = z.enum(AGENT_CHANGE_FIELDS)
 /** Where a change came from: something the member said in chat (through Connect), or the Library page. */
@@ -178,6 +279,8 @@ export type AgentChangeSource = (typeof AGENT_CHANGE_SOURCES)[number]
 export const memberAgentChangeSchema = z.object({
   id: z.string(),
   field: agentChangeFieldSchema,
+  /** For `source` and `sourceInstruction`: which source (a core source or a connection id). */
+  sourceId: z.string().nullable(),
   /** "When: “Between 12 and 2, only urgent things.”", "Stopped calendar changes". */
   summary: z.string(),
   source: z.enum(AGENT_CHANGE_SOURCES),
@@ -202,6 +305,7 @@ export const AGENT_CHECK_REASONS = [
   "quiet_window",
   "snoozed",
   "google_disconnected",
+  "source_disconnected",
   "slack_app_not_installed",
   "member_not_linked",
   "no_destination",
@@ -213,7 +317,7 @@ export type AgentCheckReason = (typeof AGENT_CHECK_REASONS)[number]
 export const AGENT_CHECK_KINDS = ["morning", "scheduled", "calendar"] as const
 export type AgentCheckKind = (typeof AGENT_CHECK_KINDS)[number]
 /** What the member can do about a check that failed. */
-export const AGENT_CHECK_FIXES = ["reconnect_google", "link_slack", "ask_admin"] as const
+export const AGENT_CHECK_FIXES = ["reconnect_google", "reconnect", "link_slack", "ask_admin"] as const
 export type AgentCheckFix = (typeof AGENT_CHECK_FIXES)[number]
 
 export const memberAgentCheckSchema = z.object({
@@ -228,6 +332,8 @@ export const memberAgentCheckSchema = z.object({
   summary: z.string(),
   /** What it was about (sent or held). */
   responsibilities: z.array(agentResponsibilitySchema),
+  /** The sources it was about: what a message drew on, or what couldn't be read. */
+  sources: z.array(z.object({ id: z.string(), name: z.string(), connectionId: z.string().nullable() })),
   /** The DM it sent, in Slack. */
   slackUrl: z.string().nullable(),
   fix: z.enum(AGENT_CHECK_FIXES).nullable(),
@@ -251,6 +357,28 @@ export const memberAgentLimitsSchema = z.object({
   narrowed: z.object({ hours: z.boolean(), dailyCap: z.boolean() }),
 })
 export type MemberAgentLimits = z.infer<typeof memberAgentLimitsSchema>
+
+/** Whether the member's own account on a connection is ready for their agent to read. */
+export const AGENT_SOURCE_CONNECTION_STATES = ["connected", "needs_connection", "reconnect"] as const
+
+/** One source as the member sees it: whether their agent reads it, why it can't, and what they told it. */
+export const memberAgentSourceSchema = z.object({
+  /** `calendar`, `email`, `chat`, or a connection id. */
+  id: z.string(),
+  kind: z.enum([...AGENT_CORE_SOURCES, "other"]),
+  /** "Calendar", "Team chat", "Granola". */
+  name: z.string(),
+  /** The connections behind it the member can use, and whether their account is ready. */
+  connections: z.array(agentSourceConnectionSchema.extend({ state: z.enum(AGENT_SOURCE_CONNECTION_STATES) })),
+  /** The admin's choice: on for everyone and not allowed are locked; members choose is the member's switch. */
+  policy: agentSourcePolicySchema,
+  /** The agent reads it (once a connection is ready). */
+  on: z.boolean(),
+  /** The member's instruction for it, in their own words. */
+  instruction: z.string(),
+  lastReadAt: z.iso.datetime().nullable(),
+})
+export type MemberAgentSource = z.infer<typeof memberAgentSourceSchema>
 
 /** `GET /v1/me/agent`: a member's own agent, in their words. */
 export const memberAgentViewSchema = z.object({
@@ -289,6 +417,8 @@ export const memberAgentViewSchema = z.object({
   limits: memberAgentLimitsSchema.optional(),
   /** The member's recent changes, newest first: where each came from, and whether it was undone. */
   changes: z.array(memberAgentChangeSchema).optional(),
+  /** What the agent reads: calendar, email, team chat and every other connection it may read. */
+  sources: z.array(memberAgentSourceSchema).optional(),
   /** The member's agent in the Library. */
   link: z.string().optional(),
 })
@@ -313,6 +443,15 @@ export const memberAgentInputSchema = z
     dailyCap: z.number().int().min(1).max(10).nullable().optional(),
     /** Hours inside the working day when only urgent messages go out; null removes it. */
     quietWindow: agentHourWindowSchema.nullable().optional(),
+    /**
+     * What the agent reads, by source id or name ("Granola", "Linear", "Team chat"): on or off, and an instruction in
+     * the member's own words (an empty string clears it). The admin's policy decides which sources a member may change.
+     */
+    sources: z.array(z.object({
+      source: z.string().trim().min(1).max(120),
+      on: z.boolean().optional(),
+      instruction: preferenceInputText.optional(),
+    }).strict()).min(1).max(20).optional(),
     /** `last` reverts the member's last save (every field it changed); a change id reverts that one change. */
     undo: z.string().trim().min(1).max(64).optional(),
   })
@@ -322,6 +461,8 @@ export type MemberAgentInput = z.infer<typeof memberAgentInputSchema>
 /** `PUT /v1/me/agent` with `workbotAgentLibrary` on: the agent after the change, and exactly what was saved. */
 export const memberAgentSavedSchema = memberAgentViewSchema.extend({
   saved: z.object({
+    /** Sources it can't read until the member connects them: "Connect Granola" and where. */
+    connect: z.array(z.object({ name: z.string(), href: z.string() })).optional(),
     /** One line per field changed, in plain words. Empty when nothing changed. */
     changes: z.array(z.string()),
     /** The reply to give in chat, as is: what was saved, "Reply \"undo\" to revert." and the link. */
@@ -363,8 +504,8 @@ export function readWorkbotProactiveSettings(metadata: unknown): WorkbotProactiv
 
 /** Applies a policy change; null when the result is invalid (for example a workday that ends before it starts). */
 export function mergeWorkbotProactiveSettings(current: WorkbotProactiveSettings, change: WorkbotProactiveSettingsInput): WorkbotProactiveSettings | null {
-  const { responsibilities: _responsibilities, instructions: _instructions, ...policy } = change
-  const parsed = workbotProactiveSettingsSchema.safeParse({ ...current, ...policy })
+  const { responsibilities: _responsibilities, instructions: _instructions, sources, ...policy } = change
+  const parsed = workbotProactiveSettingsSchema.safeParse({ ...current, ...policy, sources: mergeAgentSourcesPolicy(current.sources, sources) })
   return parsed.success ? parsed.data : null
 }
 

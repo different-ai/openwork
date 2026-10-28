@@ -50,7 +50,9 @@ import {
   getWorkflowRunsRoute,
   getWebRoute,
   getPermissionsRoute,
+  getLibraryMyAgentRoute,
 } from "../../_lib/den-org";
+import { myAgentAvailable } from "./my-agent-availability";
 import { useOrgListWindow } from "../../_lib/use-org-list-window";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { buildDenFeedbackUrl } from "../../_lib/feedback";
@@ -261,6 +263,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getAutomationsRoute(orgSlug))) {
     return "My Automations";
   }
+  if (pathname.startsWith(getLibraryMyAgentRoute(orgSlug))) {
+    return "My bot";
+  }
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
     return "Bring your Own Keys";
   }
@@ -468,6 +473,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
     desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),
     workbotEntry: workbot.entry,
+    myBot: myAgentAvailable(orgContext),
   });
 
   const orgSwitcher = isSingleOrgMode ? (

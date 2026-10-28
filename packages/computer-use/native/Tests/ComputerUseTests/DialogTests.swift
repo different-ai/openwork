@@ -23,4 +23,20 @@ final class DialogTests: XCTestCase {
         XCTAssertFalse(DialogRules.confirmsFilePanel(.type("launch.mp4"), pressed: nil, defaultButton: button))
         XCTAssertFalse(DialogRules.confirmsFilePanel(.press("e1"), pressed: button, defaultButton: nil))
     }
+
+    func testOnlyPromptsThePersonMustAnswerAreHandedOver() {
+        XCTAssertEqual(HandoverRules.reason(bundleID: "com.apple.UserNotificationCenter"), "permission")
+        XCTAssertEqual(HandoverRules.reason(bundleID: "com.apple.SecurityAgent"), "sign_in")
+        XCTAssertEqual(HandoverRules.reason(bundleID: "com.apple.PassbookUIService"), "payment")
+        XCTAssertNil(HandoverRules.reason(bundleID: "com.apple.TextEdit"))
+        XCTAssertNil(HandoverRules.reason(bundleID: nil))
+        XCTAssertTrue(HandoverRules.message("payment").contains("Nothing was sent"))
+    }
+
+    func testOnlyWindowsTheLastActionOpenedAreFollowed() {
+        XCTAssertTrue(HandoverRules.followsNewWindow(focused: 9, target: 4, opened: [9]), "a sign-in popup the click opened")
+        XCTAssertFalse(HandoverRules.followsNewWindow(focused: 9, target: 4, opened: []), "a window the person opened stays theirs")
+        XCTAssertFalse(HandoverRules.followsNewWindow(focused: 4, target: 4, opened: [4]))
+        XCTAssertFalse(HandoverRules.followsNewWindow(focused: nil, target: 4, opened: [9]))
+    }
 }

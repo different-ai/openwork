@@ -567,6 +567,7 @@ const nativeSource: CapabilitySource = {
       catalog: ctx.catalog,
       limit,
       namespaceContext: await ctx.resolveNamespaceContext(),
+      scopes: ctx.principal.scopes,
     })
   },
   enumerate: async (ctx) => leavesFromBuilt(await buildNativeProviderToolTree({
@@ -608,6 +609,7 @@ const externalMcpSource: CapabilitySource = {
       limit,
       namespaceContext: await ctx.resolveNamespaceContext(),
       reportCoverage: (coverage) => ctx.reportExternalCoverage(externalMcpSearchCoverageHint(coverage)),
+      scopes: ctx.principal.scopes,
     })
   },
   enumerate: async (ctx) => {

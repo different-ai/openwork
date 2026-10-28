@@ -534,6 +534,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  expandedMcpPresets: {
+    label: "Connect: more MCP server presets",
+    description: "Admins see more reviewed official MCP servers (Airtable, Amplitude, Canva, Fireflies, Hugging Face, Lucid, Mural, Vercel, PostHog, monday.com, Honeycomb, Klaviyo, Semgrep, Cal.com, Tavily, Figma) to add with one click in Manage › Connectors. Each uses the same OAuth or API-key flow as the existing presets. Turning it off hides the new suggestions; existing connections stay.",
+    category: "connect",
+    added: "2026-10-27",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/expanded-mcp-presets/README.md",
+    deployments: everywhere,
+    default: false,
+  },
 })
 
 export type FeatureKey = keyof typeof FEATURES

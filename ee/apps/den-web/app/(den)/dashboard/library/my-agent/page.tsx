@@ -1,5 +1,6 @@
-import { MyAgentScreen } from "../../_components/my-agent-screen";
+import { redirect } from "next/navigation";
 
-export default function MyAgentPage() {
-  return <MyAgentScreen />;
+/** My agent moved out of the Library and became My bot; keep old links working. */
+export default function MyAgentMovedPage() {
+  redirect("/dashboard/my-bot");
 }

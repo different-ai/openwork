@@ -75,7 +75,7 @@ export type HeadlessRunnerDeps = {
    * to report the session's content-free totals and state to Den's session index.
    */
   mintToken: (
-    input: HeadlessRunnerActor & { ttlMs?: number; sessionId?: string; messageId?: string; readOnly?: boolean; model?: string; modelAccessRequired?: boolean },
+    input: HeadlessRunnerActor & { ttlMs?: number; sessionId?: string; messageId?: string; readOnly?: boolean; scopes?: readonly string[]; model?: string; modelAccessRequired?: boolean },
   ) => Promise<{ token: string; resumeGrant?: string; modelAccess?: HeadlessModelAccess; indexCapability?: string }>
   /** Resolve scoped turns' persisted model before minting, even when today's default is no longer accessible. */
   modelAccessRequired?: (actor: HeadlessRunnerActor) => Promise<boolean> | boolean
@@ -457,6 +457,11 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
          * keep notes in `memory/` but can't change anything through MCP. `readOnly` also removes the file tools.
          */
         mcpReadOnly?: boolean
+        /**
+         * Extra scopes for the read-scoped token, minted by the trusted caller only (a member's background agent
+         * carries the sources it may read). Ignored without `mcpReadOnly` or `readOnly`.
+         */
+        mcpScopes?: readonly string[]
         interrupt?: boolean
         execution?: "steps"
       },
@@ -472,6 +477,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
           ...(model ? { model } : {}),
           ...(modelAccessRequired ? { modelAccessRequired: true } : {}),
           ...(input.readOnly || input.mcpReadOnly ? { readOnly: true } : {}),
+          ...((input.readOnly || input.mcpReadOnly) && input.mcpScopes?.length ? { scopes: input.mcpScopes } : {}),
         })
         const modelAccess = issued.modelAccess ?? await deps.modelAccess?.(actor, { ...(model ? { model } : {}), ...(modelAccessRequired ? { modelAccessRequired: true } : {}) })
         return { ...issued, modelAccess }

@@ -969,6 +969,11 @@ export function getLibraryPluginRoute(orgSlug: string | null | undefined, plugin
   return `${getLibraryRoute(orgSlug)}/plugins/${encodeURIComponent(pluginId)}`;
 }
 
+/** A skill inside a plugin, viewed from My Library (no admin area needed). */
+export function getLibraryPluginSkillRoute(orgSlug: string | null | undefined, pluginId: string, skillId: string): string {
+  return `${getLibraryPluginRoute(orgSlug, pluginId)}/skills/${encodeURIComponent(skillId)}`;
+}
+
 export function getLibraryPluginShareRoute(orgSlug: string | null | undefined, pluginId: string): string {
   return `${getLibraryPluginRoute(orgSlug, pluginId)}/share`;
 }
@@ -977,9 +982,9 @@ export function getLibraryNewPluginRoute(orgSlug?: string | null, start?: "skill
   return `${getLibraryRoute(orgSlug)}/plugins/new${start ? `?start=${start}` : ""}`;
 }
 
-/** The member's own agent in the Library (My agent). */
+/** The member's own agent (My bot), in the sidebar's Work section. */
 export function getLibraryMyAgentRoute(orgSlug?: string | null): string {
-  return `${getLibraryRoute(orgSlug)}/my-agent`;
+  return `${getOrgDashboardRoute(orgSlug)}/my-bot`;
 }
 
 export function getLibraryModelsRoute(orgSlug?: string | null): string {

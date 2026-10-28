@@ -14,6 +14,7 @@ import {
   AuditUsageFactTable,
   CapabilityUsageEventTable,
   CapabilityUsageRollupTable,
+  FeatureUsageTable,
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
   ConfigObjectVersionTable,
@@ -558,6 +559,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(TelemetrySessionDimensionTable).where(eq(TelemetrySessionDimensionTable.org_id, organizationId))
         await tx.delete(CapabilityUsageEventTable).where(eq(CapabilityUsageEventTable.organization_id, organizationId))
         await tx.delete(CapabilityUsageRollupTable).where(eq(CapabilityUsageRollupTable.organization_id, organizationId))
+        await tx.delete(FeatureUsageTable).where(eq(FeatureUsageTable.organization_id, organizationId))
         await deleteHeadlessSessionIndexForOrganization(tx, organizationId)
         // Resume grants are useless once the members are gone (the exchange needs an active member); delete them too.
         await unlessResumeTableMissing("headless_resume_grant", () => tx.delete(HeadlessResumeGrantTable).where(eq(HeadlessResumeGrantTable.organizationId, organizationId)))

@@ -67,6 +67,7 @@ config:
     outlookAttachments: ""          # default off · Agents read the files attached to Outlook messages and create Outlook drafts and replies with workspace files attached, after the member approves each draft. Drafts are never sent.
     sessionTokenHashing: ""         # default off · Den keeps only a one-way hash of each sign-in session token, so a copy of the database cannot sign anyone in. New sessions are stored hashed and older ones convert the next time they are used; turn on only once every Den replica runs a release that reads both forms.
     lastUsedSignIn: ""              # default off · People who last signed in with a password, Google or GitHub skip the email step next time: Den web lists the sign-in methods with a Last used badge, and Single sign-on returns to the email step. Signing in with SSO forgets the method.
+    expandedMcpPresets: ""          # default off · Admins see more reviewed official MCP servers (Airtable, Amplitude, Canva, Fireflies, Hugging Face, Lucid, Mural, Vercel, PostHog, monday.com, Honeycomb, Klaviyo, Semgrep, Cal.com, Tavily, Figma) to add with one click in Manage › Connectors. Each uses the same OAuth or API-key flow as the existing presets. Turning it off hides the new suggestions; existing connections stay.
   # END GENERATED features
   administratorRecovery:
     # Processed only with config.features.administratorRecovery on. Flag off is a

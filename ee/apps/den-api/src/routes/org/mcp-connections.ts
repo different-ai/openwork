@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto"
+import { observeSignInRegistration } from "../../mcp-registration/sign-in.js"
+import { mcpRegistrationStatusByPreset } from "../../mcp-registration/status.js"
 import type { Context, Hono } from "hono"
 import { bodyLimit } from "hono/body-limit"
 import type { RequestIdVariables } from "hono/request-id"
@@ -36,6 +38,7 @@ import { env } from "../../env.js"
 import { recordWorkbotConnection } from "../../workbot/telemetry.js"
 import { connectionRemovalLink, memberSignInLink } from "../../agent-links.js"
 import { appLogger } from "../../observability/logger.js"
+import { organizationFeatureEnabled } from "../../features.js"
 import {
   jsonValidator,
   orgMemberRoute,
@@ -107,9 +110,9 @@ import {
 } from "../../capability-sources/external-mcp-oauth-contract.js"
 import type { MemberTeamSummary } from "../../orgs.js"
 import {
-  EXTERNAL_MCP_PRESETS,
   externalMcpPresetListResponseSchema,
   externalMcpPresetResponseSchema,
+  externalMcpPresetsForCatalog,
 } from "../../capability-sources/external-mcp-presets.js"
 import {
   MAX_RESOLVE_QUERY_LENGTH,
@@ -2598,7 +2601,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Capability Sources"],
       summary: "List predefined External MCP Connection presets",
-      description: "Common third-party MCP servers (Notion, Linear, Stripe, Slack, ...) an admin can add with one click, prefilled with a real name and URL.",
+      description: "Common third-party MCP servers (Notion, Linear, Stripe, Slack, ...) an admin can add with one click, prefilled with a real name and URL. registrationStatus says what OpenWork last learned about signing in to each provider (for example dynamic_refused: the provider only accepts apps it approved), and is absent until checked.",
       responses: {
         200: jsonResponse("Presets.", externalMcpPresetListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -2606,7 +2609,17 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     }),
     orgMemberRoute(),
     async (c) => {
-      return c.json({ presets: EXTERNAL_MCP_PRESETS })
+      const org = c.get("organizationContext")
+      const [expanded, registration] = await Promise.all([
+        org ? organizationFeatureEnabled(org.organization.id, "expandedMcpPresets", { userId: org.currentMember.userId }) : false,
+        mcpRegistrationStatusByPreset(),
+      ])
+      return c.json({
+        presets: externalMcpPresetsForCatalog({ expanded }).map((preset) => {
+          const registrationStatus = registration.get(preset.presetId)
+          return registrationStatus && registrationStatus !== "unknown" ? { ...preset, registrationStatus } : preset
+        }),
+      })
     },
   )
 
@@ -2628,12 +2641,16 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     async (c) => {
       const { query } = c.req.valid("json")
 
+      const org = c.get("organizationContext")
+      const expanded = org ? await organizationFeatureEnabled(org.organization.id, "expandedMcpPresets", { userId: org.currentMember.userId }) : false
+      const presets = externalMcpPresetsForCatalog({ expanded })
+
       const classification = classifyResolveQuery(query)
       if (classification.kind === "invalid") {
         return c.json({ resolution: "not_found" as const, attempted: [], reason: classification.reason })
       }
 
-      const preset = matchPresetForQuery(query, EXTERNAL_MCP_PRESETS)
+      const preset = matchPresetForQuery(query, presets)
       const candidates = preset ? [preset.url] : resolveCandidateUrls(classification)
       const guessed = !preset && classification.kind === "name"
       const probes = await Promise.all(candidates.map(async (candidateUrl) => {
@@ -4097,12 +4114,20 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         }
 
         const { result } = started
+        // Client registration happens before an authorize URL exists, so either result shows how it went.
+        observeSignInRegistration({ connection, reference: c.get("requestId") })
         if (result.status === "connected") {
           return c.json({ status: "connected" as const, authorizeUrl: null })
         }
         return c.json({ status: "needs_auth" as const, authorizeUrl: result.authorizeUrl })
       } catch (error) {
         const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "AUTH_RESOURCE_DISCOVERY")
+        observeSignInRegistration({
+          connection,
+          diagnostic,
+          reference: c.get("requestId"),
+          reload: () => getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: externalMcpConnectionId }),
+        })
         logger.error("external_mcp_connect_start_oauth_handshake_failed", {
           connection_id: connection.id,
           organization_id: payload.organization.id,

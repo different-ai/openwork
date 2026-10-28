@@ -675,6 +675,8 @@ export type SessionSurfaceProps = {
   onChangeModel?: (model: { providerID: string; modelID: string }) => void;
   providerConnectedCount?: number;
   onOpenSettingsSection?: ((section: ComposerSettingsSection) => void) | undefined;
+  /** Open one Library item's detail page, e.g. a skill the agent just created. */
+  onOpenLibraryDetail?: ((detailId: string) => void) | undefined;
   onRevertToMessage?: (messageId: string, sessionId: string) => Promise<boolean>;
   onRestoreRevertedSession?: (sessionId: string) => Promise<boolean>;
   onForkAtMessage?: (messageId: string | null, sessionId: string, isCurrent: () => boolean) => Promise<void>;
@@ -3696,6 +3698,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onOpenSubagentSession={openChild}
                       onStopSubagentSession={archived ? undefined : handleStopSubagentSession}
                       onResumeInterrupted={archived ? undefined : handleResumeInterrupted}
+                      onOpenLibraryDetail={props.onOpenLibraryDetail}
                       onMcpReconnect={handleMcpReconnect}
                       onMcpReopenAuthorization={handleMcpReopenAuthorization}
                       getConnectionDecision={getConnectionDecision}

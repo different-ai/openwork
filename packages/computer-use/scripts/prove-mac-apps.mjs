@@ -199,6 +199,29 @@ const scenarios = {
     await calculatorShows(call, "12");
   },
 
+  /** A sheet the agent opens is followed, and closing it returns to the window: TextEdit's Print sheet. */
+  async "dialog-follow"({ call, scratch }) {
+    const file = join(scratch, "computer-use-check.txt");
+    await writeFile(file, "Print me.");
+    await run("/usr/bin/open", ["-a", "TextEdit", file]);
+    await delay(1500);
+    const opened = await openApp(call, TEXTEDIT, "control", "Check dialogs in TextEdit", "computer-use-check.txt");
+    expect(opened.ok, `Opening TextEdit failed: ${opened.first.code}: ${opened.first.message}`);
+    const seen = opened.observation ?? (await call("computer_observe", { elements: "interactive" })).observation;
+    const printed = await call("computer_act", { observation_id: seen.observation_id, intent: "opening Print", action: { type: "key", key: "p", modifiers: ["command"] } });
+    expect(printed.ok, `Opening Print failed: ${printed.first.code}: ${printed.first.message}`);
+    await delay(800);
+    const sheet = (await call("computer_observe", { elements: "interactive" })).observation;
+    expect(sheet?.dialog?.kind === "sheet", `The Print sheet was not followed. Last seen: ${describe(sheet)}.`);
+    const cancel = sheet.elements?.find((element) => element.role === "Button" && /cancel/i.test(label(element)));
+    expect(cancel, "The Print sheet has no Cancel button in the observation.");
+    const closed = await call("computer_act", { observation_id: sheet.observation_id, intent: "closing Print", action: { type: "press", ref: cancel.ref } });
+    expect(closed.ok, `Cancelling Print failed: ${closed.first.code}: ${closed.first.message}`);
+    await delay(500);
+    const back = (await call("computer_observe", { elements: "interactive" })).observation;
+    expect(back?.dialog_closed === true && !back.dialog, `The session did not return to the window. Last seen: ${describe(back)}.`);
+  },
+
   /** Keyboard typing and a save shortcut, checked against the file on disk. */
   async "textedit-type"({ call, scratch }) {
     const file = join(scratch, "computer-use-check.txt");

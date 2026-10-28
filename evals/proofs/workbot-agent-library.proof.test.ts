@@ -13,8 +13,9 @@ test("a member sees what their agent did and why it stayed quiet, and changes it
   const agent = async () => memberAgentViewSchema.parse((await probe.api(world.den.members.member, "/v1/me/agent")).body);
   const checked = (testId: string) => probe.dom(`[data-testid="${testId}"] button[role="switch"][aria-checked="true"]`);
 
-  await step("before: without My agent, the member's Library has no agent and chat can't save their words", async () => {
+  await step("before: without My bot, the Work sidebar has no agent and chat can't save their words", async () => {
     await user.see({ role: "heading", label: "My Library" }, { timeoutMs: 90_000 });
+    await user.notSee({ testId: "dashboard-nav-my-bot" });
     await user.notSee({ testId: "my-agent-row" });
     const view = await agent();
     const said = await world.sayInChat("putMeAgent", { preferences: { when: "Mornings only" } });
@@ -28,18 +29,16 @@ test("a member sees what their agent did and why it stayed quiet, and changes it
     await user.screenshot();
   });
 
-  await step("after: My agent is pinned above the filters with its last check, today's count and its switch", async () => {
+  await step("after: My bot appears in the Work sidebar, not in the Library, and reads the agent's own records", async () => {
     await world.turnOnMyAgent();
     await user.reload();
-    await user.see({ testId: "my-agent-row" }, { timeoutMs: 60_000 });
-    await user.see({ text: new RegExp(`^Last check at ${CLOCK}\\. Stayed quiet\\.$`) });
-    await user.see({ text: "1 of 3 today" });
-    await user.see({ role: "switch", label: "My agent" });
+    await user.see({ testId: "dashboard-nav-my-bot" }, { timeoutMs: 60_000 });
     await user.see({ role: "tab", label: "All" });
+    await user.notSee({ testId: "my-agent-row" });
     const view = await agent();
     evidence.recordAssertionEvidence(
-      "The row reads the agent's own records",
-      `last check: ${view.lastCheck?.summary}; ${view.sentToday} of ${view.limits?.dailyCap} sent today; ${view.todayChecks?.length} checks today`,
+      "My bot is a Work destination; its page reads the agent's own records",
+      `sidebar has My bot; Library row absent; last check: ${view.lastCheck?.summary}; ${view.sentToday} of ${view.limits?.dailyCap} sent today; ${view.todayChecks?.length} checks today`,
       view.lastCheck?.reason === "nothing_new" && view.sentToday === 1 && view.todayChecks?.length === 2,
     );
     expect(view.lastCheck?.reason).toBe("nothing_new");
@@ -47,8 +46,9 @@ test("a member sees what their agent did and why it stayed quiet, and changes it
   });
 
   await step("the member opens it: the last check and why, today's checks with Sent and Quiet, what it tells them about, uses and limits", async () => {
-    await user.click({ role: "link", label: "Open My agent" });
+    await user.click({ testId: "dashboard-nav-my-bot" });
     await user.see({ testId: "my-agent-screen" }, { timeoutMs: 30_000 });
+    await user.see({ role: "switch", label: "My bot" });
     await user.see({ role: "heading", label: new RegExp(`^Last check at ${CLOCK}$`) });
     await user.see({ text: new RegExp(`^Next check `) });
     await user.see({ text: "1 of 3 sent today" });
@@ -90,8 +90,8 @@ test("a member sees what their agent did and why it stayed quiet, and changes it
     await user.see({ text: "12 PM–2 PM" });
     const muted = await probe.dom('[data-testid="my-agent-calendar_changes"] button[role="switch"][aria-checked="false"]');
     const sources = await probe.dom('[data-source="chat"]');
-    evidence.recordAssertionEvidence("Chat's reply says what it saved; the page shows it saved from chat", `${reply.replaceAll("\n", " / ")}; calendar changes off on the page=${muted.elements.length === 1}; ${sources.elements.length} fields say "Saved from chat"`, /Reply "undo" to revert\. My agent: http/.test(reply) && muted.elements.length === 1);
-    expect(reply).toMatch(/^Saved:\n- When: “Between 12 and 2, only urgent things”\n- Stopped: Calendar changes\n- Only urgent messages 12 PM–2 PM\nReply "undo" to revert\. My agent: http/);
+    evidence.recordAssertionEvidence("Chat's reply says what it saved; the page shows it saved from chat", `${reply.replaceAll("\n", " / ")}; calendar changes off on the page=${muted.elements.length === 1}; ${sources.elements.length} fields say "Saved from chat"`, /Reply "undo" to revert\. My bot: http/.test(reply) && muted.elements.length === 1);
+    expect(reply).toMatch(/^Saved:\n- When: “Between 12 and 2, only urgent things”\n- Stopped: Calendar changes\n- Only urgent messages 12 PM–2 PM\nReply "undo" to revert\. My bot: http/);
     expect(muted.elements.length).toBe(1);
     await user.screenshot();
   });

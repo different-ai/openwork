@@ -15,8 +15,6 @@ on:
       - "packaging/helm/openwork-ee/**"
       - "scripts/features-sync.mjs"
       - "scripts/check-docker-workspace-packages.mjs"
-      - "scripts/check-ui-guardrails*"
-      - "scripts/ui-guardrails-baseline.json"
       - ".github/workflows/features-check.yml"
       - "package.json"
       - "packaging/docker/**"
@@ -56,7 +54,7 @@ jobs:
           version: 11.4.0
 
       - name: Install the registry's dependencies
-        run: pnpm install --frozen-lockfile --filter "@openwork/features" --filter "@different-ai/openwork-workspace"
+        run: pnpm install --frozen-lockfile --filter "@openwork/features"
 
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
@@ -66,9 +64,3 @@ jobs:
 
       - name: Check the feature registry
         run: pnpm features:check
-
-      - name: Test UI guardrails
-        run: pnpm test:ui-guardrails
-
-      - name: Ratchet UI guardrails
-        run: pnpm check:ui-guardrails

@@ -471,6 +471,16 @@
               ],
               "description": "Remember last sign-in method: People who last signed in with a password, Google or GitHub skip the email step next time: Den web lists the sign-in methods with a Last used badge, and Single sign-on returns to the email step. Signing in with SSO forgets the method. Renders DEN_FEATURE_LAST_USED_SIGN_IN."
             },
+            "expandedMcpPresets": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Connect: more MCP server presets: Admins see more reviewed official MCP servers (Airtable, Amplitude, Canva, Fireflies, Hugging Face, Lucid, Mural, Vercel, PostHog, monday.com, Honeycomb, Klaviyo, Semgrep, Cal.com, Tavily, Figma) to add with one click in Manage › Connectors. Each uses the same OAuth or API-key flow as the existing presets. Turning it off hides the new suggestions; existing connections stay. Renders DEN_FEATURE_EXPANDED_MCP_PRESETS."
+            },
             "gatewayDashboard": {
               "enum": [
                 "",

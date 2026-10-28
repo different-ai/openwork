@@ -86,7 +86,9 @@ test("collapsed steps retain duration and count, never duplicate the footer mode
   const container = await render([...steps, answer("reply")])
   const rail = container.querySelector('[data-testid="completed-work-rail"]')
   expect(rail?.tagName).toBe("BUTTON")
-  expect(rail?.textContent).toBe("Worked for 7s · 6 steps")
+  // The count is quiet metadata beside the duration, not a middle-dot string (DESIGN.md C7).
+  expect([...(rail?.querySelectorAll("span:not([aria-hidden])") ?? [])].map((span) => span.textContent)).toEqual(["Worked for 7s", "6 steps"])
+  expect(rail?.getAttribute("aria-label")).toBe("Worked for 7s, 6 steps. Show steps")
   expect(rail?.textContent).not.toContain("Claude Sonnet")
   expect(rail?.getAttribute("aria-label")).not.toContain("Claude Sonnet")
   expect(container.querySelectorAll('[data-testid="reply-model"]').length).toBe(1)

@@ -1,19 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { getLibraryAddConnectorRoute, getLibraryConnectorRoute, getLibraryMyAgentRoute, getLibraryRoute, orgFeatureEnabled, type DenOrgContext } from "../../_lib/den-org";
+import { getLibraryAddConnectorRoute, getLibraryConnectorRoute, getLibraryMyAgentRoute, getLibraryRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage } from "./item-header";
 import { useLibrary, type LibraryConnectionItem, type LibraryItem } from "./library-data";
 import { MyAgentPanel, MyAgentPanelSkeleton, MyAgentRow, MyAgentRowError, MyAgentRowSkeleton, type MyAgentLinks } from "./my-agent";
 import { useMyAgent, useMyAgentChecks, useSaveMyAgent } from "./my-agent-data";
-
-/** My agent shows where Your agent runs (Workbot on this deployment) and both rollouts are on for the member. */
-export function myAgentAvailable(orgContext: DenOrgContext | null | undefined): boolean {
-  return orgContext?.capabilities.workbot === true
-    && orgFeatureEnabled(orgContext, "workbotProactive")
-    && orgFeatureEnabled(orgContext, "workbotAgentLibrary");
-}
+import { fromMyAgent, myAgentGoogleHref } from "./my-agent-connector-navigation";
+import { myAgentAvailable } from "./my-agent-availability"
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim() ? error.message : fallback;
@@ -41,7 +36,7 @@ const CONNECTION_STATUS: Record<LibraryConnectionItem["state"], string> = {
   available: "Not connected",
 };
 
-/** Library › My agent. */
+/** Work › My bot: the member's own agent. */
 export function MyAgentScreen() {
   const { orgSlug, orgContext } = useOrgDashboard();
   const orgId = orgContext?.organization.id ?? "";
@@ -52,21 +47,21 @@ export function MyAgentScreen() {
   const [earlierOpen, setEarlierOpen] = useState(false);
   const earlier = useMyAgentChecks(orgId, available && earlierOpen);
   const libraryHref = getLibraryRoute(orgSlug);
-  const back = { href: libraryHref, label: "My Library" };
 
-  if (!available) return <ItemPage><ItemHeader back={back} title="Not in your Library" description="Your organization hasn't turned on My agent for you." /></ItemPage>;
-  if (agent.isError) return <ItemPage><ItemHeader back={back} title="It did not load" description={`${errorMessage(agent.error, "Couldn't load your agent.")} Reload the page to try again.`} /></ItemPage>;
+  if (!available) return <ItemPage><ItemHeader title="My bot isn't on for you" description="Your organization hasn't turned it on yet." /></ItemPage>;
+  if (agent.isError) return <ItemPage><ItemHeader title="It did not load" description={`${errorMessage(agent.error, "Couldn't load your agent.")} Reload the page to try again.`} /></ItemPage>;
   if (!agent.data) return <MyAgentPanelSkeleton library={libraryHref} />;
 
   const connections = (library.data ?? []).filter(isConnection);
   const google = connections.find((item) => item.provider === "google-workspace");
-  const slack = connections.find((item) => item.name.trim().toLowerCase() === "slack");
   const links: MyAgentLinks = {
     library: libraryHref,
-    google: google
-      ? { href: getLibraryConnectorRoute(orgSlug, google.id), status: CONNECTION_STATUS[google.state] }
-      : { href: getLibraryAddConnectorRoute(orgSlug, "google-workspace"), status: library.isLoading ? "" : "Not added" },
-    slack: { href: slack ? getLibraryConnectorRoute(orgSlug, slack.id) : null },
+    google: {
+      href: myAgentGoogleHref(orgSlug, google?.id),
+      status: google ? CONNECTION_STATUS[google.state] : library.isError ? "Couldn't verify" : library.isLoading ? "" : "Not added",
+    },
+    connector: (connectionId) => fromMyAgent(getLibraryConnectorRoute(orgSlug, connectionId)),
+    catalog: fromMyAgent(getLibraryAddConnectorRoute(orgSlug)),
   };
 
   return (

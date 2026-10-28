@@ -19,6 +19,7 @@ import {
   getOrgAccessFlags,
   getPluginRoute,
 } from "../../../_lib/den-org";
+import { myAgentAvailable } from "../my-agent-availability";
 import { useDenFlow } from "../../../_providers/den-flow-provider";
 import {
   buildDashboardNavSections,
@@ -161,6 +162,7 @@ export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: D
 
       desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),
       canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
+      myBot: myAgentAvailable(orgContext),
     });
     return flattenNavigationForSearch(sections)
       .filter((entry) => entry.href !== "#")

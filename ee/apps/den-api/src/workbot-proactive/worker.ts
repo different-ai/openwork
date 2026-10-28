@@ -1,3 +1,4 @@
+import { libraryConnectorLink } from "../agent-links.js"
 import { organizationFeatureEnabled } from "../features.js"
 import { appLogger } from "../observability/logger.js"
 import { readMemberGoogleCalendar } from "../routes/org/google-workspace.js"
@@ -18,6 +19,7 @@ import {
   settleAgent,
   toldAgentItems,
 } from "./repository.js"
+import { listMemberConnections } from "./sources-repository.js"
 import { readAgentTemplate } from "./template.js"
 import { agentMessageId, agentSessionId, defaultAgentTurnDeps, runAgentTurn } from "./turn.js"
 import { wakeAgent, type AgentWakeDeps } from "./wake.js"
@@ -59,6 +61,8 @@ export function defaultAgentWakeDeps(): AgentWakeDeps {
     recordChecks: recordAgentChecks,
     library: (organizationId, userId) => organizationFeatureEnabled(organizationId, "workbotAgentLibrary", { userId }),
     recordCheck: recordMemberCheck,
+    connections: listMemberConnections,
+    connectLink: libraryConnectorLink,
   }
 }
 

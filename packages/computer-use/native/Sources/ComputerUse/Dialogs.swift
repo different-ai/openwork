@@ -7,7 +7,7 @@ import ScreenCaptureKit
 /// it for a sandboxed app. The session works in it until it closes, then
 /// returns to its window.
 struct DialogTarget {
-    enum Kind: String { case sheet, dialog, filePanel = "file_panel" }
+    enum Kind: String { case sheet, dialog, filePanel = "file_panel", window, menu }
     let target: WindowTarget
     let app: AppIdentity
     let kind: Kind
@@ -34,6 +34,35 @@ extension AppIdentity {
         guard let app = NSRunningApplication(processIdentifier: pid), app.bundleIdentifier == filePanelService,
               let executable = app.executableURL, let launched = ProcessStart(pid: pid) else { return nil }
         return AppIdentity(app: app, bundleID: filePanelService, executable: executable, launched: launched)
+    }
+}
+
+/// macOS prompts only the person may answer: they are drawn by system processes,
+/// so a session never sees them, and an agent must never click them.
+enum HandoverRules {
+    static let prompts: [String: String] = [
+        "com.apple.UserNotificationCenter": "permission",
+        "com.apple.SecurityAgent": "sign_in",
+        "com.apple.CoreAuthUI": "sign_in",
+        "com.apple.LocalAuthentication.UIAgent": "sign_in",
+        "com.apple.AuthKitUI.AKAuthorizationRemoteViewService": "sign_in",
+        "com.apple.AuthenticationServicesCore.AuthenticationServicesAgent": "sign_in",
+        "com.apple.PassbookUIService": "payment",
+        "com.apple.PassKit.PaymentAuthorizationUIExtension": "payment",
+    ]
+    static func reason(bundleID: String?) -> String? { bundleID.flatMap { prompts[$0] } }
+    static func message(_ reason: String) -> String {
+        switch reason {
+        case "permission": return "macOS is asking the person to allow something. Only they can answer it; ask them to, then observe again. Nothing was sent."
+        case "payment": return "A payment sheet is open. Only the person can confirm a payment; ask them to, then observe again. Nothing was sent."
+        default: return "macOS is asking the person to sign in or confirm it's them. Ask them to finish it, then observe again. Nothing was sent."
+        }
+    }
+
+    /// Follow a new window only when the agent's own last action opened it and the app focused it.
+    static func followsNewWindow(focused: CGWindowID?, target: CGWindowID, opened: Set<CGWindowID>) -> Bool {
+        guard let focused, focused != target else { return false }
+        return opened.contains(focused)
     }
 }
 
@@ -90,6 +119,43 @@ extension MacAccessibility {
                       let found = await windowTarget(for: window, pid: service.processIdentifier) else { continue }
                 return DialogTarget(target: found, app: identity, kind: .filePanel)
             }
+        }
+        return nil
+    }
+
+    /// A window the agent's last action opened, which the app now focuses: a popup
+    /// sign-in, a new document or a settings window. Followed like a dialog.
+    func openedWindow(by opened: Set<CGWindowID>, over target: WindowTarget, app: AppIdentity) async -> DialogTarget? {
+        guard !opened.isEmpty, let focused = elementAttribute(AXUIElementCreateApplication(app.pid), kAXFocusedWindowAttribute),
+              let found = await windowTarget(for: focused, pid: app.pid),
+              HandoverRules.followsNewWindow(focused: found.id, target: target.id, opened: opened) else { return nil }
+        // An app's file picker can be an ordinary window: it keeps the file-panel rules.
+        return DialogTarget(target: found, app: app, kind: isFilePanel(found, app: app) ? .filePanel : .window)
+    }
+
+    /// A menu the app has open: a pop-up, a context menu or one from its menu bar.
+    /// Its items are read and pressed like any element until it closes.
+    func openMenu(of app: AppIdentity) async -> DialogTarget? {
+        let root = AXUIElementCreateApplication(app.pid)
+        var candidates = (attribute(root, kAXChildrenAttribute) as? [AXUIElement] ?? []).filter { (attribute($0, kAXRoleAttribute) as? String) == "AXMenu" }
+        if let bar = elementAttribute(root, kAXMenuBarAttribute) {
+            for item in attribute(bar, kAXChildrenAttribute) as? [AXUIElement] ?? [] where (attribute(item, kAXSelectedAttribute) as? Bool) == true {
+                candidates += (attribute(item, kAXChildrenAttribute) as? [AXUIElement] ?? []).filter { (attribute($0, kAXRoleAttribute) as? String) == "AXMenu" }
+            }
+        }
+        for menu in candidates {
+            if let found = await windowTarget(for: menu, pid: app.pid) { return DialogTarget(target: found, app: app, kind: .menu) }
+        }
+        return nil
+    }
+
+    /// A prompt only the person may answer, on screen now.
+    func personPrompt() -> (reason: String, app: String)? {
+        let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let owners = Set(onScreen.compactMap { $0[kCGWindowOwnerPID as String] as? Int32 })
+        for pid in owners {
+            guard let app = NSRunningApplication(processIdentifier: pid), let reason = HandoverRules.reason(bundleID: app.bundleIdentifier) else { continue }
+            return (reason, app.localizedName ?? "macOS")
         }
         return nil
     }

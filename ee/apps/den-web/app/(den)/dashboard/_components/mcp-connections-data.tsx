@@ -1,5 +1,6 @@
 "use client";
 
+import type { McpRegistrationStatus } from "@openwork/types/den/mcp-registration";
 import { z } from "zod";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DenRequestCanceledError, DenRequestTimeoutError, getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
@@ -312,6 +313,8 @@ export type ExternalMcpPreset = {
   requiresOAuthClient?: boolean;
   defaultOAuthClientId?: string;
   supportedAuthTypes?: ExternalMcpAuthType[];
+  /** What OpenWork last learned about signing in to this provider. */
+  registrationStatus?: McpRegistrationStatus;
 };
 
 export type CreatedMcpConnection = ExternalMcpConnection & {

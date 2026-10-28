@@ -1,9 +1,11 @@
 "use client"
 
 import { Fragment, useState } from "react"
-import { Check, ChevronUp, CircleHelp, CirclePause, Copy, MoreHorizontal } from "lucide-react"
+import { Check, ChevronUp, CircleHelp, CirclePause, Copy, FilePen, FileText, MoreHorizontal, Search, SquareTerminal } from "lucide-react"
 
 import { FileChip } from "@/components/chat/file-chip"
+import { LaneChevron, LeadingLane, RAIL_LINE, RAIL_ROW, RailDuration, RailMeta } from "@/components/chat/activity-rail"
+import { DetailsToggle } from "@/components/chat/capability-call-line"
 import { ShellCommandText } from "@/components/chat/shell-command-text"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
 import { useWorkbenchDisclosure } from "@/react-app/domains/session/chat/workbench-ui-state"
@@ -28,6 +30,15 @@ import { trackToolCallDuration } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
 
 const ROW_CAP = 8
+
+/** The leading-lane glyph for a local step: terminal, file read, file change or search (T1). */
+function FamilyGlyph({ part, status }: { part: AnyToolPart; status: string }) {
+  if (status === "waiting") return <CirclePause aria-label="Waiting" className="size-3.5 text-amber-11" />
+  if (status === "unknown") return <CircleHelp aria-label="Status unknown" className="size-3.5" />
+  const family = getToolFamily(part)
+  const Glyph = family === "command" ? SquareTerminal : family === "edit" ? FilePen : family === "search" ? Search : FileText
+  return <Glyph aria-hidden="true" className="size-3.5 text-muted-foreground/80" strokeWidth={1.5} />
+}
 
 function WorkspacePathNotice({ part }: { part: AnyToolPart }) {
   return getWorkspacePathResolutions(part).map(path => (
@@ -259,6 +270,13 @@ export function ToolAggregateGroup({ parts, messageId, thoughts = [], className 
   const thoughtsAt = (index: number) => thoughts.filter((thought) => thought.afterIndex === index)
   const trailingThoughts = hiddenCount > 0 ? [] : thoughts.filter((thought) => thought.afterIndex >= parts.length)
 
+  const rowStatus = (part: AnyToolPart) => {
+    const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
+    return isToolPartInFlight(part)
+      ? lifecycle === "running" || lifecycle === "waiting" ? lifecycle : "unknown"
+      : persistedRowStatus(part)
+  }
+
   // "Edited 1 file" above "Edited file-chip.tsx" says nothing twice.
   // A group that is exactly one file action (and no thoughts) renders
   // as the row itself — verb, chip, duration — with nothing to expand.
@@ -275,24 +293,17 @@ export function ToolAggregateGroup({ parts, messageId, thoughts = [], className 
         data-tool-aggregate={latestToolCallId}
         data-tool-lifecycle={status}
       >
-        <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
-          <span className={cn("shrink-0", status === "running" && "text-foreground ow-text-shimmer")}>
+        <div className={cn(RAIL_ROW, RAIL_LINE)}>
+          <LeadingLane><FamilyGlyph part={soloRow.part} status={status} /></LeadingLane>
+          <span className={cn("shrink-0", status === "running" && "text-foreground ow-text-shimmer motion-reduce:animate-none", status === "failed" && "text-destructive")}>
             {status === "unknown" ? "Status unknown for" : soloFile.verb}
           </span>
           <FileChip path={soloFile.path} className="min-w-0" />
-          {soloRow.repeat > 1 ? (
-            <span data-tool-aggregate-repeat className="shrink-0 text-xs text-muted-foreground/70">
-              ×{soloRow.repeat}
-            </span>
-          ) : null}
-          {durations[soloRow.lastIndex] ? (
-            <span className="shrink-0 tabular-nums text-xs text-muted-foreground/70">
-              {durations[soloRow.lastIndex]}
-            </span>
-          ) : null}
+          {soloRow.repeat > 1 ? <RailMeta><span data-tool-aggregate-repeat>×{soloRow.repeat}</span></RailMeta> : null}
+          <RailDuration value={durations[soloRow.lastIndex]} />
         </div>
         {status === "waiting" ? (
-          <div className="mt-1 flex items-center gap-1.5 text-xs text-amber-11" role="status">
+          <div className="mt-1 flex items-center gap-1.5 ps-7 text-xs text-amber-11" role="status">
             <CirclePause aria-hidden="true" className="size-3.5 shrink-0" />
             <span>Choose an option or approve the request to continue.</span>
           </div>
@@ -315,149 +326,65 @@ export function ToolAggregateGroup({ parts, messageId, thoughts = [], className 
         type="button"
         onClick={() => setExpanded(!expanded)}
         aria-expanded={expanded}
-        className="group flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
+        className={cn(RAIL_ROW, RAIL_LINE, "group w-full cursor-pointer text-start transition-colors hover:text-foreground")}
       >
+        <LaneChevron open={expanded} />
         <span className="min-w-0 shrink-0 truncate">{summary}</span>
         {/* What is happening now lives on the same line, so starting or
             finishing a step never adds or removes a line below it. */}
         {liveText ? (
-          <span data-tool-aggregate-now className="ow-text-shimmer min-w-0 truncate motion-reduce:animate-none"
+          <span data-tool-aggregate-now className="ow-text-shimmer min-w-0 flex-1 truncate motion-reduce:animate-none"
             title={nowCommand ? "Double-click to show the full command" : undefined}
             onDoubleClick={nowPart && nowCommand ? (event) => { event.stopPropagation(); setFullNowCommand(true) } : undefined}>
             {liveText}
           </span>
         ) : null}
         {thoughts.length > 0 ? (
-          <span data-tool-aggregate-thought-count className="shrink-0 text-xs text-muted-foreground/70">
-            · {thoughts.length === 1 ? "1 thought" : `${thoughts.length} thoughts`}
-          </span>
+          <RailMeta><span data-tool-aggregate-thought-count>{thoughts.length === 1 ? "1 thought" : `${thoughts.length} thoughts`}</span></RailMeta>
         ) : null}
-        {singleCommandDuration ? (
-          <span className="shrink-0 tabular-nums text-xs text-muted-foreground/70">
-            {singleCommandDuration}
-          </span>
-        ) : null}
-        {failedCount > 0 ? (
-          <span className="shrink-0 text-xs text-muted-foreground">
-            {failedCount} failed
-          </span>
-        ) : null}
+        {failedCount > 0 ? <RailMeta className="text-destructive">{failedCount} failed</RailMeta> : null}
+        <RailDuration value={singleCommandDuration} />
       </button>
 
       {aggregateLifecycle === "waiting" ? (
-        <div className="mt-1 flex items-center gap-1.5 text-xs text-amber-11" role="status">
+        <div className="mt-1 flex items-center gap-1.5 ps-7 text-xs text-amber-11" role="status">
           <CirclePause aria-hidden="true" className="size-3.5 shrink-0" />
           <span>Choose an option or approve the request to continue.</span>
         </div>
       ) : null}
 
       {aggregateLifecycle === "unknown" ? (
-        <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
+        <div className="mt-1 flex items-center gap-1.5 ps-7 text-xs text-muted-foreground" role="status">
           <CircleHelp aria-hidden="true" className="size-3.5 shrink-0" />
           <span>No terminal result was observed. This step may still be running; check the session before retrying.</span>
         </div>
       ) : null}
 
       {nowPart && nowCommandShown ? (
-        <div className="mt-1.5 min-w-0">
+        <div className="mt-1.5 min-w-0 ps-7">
           <DetailBox kind="command" text={nowCommand} expanded={fullNowCommand} onToggle={() => setFullNowCommand(false)} />
         </div>
       ) : null}
 
       {expanded ? (
-        <div className="mt-1.5 flex flex-col gap-1">
-          {visibleRows.map((row) => {
-            const part = row.part
-            const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
-            const status = isToolPartInFlight(part)
-              ? lifecycle === "running" || lifecycle === "waiting"
-                ? lifecycle
-                : "unknown"
-              : persistedRowStatus(part)
-            const failure = failureText(part)
-            const bash = isBashToolPart(part)
-            const command = bash ? part.input?.command?.trim() ?? "" : ""
-            const commandDescription = bash
-              ? part.input?.description?.trim() || "command"
-              : ""
-            const search = bash ? null : getAggregateRowSearch(part)
-            return (
-              <Fragment key={part.toolCallId}>
+        // Flat, not boxed (S1): steps indent under the summary's label.
+        <div className="mt-2 flex flex-col gap-2 ps-7">
+          {visibleRows.map((row) => (
+            <Fragment key={row.part.toolCallId}>
               {thoughtsAt(row.index).map((thought) => (
                 <div key={`thought-${row.index}-${thought.afterIndex}`} data-tool-aggregate-thought className="py-1">
                   <ReasoningBlock disclosureKey={keyFor(groupKey, `thought-${thought.afterIndex}`)} text={thought.text} isStreaming={thought.isStreaming} />
                 </div>
               ))}
-              <div data-tool-aggregate-row className="flex min-w-0 flex-col gap-1.5 py-1">
-                {!singleCommand ? (
-                  <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
-                  {status === "waiting" ? (
-                    <CirclePause aria-label="Waiting" className="size-3.5 shrink-0 text-amber-11" />
-                  ) : null}
-                  {status === "unknown" ? (
-                    <CircleHelp aria-label="Status unknown" className="size-3.5 shrink-0" />
-                  ) : null}
-                  {bash ? (
-                    <span className="min-w-0 break-words">
-                      <span className={cn("text-foreground", status === "running" && "ow-text-shimmer")}>
-                        {status === "running"
-                          ? "Running"
-                          : status === "waiting"
-                            ? "Waiting to run"
-                            : status === "unknown"
-                              ? "Status unknown for"
-                              : "Ran"}
-                      </span>{" "}
-                      <span>{commandDescription}</span>
-                    </span>
-                  ) : search ? (
-                    <span className="min-w-0 break-words">
-                      <span className={cn(status === "running" && "text-foreground ow-text-shimmer")}>
-                        {search.verb}
-                      </span>
-                      {search.scope ? <span> in {search.scope}</span> : null}
-                    </span>
-                  ) : (() => {
-                    const file = getAggregateRowFile(part)
-                    if (!file) {
-                      return (
-                        <span className={cn("min-w-0 truncate", status === "running" && "ow-text-shimmer")}>
-                          {getAggregateRowLabel(part)}
-                        </span>
-                      )
-                    }
-                    return (
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        <span className={cn("shrink-0", status === "running" && "text-foreground ow-text-shimmer")}>
-                          {file.verb}
-                        </span>
-                        <FileChip path={file.path} className="min-w-0" />
-                        {row.repeat > 1 ? (
-                          <span
-                            data-tool-aggregate-repeat
-                            className="shrink-0 text-xs text-muted-foreground/70"
-                          >
-                            ×{row.repeat}
-                          </span>
-                        ) : null}
-                      </span>
-                    )
-                  })()}
-                  {durations[row.lastIndex] ? (
-                    <span className="shrink-0 tabular-nums text-muted-foreground/70">
-                      {durations[row.lastIndex]}
-                    </span>
-                  ) : null}
-                  </div>
-                ) : null}
-                <WorkspacePathNotice part={part} />
-                {bash && command ? detailBox("command", part.toolCallId, command) : null}
-                {search ? detailBox("pattern", part.toolCallId, search.pattern) : null}
-                {failure ? detailBox("error", part.toolCallId, failure) : null}
-              </div>
-              </Fragment>
-            )
-          })}
+              <AggregateRowView
+                row={row}
+                duration={durations[row.lastIndex] ?? null}
+                showLine={!singleCommand}
+                status={rowStatus(row.part)}
+                detailKey={(detail) => keyFor(row.part.toolCallId, detail)}
+              />
+            </Fragment>
+          ))}
           {trailingThoughts.map((thought) => (
             <div key={`thought-trailing-${thought.afterIndex}`} data-tool-aggregate-thought className="py-1">
               <ReasoningBlock disclosureKey={keyFor(groupKey, `thought-${thought.afterIndex}`)} text={thought.text} isStreaming={thought.isStreaming} />
@@ -474,6 +401,58 @@ export function ToolAggregateGroup({ parts, messageId, thoughts = [], className 
           ) : null}
         </div>
       ) : null}
+    </div>
+  )
+}
+
+/**
+ * One local step on the rail: a glyph in the leading lane, the sentence,
+ * the duration, and the full command or search pattern behind the details
+ * icon (P3). A failure keeps its error visible, since that is when it is needed.
+ */
+function AggregateRowView({ row, duration, showLine, status, detailKey }: {
+  row: AggregateRow
+  duration: string | null
+  showLine: boolean
+  status: "running" | "waiting" | "unknown" | "failed" | "done"
+  detailKey: (detail: string) => string | undefined
+}) {
+  const part = row.part
+  const [detailsOpen, setDetailsOpen] = useWorkbenchDisclosure(detailKey("details"))
+  const failure = failureText(part)
+  const bash = isBashToolPart(part)
+  const command = bash ? part.input?.command?.trim() ?? "" : ""
+  const commandDescription = bash ? part.input?.description?.trim() || "command" : ""
+  const search = bash ? null : getAggregateRowSearch(part)
+  const raw = command ? { kind: "command" as const, text: command } : search ? { kind: "pattern" as const, text: search.pattern } : null
+  const shimmer = status === "running" && "text-foreground ow-text-shimmer motion-reduce:animate-none"
+  const file = bash || search ? null : getAggregateRowFile(part)
+  const label = bash
+    ? `${status === "running" ? "Running" : status === "waiting" ? "Waiting to run" : status === "unknown" ? "Status unknown for" : "Ran"} ${commandDescription}`
+    : search ? `${search.verb}${search.scope ? ` in ${search.scope}` : ""}` : getAggregateRowLabel(part)
+  return (
+    <div data-tool-aggregate-row className="flex min-w-0 flex-col gap-1.5">
+      {showLine ? (
+        <div className={cn(RAIL_ROW, RAIL_LINE)}>
+          <LeadingLane><FamilyGlyph part={part} status={status} /></LeadingLane>
+          {file ? (
+            <span className="flex min-w-0 flex-1 items-center gap-1.5">
+              <span className={cn("shrink-0", shimmer, status === "failed" && "text-destructive")}>{file.verb}</span>
+              <FileChip path={file.path} className="min-w-0" />
+              {row.repeat > 1 ? <RailMeta><span data-tool-aggregate-repeat>×{row.repeat}</span></RailMeta> : null}
+            </span>
+          ) : (
+            <span className={cn("min-w-0 flex-1 truncate", shimmer, status === "failed" && "text-destructive")}>{label}</span>
+          )}
+          <RailDuration value={duration} />
+          {raw ? (
+            <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={label} alwaysVisible={status === "failed"} />
+          ) : null}
+        </div>
+      ) : null}
+      <WorkspacePathNotice part={part} />
+      {raw && (detailsOpen || !showLine) ? <RetainedDetailBox disclosureKey={detailKey(raw.kind)} kind={raw.kind} text={raw.text} /> : null}
+      {failure ? <RetainedDetailBox disclosureKey={detailKey("error")} kind="error" text={failure} /> : null}
     </div>
   )
 }

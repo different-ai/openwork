@@ -33,7 +33,17 @@ export function connectionRemovalLink(connectionId: string) {
   return link.toString()
 }
 
-/** The member's own agent in the Library (My agent). den-web resolves the active organization. */
+/** The member's own agent (My bot). den-web resolves the active organization. */
 export function myAgentLink() {
-  return new URL("/dashboard/library/my-agent", env.betterAuthUrl).toString()
+  return new URL("/dashboard/my-bot", env.betterAuthUrl).toString()
+}
+
+/** A connection in the member's Library, where they connect or reconnect their own account. */
+export function libraryConnectorLink(connectionId: string) {
+  return new URL(`/dashboard/library/connectors/${encodeURIComponent(connectionId)}`, env.betterAuthUrl).toString()
+}
+
+/** The Library's connector catalog, where a member adds a connection their organization doesn't have yet. */
+export function libraryCatalogLink() {
+  return new URL("/dashboard/library/connectors/new", env.betterAuthUrl).toString()
 }
