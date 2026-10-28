@@ -390,6 +390,25 @@ test("an admin navigates organizations and member usage without loading every de
     await admin.screenshot();
   });
 
+  await step("after: the overview opens on the Control Center, served from cached snapshots", async () => {
+    await admin.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
+    await admin.see({ testId: "admin-control-center" });
+    // Recompute now instead of waiting for the background job's first tick.
+    await admin.click({ testId: "admin-control-center-refresh" });
+    await admin.see({ testId: "kpi-task-users" }, { timeoutMs: 90_000 });
+    await admin.see({ testId: "admin-control-center-attention" });
+    const view = await world.controlCenter();
+    const access = await world.controlCenterAccess();
+    const traffic = await world.traffic("admin");
+    const computed = Object.values(view.sections).filter((section) => section.computedAt !== null && section.data !== null).length;
+    const ok = computed === Object.keys(view.sections).length && view.sections.pulse.data !== null
+      && access.read === 403 && access.refresh === 403 && traffic.controlCenter > 0;
+    evidence.recordAssertionEvidence("Every Control Center section comes from a snapshot, and only platform admins can read or refresh them",
+      `sections with snapshots=${computed}/${Object.keys(view.sections).length}; member read=${access.read}, refresh=${access.refresh}; page reads=${traffic.controlCenter}`, ok);
+    expect(ok).toBe(true);
+    await admin.screenshot();
+  });
+
   await step("after: the overview shows bounded platform metrics, daily usage and organization links", async () => {
     await admin.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
     await admin.see({ testId: "admin-dashboard-requests" }, { text: /8/ });

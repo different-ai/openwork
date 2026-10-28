@@ -1,4 +1,5 @@
 import { queryDenDatabase, type Seed } from "@openwork/env";
+import { adminControlCenterSchema } from "@openwork/types/den/admin-control-center";
 import { adminActiveUsersSchema, adminDashboardSchema, adminOrganizationDetailSchema, adminOrganizationInsightsSchema, adminOrganizationUsageSchema } from "@openwork/types/den/admin-organization";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -112,6 +113,16 @@ export async function adminOverviewWorld(seed: Seed) {
     async dashboardAccess() {
       return (await seed.api(den.members.member, "/v1/admin/dashboard")).response.status;
     },
+    async controlCenter() {
+      const result = await seed.api(den.admin, "/v1/admin/control-center?range=30d");
+      if (!result.response.ok) throw new Error(`Control Center failed (${result.response.status}).`);
+      return adminControlCenterSchema.parse(result.body);
+    },
+    async controlCenterAccess() {
+      const read = await seed.api(den.members.member, "/v1/admin/control-center");
+      const refresh = await seed.api(den.members.member, "/v1/admin/control-center/refresh", { method: "POST" });
+      return { read: read.response.status, refresh: refresh.response.status };
+    },
     async organizationInsights() {
       const result = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/insights?limit=1`);
       if (!result.response.ok) throw new Error(`Organization insights failed (${result.response.status}).`);
@@ -169,6 +180,7 @@ export async function adminOverviewWorld(seed: Seed) {
           overview: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/admin/overview")).length,
           usage: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/inference-usage")).length,
           dashboard: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/admin/dashboard")).length,
+          controlCenter: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/admin/control-center")).length,
           activeUsers: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/admin/dashboard/active-users")).length,
           metrics: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/admin/metrics")).length,
           organizationInsights: resources.filter((entry) => /\/v1\/admin\/organizations\/[^/]+\/insights$/.test(new URL(entry.name).pathname)).length,

@@ -13,6 +13,9 @@ import { runPlatformAdminPlatformAction, runPlatformAdminServiceAction, type Pla
 import { readWorkbotAdoptionReport, workbotAdoptionInputSchema } from "../workbot/adoption-report.js"
 import { assertReadOnlySql, isDatabaseTimeLimitError, withDatabaseTimeLimit } from "./admin-query-limit.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
+import { buildRetentionCohorts } from "../admin-metrics/definitions.js"
+import { readTaskUserWindows } from "../admin-metrics/metrics.js"
+import { normalizeRows } from "../admin-metrics/sql.js"
 
 /**
  * den-admin MCP toolset: read-only Den analytics for allowlisted platform
@@ -31,7 +34,7 @@ import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
  * write tools need the caller's mcp:write scope, like connection writes.
  */
 
-export const DEN_ADMIN_MCP_VERSION = "0.9.0"
+export const DEN_ADMIN_MCP_VERSION = "0.10.0"
 
 const QUERY_TIMEOUT_MS = 15_000
 // Slightly under Den's own timer, so the database stops the statement first.
@@ -58,23 +61,7 @@ const organizationSelect = {
   metadata: OrganizationTable.metadata,
 }
 
-/**
- * `db` is drizzle over either mysql2 (returns `[rows, fields]`) or
- * PlanetScale serverless (returns `{ rows }`). Normalize both shapes.
- */
-export function normalizeRows(result: unknown): Row[] {
-  if (Array.isArray(result)) {
-    const first: unknown = result[0]
-    if (Array.isArray(first)) {
-      return first as Row[]
-    }
-    return result as Row[]
-  }
-  if (typeof result === "object" && result !== null && Array.isArray((result as { rows?: unknown }).rows)) {
-    return (result as { rows: Row[] }).rows
-  }
-  return []
-}
+export { normalizeRows }
 
 async function rows(query: SQL): Promise<Row[]> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -232,27 +219,6 @@ async function activeUserCount(days: number): Promise<number> {
   }
 }
 
-/**
- * "Real" active users: executed at least one task in a session in the
- * window — task.* telemetry with a session id, not just sign-ins or
- * heartbeat pings. Returns 0 when the telemetry table is missing.
- */
-async function taskActiveUserCount(days: number): Promise<number> {
-  const interval = intLiteral(days)
-  try {
-    const result = await rows(sql`SELECT COUNT(DISTINCT m.user_id) AS count FROM telemetry_event t
-        JOIN member m ON m.id = t.member_id
-       WHERE m.user_id IS NOT NULL
-         AND t.event_type IN ('task.started', 'task.completed', 'task.failed')
-         AND t.session_id IS NOT NULL
-         AND t.event_timestamp >= DATE_SUB(NOW(), INTERVAL ${interval} DAY)`)
-    return n(result[0]?.count)
-  } catch (error) {
-    if (!isMissingTable(error)) throw error
-    return 0
-  }
-}
-
 async function activityDays(): Promise<Row[]> {
   try {
     return await rows(sql`SELECT s.user_id AS uid, DATE(s.updated_at) AS day FROM session s
@@ -395,7 +361,7 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
     },
     async () =>
       run(async () => {
-        const [users, orgs, members, invitations, subscriptions, dau, wau, mau, realDau, realWau, realMau] = await Promise.all([
+        const [users, orgs, members, invitations, subscriptions, dau, wau, mau, taskUsers] = await Promise.all([
           rows(sql`SELECT COUNT(*) AS total,
                   SUM(created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS new7d,
                   SUM(created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)) AS new30d
@@ -407,9 +373,10 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
           activeUserCount(1),
           activeUserCount(7),
           activeUserCount(30),
-          taskActiveUserCount(1),
-          taskActiveUserCount(7),
-          taskActiveUserCount(30),
+          readTaskUserWindows(rows, new Date()).catch((error: unknown) => {
+            if (!isMissingTable(error)) throw error
+            return { daily: 0, weekly: 0, monthly: 0 }
+          }),
         ])
         return {
           users: {
@@ -421,13 +388,13 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
           activeMembers: n(members[0]?.total),
           pendingInvitations: n(invitations[0]?.pending),
           activeUsers: { daily: dau, weekly: wau, monthly: mau },
-          realActiveUsers: { daily: realDau, weekly: realWau, monthly: realMau },
+          realActiveUsers: { daily: taskUsers.daily, weekly: taskUsers.weekly, monthly: taskUsers.monthly },
           subscriptions: subscriptions.map((row) => ({
             type: row.type,
             status: row.status,
             count: n(row.count),
           })),
-          note: "active = sign-in session day or any telemetry event; realActive = executed at least one task in a session (task.* events with a session id)",
+          note: "active = sign-in session day or any telemetry event; realActive = ran at least one task in a session from the app (task.* events with a session id), excluding setup agents and removed members, as in the admin Control Center",
         }
       }),
   )
@@ -645,44 +612,21 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
              FROM user WHERE created_at >= DATE_SUB(NOW(), INTERVAL ${intLiteral(weeks)} WEEK)`,
         )
         const activity = await activityDays()
-        const WEEK_MS = 7 * 86_400_000
-        const signupByUser = new Map<string, { week: string; time: number }>()
-        for (const row of users) {
+        const signups = users.flatMap((row) => {
           const time = toTime(row.day)
-          if (typeof row.id !== "string" || typeof row.week !== "string" || time === null) continue
-          signupByUser.set(row.id, { week: row.week, time })
-        }
-        const cohorts = new Map<string, { size: number; retained: Map<number, Set<string>> }>()
-        for (const signup of signupByUser.values()) {
-          const cohort = cohorts.get(signup.week) ?? { size: 0, retained: new Map() }
-          cohort.size += 1
-          cohorts.set(signup.week, cohort)
-        }
-        for (const row of activity) {
-          if (typeof row.uid !== "string") continue
-          const signup = signupByUser.get(row.uid)
+          return typeof row.id === "string" && typeof row.week === "string" && time !== null ? [{ userId: row.id, cohort: row.week, signupTime: time }] : []
+        })
+        const activityRows = activity.flatMap((row) => {
           const dayTime = toTime(row.day)
-          if (!signup || dayTime === null) continue
-          const offset = Math.floor((dayTime - signup.time) / WEEK_MS)
-          if (offset < 0) continue
-          const cohort = cohorts.get(signup.week)
-          if (!cohort) continue
-          const usersAtOffset = cohort.retained.get(offset) ?? new Set<string>()
-          usersAtOffset.add(row.uid)
-          cohort.retained.set(offset, usersAtOffset)
-        }
-        const result = [...cohorts.entries()]
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([week, cohort]) => {
-            const byWeek: Record<string, { users: number; percent: number }> = {}
-            for (const [offset, retainedUsers] of [...cohort.retained.entries()].sort((a, b) => a[0] - b[0])) {
-              byWeek[`week${offset}`] = {
-                users: retainedUsers.size,
-                percent: Math.round((retainedUsers.size / cohort.size) * 1000) / 10,
-              }
-            }
-            return { cohort: week, signups: cohort.size, retention: byWeek }
-          })
+          return typeof row.uid === "string" && dayTime !== null ? [{ userId: row.uid, dayTime }] : []
+        })
+        const result = buildRetentionCohorts(signups, activityRows).map((cohort) => {
+          const byWeek: Record<string, { users: number; percent: number }> = {}
+          for (const [offset, retained] of cohort.retained) {
+            byWeek[`week${offset}`] = { users: retained, percent: Math.round((retained / cohort.signups) * 1000) / 10 }
+          }
+          return { cohort: cohort.cohort, signups: cohort.signups, retention: byWeek }
+        })
         return {
           cohorts: result,
           note: "week0 = signup week; weekN = active N weeks after signup",

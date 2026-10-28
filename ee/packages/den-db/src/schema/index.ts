@@ -1,3 +1,4 @@
+export * from "./admin-metrics"
 export * from "./agent-permissions"
 export * from "./default-models"
 export * from "./auto-router"

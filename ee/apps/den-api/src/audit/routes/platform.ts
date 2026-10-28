@@ -152,6 +152,8 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   platform("GET", "/v1/admin/overview", "platform.overview.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/dashboard", "platform.dashboard.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/dashboard/active-users", "platform.active_users.read", "platform.admin", "platform_report", null, ADMIN),
+  platform("GET", "/v1/admin/control-center", "platform.control_center.read", "platform.admin", "platform_report", null, `${ADMIN} Reads precomputed admin_metric_snapshot rows only.`),
+  platform("POST", "/v1/admin/control-center/refresh", "platform.control_center.refresh", "platform.admin", "platform_report", null, `${ADMIN} Schedules a recompute of the Control Center snapshots, globally rate limited to once a minute; changes no tenant data.`),
   platform("GET", "/v1/admin/opportunities", "platform.opportunities.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/opportunities/companies", "platform.opportunities.companies.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/opportunities/overview", "platform.opportunities.overview.read", "platform.admin", "platform_report", null, ADMIN),

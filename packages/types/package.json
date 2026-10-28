@@ -469,6 +469,14 @@
       "development": "./src/den/admin-organization.ts",
       "default": "./src/den/admin-organization.ts"
     },
+    "./den/admin-control-center": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/admin-control-center.d.ts",
+        "default": "./src/den/admin-control-center.ts"
+      },
+      "development": "./src/den/admin-control-center.ts",
+      "default": "./src/den/admin-control-center.ts"
+    },
     "./den/admin-free-auto": {
       "types": {
         "openwork-build": "./dist/types/src/den/admin-free-auto.d.ts",

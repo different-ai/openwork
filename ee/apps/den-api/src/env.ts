@@ -183,6 +183,9 @@ const EnvSchema = z.object({
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
   LIFECYCLE_EMAILS_ENABLED: z.string().optional(),
   LIFECYCLE_EMAILS_INTERVAL_MS: z.string().optional(),
+  ADMIN_METRICS_REFRESH_ENABLED: z.string().optional(),
+  ADMIN_METRICS_FAST_INTERVAL_MS: z.string().optional(),
+  ADMIN_METRICS_HEAVY_INTERVAL_MS: z.string().optional(),
   MCP_REGISTRATION_PROBE_ENABLED: z.string().optional(),
   MCP_REGISTRATION_PROBE_TRY_REGISTRATION: z.string().optional(),
   MCP_REGISTRATION_PROBE_INTERVAL_MS: z.string().optional(),
@@ -758,6 +761,13 @@ export const env = {
   lifecycleEmails: {
     enabled: parsed.LIFECYCLE_EMAILS_ENABLED?.trim() === "1",
     intervalMs: Number(parsed.LIFECYCLE_EMAILS_INTERVAL_MS ?? "900000"),
+  },
+  // Admin Control Center snapshots (admin-metrics/worker.ts): today's and 7-day KPIs on the fast tier,
+  // cohorts, sharing, revenue and accounts on the heavy tier. ADMIN_METRICS_REFRESH_ENABLED=0 turns it off.
+  adminMetrics: {
+    enabled: parsed.ADMIN_METRICS_REFRESH_ENABLED?.trim() !== "0",
+    fastIntervalMs: Math.max(60_000, Number(parsed.ADMIN_METRICS_FAST_INTERVAL_MS ?? "300000") || 300_000),
+    heavyIntervalMs: Math.max(300_000, Number(parsed.ADMIN_METRICS_HEAVY_INTERVAL_MS ?? "1800000") || 1_800_000),
   },
   // Scheduled check of which preset MCP providers let OpenWork register (mcp-registration/probe.ts). Off unless
   // MCP_REGISTRATION_PROBE_ENABLED=1; registering a test client with providers is a further opt-in, so self-hosted
