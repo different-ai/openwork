@@ -103,6 +103,33 @@ function titleFromHead(head: string): string | undefined {
   return undefined;
 }
 
+/** What driving needs from a rollout: the CLI session uuid and the project cwd. */
+export async function codexDriveContext(
+  id: string,
+  options: CodexReadOptions = {},
+): Promise<{ uuid: string; cwd: string }> {
+  const configDir = options.configDir ?? codexHome();
+  const { segments, file } = parseSessionId(id);
+  const root = resolvePath(sessionsRoot(configDir)) + sep;
+  const path = resolvePath(join(root, ...segments, `${file}.jsonl`));
+  if (!path.startsWith(root)) {
+    throw new CodeSessionsError("code_session_not_found", "This Codex session id is not valid.");
+  }
+  let head: string;
+  try {
+    head = await headOf(path, CODEX_LIMITS.headBytes);
+  } catch {
+    throw new CodeSessionsError("code_session_not_found", "This Codex session is gone or cannot be read.");
+  }
+  const meta = metaFromHead(head);
+  const cwd = meta.projectPath;
+  if (!cwd) {
+    throw new CodeSessionsError("code_session_unreadable", "This Codex session has no project directory recorded.");
+  }
+  // The CLI resume id is the rollout's uuid — the filename suffix.
+  return { uuid: file.slice(0, -".jsonl".length), cwd };
+}
+
 export type CodexListOptions = {
   /** Codex's data folder; defaults to CODEX_HOME or ~/.codex. */
   configDir?: string;
