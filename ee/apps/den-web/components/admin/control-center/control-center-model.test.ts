@@ -58,6 +58,15 @@ test("each threshold raises its own signal", () => {
   assert.deepEqual(ids, ["failures", "invites", "connector:Busy", "gains", "past-due", "refresh"]);
 });
 
+test("a handful of invited members is too few to judge activation", () => {
+  const invitations = (joined: number, active: number) => ({ ...empty, data: {
+    joinedThroughInvite: joined, joinedRanTask: active, joinedRanTaskWithin7Days: active, peopleWithAcceptedInvite: joined,
+    invitations: { sent: joined, accepted: joined, expired: 0, pending: 0, canceled: 0, medianHoursToAccept: 1 }, pendingNow: 0, outreach: null,
+  } });
+  assert.deepEqual(controlCenterSignals(view({ invitations: invitations(1, 0) })), []);
+  assert.deepEqual(controlCenterSignals(view({ invitations: invitations(10, 2) })).map((signal) => signal.id), ["invites"]);
+});
+
 test("formatting helpers", () => {
   assert.equal(change(110, 100), 10);
   assert.equal(change(0, 0), 0);

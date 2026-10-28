@@ -152,7 +152,7 @@ function ControlCenter({ onAccessDenied }: { onAccessDenied: (access: "signed-ou
     <div className="grid grid-cols-1 gap-4 pb-6 lg:grid-cols-12">
       <Group title="Growth and lifecycle" />
       <Panel title="Weekly active people" caption="Everyone who ran a task each week, by whether they are new, stayed, came back, or were lost." span="lg:col-span-8" section={view?.sections.lifecycle} now={now} testId="lifecycle" notes={[trackingNote]}>
-        {(data) => data.weeks.length === 0 ? <Empty>No complete weeks since tracking started.</Empty> : <>
+        {(data) => data.weeks.every((week) => week.new + week.stillActive + week.returned + week.lost === 0) ? <Empty>No one ran a task in the complete weeks of this range.</Empty> : <>
           <Chart height="h-64"><LifecycleChart weeks={data.weeks} /></Chart>
           {data.weeks.length > 1 ? <>
             <p className="mb-1 mt-4 text-xs font-medium text-slate-600">Gained per person lost (above 1 means growth)</p>

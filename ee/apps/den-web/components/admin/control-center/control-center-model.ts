@@ -25,6 +25,8 @@ export function change(current: number, previous: number): number | null {
 
 export const FAILURE_RATE_THRESHOLD = 0.12;
 export const INVITE_ACTIVATION_THRESHOLD = 0.3;
+/** Below this many invited members the activation share is noise. */
+export const INVITE_MIN_MEMBERS = 10;
 export const CONNECTOR_ERROR_THRESHOLD = 0.15;
 /** Below this many calls a connector's error rate is noise. */
 export const CONNECTOR_MIN_CALLS = 50;
@@ -40,7 +42,7 @@ export function controlCenterSignals(view: AdminControlCenter): Signal[] {
     signals.push({ id: "failures", tone: "warn", section: "pulse", text: `${percent(failureRate, 1)} of tasks failed in the last 7 days, above the ${percent(FAILURE_RATE_THRESHOLD)} threshold.` });
   }
   const invited = invitations.data;
-  const inviteActivation = invited && invited.joinedThroughInvite > 0 ? invited.joinedRanTaskWithin7Days / invited.joinedThroughInvite : null;
+  const inviteActivation = invited && invited.joinedThroughInvite >= INVITE_MIN_MEMBERS ? invited.joinedRanTaskWithin7Days / invited.joinedThroughInvite : null;
   if (inviteActivation !== null && inviteActivation < INVITE_ACTIVATION_THRESHOLD) {
     signals.push({ id: "invites", tone: "warn", section: "invitations", text: `Only ${percent(inviteActivation)} of invited members ran a task within 7 days of joining.` });
   }

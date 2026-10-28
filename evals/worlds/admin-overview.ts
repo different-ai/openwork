@@ -73,7 +73,8 @@ export async function adminOverviewWorld(seed: Seed) {
   if (!killed.response.ok) throw new Error("Could not set up a globally disabled feature.");
   const viewport = { width: 1280, height: 700 };
   const anonymous = await seed.web({ den, startPath: "/admin/users?search=Routing&page=2", headless: true, viewport });
-  const admin = await seed.web({ den, signedInAs: den.admin, startPath: "/admin/users", headless: true, viewport: { width: 1280, height: 200 } });
+  // A short window keeps the first member's consumption section well beyond the 400px prefetch margin.
+  const admin = await seed.web({ den, signedInAs: den.admin, startPath: "/admin/users", headless: true, viewport: { width: 1280, height: 120 } });
   const member = await seed.web({ den, signedInAs: den.members.member, startPath: "/admin/organizations", headless: true, viewport });
   return {
     anonymous, admin, member, organizationId, memberId,
