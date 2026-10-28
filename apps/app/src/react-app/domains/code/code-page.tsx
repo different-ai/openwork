@@ -1,0 +1,300 @@
+/** @jsxImportSource react */
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Folder, RefreshCw, Search, SquareTerminal } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { toast } from "@/components/ui/sonner";
+import type { CodeSessionSummary } from "@/app/lib/code-sessions";
+import type { OpenworkServerClient } from "@/app/lib/openwork-server";
+import { cn } from "@/lib/utils";
+import { CodeTranscript } from "./code-transcript";
+
+const LIST_REFETCH_MS = 5_000;
+const DETAIL_REFETCH_MS = 4_000;
+
+/** "5 min ago" style labels; sessions are compared against a fresh clock. */
+function relativeTime(timestamp: number, now: number): string {
+  const seconds = Math.max(1, Math.round((now - timestamp) / 1000));
+  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  if (seconds < 60) return formatter.format(-seconds, "second");
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return formatter.format(-minutes, "minute");
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return formatter.format(-hours, "hour");
+  return formatter.format(-Math.round(hours / 24), "day");
+}
+
+function folderOf(projectPath: string): string {
+  const parts = projectPath.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? projectPath;
+}
+
+function splitSessionId(sessionId: string): { folder: string; file: string } | null {
+  const separator = sessionId.indexOf("/");
+  if (separator <= 0 || separator === sessionId.length - 1) return null;
+  return { folder: sessionId.slice(0, separator), file: sessionId.slice(separator + 1) };
+}
+
+type ProjectGroup = { projectPath: string; items: CodeSessionSummary[] };
+
+function groupByProject(items: CodeSessionSummary[]): ProjectGroup[] {
+  const groups = new Map<string, ProjectGroup>();
+  for (const item of items) {
+    const group = groups.get(item.projectPath);
+    if (group) group.items.push(item);
+    else groups.set(item.projectPath, { projectPath: item.projectPath, items: [item] });
+  }
+  return [...groups.values()];
+}
+
+function SessionRow({
+  item,
+  active,
+  now,
+  onSelect,
+}: {
+  item: CodeSessionSummary;
+  active: boolean;
+  now: number;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-current={active ? "true" : undefined}
+      onClick={onSelect}
+      className={cn(
+        "flex h-12 w-full items-center gap-3 rounded-md px-3 text-left",
+        active ? "bg-muted" : "hover:bg-muted/60",
+      )}
+    >
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate text-[13px] font-medium text-foreground">{item.title}</span>
+        <span className="truncate text-xs text-muted-foreground">
+          {folderOf(item.projectPath)} · {relativeTime(item.updatedAt, now)}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+export function CodePage({ openworkServerClient: client }: { openworkServerClient: OpenworkServerClient | null }) {
+  const queryClient = useQueryClient();
+  const [filter, setFilter] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  const listQuery = useQuery({
+    queryKey: ["code-sessions"],
+    queryFn: () => {
+      if (!client) throw new Error("The OpenWork server is not connected yet.");
+      return client.listCodeSessions();
+    },
+    enabled: Boolean(client),
+    refetchInterval: LIST_REFETCH_MS,
+  });
+
+  const items = listQuery.data?.items ?? [];
+  const clients = listQuery.data?.clients ?? [];
+  const filtered = useMemo(() => {
+    const query = filter.trim().toLowerCase();
+    if (!query) return items;
+    return items.filter((item) =>
+      item.title.toLowerCase().includes(query) || item.projectPath.toLowerCase().includes(query),
+    );
+  }, [filter, items]);
+  const groups = useMemo(() => groupByProject(filtered), [filtered]);
+
+  const selected = items.find((item) => item.sessionId === selectedId) ?? null;
+  const selectedParts = selected ? splitSessionId(selected.sessionId) : null;
+  const detailQuery = useQuery({
+    queryKey: ["code-session", selectedId],
+    queryFn: () => {
+      if (!client || !selected || !selectedParts) {
+        throw new Error("This session is no longer listed.");
+      }
+      return client.readCodeSession(selected.client, selectedParts.folder, selectedParts.file);
+    },
+    enabled: Boolean(client && selected && selectedParts),
+    refetchInterval: DETAIL_REFETCH_MS,
+  });
+
+  // The list clock only moves on a slow tick, so relative labels stay fresh
+  // without re-rendering the transcript on every list poll.
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const toggleClient = async (id: string, enabled: boolean) => {
+    if (!client) return;
+    try {
+      await client.setCodeSessionClientEnabled(id, enabled);
+      await queryClient.invalidateQueries({ queryKey: ["code-sessions"] });
+      if (!enabled) setSelectedId(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The coding agent could not be switched.");
+    }
+  };
+
+  const clientsRow = clients.length > 0 ? (
+    <div className="flex items-center gap-4 px-1">
+      {clients.map((entry) => (
+        <label key={entry.id} className="flex items-center gap-2 text-xs text-muted-foreground">
+          <SquareTerminal className="size-3.5" aria-hidden />
+          <span>{entry.id === "claude-code" ? "Claude Code" : entry.id}</span>
+          <Switch
+            checked={entry.enabled}
+            disabled={!entry.available}
+            aria-label={`Mirror ${entry.id} sessions`}
+            onCheckedChange={(value) => void toggleClient(entry.id, value === true)}
+          />
+        </label>
+      ))}
+    </div>
+  ) : null;
+
+  if (!client) {
+    return (
+      <Empty variant="ghost" className="h-full">
+        <EmptyHeader>
+          <EmptyTitle>The OpenWork server is not connected</EmptyTitle>
+          <EmptyDescription>Connect a workspace first; the Code tab reads its sessions from the same server.</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-0">
+      <div className="flex h-full w-80 min-w-0 shrink-0 flex-col border-r border-border">
+        <div className="flex flex-col gap-3 border-b border-border px-3 py-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <Input
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              placeholder="Search sessions"
+              aria-label="Search sessions"
+              className="h-8 pl-8"
+            />
+          </div>
+          {clientsRow}
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2" data-code-session-list>
+          {listQuery.isPending ? (
+            <div className="flex flex-col gap-2 px-1 pt-1">
+              {Array.from({ length: 8 }, (_, index) => (
+                <Skeleton key={index} className="h-12 w-full" />
+              ))}
+            </div>
+          ) : listQuery.isError ? (
+            <div className="flex flex-col items-start gap-2 px-2 py-4">
+              <p className="text-sm text-muted-foreground">
+                The session list could not be read. The server may still be starting.
+              </p>
+              <Button variant="outline" size="sm" onClick={() => void listQuery.refetch()}>
+                <RefreshCw className="size-3.5" aria-hidden />
+                Retry
+              </Button>
+            </div>
+          ) : groups.length === 0 ? (
+            <Empty variant="ghost">
+              <EmptyHeader>
+                <EmptyMedia>
+                  <SquareTerminal className="size-6 text-muted-foreground" aria-hidden />
+                </EmptyMedia>
+                <EmptyTitle>No sessions mirrored yet</EmptyTitle>
+                <EmptyDescription>
+                  {clients.every((entry) => !entry.enabled)
+                    ? "Turn a coding agent on above to mirror its sessions."
+                    : "Run Claude Code in any project on this computer; its sessions appear here."}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            groups.map((group) => (
+              <div key={group.projectPath} className="mb-3">
+                <p className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-muted-foreground">
+                  <Folder className="size-3.5" aria-hidden />
+                  <span className="truncate">{folderOf(group.projectPath)}</span>
+                  <span className="truncate font-normal" title={group.projectPath}>{group.projectPath !== folderOf(group.projectPath) ? group.projectPath : null}</span>
+                </p>
+                <div className="flex flex-col gap-0.5">
+                  {group.items.map((item) => (
+                    <SessionRow
+                      key={item.sessionId}
+                      item={item}
+                      active={item.sessionId === selectedId}
+                      now={now}
+                      onSelect={() => {
+                        setNow(Date.now());
+                        setSelectedId(item.sessionId);
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+      <div className="min-w-0 flex-1 overflow-y-auto" data-code-transcript-pane>
+        {selected && detailQuery.data ? (
+          <div className="mx-auto flex max-w-3xl flex-col gap-5 px-6 py-6">
+            <header className="flex flex-col gap-1">
+              <h2 className="truncate text-base font-semibold text-foreground">{detailQuery.data.summary.title}</h2>
+              <p className="text-xs text-muted-foreground">
+                {selected.client === "claude-code" ? "Claude Code" : selected.client}
+                {" · "}
+                {selected.projectPath}
+                {" · "}
+                {relativeTime(detailQuery.data.summary.updatedAt, now)}
+                {" · External, read-only"}
+              </p>
+            </header>
+            {detailQuery.data.notes.length > 0 ? (
+              <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+                {detailQuery.data.notes.map((note) => (
+                  <li key={note}>{note}</li>
+                ))}
+              </ul>
+            ) : null}
+            <CodeTranscript messages={detailQuery.data.messages} />
+          </div>
+        ) : selected && detailQuery.isError ? (
+          <Empty variant="ghost" className="h-full">
+            <EmptyHeader>
+              <EmptyTitle>This session could not be read</EmptyTitle>
+              <EmptyDescription>It may have been deleted by the coding agent while you were opening it.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : selected ? (
+          <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-6">
+            {Array.from({ length: 4 }, (_, index) => (
+              <Skeleton key={index} className="h-16 w-full" />
+            ))}
+          </div>
+        ) : (
+          <Empty variant="ghost" className="h-full">
+            <EmptyHeader>
+              <EmptyTitle>Choose a session</EmptyTitle>
+              <EmptyDescription>Read any Claude Code session on this computer without leaving OpenWork.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
+      </div>
+    </div>
+  );
+}

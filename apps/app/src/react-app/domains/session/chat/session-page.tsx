@@ -195,6 +195,8 @@ export type SessionPageSidebarProps = {
   onOpenAutomations?: () => void;
   calendarActive?: boolean;
   onOpenCalendar?: () => void;
+  codeActive?: boolean;
+  onOpenCode?: () => void;
   dashboardActive?: boolean;
   onOpenDashboard?: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
@@ -1456,6 +1458,8 @@ export function SessionPage(props: SessionPageProps) {
           onOpenAutomations={props.sidebar.onOpenAutomations}
           calendarActive={props.sidebar.calendarActive}
           onOpenCalendar={props.sidebar.onOpenCalendar}
+          codeActive={props.sidebar.codeActive}
+          onOpenCode={props.sidebar.onOpenCode}
           dashboardActive={props.sidebar.dashboardActive}
           onOpenDashboard={props.sidebar.onOpenDashboard}
           conversationHistory={{

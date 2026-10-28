@@ -51,6 +51,10 @@ export function automationsRoute() {
   return "/automations";
 }
 
+export function codeRoute() {
+  return "/code";
+}
+
 export function calendarRoute() {
   return "/calendar";
 }

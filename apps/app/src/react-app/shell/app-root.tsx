@@ -537,6 +537,14 @@ export function AppRoot() {
                 }
               />
               <Route path="/calendar" element={<DevProfiler id="CalendarRoute"><SessionRoute /></DevProfiler>} />
+              <Route
+                path="/code"
+                element={
+                  <DevProfiler id="CodeRoute">
+                    <SessionRoute />
+                  </DevProfiler>
+                }
+              />
               <Route path="/activity" element={<DevProfiler id="ActivityRoute"><SessionRoute /></DevProfiler>} />
               <Route path="/apps" element={<DevProfiler id="AppsRoute"><SessionRoute /></DevProfiler>} />
               <Route path="/dashboard/apps/:appId" element={<DevProfiler id="DashboardAppRoute"><SessionRoute /></DevProfiler>} />

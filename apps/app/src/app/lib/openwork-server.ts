@@ -21,6 +21,10 @@ import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } fro
 import type { DenResourceSnapshot } from "./den-types";
 import type { CloudImportedMarketplace, CloudImportedPlugin, CloudImportedProvider } from "../cloud/import-state";
 import { desktopFreeAccessStatusSchema } from "./inference-access";
+import {
+  codeSessionDetailEnvelopeSchema,
+  codeSessionsListSchema,
+} from "./code-sessions";
 import { claudeImportItemsSchema, claudeImportResultsSchema } from "./claude-import";
 
 const desktopFreePreferencesSchema = z.object({ enabled: z.boolean(), available: z.boolean(), canEnable: z.boolean(), refresh: z.enum(["reloaded", "deferred"]).optional() });
@@ -2349,6 +2353,30 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       claudeImportItemsSchema.parse(
         await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/code`, { token, hostToken, timeoutMs: 60_000 }),
       ).items,
+    listCodeSessions: async () =>
+      codeSessionsListSchema.parse(
+        await requestJson<unknown>(baseUrl, "/code-sessions", { token, hostToken, timeoutMs: 120_000 }),
+      ),
+    readCodeSession: async (client: string, folder: string, file: string) =>
+      codeSessionDetailEnvelopeSchema.parse(
+        await requestJson<unknown>(
+          baseUrl,
+          `/code-sessions/${encodeURIComponent(client)}/${encodeURIComponent(folder)}/${encodeURIComponent(file)}`,
+          { token, hostToken, timeoutMs: 120_000 },
+        ),
+      ).item,
+    setCodeSessionClientEnabled: async (client: string, enabled: boolean) => {
+      const result = codeSessionsListSchema.parse(
+        await requestJson<unknown>(baseUrl, `/code-sessions/clients/${encodeURIComponent(client)}`, {
+          token,
+          hostToken,
+          method: "PUT",
+          body: { enabled },
+          timeoutMs: 60_000,
+        }),
+      );
+      return result.clients;
+    },
     importClaudeCodeSessions: async (workspaceId: string, ids: string[]) =>
       claudeImportResultsSchema.parse(
         await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/code`, {

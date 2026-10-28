@@ -30,6 +30,7 @@ import {
   RotateCcw,
   FolderOpen,
   SquarePen,
+  SquareTerminal,
   Tag,
   X,
 } from "lucide-react";
@@ -669,6 +670,8 @@ export type AppSidebarProps = {
   onOpenAutomations?: () => void;
   calendarActive?: boolean;
   onOpenCalendar?: () => void;
+  codeActive?: boolean;
+  onOpenCode?: () => void;
   dashboardActive?: boolean;
   onOpenDashboard?: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
@@ -875,6 +878,14 @@ export function AppSidebar(props: AppSidebarProps) {
                 icon={CalendarDays}
                 label="Calendar"
                 onSelect={props.onOpenCalendar}
+              />
+            ) : null}
+            {props.onOpenCode ? (
+              <SidebarDestination
+                active={props.codeActive === true}
+                icon={SquareTerminal}
+                label="Code"
+                onSelect={props.onOpenCode}
               />
             ) : null}
             <SidebarDestination

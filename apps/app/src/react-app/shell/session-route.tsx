@@ -113,6 +113,7 @@ import type { ActivityResource } from "@/react-app/kernel/activity-types";
 import { encodeConnectSkillToken } from "@/react-app/domains/session/surface/composer/connect-skill-token";
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
+import { CodePage } from "@/react-app/domains/code/code-page";
 import { CalendarPage } from "@/react-app/domains/calendar/calendar-page";
 import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature";
 import { useRemoteSessionSubagentsFeature } from "@/react-app/domains/session/remote-threads/use-remote-session-subagents-feature";
@@ -287,6 +288,7 @@ import {
   mergeWorkspaceRouteSession,
   automationsRoute,
   calendarRoute,
+  codeRoute,
   dashboardRoute,
   workspaceExtensionsRoute,
   workspaceSessionRoute,
@@ -415,6 +417,7 @@ export function SessionRoute() {
   const automationsRouteRequested = /^\/automations(?:\/|$)/.test(location.pathname);
   const dashboardRouteRequested = /^\/dashboard(?:\/|$)/.test(location.pathname);
   const calendarRouteRequested = /^\/calendar(?:\/|$)/.test(location.pathname);
+  const codeRouteActive = /^\/code(?:\/|$)/.test(location.pathname);
   const activityRouteRequested = location.pathname === "/activity";
   const {
     enabled: mcpAppsDashboardEnabled,
@@ -570,7 +573,7 @@ export function SessionRoute() {
   } = useWorkspaceRouteState({
     preservePendingConversationRoute: Boolean(requestedPendingId && pendingConversations[requestedPendingId]?.scope === sessionDraftScope),
     developerMode,
-    workspaceRoute: activityRouteActive ? "activity" : appsRouteActive ? "apps" : automationsRouteActive ? "automations" : calendarRouteActive || (calendarRouteRequested && calendarAvailabilityPending) ? "calendar" : dashboardWorkspaceRoute ? "dashboard" : "session",
+    workspaceRoute: activityRouteActive ? "activity" : appsRouteActive ? "apps" : automationsRouteActive ? "automations" : calendarRouteActive || (calendarRouteRequested && calendarAvailabilityPending) ? "calendar" : dashboardWorkspaceRoute ? "dashboard" : codeRouteActive ? "code" : "session",
     onServerSettingsChanged: () => undefined,
     onHostInfo: setOpenworkServerHostInfoState,
   });
@@ -3944,11 +3947,13 @@ export function SessionRoute() {
         />
       }
       // Page titles match their sidebar labels.
-      primaryTitle={activityRouteActive ? t("activity.title") : appsRouteActive ? "Dashboard" : automationsRouteActive ? "Automations" : calendarRouteActive ? "Calendar" : dashboardRouteActive ? "Dashboard" : undefined}
+      primaryTitle={activityRouteActive ? t("activity.title") : appsRouteActive ? "Dashboard" : automationsRouteActive ? "Automations" : calendarRouteActive ? "Calendar" : dashboardRouteActive ? "Dashboard" : codeRouteActive ? "Code" : undefined}
       // Dashboard, Automations and Library share one flat page surface.
-      primarySurface={activityRouteActive || dashboardRouteActive || automationsRouteActive || calendarRouteActive || extensionsMainOpen ? "flat" : undefined}
+      primarySurface={activityRouteActive || dashboardRouteActive || automationsRouteActive || calendarRouteActive || codeRouteActive || extensionsMainOpen ? "flat" : undefined}
       primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation)}
-      primarySlot={activityRouteActive ? <ActivityPage onTrySkill={trySkillInNewSession} /> : pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
+      primarySlot={activityRouteActive ? <ActivityPage onTrySkill={trySkillInNewSession} /> : codeRouteActive ? (
+        <CodePage openworkServerClient={selectedWorkspaceEndpoint?.client ?? null} />
+      ) : pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
         <WorkspaceProvider
           client={opencodeClient}
           opencodeBaseUrl={opencodeBaseUrl}
@@ -4019,6 +4024,10 @@ export function SessionRoute() {
               navigate(calendarRoute());
             }
           : undefined,
+        codeActive: codeRouteActive,
+        onOpenCode: () => {
+          navigate(codeRoute());
+        },
         dashboardActive: dashboardRouteActive || appsRouteActive,
         onOpenDashboard: dashboardSurfaceAvailable
           ? () => {
