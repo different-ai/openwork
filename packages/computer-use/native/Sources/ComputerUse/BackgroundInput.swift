@@ -53,18 +53,13 @@ enum InputDelivery: String {
     }
 }
 
-/// Real input posted through the system input stream also lands in the hardware
-/// state the helper reads to notice the person's clicks and keys. An input of
-/// the same type at the moment of the agent's own post is the agent's.
+/// Input posted through the system input stream for apps that take only real
+/// mouse and keyboard input.
 enum RealInput {
-    /// The system stamps the agent's event within a few milliseconds of the post;
-    /// a person's click or key any later than this is theirs.
-    static let echo: TimeInterval = 0.02
-
-    static func isOwn(inputAt: TimeInterval, postedAt: TimeInterval?) -> Bool {
-        guard let postedAt else { return false }
-        return inputAt >= postedAt - 0.01 && inputAt <= postedAt + echo
-    }
+    /// A drag holds the button while the pointer travels. If something comes forward
+    /// mid-drag, the release that must go out could drop the dragged content into
+    /// another app, so these apps get no real drags.
+    static let dragUnavailable = UseError("drag_unavailable", "Drags are not sent to this app: if another window came forward during one, its release could drop into that window. Use clicks, keys or the app's own commands. Nothing was sent.", next: "observe")
 
     /// Hands the pointer back only if it is still where the agent left it;
     /// a pointer the person moved since stays with them.

@@ -557,6 +557,7 @@ final class SessionRuntime {
         let background = inBackground && !front
         // Its own window in front, never a dialog of another process over it.
         let realInput = front && current.realInput && current.parents.isEmpty
+        if realInput, actions.contains(where: { if case .drag = $0 { return true }; return false }) { throw RealInput.dragUnavailable }
         // Held through the settle wait, so no other agent's window comes forward mid-batch.
         let focusLease = front ? try await FocusLease.acquire(check: { try self.checkActive(current) }) : nil
         defer { focusLease?.release() }
@@ -805,9 +806,9 @@ final class SessionRuntime {
     /// HID system state holds only device input, never the agent's process-targeted
     /// events. Reads only timing, with no permission beyond computer use's own.
     private func lastPersonInput(_ type: CGEventType) -> TimeInterval {
-        let at = ProcessInfo.processInfo.systemUptime - CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: type)
-        // The agent's own real input lands in the same state; it is never the person's.
-        return RealInput.isOwn(inputAt: at, postedAt: input.realPost(type)) ? -.infinity : at
+        // The agent's own real input may show up here too. It is never discounted:
+        // that can only stop a step early, never let one run over the person's input.
+        ProcessInfo.processInfo.systemUptime - CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: type)
     }
     private func personInterrupted(since start: TimeInterval) -> Bool {
         Self.interruptions.contains { SharedDesktop.personInterrupted(inputAt: lastPersonInput($0), since: start) }

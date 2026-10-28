@@ -44,8 +44,6 @@ final class MacInput {
     /// Set for one action in an app that takes only hardware input: events go
     /// through the system input stream and move the real pointer.
     private var realInput = false
-    /// When the agent last posted real input of each type, in uptime.
-    private var realPosts: [CGEventType: TimeInterval] = [:]
     /// Where the person's pointer was before the agent moved it.
     private var personPointer: CGPoint?
     // One gesture's events share a group so the app coalesces them as one.
@@ -68,7 +66,6 @@ final class MacInput {
         releaseModifiers()
         if interrupted { report(.uncertain) }
     }
-    func realPost(_ type: CGEventType) -> TimeInterval? { realPosts[type] }
     /// Puts the person's pointer back after real input, unless they moved it meanwhile.
     func restorePointer() {
         defer { personPointer = nil }
@@ -258,7 +255,6 @@ final class MacInput {
             // releases always go out so nothing stays held in another app.
             if pointer, personPointer == nil { personPointer = CGEvent(source: nil)?.location }
             event.post(tap: .cghidEventTap)
-            realPosts[event.type] = ProcessInfo.processInfo.systemUptime
             return
         }
         if pointer, routes[pid] == .skyLight, let skyLightPost = Self.skyLightPost {

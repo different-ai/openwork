@@ -20,9 +20,10 @@ Some apps and steps still need the front, and get it the way they did before
 (the window comes forward, then is handed back):
 
 - whole sessions in Blender, Unity, Unreal, games, and apps built with Qt,
-  wxWidgets or Tk, which read only real pointer input. Their clicks, drags,
-  scrolls and keys go through the system input stream with the real pointer,
-  which goes back to where the person left it after each step;
+  wxWidgets or Tk, which read only real pointer input. Their clicks, scrolls
+  and keys go through the system input stream with the real pointer, which
+  goes back to where the person left it after each step. They get no drags,
+  whose release could drop into another window that came forward;
 - single steps in any app: menu shortcuts (⌘ keys), clicks with modifier
   keys, hover, drags, and typing in Chromium, Electron and Catalyst apps.
   When such a step needs the window brought forward and uses coordinates,

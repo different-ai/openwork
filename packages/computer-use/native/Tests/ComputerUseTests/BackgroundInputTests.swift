@@ -31,13 +31,9 @@ final class BackgroundInputTests: XCTestCase {
         }
     }
 
-    func testTheAgentsOwnRealInputIsNeverTakenForThePersons() {
-        XCTAssertTrue(RealInput.isOwn(inputAt: 10.002, postedAt: 10))
-        XCTAssertTrue(RealInput.isOwn(inputAt: 9.995, postedAt: 10), "the system can stamp the event just before the post returns")
-        XCTAssertFalse(RealInput.isOwn(inputAt: 10 + RealInput.echo + 0.05, postedAt: 10), "a click after the agent's is the person's")
-        XCTAssertFalse(RealInput.isOwn(inputAt: 10.03, postedAt: 10), "a person's click right after the agent's still stops the step")
-        XCTAssertFalse(RealInput.isOwn(inputAt: 9.5, postedAt: 10))
-        XCTAssertFalse(RealInput.isOwn(inputAt: 10, postedAt: nil), "without real input every click is the person's")
+    func testAppsThatTakeOnlyRealInputGetNoDrags() {
+        XCTAssertEqual(RealInput.dragUnavailable.code, "drag_unavailable")
+        XCTAssertEqual(RealInput.dragUnavailable.next, "observe")
     }
 
     func testThePointerGoesBackOnlyIfThePersonLeftItWhereTheAgentPutIt() {
