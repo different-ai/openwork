@@ -87,6 +87,14 @@ export const codeSessionDrivesSchema = z.object({ runs: z.array(codeSessionDrive
 
 export const codeSessionDriveEnvelopeSchema = z.object({ run: codeSessionDriveRunSchema });
 
+export const codeSessionCatalogSchema = z.object({
+  models: z.array(z.string()),
+  agents: z.array(z.string()),
+  effort: z.enum(["supported", "unsupported"]),
+});
+
+export type CodeSessionCatalog = z.infer<typeof codeSessionCatalogSchema>;
+
 export type CodeSessionClientState = z.infer<typeof codeSessionClientStateSchema>;
 export type CodeSessionSummary = z.infer<typeof codeSessionSummarySchema>;
 export type CodeSessionsList = z.infer<typeof codeSessionsListSchema>;

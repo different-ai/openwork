@@ -22,6 +22,7 @@ import type { DenResourceSnapshot } from "./den-types";
 import type { CloudImportedMarketplace, CloudImportedPlugin, CloudImportedProvider } from "../cloud/import-state";
 import { desktopFreeAccessStatusSchema } from "./inference-access";
 import {
+  codeSessionCatalogSchema,
   codeSessionDetailEnvelopeSchema,
   codeSessionDriveEnvelopeSchema,
   codeSessionDrivesSchema,
@@ -2383,13 +2384,28 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       );
       return result.clients;
     },
-    startCodeSessionDrive: async (client: string, sessionId: string, prompt: string) =>
+    getCodeSessionCatalog: async (client: string, projectPath: string) =>
+      codeSessionCatalogSchema.parse(
+        await requestJson<unknown>(
+          baseUrl,
+          `/code-sessions/${encodeURIComponent(client)}/catalog?project=${encodeURIComponent(projectPath)}`,
+          { token, hostToken, timeoutMs: 60_000 },
+        ),
+      ),
+    startCodeSessionDrive: async (client: string, sessionId: string, prompt: string, options?: { model?: string; agent?: string; effort?: string }) =>
       codeSessionDriveEnvelopeSchema.parse(
         await requestJson<unknown>(baseUrl, "/code-sessions/drives", {
           token,
           hostToken,
           method: "POST",
-          body: { client, sessionId, prompt },
+          body: {
+            client,
+            sessionId,
+            prompt,
+            ...(options?.model ? { model: options.model } : {}),
+            ...(options?.agent ? { agent: options.agent } : {}),
+            ...(options?.effort ? { effort: options.effort } : {}),
+          },
           timeoutMs: 60_000,
         }),
       ).run,

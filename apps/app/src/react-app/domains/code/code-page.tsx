@@ -23,6 +23,8 @@ import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { cn } from "@/lib/utils";
 import { CodeTranscript } from "./code-transcript";
 
+const DRIVE_EFFORTS = ["low", "medium", "high"] as const;
+
 const LIST_REFETCH_MS = 5_000;
 const DETAIL_REFETCH_MS = 4_000;
 
@@ -113,6 +115,9 @@ export function CodePage({ openworkServerClient: client }: { openworkServerClien
 
   const [draft, setDraft] = useState("");
   const [activeDriveId, setActiveDriveId] = useState<string | null>(null);
+  const [driveModel, setDriveModel] = useState("");
+  const [driveAgent, setDriveAgent] = useState("");
+  const [driveEffort, setDriveEffort] = useState("");
   const drivesQuery = useQuery({
     queryKey: ["code-session-drives"],
     queryFn: () => {
@@ -149,6 +154,17 @@ export function CodePage({ openworkServerClient: client }: { openworkServerClien
   const groups = useMemo(() => groupByProject(filtered), [filtered]);
 
   const selected = items.find((item) => item.sessionId === selectedId) ?? null;
+
+  const catalogQuery = useQuery({
+    queryKey: ["code-session-catalog", selected?.client ?? "", selected?.projectPath ?? ""],
+    queryFn: () => {
+      if (!client || !selected) throw new Error("not connected");
+      return client.getCodeSessionCatalog(selected.client, selected.projectPath);
+    },
+    enabled: Boolean(client && selected && (selected.client === "claude-code" || selected.client === "opencode")),
+    staleTime: 60_000,
+  });
+
   const detailQuery = useQuery({
     queryKey: ["code-session", selectedId],
     queryFn: () => {
@@ -199,7 +215,12 @@ export function CodePage({ openworkServerClient: client }: { openworkServerClien
     const prompt = draft.trim();
     if (!prompt) return;
     try {
-      const run = await client.startCodeSessionDrive(selected.client, selected.sessionId, prompt);
+      const run = await client.startCodeSessionDrive(selected.client, selected.sessionId, prompt, {
+        model: driveModel || undefined,
+        agent: driveAgent || undefined,
+        // Effort is Claude-only at the CLI level; OpenCode's model config governs it.
+        effort: selected.client === "claude-code" ? (driveEffort || undefined) : undefined,
+      });
       setActiveDriveId(run.id);
       setDraft("");
       await queryClient.invalidateQueries({ queryKey: ["code-session-drives"] });
@@ -346,10 +367,115 @@ export function CodePage({ openworkServerClient: client }: { openworkServerClien
             <CodeTranscript messages={detailQuery.data.messages} />
             {selected.client === "claude-code" || selected.client === "opencode" ? (
               <div className="mt-2 flex flex-col gap-2 rounded-[16px] border border-border bg-background p-2">
+                {catalogQuery.data ? (
+                  <div className="flex flex-wrap items-center gap-2 px-1" data-code-drive-selects>
+                    <label className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <span className="shrink-0">Model</span>
+                      <select
+                        value={driveModel}
+                        onChange={(event) => setDriveModel(event.target.value)}
+                        className="h-6 rounded-md border border-border bg-background px-1 text-[11px] text-foreground"
+                        aria-label="Model for driven runs"
+                      >
+                        <option value="">Session default</option>
+                        {catalogQuery.data.models.map((model) => (
+                          <option key={model} value={model}>{model}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label
+                      className={cn("flex min-w-0 items-center gap-1.5 text-[11px]", catalogQuery.data.effort === "unsupported" ? "text-muted-foreground/60" : "text-muted-foreground")}
+                      title={catalogQuery.data.effort === "unsupported" ? "This client has no effort flag on its run CLI" : undefined}
+                    >
+                      <span className="shrink-0">Effort</span>
+                      <select
+                        value={driveEffort}
+                        onChange={(event) => setDriveEffort(event.target.value)}
+                        disabled={catalogQuery.data.effort === "unsupported"}
+                        className="h-6 rounded-md border border-border bg-background px-1 text-[11px] text-foreground disabled:opacity-60"
+                        aria-label="Thinking effort for driven runs"
+                      >
+                        <option value="">Default</option>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                      </select>
+                    </label>
+                    <label className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <span className="shrink-0">Agent</span>
+                      <select
+                        value={driveAgent}
+                        onChange={(event) => setDriveAgent(event.target.value)}
+                        className="h-6 rounded-md border border-border bg-background px-1 text-[11px] text-foreground"
+                        aria-label="Agent modality for driven runs"
+                      >
+                        <option value="">Default</option>
+                        {catalogQuery.data.agents.map((agent) => (
+                          <option key={agent} value={agent}>{agent}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                ) : null}
                 {driveRunning ? (
                   <p className="px-1 text-xs text-muted-foreground" data-code-drive-running>
                     {CODE_SESSION_CLIENT_LABELS[selected.client]} is working on this session — the reply lands here as it writes it.
                   </p>
+                ) : null}
+                {catalogQuery.data && (catalogQuery.data.models.length > 0 || catalogQuery.data.agents.length > 0) ? (
+                  <div className="flex flex-wrap items-center gap-2 px-1" data-code-drive-selects>
+                    {catalogQuery.data.models.length > 0 ? (
+                      <label className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                        <span className="shrink-0">Model</span>
+                        <select
+                          value={driveModel}
+                          onChange={(event) => setDriveModel(event.target.value)}
+                          disabled={driveRunning}
+                          aria-label="Model for the driven run"
+                          className="h-7 max-w-44 rounded-md border border-border bg-background px-1.5 text-xs text-foreground"
+                        >
+                          <option value="">Agent default</option>
+                          {catalogQuery.data.models.map((model) => (
+                            <option key={model} value={model}>{model}</option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    {selected.client === "claude-code" ? (
+                      <label className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground" title="Applies MAX_THINKING_TOKENS to the driven run">
+                        <span className="shrink-0">Thinking</span>
+                        <select
+                          value={driveEffort}
+                          onChange={(event) => setDriveEffort(event.target.value)}
+                          disabled={driveRunning}
+                          aria-label="Thinking effort for the driven run"
+                          className="h-7 rounded-md border border-border bg-background px-1.5 text-xs text-foreground"
+                        >
+                          <option value="">Default</option>
+                          {DRIVE_EFFORTS.map((effort) => (
+                            <option key={effort} value={effort}>{effort}</option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    {catalogQuery.data.agents.length > 0 ? (
+                      <label className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                        <span className="shrink-0">Agent</span>
+                        <select
+                          value={driveAgent}
+                          onChange={(event) => setDriveAgent(event.target.value)}
+                          disabled={driveRunning}
+                          aria-label="Agent modality for the driven run"
+                          className="h-7 max-w-44 rounded-md border border-border bg-background px-1.5 text-xs text-foreground"
+                        >
+                          <option value="">Default</option>
+                          {catalogQuery.data.agents.map((agent) => (
+                            <option key={agent} value={agent}>{agent}</option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                  </div>
                 ) : null}
                 <Textarea
                   value={draft}

@@ -54,6 +54,8 @@ function childEnv(): NodeJS.ProcessEnv {
 
 export type DriveSpawnSpec = { file: string; args: string[] };
 
+export type DriveEffort = "low" | "medium" | "high";
+
 export type StartDriveInput = {
   client: string;
   sessionId: string;
@@ -61,6 +63,12 @@ export type StartDriveInput = {
   cwd: string;
   prompt: string;
   uuid?: string;
+  /** Model override; passed as the client's --model / -m flag. */
+  model?: string;
+  /** Agent modality override; passed as the client's --agent flag. */
+  agent?: string;
+  /** Thinking effort; only clients that expose it honor this. */
+  effort?: DriveEffort;
   /**
    * Environment corrections for the child: the OpenWork server may run with
    * isolated-home or engine-pinned variables (HOME, USERPROFILE, XDG_*,
@@ -69,6 +77,13 @@ export type StartDriveInput = {
    * user-real values per client.
    */
   envOverrides?: Record<string, string>;
+};
+
+/** Claude Code thinking budget per effort level (tokens). */
+export const CLAUDE_EFFORT_TOKENS: Record<DriveEffort, string> = {
+  low: "4096",
+  medium: "10000",
+  high: "31999",
 };
 
 export type DriveRegistry = {
@@ -82,17 +97,20 @@ export type DriveRegistry = {
 /** Claude Code: one headless turn appended to the resumed session. */
 export function claudeRunSpec(input: StartDriveInput): DriveSpawnSpec {
   const resume = input.uuid ? ["--resume", input.uuid] : [];
+  const model = input.model && input.model !== "default" ? ["--model", input.model] : [];
   return {
     file: "cmd.exe",
-    args: ["/d", "/s", "/c", "claude", "-p", "--output-format", "stream-json", "--verbose", ...resume],
+    args: ["/d", "/s", "/c", "claude", "-p", "--output-format", "stream-json", "--verbose", ...resume, ...model],
   };
 }
 
 /** OpenCode: one headless turn continued on the given session (prompt via stdin). */
 export function opencodeRunSpec(input: StartDriveInput): DriveSpawnSpec {
+  const model = input.model ? ["-m", input.model] : [];
+  const agent = input.agent ? ["--agent", input.agent] : [];
   return {
     file: "cmd.exe",
-    args: ["/d", "/s", "/c", "opencode", "run", "--session", input.sessionId],
+    args: ["/d", "/s", "/c", "opencode", "run", "--session", input.sessionId, ...model, ...agent],
   };
 }
 
@@ -129,9 +147,13 @@ export function createDriveRegistry(options: {
       // database (OPENCODE_DB / OPENCODE_CONFIG_DIR). The mirror and the user's
       // own sessions live in the global store, so the driven child must read
       // and write THERE: drop the isolation pins from its environment.
-      const childEnv: NodeJS.ProcessEnv = { ...process.env };
+      const childEnv: NodeJS.ProcessEnv = { ...process.env, ...input.envOverrides };
       delete childEnv.OPENCODE_DB;
       delete childEnv.OPENCODE_CONFIG_DIR;
+      // Claude Code reads its thinking budget from the environment.
+      if (input.effort && input.client === "claude-code") {
+        childEnv.MAX_THINKING_TOKENS = CLAUDE_EFFORT_TOKENS[input.effort];
+      }
       const child = spawn(spec.file, spec.args, {
         cwd: input.cwd,
         env: childEnv,

@@ -1,16 +1,16 @@
-import { z } from "zod";
+﻿import { z } from "zod";
 
 import { ApiError } from "../errors.js";
 import { claudeDriveContext } from "../code-sessions/claude-code.js";
 import { claudeConfigDir } from "../claude-import.js";
 import { opencodeDriveContext } from "../code-sessions/opencode.js";
-import { opencodeRunSpec } from "../code-sessions/drive.js";
+import { clientCatalog } from "../code-sessions/catalog.js";
 import {
   CodeSessionsError,
   type CodeSessionClient,
 } from "../code-sessions/types.js";
 import { createCodeSessionsService, type CodeSessionsService } from "../code-sessions/index.js";
-import { createDriveRegistry, type DriveRegistry } from "../code-sessions/drive.js";
+import { createDriveRegistry, opencodeRunSpec, type DriveRegistry } from "../code-sessions/drive.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 import type { TokenScope } from "../types.js";
 
@@ -81,7 +81,7 @@ export function registerCodeSessionsRoutes(options: RegisterCodeSessionsRoutesOp
     }
   });
 
-  // Clients whose session ids are a single opaque token (OpenCode's ses_…)
+  // Clients whose session ids are a single opaque token (OpenCode's ses_â€¦)
   // read through the flat route; path-scoped clients keep the three-segment
   // one above.
   addRoute(routes, "GET", "/code-sessions/:client/:id", "client", async (ctx) => {
@@ -120,6 +120,9 @@ export function registerCodeSessionsRoutes(options: RegisterCodeSessionsRoutesOp
     client: z.enum(["claude-code", "opencode"]),
     sessionId: z.string().min(1).max(400),
     prompt: z.string().min(1).max(100_000),
+    model: z.string().min(1).max(200).optional(),
+    agent: z.string().min(1).max(200).optional(),
+    effort: z.enum(["low", "medium", "high"]).optional(),
   }).strict();
 
   const toPublicDrives = () => ({ runs: drives.list() });
@@ -139,34 +142,29 @@ export function registerCodeSessionsRoutes(options: RegisterCodeSessionsRoutesOp
     }
     const parsed = driveSchema.safeParse(body);
     if (!parsed.success) {
-      throw new ApiError(400, "invalid_payload", "Send { client, sessionId, prompt }.");
+      throw new ApiError(400, "invalid_payload", "Send { client, sessionId, prompt, model?, agent?, effort? }.");
     }
+    const driveInput = {
+      client: parsed.data.client,
+      sessionId: parsed.data.sessionId,
+      prompt: parsed.data.prompt,
+      model: parsed.data.model,
+      agent: parsed.data.agent,
+      effort: parsed.data.effort,
+    };
     try {
       if (parsed.data.client === "claude-code") {
         const context = await claudeDriveContext(parsed.data.sessionId, { configDir: options.claudeConfigDir?.() ?? claudeConfigDir() });
         return jsonResponse({
-          run: drives.start({
-            client: parsed.data.client,
-            sessionId: parsed.data.sessionId,
-            prompt: parsed.data.prompt,
-            cwd: context.cwd,
-            uuid: context.uuid,
-          }),
+          run: drives.start({ ...driveInput, cwd: context.cwd, uuid: context.uuid }),
         }, 202);
       }
       const context = await opencodeDriveContext(parsed.data.sessionId, { dbPath: options.opencodeDbPath?.() });
       return jsonResponse({
         run: drives.start({
-          client: parsed.data.client,
-          sessionId: parsed.data.sessionId,
-          prompt: parsed.data.prompt,
+          ...driveInput,
           cwd: context.directory,
-        }, opencodeRunSpec({
-          client: parsed.data.client,
-          sessionId: parsed.data.sessionId,
-          prompt: parsed.data.prompt,
-          cwd: context.directory,
-        })),
+        }, opencodeRunSpec({ ...driveInput, cwd: context.directory })),
       }, 202);
     } catch (error) {
       throw toApiError(error);
@@ -185,5 +183,16 @@ export function registerCodeSessionsRoutes(options: RegisterCodeSessionsRoutesOp
     } catch (error) {
       throw toApiError(error);
     }
+  });
+
+  // Per-client composer catalogs: models + agent modalities for the project.
+  addRoute(routes, "GET", "/code-sessions/:client/catalog", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const client = parseClient(ctx.params.client);
+    const project = ctx.url.searchParams.get("project") ?? "";
+    if (!project || project.includes("..")) {
+      throw new ApiError(400, "invalid_payload", "Send the session's project path.");
+    }
+    return jsonResponse(await clientCatalog(client, project));
   });
 }
