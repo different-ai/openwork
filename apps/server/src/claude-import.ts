@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 
 /**
@@ -331,6 +333,11 @@ function firstUserLine(messages: ImportedMessage[]): string | undefined {
 
 // ---------------------------------------------------------------------------
 // Claude Code transcripts
+
+/** Claude Code's data folder: `CLAUDE_CONFIG_DIR`, as Claude Code itself reads it, else ~/.claude. */
+export function claudeConfigDir(env: NodeJS.ProcessEnv = process.env): string {
+  return env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), ".claude");
+}
 
 /** The folder name Claude Code uses for a project directory. */
 export function claudeCodeProjectFolder(directory: string): string {

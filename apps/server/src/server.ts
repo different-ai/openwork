@@ -116,6 +116,7 @@ import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } 
 import { registerSessionGroupRoutes } from "./routes/session-groups.js";
 import { registerWorkspaceDefaultModelRoutes } from "./routes/workspace-default-model.js";
 import { createNativeClaudeImportEngine, registerClaudeImportRoutes } from "./routes/claude-import.js";
+import { registerCodeSessionsRoutes } from "./routes/code-sessions.js";
 import { registerUiControlRoutes } from "./routes/ui-control.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
@@ -2911,6 +2912,8 @@ function createRoutes(
     requireClientScope,
     resolveWorkspaceWithoutBootstrap,
   });
+
+  registerCodeSessionsRoutes({ routes, jsonResponse });
 
   registerCloudMcpRoutes({
     nativeEngineForWorkspace,

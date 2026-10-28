@@ -1,10 +1,10 @@
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 
 import {
   buildNativeImport,
+  claudeConfigDir,
   CLAUDE_IMPORT_LIMITS,
   ClaudeImportError,
   claudeCodeProjectFolder,
@@ -14,6 +14,8 @@ import {
   type ImportedConversation,
   type NativeImportPayload,
 } from "../claude-import.js";
+// Kept as a re-export: machine-wide code-session discovery reads this too.
+export { claudeConfigDir } from "../claude-import.js";
 import { ApiError } from "../errors.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
@@ -112,11 +114,6 @@ export async function importConversations(engine: ClaudeImportEngine, conversati
     }
   }
   return results;
-}
-
-/** Claude Code's data folder: `CLAUDE_CONFIG_DIR`, as Claude Code itself reads it, else ~/.claude. */
-export function claudeConfigDir(env: NodeJS.ProcessEnv = process.env): string {
-  return env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), ".claude");
 }
 
 /** Claude Code saves each folder's sessions under <config>/projects/<folder>. */
