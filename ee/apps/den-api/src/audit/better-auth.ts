@@ -43,7 +43,7 @@ type ExistingOrganization = Readonly<{ id: string }>
 
 const logger = appLogger.child({ component: "better_auth_audit" })
 const ORG_READS = new Set([
-  "/organization/get-full-organization", "/organization/list-members", "/organization/list-invitations", "/organization/get-active-member",
+  "/organization/get-full-organization", "/organization/get-organization", "/organization/list-members", "/organization/list-invitations", "/organization/get-active-member",
   "/organization/get-active-member-role", "/organization/list-roles", "/organization/get-role", "/organization/list-teams", "/organization/list-team-members",
 ])
 const CONSENT_SESSION_ORG = new Set(["/oauth2/consent", "/oauth2/continue"])
@@ -173,7 +173,7 @@ async function attributeBefore(input: HookInput): Promise<HookResult> {
   }
   if (ORG_READS.has(path)) {
     const organizationId = stringField(input.query, "organizationId")
-    const slug = path === "/organization/get-full-organization" ? stringField(input.query, "organizationSlug") : null
+    const slug = path === "/organization/get-full-organization" || path === "/organization/get-organization" ? stringField(input.query, "organizationSlug") : null
     const session = organizationId || slug ? null : await input.session()
     const organization = await existingOrganization(organizationId ? { id: organizationId } : slug ? { slug } : { id: session?.activeOrganizationId ?? null })
     const user = organization ? session ?? await input.session() : null
