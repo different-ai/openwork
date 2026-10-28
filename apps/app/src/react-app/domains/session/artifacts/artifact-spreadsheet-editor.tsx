@@ -4,7 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Loader2, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { parseSpreadsheet, serializeSpreadsheet, type SpreadsheetRows } from "./artifact-spreadsheet-model";
+import { isEditableSpreadsheet, parseSpreadsheet, serializeSpreadsheet, type SpreadsheetRows } from "./artifact-spreadsheet-model";
 import { cn } from "@/lib/utils";
 import type { Data } from "./open-target";
 
@@ -86,6 +86,7 @@ function useSpreadsheet({ name, content, onSave }: UseSpreadsheetProps) {
 export function ArtifactSpreadsheetEditor(props: ArtifactSpreadsheetEditorProps) {
   const { rows, error, isLoading, updateCell, addRow, addColumn, discard, isDirty, save, isSaving } = useSpreadsheet(props);
   const saving = props.saving || isSaving;
+  const editable = isEditableSpreadsheet(props.name);
 
   if (isLoading) {
     return (
@@ -106,11 +107,13 @@ export function ArtifactSpreadsheetEditor(props: ArtifactSpreadsheetEditorProps)
   return (
     <div className={cn("flex h-full min-h-0 flex-col", props.className)}>
       <div className="flex shrink-0 items-center gap-2 px-3 py-2 border-b border-border">
-        <Button variant="ghost" size="xs" onClick={addRow}><Plus className="size-3" /> Row</Button>
-        <Button variant="ghost" size="xs" onClick={addColumn}><Plus className="size-3" /> Column</Button>
-        <div className="min-w-0 flex-1" />
-        <Button variant="ghost" size="xs" onClick={discard} disabled={!isDirty || saving}>Discard</Button>
-        <Button variant="default" size="xs" onClick={() => save()} disabled={!isDirty || saving}>{saving ? "Saving" : "Save"}</Button>
+        {editable ? <>
+          <Button variant="ghost" size="xs" onClick={addRow}><Plus className="size-3" /> Row</Button>
+          <Button variant="ghost" size="xs" onClick={addColumn}><Plus className="size-3" /> Column</Button>
+          <div className="min-w-0 flex-1" />
+          <Button variant="ghost" size="xs" onClick={discard} disabled={!isDirty || saving}>Discard</Button>
+          <Button variant="default" size="xs" onClick={() => save()} disabled={!isDirty || saving}>{saving ? "Saving" : "Save"}</Button>
+        </> : <span className="text-xs text-muted-foreground">Read-only · First sheet · Values only</span>}
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         <table className="w-full border-collapse text-xs">
@@ -122,7 +125,9 @@ export function ArtifactSpreadsheetEditor(props: ArtifactSpreadsheetEditorProps)
                     <input
                       className="h-8 w-full min-w-[120px] bg-transparent px-2 text-foreground outline-none focus:bg-muted/50"
                       value={cell}
-                      onChange={(event) => updateCell(rowIndex, columnIndex, event.target.value)}
+                      aria-label={`Row ${rowIndex + 1}, column ${columnIndex + 1}`}
+                      readOnly={!editable}
+                      onChange={editable ? (event) => updateCell(rowIndex, columnIndex, event.target.value) : undefined}
                     />
                   </td>
                 ))}
