@@ -4,13 +4,14 @@ import { ApiError } from "../errors.js";
 import { claudeDriveContext } from "../code-sessions/claude-code.js";
 import { claudeConfigDir } from "../claude-import.js";
 import { opencodeDriveContext } from "../code-sessions/opencode.js";
+import { codexDriveContext } from "../code-sessions/codex.js";
 import { clientCatalog } from "../code-sessions/catalog.js";
 import {
   CodeSessionsError,
   type CodeSessionClient,
 } from "../code-sessions/types.js";
 import { createCodeSessionsService, type CodeSessionsService } from "../code-sessions/index.js";
-import { createDriveRegistry, opencodeRunSpec, type DriveRegistry } from "../code-sessions/drive.js";
+import { codexRunSpec, createDriveRegistry, opencodeRunSpec, type DriveRegistry } from "../code-sessions/drive.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 import type { TokenScope } from "../types.js";
 
@@ -34,6 +35,8 @@ interface RegisterCodeSessionsRoutesOptions {
   claudeConfigDir?: () => string;
   /** OpenCode's database path resolver, for drive context lookups. */
   opencodeDbPath?: () => string;
+  /** Codex's data folder resolver, for drive context lookups. */
+  codexConfigDir?: () => string;
 }
 
 /**
@@ -117,7 +120,7 @@ export function registerCodeSessionsRoutes(options: RegisterCodeSessionsRoutesOp
 
   const drives = options.drives ?? createDriveRegistry();
   const driveSchema = z.object({
-    client: z.enum(["claude-code", "opencode"]),
+    client: z.enum(["claude-code", "opencode", "codex"]),
     sessionId: z.string().min(1).max(400),
     prompt: z.string().min(1).max(100_000),
     model: z.string().min(1).max(200).optional(),
@@ -157,6 +160,16 @@ export function registerCodeSessionsRoutes(options: RegisterCodeSessionsRoutesOp
         const context = await claudeDriveContext(parsed.data.sessionId, { configDir: options.claudeConfigDir?.() ?? claudeConfigDir() });
         return jsonResponse({
           run: drives.start({ ...driveInput, cwd: context.cwd, uuid: context.uuid }),
+        }, 202);
+      }
+      if (parsed.data.client === "codex") {
+        const context = await codexDriveContext(parsed.data.sessionId, { configDir: options.codexConfigDir?.() });
+        return jsonResponse({
+          run: drives.start({
+            ...driveInput,
+            cwd: context.cwd,
+            uuid: context.uuid,
+          }, codexRunSpec({ ...driveInput, cwd: context.cwd, uuid: context.uuid })),
         }, 202);
       }
       const context = await opencodeDriveContext(parsed.data.sessionId, { dbPath: options.opencodeDbPath?.() });

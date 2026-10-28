@@ -114,6 +114,20 @@ export function opencodeRunSpec(input: StartDriveInput): DriveSpawnSpec {
   };
 }
 
+/**
+ * Codex: one headless turn resumed on the rollout session (prompt via stdin).
+ * The uuid comes from the rollout's session_meta record.
+ */
+export function codexRunSpec(input: StartDriveInput): DriveSpawnSpec {
+  const uuid = input.uuid ?? input.sessionId;
+  const model = input.model ? ["-m", input.model] : [];
+  const effort = input.effort ? ["-c", `model_reasoning_effort="${input.effort}"`] : [];
+  return {
+    file: "cmd.exe",
+    args: ["/d", "/s", "/c", "codex", "exec", "resume", uuid, "-", ...model, ...effort],
+  };
+}
+
 export function createDriveRegistry(options: {
   /** Spawn spec builder; injectable for tests. Defaults to the Claude CLI. */
   spawnSpec?: (input: StartDriveInput) => DriveSpawnSpec;

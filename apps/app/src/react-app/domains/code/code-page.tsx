@@ -161,7 +161,7 @@ export function CodePage({ openworkServerClient: client }: { openworkServerClien
       if (!client || !selected) throw new Error("not connected");
       return client.getCodeSessionCatalog(selected.client, selected.projectPath);
     },
-    enabled: Boolean(client && selected && (selected.client === "claude-code" || selected.client === "opencode")),
+    enabled: Boolean(client && selected && (selected.client === "claude-code" || selected.client === "opencode" || selected.client === "codex")),
     staleTime: 60_000,
   });
 
@@ -365,7 +365,7 @@ export function CodePage({ openworkServerClient: client }: { openworkServerClien
               </ul>
             ) : null}
             <CodeTranscript messages={detailQuery.data.messages} />
-            {selected.client === "claude-code" || selected.client === "opencode" ? (
+            {selected.client === "claude-code" || selected.client === "opencode" || selected.client === "codex" ? (
               <div className="mt-2 flex flex-col gap-2 rounded-[16px] border border-border bg-background p-2">
                 {catalogQuery.data ? (
                   <div className="flex flex-wrap items-center gap-2 px-1" data-code-drive-selects>
