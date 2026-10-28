@@ -23,6 +23,7 @@ import type { CloudImportedMarketplace, CloudImportedPlugin, CloudImportedProvid
 import { desktopFreeAccessStatusSchema } from "./inference-access";
 import {
   codeSessionDetailEnvelopeSchema,
+  codeSessionsClientsSchema,
   codeSessionsListSchema,
 } from "./code-sessions";
 import { claudeImportItemsSchema, claudeImportResultsSchema } from "./claude-import";
@@ -2366,7 +2367,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         ),
       ).item,
     setCodeSessionClientEnabled: async (client: string, enabled: boolean) => {
-      const result = codeSessionsListSchema.parse(
+      const result = codeSessionsClientsSchema.parse(
         await requestJson<unknown>(baseUrl, `/code-sessions/clients/${encodeURIComponent(client)}`, {
           token,
           hostToken,

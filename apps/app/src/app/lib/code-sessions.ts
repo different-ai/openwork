@@ -27,6 +27,10 @@ export const codeSessionsListSchema = z.object({
   items: z.array(codeSessionSummarySchema),
 });
 
+export const codeSessionsClientsSchema = z.object({
+  clients: z.array(codeSessionClientStateSchema),
+});
+
 export const importedToolCallSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -74,3 +78,10 @@ export type CodeSessionsList = z.infer<typeof codeSessionsListSchema>;
 export type ImportedToolCall = z.infer<typeof importedToolCallSchema>;
 export type ImportedMessage = z.infer<typeof importedMessageSchema>;
 export type CodeSessionDetail = z.infer<typeof codeSessionDetailSchema>;
+
+/** Display labels for the clients the Code tab can mirror. */
+export const CODE_SESSION_CLIENT_LABELS: Record<string, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  pi: "Pi",
+};

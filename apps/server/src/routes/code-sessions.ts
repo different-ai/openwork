@@ -50,7 +50,7 @@ export function registerCodeSessionsRoutes(options: RegisterCodeSessionsRoutesOp
   };
 
   const parseClient = (value: string): CodeSessionClient => {
-    if (value === "claude-code") return "claude-code";
+    if (value === "claude-code" || value === "codex" || value === "pi") return value;
     throw new ApiError(400, "code_session_client_unknown", "This coding agent is not supported yet.");
   };
 

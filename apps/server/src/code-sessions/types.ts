@@ -5,7 +5,7 @@ import type { ImportedMessage } from "../claude-import.js";
  * Each entry maps to one adapter; an adapter knows where the client stores its
  * transcripts on this machine and how to read them without executing anything.
  */
-export type CodeSessionClient = "claude-code";
+export type CodeSessionClient = "claude-code" | "codex" | "pi";
 
 export type CodeSessionSummary = {
   client: CodeSessionClient;

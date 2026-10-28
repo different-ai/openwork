@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { BrainCircuit, ChevronRight, Terminal } from "lucide-react";
 
+import { MarkdownBlock } from "@/components/markdown/markdown";
 import {
   Collapsible,
   CollapsibleContent,
@@ -112,9 +113,7 @@ export function CodeTranscript({ messages }: { messages: ImportedMessage[] }) {
             {message.blocks.map((block, index) => {
               if (block.type === "text") {
                 return (
-                  <p key={index} className="text-sm whitespace-pre-wrap text-foreground">
-                    {block.text}
-                  </p>
+                  <MarkdownBlock key={index} className="text-sm text-foreground" text={block.text} />
                 );
               }
               if (block.type === "reasoning") {

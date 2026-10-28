@@ -17,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/sonner";
 import type { CodeSessionSummary } from "@/app/lib/code-sessions";
+import { CODE_SESSION_CLIENT_LABELS } from "@/app/lib/code-sessions";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { cn } from "@/lib/utils";
 import { CodeTranscript } from "./code-transcript";
@@ -163,7 +164,7 @@ export function CodePage({ openworkServerClient: client }: { openworkServerClien
       {clients.map((entry) => (
         <label key={entry.id} className="flex items-center gap-2 text-xs text-muted-foreground">
           <SquareTerminal className="size-3.5" aria-hidden />
-          <span>{entry.id === "claude-code" ? "Claude Code" : entry.id}</span>
+          <span>{CODE_SESSION_CLIENT_LABELS[entry.id] ?? entry.id}</span>
           <Switch
             checked={entry.enabled}
             disabled={!entry.available}
@@ -266,7 +267,7 @@ export function CodePage({ openworkServerClient: client }: { openworkServerClien
             <header className="flex flex-col gap-1">
               <h2 className="truncate text-base font-semibold text-foreground">{detailQuery.data.summary.title}</h2>
               <p className="text-xs text-muted-foreground">
-                {selected.client === "claude-code" ? "Claude Code" : selected.client}
+                {CODE_SESSION_CLIENT_LABELS[selected.client] ?? selected.client}
                 {" · "}
                 {selected.projectPath}
                 {" · "}
