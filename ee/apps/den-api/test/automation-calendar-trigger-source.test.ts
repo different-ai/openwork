@@ -1,6 +1,7 @@
 /**
  * The calendar trigger source with fake reads and claims: one run per meeting
- * across many polls, and one decision log per occurrence.
+ * across many polls, one decision log per occurrence, and a skipped run (once)
+ * for a meeting that came due while the calendar couldn't be read.
  */
 import assert from "node:assert/strict"
 import { test } from "node:test"
@@ -56,7 +57,10 @@ type Claimed = { scheduledFor: number; nonce: string; triggerContext: Automation
 
 function harness(read: (now: number) => MemberCalendarRead) {
   const claims: Claimed[] = []
+  const skips: Array<Claimed & { code: string; message: string }> = []
+  const recorded = new Set<string>()
   let reads = 0
+  let skipCalls = 0
   let clock = 0
   const source = new CalendarTriggerSource({
     list: async () => [item],
@@ -67,13 +71,23 @@ function harness(read: (now: number) => MemberCalendarRead) {
     },
     claim: async (_item, occurrence) => {
       claims.push(occurrence)
+      recorded.add(occurrence.nonce)
       return `atr_${claims.length}`
+    },
+    // Like the database: an occurrence that already has a run or a receipt is not written again.
+    skip: async (_item, occurrence) => {
+      skipCalls += 1
+      if (recorded.has(occurrence.nonce)) return false
+      recorded.add(occurrence.nonce)
+      skips.push(occurrence)
+      return true
     },
     needsConnection: async () => undefined,
   })
   return {
-    claims,
+    claims, skips,
     reads: () => reads,
+    skipCalls: () => skipCalls,
     tick: (now: number) => {
       clock = now
       return source.tick(now)
@@ -101,7 +115,7 @@ async function decisionLogs(run: () => Promise<void>): Promise<Array<Record<stri
   })
 }
 
-test("an unanswered meeting runs once across many polls; each decision is logged once", async () => {
+test("an unanswered meeting runs once across many polls; skips record nothing; each decision is logged once", async () => {
   const endsAt = createdAt + 60 * MINUTE
   const dueAt = endsAt + 5 * MINUTE
   const calendar = {
@@ -122,6 +136,7 @@ test("an unanswered meeting runs once across many polls; each decision is logged
   })
 
   assert.deepEqual(source.claims.map((claim) => [claim.triggerContext.eventId, claim.scheduledFor]), [["unanswered", dueAt], ["maybe", dueAt + 20 * MINUTE]])
+  assert.deepEqual(source.skips, [], "meetings the trigger isn't meant for are not misses")
   assert.ok(source.reads() <= 10, `one read per poll, not per tick (${source.reads()})`)
 
   const decided = logs.map((log) => [log.occurrence_key, log.decision, log.reason])
@@ -149,4 +164,30 @@ test("a decision that changes inside the grace window is acted on: declined, the
   })
   assert.deepEqual(source.claims.map((claim) => claim.triggerContext.eventId), ["changed"])
   assert.deepEqual(logs.map((log) => log.reason ?? log.decision), ["declined", "run"])
+})
+
+test("a meeting due while the calendar couldn't be read gets one skipped run with its times, never its title", async () => {
+  const missedEnd = createdAt + 60 * MINUTE
+  const missedDue = missedEnd + 5 * MINUTE
+  const lateDue = missedDue + 12 * MINUTE
+  // Reads fail every 5 minutes from 2 minutes before the first moment; the one at +18 minutes works.
+  const recoverAt = missedDue + 18 * MINUTE
+  const calendar = { items: [meeting("missed", missedEnd), meeting("late", lateDue - 5 * MINUTE), meeting("missed-but-declined", missedEnd, { attendees: [me("declined"), peer] })] }
+  const read = (now: number): MemberCalendarRead => now < recoverAt ? { kind: "google_api_error" } : { kind: "ok", json: calendar }
+  const source = harness(read)
+  const logs = await decisionLogs(async () => {
+    for (let now = missedDue - 2 * MINUTE; now <= recoverAt + 30 * MINUTE; now += 15_000) await source.tick(now)
+  })
+
+  assert.deepEqual(source.skips.map((skip) => [skip.triggerContext.eventId, skip.scheduledFor, skip.code]), [["missed", missedDue, "connect_access_unavailable"]])
+  assert.equal(source.skipCalls(), 1, "asked once, not on every poll after the outage")
+  const [receipt] = source.skips
+  assert.ok(receipt)
+  assert.equal(receipt.triggerContext.title, null)
+  assert.equal(receipt.triggerContext.start, missedEnd - 30 * MINUTE)
+  assert.equal(receipt.triggerContext.end, missedEnd)
+  assert.match(receipt.message, /^Google Calendar couldn't be read when this meeting was due, so it didn't run\./)
+  assert.equal(receipt.nonce, `meeting:end:${missedEnd}:missed`, "keyed like the run it replaces")
+  assert.deepEqual(source.claims.map((claim) => claim.triggerContext.eventId), ["late"], "a meeting still inside the grace window runs late instead")
+  assert.deepEqual(logs.filter((log) => log.missed === true).map((log) => [String(log.occurrence_key).split(":").at(-1), log.skipped_run_recorded]), [["missed", true]])
 })

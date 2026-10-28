@@ -65,13 +65,22 @@ or propose one with `automation.propose`.
 
 - Meetings the trigger isn't meant for (a `skip` decision) record nothing on
   the Automation: they are not misses.
+- A meeting that should have run but came due while Google Calendar couldn't
+  be read, and is more than 10 minutes old once a read works again, gets a
+  `skipped` run on its Automation: `scheduledFor` is the meeting's moment,
+  `error.code` is `connect_access_unavailable`, the summary says so in a
+  sentence, and `triggerContext` keeps the meeting's times with no title. It
+  uses the same occurrence key as the run would have, so a meeting never has
+  both, and replicas never write it twice. A meeting still within 10 minutes
+  runs late instead. A Den restart during the outage forgets it began, so
+  meetings missed before the restart record nothing.
 - Every decision is logged once per occurrence and decision (not per poll) by
   each replica: `component=automation_calendar_triggers`,
   `message="calendar trigger decision"`, with `automation_id`,
   `occurrence_key`, `due_at`, `meeting_start`, `meeting_end`,
-  `owner_response`, `decision`, `reason` and `run_id`. Never the title or
-  anyone's address. Events without times (all-day) have no moment, so they
-  are never logged.
+  `owner_response`, `decision`, `reason`, `missed`, `run_id` and
+  `skipped_run_recorded`. Never the title or anyone's address. Events without
+  times (all-day) have no moment, so they are never logged.
 
 ## Older desktops
 
@@ -95,4 +104,6 @@ meetings and when: `packages/automations/src/calendar-trigger.test.ts`.
 
 Logs from `automation_calendar_triggers` (read failures per owner, and one
 `calendar trigger decision` per occurrence), runs whose `scheduledFor` follows
-meetings, and Automations needing attention with `connect_access_unavailable`.
+meetings, skipped runs with `connect_access_unavailable` (meetings missed while
+the calendar couldn't be read), and Automations needing attention with
+`connect_access_unavailable`.

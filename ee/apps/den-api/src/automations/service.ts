@@ -190,6 +190,7 @@ export class AutomationService {
       enabled: options.calendarTriggersEnabled ?? ((owner) => ownerScheduleFeatureEnabled(owner, "automationCalendarTriggers")),
       read: options.readCalendar ?? readOwnerCalendar,
       claim: (item, occurrence) => this.claimAndDispatch(item, occurrence, Date.now()),
+      skip: (item, occurrence) => this.recordSkippedOccurrence(item, occurrence, Date.now()),
       needsConnection: async (item, message) => {
         const now = Date.now()
         await automationRepository.markNeedsAttention({
@@ -517,17 +518,19 @@ export class AutomationService {
         reason: { ...blocked, occurredAt: now },
         now,
       })
-      const skipped = await automationRepository.recordSkippedManual({
+      const skipped = await automationRepository.recordSkipped({
         ...scope,
         automation: current.automation,
         revision,
+        trigger: "manual",
+        scheduledFor: null,
         nonce: randomUUID(),
         code: blocked.code,
         message: blocked.message,
         now,
       })
-      await recordAutomationRunCompleted({ runId: skipped.id, terminalAt: now })
-      return skipped
+      await recordAutomationRunCompleted({ runId: skipped.run.id, terminalAt: now })
+      return skipped.run
     }
     const claimedAt = Date.now()
     const claim = await automationRepository.claim({
@@ -671,6 +674,36 @@ export class AutomationService {
     }
     if (claim.run.executionTarget === "cloud") this.startCloudRun(claim.run.id)
     return claim.run.id
+  }
+
+  /**
+   * Records a scheduled occurrence that can no longer run as a skipped run,
+   * once (keyed like its claim). True when this call wrote it; false when the
+   * occurrence already has a run or the Automation changed meanwhile.
+   */
+  private async recordSkippedOccurrence(
+    item: AutomationListItem,
+    occurrence: Parameters<CalendarTriggerSourceDeps["skip"]>[1],
+    now: number,
+  ): Promise<boolean> {
+    try {
+      const skipped = await automationRepository.recordSkipped({
+        organizationId: item.automation.organizationId,
+        ownerMemberId: item.automation.ownerMemberId,
+        automation: item.automation,
+        revision: item.revision,
+        trigger: "scheduled",
+        ...occurrence,
+        now,
+      })
+      if (skipped.kind === "duplicate") return false
+      await recordAutomationRunStarted(skipped.run.id)
+      await recordAutomationRunCompleted({ runId: skipped.run.id, terminalAt: now })
+      return true
+    } catch (error) {
+      if (error instanceof Error && ["automation_not_found", "automation_not_active", "automation_revision_changed"].includes(error.message)) return false
+      throw error
+    }
   }
 
   async stop(): Promise<void> {

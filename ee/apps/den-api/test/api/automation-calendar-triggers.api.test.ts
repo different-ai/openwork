@@ -2,7 +2,8 @@
  * Calendar triggers: Cloud Automations that run around each meeting. Gated by
  * `automationCalendarTriggers`, cloud only, hidden from desktops that cannot
  * read them, and claimed once per meeting from the owner's calendar, answered
- * or not.
+ * or not. A meeting missed while the calendar couldn't be read is recorded
+ * once as a skipped run.
  */
 import {
   AUTOMATION_CLOUD_DEFAULT_MODEL,
@@ -218,4 +219,34 @@ test("unanswered and maybe meetings run once each across polls and replicas; dec
   ])
   // The fake clock runs ahead of run leases, so how a run ends here says nothing; what matters is that it started work.
   assert.ok(runs.every((run) => field(run, "status") !== "skipped"), JSON.stringify(runs))
+})
+
+test("a meeting due while the calendar couldn't be read gets one skipped run, across replicas, with its times and never its title", async () => {
+  const trigger = await createInternalTrigger("Follow-up after outages")
+  const missedEnd = trigger.createdAt + 60 * 60_000
+  const missedDue = missedEnd + 5 * 60_000
+  const recoverAt = missedDue + 20 * 60_000
+  const calendar = { items: [meeting("missed", missedEnd, { summary: "Northwind Labs planning", attendees: [self("needsAction"), peer] })] }
+  const flaky = (input: { ownerMemberId: string }, now: number) => now < recoverAt ? Promise.resolve({ kind: "google_api_error" as const }) : ownCalendar(calendar)(input)
+  let clock = 0
+  const service = new AutomationService({ calendarTriggersEnabled: async () => true, readCalendar: (input) => flaky(input, clock) })
+  const replica = new AutomationService({ calendarTriggersEnabled: async () => true, readCalendar: (input) => flaky(input, clock) })
+  for (let now = missedDue - 60_000; now <= recoverAt + 15 * 60_000; now += 60_000) {
+    clock = now
+    await service.tick({ now })
+    await replica.tick({ now })
+  }
+
+  const runs = await runsOf(trigger.id)
+  assert.equal(runs.length, 1, JSON.stringify(runs))
+  const [receipt] = runs
+  assert.equal(field(receipt, "status"), "skipped")
+  assert.equal(field(receipt, "trigger"), "scheduled")
+  assert.equal(field(receipt, "scheduledFor"), missedDue)
+  assert.equal(field(receipt, "error", "code"), "connect_access_unavailable")
+  assert.match(String(field(receipt, "resultSummary")), /^Google Calendar couldn't be read when this meeting was due, so it didn't run\./)
+  assert.equal(field(receipt, "triggerContext", "start"), missedEnd - 30 * 60_000)
+  assert.equal(field(receipt, "triggerContext", "end"), missedEnd)
+  assert.equal(field(receipt, "triggerContext", "title"), null)
+  assert.doesNotMatch(JSON.stringify(receipt), /Northwind Labs planning/)
 })

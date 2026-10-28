@@ -593,17 +593,25 @@ export class DenAutomationRepository implements AutomationRepository {
     })
   }
 
-  /** Records a manual attempt that policy refused without dispatching work. */
-  async recordSkippedManual(input: {
+  /**
+   * Records an occurrence that never dispatched work, as a skipped run: a
+   * manual attempt policy refused, or a scheduled occurrence that could not
+   * run. Idempotent by the occurrence's identity, so an occurrence that
+   * already has a run (or a receipt) is left as it is.
+   */
+  async recordSkipped(input: {
     organizationId: string
     ownerMemberId: string
     automation: Automation
     revision: AutomationRevision
+    trigger: "manual" | "scheduled"
+    scheduledFor: number | null
     nonce: string
+    triggerContext?: AutomationRunTriggerContext | null
     code: AutomationError["code"]
     message: string
     now: number
-  }): Promise<AutomationRun> {
+  }): Promise<{ kind: "recorded" | "duplicate"; run: AutomationRun }> {
     return db.transaction(async (tx) => {
       const automationId = normalizeAutomationId(input.automation.id)
       const revisionId = normalizeRevisionId(input.revision.id)
@@ -613,20 +621,24 @@ export class DenAutomationRepository implements AutomationRepository {
         eq(AutomationTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
       )).limit(1).for("update")
       if (!locked[0] || locked[0].state === "archived") throw new Error("automation_not_found")
+      if (input.trigger === "scheduled" && locked[0].state !== "active") throw new Error("automation_not_active")
       if (locked[0].current_revision_id !== revisionId) throw new Error("automation_revision_changed")
 
       const identity = automationOccurrenceIdentity({
         automationId: input.automation.id,
-        scheduledFor: null,
+        scheduledFor: input.scheduledFor,
         nonce: input.nonce,
       })
+      const duplicates = await tx.select().from(AutomationRunTable)
+        .where(eq(AutomationRunTable.idempotency_key, identity.idempotencyKey)).limit(1)
+      if (duplicates[0]) return { kind: "duplicate", run: mapRun(duplicates[0]) }
       const runId = createDenTypeId("automationRun")
       await tx.insert(AutomationRunTable).values({
         id: runId,
         automation_id: automationId,
         revision_id: revisionId,
-        trigger: "manual",
-        scheduled_for: null,
+        trigger: input.trigger,
+        scheduled_for: date(input.scheduledFor),
         idempotency_key: identity.idempotencyKey,
         status: "skipped",
         execution_target: input.revision.executionTarget ?? "desktop",
@@ -646,6 +658,7 @@ export class DenAutomationRepository implements AutomationRepository {
         finished_at: new Date(input.now),
         error: { code: input.code, message: input.message, retryable: false },
         result_summary: input.message,
+        trigger_context: input.triggerContext ?? null,
         usage: emptyUsage,
         created_at: new Date(input.now),
         updated_at: new Date(input.now),
@@ -656,7 +669,7 @@ export class DenAutomationRepository implements AutomationRepository {
       }).where(eq(AutomationTable.id, automationId))
       const rows = await tx.select().from(AutomationRunTable).where(eq(AutomationRunTable.id, runId)).limit(1)
       if (!rows[0]) throw new Error("automation_run_not_durable")
-      return mapRun(rows[0])
+      return { kind: "recorded", run: mapRun(rows[0]) }
     })
   }
 
