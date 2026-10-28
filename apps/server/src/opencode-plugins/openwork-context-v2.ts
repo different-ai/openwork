@@ -93,7 +93,13 @@ export default {
             const response = await fetch(context.options.url, {
               method: "POST", redirect: "error", signal: call.signal,
               headers: { Authorization: `Bearer ${context.options.token}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ name, input, sessionId: call.sessionID, ...(context.options.codeMode === true ? { codeMode: true } : {}) }),
+              body: JSON.stringify({
+                name, input, sessionId: call.sessionID, ...(context.options.codeMode === true ? { codeMode: true } : {}),
+                // A command that asks first shows its approval at this call in the chat.
+                ...(name === "openwork_execute" && context.location?.directory && call.messageID && call.id ? {
+                  caller: { directory: context.location.directory, messageId: call.messageID, callId: call.id, ...(call.agent ? { agent: call.agent } : {}) },
+                } : {}),
+              }),
             });
             if (!response.ok) throw new Error(`OpenWork ${name === "openwork_execute" ? "command" : "read"} failed (${response.status})`);
             return { content: [{ type: "text", text: await response.text() }] };

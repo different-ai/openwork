@@ -61,6 +61,9 @@ export const sessionSendArgsSchema = z.object({
   reveal: z.boolean().optional().describe("true to also open that session in the person's focused pane after sending. Defaults to false: nothing on screen changes."),
 });
 
+/** The engine permission a person answers before the agent answers another session's question for them. */
+export const SESSION_QUESTION_ANSWER_PERMISSION = "openwork_session_question_answer";
+
 export const sessionQuestionListArgsSchema = z.object({
   sessionId: z.string().trim().min(1).describe("Session ID from session.search or session.read."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Omit to resolve the session across all workspaces."),

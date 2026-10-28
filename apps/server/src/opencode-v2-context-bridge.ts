@@ -330,7 +330,19 @@ export async function createV2ContextBridge(
         if (call.name === "openwork_execute") {
           const id = isRecord(call.input) ? String(call.input.id) : "";
           if (!commandIds.includes(id)) throw new Error(`${id || "This command"} is not available here; only session group changes, session.create, session.send, session.question.answer and automation proposals are`);
-          return plugin.tool.openwork_execute.execute(call.input, call.sessionId ? { sessionID: call.sessionId } : {});
+          const { sessionId, caller } = call;
+          // Commands that ask first (answering another session's question)
+          // ask in the calling chat through the engine's own prompt.
+          const ask = sessionId && caller ? async (approval: { permission: string; patterns: string[]; metadata: Record<string, unknown> }) => {
+            await askEngineApproval(engine?.(), {
+              directory: caller.directory, sessionId, messageId: caller.messageId, callId: caller.callId, ...(caller.agent ? { agent: caller.agent } : {}),
+              action: approval.permission, resources: approval.patterns, metadata: approval.metadata,
+              subject: "answering this question", nothing: "the question was not answered",
+            }, AbortSignal.any([request.signal, AbortSignal.timeout(APPROVAL_WAIT_MS)]));
+            // The writes after an approval get their own budget.
+            deadline = AbortSignal.timeout(60_000);
+          } : undefined;
+          return plugin.tool.openwork_execute.execute(call.input, { ...(sessionId ? { sessionID: sessionId } : {}), ...(ask ? { ask } : {}) });
         }
         const context: unknown = JSON.parse(await plugin.tool.openwork_context.execute());
         const filtered = bridgeAffordances(context);

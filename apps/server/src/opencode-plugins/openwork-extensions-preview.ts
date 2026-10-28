@@ -40,6 +40,7 @@ import {
   sessionCreateArgsSchema,
   sessionReadArgsSchema,
   sessionSearchArgsSchema,
+  SESSION_QUESTION_ANSWER_PERMISSION,
   sessionQuestionAnswerArgsSchema,
   sessionQuestionListArgsSchema,
   sessionSendArgsSchema,
@@ -315,7 +316,9 @@ function normalizeOpenCodeContext(value: unknown): OpenCodeContext {
   const worktree = optionalStringProperty(nested, "worktree");
   const workspaceId = optionalStringProperty(nested, "workspaceId");
   const workspaceID = optionalStringProperty(nested, "workspaceID");
+  const ask = isRecord(nested) && typeof nested.ask === "function" ? nested.ask : undefined;
   return {
+    ...(ask ? { ask: (request) => ask.call(nested, request) } : {}),
     ...(agent ? { agent } : {}),
     ...(sessionID ? { sessionID } : {}),
     ...(messageID ? { messageID } : {}),
@@ -1327,7 +1330,9 @@ async function listSessionQuestions(rawArgs: unknown): Promise<object> {
 /**
  * Answer another session's pending question with the person's answers.
  * Options are matched by label; free text is refused where the question
- * does not allow it. A session cannot answer its own question.
+ * does not allow it. A session cannot answer its own question, and every
+ * answer waits for the person to allow it in the calling chat: the question
+ * text comes from another session and must not steer an unattended reply.
  */
 async function answerSessionQuestion(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
   const parsed = sessionQuestionAnswerArgsSchema.safeParse(rawArgs);
@@ -1349,6 +1354,22 @@ async function answerSessionQuestion(rawArgs: unknown, context: OpenCodeContext)
     if (unknown !== undefined && !question.custom) {
       return { ok: false, error: `Question ${index + 1} does not take "${unknown}"; choose from: ${[...labels].join(", ")}.` };
     }
+  }
+  if (!context.ask) return { ok: false, error: "OpenWork cannot ask for your approval here, so the question was not answered." };
+  try {
+    // Nothing is saved for later, so each answer is approved on its own.
+    await context.ask({
+      permission: SESSION_QUESTION_ANSWER_PERMISSION,
+      patterns: [pending.sessionId],
+      always: [],
+      metadata: {
+        sessionId: pending.sessionId,
+        requestId: pending.requestId,
+        answers: pending.questions.map((question, index) => ({ question: question.question || question.header, answer: args.answers[index] ?? [] })),
+      },
+    });
+  } catch (error) {
+    return { ok: false, error: `The question was not answered: ${unknownErrorMessage(error)}` };
   }
   const workspace = encodeURIComponent(found.workspace.id);
   const requestId = encodeURIComponent(pending.requestId);
