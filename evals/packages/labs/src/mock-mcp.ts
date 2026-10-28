@@ -63,6 +63,8 @@ export interface MockAgentWorkload {
   finalReplyDelayMs?: number;
   /** Chat Completions: emit a reasoning block before the final answer. */
   finalReasoning?: string;
+  /** Exact reasoning-delta boundaries; concatenate to finalReasoning. Paced like content deltas. */
+  finalReasoningChunks?: string[];
   /** Tool calls the agent makes before its final reply; empty answers directly. */
   steps: MockAgentToolStep[];
 }

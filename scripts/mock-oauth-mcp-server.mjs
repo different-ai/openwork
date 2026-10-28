@@ -247,6 +247,12 @@ function validateAgentWorkloads(value) {
     if (workload.finalReasoning !== undefined && typeof workload.finalReasoning !== "string") {
       throw new Error(`agent workload ${promptMarker} finalReasoning must be a string`);
     }
+    const finalReasoningChunks = workload.finalReasoningChunks ?? null;
+    if (finalReasoningChunks !== null && (!Array.isArray(finalReasoningChunks) || finalReasoningChunks.length === 0
+      || finalReasoningChunks.some((chunk) => typeof chunk !== "string" || chunk.length === 0)
+      || finalReasoningChunks.join("") !== workload.finalReasoning)) {
+      throw new Error(`agent workload ${promptMarker} finalReasoningChunks must concatenate to finalReasoning`);
+    }
     if (workload.latestUserTurn !== undefined && typeof workload.latestUserTurn !== "boolean") {
       throw new Error(`agent workload ${promptMarker} latestUserTurn must be a boolean`);
     }
@@ -284,7 +290,7 @@ function validateAgentWorkloads(value) {
     if (workload.terminalErrorMessage !== undefined && (typeof workload.terminalErrorMessage !== "string" || !workload.terminalErrorMessage.trim()))
       throw new Error(`agent workload ${promptMarker} terminalErrorMessage must be a non-empty string`);
     return { promptMarker, matchAll: workload.matchAll === true, finalReply, finalReplyFrom: workload.finalReplyFrom, finalReplyChunkSize, finalReplyChunks,
-      finalReplyInitiallyReleasedChunks, finalReplyDelayMs, finalReasoning: workload.finalReasoning, steps,
+      finalReplyInitiallyReleasedChunks, finalReplyDelayMs, finalReasoning: workload.finalReasoning, finalReasoningChunks, steps,
       latestUserTurn: workload.latestUserTurn === true, rateLimitAttempts, serverErrorAttempts, terminalErrorMessage: workload.terminalErrorMessage };
   });
 }
@@ -377,7 +383,12 @@ async function gatedAgentStream(res, model, workload, finalReply) {
   res.once("close", abort);
   res.write(`data: ${JSON.stringify(agentChunk(model, { role: "assistant" }))}\n\n`);
   if (workload.finalReasoning) {
-    res.write(`data: ${JSON.stringify(agentChunk(model, { reasoning_content: workload.finalReasoning }))}\n\n`);
+    for (const reasoning of workload.finalReasoningChunks ?? [workload.finalReasoning]) {
+      if (gate.aborted || res.writableEnded || res.destroyed) return;
+      res.write(`data: ${JSON.stringify(agentChunk(model, { reasoning_content: reasoning }))}\n\n`);
+      // Opt-in chunking leaves time for trusted disclosure and incremental DOM observation.
+      if (workload.finalReasoningChunks) await new Promise((resolve) => setTimeout(resolve, 80));
+    }
   }
   for (const content of chunks) {
     while (gate.deliveredChunks >= gate.releasedChunks) {
@@ -740,7 +751,8 @@ async function handleAgentCompletion(req, res, entry) {
     } else {
       agentStream(res, model, [
         agentChunk(model, { role: "assistant" }),
-        ...(workload.finalReasoning ? [agentChunk(model, { reasoning_content: workload.finalReasoning })] : []),
+        ...(workload.finalReasoning ? (workload.finalReasoningChunks ?? [workload.finalReasoning])
+          .map((reasoning) => agentChunk(model, { reasoning_content: reasoning })) : []),
         ...finalReplyChunks({ ...workload, finalReply }).map((content) => agentChunk(model, { content })),
         agentChunk(model, {}, "stop"),
       ], agentRepliesHeld);
