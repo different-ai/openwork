@@ -22,11 +22,12 @@ import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { useSaveWorkbotProactive, useWorkbotProactive } from "./workbot-proactive-data";
 import { PROACTIVE_PREVIEW_KINDS, WorkbotProactivePreview } from "./workbot-proactive-preview";
+import { WorkbotProactiveSources } from "./workbot-proactive-sources";
 
 /**
- * Manage › Workbot › Your agent: every member gets a background agent that reads their Gmail and Google Calendar on
- * a schedule and messages them only when something needs them. One switch for the organization, what agents tell
- * people about, where messages go, when and how often, and a preview.
+ * Manage › Workbot › Your agent: every member gets a background agent that reads their calendar, email, team chat and
+ * the connections they turn on, on a schedule, and messages them only when something needs them. One switch for the
+ * organization, what agents tell people about, where messages go, when and how often, a preview, and what agents read.
  */
 
 function hourLabel(hour: number) {
@@ -270,13 +271,16 @@ export function WorkbotProactiveSection({ orgId, canManage, connectorsHref }: { 
           )}
         />
       ) : query.data ? (
-        <WorkbotProactivePanel
-          view={query.data}
-          canManage={canManage}
-          saving={save.isPending}
-          connectorsHref={connectorsHref}
-          onChange={(change) => save.mutate(change)}
-        />
+        <div className="grid gap-6">
+          <WorkbotProactivePanel
+            view={query.data}
+            canManage={canManage}
+            saving={save.isPending}
+            connectorsHref={connectorsHref}
+            onChange={(change) => save.mutate(change)}
+          />
+          <WorkbotProactiveSources view={query.data} canManage={canManage} saving={save.isPending} onChange={(change) => save.mutate(change)} />
+        </div>
       ) : (
         <PanelSkeleton />
       )}

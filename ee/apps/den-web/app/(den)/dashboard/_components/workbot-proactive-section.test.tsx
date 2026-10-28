@@ -5,12 +5,22 @@ import { DEFAULT_AGENT_TEMPLATE, DEFAULT_WORKBOT_PROACTIVE_SETTINGS, type AgentR
 import { WorkbotProactivePanel } from "./workbot-proactive-section";
 import { previewTime } from "./workbot-proactive-preview";
 import { WorkbotProactiveHealthTable } from "./workbot-proactive-health";
+import { WorkbotProactiveSources } from "./workbot-proactive-sources";
 
 const ready: WorkbotProactiveView = {
   settings: { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS, enabled: true },
   template: { ...DEFAULT_AGENT_TEMPLATE, versionId: null, version: 1 },
   slackReady: true,
   runnerReady: true,
+  sourceConnections: {
+    calendar: [{ id: "google-workspace", name: "Google Calendar", url: "https://google.com" }],
+    email: [{ id: "google-workspace", name: "Gmail", url: "https://google.com" }],
+    chat: [{ id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp" }],
+    other: [
+      { id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp" },
+      { id: "emc_tracker", name: "Issue tracker", url: "https://mcp.linear.app/mcp" },
+    ],
+  },
 };
 
 function render(view: WorkbotProactiveView = ready, options: { canManage?: boolean; preview?: AgentResponsibility } = {}) {
@@ -90,3 +100,38 @@ test("the health table shows checks, the share that stayed quiet, messages and m
   assert.match(view, /Calendar changes 240 95% 12 1 of 12/);
   assert.match(view, /Waiting on you 0 — 0 0 of 12/);
 });
+
+function sources(view: WorkbotProactiveView = ready, canManage = true) {
+  return renderToStaticMarkup(<WorkbotProactiveSources view={view} canManage={canManage} saving={false} onChange={() => undefined} />);
+}
+
+function row(html: string, testId: string) {
+  return text(new RegExp(`data-testid="${testId}"[\\s\\S]*?(?=data-testid="workbot-source-|$)`).exec(html)?.[0] ?? "");
+}
+
+test("what agents read: calendar, email and team chat on for everyone by default, the connections behind them, other connections up to members", () => {
+  const html = sources();
+  const view = text(html);
+  assert.match(view, /What agents read/);
+  assert.match(row(html, "workbot-source-calendar"), /Calendar Google Calendar On for everyone/);
+  assert.match(row(html, "workbot-source-email"), /Email Gmail On for everyone/);
+  assert.match(row(html, "workbot-source-chat"), /Team chat Slack On for everyone/);
+  assert.match(view, /Other connections \(2\)/);
+  assert.match(row(html, "workbot-source-emc_notes"), /Meeting notes Members choose/);
+  assert.match(row(html, "workbot-source-emc_tracker"), /Issue tracker Members choose/);
+  assert.match(view, /Read only\. Agents never send, edit or delete through these\./);
+  assert.match(html, /<details[^>]*data-testid="workbot-source-others"/);
+  assert.doesNotMatch(html, /<details[^>]*open=""[^>]*data-testid="workbot-source-others"|<details[^>]*data-testid="workbot-source-others"[^>]*open=""/, "other connections start collapsed");
+})
+
+test("what agents read: each row shows the admin's choice, and is locked for people who can't manage it", () => {
+  const view: WorkbotProactiveView = { ...ready, settings: { ...ready.settings, sources: { calendar: "everyone", email: "members", chat: "off", connections: { emc_tracker: "off" } } } };
+  const html = sources(view);
+  assert.match(row(html, "workbot-source-email"), /Members choose/);
+  assert.match(row(html, "workbot-source-chat"), /Not allowed/);
+  assert.match(row(html, "workbot-source-emc_tracker"), /Not allowed/);
+  assert.match(row(html, "workbot-source-emc_notes"), /Members choose/);
+  const locked = sources(view, false);
+  assert.equal((locked.match(/<button[^>]*disabled=""/g) ?? []).length, 5, "every choice is locked without Manage");
+  assert.match(text(sources({ ...ready, sourceConnections: { calendar: [], email: [], chat: [], other: [] } })), /No team chat connected .*Other connections \(0\)/);
+})

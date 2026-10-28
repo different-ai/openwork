@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AGENT_RESPONSIBILITIES, AGENT_RESPONSIBILITY_COPY, type MemberAgentCheck, type MemberAgentLimits, type MemberAgentView } from "@openwork/types/den/workbot-proactive";
+import { AGENT_RESPONSIBILITIES, AGENT_RESPONSIBILITY_COPY, type MemberAgentCheck, type MemberAgentLimits, type MemberAgentSource, type MemberAgentView } from "@openwork/types/den/workbot-proactive";
 import { MyAgentPanel, MyAgentRow, MyAgentRowError, type MyAgentLinks } from "./my-agent";
 import { myAgentStateLine, sentTodayLabel, whenPhrase } from "./my-agent-view";
 
@@ -12,13 +12,15 @@ const at = (local: string) => new Date(Date.parse(`${local}-04:00`)).toISOString
 
 function check(overrides: Partial<MemberAgentCheck> & Pick<MemberAgentCheck, "at" | "outcome" | "reason" | "summary">): MemberAgentCheck {
   const colon = overrides.summary.indexOf(": ");
-  return { id: overrides.at, kind: "scheduled", headline: colon > 0 ? overrides.summary.slice(0, colon) : overrides.summary.replace(/\.$/, ""), responsibilities: [], slackUrl: null, fix: null, ...overrides };
+  return { id: overrides.at, kind: "scheduled", headline: colon > 0 ? overrides.summary.slice(0, colon) : overrides.summary.replace(/\.$/, ""), responsibilities: [], sources: [], slackUrl: null, fix: null, ...overrides };
 }
 
 const quietCheck = check({ at: at("2026-10-20T11:20:00"), outcome: "quiet", reason: "nothing_new", summary: "Stayed quiet: nothing new." });
 const sentCheck = check({ at: at("2026-10-20T08:02:00"), kind: "morning", outcome: "sent", reason: "sent", summary: "Sent you a message about morning brief.", responsibilities: ["morning_brief"], slackUrl: "https://example.slack.com/archives/D0DM/p1" });
 
 const baseLimits: MemberAgentLimits = { workingDays: "weekdays", startHour: 8, endHour: 19, dailyCap: 3, quietWindow: { startHour: 12, endHour: 14 }, admin: { startHour: 8, endHour: 19, dailyCap: 3 }, narrowed: { hours: false, dailyCap: false } };
+
+const emailSource: MemberAgentSource = { id: "email", kind: "email", name: "Email", connections: [{ id: "google-workspace", name: "Gmail", url: "https://google.com", state: "connected" }], policy: "everyone", on: true, instruction: "", lastReadAt: at("2026-10-20T11:20:00") };
 
 const base: MemberAgentView = {
   available: true,
@@ -35,14 +37,28 @@ const base: MemberAgentView = {
   preferences: { always: "", never: "", when: "Between 12 and 2, only urgent things", how: "" },
   limits: baseLimits,
   changes: [
-    { id: "chg_2", field: "quietWindow", summary: "Only urgent messages 12 PM–2 PM", source: "chat", at: at("2026-10-20T11:22:00"), undone: false },
-    { id: "chg_1", field: "calendar_changes", summary: "Stopped: Calendar changes", source: "chat", at: at("2026-10-20T11:22:00"), undone: false },
-    { id: "chg_0", field: "when", summary: "When: “Between 12 and 2, only urgent things”", source: "chat", at: at("2026-10-20T11:22:00"), undone: false },
+    { id: "chg_2", field: "quietWindow", summary: "Only urgent messages 12 PM–2 PM", sourceId: null, source: "chat", at: at("2026-10-20T11:22:00"), undone: false },
+    { id: "chg_1", field: "calendar_changes", summary: "Stopped: Calendar changes", sourceId: null, source: "chat", at: at("2026-10-20T11:22:00"), undone: false },
+    { id: "chg_0", field: "when", summary: "When: “Between 12 and 2, only urgent things”", sourceId: null, source: "chat", at: at("2026-10-20T11:22:00"), undone: false },
+    { id: "chg_s", field: "sourceInstruction", sourceId: "emc_notes", summary: "Meeting notes: “Use my meeting notes for context and action items.”", source: "chat", at: at("2026-10-20T10:42:00"), undone: false },
+  ],
+  sources: [
+    { id: "calendar", kind: "calendar", name: "Calendar", connections: [{ id: "google-workspace", name: "Google Calendar", url: "https://google.com", state: "connected" }], policy: "everyone", on: true, instruction: "", lastReadAt: at("2026-10-20T11:20:00") },
+    emailSource,
+    { id: "chat", kind: "chat", name: "Team chat", connections: [{ id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp", state: "connected" }], policy: "members", on: true, instruction: "", lastReadAt: at("2026-10-20T11:20:00") },
+    { id: "emc_notes", kind: "other", name: "Meeting notes", connections: [{ id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp", state: "connected" }], policy: "members", on: true, instruction: "Use my meeting notes for context and action items.", lastReadAt: null },
+    { id: "emc_tracker", kind: "other", name: "Issue tracker", connections: [{ id: "emc_tracker", name: "Issue tracker", url: "https://mcp.linear.app/mcp", state: "needs_connection" }], policy: "members", on: true, instruction: "", lastReadAt: null },
+    { id: "emc_wiki", kind: "other", name: "Wiki", connections: [{ id: "emc_wiki", name: "Wiki", url: "https://mcp.notion.com/mcp", state: "connected" }], policy: "off", on: false, instruction: "", lastReadAt: null },
   ],
   link: "https://den.example/dashboard/library/my-agent",
 };
 
-const links: MyAgentLinks = { library: "/dashboard/library", google: { href: "/dashboard/library/connectors/emc_google", status: "Ready" }, slack: { href: null } };
+const links: MyAgentLinks = {
+  library: "/dashboard/library",
+  google: { href: "/dashboard/library/connectors/emc_google", status: "Ready" },
+  connector: (id) => `/dashboard/library/connectors/${id}?from=my-agent`,
+  catalog: "/dashboard/library/connectors/new?from=my-agent",
+};
 
 function text(html: string) {
   return html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/&quot;/g, "\"").replace(/\s+/g, " ");
@@ -135,11 +151,35 @@ test("in your words: the four fields, what was saved from chat, and Undo", () =>
   assert.match(words, /placeholder="Newsletters and automated alerts"/);
 });
 
-test("uses: Gmail and Google Calendar link to the Library's Google entry; Slack says whether DMs can arrive", () => {
+function source(html: string, id: string) {
+  return new RegExp(`data-testid="my-agent-source-${id}"[\\s\\S]*?(?=data-testid="my-agent-source-(?!instruction)|data-testid="my-agent-limits"|$)`).exec(html)?.[0] ?? "";
+}
+
+test("uses: a switch per source with when it was last read; the admin's decisions are locked with the reason", () => {
   const html = page();
-  assert.match(html, /data-testid="my-agent-uses-gmail"[^>]*>|href="\/dashboard\/library\/connectors\/emc_google"[^>]*data-testid="my-agent-uses-gmail"/);
-  assert.match(text(html), /Gmail Ready Google Calendar Ready Slack Ready/);
-  assert.match(text(page({ ...base, destination: { kind: "workbot_dm", name: "Workbot DM", blocked: "member_not_linked" } })), /Slack Link your account/);
+  const calendar = source(html, "calendar");
+  assert.match(text(calendar), /Calendar Last read at 11:20 AM/);
+  assert.match(switchFor(calendar, "Calendar") ?? "", /aria-checked="true"[\s\S]*disabled=""|disabled=""[\s\S]*aria-checked="true"/);
+  assert.match(text(calendar), /On for everyone\. Set by your admin in Manage › Workbot\./);
+  const chat = source(html, "chat");
+  assert.doesNotMatch(switchFor(chat, "Team chat") ?? "", /disabled=""/, "members choose: their switch");
+  const wiki = source(html, "emc_wiki");
+  assert.match(text(wiki), /Wiki Off .*Not allowed by your admin in Manage › Workbot\./);
+  assert.match(switchFor(wiki, "Wiki") ?? "", /disabled=""/);
+  assert.doesNotMatch(text(wiki), /Add an instruction/, "nothing to steer on a source it may not read");
+});
+
+test("uses: the member's instruction in their own words, where it was saved and Edit; a Connect action when their account isn't ready", () => {
+  const html = page();
+  const notes = source(html, "emc_notes");
+  assert.match(text(notes), /Meeting notes Not read yet/);
+  assert.match(text(notes), /“Use my meeting notes for context and action items\.” Saved from chat at 10:42 AM\. Edit/);
+  const tracker = source(html, "emc_tracker");
+  assert.match(text(tracker), /Issue tracker Connect Issue tracker/);
+  assert.match(tracker, /href="\/dashboard\/library\/connectors\/emc_tracker\?from=my-agent"/);
+  assert.match(text(source(html, "chat")), /Add an instruction for Team chat/);
+  const reconnect = page({ ...base, sources: [{ ...emailSource, connections: [{ id: "google-workspace", name: "Gmail", url: "https://google.com", state: "reconnect" }] }] });
+  assert.match(text(source(reconnect, "email")), /Email Reconnect Gmail/);
 });
 
 test("limits: their hours inside the admin's, the only-urgent window, and the cap locked by the admin", () => {
@@ -148,7 +188,7 @@ test("limits: their hours inside the admin's, the only-urgent window, and the ca
   assert.match(text(limits), /Hours Weekdays/);
   assert.match(text(limits), /Only urgent 12 PM–2 PM Saved from chat at 11:22 AM\. Undo/);
   assert.match(text(limits), /Daily limit 3 a day Set by your admin in Manage › Workbot\./);
-  const narrowed = page({ ...base, limits: { ...baseLimits, dailyCap: 1, narrowed: { hours: false, dailyCap: true } }, changes: [{ id: "chg_9", field: "dailyCap", summary: "Daily limit: 1 a day", source: "page", at: at("2026-10-20T09:00:00"), undone: false }] });
+  const narrowed = page({ ...base, limits: { ...baseLimits, dailyCap: 1, narrowed: { hours: false, dailyCap: true } }, changes: [{ id: "chg_9", field: "dailyCap", summary: "Daily limit: 1 a day", sourceId: null, source: "page", at: at("2026-10-20T09:00:00"), undone: false }] });
   assert.match(text(narrowed), /Daily limit 1 a day Saved here at 9:00 AM\. Undo Your admin allows 3 a day\./);
   assert.equal(whenPhrase(at("2026-10-21T08:00:00"), TZ, NOW), "tomorrow at 8:00 AM");
 });

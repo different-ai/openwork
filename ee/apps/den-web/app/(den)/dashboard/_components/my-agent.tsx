@@ -11,6 +11,7 @@ import {
   type AgentPreferenceField,
   type MemberAgentCheck,
   type MemberAgentInput,
+  type MemberAgentSource,
   type MemberAgentView,
 } from "@openwork/types/den/workbot-proactive";
 import { DenBadge } from "../../_components/ui/badge";
@@ -21,6 +22,7 @@ import { DenTextarea } from "../../_components/ui/textarea";
 import { ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection } from "./item-list";
 import { ItemHeader, ItemPage } from "./item-header";
 import { ConnectorLogo } from "./item-logo";
+import { SourceIcon } from "./source-icon";
 import {
   OUTCOME_PILL,
   changeSourceLine,
@@ -42,12 +44,6 @@ import {
  */
 
 const ADMIN_LOCK = "Set by your admin in Manage › Workbot.";
-
-/** What the agent reads, each through the member's Google Workspace connector. */
-const GOOGLE_USES: readonly { name: string; testId: string }[] = [
-  { name: "Gmail", testId: "my-agent-uses-gmail" },
-  { name: "Google Calendar", testId: "my-agent-uses-calendar" },
-];
 
 export function AgentLogo({ size = "sm" }: { size?: "sm" | "lg" }) {
   return <ConnectorLogo name="My bot" iconUrl="/openwork-mark.svg" size={size} />;
@@ -120,8 +116,10 @@ export type MyAgentLinks = {
   library: string;
   /** The Google Workspace connector in the member's Library, or where to add it. */
   google: { href: string; status: string };
-  /** The Slack connector in the Library, when there is one. */
-  slack: { href: string | null };
+  /** A connection's page in the member's Library, where they connect or reconnect their account. */
+  connector: (connectionId: string) => string;
+  /** The Library's connector catalog, for a source the organization has no connection for yet. */
+  catalog: string;
 };
 
 type Change = (change: MemberAgentInput) => void;
@@ -210,7 +208,7 @@ function focalLine(view: MemberAgentView, now: number): { title: string; sentenc
   if (!view.on) return { title: "Off", sentence: "It isn't checking your email or calendar." };
   if (view.snoozedUntil) return { title: `Snoozed until ${clockLabel(view.snoozedUntil, view.timeZone)}`, sentence: view.lastCheck ? `Last check ${whenPhrase(view.lastCheck.at, view.timeZone, now)}: ${view.lastCheck.summary}` : "No checks yet." };
   if (view.lastCheck) return { title: `Last check ${whenPhrase(view.lastCheck.at, view.timeZone, now)}`, sentence: view.lastCheck.summary };
-  return { title: "No checks yet", sentence: view.destination?.blocked === "member_not_linked" ? "Link your Slack account to Workbot to get its messages." : "It looks at your email and calendar in your working hours." };
+  return { title: "No checks yet", sentence: view.destination?.blocked === "member_not_linked" ? "Link your Slack account to Workbot to get its messages." : "It reads your calendar, email and team chat in your working hours." };
 }
 
 export function MyAgentPanel({ view, now, links, saving, error, earlier, onChange }: {
@@ -229,6 +227,7 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
   const today = view.todayChecks ?? [];
   const earlierChecks = (earlier.checks ?? []).filter((check) => !isSameDay(check.at, now, view.timeZone));
   const fix = view.lastCheck?.fix ?? null;
+  const reconnect = view.lastCheck?.sources[0] ?? null;
   const google = links.google;
 
   return (
@@ -251,6 +250,7 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
             {limits && view.sentToday !== undefined ? <span>{`${view.sentToday} of ${limits.dailyCap} sent today`}</span> : null}
             {view.snoozedUntil ? <DenButton variant="secondary" size="xs" disabled={saving} onClick={() => onChange({ snooze: null })}>Resume</DenButton> : null}
             {fix === "reconnect_google" ? <Link href={google.href} className="font-medium text-gray-900 underline-offset-2 hover:underline">Reconnect Google</Link> : null}
+            {fix === "reconnect" && reconnect?.connectionId ? <Link href={links.connector(reconnect.connectionId)} className="font-medium text-gray-900 underline-offset-2 hover:underline">{`Reconnect ${reconnect.name}`}</Link> : null}
           </p>
         ) : null}
       </section>
@@ -296,15 +296,7 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
 
       <ItemSection title="Uses" variant="rule" testId="my-agent-uses">
         <div className="flex flex-col divide-y divide-gray-100">
-          {GOOGLE_USES.map(({ name, testId }) => (
-            <Link key={name} href={google.href} className="flex min-h-11 items-center gap-3 py-2 outline-none focus-visible:ring-2 focus-visible:ring-gray-300" data-testid={testId}>
-              <ConnectorLogo name={name} size="xs" />
-              <span className="min-w-0 flex-1 text-[13px] font-medium text-gray-900">{name}</span>
-              <span className="text-[12px] text-gray-500">{google.status}</span>
-              <ChevronRight className="h-4 w-4 text-gray-500" aria-hidden />
-            </Link>
-          ))}
-          <UsesSlack view={view} href={links.slack.href} />
+          {(view.sources ?? []).map((source) => <SourceRow key={source.id} view={view} source={source} now={now} saving={saving} links={links} onChange={onChange} />)}
         </div>
       </ItemSection>
 
@@ -346,24 +338,89 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
   );
 }
 
-function hourRange(from: number, to: number): number[] {
-  return Array.from({ length: Math.max(0, to - from + 1) }, (_, index) => from + index);
+/** "Saved from chat at 10:42 AM." for the latest change to one source's switch or instruction. */
+function SourceChangeNote({ view, sourceId, field, now }: { view: MemberAgentView; sourceId: string; field: "source" | "sourceInstruction"; now: number }) {
+  const change = (view.changes ?? []).find((entry) => entry.field === field && entry.sourceId === sourceId && !entry.undone);
+  return change ? <span data-source={change.source}>{changeSourceLine(change, view.timeZone, now)}</span> : null;
 }
 
-function UsesSlack({ view, href }: { view: MemberAgentView; href: string | null }) {
-  const blocked = view.destination?.blocked ?? null;
-  const status = !view.destination ? "No destination yet" : blocked === "member_not_linked" ? "Link your account" : blocked === "slack_app_not_installed" ? "Not installed" : "Ready";
-  const body = (
-    <>
-      <ConnectorLogo name="Slack" size="xs" />
-      <span className="min-w-0 flex-1 text-[13px] font-medium text-gray-900">Slack</span>
-      <span className="text-[12px] text-gray-500">{status}</span>
-      {href ? <ChevronRight className="h-4 w-4 text-gray-500" aria-hidden /> : <span className="w-4" aria-hidden />}
-    </>
+/**
+ * One source in Uses: its switch (locked with the reason when the admin decided), when it was last read, a Connect
+ * action when the member's account isn't ready, and their instruction for it in their own words.
+ */
+function SourceRow({ view, source, now, saving, links, onChange }: { view: MemberAgentView; source: MemberAgentSource; now: number; saving: boolean; links: MyAgentLinks; onChange: Change }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(source.instruction);
+  useEffect(() => setDraft(source.instruction), [source.instruction]);
+  const locked = source.policy !== "members";
+  const ready = source.connections.find((connection) => connection.state === "connected") ?? null;
+  const fix = source.connections.find((connection) => connection.state !== "connected") ?? null;
+  const logoFrom = ready ?? source.connections[0] ?? null;
+  const save = (instruction: string) => {
+    onChange({ sources: [{ source: source.id, instruction }] });
+    setEditing(false);
+  };
+  const status = !source.on
+    ? "Off"
+    : !source.connections.length
+      ? `No ${source.name.toLowerCase()} connected`
+      : !ready
+        ? null
+        : source.lastReadAt ? `Last read ${whenPhrase(source.lastReadAt, view.timeZone, now)}` : "Not read yet";
+  return (
+    <div className="flex flex-col gap-1.5 py-2.5" data-testid={`my-agent-source-${source.id}`} data-on={source.on} data-policy={source.policy}>
+      <div className="flex min-h-[32px] flex-wrap items-center justify-between gap-3">
+        <span className="flex min-w-0 items-center gap-3">
+          {logoFrom ? <ConnectorLogo name={logoFrom.name} url={logoFrom.url} size="xs" /> : <SourceIcon kind={source.kind} />}
+          <span className="text-[13px] font-medium text-gray-900">{source.name}</span>
+        </span>
+        <span className="flex min-w-0 flex-wrap items-center justify-end gap-3">
+          {status ? <span className="text-[12px] text-gray-500">{status}</span> : null}
+          {source.on && !ready ? (
+            fix
+              ? <Link href={links.connector(fix.id)} className="text-[12px] font-medium text-gray-900 underline-offset-2 hover:underline">{`${fix.state === "reconnect" ? "Reconnect" : "Connect"} ${fix.name}`}</Link>
+              : <Link href={links.catalog} className="text-[12px] font-medium text-gray-900 underline-offset-2 hover:underline">{`Connect ${source.name.toLowerCase()}`}</Link>
+          ) : null}
+          <DenSwitch size="sm" aria-label={source.name} checked={source.on} disabled={locked || saving}
+            onChange={(on) => onChange({ sources: [{ source: source.id, on }] })} />
+        </span>
+      </div>
+      {source.policy === "everyone" ? <LockNote>On for everyone. Set by your admin in Manage › Workbot.</LockNote> : null}
+      {source.policy === "off" ? <LockNote>Not allowed by your admin in Manage › Workbot.</LockNote> : null}
+      {source.policy === "members" && !source.on ? null : source.policy === "off" ? null : editing ? (
+        <div className="flex flex-col gap-1.5 pl-9">
+          <DenTextarea rows={1} maxLength={AGENT_PREFERENCE_MAX} value={draft} disabled={saving} aria-label={`Instruction for ${source.name}`}
+            placeholder="Use my meeting notes for context and action items." onChange={(event) => setDraft(event.target.value)} />
+          <span className="flex justify-end gap-2">
+            <DenButton variant="secondary" size="xs" onClick={() => { setDraft(source.instruction); setEditing(false); }}>Cancel</DenButton>
+            <DenButton size="xs" disabled={saving || draft.trim() === source.instruction.trim()} onClick={() => save(draft.trim())}>Save instruction</DenButton>
+          </span>
+        </div>
+      ) : source.instruction ? (
+        <div className="flex flex-col gap-1 pl-9" data-testid={`my-agent-source-instruction-${source.id}`}>
+          <p className="text-[13px] leading-[18px] text-gray-900">{`“${source.instruction}”`}</p>
+          <span className="inline-flex flex-wrap items-center gap-1.5 text-[12px] leading-4 text-gray-500">
+            <SourceChangeNote view={view} sourceId={source.id} field="sourceInstruction" now={now} />
+            <button type="button" disabled={saving} onClick={() => setEditing(true)} aria-label={`Edit the instruction for ${source.name}`}
+              className="rounded font-medium text-gray-900 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 disabled:opacity-50">
+              Edit
+            </button>
+          </span>
+        </div>
+      ) : (
+        <span className="pl-9">
+          <button type="button" disabled={saving} onClick={() => setEditing(true)}
+            className="rounded text-[12px] font-medium text-gray-700 underline-offset-2 hover:text-gray-900 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 disabled:opacity-50">
+            {`Add an instruction for ${source.name}`}
+          </button>
+        </span>
+      )}
+    </div>
   );
-  return href
-    ? <Link href={href} className="flex min-h-11 items-center gap-3 py-2 outline-none focus-visible:ring-2 focus-visible:ring-gray-300" data-testid="my-agent-uses-slack">{body}</Link>
-    : <div className="flex min-h-11 items-center gap-3 py-2" data-testid="my-agent-uses-slack">{body}</div>;
+}
+
+function hourRange(from: number, to: number): number[] {
+  return Array.from({ length: Math.max(0, to - from + 1) }, (_, index) => from + index);
 }
 
 /** The page's layout while the agent loads: the focal line and sections where they will be. */
