@@ -46,6 +46,19 @@ final class BackgroundInputTests: XCTestCase {
         XCTAssertNil(RealInput.restore(to: nil, current: agent, agentLast: agent), "the pointer never moved")
     }
 
+    func testRealInputIsSentOnlyWhileItStillLandsInTheSelectedApp() {
+        let app: pid_t = 42, other: pid_t = 7, helper: pid_t = 99
+        let window = CGRect(x: 0, y: 0, width: 800, height: 600), point = CGPoint(x: 400, y: 300)
+        XCTAssertTrue(RealInput.reachesTarget(app, front: app, at: nil, windows: [], own: helper))
+        XCTAssertFalse(RealInput.reachesTarget(app, front: other, at: nil, windows: [], own: helper), "keys go to whatever app is in front")
+        XCTAssertTrue(RealInput.reachesTarget(app, front: app, at: point,
+            windows: [(helper, window), (app, window)], own: helper), "the helper's own overlays are not in the way")
+        XCTAssertFalse(RealInput.reachesTarget(app, front: app, at: point,
+            windows: [(other, CGRect(x: 300, y: 200, width: 200, height: 200)), (app, window)], own: helper), "another app's window over the point")
+        XCTAssertFalse(RealInput.reachesTarget(app, front: other, at: point, windows: [(app, window)], own: helper))
+        XCTAssertFalse(RealInput.reachesTarget(app, front: app, at: CGPoint(x: 900, y: 300), windows: [(app, window)], own: helper))
+    }
+
     func testBackgroundSessionsTakeTheFrontOnlyForStepsThatNeedIt() {
         let point = CGPoint(x: 10, y: 10)
         XCTAssertFalse(InputDelivery.stepNeedsFront(.click(point, 1, []), route: .appKit))

@@ -70,6 +70,20 @@ enum RealInput {
         guard let person, let current, let agentLast, hypot(current.x - agentLast.x, current.y - agentLast.y) < 2 else { return nil }
         return person
     }
+
+    static let targetChanged = UseError("window_not_frontmost", "Another app or window came in front of the selected window, so nothing more was sent. Choose Continue in the Computer Use controls to return to it.", next: "human_takeover")
+
+    /// The system stream delivers to whatever is in front, so each real press,
+    /// move and scroll is re-checked just before it is posted: keys only while the
+    /// app is frontmost, pointer events only where the app's own window is the
+    /// topmost one under the point. `windows` are on-screen, front to back; the
+    /// helper's own overlays (`own`) are skipped.
+    static func reachesTarget(_ pid: pid_t, front: pid_t?, at point: CGPoint?,
+        windows: [(pid: pid_t, bounds: CGRect)], own: pid_t) -> Bool {
+        guard front == pid else { return false }
+        guard let point else { return true }
+        return windows.first { $0.pid != own && $0.bounds.contains(point) }?.pid == pid
+    }
 }
 
 /// Has an app treat a window as active, and for keys as its key window,

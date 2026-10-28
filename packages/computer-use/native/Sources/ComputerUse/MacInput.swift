@@ -254,8 +254,8 @@ final class MacInput {
         event.setIntegerValueField(.eventSourceUnixProcessID, value: Int64(ProcessInfo.processInfo.processIdentifier))
         event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
         if realInput {
-            // The caller has checked that the app is in front and the point is on its
-            // window: the system stream delivers to whatever is there, as for a person.
+            // Presses, moves and scrolls passed `checkRealTarget` just before this;
+            // releases always go out so nothing stays held in another app.
             if pointer, personPointer == nil { personPointer = CGEvent(source: nil)?.location }
             event.post(tap: .cghidEventTap)
             realPosts[event.type] = ProcessInfo.processInfo.systemUptime
@@ -267,6 +267,20 @@ final class MacInput {
             event.postToPid(pid)
         }
     }
+    /// Refuses a real press, move or scroll unless it still lands in the target app.
+    private func checkRealTarget(_ pid: pid_t, at point: CGPoint?) throws {
+        guard realInput else { return }
+        let windows = ((CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? [])
+            .compactMap { value -> (pid: pid_t, bounds: CGRect)? in
+                guard let owner = value[kCGWindowOwnerPID as String] as? NSNumber,
+                      (value[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1 > 0,
+                      let bounds = value[kCGWindowBounds as String] as? [String: Any],
+                      let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }
+                return (owner.int32Value, rect)
+            }
+        guard RealInput.reachesTarget(pid, front: NSWorkspace.shared.frontmostApplication?.processIdentifier, at: point,
+            windows: windows, own: ProcessInfo.processInfo.processIdentifier) else { throw RealInput.targetChanged }
+    }
     /// `quiet` posts the event without tracking or showing it, for presses no person should see.
     private func mouse(_ type: CGEventType, _ point: CGPoint, _ pid: pid_t, _ count: Int, _ windowID: CGWindowID, _ frame: CGRect, _ flags: CGEventFlags = [], check: () throws -> Void = {}, quiet: Bool = false) throws {
         let event = try Self.pointerEvent(type, point, count: count, windowID: windowID, frame: frame, flags: flags)
@@ -277,7 +291,7 @@ final class MacInput {
             event.setIntegerValueField(.mouseEventDeltaY, value: Int64((point.y - last.point.y).rounded()))
         }
         try Self.verifyTargeted(event, point, windowID: windowID, frame: frame)
-        if type != .leftMouseUp { try Task.checkCancellation(); try check() }
+        if type != .leftMouseUp { try Task.checkCancellation(); try check(); try checkRealTarget(pid, at: point) }
         post(event, pid, pointer: true)
         guard !quiet else { return }
         lastPointer = (pid, windowID, point)
@@ -323,6 +337,7 @@ final class MacInput {
         let event = try Self.scrollEvent(point, dx: dx, dy: dy, windowID: windowID, frame: frame)
         if let gestureField = Self.gestureField { event.setIntegerValueField(gestureField, value: gesture) }
         try Self.verifyTargeted(event, point, windowID: windowID, frame: frame)
+        try checkRealTarget(pid, at: point)
         post(event, pid, pointer: true)
         feedback?.didDispatch = true
     }
@@ -371,15 +386,16 @@ final class MacInput {
         var remaining = held.flags
         for key in Self.modifierKeys.reversed() where remaining.contains(key.flag) {
             remaining.remove(key.flag)
-            try? modifier(key.code, flags: remaining, pid: held.pid)
+            try? modifier(key.code, flags: remaining, pid: held.pid, release: true)
         }
     }
-    private func modifier(_ code: CGKeyCode, flags: CGEventFlags, pid: pid_t) throws {
+    private func modifier(_ code: CGKeyCode, flags: CGEventFlags, pid: pid_t, release: Bool = false) throws {
         guard let event = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true) else {
             throw UseError("input_failed", "Could not create a modifier key event.")
         }
         event.type = .flagsChanged
         event.flags = flags
+        if !release { try checkRealTarget(pid, at: nil) }
         post(event, pid)
     }
     private func keyCode(_ key: String, flags: CGEventFlags) throws -> CGKeyCode {
@@ -425,7 +441,7 @@ final class MacInput {
                 }
             }
         }
-        try InputDispatch.pair(check: check, down: {
+        try InputDispatch.pair(check: { try check(); try self.checkRealTarget(pid, at: nil) }, down: {
             self.post(down, pid)
             self.feedback?.didDispatch = true
             if text == nil { self.report(.down) }
