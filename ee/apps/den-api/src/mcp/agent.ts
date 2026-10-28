@@ -40,7 +40,7 @@ import {
 } from "./search.js"
 import { resolveMcpMember, resolveMcpMemberIdentity } from "./external-capabilities.js"
 import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, listAccessibleMarketplaceSkillSources, parseMarketplaceCapabilityName, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
-import { registerSkillsExtension, resolveSkills, skillIndexInstructions, type ResolvedSkill } from "./skills-extension.js"
+import { registerSkillsExtension, resolveSkills, type ResolvedSkill } from "./skills-extension.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { automationService } from "../automations/service.js"
 import { AGENT_AUTOMATION_INDEX_LIMIT, registerAgentAutomationResources } from "./automation-index.js"
@@ -756,7 +756,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       slackSendAsBot: slackSendAsBotAvailable(capabilityContext),
       myAgent: Boolean(memberIdentity && organizationFeatures.workbotProactive && organizationFeatures.workbotAgentLibrary && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
       skillsExtension,
-      skillIndex: skillsExtension && advertisesInstructions && !listsSkillsNatively ? skillIndexInstructions(await loadRemoteSkills()) : undefined,
+      skills: skillsExtension && advertisesInstructions && !listsSkillsNatively ? await loadRemoteSkills() : undefined,
     })
     if (skillsExtension) registerSkillsExtension(server, loadResolvedSkills)
     registerAgentConnectionActionApp(server, { organizationId: principal.organizationId, member: memberIdentity })

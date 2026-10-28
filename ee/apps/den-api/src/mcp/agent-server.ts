@@ -1,7 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/server"
 import { workflowArtifactAppServerCapabilities } from "./workflow-artifact-app.js"
-import { SKILLS_EXTENSION_ID } from "./skills-extension.js"
+import { SKILLS_EXTENSION_ID, skillIndexInstructions } from "./skills-extension.js"
 import type { ConnectToolView } from "./connect-tool-view.js"
+import type { RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 
 /**
  * Connect steering routes requests; it does not repeat tool rules. With App
@@ -44,6 +45,14 @@ function agentMcpDetailedInstructions(appServers: boolean, toolView: ConnectTool
 }
 
 export const AGENT_MCP_GUIDANCE_URI = "openwork://agent/guidance.md"
+
+/**
+ * Claude Code shows a server's instructions only up to 4,096 characters (2,048
+ * before v2.1.296) and drops the rest
+ * (https://code.claude.com/docs/en/mcp#tool-search-for-mcp-server-authors).
+ * The rules stay within the lower limit; the skill index gets what is left.
+ */
+export const AGENT_MCP_INSTRUCTIONS_MAX_CHARS = 4_096
 
 /** What the full tool view does instead of searching; every other rule is shared. */
 const FULL_TOOL_VIEW_INSTRUCTIONS = [
@@ -106,9 +115,14 @@ export function createAgentMcpServer(options: {
   toolShapes?: boolean
   /** Advertise the MCP Skills Extension (SEP-2640); its handlers are registered by the caller. */
   skillsExtension?: boolean
-  /** Short always-on list of the member's skills, appended to the instructions. */
-  skillIndex?: string
+  /** The member's skills, listed after the instructions as far as AGENT_MCP_INSTRUCTIONS_MAX_CHARS allows. */
+  skills?: readonly RemoteSkillDescriptor[]
 } = {}): McpServer {
+  const rules = [agentMcpInstructions(options.appServers !== false, options.toolView, options.toolShapes),
+    ...(options.remoteSessionStatus ? [REMOTE_SESSION_STATUS_INSTRUCTIONS] : []),
+    ...(options.slackSendAsBot ? [slackSendAsBotInstructions(options.toolView)] : []),
+    ...(options.myAgent ? [MY_AGENT_INSTRUCTIONS] : [])].join("\n")
+  const skillIndex = options.skills ? skillIndexInstructions(options.skills, AGENT_MCP_INSTRUCTIONS_MAX_CHARS - rules.length - 1) : ""
   const server = new McpServer({
     name: "openwork-den-api-agent",
     version: "1.0.0",
@@ -125,11 +139,7 @@ export function createAgentMcpServer(options: {
       tools: { listChanged: true },
       resources: { listChanged: true },
     },
-    instructions: [agentMcpInstructions(options.appServers !== false, options.toolView, options.toolShapes),
-      ...(options.remoteSessionStatus ? [REMOTE_SESSION_STATUS_INSTRUCTIONS] : []),
-      ...(options.slackSendAsBot ? [slackSendAsBotInstructions(options.toolView)] : []),
-      ...(options.myAgent ? [MY_AGENT_INSTRUCTIONS] : []),
-      ...(options.skillIndex ? [options.skillIndex] : [])].join("\n"),
+    instructions: skillIndex ? `${rules}\n${skillIndex}` : rules,
     ...(options.toolView === "full" ? { cacheHints: FULL_TOOL_VIEW_CACHE_HINTS } : {}),
   })
   server.registerResource("agent-guidance", AGENT_MCP_GUIDANCE_URI, {
