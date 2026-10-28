@@ -706,6 +706,13 @@ const googleCalendarEventsResponseSchema = z.object({
 
 export type CalendarAttendee = { email: string; external: boolean }
 
+/**
+ * The owner's answer to an event: they organize it, or Google's `responseStatus` for them. An event on their calendar
+ * with no entry for them (invited through a group, say) is `needsAction`: they haven't answered. Declining wins, even
+ * on an event they organize.
+ */
+export type CalendarResponse = "organizer" | "accepted" | "tentative" | "needsAction" | "declined"
+
 /** What the event source knows about one event: facts only, never shown to anyone as-is. */
 export type CalendarEventFacts = {
   id: string
@@ -718,9 +725,8 @@ export type CalendarEventFacts = {
   /** Google's `updated`, verbatim: a change's ref. */
   updated: string
   organizerSelf: boolean
-  declined: boolean
-  /** The person said yes, or organizes it. Not answered, maybe and no do not count. */
-  accepted: boolean
+  /** The person's answer to the invite. Each consumer decides what counts: Your agent and calendar triggers skip only `declined`. */
+  response: CalendarResponse
   /**
    * The invite's title, written by whoever sent it. Kept for rules a person
    * writes ("titles containing…") and as data in a run; the agent's wake
@@ -749,6 +755,12 @@ function instant(value: string | undefined) {
   if (!value) return null
   const at = Date.parse(value)
   return Number.isFinite(at) ? at : null
+}
+
+function ownerResponse(responseStatus: string | undefined, organizerSelf: boolean): CalendarResponse {
+  if (responseStatus === "declined") return "declined"
+  if (organizerSelf) return "organizer"
+  return responseStatus === "accepted" || responseStatus === "tentative" ? responseStatus : "needsAction"
 }
 
 /**
@@ -783,8 +795,7 @@ export function projectGoogleCalendarEvents(raw: unknown, selfEmail?: string | n
       created: instant(event.created),
       updated: event.updated ?? "",
       organizerSelf: event.organizer?.self === true,
-      declined: self?.responseStatus === "declined",
-      accepted: self ? self.responseStatus === "accepted" : event.organizer?.self === true,
+      response: ownerResponse(self?.responseStatus, event.organizer?.self === true),
       title: event.summary?.trim().slice(0, 300) || null,
       link: safeProactiveLink(event.hangoutLink) ?? safeProactiveLink(event.htmlLink),
       meeting: !event.eventType || event.eventType === "default",
@@ -831,7 +842,7 @@ function hasOutsiders(event: CalendarEventFacts) {
 }
 
 function attending(event: CalendarEventFacts) {
-  return event.meeting && event.status !== "cancelled" && !event.declined && event.start !== null
+  return event.meeting && event.status !== "cancelled" && event.response !== "declined" && event.start !== null
 }
 
 /**
@@ -854,7 +865,7 @@ export function detectCalendarWakes(input: {
   const wakes: CalendarWake[] = []
 
   for (const event of events) {
-    if (!event.meeting || event.declined || event.allDay) continue
+    if (!event.meeting || event.response === "declined" || event.allDay) continue
     if (attending(event) && event.start !== null && event.start > now && event.start - now <= input.leadMinutes * MINUTE_MS && hasOutsiders(event)) {
       wakes.push({ kind: "meeting_soon", ref: `${event.id}:${event.start}`, event })
     }

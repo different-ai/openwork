@@ -163,6 +163,34 @@ describe("calendar events only wake the agent early", () => {
     assert.deepEqual(wakes(after, previous).wakes, [])
   })
 
+  test("the person's answer is read from their own entry; declining wins, organizing counts without one", () => {
+    const outside = { email: "lead@northwind.example" }
+    const response = (event: RawEvent) => project(event)[0]?.response
+    assert.equal(response(raw({ attendees: [{ email: "me@contoso.example", self: true, responseStatus: "accepted" }, outside] })), "accepted")
+    assert.equal(response(raw({ attendees: [{ email: "me@contoso.example", self: true, responseStatus: "tentative" }, outside] })), "tentative")
+    assert.equal(response(raw({ attendees: [{ email: "me@contoso.example", self: true, responseStatus: "needsAction" }, outside] })), "needsAction")
+    assert.equal(response(raw({ attendees: [{ email: "me@contoso.example", self: true }, outside] })), "needsAction")
+    assert.equal(response(raw({ attendees: [outside] })), "needsAction", "invited through a group: no entry for them")
+    assert.equal(response(raw({ attendees: [{ email: "me@contoso.example", self: true, responseStatus: "declined" }, outside] })), "declined")
+    assert.equal(response(raw({ organizer: { email: "me@contoso.example", self: true }, attendees: [outside] })), "organizer")
+    assert.equal(response(raw({ organizer: { email: "me@contoso.example", self: true }, attendees: [{ email: "me@contoso.example", self: true, responseStatus: "declined" }, outside] })), "declined")
+  })
+
+  test("only declining keeps a meeting from waking it: unanswered and maybe meetings wake it like accepted ones", () => {
+    const outsiders = [{ email: "lead@northwind.example" }, { email: "ops@northwind.example" }]
+    const previous = checkpoint([], now - 5 * 60_000)
+    const calendar = (self: Record<string, unknown>) => project(
+      raw({ id: "soon", attendees: [self, ...outsiders] }),
+      raw({ id: "added", created: "2026-10-20T17:43:00Z", updated: "2026-10-20T17:43:00Z", start: { dateTime: "2026-10-21T10:00:00-04:00" }, end: { dateTime: "2026-10-21T10:30:00-04:00" }, attendees: [self, ...outsiders] }),
+    )
+    const woke = (events: CalendarEventFacts[]) => wakes(events, previous).wakes.map((w) => (w.kind === "calendar_change" ? `${w.change}:${w.event.id}` : `${w.kind}:${w.event.id}`))
+    for (const responseStatus of ["accepted", "tentative", "needsAction", undefined]) {
+      const self = { email: "me@contoso.example", self: true, ...(responseStatus ? { responseStatus } : {}) }
+      assert.deepEqual(woke(calendar(self)), ["meeting_soon:soon", "added:added"], String(responseStatus))
+    }
+    assert.deepEqual(woke(calendar({ email: "me@contoso.example", self: true, responseStatus: "declined" })), [])
+  })
+
   test("the calendar is polled every five minutes, sooner when a prep window opens, never at night", () => {
     const events = project(raw({ start: { dateTime: "2026-10-20T14:10:00-04:00" }, end: { dateTime: "2026-10-20T14:40:00-04:00" } }))
     const base = { events, leadMinutes: 15, policy, timeZone: TZ }

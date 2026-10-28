@@ -48,7 +48,8 @@ function shortDigest(value: string): string {
  * rule.
  */
 export function calendarTriggerMatches(trigger: AutomationCalendarSchedule, event: CalendarEventFacts): boolean {
-  if (!event.meeting || event.allDay || event.status === "cancelled" || event.declined || !event.accepted) return false
+  const accepted = event.response === "accepted" || event.response === "organizer"
+  if (!event.meeting || event.allDay || event.status === "cancelled" || event.response === "declined" || !accepted) return false
   if (event.start === null || event.end === null || event.others.length === 0) return false
   if (trigger.rule.withExternalAttendees && !event.others.some((other) => other.external)) return false
   const wanted = trigger.rule.titleIncludes?.toLocaleLowerCase()
