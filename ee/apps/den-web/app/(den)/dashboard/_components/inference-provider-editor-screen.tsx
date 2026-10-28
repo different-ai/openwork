@@ -30,6 +30,7 @@ import { LITELLM_PROVIDER_ID } from "./litellm-provider-data";
 import { LiteLlmProviderScreen } from "./litellm-provider-screen";
 import { formatProviderTimestamp, getProviderDocUrl, getProviderEnvNames, getProviderIconSlug, getProviderNpmPackage, requestLlmProviderCatalogDetail, type DenModelsDevProviderDetail } from "./llm-provider-data";
 import { normalizeAzureResourceNameInput } from "./llm-provider-guided";
+import { pickTestModel, sortModelsNewestFirst } from "./gateway-provider-models";
 import type { ProviderAccessValue } from "./llm-provider-pickers";
 
 const CARD = "rounded-[12px] border border-gray-100 bg-white p-4";
@@ -168,11 +169,12 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     ...(signInMethod === "microsoft" ? { oauthTenantId } : {}), ...(signInMethod === "aws_sso" ? { awsSso } : {}),
     ...(bedrock ? { awsKeys, reuseCredentialFrom: reuseSource?.id ?? null } : {}),
   };
-  const models = detail?.models ?? [];
+  // Newest first, so the latest models are easy to find and the test uses a current one.
+  const models = useMemo(() => sortModelsNewestFirst(detail?.models ?? []), [detail]);
   // A new provider with a shared key is tested before it can be added (feature gatewayProviderTest).
   const testRequired = !provider && credentialMode === "org" && orgFeatureEnabled(orgContext, "gatewayProviderTest");
-  // "All models" tests the first model in the list below; "Only the ones I pick" tests the first one picked.
-  const testModelId = allowAllModels ? models[0]?.id ?? null : modelIds[0] ?? null;
+  // The first model in the list below that can answer a text prompt; with "Only the ones I pick", the first picked one.
+  const testModelId = pickTestModel(models, allowAllModels ? null : modelIds);
   const configFingerprint = JSON.stringify(formInput);
   const testPassed = providerTest?.state === "done" && providerTest.result.ok;
 

@@ -10,9 +10,13 @@ one short prompt ("Reply with the single word OK.", at most 16 output tokens)
 through AI Gateway with exactly what is on the screen: the provider, its
 settings (region, project, resource name), the pasted key and one model.
 
-- **All {Provider} models**: the first model in the list shown under
-  "Only the ones I pick".
-- **Only the ones I pick**: the first model picked.
+The model list under "Only the ones I pick" is sorted newest release first
+(models.dev `release_date`), and the test uses:
+
+- **All {Provider} models**: the first model in that list that can answer a
+  text prompt (not deprecated, not an image, video or embedding model).
+- **Only the ones I pick**: the first such model among the picked ones, in
+  list order. If none qualifies, the first picked model.
 
 If the provider answers, a green message appears and the button becomes
 **Add {Provider}**. If not, a red message says why (key rejected, access
