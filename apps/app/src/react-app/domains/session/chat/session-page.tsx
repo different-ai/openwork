@@ -753,11 +753,17 @@ export function SessionPage(props: SessionPageProps) {
     const reportOpenError = (error: unknown) => {
       toast.error(error instanceof Error ? error.message : "Could not open this file.");
     };
-    const canOpenLocally = isElectronRuntime();
+    const canOpenLocally = isElectronRuntime() && runtime.workspaceType === "local" && platform.capabilities.revealInFileManager;
     const openLocalFile = (fileTarget: OpenTarget) => {
       // Files outside the workspace are revealed, never launched; see nativeFileAction.
       // The desktop re-checks the resolved file on disk before launching anything.
-      const native = nativeFileAction(runtime.workspaceRoot, fileTarget.value, options);
+      const native = nativeFileAction(runtime.workspaceRoot, fileTarget.value, {
+        ...options,
+        isLocalWorkspace: runtime.workspaceType === "local",
+        canUseDesktop: canOpenLocally,
+        os: platform.os,
+        exists: fileTarget.exists,
+      });
       if (!native) {
         reportOpenError(new Error("This is not a local file path."));
         return;
@@ -774,8 +780,13 @@ export function SessionPage(props: SessionPageProps) {
     };
 
     // A person's explicit native open is not a workspace preview request.
-    if (canOpenLocally && options?.external) {
-      openLocalFile(target);
+    if (options?.external) {
+      if (canOpenLocally) openLocalFile(target);
+      else reportOpenError(new Error("Download this file to open it on this device."));
+      return;
+    }
+    if (target.exists === false) {
+      reportOpenError(new Error("This file is missing or outside the workspace."));
       return;
     }
 
@@ -795,6 +806,12 @@ export function SessionPage(props: SessionPageProps) {
         label: fileTarget.name,
         preview: fileTarget.preview,
         target: fileTarget,
+        runtime: {
+          serverBaseUrl: runtime.client?.baseUrl ?? "",
+          workspaceId: runtime.runtimeWorkspaceId,
+          workspaceRoot: runtime.workspaceRoot,
+          isLocalWorkspace: runtime.workspaceType === "local",
+        },
       });
       setCurrentSidePanel("panel");
     };
@@ -816,7 +833,7 @@ export function SessionPage(props: SessionPageProps) {
     }
 
     openFileTarget(target);
-  }, [browserUrlForTarget, createBrowserTab, openOwnerSidePanel, openTab, props.selectedSessionId, setCurrentSidePanel]);
+  }, [browserUrlForTarget, createBrowserTab, openOwnerSidePanel, openTab, platform.capabilities.revealInFileManager, platform.os, props.selectedSessionId, setCurrentSidePanel]);
   const openTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     openTargetForRuntime({
       client: props.openworkServerClient,
@@ -1388,6 +1405,7 @@ export function SessionPage(props: SessionPageProps) {
       client={props.openworkServerClient}
       workspaceId={props.runtimeWorkspaceId}
       workspaceRoot={props.selectedWorkspaceRoot}
+      isLocalWorkspace={props.selectedWorkspaceDisplay.workspaceType === "local"}
       onClose={closeRightPane}
       onOpenExtensions={props.settingsSlot ? () => setCurrentSidePanel("extensions") : undefined}
       browserPresentation={browserPresentation.enabled ? { onPresent: browserPresentation.present } : undefined}
@@ -1820,6 +1838,7 @@ export function SessionPage(props: SessionPageProps) {
                             client={props.openworkServerClient!}
                             environmentClient={props.environmentClient}
                             workspaceId={props.runtimeWorkspaceId!}
+                            isLocalWorkspace={props.selectedWorkspaceDisplay.workspaceType === "local"}
                             sessionId={props.selectedSessionId!}
                             archived={archivedInWorkspace(props.selectedWorkspaceId, props.selectedSessionId)}
                             onRestoreSession={async () => { await props.onArchiveSession?.(props.selectedSessionId!, false); }}
@@ -1901,6 +1920,7 @@ export function SessionPage(props: SessionPageProps) {
                                   environmentClient={splitPaneRuntime.environmentClient}
                                   workspaceId={splitPaneRuntime.runtimeWorkspaceId}
                                   workspaceRoot={splitPaneRuntime.workspaceRoot}
+                                  isLocalWorkspace={splitPaneRuntime.workspaceType === "local"}
                                   sessionId={splitSession.sessionId}
                                   archived={archivedInWorkspace(splitSession.workspaceId, splitSession.sessionId)}
                                   onRestoreSession={async () => { await props.onArchiveSession?.(splitSession.sessionId, false); }}

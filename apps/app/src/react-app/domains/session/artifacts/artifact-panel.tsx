@@ -4,7 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Ellipsis, ExternalLink, FolderOpen, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 
 import type { OpenworkServerClient, OpenworkWorkspaceCatalogEntry } from "@/app/lib/openwork-server";
-import { openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
+import { openDesktopWorkspaceFile, revealDesktopItemInDir } from "@/app/lib/desktop";
+import { nativeFileAction } from "./resolve-open-target";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -39,6 +40,7 @@ type ArtifactPanelProps = {
   client: OpenworkServerClient | null;
   workspaceId: string | null;
   workspaceRoot: string;
+  isLocalWorkspace?: boolean;
   onClose: () => void;
 };
 
@@ -47,6 +49,7 @@ type ArtifactPanelViewProps = {
   client: OpenworkServerClient;
   workspaceId: string;
   workspaceRoot: string;
+  isLocalWorkspace: boolean;
   target: OpenTarget;
   onClose: () => void;
 };
@@ -57,24 +60,26 @@ type ArtifactQueryState =
 
 type SaveArtifactInput = Data & { baseUpdatedAt: number | null };
 
-function absoluteWorkspacePath(root: string, path: string) {
-  const cleanRoot = root.trim().replace(/[/\\]+$/, "");
-  const cleanPath = path.trim().replace(/^\.\//, "");
-  
-  return cleanRoot ? `${cleanRoot}/${cleanPath}` : cleanPath;
-}
-
 function isTextContent(target: OpenTarget): boolean {
   return ["markdown", "code", "text", "sheet", "html"].includes(target.preview) && !/\.(xlsx|xls|ods)$/i.test(target.value);
 }
 
-export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRoot, onClose }: ArtifactPanelProps) {
+export function ArtifactPanel(props: ArtifactPanelProps) {
+  const { sessionId, tab, client, workspaceId, workspaceRoot, onClose } = props;
+  const isLocalWorkspace = props.isLocalWorkspace === true && tab.runtime?.isLocalWorkspace !== false;
   const transcriptTargets = usePanelTabStore((state) => state.transcriptArtifactTargets[sessionId] ?? EMPTY_TRANSCRIPT_TARGETS);
   const artifactTargets = useMemo(() => transcriptTargets.filter(isCollectibleArtifactTarget), [transcriptTargets]);
   const target = tab.target ?? artifactTargets.find((item) => item.id === tab.id) ?? null;
 
   if (!target || !client || !workspaceId) {
     return null;
+  }
+  // A tab carries provenance, never a captured client/token that can outlive
+  // the active connection. A different workspace must not borrow this one's
+  // file access or local shell, even when their path strings happen to match.
+  if (tab.runtime && (tab.runtime.serverBaseUrl !== client.baseUrl
+    || tab.runtime.workspaceId !== workspaceId || tab.runtime.workspaceRoot !== workspaceRoot)) {
+    return <PreviewError message="Open this file in its workspace to preview it." />;
   }
 
   return (
@@ -83,13 +88,14 @@ export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRo
       client={client}
       workspaceId={workspaceId}
       workspaceRoot={workspaceRoot}
+      isLocalWorkspace={isLocalWorkspace}
       target={target}
       onClose={onClose}
     />
   );
 }
 
-function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, target, onClose }: ArtifactPanelViewProps) {
+function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isLocalWorkspace, target, onClose }: ArtifactPanelViewProps) {
   const [failure, setFailure] = useState<{ owner: string; title: string; details: string } | null>(null);
   const owner = JSON.stringify([sessionId, workspaceId, target.id]);
   const reportFailure = (title: string, error: unknown) => setFailure({ owner, title, details: error instanceof Error ? error.message : String(error) });
@@ -105,8 +111,9 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
   // their rendered previews and retain the existing Edit toggle.
   const isDirectTextEdit = isTextContent(target) && target.preview === "text";
   const isDirectCodeEdit = target.kind === "file" && target.preview === "code";
-  const canUseDesktopWorkspaceActions = platform.capabilities.revealInFileManager;
-  const canUseDesktopFileActions = target.kind === "file" && canUseDesktopWorkspaceActions;
+  const nativeOptions = { isLocalWorkspace, canUseDesktop: platform.capabilities.revealInFileManager, os: platform.os };
+  const canUseDesktopWorkspaceActions = nativeFileAction(workspaceRoot, workspaceRoot, nativeOptions) !== null;
+  const canUseDesktopFileActions = target.kind === "file" && nativeFileAction(workspaceRoot, target.value, { ...nativeOptions, exists: target.exists }) !== null;
   const workspaceName = workspaceRoot.split(/[/\\]/).filter(Boolean).pop() ?? "Workspace";
 
   const openWorkspaceFile = (entry: { path: string; size: number; mtimeMs: number }) => {
@@ -118,6 +125,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
       label: nextTarget.name,
       preview: nextTarget.preview,
       target: nextTarget,
+      runtime: { serverBaseUrl: client.baseUrl, workspaceId, workspaceRoot, isLocalWorkspace },
     });
   };
 
@@ -230,7 +238,10 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
 
   const openFileExternally = async (path: string) => {
     try {
-      await openDesktopPath(absoluteWorkspacePath(workspaceRoot, path));
+      const native = nativeFileAction(workspaceRoot, path, nativeOptions);
+      if (!native) throw new Error("Download this file to open it on this device.");
+      if (native.action === "reveal") await revealDesktopItemInDir(native.path);
+      else await openDesktopWorkspaceFile(workspaceRoot, native.path);
     } catch (cause) {
       reportFailure("Could not open this file. Try opening it again.", cause);
     }
@@ -238,7 +249,9 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
 
   const revealFile = async (path: string) => {
     try {
-      await revealDesktopItemInDir(absoluteWorkspacePath(workspaceRoot, path));
+      const native = nativeFileAction(workspaceRoot, path, { ...nativeOptions, reveal: true });
+      if (!native) throw new Error("Download this file to view it on this device.");
+      await revealDesktopItemInDir(native.path);
     } catch (cause) {
       reportFailure("Could not show this file in your file manager.", cause);
     }

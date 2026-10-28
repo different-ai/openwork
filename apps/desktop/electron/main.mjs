@@ -2344,12 +2344,13 @@ const desktopCommandHandlers = {
         shell.showItemInFolder(target);
         return undefined;
       }
-      // The exact file may not exist yet (or path is slightly off); fall back to
-      // opening the containing directory so the user still lands in the right place.
+      // A missing leaf is not permission to launch its parent: it might be an
+      // application bundle, executable or symlink. Reveal the parent itself,
+      // using the file manager's selection API for every fallback.
       const parent = path.dirname(target);
       if (parent && parent !== target && existsSync(parent)) {
-        const error = await shell.openPath(parent);
-        return error && error.trim() ? error : undefined;
+        shell.showItemInFolder(parent);
+        return undefined;
       }
       return `Could not find "${target}" on disk.`;
   },

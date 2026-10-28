@@ -1,7 +1,8 @@
 import * as React from "react";
 
 import { useOpenTargets } from "@/lib/target-provider";
-import type { OpenTarget, OpenTargetPreview } from "@/react-app/domains/session/artifacts/open-target";
+import { openTargetForHref } from "@/react-app/domains/session/artifacts/resolve-open-target";
+import type { OpenTargetOptions } from "@/lib/target-provider";
 
 export type ArtifactType = "website" | "markdown" | "sheet" | "slides" | "document" | "image" | "video" | "audio" | "pdf" | "html" | "text" | "unknown";
 
@@ -59,40 +60,14 @@ function getFileExtension(filename: string) {
   return filename.split(".").pop()?.toLowerCase();
 }
 
-function getArtifactName(path: string) {
-  const segments = path.split(/[/\\]/);
-  
-  return segments[segments.length - 1] ?? path;
-}
-
-function artifactTypeToPreview(type: ArtifactType): OpenTargetPreview {
-  if (type === "markdown") return "markdown";
-  if (type === "sheet") return "sheet";
-  if (type === "slides") return "slides";
-  if (type === "document") return "document";
-  if (type === "image") return "image";
-  if (type === "pdf") return "pdf";
-  if (type === "html") return "html";
-  if (type === "text") return "text";
-  if (type === "website") return "browser";
-  return "external";
-}
-
 /** Open any file path in the artifact preview panel (markdown, code, images…). */
 export function useOpenArtifactPath() {
-  const { onOpenTarget } = useOpenTargets();
+  const { onOpenTarget, openTargets, workspaceRoot } = useOpenTargets();
 
-  return React.useCallback((path: string, options?: { external?: boolean }) => {
-    // Explicit file actions must not strip path prefixes or reuse suffix matches.
-    const target: OpenTarget = {
-      id: `file:${path}`,
-      kind: "file",
-      value: path,
-      name: getArtifactName(path),
-      preview: artifactTypeToPreview(getArtifactType(path)),
-      confidence: 95,
-      reason: "artifact",
-    };
-    onOpenTarget?.(target, options);
-  }, [onOpenTarget]);
+  return React.useCallback((path: string, options?: OpenTargetOptions) => {
+    // Reuse exact resolution so availability/provenance are not discarded by
+    // rebuilding a fresh target from a chip's path.
+    const target = openTargetForHref(path, openTargets, workspaceRoot);
+    if (target) onOpenTarget?.(target, options);
+  }, [onOpenTarget, openTargets, workspaceRoot]);
 }

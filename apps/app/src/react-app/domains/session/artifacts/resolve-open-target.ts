@@ -9,8 +9,10 @@ export function openTargetForHref(href: string, targets: OpenTarget[], root?: st
   const value = filePathFromLinkHref(href).replace(/^\.\//, "");
   const path = localArtifactPath(root, value);
   if (!path && !localArtifactPath("/", value)) return null;
+  const samePath = (left: string | null, right: string | null) => left !== null && right !== null
+    && left.replace(/\\/g, "/") === right.replace(/\\/g, "/");
   const exact = targets.find((target) => target.kind === "file"
-    && (target.value === value || (path !== null && localArtifactPath(root, target.value) === path)));
+    && (samePath(target.value, value) || samePath(localArtifactPath(root, target.value), path)));
   if (exact) return exact;
   return {
     id: `file:${value}`,
@@ -98,11 +100,24 @@ export type NativeFileAction = { path: string; action: "open" | "reveal" };
 export function nativeFileAction(
   root: string | null | undefined,
   value: string,
-  options?: { reveal?: boolean },
+  options: {
+    isLocalWorkspace: boolean;
+    canUseDesktop: boolean;
+    os?: "macos" | "windows" | "linux";
+    exists?: boolean;
+    reveal?: boolean;
+  },
 ): NativeFileAction | null {
-  const path = localArtifactPath(root, value);
+  // A remote worker may use an identical-looking path on a different machine.
+  // Unknown provenance is never permission to send that path to the local shell.
+  if (!options.isLocalWorkspace || !options.canUseDesktop || !options.os || options.exists === false) return null;
+  const base = localArtifactPath(undefined, root ?? "");
+  if (!base) return null;
+  const path = localArtifactPath(base, value);
   if (!path) return null;
-  if (options?.reveal || !isWorkspaceContainedPath(root, path)) return { path, action: "reveal" };
+  const windowsHost = options.os === "windows";
+  if (windowsHost !== /^[A-Za-z]:[/\\]/.test(base) || windowsHost !== /^[A-Za-z]:[/\\]/.test(path)) return null;
+  if (options.reveal || !isWorkspaceContainedPath(base, path)) return { path, action: "reveal" };
   return { path, action: "open" };
 }
 

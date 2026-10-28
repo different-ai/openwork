@@ -18,6 +18,13 @@ export type ArtifactPanelTab = {
   label: string;
   preview: OpenTargetPreview;
   target?: OpenTarget;
+  /** Runtime that verified this file; a split pane may belong to another computer. */
+  runtime?: {
+    serverBaseUrl: string;
+    workspaceId: string | null;
+    workspaceRoot: string;
+    isLocalWorkspace: boolean;
+  };
 }
 
 export type AppPanelTab = { id: string; type: "app"; label: string; appId: string; revisionId?: string; receiptId?: string };
