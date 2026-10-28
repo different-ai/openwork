@@ -5,6 +5,7 @@ import {
   calendarMeetingContext,
   calendarTriggerOccurrences,
   type AutomationListItem,
+  type CalendarTriggerOccurrence,
 } from "@openwork/automations"
 import { projectGoogleCalendarEvents, type CalendarEventFacts } from "@openwork/automations/proactive"
 import type { AutomationRunTriggerContext } from "@openwork/types/automations"
@@ -15,10 +16,12 @@ const logger = appLogger.child({ component: "automation_calendar_triggers" })
 
 /** Calendar-triggered Automations looked at per cycle. */
 const LIST_LIMIT = 200
-/** Occurrences this process remembers claiming, so it does not ask the database again every cycle. */
-const CLAIMED_MEMORY = 5_000
+/** Occurrence decisions this process remembers handling, so it neither asks the database nor logs again every cycle. */
+const HANDLED_MEMORY = 5_000
 
 export type CalendarTriggerOwner = { organizationId: string; ownerMemberId: string }
+
+type CalendarTriggerOccurrenceInput = { scheduledFor: number; nonce: string; triggerContext: AutomationRunTriggerContext }
 
 export type CalendarTriggerSourceDeps = {
   list: (limit: number) => Promise<AutomationListItem[]>
@@ -26,7 +29,7 @@ export type CalendarTriggerSourceDeps = {
   enabled: (owner: CalendarTriggerOwner) => Promise<boolean>
   read: (input: CalendarTriggerOwner & { timeMin: string; timeMax: string }) => Promise<MemberCalendarRead>
   /** Claims one occurrence (idempotent by its nonce) and starts its run; the run id when work started. */
-  claim: (item: AutomationListItem, occurrence: { scheduledFor: number; nonce: string; triggerContext: AutomationRunTriggerContext }) => Promise<string | null>
+  claim: (item: AutomationListItem, occurrence: CalendarTriggerOccurrenceInput) => Promise<string | null>
   /** The owner's Google Calendar cannot be read until they act. */
   needsConnection: (item: AutomationListItem, message: string) => Promise<void>
 }
@@ -35,14 +38,17 @@ const CONNECT_MESSAGE = "Connect Google Calendar with calendar access in OpenWor
 
 /**
  * Reads each owner's primary Google Calendar at most every few minutes, and
- * only for owners with an active calendar-triggered Automation, then claims
+ * only for owners with an active calendar-triggered Automation, then decides
  * every due meeting occurrence once. All I/O lives here; which meetings and
  * when is the pure calendarTriggerOccurrences. Each replica keeps its own
  * read cache; claims are idempotent, so replicas never run a meeting twice.
+ *
+ * Every decision is logged once per occurrence (`calendar trigger decision`).
+ * Meetings the rule doesn't want record nothing else.
  */
 export class CalendarTriggerSource {
   private readonly reads = new Map<string, { readAt: number; events: CalendarEventFacts[] }>()
-  private readonly claimed = new Set<string>()
+  private readonly handled = new Set<string>()
 
   constructor(private readonly deps: CalendarTriggerSourceDeps) {}
 
@@ -82,13 +88,9 @@ export class CalendarTriggerSource {
       // Never a meeting from before the trigger was saved, and never a moment long past.
       const from = Math.max(now - CALENDAR_TRIGGER_GRACE_MS, item.revision.createdAt)
       for (const occurrence of calendarTriggerOccurrences({ trigger, events, from, to: now + 1 })) {
-        const memory = `${item.automation.id}\n${occurrence.key}`
-        if (this.claimed.has(memory)) continue
-        const runId = await this.deps.claim(item, {
-          scheduledFor: occurrence.at,
-          nonce: occurrence.key,
-          triggerContext: calendarMeetingContext(occurrence.event),
-        })
+        const memory = `${item.automation.id}\n${occurrence.key}\n${occurrence.decision.kind === "run" ? "run" : occurrence.decision.reason}`
+        if (this.handled.has(memory)) continue
+        const runId = await this.handle(item, occurrence)
         if (runId) started.push(runId)
         this.remember(memory)
       }
@@ -96,11 +98,32 @@ export class CalendarTriggerSource {
     return started
   }
 
+  /** Acts on one occurrence's decision and logs it. The run id when work started. */
+  private async handle(item: AutomationListItem, occurrence: CalendarTriggerOccurrence): Promise<string | null> {
+    const { decision, event } = occurrence
+    const runId = decision.kind === "run"
+      ? await this.deps.claim(item, { scheduledFor: occurrence.at, nonce: occurrence.key, triggerContext: calendarMeetingContext(event) })
+      : null
+    logger.debug("calendar trigger decision", {
+      automation_id: item.automation.id,
+      revision_id: item.revision.id,
+      occurrence_key: occurrence.key,
+      due_at: new Date(occurrence.at).toISOString(),
+      meeting_start: event.start === null ? null : new Date(event.start).toISOString(),
+      meeting_end: event.end === null ? null : new Date(event.end).toISOString(),
+      owner_response: event.response,
+      decision: decision.kind,
+      reason: decision.kind === "skip" ? decision.reason : null,
+      run_id: runId,
+    })
+    return runId
+  }
+
   private remember(memory: string) {
-    this.claimed.add(memory)
-    if (this.claimed.size <= CLAIMED_MEMORY) return
-    const oldest = this.claimed.values().next()
-    if (!oldest.done) this.claimed.delete(oldest.value)
+    this.handled.add(memory)
+    if (this.handled.size <= HANDLED_MEMORY) return
+    const oldest = this.handled.values().next()
+    if (!oldest.done) this.handled.delete(oldest.value)
   }
 
   /** The owner's meetings around now, from the last read when it is fresh enough. Null when unreadable. */

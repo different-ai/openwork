@@ -57,8 +57,9 @@ export const AUTOMATION_CALENDAR_OFFSET_MAX_MINUTES = 120
 /**
  * Runs around each meeting on the owner's primary Google Calendar instead of
  * on a clock: `offsetMinutes` from the meeting's `edge` (negative is before).
- * Only meetings the owner accepted (or organizes), with someone else invited,
- * that are timed rather than all-day count; `rule` narrows them further. It
+ * Timed, not cancelled meetings with someone else invited count unless the
+ * owner declined them (unanswered and tentative invites count); `rule`
+ * narrows them further. It
  * has no clock occurrences, so `nextDueAt` stays null; Den reads the calendar
  * and claims each meeting once. Cloud placement only.
  */
@@ -74,7 +75,7 @@ export const automationCalendarScheduleSchema = z.object({
     /** Only meetings whose title contains this text, ignoring case. */
     titleIncludes: z.string().trim().min(1).max(120).optional(),
   }).strict().default({ withExternalAttendees: false }),
-}).describe("Runs offsetMinutes (negative is before) from the start or end of each meeting on the owner's primary Google Calendar: timed meetings they accepted or organize, with someone else invited. Cloud Automations only; needs Google Calendar connected and the organization's before-and-after-meeting Automations.")
+}).describe("Runs offsetMinutes (negative is before) from the start or end of each meeting on the owner's primary Google Calendar: timed meetings with someone else invited that they haven't declined. Cloud Automations only; needs Google Calendar connected and the organization's before-and-after-meeting Automations.")
 
 export const automationScheduleSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("once"), timezone: timezoneSchema, at: timestampSchema }),

@@ -1,7 +1,8 @@
 /**
  * Calendar triggers: Cloud Automations that run around each meeting. Gated by
  * `automationCalendarTriggers`, cloud only, hidden from desktops that cannot
- * read them, and claimed once per meeting from the owner's calendar.
+ * read them, and claimed once per meeting from the owner's calendar, answered
+ * or not.
  */
 import {
   AUTOMATION_CLOUD_DEFAULT_MODEL,
@@ -153,4 +154,68 @@ test("an owner without the feature has no calendar read; a calendar that is not 
   assert.equal(field(detail.body, "automation", "state"), "needs_attention", summary(detail))
   assert.equal(field(detail.body, "automation", "needsAttentionReason", "code"), "connect_access_unavailable")
   assert.match(String(field(detail.body, "automation", "needsAttentionReason", "message")), /Connect Google Calendar/)
+})
+
+// A second owner, so the first owner's Automation (now needing attention) is out of the way.
+const second = await den.createOrg(await den.signUp("Sam Rivera"), "Northwind Labs")
+const asSecond = den.as(second.owner, second.orgId)
+const internalOnly = { kind: "calendar", timezone: "America/New_York", edge: "end", offsetMinutes: 5, rule: { withExternalAttendees: false } }
+const peer = { email: "riley@contoso.example" }
+const self = (responseStatus?: string) => ({ email: "owner@contoso.example", self: true, ...(responseStatus ? { responseStatus } : {}) })
+const runsOf = async (id: string) => list(field((await asSecond("GET", `/v1/automations/${id}/runs`)).body, "items"))
+const ownCalendar = (json: unknown) => async (input: { ownerMemberId: string }) => input.ownerMemberId === second.owner.memberId
+  ? { kind: "ok" as const, json }
+  : { kind: "ok" as const, json: { items: [] } }
+
+/** Waits until none of the Automation's runs is still in flight, so the next meeting never overlaps it. */
+async function settled(id: string) {
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    if (!(await runsOf(id)).some((run) => ["queued", "claimed", "running"].includes(String(run.status)))) return
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  throw new Error("runs did not settle")
+}
+
+async function createInternalTrigger(name: string) {
+  assert.equal((await den.setFeature(second.orgId, "automationCalendarTriggers", true)).status, 200)
+  const created = await asSecond("POST", "/v1/cloud-automations", { ...cloudDefinition(internalOnly), name })
+  assert.equal(created.status, 201, summary(created))
+  return { id: text(field(created.body, "automation", "id"), "Automation id"), createdAt: Number(field(created.body, "revision", "createdAt")) }
+}
+
+test("unanswered and maybe meetings run once each across polls and replicas; declined, solo and focus time leave no run", async () => {
+  const trigger = await createInternalTrigger("Internal follow-up")
+  const firstEnd = trigger.createdAt + 60 * 60_000
+  const secondEnd = firstEnd + 20 * 60_000
+  const calendar = {
+    items: [
+      meeting("unanswered", firstEnd, { summary: "Weekly sync", attendees: [self("needsAction"), peer] }),
+      meeting("maybe", secondEnd, { attendees: [self("tentative"), peer] }),
+      meeting("declined", firstEnd, { attendees: [self("declined"), peer] }),
+      meeting("solo", firstEnd, { attendees: undefined, organizer: { email: "owner@contoso.example", self: true } }),
+      meeting("focus", firstEnd, { eventType: "focusTime" }),
+    ],
+  }
+  const options = { calendarTriggersEnabled: async () => true, readCalendar: ownCalendar(calendar) }
+  const service = new AutomationService(options)
+  const replica = new AutomationService(options)
+  for (let now = firstEnd; now <= firstEnd + 9 * 60_000; now += 30_000) {
+    await service.tick({ now })
+    await replica.tick({ now: now + 10_000 })
+  }
+  await settled(trigger.id)
+  for (let now = secondEnd; now <= secondEnd + 9 * 60_000; now += 30_000) {
+    await service.tick({ now })
+    await replica.tick({ now: now + 10_000 })
+  }
+  await settled(trigger.id)
+
+  const runs = await runsOf(trigger.id)
+  assert.deepEqual(runs.map((run) => [field(run, "triggerContext", "eventId"), field(run, "scheduledFor")]).sort(), [
+    ["maybe", secondEnd + 5 * 60_000],
+    ["unanswered", firstEnd + 5 * 60_000],
+  ])
+  // The fake clock runs ahead of run leases, so how a run ends here says nothing; what matters is that it started work.
+  assert.ok(runs.every((run) => field(run, "status") !== "skipped"), JSON.stringify(runs))
 })

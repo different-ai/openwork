@@ -363,7 +363,10 @@ export function formatAutomationSchedule(schedule: AutomationSchedule, locale?: 
 
 /**
  * When a calendar trigger runs, in words: "After each meeting (+5 min)",
- * "15 min before each meeting", "As each meeting starts".
+ * "15 min before each meeting", "As each meeting starts". "Each meeting" is
+ * every timed meeting with someone else invited that the owner hasn't
+ * declined, answered or not; calendarTriggerDecision in @openwork/automations
+ * decides it.
  */
 export function describeCalendarMoment(schedule: Pick<AutomationCalendarSchedule, "edge" | "offsetMinutes">): string {
   const minutes = Math.abs(schedule.offsetMinutes)

@@ -49,7 +49,7 @@ test("a member schedules an Automation every few hours, or around their meetings
     await user.screenshot();
   });
 
-  await step("after: with meeting triggers on, the member picks Around my meetings, 5 minutes after each ends", async () => {
+  await step("after: with meeting triggers on, the member picks Around my meetings, 5 minutes after each ends, for every meeting they haven't declined", async () => {
     await world.turnOnCalendarTriggers();
     await user.reload();
     await openNewAutomation();
@@ -60,6 +60,11 @@ test("a member schedules an Automation every few hours, or around their meetings
     const moment = await fieldText("#automation-meeting-moment");
     evidence.recordAssertionEvidence("5 minutes after each meeting ends is the starting choice", `${choices.join(", ")} → ${moment}`, moment === "5 min after it ends");
     expect(moment).toBe("5 min after it ends");
+    // Unanswered invites count too; only declined meetings are left out.
+    const hint = (await probe.dom("p")).elements.map((element) => element.text.trim()).find((line) => line.startsWith("Uses meetings")) ?? "";
+    const rule = "Uses meetings on your Google Calendar, except ones you declined. Runs in OpenWork Cloud.";
+    evidence.recordAssertionEvidence("The editor says which meetings count: all but declined ones", hint, hint === rule);
+    expect(hint).toBe(rule);
     await user.screenshot();
   });
 });
