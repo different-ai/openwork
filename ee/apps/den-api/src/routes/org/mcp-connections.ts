@@ -54,6 +54,14 @@ import { forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, okSc
 import { createOAuthStateToken, verifyOAuthStateToken } from "../../capability-sources/generic-oauth.js"
 import { matchesLegacyExternalMcpOAuthStateIdentityBinding } from "../../capability-sources/external-mcp-oauth-state-identity.js"
 import {
+  EXTERNAL_MCP_REQUEST_HEADERS_LIMIT,
+  externalMcpRequestHeaderNames,
+  resolveRequestHeaderUpdate,
+  serializeExternalMcpRequestHeaders,
+  validateExternalMcpRequestHeaders,
+  withExternalMcpRequestHeaders,
+} from "../../capability-sources/external-mcp-request-headers.js"
+import {
   abandonLegacyExternalMcpAuth,
   abandonExternalMcpAuth,
   completeLegacyExternalMcpAuth,
@@ -263,8 +271,24 @@ const externalMcpUrlSchema = z.string().trim().url().max(2048).superRefine((valu
   }
 })
 
+// Bounds only; validateExternalMcpRequestHeaders enforces the exact rules
+// with plain-English messages that name the header.
+const requestHeaderNameSchema = z.string().trim().min(1).max(256)
+const requestHeaderValueSchema = z.string().min(1).max(8192)
+const requestHeadersInputSchema = z.array(z.object({
+  name: requestHeaderNameSchema,
+  value: requestHeaderValueSchema,
+})).max(EXTERNAL_MCP_REQUEST_HEADERS_LIMIT)
+const requestHeadersUpdateSchema = z.array(z.object({
+  name: requestHeaderNameSchema,
+  /** Omitted keeps the stored value for the header with the same name (case-insensitive). */
+  value: requestHeaderValueSchema.optional(),
+})).max(EXTERNAL_MCP_REQUEST_HEADERS_LIMIT)
+
 const discoverConnectionBodySchema = z.object({
   url: externalMcpUrlSchema,
+  requestHeaders: requestHeadersInputSchema.optional()
+    .describe("Sent only to the MCP server URL itself during discovery, never to sign-in or metadata addresses. Not stored."),
 }).meta({ ref: "ExternalMcpRequirementsDiscoveryInput" })
 
 const requirementsDiscoveryResponseSchema = z.object({
@@ -365,6 +389,8 @@ const createExternalConnectionBodySchema = z.object({
   exposeDirectly: z.boolean().optional().default(false),
   apiKey: z.string().trim().min(1).max(4096).optional(),
   apiKeyAuthScheme: z.enum(["bearer", "token"]).optional(),
+  requestHeaders: requestHeadersInputSchema.optional()
+    .describe("Sent with every request to the MCP server alongside OpenWork's own sign-in. Values are stored encrypted and never returned. Up to four."),
   oauthClient: z.object({
     clientId: z.string().trim().min(1).max(512),
     clientSecret: z.string().trim().min(1).max(4096).optional(),
@@ -408,6 +434,8 @@ const updateConnectionBodySchema = z.object({
   /** Omitted means preserve only when the connection identity is unchanged. Never returned by any read route. */
   apiKey: z.string().trim().min(1).max(4096).optional(),
   apiKeyAuthScheme: z.enum(["bearer", "token"]).optional(),
+  requestHeaders: requestHeadersUpdateSchema.optional()
+    .describe("Omitted keeps the stored headers. An array replaces them; an entry without value keeps the stored value of the header with that name. An empty array removes them all. Values are never returned."),
   oauthClient: z.object({
     clientId: z.string().trim().min(1).max(512),
     /** Omitted preserves the secret only when both identity and client id are unchanged. */
@@ -495,6 +523,8 @@ const connectionResponseSchema = z.object({
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]),
   apiKeyAuthScheme: z.enum(["bearer", "token"]),
+  /** Names of the administrator-configured request headers. Values are never returned. */
+  requestHeaderNames: z.array(z.string()),
   /** True when granted members may use this connection as a standard MCP server with its own tool catalog. */
   exposeDirectly: z.boolean(),
   /** scope=usable with the connectionMcpServers feature on: this connection's own MCP server, listing only its tools. */
@@ -1424,6 +1454,7 @@ async function toConnectionResponse(
     authType: row.authType,
     credentialMode: row.credentialMode,
     apiKeyAuthScheme: row.apiKeyAuthScheme,
+    requestHeaderNames: row.kind === "external_mcp" ? externalMcpRequestHeaderNames(row.requestHeaders) : [],
     exposeDirectly: row.exposeDirectly,
     // Which service a native connector fronts ("google-workspace"), so a
     // member's card can say what they would be signing in to. Null for
@@ -1847,6 +1878,7 @@ function memberConnectionCreateDenial(body: z.infer<typeof createConnectionBodyS
   if (body.kind === "native_provider") return "Only workspace owners and admins can set up this service."
   if (body.externalKey) return "Only workspace owners and admins can add connections with a stable key."
   if (body.authType === "apikey" || body.apiKey !== undefined) return "Only workspace owners and admins can add a connection that uses a key."
+  if ((body.requestHeaders?.length ?? 0) > 0) return "Only workspace owners and admins can add request headers."
   if (body.oauthClient) return "Only workspace owners and admins can add OAuth app credentials."
   if (body.authType === "oauth" && body.credentialMode !== "per_member") return "Connections you add sign each person in with their own account."
   if (body.access.orgWide && !options.canShareOrgWide) return "Only workspace owners and admins can share a connection with everyone."
@@ -1885,6 +1917,11 @@ async function createExternalConnectionResponse(
   if (machineCaller && body.apiKey !== undefined) {
     return c.json({ error: "secure_entry_required", message: "Do not send keys through the agent or an API key. Create the connection without apiKey; the person adds it in a private field in OpenWork." }, 400)
   }
+  if (machineCaller && (body.requestHeaders?.length ?? 0) > 0) {
+    return c.json({ error: "secure_entry_required", message: "Do not send request header values through the agent or an API key. Create the connection without requestHeaders; a person adds them in OpenWork." }, 400)
+  }
+  const requestHeaders = validateExternalMcpRequestHeaders(body.requestHeaders ?? [], body.authType)
+  if (!requestHeaders.ok) return c.json({ error: "invalid_request", message: requestHeaders.message }, 400)
   const awaitingSharedKey = body.authType === "apikey" && body.credentialMode === "shared" && !body.apiKey
   if (body.oauthClient && body.authType !== "oauth") {
     return c.json({ error: "invalid_request", message: "oauthClient is only allowed when authType is oauth." }, 400)
@@ -1938,6 +1975,7 @@ async function createExternalConnectionResponse(
     exposeDirectly: body.exposeDirectly,
     apiKey: body.apiKey ?? null,
     apiKeyAuthScheme: body.apiKeyAuthScheme ?? "bearer",
+    requestHeaders: requestHeaders.headers,
     oauthConfiguration: body.authType === "oauth" ? {
       version: 1,
       ...oauthConfiguration,
@@ -2119,6 +2157,22 @@ async function replaceExternalConnectionResponse(
   if (body.apiKey !== undefined && body.authType !== "apikey") {
     return c.json({ error: "invalid_request", message: "apiKey is only allowed when authType is apikey." }, 400)
   }
+  const requestHeaderUpdate = resolveRequestHeaderUpdate({
+    stored: connection.requestHeaders,
+    update: body.requestHeaders,
+    authType: body.authType,
+    serverChanged: normalizeExternalMcpIdentityUrl(connection.url) !== normalizeExternalMcpIdentityUrl(body.url),
+  })
+  if (!requestHeaderUpdate.ok) return c.json({ error: "invalid_request", message: requestHeaderUpdate.message }, 400)
+  if (requestHeaderUpdate.changed && sessionId === "mcp_internal" && body.requestHeaders?.some((header) => header.value !== undefined)) {
+    return c.json({
+      error: "invalid_request",
+      message: "Request header values cannot be edited from the agent. Use the OpenWork Cloud dashboard under Connections.",
+    }, 400)
+  }
+  if (requestHeaderUpdate.changed && !(await callerHasPermission(payload, "connections.manage"))) {
+    return c.json({ error: "forbidden", message: "Only workspace owners and admins can change request headers." }, 403)
+  }
   if (body.apiKeyAuthScheme !== undefined && body.authType !== "apikey") {
     return c.json({ error: "invalid_request", message: "apiKeyAuthScheme is only allowed for API-key connections." }, 400)
   }
@@ -2177,7 +2231,7 @@ async function replaceExternalConnectionResponse(
   const shouldValidate = body.authType !== "oauth"
     && body.credentialMode === "shared"
     && !awaitingSharedKey
-    && (identityChanged || connection.url !== body.url || body.apiKey !== undefined)
+    && (identityChanged || connection.url !== body.url || body.apiKey !== undefined || requestHeaderUpdate.changed)
   let validatedAt: Date | undefined
   if (shouldValidate) {
     const proposedConnection: ExternalMcpConnectionRow = {
@@ -2189,6 +2243,7 @@ async function replaceExternalConnectionResponse(
       oauthConfiguration: oauthConfiguration ?? connection.oauthConfiguration,
       apiKey,
       apiKeyAuthScheme,
+      requestHeaders: serializeExternalMcpRequestHeaders(requestHeaderUpdate.headers),
       accessToken: identityChanged ? null : connection.accessToken,
       refreshToken: identityChanged ? null : connection.refreshToken,
       tokenType: identityChanged ? null : connection.tokenType,
@@ -2233,6 +2288,7 @@ async function replaceExternalConnectionResponse(
     ...(body.exposeDirectly !== undefined ? { exposeDirectly: body.exposeDirectly } : {}),
     ...(body.apiKey !== undefined ? { apiKey: body.apiKey } : {}),
     apiKeyAuthScheme,
+    ...(requestHeaderUpdate.changed ? { requestHeaders: requestHeaderUpdate.headers } : {}),
     ...(body.oauthClient ? {
       oauthClient: {
         ...body.oauthClient,
@@ -2469,11 +2525,14 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     orgMemberRoute(),
     jsonValidator(discoverConnectionBodySchema),
     async (c) => {
-      const { url } = c.req.valid("json")
+      const { url, requestHeaders } = c.req.valid("json")
+      const discoveryHeaders = validateExternalMcpRequestHeaders(requestHeaders ?? [], "discover")
+      if (!discoveryHeaders.ok) return c.json({ error: "invalid_request" as const, message: discoveryHeaders.message }, 400)
       try {
         const result = await discoverConnectionRequirements({
           serverUrl: url,
-          fetch: externalMcpDiscoveryFetch,
+          // Only requests to the MCP URL itself carry the headers.
+          fetch: withExternalMcpRequestHeaders(externalMcpDiscoveryFetch, url, discoveryHeaders.headers),
         })
         return c.json(requirementsForCaller(result, await hasPermission(c, "connections.view")))
       } catch (error) {
@@ -3351,6 +3410,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         exposeDirectly: body.exposeDirectly,
         ...(body.apiKey !== undefined ? { apiKey: body.apiKey } : {}),
         ...(body.apiKeyAuthScheme !== undefined ? { apiKeyAuthScheme: body.apiKeyAuthScheme } : {}),
+        ...(body.requestHeaders !== undefined ? { requestHeaders: body.requestHeaders } : {}),
         ...(body.oauthClient !== undefined ? { oauthClient: body.oauthClient } : {}),
         ...(body.manualOAuthEndpoints !== undefined ? { manualOAuthEndpoints: body.manualOAuthEndpoints } : {}),
         ...(body.authorizationServerIssuer !== undefined ? { authorizationServerIssuer: body.authorizationServerIssuer } : {}),

@@ -1,12 +1,14 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessPeopleIds, peopleLabel } from "./access-summary";
-import { useConnectorSetup } from "./connector-setup";
+import type { ConnectorRoute } from "./connector-route";
+import { ConnectorRouteStep } from "./connector-route-step";
+import { type OAuthAppInput, useConnectorSetup } from "./connector-setup";
 import { ApiKeyFields, ApiKeySchemeAdvanced, OAuthAppFields } from "./connector-setup-fields";
 import { useConnectorTarget } from "./connector-setup-screen";
 import { useDenToast } from "./den-toast";
@@ -85,10 +87,18 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const [error, setError] = useState<string | null>(null);
   const [confirmSwitch, setConfirmSwitch] = useState(false);
   const [showOAuthApp, setShowOAuthApp] = useState(false);
+  // A custom connector first shows what OpenWork detected and lets the admin pick another route.
+  const isCustom = catalogId === "custom";
+  const initialConnectionId = searchParams.get("connection");
+  const [route, setRoute] = useState<ConnectorRoute | null>(null);
+  const [previousRoute, setPreviousRoute] = useState<ConnectorRoute | null>(null);
+  const [pendingOAuthApp, setPendingOAuthApp] = useState<OAuthAppInput | null>(null);
   const setup = useConnectorSetup({
     mode: "admin",
     target,
-    initialConnectionId: searchParams.get("connection"),
+    route,
+    routeRequired: isCustom && !initialConnectionId,
+    initialConnectionId,
     onConnectionCreated: (connectionId) => {
       const params = new URLSearchParams(searchParams.toString());
       params.set("connection", connectionId);
@@ -98,6 +108,14 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
 
   const name = target?.name ?? "";
   const back = { href: getAddConnectorRoute(orgSlug), label: "Add a connector" };
+
+  // "Use your own OAuth app" saves the app once the route (and its headers) is in place.
+  const { saveOAuthApp, discovering, connection: setupConnection } = setup;
+  useEffect(() => {
+    if (!route || !pendingOAuthApp || discovering || setupConnection) return;
+    setPendingOAuthApp(null);
+    void saveOAuthApp(pendingOAuthApp);
+  }, [discovering, pendingOAuthApp, route, saveOAuthApp, setupConnection]);
 
   if (missing || failed) {
     return (
@@ -218,6 +236,26 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
     }
   }
 
+  if (isCustom && route === null && !connection && !initialConnectionId) {
+    return (
+      <ConnectorRouteStep
+        name={name}
+        url={target.url}
+        back={back}
+        initial={previousRoute}
+        discovery={setup.discovery}
+        discovering={setup.discovering}
+        unreachable={setup.unreachable}
+        secretRequired={setup.secretRequired}
+        onCancel={() => router.push(getAddConnectorRoute(orgSlug))}
+        onContinue={(chosen, oauthApp) => {
+          setRoute(chosen);
+          setPendingOAuthApp(oauthApp);
+        }}
+      />
+    );
+  }
+
   if (!ready) {
     return (
       <ItemPage testId="connector-setup">
@@ -229,7 +267,11 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
         <SetupChecks checks={checks} />
         {setup.skipError ? <p className="text-[13px] text-red-600" role="alert">{setup.skipError}</p> : null}
         <StepFooter note={setup.canSkip ? "You can add it anyway and finish its settings on its page." : `Step ${setup.stepNumber} of ${checks.length}`}>
-          <DenButton variant="secondary" loading={busy} disabled={setup.skipping} onClick={() => void cancel()}>Cancel</DenButton>
+          {isCustom && route && !connection && !setup.saving ? (
+            <DenButton variant="secondary" disabled={busy || setup.skipping || setup.signingIn} onClick={() => { setPreviousRoute(route); setRoute(null); }} data-testid="connector-setup-change-route">Back</DenButton>
+          ) : (
+            <DenButton variant="secondary" loading={busy} disabled={setup.skipping} onClick={() => void cancel()}>Cancel</DenButton>
+          )}
           {setup.canSkip ? (
             <DenButton loading={setup.skipping} disabled={busy} onClick={() => void setup.skipChecks()} data-testid="connector-setup-add-anyway">Add anyway</DenButton>
           ) : null}

@@ -112,6 +112,8 @@ export type ExternalMcpConnection = {
   authType: ExternalMcpAuthType;
   credentialMode: ExternalMcpCredentialMode;
   apiKeyAuthScheme: ExternalMcpApiKeyAuthScheme;
+  /** Names of the admin's custom request headers. Values are never returned. Absent from older servers. */
+  requestHeaderNames?: string[];
   /** True when granted members may use this connection as a standard MCP server with its own tool catalog. */
   exposeDirectly: boolean;
   connected: boolean;
@@ -730,6 +732,9 @@ export type McpConnectionAccessInput = {
   teamIds: string[];
 };
 
+/** A custom header sent with every request to the MCP server. */
+export type McpRequestHeaderInput = { name: string; value: string };
+
 export type CreateMcpConnectionInput = {
   name: string;
   url: string;
@@ -738,6 +743,7 @@ export type CreateMcpConnectionInput = {
   exposeDirectly?: boolean;
   apiKey?: string;
   apiKeyAuthScheme?: ExternalMcpApiKeyAuthScheme;
+  requestHeaders?: McpRequestHeaderInput[];
   oauthClient?: {
     clientId: string;
     clientSecret?: string;
@@ -819,13 +825,14 @@ export function useResolveMcpConnection() {
 export function useDiscoverMcpConnectionRequirements() {
   const { orgId } = useOrgDashboard();
   return useMutation({
-    mutationFn: async (url: string): Promise<McpRequirementsDiscovery> => {
+    mutationFn: async (input: string | { url: string; requestHeaders?: McpRequestHeaderInput[] }): Promise<McpRequirementsDiscovery> => {
+      const { url, requestHeaders } = typeof input === "string" ? { url: input, requestHeaders: undefined } : input;
       const { response, payload } = await requestJson(
         "/v1/mcp-connections/discover",
         {
           method: "POST",
           headers: getOrgScopeHeaders(requireOrgId(orgId)),
-          body: JSON.stringify({ url }),
+          body: JSON.stringify(requestHeaders?.length ? { url, requestHeaders } : { url }),
         },
         20000,
       );

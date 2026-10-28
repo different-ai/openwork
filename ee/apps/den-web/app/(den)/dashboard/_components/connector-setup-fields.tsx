@@ -48,13 +48,17 @@ export function ApiKeyFields({ name, saving, error, onSave }: {
 }
 
 /** Step two's fields for a server that only accepts a pre-registered OAuth app. */
-export function OAuthAppFields({ secretRequired, saving, error, onSave, url, discovery }: {
+export function OAuthAppFields({ secretRequired, saving, error, onSave, url, discovery, formId, hideSubmit = false }: {
   url?: string;
   discovery?: McpRequirementsDiscovery | null;
   secretRequired: boolean;
   saving: boolean;
   error: string | null;
   onSave: (input: OAuthAppInput) => void;
+  /** Lets a page footer button submit these fields. */
+  formId?: string;
+  /** The page footer carries the submit action instead. */
+  hideSubmit?: boolean;
 }) {
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
@@ -66,6 +70,7 @@ export function OAuthAppFields({ secretRequired, saving, error, onSave, url, dis
   const ready = !halfSet && Boolean(clientId.trim()) && (hasManual || !secretRequired || Boolean(clientSecret.trim()));
   return (
     <form
+      id={formId}
       className="flex flex-col gap-2"
       data-testid="setup-oauth-app"
       onSubmit={(event) => {
@@ -96,9 +101,11 @@ export function OAuthAppFields({ secretRequired, saving, error, onSave, url, dis
       </div>
       {url ? <ManualOAuthFields url={url} draft={manualDraft} onChange={setManualDraft} hasClientSecret={Boolean(clientSecret.trim())} disabled={saving} discovery={discovery} /> : null}
       {error ? <p className="text-[12px] text-red-600" role="alert">{error}</p> : null}
-      <div className="flex justify-end pt-1">
-        <DenButton type="submit" loading={saving} disabled={!ready}>{usingPublishedAddresses ? "Save and use these addresses" : "Save changes"}</DenButton>
-      </div>
+      {hideSubmit ? null : (
+        <div className="flex justify-end pt-1">
+          <DenButton type="submit" loading={saving} disabled={!ready}>{usingPublishedAddresses ? "Save and use these addresses" : "Save changes"}</DenButton>
+        </div>
+      )}
     </form>
   );
 }

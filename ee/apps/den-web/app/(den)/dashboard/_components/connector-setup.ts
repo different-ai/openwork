@@ -1,9 +1,10 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { connectorAccountReady } from "./connector-detail";
+import { type ConnectorRoute, routeSignInMethod } from "./connector-route";
 import { type ConnectorSignInMethod, connectorSignInMethod, oauthClientSecretRequired, oauthRequestFields } from "./connector-sign-in-method";
 import { libraryQueryKeys } from "./library-data";
 import { credentialModeForAuth, personalApiKeyStatus, usesMemberApiKey } from "./member-api-key";
@@ -84,11 +85,15 @@ function errorMessage(error: unknown, fallback: string): string {
  * saves the key or OAuth app step two asks for, or right away when there is
  * nothing to sign in to.
  */
-export function useConnectorSetup({ target, initialConnectionId, onConnectionCreated, mode = "member" }: {
+export function useConnectorSetup({ target, initialConnectionId, onConnectionCreated, mode = "member", route = null, routeRequired = false }: {
   target: ConnectorTarget | null;
   initialConnectionId: string | null;
   onConnectionCreated?: (connectionId: string) => void;
   mode?: ConnectorSetupMode;
+  /** The sign-in route the admin chose for a custom connector; it overrides detection. */
+  route?: ConnectorRoute | null;
+  /** A custom connector waits for its route before any check creates a connection. */
+  routeRequired?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { orgId, orgContext } = useOrgDashboard();
@@ -109,12 +114,19 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   const [skipping, setSkipping] = useState(false);
   const [skipError, setSkipError] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const discoveredUrl = useRef<string | null>(null);
+  const discoveredKey = useRef<string | null>(null);
   const autoCreated = useRef(false);
 
   const connection: ExternalMcpConnection | null = usable.data?.find((entry) => entry.id === connectionId) ?? null;
-  const findDone = discovery !== null && discovery.status !== "unreachable" && discovery.status !== "unsupported";
-  const method: ConnectorSignInMethod | null = findDone && discovery ? connectorSignInMethod(discovery, target?.preset) : null;
+  // A chosen route answers what detection could not, so only an unreachable server fails the first check.
+  const findDone = discovery !== null && discovery.status !== "unreachable" && (discovery.status !== "unsupported" || route !== null);
+  const awaitingRoute = routeRequired && route === null;
+  const method: ConnectorSignInMethod | null = !findDone || !discovery || awaitingRoute
+    ? null
+    : route ? routeSignInMethod(route) : connectorSignInMethod(discovery, target?.preset);
+  const routeHeaders = route?.requestHeaders;
+  const requestHeaders = useMemo(() => routeHeaders ?? [], [routeHeaders]);
+  const requestHeadersKey = JSON.stringify(requestHeaders);
   const signedIn = Boolean(connection && (connection.authType === "none" || connectorAccountReady(connection)));
   const apiKeyConfigured = connection?.authType === "apikey";
   const usesIndividualKeys = Boolean(connection && usesMemberApiKey(connection));
@@ -122,14 +134,17 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
 
   useEffect(() => {
     // A deep link can resolve the catalog entry before the organization loads.
-    if (!target || !orgId || discoveredUrl.current === target.url) return;
-    discoveredUrl.current = target.url;
+    // Headers the admin adds can change what the server answers, so they re-run it.
+    const key = `${target?.url ?? ""}\n${requestHeadersKey}`;
+    if (!target || !orgId || discoveredKey.current === key) return;
+    discoveredKey.current = key;
     setDiscovery(null);
     setDiscoveryError(null);
-    discover.mutateAsync(target.url)
-      .then((result) => setDiscovery(result))
-      .catch((error: unknown) => setDiscoveryError(errorMessage(error, "OpenWork could not reach it.")));
-  }, [discover, orgId, target]);
+    // Only the latest request's answer counts when the headers change mid-flight.
+    discover.mutateAsync({ url: target.url, requestHeaders })
+      .then((result) => { if (discoveredKey.current === key) setDiscovery(result); })
+      .catch((error: unknown) => { if (discoveredKey.current === key) setDiscoveryError(errorMessage(error, "OpenWork could not reach it.")); });
+  }, [discover, orgId, requestHeaders, requestHeadersKey, target]);
 
   const stopPolling = useCallback(() => {
     if (pollTimer.current) clearInterval(pollTimer.current);
@@ -152,6 +167,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       ...(auth.oauthClient ? { oauthClient: auth.oauthClient } : {}),
       ...(auth.authType === "oauth" ? oauthRequestFields(discovery) : {}),
       ...(auth.manualOAuthEndpoints ? { manualOAuthEndpoints: auth.manualOAuthEndpoints } : {}),
+      ...(requestHeaders.length > 0 ? { requestHeaders } : {}),
       access: { orgWide: false, memberIds: [orgContext.currentMember.id], teamIds: [] },
     });
     setConnectionId(created.id);
@@ -162,7 +178,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items }),
     ]);
     return created.id;
-  }, [createConnection, discovery, onConnectionCreated, orgContext, queryClient, target, usable]);
+  }, [createConnection, discovery, onConnectionCreated, orgContext, queryClient, requestHeaders, target, usable]);
 
   useEffect(() => {
     if (method !== "none" || connectionId || autoCreated.current) return;
@@ -430,6 +446,10 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     /** Step two is waiting on a key or OAuth app from this viewer. */
     needsInput: needsAdminInput && mode === "admin" && !connection,
     discovery,
+    /** The first check is still waiting on the server. */
+    discovering: discovery === null && discoveryError === null,
+    /** OpenWork could not reach the server at all. */
+    unreachable: discoveryError !== null || discovery?.status === "unreachable",
     secretRequired: oauthClientSecretRequired(discovery),
     saving,
     saveError,

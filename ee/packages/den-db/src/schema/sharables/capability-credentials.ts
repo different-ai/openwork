@@ -245,6 +245,12 @@ export const ExternalMcpConnectionTable = mysqlTable(
     /** Administrator-selected transport only; the member supplies the raw key. */
     apiKeyAuthScheme: mysqlEnum("api_key_auth_scheme", ["bearer", "token"]).notNull().default("bearer"),
     /**
+     * Administrator-configured request headers sent with every MCP request,
+     * stored encrypted as a JSON string of `[{ name, value }]` (at most four).
+     * Values are never returned by the API; only names are exposed.
+     */
+    requestHeaders: encryptedTextColumn("request_headers"),
+    /**
      * OAuth tokens for authType = "oauth". Unlike ConnectedAccountTable,
      * this is deliberately org-level, not per-member: an external MCP
      * connection (Notion, Linear, ...) is a shared org integration, like an
