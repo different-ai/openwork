@@ -1170,6 +1170,13 @@
       "when": 1793202414862,
       "tag": "0167_agent_member_check_sources",
       "breakpoints": true
+    },
+    {
+      "idx": 168,
+      "version": "5",
+      "when": 1793206007503,
+      "tag": "0168_headless_resume_grant_scopes",
+      "breakpoints": true
     }
   ]
 }
