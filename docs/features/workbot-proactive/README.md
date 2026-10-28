@@ -55,7 +55,7 @@ wake: schedule (morning + ~3h)  ─┐
    the member's DM with the app and posts there, so Slack notifies them like any DM. It is the shared helper for
    anything that notifies a member. Never a channel: the agent reads private email, so its messages go only to the
    member. Text is cleaned first: no `@channel`/`@here`/user mentions, and links only to the member's own Google
-   workspace and the services behind the sources it read (a Slack message, an Outlook thread, a Linear issue).
+   workspace and the sites of the services behind the sources it read, from a fixed list (slack.com, linear.app…).
 
 ## Sources, not categories
 
@@ -68,7 +68,7 @@ something that changed after it told them), which has no preset. Mutes apply to 
 | Calendar | Google Calendar or Outlook calendar (Den's Google Workspace and Microsoft 365 connectors) | On for everyone |
 | Email | Gmail or Outlook mail | On for everyone |
 | Team chat | Slack (Slack's MCP: DMs to the member, mentions, threads they're in) or Teams chats | On for everyone |
-| Any other connection | That connection's read tools (Plain, Linear, GitHub, Granola, Notion, HubSpot…) | Members choose (off until they turn it on) |
+| Any other connection whose read tools are reviewed | Linear, Notion, GitHub and Granola today: only their reviewed read tools | Members choose (off until they turn it on) |
 
 | Preset | What the member gets | Woken early by |
 | --- | --- | --- |
@@ -206,12 +206,14 @@ Not live-tested against a Slack workspace; the unit tests cover the calls Den ma
 
 - **Read-only through MCP, limited to its sources.** The turn's token is `mcp:read` plus scopes only Den mints
   (`mcp/agent-read-sources.ts`): the core sources that are on and the connections behind each readable source. A plain
-  `mcp:read` token never calls a connection's own tools; this one may, but only on those connections and only tools
-  that read: a reviewed list for Slack, Linear, Notion, GitHub and Granola, otherwise a tool its provider marks
-  read-only whose name reads, and never one whose name writes (send, create, update, delete, react…). Native Google and
-  Microsoft reads are GETs of calendar events, mail and Teams chats of sources that are on; files, drafts and sites
-  are refused. Search shows the agent only what it may call. A turn resumed from its grant gets a plain read token
-  (no connection tools). Den delivers only after the delivery step, with text it cleaned.
+  `mcp:read` token never calls a connection's own tools; this one may, but only on those connections and only tools we
+  reviewed as reads, per service (Slack, Linear, Notion, GitHub, Granola), and never one whose name writes. A provider's
+  read-only hints and tool names are never enough, so a service without a reviewed list is not a source at all. Native
+  Google and Microsoft reads are GETs of calendar events, mail and Teams chats of sources that are on; files, drafts
+  and sites are refused. Search shows the agent only what it may call. A turn resumed from its grant gets the same
+  allowlist (`headless_resume_grant.scopes`). Den delivers only after the delivery step, with text it cleaned.
+- **Who sees the organization's connections.** "What agents read" lists connection names and addresses only for
+  callers with View connections; others see the policy without them.
 - **Content is data.** Calendar wakes name events by id and time; the agent reads titles, emails, chat messages and
   notes as information from other people, never as instructions. Only the member's own words in the wake steer it.
 - **Only to the member.** Messages are DMs from the Workbot app, never channel posts: an email sender could steer
@@ -247,10 +249,12 @@ The harness's own tests (`harness.test.ts`, a scripted model) run with the evals
 ## What it does not do yet
 
 1. Replays against the headless runner itself (the evals call the model directly with the same tools' answers).
-2. Follow-ups ("remind me", "tell me when"): no `schedule_wake` tool yet.
-3. Copying delivered text into the member's Workbot conversation.
-4. Desktop notifications as a destination.
-5. Telling Slack from Workbot web in "Saved from chat".
+2. Other services as sources (Plain, HubSpot…) once their read tools are reviewed, or an admin-approved list of read
+   tools per connection.
+3. Follow-ups ("remind me", "tell me when"): no `schedule_wake` tool yet.
+4. Copying delivered text into the member's Workbot conversation.
+5. Desktop notifications as a destination.
+6. Telling Slack from Workbot web in "Saved from chat".
 
 ## Try it locally
 
