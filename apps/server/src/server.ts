@@ -1,3 +1,4 @@
+import { truncateLogLine, isUnavailableLogOutputError } from "./log-utils.js";
 import { cloudComputerCall, cloudComputerFor, cloudComputerJson, startCloudComputerBridge } from "./cloud-computer.js";
 import { createV2SessionHomes, nativeSession, nativeSessionDirectory } from "./opencode-v2-session-home.js";
 import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./cloud-mcp-v2.js";
@@ -431,13 +432,8 @@ function toUnixNano(): string {
   return (BigInt(Date.now()) * 1_000_000n).toString();
 }
 
-function isUnavailableLogOutputError(error: unknown): boolean {
-  if (!isRecord(error)) return false;
-  // Redirected stdout can run out of space just like the optional file sink.
-  // Logging must not turn an otherwise successful request into a server crash.
-  return error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED"
-    || error.code === "ENOSPC" || error.code === "EDQUOT" || error.code === "EIO";
-}
+// truncateLogLine and isUnavailableLogOutputError live in log-utils.ts so they
+// can be unit-tested without importing the full server module graph.
 
 let stdoutLogWritesDisabled = false;
 let stdoutErrorHandlerInstalled = false;
@@ -486,8 +482,14 @@ export function createServerLogger(
   const writeLogLine = (line: string) => {
     if (logWritesDisabled) return;
     try {
-      writeLine(line);
+      writeLine(truncateLogLine(line));
     } catch (error) {
+      if (error instanceof RangeError) {
+        // A RangeError means this specific write exceeded the Buffer pool limit.
+        // stdout is still healthy so don't disable the channel; just skip this
+        // record.  truncateLogLine prevents this in normal operation.
+        return;
+      }
       if (isUnavailableLogOutputError(error)) {
         logWritesDisabled = true;
         if (writeLine === writeStdoutLogLine) {
