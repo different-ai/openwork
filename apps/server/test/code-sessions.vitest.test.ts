@@ -20,6 +20,7 @@ import {
   readOpenCodeSessionEverywhere,
 } from "../src/code-sessions/opencode.ts";
 import { createCodeSessionsService } from "../src/code-sessions/index.ts";
+import { createDriveRegistry } from "../src/code-sessions/drive.ts";
 
 const FOLDER_A = "E--Proyectos-Kizuna";
 const FOLDER_B = "C--Users-dev-api";
@@ -328,4 +329,55 @@ test("an OpenCode session id that is not a session id is rejected", async () => 
     .rejects.toMatchObject({ code: "code_session_not_found" });
   await expect(readOpenCodeSessionEverywhere("msg_notasession", { dbPath }))
     .rejects.toMatchObject({ code: "code_session_not_found" });
+});
+
+// ---------------------------------------------------------------------------
+// Driven mode registry (spawn injected: no real agent runs in tests)
+
+function until<T>(probe: () => T | undefined, check: (value: T) => boolean, timeoutMs = 5_000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tick = () => {
+      const value = probe();
+      if (value !== undefined && check(value)) { resolve(value); return; }
+      if (Date.now() - started > timeoutMs) { reject(new Error("drive condition timed out")); return; }
+      setTimeout(tick, 50);
+    };
+    tick();
+  });
+}
+
+test("a drive run starts, completes and is reported", async () => {
+  const drives = createDriveRegistry({
+    spawnSpec: () => ({ file: process.execPath, args: ["-e", "process.exit(0)"] }),
+  });
+  const run = drives.start({ client: "claude-code", sessionId: "ses_x", cwd: process.cwd(), prompt: "hi" });
+  expect(run.status).toBe("running");
+
+  const finished = await until(() => drives.get(run.id), (value) => value.status !== "running");
+  expect(finished.status).toBe("completed");
+});
+
+test("a failing run surfaces its stderr tail", async () => {
+  const drives = createDriveRegistry({
+    spawnSpec: () => ({ file: process.execPath, args: ["-e", "console.error('boom reason'); process.exit(3)"] }),
+  });
+  const run = drives.start({ client: "claude-code", sessionId: "ses_y", cwd: process.cwd(), prompt: "hi" });
+  const finished = await until(() => drives.get(run.id), (value) => value.status !== "running");
+  expect(finished.status).toBe("failed");
+  expect(finished.error).toContain("boom reason");
+});
+
+test("one run per session; abort flips the status", async () => {
+  const drives = createDriveRegistry({
+    spawnSpec: () => ({ file: process.execPath, args: ["-e", "setTimeout(() => {}, 60000)"] }),
+  });
+  const run = drives.start({ client: "claude-code", sessionId: "ses_z", cwd: process.cwd(), prompt: "hi" });
+  expect(() => drives.start({ client: "claude-code", sessionId: "ses_z", cwd: process.cwd(), prompt: "again" }))
+    .toThrowError(/already running/);
+
+  drives.abort(run.id);
+  const aborted = await until(() => drives.get(run.id), (value) => value.status === "aborted");
+  expect(aborted.status).toBe("aborted");
+  expect(drives.list().length).toBe(1);
 });

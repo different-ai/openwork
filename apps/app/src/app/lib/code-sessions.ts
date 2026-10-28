@@ -72,12 +72,28 @@ export const codeSessionDetailSchema = z.object({
 
 export const codeSessionDetailEnvelopeSchema = z.object({ item: codeSessionDetailSchema });
 
+export const codeSessionDriveRunSchema = z.object({
+  id: z.string(),
+  client: z.string(),
+  sessionId: z.string(),
+  status: z.enum(["running", "completed", "failed", "aborted"]),
+  startedAt: z.number(),
+  endedAt: z.number().nullable(),
+  exitCode: z.number().nullable(),
+  error: z.string().nullable(),
+});
+
+export const codeSessionDrivesSchema = z.object({ runs: z.array(codeSessionDriveRunSchema) });
+
+export const codeSessionDriveEnvelopeSchema = z.object({ run: codeSessionDriveRunSchema });
+
 export type CodeSessionClientState = z.infer<typeof codeSessionClientStateSchema>;
 export type CodeSessionSummary = z.infer<typeof codeSessionSummarySchema>;
 export type CodeSessionsList = z.infer<typeof codeSessionsListSchema>;
 export type ImportedToolCall = z.infer<typeof importedToolCallSchema>;
 export type ImportedMessage = z.infer<typeof importedMessageSchema>;
 export type CodeSessionDetail = z.infer<typeof codeSessionDetailSchema>;
+export type CodeSessionDriveRun = z.infer<typeof codeSessionDriveRunSchema>;
 
 /** Display labels for the clients the Code tab can mirror. */
 export const CODE_SESSION_CLIENT_LABELS: Record<string, string> = {

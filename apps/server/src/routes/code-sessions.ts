@@ -1,11 +1,14 @@
 import { z } from "zod";
 
 import { ApiError } from "../errors.js";
+import { claudeDriveContext } from "../code-sessions/claude-code.js";
+import { claudeConfigDir } from "../claude-import.js";
 import {
   CodeSessionsError,
   type CodeSessionClient,
 } from "../code-sessions/types.js";
 import { createCodeSessionsService, type CodeSessionsService } from "../code-sessions/index.js";
+import { createDriveRegistry, type DriveRegistry } from "../code-sessions/drive.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 import type { TokenScope } from "../types.js";
 
@@ -23,6 +26,10 @@ interface RegisterCodeSessionsRoutesOptions {
   requireClientScope: (ctx: RequestContext, required: TokenScope) => void;
   /** Injectable for tests; defaults to the shared in-memory service. */
   service?: CodeSessionsService;
+  /** Injectable for tests; defaults to the shared drive registry. */
+  drives?: DriveRegistry;
+  /** Claude's data folder resolver, for drive context lookups. */
+  claudeConfigDir?: () => string;
 }
 
 /**
@@ -102,5 +109,67 @@ export function registerCodeSessionsRoutes(options: RegisterCodeSessionsRoutesOp
       throw toApiError(error);
     }
     return jsonResponse({ clients: service.clients() });
+  });
+
+  const drives = options.drives ?? createDriveRegistry();
+  const driveSchema = z.object({
+    client: z.enum(["claude-code"]),
+    sessionId: z.string().min(1).max(400),
+    prompt: z.string().min(1).max(100_000),
+  }).strict();
+
+  const toPublicDrives = () => ({ runs: drives.list() });
+
+  // Driven mode: run one prompt headlessly against a stored session. The
+  // agent appends to its own transcript, so the mirror's next poll shows the
+  // turn while it runs. v1 drives Claude Code only.
+  addRoute(routes, "POST", "/code-sessions/drives", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    let body: unknown;
+    try {
+      body = await ctx.request.json();
+    } catch {
+      throw new ApiError(400, "invalid_payload", "Send a JSON body.");
+    }
+    const parsed = driveSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new ApiError(400, "invalid_payload", "Send { client, sessionId, prompt }.");
+    }
+    if (parsed.data.client !== "claude-code") {
+      throw new ApiError(409, "drive_unsupported", "Writing to this agent is not wired yet.");
+    }
+    let context: { uuid: string; cwd: string };
+    try {
+      context = await claudeDriveContext(parsed.data.sessionId, { configDir: options.claudeConfigDir?.() ?? claudeConfigDir() });
+    } catch (error) {
+      throw toApiError(error);
+    }
+    try {
+      return jsonResponse({
+        run: drives.start({
+          client: parsed.data.client,
+          sessionId: parsed.data.sessionId,
+          prompt: parsed.data.prompt,
+          cwd: context.cwd,
+          uuid: context.uuid,
+        }),
+      }, 202);
+    } catch (error) {
+      throw toApiError(error);
+    }
+  });
+
+  addRoute(routes, "GET", "/code-sessions/drives", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    return jsonResponse(toPublicDrives());
+  });
+
+  addRoute(routes, "POST", "/code-sessions/drives/:id/abort", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    try {
+      return jsonResponse({ run: drives.abort(ctx.params.id) });
+    } catch (error) {
+      throw toApiError(error);
+    }
   });
 }

@@ -229,3 +229,28 @@ export async function readClaudeCodeSessionEverywhere(
     sourceHash: conversation.sourceHash,
   };
 }
+
+/** What driving needs from a session: the CLI uuid and the project cwd. */
+export async function claudeDriveContext(
+  id: string,
+  options: ClaudeCodeReadOptions = {},
+): Promise<{ uuid: string; cwd: string }> {
+  const configDir = options.configDir ?? claudeConfigDir();
+  const { folder, file } = parseSessionId(id);
+  const root = resolvePath(join(configDir, "projects")) + sep;
+  const path = resolvePath(join(root, folder, `${file}.jsonl`));
+  if (!path.startsWith(root)) {
+    throw new CodeSessionsError("code_session_not_found", "This Claude Code session id is not valid.");
+  }
+  let head: string;
+  try {
+    head = await headOf(path, CODE_SESSION_LIMITS.headBytes);
+  } catch {
+    throw new CodeSessionsError("code_session_not_found", "This Claude Code session is gone or cannot be read.");
+  }
+  const cwd = cwdOf(head);
+  if (!cwd) {
+    throw new CodeSessionsError("code_session_unreadable", "This Claude Code session has no project directory recorded.");
+  }
+  return { uuid: file, cwd };
+}

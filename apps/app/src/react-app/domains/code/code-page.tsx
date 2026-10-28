@@ -1,8 +1,8 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Folder, RefreshCw, Search, SquareTerminal } from "lucide-react";
+import { Folder, RefreshCw, Search, Send, Square, SquareTerminal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -15,8 +15,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/sonner";
-import type { CodeSessionSummary } from "@/app/lib/code-sessions";
+import type { CodeSessionDriveRun, CodeSessionSummary } from "@/app/lib/code-sessions";
 import { CODE_SESSION_CLIENT_LABELS } from "@/app/lib/code-sessions";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { cn } from "@/lib/utils";
@@ -110,6 +111,32 @@ export function CodePage({ openworkServerClient: client }: { openworkServerClien
     refetchInterval: LIST_REFETCH_MS,
   });
 
+  const [draft, setDraft] = useState("");
+  const [activeDriveId, setActiveDriveId] = useState<string | null>(null);
+  const drivesQuery = useQuery({
+    queryKey: ["code-session-drives"],
+    queryFn: () => {
+      if (!client) throw new Error("The OpenWork server is not connected yet.");
+      return client.listCodeSessionDrives();
+    },
+    enabled: Boolean(client),
+    // While anything runs the turn streams into the transcript through the
+    // mirror poll; the drive poll only tracks the running flag.
+    refetchInterval: (query) => {
+      const runs = query.state.data ?? [];
+      return runs.some((run) => run.status === "running") ? 2_000 : false;
+    },
+  });
+  const drives = drivesQuery.data ?? [];
+  const activeDrive: CodeSessionDriveRun | null = useMemo(() => {
+    if (!selectedId) return null;
+    const run = drives.find((entry) => entry.sessionId === selectedId && entry.status === "running");
+    return run ?? null;
+  }, [drives, selectedId]);
+  useEffect(() => {
+    if (activeDriveId && activeDrive && activeDrive.id !== activeDriveId) setActiveDriveId(activeDrive.id);
+  }, [activeDrive, activeDriveId]);
+
   const items = listQuery.data?.items ?? [];
   const clients = listQuery.data?.clients ?? [];
   const filtered = useMemo(() => {
@@ -141,6 +168,20 @@ export function CodePage({ openworkServerClient: client }: { openworkServerClien
     return () => window.clearInterval(interval);
   }, []);
 
+  const activeRun = useMemo(
+    () => drives.find((entry) => entry.id === activeDriveId) ?? null,
+    [activeDriveId, drives],
+  );
+  const prevDriveStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    const status = activeRun?.status ?? null;
+    if (prevDriveStatusRef.current === "running" && status !== null && status !== "running") {
+      void queryClient.invalidateQueries({ queryKey: ["code-sessions"] });
+      void queryClient.invalidateQueries({ queryKey: ["code-session", selectedId] });
+    }
+    prevDriveStatusRef.current = status;
+  }, [activeRun?.status, queryClient, selectedId]);
+
   const toggleClient = async (id: string, enabled: boolean) => {
     if (!client) return;
     try {
@@ -152,12 +193,39 @@ export function CodePage({ openworkServerClient: client }: { openworkServerClien
     }
   };
 
+  const driveRunning = activeDrive !== null;
+  const sendPrompt = async () => {
+    if (!client || !selected || driveRunning) return;
+    const prompt = draft.trim();
+    if (!prompt) return;
+    try {
+      const run = await client.startCodeSessionDrive(selected.client, selected.sessionId, prompt);
+      setActiveDriveId(run.id);
+      setDraft("");
+      await queryClient.invalidateQueries({ queryKey: ["code-session-drives"] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The prompt could not be started.");
+    }
+  };
+
+  const abortDrive = async () => {
+    if (!client || !activeDrive) return;
+    try {
+      await client.abortCodeSessionDrive(activeDrive.id);
+      await queryClient.invalidateQueries({ queryKey: ["code-session-drives"] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The run could not be stopped.");
+    }
+  };
+
   const clientsRow = clients.length > 0 ? (
-    <div className="flex items-center gap-4 px-1">
+    <div className="grid grid-cols-2 gap-x-2 gap-y-1.5 px-1">
       {clients.map((entry) => (
-        <label key={entry.id} className="flex items-center gap-2 text-xs text-muted-foreground">
-          <SquareTerminal className="size-3.5" aria-hidden />
-          <span>{CODE_SESSION_CLIENT_LABELS[entry.id] ?? entry.id}</span>
+        <label key={entry.id} className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+          <SquareTerminal className="size-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0 flex-1 truncate" title={CODE_SESSION_CLIENT_LABELS[entry.id] ?? entry.id}>
+            {CODE_SESSION_CLIENT_LABELS[entry.id] ?? entry.id}
+          </span>
           <Switch
             checked={entry.enabled}
             disabled={!entry.available}
@@ -276,6 +344,46 @@ export function CodePage({ openworkServerClient: client }: { openworkServerClien
               </ul>
             ) : null}
             <CodeTranscript messages={detailQuery.data.messages} />
+            {selected.client === "claude-code" ? (
+              <div className="mt-2 flex flex-col gap-2 rounded-[16px] border border-border bg-background p-2">
+                {driveRunning ? (
+                  <p className="px-1 text-xs text-muted-foreground" data-code-drive-running>
+                    {CODE_SESSION_CLIENT_LABELS[selected.client]} is working on this session — the reply lands here as it writes it.
+                  </p>
+                ) : null}
+                <Textarea
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      void sendPrompt();
+                    }
+                  }}
+                  placeholder={`Write to ${CODE_SESSION_CLIENT_LABELS[selected.client] ?? selected.client}…`}
+                  aria-label={`Write to ${CODE_SESSION_CLIENT_LABELS[selected.client] ?? selected.client}`}
+                  disabled={driveRunning}
+                  className="min-h-16 resize-none border-0 shadow-none focus-visible:ring-0"
+                />
+                <div className="flex items-center justify-end gap-2">
+                  {driveRunning ? (
+                    <Button variant="outline" size="sm" onClick={() => void abortDrive()}>
+                      <Square className="size-3.5" aria-hidden />
+                      Stop
+                    </Button>
+                  ) : (
+                    <Button size="sm" disabled={!draft.trim()} onClick={() => void sendPrompt()}>
+                      <Send className="size-3.5" aria-hidden />
+                      Send
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <p className="rounded-[16px] border border-border px-4 py-3 text-xs text-muted-foreground" data-code-drive-locked>
+                Writing to {CODE_SESSION_CLIENT_LABELS[selected.client] ?? selected.client} arrives client by client; this session is read-only for now.
+              </p>
+            )}
           </div>
         ) : selected && detailQuery.isError ? (
           <Empty variant="ghost" className="h-full">

@@ -51,7 +51,9 @@ export type CodeSessionsErrorCode =
   | "code_session_unreadable"
   | "code_session_not_found"
   | "code_session_client_unknown"
-  | "code_session_client_disabled";
+  | "code_session_client_disabled"
+  | "code_session_drive_running"
+  | "code_session_drive_unknown";
 
 export class CodeSessionsError extends Error {
   constructor(

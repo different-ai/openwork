@@ -23,6 +23,8 @@ import type { CloudImportedMarketplace, CloudImportedPlugin, CloudImportedProvid
 import { desktopFreeAccessStatusSchema } from "./inference-access";
 import {
   codeSessionDetailEnvelopeSchema,
+  codeSessionDriveEnvelopeSchema,
+  codeSessionDrivesSchema,
   codeSessionsClientsSchema,
   codeSessionsListSchema,
 } from "./code-sessions";
@@ -2381,6 +2383,29 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       );
       return result.clients;
     },
+    startCodeSessionDrive: async (client: string, sessionId: string, prompt: string) =>
+      codeSessionDriveEnvelopeSchema.parse(
+        await requestJson<unknown>(baseUrl, "/code-sessions/drives", {
+          token,
+          hostToken,
+          method: "POST",
+          body: { client, sessionId, prompt },
+          timeoutMs: 60_000,
+        }),
+      ).run,
+    listCodeSessionDrives: async () =>
+      codeSessionDrivesSchema.parse(
+        await requestJson<unknown>(baseUrl, "/code-sessions/drives", { token, hostToken, timeoutMs: 30_000 }),
+      ).runs,
+    abortCodeSessionDrive: async (runId: string) =>
+      codeSessionDriveEnvelopeSchema.parse(
+        await requestJson<unknown>(baseUrl, `/code-sessions/drives/${encodeURIComponent(runId)}/abort`, {
+          token,
+          hostToken,
+          method: "POST",
+          timeoutMs: 30_000,
+        }),
+      ).run,
     importClaudeCodeSessions: async (workspaceId: string, ids: string[]) =>
       claudeImportResultsSchema.parse(
         await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/code`, {
