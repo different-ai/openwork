@@ -80,7 +80,7 @@ overrides:
   "@modelcontextprotocol/sdk@>=1.12.0 <1.32.1": 1.32.1
   "axios@<1.20.0": 1.20.0
   baseline-browser-mapping: 2.11.5
-  "body-parser@>=2.0.0 <2.3.0": 2.3.0
+  "body-parser@>=2.0.0 <2.4.0": 2.4.0
   "brace-expansion@<1.1.21": 1.1.21
   "brace-expansion@>=2.0.0 <2.1.7": 2.1.7
   "brace-expansion@>=5.0.0 <5.0.12": 5.0.12
@@ -90,7 +90,7 @@ overrides:
   "dompurify@<3.4.17": 3.4.17
   "engine.io@>=6.0.0 <6.6.11": 6.6.11
   "browserslist@<=4.28.6": 4.28.7
-  "fast-uri@>=3.0.0 <3.1.8": 3.1.8
+  "fast-uri@>=3.0.0 <3.1.9": 3.1.9
   "fast-xml-parser@>=5.0.0 <5.7.0": 5.7.0
   "follow-redirects@<1.16.1": 1.16.1
   "form-data@>=4.0.0 <4.0.6": 4.0.6
@@ -112,7 +112,7 @@ overrides:
   "postcss-selector-parser@<7.1.6": 7.1.6
   "protobufjs@<7.6.5": 7.6.5
   "proxy-addr@>=1.1.0 <2.0.8": 2.0.8
-  "qs@>=6.0.0 <6.16.0": 6.16.0
+  "qs@>=6.0.0 <6.16.1": 6.16.1
   "rollup@>=4.0.0 <4.59.0": 4.59.0
   "samlify@<2.13.0": 2.13.0
   "sharp@<0.35.5": 0.35.5
