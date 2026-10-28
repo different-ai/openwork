@@ -43,6 +43,9 @@ final class AgentCursor {
     private let enabled = SessionControls.embedded
         || ProcessInfo.processInfo.environment["OPENWORK_COMPUTER_USE_PRESENCE"] != nil
     private var window: NSWindow?
+    /// The presence overlay ignores the mouse, so real pointer input passes through it.
+    /// The pill takes clicks and is not listed.
+    var passThroughWindows: Set<CGWindowID> { window.map { [CGWindowID($0.windowNumber)] } ?? [] }
     private var badge: NSPanel?
     private var pill: PresencePill?
     private let outline = CAShapeLayer()

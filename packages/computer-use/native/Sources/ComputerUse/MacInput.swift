@@ -267,19 +267,20 @@ final class MacInput {
             event.postToPid(pid)
         }
     }
-    /// Refuses a real press, move or scroll unless it still lands in the target app.
-    private func checkRealTarget(_ pid: pid_t, at point: CGPoint?) throws {
+    /// Refuses a real press, move or scroll unless it still lands in the selected window.
+    private func checkRealTarget(_ pid: pid_t, window: CGWindowID = 0, at point: CGPoint?) throws {
         guard realInput else { return }
         let windows = ((CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? [])
-            .compactMap { value -> (pid: pid_t, bounds: CGRect)? in
-                guard let owner = value[kCGWindowOwnerPID as String] as? NSNumber,
+            .compactMap { value -> (id: CGWindowID, pid: pid_t, bounds: CGRect)? in
+                guard let number = value[kCGWindowNumber as String] as? NSNumber,
+                      let owner = value[kCGWindowOwnerPID as String] as? NSNumber,
                       (value[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1 > 0,
                       let bounds = value[kCGWindowBounds as String] as? [String: Any],
                       let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }
-                return (owner.int32Value, rect)
+                return (number.uint32Value, owner.int32Value, rect)
             }
-        guard RealInput.reachesTarget(pid, front: NSWorkspace.shared.frontmostApplication?.processIdentifier, at: point,
-            windows: windows, own: ProcessInfo.processInfo.processIdentifier) else { throw RealInput.targetChanged }
+        guard RealInput.reachesTarget(pid, window: window, front: NSWorkspace.shared.frontmostApplication?.processIdentifier, at: point,
+            windows: windows, passThrough: AgentCursor.shared.passThroughWindows) else { throw RealInput.targetChanged }
     }
     /// `quiet` posts the event without tracking or showing it, for presses no person should see.
     private func mouse(_ type: CGEventType, _ point: CGPoint, _ pid: pid_t, _ count: Int, _ windowID: CGWindowID, _ frame: CGRect, _ flags: CGEventFlags = [], check: () throws -> Void = {}, quiet: Bool = false) throws {
@@ -291,7 +292,7 @@ final class MacInput {
             event.setIntegerValueField(.mouseEventDeltaY, value: Int64((point.y - last.point.y).rounded()))
         }
         try Self.verifyTargeted(event, point, windowID: windowID, frame: frame)
-        if type != .leftMouseUp { try Task.checkCancellation(); try check(); try checkRealTarget(pid, at: point) }
+        if type != .leftMouseUp { try Task.checkCancellation(); try check(); try checkRealTarget(pid, window: windowID, at: point) }
         post(event, pid, pointer: true)
         guard !quiet else { return }
         lastPointer = (pid, windowID, point)
@@ -337,7 +338,7 @@ final class MacInput {
         let event = try Self.scrollEvent(point, dx: dx, dy: dy, windowID: windowID, frame: frame)
         if let gestureField = Self.gestureField { event.setIntegerValueField(gestureField, value: gesture) }
         try Self.verifyTargeted(event, point, windowID: windowID, frame: frame)
-        try checkRealTarget(pid, at: point)
+        try checkRealTarget(pid, window: windowID, at: point)
         post(event, pid, pointer: true)
         feedback?.didDispatch = true
     }

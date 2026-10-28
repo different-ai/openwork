@@ -35,6 +35,7 @@ final class BackgroundInputTests: XCTestCase {
         XCTAssertTrue(RealInput.isOwn(inputAt: 10.002, postedAt: 10))
         XCTAssertTrue(RealInput.isOwn(inputAt: 9.995, postedAt: 10), "the system can stamp the event just before the post returns")
         XCTAssertFalse(RealInput.isOwn(inputAt: 10 + RealInput.echo + 0.05, postedAt: 10), "a click after the agent's is the person's")
+        XCTAssertFalse(RealInput.isOwn(inputAt: 10.03, postedAt: 10), "a person's click right after the agent's still stops the step")
         XCTAssertFalse(RealInput.isOwn(inputAt: 9.5, postedAt: 10))
         XCTAssertFalse(RealInput.isOwn(inputAt: 10, postedAt: nil), "without real input every click is the person's")
     }
@@ -48,15 +49,21 @@ final class BackgroundInputTests: XCTestCase {
 
     func testRealInputIsSentOnlyWhileItStillLandsInTheSelectedApp() {
         let app: pid_t = 42, other: pid_t = 7, helper: pid_t = 99
-        let window = CGRect(x: 0, y: 0, width: 800, height: 600), point = CGPoint(x: 400, y: 300)
-        XCTAssertTrue(RealInput.reachesTarget(app, front: app, at: nil, windows: [], own: helper))
-        XCTAssertFalse(RealInput.reachesTarget(app, front: other, at: nil, windows: [], own: helper), "keys go to whatever app is in front")
-        XCTAssertTrue(RealInput.reachesTarget(app, front: app, at: point,
-            windows: [(helper, window), (app, window)], own: helper), "the helper's own overlays are not in the way")
-        XCTAssertFalse(RealInput.reachesTarget(app, front: app, at: point,
-            windows: [(other, CGRect(x: 300, y: 200, width: 200, height: 200)), (app, window)], own: helper), "another app's window over the point")
-        XCTAssertFalse(RealInput.reachesTarget(app, front: other, at: point, windows: [(app, window)], own: helper))
-        XCTAssertFalse(RealInput.reachesTarget(app, front: app, at: CGPoint(x: 900, y: 300), windows: [(app, window)], own: helper))
+        let selected: CGWindowID = 10, sibling: CGWindowID = 11, overlay: CGWindowID = 90, pill: CGWindowID = 91
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        func reaches(front: pid_t? = 42, at point: CGPoint? = CGPoint(x: 400, y: 300), _ windows: [(id: CGWindowID, pid: pid_t, bounds: CGRect)]) -> Bool {
+            RealInput.reachesTarget(app, window: selected, front: front, at: point, windows: windows, passThrough: [overlay])
+        }
+        XCTAssertTrue(reaches(at: nil, []))
+        XCTAssertFalse(reaches(front: other, at: nil, []), "keys go to whatever app is in front")
+        XCTAssertTrue(reaches([(overlay, helper, bounds), (selected, app, bounds)]), "the agent's see-through overlay is not in the way")
+        XCTAssertFalse(reaches([(pill, helper, CGRect(x: 350, y: 250, width: 100, height: 100)), (selected, app, bounds)]),
+            "the Take over pill takes clicks, so it is in the way")
+        XCTAssertFalse(reaches([(sibling, app, CGRect(x: 300, y: 200, width: 200, height: 200)), (selected, app, bounds)]),
+            "another window of the same app over the point")
+        XCTAssertFalse(reaches([(5, other, CGRect(x: 300, y: 200, width: 200, height: 200)), (selected, app, bounds)]), "another app's window over the point")
+        XCTAssertFalse(reaches(front: other, [(selected, app, bounds)]))
+        XCTAssertFalse(reaches(at: CGPoint(x: 900, y: 300), [(selected, app, bounds)]))
     }
 
     func testBackgroundSessionsTakeTheFrontOnlyForStepsThatNeedIt() {

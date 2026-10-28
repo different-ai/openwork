@@ -57,7 +57,9 @@ enum InputDelivery: String {
 /// state the helper reads to notice the person's clicks and keys. An input of
 /// the same type at the moment of the agent's own post is the agent's.
 enum RealInput {
-    static let echo: TimeInterval = 0.1
+    /// The system stamps the agent's event within a few milliseconds of the post;
+    /// a person's click or key any later than this is theirs.
+    static let echo: TimeInterval = 0.02
 
     static func isOwn(inputAt: TimeInterval, postedAt: TimeInterval?) -> Bool {
         guard let postedAt else { return false }
@@ -75,14 +77,16 @@ enum RealInput {
 
     /// The system stream delivers to whatever is in front, so each real press,
     /// move and scroll is re-checked just before it is posted: keys only while the
-    /// app is frontmost, pointer events only where the app's own window is the
-    /// topmost one under the point. `windows` are on-screen, front to back; the
-    /// helper's own overlays (`own`) are skipped.
-    static func reachesTarget(_ pid: pid_t, front: pid_t?, at point: CGPoint?,
-        windows: [(pid: pid_t, bounds: CGRect)], own: pid_t) -> Bool {
+    /// app is frontmost, pointer events only where the selected window itself is
+    /// the topmost one under the point, not another window of the app. `windows`
+    /// are on-screen, front to back; only windows the pointer passes through
+    /// (`passThrough`, the agent's presence overlay) are skipped.
+    static func reachesTarget(_ pid: pid_t, window target: CGWindowID, front: pid_t?, at point: CGPoint?,
+        windows: [(id: CGWindowID, pid: pid_t, bounds: CGRect)], passThrough: Set<CGWindowID>) -> Bool {
         guard front == pid else { return false }
         guard let point else { return true }
-        return windows.first { $0.pid != own && $0.bounds.contains(point) }?.pid == pid
+        guard let top = windows.first(where: { !passThrough.contains($0.id) && $0.bounds.contains(point) }) else { return false }
+        return top.id == target && top.pid == pid
     }
 }
 
