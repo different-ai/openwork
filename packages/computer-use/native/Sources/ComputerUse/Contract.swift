@@ -437,6 +437,13 @@ enum PointerRoute: Equatable {
         if info["UIApplicationSceneManifest"] != nil || info["UIDeviceFamily"] != nil { return .skyLight }
         return .appKit
     }
+
+    /// Chromium browsers and Electron apps, without Catalyst.
+    static func isChromium(bundleID: String, info: [String: Any]) -> Bool {
+        chromiumBundlePrefixes.contains(where: bundleID.lowercased().hasPrefix)
+            || (info["NSPrincipalClass"] as? String)?.lowercased().contains("atomapplication") == true
+            || info["ElectronAsarIntegrity"] != nil
+    }
 }
 
 /// Windows an action opened or closed and whether another app came to the front.

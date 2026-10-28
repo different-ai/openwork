@@ -33,12 +33,11 @@ enum InputDelivery: String {
     /// (background keys never reach an app's menus), modified clicks (apps drop
     /// modifier state from process-targeted clicks), hover and drags (tracking
     /// areas and drag-and-drop follow the real pointer), and keys to Chromium,
-    /// Electron and Catalyst apps (which need a signed envelope the helper does
-    /// not send).
-    static func stepNeedsFront(_ action: Action, route: PointerRoute) -> Bool {
+    /// Electron and Catalyst apps when this macOS cannot sign them (`signedKeys`).
+    static func stepNeedsFront(_ action: Action, route: PointerRoute, signedKeys: Bool = KeyAuthentication.available) -> Bool {
         switch action {
-        case .key(_, let flags): return flags.contains(.maskCommand) || route == .skyLight
-        case .type: return route == .skyLight
+        case .key(_, let flags): return flags.contains(.maskCommand) || route == .skyLight && !signedKeys
+        case .type: return route == .skyLight && !signedKeys
         case .click(_, _, let flags): return !flags.isEmpty
         case .move, .drag: return true
         case .press, .setValue, .scroll, .wait: return false
@@ -117,6 +116,43 @@ enum BackgroundFocus {
             } while now() - started < keyLimit
         }
         throw keysUnavailable
+    }
+}
+
+/// Chromium, Electron and Catalyst accept a process-targeted key only with
+/// WindowServer's authentication envelope (macOS 15 and later), the way
+/// cua-driver sends background keys. Without it their keys need the front.
+enum KeyAuthentication {
+    private typealias SetMessage = @convention(c) (UnsafeMutableRawPointer, AnyObject) -> Void
+    private typealias Factory = @convention(c) (AnyClass, Selector, UnsafeMutableRawPointer, Int32, UInt32) -> Unmanaged<AnyObject>?
+    private static let selector = NSSelectorFromString("messageWithEventRecord:pid:version:")
+    private static let parts: (AnyClass, Factory, SetMessage)? = {
+        guard let skyLight = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY),
+              let set = dlsym(skyLight, "SLEventSetAuthenticationMessage"),
+              let messageClass = NSClassFromString("SLSEventAuthenticationMessage"),
+              // macOS 14 has the class without this factory; calling it there would raise.
+              let method = class_getClassMethod(messageClass, selector) else { return nil }
+        return (messageClass, unsafeBitCast(method_getImplementation(method), to: Factory.self), unsafeBitCast(set, to: SetMessage.self))
+    }()
+
+    static var available: Bool { parts != nil }
+
+    /// The event's WindowServer record: `__CGEvent` is a CF base, a 32-bit field
+    /// and then the record pointer, at offset 24 on current releases.
+    static func record(_ event: CGEvent) -> UnsafeMutableRawPointer? {
+        let base = Unmanaged.passUnretained(event).toOpaque()
+        for offset in [24, 32, 16] {
+            if let pointer = base.load(fromByteOffset: offset, as: UnsafeMutableRawPointer?.self) { return pointer }
+        }
+        return nil
+    }
+
+    /// True when the envelope is attached; the caller then posts through SkyLight.
+    static func attach(_ event: CGEvent, pid: pid_t) -> Bool {
+        guard let (messageClass, factory, set) = parts, let record = record(event),
+              let message = factory(messageClass, selector, record, pid, 0)?.takeUnretainedValue() else { return false }
+        set(Unmanaged.passUnretained(event).toOpaque(), message)
+        return true
     }
 }
 
