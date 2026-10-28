@@ -236,7 +236,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
     }
   }
 
-  if (isCustom && route === null && !connection && !initialConnectionId) {
+  if (isCustom && route === null && !setup.connectionId && !initialConnectionId) {
     return (
       <ConnectorRouteStep
         name={name}
@@ -267,7 +267,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
         <SetupChecks checks={checks} />
         {setup.skipError ? <p className="text-[13px] text-red-600" role="alert">{setup.skipError}</p> : null}
         <StepFooter note={setup.canSkip ? "You can add it anyway and finish its settings on its page." : `Step ${setup.stepNumber} of ${checks.length}`}>
-          {isCustom && route && !connection && !setup.saving ? (
+          {isCustom && route && !setup.connectionId && !setup.saving ? (
             <DenButton variant="secondary" disabled={busy || setup.skipping || setup.signingIn} onClick={() => { setPreviousRoute(route); setRoute(null); }} data-testid="connector-setup-change-route">Back</DenButton>
           ) : (
             <DenButton variant="secondary" loading={busy} disabled={setup.skipping} onClick={() => void cancel()}>Cancel</DenButton>
