@@ -5,9 +5,9 @@ export default async function EditDesktopPolicyPage({
   searchParams,
 }: {
   params: Promise<{ desktopPolicyId: string }>;
-  searchParams: Promise<{ setup?: string }>;
+  searchParams: Promise<{ setup?: string; view?: string }>;
 }) {
   const { desktopPolicyId } = await params;
-  const { setup } = await searchParams;
-  return <DesktopPolicyRoute editor desktopPolicyId={desktopPolicyId} setupRestricted={setup === "restricted"} />;
+  const { setup, view } = await searchParams;
+  return <DesktopPolicyRoute editor desktopPolicyId={desktopPolicyId} setupRestricted={setup === "restricted"} assignmentRecovery={view === "assignments"} />;
 }

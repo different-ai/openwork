@@ -763,6 +763,12 @@ export function getDesktopPoliciesRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/desktop-policies`;
 }
 
+/** Advanced recovery for existing member, role and overlapping team assignments. */
+export function getDesktopPolicyAssignmentsRoute(orgSlug?: string | null, desktopPolicyId?: string): string {
+  const route = desktopPolicyId ? getDesktopPolicyRoute(orgSlug, desktopPolicyId) : getDesktopPoliciesRoute(orgSlug);
+  return `${route}?view=assignments`;
+}
+
 export function getWorkbotSettingsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/workbot-settings`;
 }
