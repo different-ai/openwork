@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { CodeSessionsError } from "./types.js";
@@ -36,6 +38,20 @@ type InternalRun = DriveRun & { child: ChildProcess | null; stderrTail: string[]
 const MAX_RUNS_KEPT = 50;
 const MAX_STDERR_TAIL = 12;
 
+/**
+ * Engine-pinned variables from the server environment (the dev world points
+ * OPENCODE_DB at the isolated mirror database; production configs may pin
+ * more). A driven agent must write where the mirror reads — the user's real
+ * store — so these are stripped from the child environment.
+ */
+const STRIPPED_CHILD_ENV = ["OPENCODE_DB", "OPENCODE_CONFIG_DIR"] as const;
+
+function childEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of STRIPPED_CHILD_ENV) delete env[key];
+  return env;
+}
+
 export type DriveSpawnSpec = { file: string; args: string[] };
 
 export type StartDriveInput = {
@@ -45,6 +61,14 @@ export type StartDriveInput = {
   cwd: string;
   prompt: string;
   uuid?: string;
+  /**
+   * Environment corrections for the child: the OpenWork server may run with
+   * isolated-home or engine-pinned variables (HOME, USERPROFILE, XDG_*,
+   * OPENCODE_DB) that would point the agent at a different data directory
+   * than the one the mirror read the session from. The route supplies the
+   * user-real values per client.
+   */
+  envOverrides?: Record<string, string>;
 };
 
 export type DriveRegistry = {
@@ -101,8 +125,16 @@ export function createDriveRegistry(options: {
 
       const spec = spawnSpec ?? defaultSpec(input);
       const id = `drive_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      // The server env pins OpenCode's storage to the world's isolated engine
+      // database (OPENCODE_DB / OPENCODE_CONFIG_DIR). The mirror and the user's
+      // own sessions live in the global store, so the driven child must read
+      // and write THERE: drop the isolation pins from its environment.
+      const childEnv: NodeJS.ProcessEnv = { ...process.env };
+      delete childEnv.OPENCODE_DB;
+      delete childEnv.OPENCODE_CONFIG_DIR;
       const child = spawn(spec.file, spec.args, {
         cwd: input.cwd,
+        env: childEnv,
         stdio: ["pipe", "ignore", "pipe"],
         windowsHide: true,
       });
