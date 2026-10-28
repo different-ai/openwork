@@ -210,6 +210,8 @@ jobs:
           pnpm --filter @openwork/sandbox-daytona test
           pnpm --filter @openwork/sandbox-freestyle typecheck
           pnpm --filter @openwork/sandbox-freestyle test
+          pnpm --filter @openwork/sandbox-differently typecheck
+          pnpm --filter @openwork/sandbox-differently test
           pnpm --filter @openwork/evidence-provider typecheck
           pnpm --filter @openwork/evidence-provider test
           pnpm --filter @openwork/daytona-evidence typecheck

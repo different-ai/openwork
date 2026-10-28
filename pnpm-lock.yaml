@@ -1309,6 +1309,9 @@ importers:
       '@openwork/sandbox-daytona':
         specifier: workspace:*
         version: link:../../../packages/sandbox-daytona
+      '@openwork/sandbox-differently':
+        specifier: workspace:*
+        version: link:../../../packages/sandbox-differently
       '@openwork/sandbox-freestyle':
         specifier: workspace:*
         version: link:../../../packages/sandbox-freestyle
@@ -1948,6 +1951,25 @@ importers:
       '@daytonaio/sdk':
         specifier: ^0.201.0
         version: 0.201.0
+      '@openwork/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
+      tsx:
+        specifier: ^4.23.1
+        version: 4.23.1
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
+  packages/sandbox-differently:
+    dependencies:
       '@openwork/sandbox':
         specifier: workspace:*
         version: link:../sandbox

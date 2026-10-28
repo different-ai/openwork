@@ -6,10 +6,11 @@ import { createComputerProvider } from "../src/providers.js"
 import type { ComputerFile, ComputerFiles } from "../src/types.js"
 
 const kind = process.env.HEADLESS_COMPUTER
-if (kind !== "daytona" && kind !== "freestyle") throw new Error("HEADLESS_COMPUTER must be daytona or freestyle")
-const apiKey = kind === "daytona" ? process.env.DAYTONA_API_KEY : process.env.FREESTYLE_API_KEY
+if (kind !== "daytona" && kind !== "freestyle" && kind !== "differently") throw new Error("HEADLESS_COMPUTER must be daytona, freestyle or differently")
+const apiKey = { daytona: process.env.DAYTONA_API_KEY, freestyle: process.env.FREESTYLE_API_KEY, differently: process.env.DIFFERENTLY_API_KEY }[kind]
 if (!apiKey) throw new Error(`Missing ${kind} API key`)
-const provider = await createComputerProvider({ kind, apiKey, snapshot: process.env.HEADLESS_COMPUTER_SNAPSHOT, apiUrl: process.env.DAYTONA_API_URL, target: process.env.DAYTONA_TARGET })
+const apiUrl = kind === "differently" ? process.env.DIFFERENTLY_URL : process.env.DAYTONA_API_URL
+const provider = await createComputerProvider({ kind, apiKey, snapshot: process.env.HEADLESS_COMPUTER_SNAPSHOT, apiUrl, target: process.env.DAYTONA_TARGET })
 const kept = new Map<string, { file: ComputerFile; bytes: Uint8Array<ArrayBuffer> }>()
 const files: ComputerFiles = {
   maxFileBytes: 1024 * 1024,

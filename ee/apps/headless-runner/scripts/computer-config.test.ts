@@ -14,6 +14,19 @@ test("Daytona requires its own key and prepared computer snapshot", () => {
   assert.equal(loadConfig({ ...base, HEADLESS_COMPUTER: "daytona", DAYTONA_API_KEY: "test", HEADLESS_COMPUTER_SNAPSHOT: "computer-image" }).computer?.kind, "daytona")
 })
 
+test("Differently is off unless chosen, and needs its URL, key and template", () => {
+  const env = { ...base, HEADLESS_COMPUTER: "differently" }
+  assert.throws(() => loadConfig(env), /DIFFERENTLY_API_KEY/)
+  assert.throws(() => loadConfig({ ...env, DIFFERENTLY_API_KEY: "dly_test" }), /DIFFERENTLY_URL/)
+  assert.throws(() => loadConfig({ ...env, DIFFERENTLY_API_KEY: "dly_test", DIFFERENTLY_URL: "https://differently.example.com" }), /HEADLESS_COMPUTER_SNAPSHOT/)
+  assert.throws(() => loadConfig({ ...env, DIFFERENTLY_API_KEY: "dly_test", DIFFERENTLY_URL: "http://differently.example.com", HEADLESS_COMPUTER_SNAPSHOT: "workbot-computer" }), /https/)
+  const computer = loadConfig({ ...env, DIFFERENTLY_API_KEY: "dly_test", DIFFERENTLY_URL: "https://differently.example.com/", HEADLESS_COMPUTER_SNAPSHOT: "workbot-computer" }).computer
+  assert.equal(computer?.kind, "differently")
+  assert.equal(computer?.apiUrl, "https://differently.example.com")
+  assert.equal(computer?.apiKey, "dly_test")
+  assert.equal(computer?.snapshot, "workbot-computer")
+})
+
 test("VM and desktop capabilities require explicit operator configuration", () => {
   const env = { ...base, HEADLESS_COMPUTER: "daytona", DAYTONA_API_KEY: "test", HEADLESS_COMPUTER_SNAPSHOT: "computer-image" }
   assert.equal(loadConfig(env).computer?.desktop, false)

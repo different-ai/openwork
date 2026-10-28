@@ -332,9 +332,10 @@ Nothing on celld changes, so pointing the URLs back is the rollback.
 | `HEADLESS_S3_REGION` | `auto` | `auto` for R2; the bucket's region for AWS |
 | `HEADLESS_S3_BUCKET`, `HEADLESS_S3_ACCESS_KEY_ID`, `HEADLESS_S3_SECRET_ACCESS_KEY` | | For `s3` |
 | `HEADLESS_S3_FORCE_PATH_STYLE` | `false` | `true` for MinIO and most self-hosted stores |
-| `HEADLESS_COMPUTER` | `off` | `freestyle` makes a computer available to sessions created with `computer: true` |
+| `HEADLESS_COMPUTER` | `off` | `freestyle`, `daytona` or `differently` makes a computer available to sessions created with `computer: true` |
 | `FREESTYLE_API_KEY` | | For `freestyle`. Use a Freestyle account for this runner alone; the key never enters a VM |
-| `HEADLESS_COMPUTER_SNAPSHOT` | built from the package | Snapshot id or slug new computers boot from |
+| `DIFFERENTLY_URL`, `DIFFERENTLY_API_KEY` | | For `differently`: the HTTPS API and a project-scoped key; Differently holds the provider credentials |
+| `HEADLESS_COMPUTER_SNAPSHOT` | built from the package | Snapshot id or slug new computers boot from; for `differently`, a Differently template |
 | `HEADLESS_COMPUTER_PAUSE_SECONDS` | `300` | Pause a computer this long after its last turn, unless a `background` job runs |
 | `HEADLESS_COMPUTER_KEEP_DAYS` | `14` | Freestyle deletes a computer unused this long |
 | `HEADLESS_SENTRY_DSN` | unset | Optional Sentry error reports (both hosts, posted over `fetch`): failed turns by error code, startup recovery errors and 500s. Codes, ids and counts only, never content or credentials. Unset sends nothing |
@@ -416,9 +417,22 @@ from `HEADLESS_COMPUTER_KEEP_DAYS` so paused disks can expire too. Desktop mode
 rejects container snapshots. See [Workbot's Computer tab](../../../docs/computer-use/workbot.md)
 for image preparation, shared applications and the live microVM lifecycle check.
 
+For [Differently](https://github.com/different-ai/differently), a self-hosted
+control plane in front of OpenSandbox, Daytona and Freestyle, set
+`HEADLESS_COMPUTER=differently`, `DIFFERENTLY_URL`, `DIFFERENTLY_API_KEY` (a
+project-scoped key) and `HEADLESS_COMPUTER_SNAPSHOT` (a Differently template
+that maps to each pool's computer image). The runner then holds no provider
+credential. Differently decides by policy which provider runs each computer, and
+deletes it `HEADLESS_COMPUTER_KEEP_DAYS` after it last resumed. The desktop
+viewer needs a pool that publishes port URLs (Freestyle or Daytona). Switching
+providers does not move existing computers. Differently's
+[OpenWork guide](https://github.com/different-ai/differently/blob/pre-release/docs/guides/openwork.md)
+covers the server side.
+
 Opt-in verification, creating and cleaning one real computer:
 
 ```sh
 HEADLESS_COMPUTER=daytona DAYTONA_API_KEY=… HEADLESS_COMPUTER_SNAPSHOT=… pnpm --filter @openwork-ee/headless-computer proof:live
 HEADLESS_COMPUTER=freestyle FREESTYLE_API_KEY=… pnpm --filter @openwork-ee/headless-computer proof:live
+HEADLESS_COMPUTER=differently DIFFERENTLY_URL=… DIFFERENTLY_API_KEY=… HEADLESS_COMPUTER_SNAPSHOT=… pnpm --filter @openwork-ee/headless-computer proof:live
 ```

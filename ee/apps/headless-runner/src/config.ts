@@ -93,8 +93,11 @@ const configSchema = z.object({
   HEADLESS_S3_ACCESS_KEY_ID: z.string().min(1).optional(),
   HEADLESS_S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
   HEADLESS_S3_FORCE_PATH_STYLE: z.enum(["true", "false"]).default("false"),
-  /** A Linux computer per conversation (bash and look tools): off, or a Freestyle VM. */
-  HEADLESS_COMPUTER: z.enum(["off", "freestyle", "daytona"]).default("off"),
+  /** A Linux computer per conversation (bash and look tools): off, or a Freestyle, Daytona or Differently sandbox. */
+  HEADLESS_COMPUTER: z.enum(["off", "freestyle", "daytona", "differently"]).default("off"),
+  /** Differently: its API and a project-scoped key. Differently holds the provider credentials and routes by its policies. */
+  DIFFERENTLY_URL: safeUrl.optional(),
+  DIFFERENTLY_API_KEY: z.string().min(1).optional(),
   DAYTONA_API_KEY: z.string().min(1).optional(),
   DAYTONA_API_URL: safeUrl.default("https://app.daytona.io/api"),
   DAYTONA_TARGET: z.string().min(1).optional(),
@@ -246,15 +249,18 @@ function errorReportingConfig(value: z.infer<typeof configSchema>): Config["erro
 
 function computerConfig(value: z.infer<typeof configSchema>): Config["computer"] {
   if (value.HEADLESS_COMPUTER === "off") return undefined
-  const apiKey = value.HEADLESS_COMPUTER === "daytona" ? value.DAYTONA_API_KEY : value.FREESTYLE_API_KEY
-  if (!apiKey) throw new Error(`Invalid headless-runner configuration: HEADLESS_COMPUTER=${value.HEADLESS_COMPUTER} needs ${value.HEADLESS_COMPUTER === "daytona" ? "DAYTONA_API_KEY" : "FREESTYLE_API_KEY"}`)
+  const keyName = ({ daytona: "DAYTONA_API_KEY", differently: "DIFFERENTLY_API_KEY", freestyle: "FREESTYLE_API_KEY" } as const)[value.HEADLESS_COMPUTER]
+  const apiKey = value[keyName]
+  if (!apiKey) throw new Error(`Invalid headless-runner configuration: HEADLESS_COMPUTER=${value.HEADLESS_COMPUTER} needs ${keyName}`)
+  if (value.HEADLESS_COMPUTER === "differently" && !value.DIFFERENTLY_URL) throw new Error("Invalid headless-runner configuration: HEADLESS_COMPUTER=differently needs DIFFERENTLY_URL")
+  if (value.HEADLESS_COMPUTER === "differently" && !value.HEADLESS_COMPUTER_SNAPSHOT) throw new Error("Differently computers need HEADLESS_COMPUTER_SNAPSHOT: a Differently template that maps to each pool's computer image")
   if (value.HEADLESS_COMPUTER === "daytona" && !value.HEADLESS_COMPUTER_SNAPSHOT) throw new Error("Daytona computers need HEADLESS_COMPUTER_SNAPSHOT (snapshot:build:daytona)")
   if (value.HEADLESS_COMPUTER === "daytona" && value.HEADLESS_COMPUTER_DESKTOP === "true" && value.HEADLESS_COMPUTER_CLASS !== "linux-vm") throw new Error("Daytona desktop computers require HEADLESS_COMPUTER_CLASS=linux-vm for memory-preserving pause and snapshots")
   if (value.HEADLESS_COMPUTER === "freestyle" && value.HEADLESS_COMPUTER_DESKTOP === "true" && !value.HEADLESS_COMPUTER_SNAPSHOT) throw new Error("Freestyle desktop computers need HEADLESS_COMPUTER_SNAPSHOT (snapshot:build:freestyle-desktop)")
   return {
     kind: value.HEADLESS_COMPUTER,
     apiKey,
-    apiUrl: value.DAYTONA_API_URL,
+    apiUrl: value.HEADLESS_COMPUTER === "differently" ? value.DIFFERENTLY_URL : value.DAYTONA_API_URL,
     target: value.DAYTONA_TARGET,
     sandboxClass: value.HEADLESS_COMPUTER_CLASS,
     desktop: value.HEADLESS_COMPUTER_DESKTOP === "true",
