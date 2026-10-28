@@ -409,7 +409,7 @@
                 true,
                 false
               ],
-              "description": "Connect: standard tools: Supported clients, including OpenWork Desktop, OpenCode and Claude Code, discover connected actions, Workflows and Apps as individual tools. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas. Renders DEN_FEATURE_CONNECT_STANDARD_TOOLS."
+              "description": "Connect: standard tools: Claude Code and standalone OpenCode discover connected actions, Workflows and Apps as individual tools; OpenWork Desktop, Web and automation runs keep capability search. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas. Renders DEN_FEATURE_CONNECT_STANDARD_TOOLS."
             },
             "teamPlan": {
               "enum": [

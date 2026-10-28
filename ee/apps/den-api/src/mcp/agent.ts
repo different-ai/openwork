@@ -21,7 +21,7 @@ import { connectorCatalogForQuery } from "./connector-catalog.js"
 import { registerAgentConnectionActionApp } from "./connection-action-app.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { db } from "../db.js"
-import { getMcpResourceContext, mcpPrincipalCredentialId, verifyMcpRequest } from "./auth.js"
+import { getMcpResourceContext, isFirstPartyMcpPrincipal, mcpPrincipalCredentialId, verifyMcpRequest } from "./auth.js"
 import { AUDIT_UNAVAILABLE_TOOL_MESSAGE, AuditUnavailableError, auditUnavailableToolResult, mcpAuditPrincipal, runMcpServiceAction, serviceAuditResourceId, serviceErrorStatus, toolResultStatus } from "../audit/mcp-service-audit.js"
 import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import { getCatalog, protectedResourceMetadata, protectedResourceMetadataRoute } from "./index.js"
@@ -587,6 +587,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     const toolView = connectToolView(requestInfo.clientInfo, {
       enabled: organizationFeatures.connectStandardTools,
       override: connectToolViewOverride(c.req.url),
+      firstPartyToken: isFirstPartyMcpPrincipal(principal),
     })
     const audience: AgentMcpAudience = { organizationId, userId: principal.userId, fullTools: toolView === "full" }
     const redirectUriBase = resolvePublicOrigin(c.req.raw, env.apiPublicUrl)
