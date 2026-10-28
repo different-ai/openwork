@@ -6,8 +6,9 @@ import { AGENT_CORE_SOURCES, type AgentCoreSource } from "@openwork/types/den/wo
  * (`calendar`, `email`, `chat`) and the connections behind every source it may read.
  *
  * - A plain `mcp:read` token never calls a connection's own tools: provider hints can't prove a tool won't change
- *   anything. An agent token may, but only on its connections and only tools that read: a reviewed list for the
- *   services we know, otherwise a tool its provider marks read-only whose name reads and never writes.
+ *   anything. An agent token may, but only on its connections and only tools we reviewed as reads, per service
+ *   (`REVIEWED_READ_TOOLS`). A service without a reviewed list can't be a source at all; its provider's hints and tool
+ *   names never make a tool callable.
  * - Native Google Workspace and Microsoft 365 reads are limited to the core sources that are on: calendar events,
  *   mail, and Teams chats. Nothing else (files, drafts, sites) and never a non-GET.
  *
@@ -72,8 +73,8 @@ export function agentMayUseNative(allowlist: AgentReadAllowlist, connectionId: s
 }
 
 /**
- * Tools reviewed as reads, by the service's MCP host. Only names here or tools that pass `looksLikeRead` are callable,
- * and never one whose name says it writes.
+ * Tools reviewed as reads, by the service's MCP host (the URL its preset connects to). Only these are callable, and
+ * never one whose name says it writes, even if it is listed here by mistake.
  */
 const REVIEWED_READ_TOOLS: Record<string, ReadonlySet<string>> = {
   "mcp.slack.com": new Set([
@@ -96,13 +97,6 @@ const REVIEWED_READ_TOOLS: Record<string, ReadonlySet<string>> = {
 }
 
 const WRITE_WORDS = /(?:^|[_\-.\s]|[a-z](?=[A-Z]))(send|post|create|update|upsert|delete|remove|write|edit|modify|move|archive|add|set|schedule|reply|draft|upload|invite|share|assign|close|merge|comment|react|publish|trash|cancel|accept|decline|approve|mark|submit|execute|run|trigger)(?=$|[_\-.\s]|[A-Z])/i
-const READ_WORDS = /(?:^|[_\-.\s]|[a-z](?=[A-Z]))(get|list|search|read|fetch|find|query|lookup|view|describe|retrieve|show)(?=$|[_\-.\s]|[A-Z])/i
-
-/** A tool its provider marks read-only (and not destructive) whose name reads and never writes. */
-function looksLikeRead(tool: { name: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }): boolean {
-  return tool.annotations?.readOnlyHint === true && tool.annotations.destructiveHint !== true && READ_WORDS.test(tool.name) && !WRITE_WORDS.test(tool.name)
-}
-
 function hostOf(url: string): string | null {
   try {
     return new URL(url).hostname.toLowerCase()
@@ -111,19 +105,41 @@ function hostOf(url: string): string | null {
   }
 }
 
-/** Whether a connection's tool only reads, by the rules above. */
-export function agentReadTool(connectionUrl: string, tool: { name: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }): boolean {
+/** Whether agents can read through a connection at all: its service has a reviewed list of read tools. */
+export function agentReadableConnection(connectionUrl: string): boolean {
+  const host = hostOf(connectionUrl)
+  return host !== null && REVIEWED_READ_TOOLS[host] !== undefined
+}
+
+/** Whether a connection's tool is one we reviewed as a read. Provider hints are never enough. */
+export function agentReadTool(connectionUrl: string, tool: { name: string }): boolean {
   if (WRITE_WORDS.test(tool.name)) return false
   const host = hostOf(connectionUrl)
-  if (host && REVIEWED_READ_TOOLS[host]?.has(tool.name)) return true
-  return looksLikeRead(tool)
+  return host !== null && REVIEWED_READ_TOOLS[host]?.has(tool.name) === true
+}
+
+/**
+ * Where a message may link when it drew on a connection: the service's own site, by its reviewed host. Never derived
+ * from a hostname (a public suffix like co.uk would let any site through).
+ */
+const SERVICE_LINK_DOMAINS: Record<string, readonly string[]> = {
+  "mcp.slack.com": ["slack.com"],
+  "mcp.linear.app": ["linear.app"],
+  "mcp.notion.com": ["notion.so", "notion.com"],
+  "api.githubcopilot.com": ["github.com"],
+  "mcp.granola.ai": ["granola.ai"],
+}
+
+export function serviceLinkDomains(connectionUrl: string): readonly string[] {
+  const host = hostOf(connectionUrl)
+  return host ? SERVICE_LINK_DOMAINS[host] ?? [] : []
 }
 
 /** An external tool the agent may call: one of its connections, and a tool that only reads. */
 export function agentMayUseExternalTool(
   allowlist: AgentReadAllowlist,
   connection: { id: string; url: string },
-  tool: { name: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } },
+  tool: { name: string },
 ): boolean {
   return allowlist.connectionIds.has(connection.id) && agentReadTool(connection.url, tool)
 }

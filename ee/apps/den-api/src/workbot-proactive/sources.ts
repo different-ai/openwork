@@ -7,11 +7,12 @@ import {
   type AgentSourcePolicy,
   type AgentSourcesPolicy,
 } from "@openwork/types/den/workbot-proactive"
+import { agentReadableConnection, serviceLinkDomains } from "../mcp/agent-read-sources.js"
 
 /**
  * Sources, not categories: what a member's agent reads. Calendar, email and team chat come from whichever of the
  * member's connections serve them (Google Workspace, Microsoft 365, Slack); every other connection the member can use
- * is a source of its own. The admin decides per source (on for everyone, members choose, not allowed); the member
+ * whose service has reviewed read tools (Linear, Notion, GitHub, Granola) is a source of its own. The admin decides per source (on for everyone, members choose, not allowed); the member
  * turns the ones they may choose on or off and steers each with an instruction in their own words.
  *
  * Pure: the database reads live in sources-repository.ts. The wake builds the turn's read allowlist and its prompt from
@@ -59,17 +60,19 @@ export function connectionSourceName(connection: { name: string; url: string; na
   return connection.name
 }
 
-/** Domains a message may link to when it drew on a connection: the service behind it. */
-export function connectionLinkDomains(connection: { url: string; native: string | null }): string[] {
+/** Domains a message may link to when it drew on a connection: the service behind it, from a fixed list. */
+export function connectionLinkDomains(connection: { url: string; native: string | null }): readonly string[] {
   if (connection.native === "google-workspace") return []
   if (connection.native === "microsoft-365") return ["outlook.office.com", "outlook.office365.com", "outlook.live.com", "teams.microsoft.com"]
-  const host = hostOf(connection.url)
-  if (!host) return []
-  if (host === "mcp.slack.com") return ["slack.com"]
-  if (host === "api.githubcopilot.com") return ["github.com"]
-  // mcp.linear.app → linear.app: the service's own site, never a third party's.
-  const parts = host.split(".")
-  return [parts.length > 2 ? parts.slice(-2).join(".") : host]
+  return serviceLinkDomains(connection.url)
+}
+
+/**
+ * Whether a connection can be a source of its own: a service whose read tools we reviewed (agent-read-sources.ts).
+ * Den's own providers and Slack are core sources.
+ */
+function readableOther(connection: { url: string; native: string | null }) {
+  return connection.native === null && coreSourcesOf(connection).length === 0 && agentReadableConnection(connection.url)
 }
 
 /** The organization's connections behind each source, for the admin's "What agents read". */
@@ -78,7 +81,7 @@ export function groupSourceConnections(connections: readonly (AgentSourceConnect
   for (const connection of connections) {
     const core = coreSourcesOf(connection)
     const entry = { id: connection.id, name: connection.name, url: connection.url }
-    if (!core.length) groups.other.push(entry)
+    if (readableOther(connection)) groups.other.push(entry)
     for (const kind of core) groups[kind].push({ ...entry, name: connectionSourceName(connection, kind) })
   }
   return groups
@@ -129,7 +132,7 @@ export function resolveMemberSources(input: {
     }
   })
   const others = input.connections
-    .filter((connection) => coreSourcesOf(connection).length === 0)
+    .filter(readableOther)
     .map((connection): ResolvedSource => {
       const policy = agentSourcePolicy(input.policy, connection.id)
       const choice = input.choices[connection.id]

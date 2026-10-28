@@ -777,18 +777,22 @@ describe("Connect's read allowlist for an agent's token", () => {
     assert.equal(agentRead.nativeSourceKind("/v1/capabilities/microsoft-365/teams-chats/:chatId/messages"), "chat")
   })
 
-  test("a connection's tools: its reviewed reads, or a tool its provider marks read-only whose name reads; never one that writes", () => {
+  test("a connection's tools: only its service's reviewed reads; provider hints and read-shaped names never are enough", () => {
     const allowlist = { kinds: new Set(["chat" as const]), connectionIds: new Set([SLACK.id, NOTES.id, "emc_crm"]) }
     const slack = { id: SLACK.id, url: SLACK.url }
-    assert.equal(agentRead.agentMayUseExternalTool(allowlist, slack, { name: "slack_read_thread" }), true, "reviewed, without hints")
-    assert.equal(agentRead.agentMayUseExternalTool(allowlist, slack, { name: "slack_send_message", annotations: { readOnlyHint: true } }), false, "a write is never a read, whatever the hint says")
+    assert.equal(agentRead.agentMayUseExternalTool(allowlist, slack, { name: "slack_read_thread" }), true, "reviewed")
+    assert.equal(agentRead.agentMayUseExternalTool(allowlist, slack, { name: "slack_send_message" }), false)
     assert.equal(agentRead.agentMayUseExternalTool(allowlist, slack, { name: "slack_add_reaction" }), false)
+    assert.equal(agentRead.agentMayUseExternalTool(allowlist, { id: NOTES.id, url: NOTES.url }, { name: "get_meeting_transcript" }), true)
     const crm = { id: "emc_crm", url: "https://mcp.crm.example/mcp" }
-    assert.equal(agentRead.agentMayUseExternalTool(allowlist, crm, { name: "search_contacts", annotations: { readOnlyHint: true } }), true)
-    assert.equal(agentRead.agentMayUseExternalTool(allowlist, crm, { name: "search_contacts" }), false, "an unknown service's tool needs its read-only hint")
-    assert.equal(agentRead.agentMayUseExternalTool(allowlist, crm, { name: "list_contacts", annotations: { readOnlyHint: true, destructiveHint: true } }), false)
-    assert.equal(agentRead.agentMayUseExternalTool(allowlist, crm, { name: "updateContact", annotations: { readOnlyHint: true } }), false)
-    assert.equal(agentRead.agentMayUseExternalTool(allowlist, { id: "emc_other", url: crm.url }, { name: "search_contacts", annotations: { readOnlyHint: true } }), false, "not one of its sources")
+    assert.equal(agentRead.agentMayUseExternalTool(allowlist, crm, { name: "search_contacts" }), false, "a service without a reviewed list: nothing")
+    assert.equal(agentRead.agentReadableConnection(crm.url), false)
+    assert.equal(agentRead.agentMayUseExternalTool(allowlist, { id: "emc_other", url: SLACK.url }, { name: "slack_read_thread" }), false, "not one of its sources")
+  })
+
+  test("links: only the service's own site from a fixed list, never a domain derived from a hostname", () => {
+    assert.deepEqual(agentRead.serviceLinkDomains(SLACK.url), ["slack.com"])
+    assert.deepEqual(agentRead.serviceLinkDomains("https://mcp.vendor.co.uk/mcp"), [])
   })
 })
 
@@ -800,6 +804,11 @@ describe("a member's sources, in chat or on the page", () => {
   const resolved = (policy = admin.sources, stored = preferences.emptyStoredPreferences()) => resolveMemberSources({ connections, policy, choices: stored.sources, lastLook: {} })
   const change = (request: Parameters<typeof preferences.applyMemberAgentChange>[0]["request"], stored = preferences.emptyStoredPreferences(), policy = admin.sources) =>
     preferences.applyMemberAgentChange({ request, overrides: null, stored, settings: { ...admin, sources: policy }, source: "chat", now: NOW, newId, sources: resolved(policy, stored) })
+
+  test("only services agents can read are sources of their own", () => {
+    const listed = resolveMemberSources({ connections: [...connections, { id: "emc_crm", name: "CRM", url: "https://mcp.crm.example/mcp", native: null, state: "connected" }], policy: admin.sources, choices: {}, lastLook: {} })
+    assert.deepEqual(listed.map((source) => source.id), ["calendar", "email", "chat", NOTES.id, "emc_01k8z5wq0s0000000000000003"])
+  })
 
   test("\"also look at my meeting notes for action items, and skip the issue tracker\": saved by name, one line per source, Connect where needed", () => {
     const saved = change({ sources: [{ source: "Meeting notes", on: true, instruction: "Use for meeting context and action items after meetings." }, { source: "issue tracker", on: false }, { source: "Wiki", on: true }] })
