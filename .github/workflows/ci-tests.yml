@@ -185,6 +185,13 @@ jobs:
           pnpm --dir evals run test:framework
           pnpm --dir evals exec vitest run --config vitest.config.ts --project pr scripts/input-dialog.live.test.ts
           pnpm --dir evals exec vitest run --config vitest.config.ts --project pr ../apps/server/test/session-title-sigv4.vitest.test.ts
+      - name: Test native provider credential boundaries and managed ownership
+        env:
+          OPENWORK_TEST_OPENCODE2: ${{ github.workspace }}/apps/desktop/resources/sidecars/opencode2
+        run: |
+          pnpm --filter openwork-server build
+          pnpm --filter @openwork/desktop prepare:sidecar
+          bun test apps/server/test/live-provider-session-security-native.test.ts apps/server/test/live-provider-sync-managed-native.test.ts
       - name: Test native MCP readiness and Stop ownership
         run: pnpm --filter openwork-server test:readiness
       # Uses the pinned OpenCode that Setup tests put on PATH.

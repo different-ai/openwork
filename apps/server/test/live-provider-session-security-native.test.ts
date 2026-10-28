@@ -42,8 +42,10 @@ test("native model-approved shells cannot redeem the desktop capability before o
   let phase = "flag-off";
   let toolCalls = 0;
   let modelError = "";
+  let inventoryRequests = 0;
   const model = createServer(async (req, res) => {
     if (req.method !== "POST") {
+      inventoryRequests++;
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ inferenceProviders: [] }));
       return;
@@ -60,7 +62,7 @@ test("native model-approved shells cannot redeem the desktop capability before o
     res.writeHead(200, { "content-type": "text/event-stream" });
     if (!hasResult && shell) {
       toolCalls++;
-      const command = `node '${join(project, "inspect.mjs")}' '${phase}'`;
+      const command = `'${process.execPath}' '${join(project, "inspect.mjs")}' '${phase}'`;
       const parameters = { command, description: "Inspect inherited credential boundary", timeout: 5000 };
       res.end(frame({ role: "assistant", tool_calls: [{ index: 0, id: `call_${phase}`, type: "function", function: { name: shell.name, arguments: JSON.stringify(parameters) } }] }) + frame({}, "tool_calls") + "data: [DONE]\n\n");
     } else {
@@ -73,12 +75,10 @@ test("native model-approved shells cannot redeem the desktop capability before o
   const address = model.address();
   assert.ok(address && typeof address !== "string");
   const modelUrl = `http://127.0.0.1:${address.port}`;
-  let handoffs = 0;
   const denToken = "native-boundary-den-session";
-  const bridge = await createV2ProviderSessionBridge(() => {
-    handoffs++;
-    return { baseUrl: modelUrl, token: denToken, orgId: "org_security" };
-  });
+  const bridge = await createV2ProviderSessionBridge(() => ({
+    baseUrl: modelUrl, token: denToken, orgId: "org_security",
+  }));
   let live = false;
   let engine: Awaited<ReturnType<typeof createManagedOpencodeV2Server>> | undefined;
   try {
@@ -143,8 +143,10 @@ test("native model-approved shells cannot redeem the desktop capability before o
       assert.equal(value.status, 401, "a model-approved shell cannot redeem the Den-session bridge");
       assert.ok(!report.includes(bridge.token));
       assert.ok(!report.includes(denToken));
-      if (!live) assert.equal(handoffs, 0, "flag-off startup consumes the channel without activating the provider plugin");
-      else await until(async () => handoffs, value => value > 0, "late activation reuses the private channel broker");
+      // The bridge reads the current identity even for our rejected shell probe.
+      // Observe actual upstream inventory access, not calls to that getter.
+      if (!live) assert.equal(inventoryRequests, 0, "flag-off startup never activates provider inventory");
+      else await until(async () => inventoryRequests, value => value > 0, "late activation reuses the private channel broker");
     }
     assert.equal(toolCalls, 2, "both witnesses were emitted by the model and executed by native tools");
   } finally {
