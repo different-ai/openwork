@@ -122,6 +122,8 @@ jobs:
           pnpm --filter @openwork/app exec bun --conditions=development test --isolate ./tests/native-dictation.test.tsx ./tests/browser-dictation.test.ts ./tests/composer-caret-refocus.test.tsx
       - name: Test follow-ups sent while a chat is starting
         run: pnpm --filter @openwork/app exec bun test --isolate ./tests/starting-thread-follow-ups.test.ts
+      - name: Test settling finished sessions
+        run: pnpm --filter @openwork/app exec bun test --isolate ./tests/session-settle.test.ts
       - name: Test the chat Working line and run time across follow-ups
         run: pnpm --filter @openwork/app exec bun --conditions=development test --isolate ./tests/message-list-working-line.test.tsx ./tests/run-working-time.test.ts
       - name: Check desktop links open real Den pages

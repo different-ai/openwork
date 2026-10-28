@@ -30,6 +30,10 @@ import {
   LayoutStack,
 } from "../settings-layout";
 import { DesktopIntegrationSection } from "../desktop-integration-section";
+import {
+  AUTO_SETTLE_DAY_OPTIONS,
+  useSessionManagementStore,
+} from "@/react-app/domains/session/sidebar/session-management-store";
 
 export type PreferencesViewProps = {
   busy: boolean;
@@ -55,6 +59,51 @@ function desktopNotificationPreferenceLabel(value: DesktopNotificationPreference
     case "off":
       return t("settings.desktop_notifications.off");
   }
+}
+
+function autoSettleLabel(days: number) {
+  return days === 0 ? t("settings.auto_settle.never") : t("settings.auto_settle.days", { count: days });
+}
+
+/** Idle sessions move to their workspace's Settled row after this long. */
+function AutoSettleSection() {
+  const autoSettleDays = useSessionManagementStore((state) => state.autoSettleDays);
+  const setAutoSettleDays = useSessionManagementStore((state) => state.setAutoSettleDays);
+  const items = AUTO_SETTLE_DAY_OPTIONS.map((days) => ({ value: String(days), label: autoSettleLabel(days) }));
+
+  return (
+    <LayoutSection>
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>{t("settings.sessions_title")}</LayoutSectionTitle>
+      </LayoutSectionHeader>
+
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader className="min-h-10 items-center">
+          <LayoutSectionItemTitle>{t("settings.auto_settle.title")}</LayoutSectionItemTitle>
+          <LayoutSectionItemHeaderActions className="self-center">
+            <Select
+              value={String(autoSettleDays)}
+              items={items}
+              onValueChange={(value) => {
+                if (typeof value === "string") setAutoSettleDays(Number(value));
+              }}
+            >
+              <SelectTrigger className="w-44" aria-label={t("settings.auto_settle.title")} data-auto-settle-select>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {items.map(({ value, label }) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
+      </LayoutSectionItem>
+    </LayoutSection>
+  );
 }
 
 export function PreferencesView(props: PreferencesViewProps) {
@@ -107,6 +156,8 @@ export function PreferencesView(props: PreferencesViewProps) {
           </LayoutSectionItemHeader>
         </LayoutSectionItem>
       </LayoutSection>
+
+      <AutoSettleSection />
 
       <LayoutSection>
         <LayoutSectionHeader>

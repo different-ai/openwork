@@ -1,6 +1,6 @@
 /**
- * Zustand store for session management primitives (pin, manual order, custom
- * group mirror + expanded state). Persisted to localStorage via
+ * Zustand store for session management primitives (pin, settle, manual order,
+ * custom group mirror + expanded state). Persisted to localStorage via
  * zustand/middleware/persist.
  *
  * Archive is server-side (OpenCode session.time.archived). Session groups are
@@ -58,9 +58,30 @@ type SessionGroupSyncStatus = {
   deferredServerSync?: SessionGroupDeferredServerSync;
 };
 
+/** A settled session stays settled until it has activity newer than `settledThrough`. */
+export type SessionSettleEntry = {
+  /** The session's own last-activity time when it was settled, so a remote clock never un-settles it. */
+  settledThrough?: number;
+  /** Local time of an Un-settle; idle time for auto-settle counts from here. */
+  unsettledAt?: number;
+};
+
+/** What Settle or Un-settle changed, so Undo can put it back. */
+export type SessionSettleSnapshot = {
+  entry: SessionSettleEntry | undefined;
+  pinIndex: number;
+  unread: boolean;
+};
+
+/** Settings › Preferences choices; 0 turns auto-settle off. */
+export const AUTO_SETTLE_DAY_OPTIONS = [0, 1, 3, 7] as const;
+export const DEFAULT_AUTO_SETTLE_DAYS = 3;
+
 type SessionManagementState = {
   pinnedIds: string[];
   unreadIds: string[];
+  settledById: Record<string, SessionSettleEntry>;
+  autoSettleDays: number;
   orderByWorkspace: Record<string, string[]>;
   groupsByWorkspace: Record<string, WorkspaceGroupState>;
 };
@@ -70,6 +91,11 @@ type SessionManagementActions = {
   reorderPins: (sessionIds: string[]) => void;
   markUnread: (sessionId: string) => void;
   clearUnread: (sessionId: string) => void;
+  /** Settle through `activityAt`; also unpins the session and clears its unread dot. */
+  settle: (sessionId: string, activityAt: number) => SessionSettleSnapshot;
+  unsettle: (sessionId: string) => SessionSettleSnapshot;
+  restoreSettle: (sessionId: string, snapshot: SessionSettleSnapshot) => void;
+  setAutoSettleDays: (days: number) => void;
   reorderSessions: (workspaceId: string, sessionIds: string[]) => void;
   assignGroup: (workspaceId: string, sessionId: string, groupId: string | null) => void;
   createGroup: (workspaceId: string, label: string) => void;
@@ -85,6 +111,14 @@ type SessionManagementActions = {
 type SessionManagementStore = SessionManagementState & SessionManagementActions;
 
 const EMPTY_GROUP_STATE: WorkspaceGroupState = { groups: [], assignments: {} };
+
+function settleSnapshot(state: SessionManagementState, sessionId: string): SessionSettleSnapshot {
+  return {
+    entry: state.settledById[sessionId],
+    pinIndex: state.pinnedIds.indexOf(sessionId),
+    unread: state.unreadIds.includes(sessionId),
+  };
+}
 
 function sameStrings(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
@@ -206,21 +240,21 @@ function syncServerState(request: Promise<SessionGroupServerState | null> | unde
 
 export const useSessionManagementStore = create<SessionManagementStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       pinnedIds: [],
       unreadIds: [],
+      settledById: {},
+      autoSettleDays: DEFAULT_AUTO_SETTLE_DAYS,
       orderByWorkspace: {},
       groupsByWorkspace: {},
 
       togglePin: (sessionId) =>
         set((state) => {
           const idx = state.pinnedIds.indexOf(sessionId);
-          return {
-            pinnedIds:
-              idx >= 0
-                ? state.pinnedIds.filter((id) => id !== sessionId)
-                : [...state.pinnedIds, sessionId],
-          };
+          if (idx >= 0) return { pinnedIds: state.pinnedIds.filter((id) => id !== sessionId) };
+          // Pinning keeps a session in view, so it is no longer settled.
+          const { [sessionId]: _settled, ...settledById } = state.settledById;
+          return { pinnedIds: [...state.pinnedIds, sessionId], settledById };
         }),
 
       reorderPins: (sessionIds) =>
@@ -242,6 +276,38 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
             ? { unreadIds: state.unreadIds.filter((id) => id !== sessionId) }
             : state
         )),
+
+      settle: (sessionId, activityAt) => {
+        const snapshot = settleSnapshot(get(), sessionId);
+        set((state) => ({
+          settledById: { ...state.settledById, [sessionId]: { settledThrough: activityAt } },
+          pinnedIds: state.pinnedIds.filter((id) => id !== sessionId),
+          unreadIds: state.unreadIds.filter((id) => id !== sessionId),
+        }));
+        return snapshot;
+      },
+
+      unsettle: (sessionId) => {
+        const snapshot = settleSnapshot(get(), sessionId);
+        set((state) => ({
+          settledById: { ...state.settledById, [sessionId]: { unsettledAt: Date.now() } },
+        }));
+        return snapshot;
+      },
+
+      restoreSettle: (sessionId, snapshot) =>
+        set((state) => {
+          const { [sessionId]: _current, ...settledById } = state.settledById;
+          if (snapshot.entry) settledById[sessionId] = snapshot.entry;
+          const pinnedIds = state.pinnedIds.filter((id) => id !== sessionId);
+          if (snapshot.pinIndex >= 0) pinnedIds.splice(Math.min(snapshot.pinIndex, pinnedIds.length), 0, sessionId);
+          const unreadIds = state.unreadIds.filter((id) => id !== sessionId);
+          if (snapshot.unread) unreadIds.push(sessionId);
+          return { settledById, pinnedIds, unreadIds };
+        }),
+
+      setAutoSettleDays: (days) =>
+        set({ autoSettleDays: AUTO_SETTLE_DAY_OPTIONS.some((option) => option === days) ? days : DEFAULT_AUTO_SETTLE_DAYS }),
 
       reorderSessions: (workspaceId, sessionIds) =>
         set((state) => (
