@@ -140,7 +140,7 @@ jobs:
         run: |
           pnpm --filter @openwork/computer-use build
           node --test ee/packages/headless-computer/src/viewer-tickets.test.mjs
-          node --test apps/desktop/electron/computer-control.test.mjs apps/desktop/electron/computer-remote.test.mjs apps/desktop/electron/computer-windows.test.mjs packages/computer-use/cloud.test.mjs packages/computer-use/browser-task-privacy.test.mjs packages/computer-use/browser-task-viewport.test.mjs packages/computer-use/browser-task-attach.test.mjs packages/browser-tabs/index.test.mjs packages/computer-use/chromium.test.mjs apps/desktop/electron/computer-program.test.mjs apps/desktop/electron/floating-view-window.test.mjs apps/desktop/electron/window-state.test.mjs
+          node --test apps/desktop/electron/computer-control.test.mjs apps/desktop/electron/computer-remote.test.mjs apps/desktop/electron/computer-windows.test.mjs packages/computer-use/cloud.test.mjs packages/computer-use/browser-task-privacy.test.mjs packages/computer-use/browser-task-viewport.test.mjs packages/computer-use/browser-task-attach.test.mjs packages/browser-tabs/index.test.mjs packages/computer-use/chromium.test.mjs apps/desktop/electron/computer-program.test.mjs apps/desktop/electron/floating-view-window.test.mjs apps/desktop/electron/window-state.test.mjs apps/desktop/electron/keep-awake.test.mjs
           python3 ee/packages/headless-computer/scripts/desktop-bridge.test.py
           python3 ee/packages/headless-computer/scripts/app-scripting.test.py
           python3 ee/packages/headless-computer/scripts/configure-desktop-files.test.py

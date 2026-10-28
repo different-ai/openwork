@@ -2319,6 +2319,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onToggleAnalytics={() => {
               local.setPrefs((previous) => ({ ...previous, analyticsEnabled: !previous.analyticsEnabled }));
             }}
+            keepAwake={local.prefs.keepAwake}
+            onToggleKeepAwake={() => {
+              local.setPrefs((previous) => ({ ...previous, keepAwake: !previous.keepAwake }));
+            }}
             desktopNotifications={local.prefs.desktopNotifications}
             onDesktopNotificationsChange={(desktopNotifications) => {
               local.setPrefs((previous) => ({ ...previous, desktopNotifications }));

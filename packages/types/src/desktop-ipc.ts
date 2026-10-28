@@ -465,6 +465,8 @@ export type DesktopCommandMap = {
     result: { enabled: boolean };
   };
   desktopSentryClearSession: { args: []; result: { enabled: boolean } };
+  /** Keep the computer from sleeping while this window's agents are working. */
+  desktopSetKeepAwake: { args: [active: boolean]; result: { active: boolean } };
   desktopIntegrationStatus: { args: []; result: DesktopIntegrationStatus };
   desktopIntegrationInstall: {
     args: [options?: { useExternalLauncher?: boolean }];

@@ -40,6 +40,8 @@ export type PreferencesViewProps = {
   onToggleAutoCompactContext: () => void;
   analyticsEnabled: boolean;
   onToggleAnalytics: () => void;
+  keepAwake: boolean;
+  onToggleKeepAwake: () => void;
   desktopNotifications: DesktopNotificationPreference;
   onDesktopNotificationsChange: (value: DesktopNotificationPreference) => void;
   linkOpenDestination: LinkOpenDestination;
@@ -148,6 +150,29 @@ export function PreferencesView(props: PreferencesViewProps) {
           </LayoutSectionItemHeader>
         </LayoutSectionItem>
       </LayoutSection>
+
+      {isElectronRuntime() ? (
+        <LayoutSection>
+          <LayoutSectionHeader>
+            <LayoutSectionTitle>{t("settings.power_title")}</LayoutSectionTitle>
+          </LayoutSectionHeader>
+
+          <LayoutSectionItem>
+            <LayoutSectionItemHeader>
+              <LayoutSectionItemTitle>{t("settings.keep_awake")}</LayoutSectionItemTitle>
+              <LayoutSectionItemDescription>{t("settings.keep_awake_desc")}</LayoutSectionItemDescription>
+              <LayoutSectionItemHeaderActions>
+                <Switch
+                  aria-label={t("settings.keep_awake")}
+                  checked={props.keepAwake}
+                  disabled={props.busy}
+                  onCheckedChange={props.onToggleKeepAwake}
+                />
+              </LayoutSectionItemHeaderActions>
+            </LayoutSectionItemHeader>
+          </LayoutSectionItem>
+        </LayoutSection>
+      ) : null}
 
       <DesktopIntegrationSection />
 
