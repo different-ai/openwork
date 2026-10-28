@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { mock, test } from "node:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { FEATURE_KEYS, featureDefinition, OUTCOME_FEATURE_KEYS } from "@openwork/features"
+import { FEATURE_KEYS, featureDefinition, OUTCOME_FEATURE_KEYS, type FeatureKey } from "@openwork/features"
 import type { AgentInstanceRow } from "../src/workbot-proactive/repository.js"
 import type { AgentWakeOutcome } from "../src/workbot-proactive/wake.js"
 
@@ -22,6 +22,7 @@ await auth.$context
 bootstrapSelect.mock.restore()
 const { FEATURE_OUTCOME_READERS, featureOutcomeReader } = await import("../src/feature-outcomes/readers.js")
 const { featureHealth, featureOutcomeRange, summarizeFeatureOutcomes } = await import("../src/feature-outcomes/outcomes.js")
+const { organizationsWithFeatureOn } = await import("../src/feature-outcomes/report.js")
 const { createFeatureUsageMarker } = await import("../src/feature-usage.js")
 const { wakeAndMarkUse } = await import("../src/workbot-proactive/worker.js")
 type Reading = Parameters<typeof summarizeFeatureOutcomes>[0]
@@ -115,6 +116,16 @@ test("one plain health state: not used, failing, limited, mostly skipped, health
   assert.deepEqual(featureHealth({ membersUsing: 1, outcomes: totals({ runs: 40, succeeded: 40, limited: 2 }) }), { status: "limited", count: 2 })
   assert.deepEqual(featureHealth({ membersUsing: 1, outcomes: totals({ runs: 10, succeeded: 3, skipped: 7 }) }), { status: "mostly_skipped" })
   assert.deepEqual(featureHealth({ membersUsing: 1, outcomes: totals({ runs: 10, succeeded: 5, skipped: 5 }) }), { status: "healthy" })
+})
+
+test("organizations with a feature on follow the deployment state and overrides without reading each one", () => {
+  const key: FeatureKey = "automationCalendarTriggers"
+  const count = (rollouts: Parameters<typeof organizationsWithFeatureOn>[0]["rollouts"], overrides = { on: 3, off: 2 }, locks = {}) =>
+    organizationsWithFeatureOn({ key, environment: { deployment: "cloud", locks }, rollouts, overrides, organizations: 50 })
+  assert.equal(count({}), 3, "off for everyone: the organizations turned on")
+  assert.equal(count({ [key]: { enabled: true, killed: false } }), 48, "on for everyone: all but the organizations turned off")
+  assert.equal(count({ [key]: { enabled: true, killed: true } }), 0, "the kill switch wins")
+  assert.equal(count({}, undefined, { [key]: true }), 50, "an operator lock decides for everyone")
 })
 
 /** A marker with the real once-per-day dedupe, writing to an array; `setDay` moves its clock. */

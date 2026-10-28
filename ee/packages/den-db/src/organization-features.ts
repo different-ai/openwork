@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm"
+import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
   isFeatureKey,
@@ -459,4 +459,61 @@ export async function readOrganizationMemberFeatureOverrides(database: FeatureDa
     result.set(row.member_id, overrides)
   }
   return result
+}
+
+/** Per organization and feature: active members who used it since `since`, and the latest use. */
+export type FeatureUsageSince = {
+  organizationId: DenTypeId<"organization">
+  featureKey: FeatureKey
+  members: number
+  lastUsedAt: Date
+}
+
+/**
+ * Who used features since `since`, across organizations (one feature with `featureKey`), active members only, for
+ * /admin › Features. Reads the feature_usage_org_feature index (organization, feature, last use) and members by
+ * primary key.
+ */
+export async function readFeatureUsageSince(database: FeatureDatabase, input: { since: Date; featureKey?: FeatureKey }): Promise<FeatureUsageSince[]> {
+  const rows = await database.select({
+    organization_id: FeatureUsageTable.organization_id,
+    feature_key: FeatureUsageTable.feature_key,
+    members: sql<string>`count(*)`,
+    last_used_at: sql<Date>`max(${FeatureUsageTable.last_used_at})`.mapWith(FeatureUsageTable.last_used_at),
+  })
+    .from(FeatureUsageTable)
+    .innerJoin(MemberTable, and(eq(MemberTable.id, FeatureUsageTable.member_id), eq(MemberTable.organizationId, FeatureUsageTable.organization_id)))
+    .where(and(
+      gte(FeatureUsageTable.last_used_at, input.since),
+      isNull(MemberTable.removedAt),
+      input.featureKey ? eq(FeatureUsageTable.feature_key, input.featureKey) : undefined,
+    ))
+    .groupBy(FeatureUsageTable.organization_id, FeatureUsageTable.feature_key)
+  return rows.flatMap((row) => isFeatureKey(row.feature_key) ? [{
+    organizationId: row.organization_id, featureKey: row.feature_key, members: Number(row.members), lastUsedAt: row.last_used_at,
+  }] : [])
+}
+
+/** How many organizations have a stored override turning each feature on, and off. */
+export async function readOrganizationFeatureOverrideCounts(database: FeatureDatabase): Promise<Partial<Record<FeatureKey, { on: number; off: number }>>> {
+  const rows = await database.select({ feature_key: OrganizationFeatureTable.feature_key, enabled: OrganizationFeatureTable.enabled, organizations: sql<string>`count(*)` })
+    .from(OrganizationFeatureTable)
+    .groupBy(OrganizationFeatureTable.feature_key, OrganizationFeatureTable.enabled)
+  const counts: Partial<Record<FeatureKey, { on: number; off: number }>> = {}
+  for (const row of rows) {
+    if (!isFeatureKey(row.feature_key)) continue
+    const entry = counts[row.feature_key] ?? { on: 0, off: 0 }
+    if (row.enabled) entry.on += Number(row.organizations)
+    else entry.off += Number(row.organizations)
+    counts[row.feature_key] = entry
+  }
+  return counts
+}
+
+/** Every organization with a stored override for one feature, and its value. */
+export async function readFeatureOverrideOrganizations(database: FeatureDatabase, key: FeatureKey): Promise<Map<DenTypeId<"organization">, boolean>> {
+  const rows = await database.select({ organization_id: OrganizationFeatureTable.organization_id, enabled: OrganizationFeatureTable.enabled })
+    .from(OrganizationFeatureTable)
+    .where(eq(OrganizationFeatureTable.feature_key, key))
+  return new Map(rows.map((row) => [row.organization_id, row.enabled]))
 }
