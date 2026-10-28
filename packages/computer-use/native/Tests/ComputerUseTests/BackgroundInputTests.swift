@@ -31,6 +31,29 @@ final class BackgroundInputTests: XCTestCase {
         }
     }
 
+    func testTheWindowServerHandsRealInputOnlyToTheSelectedWindow() {
+        let app: pid_t = 42, other: pid_t = 7, selected: CGWindowID = 10, sibling: CGWindowID = 11
+        func admits(release: Bool = false, to pid: pid_t, under: CGWindowID = 0) -> Bool {
+            RealInput.admits(release: release, target: app, window: selected, to: pid, under: under)
+        }
+        XCTAssertTrue(admits(to: app), "a key to the selected app")
+        XCTAssertFalse(admits(to: other), "a key to an app that came forward")
+        XCTAssertTrue(admits(to: app, under: selected))
+        XCTAssertFalse(admits(to: app, under: sibling), "a press in another window of the app")
+        XCTAssertFalse(admits(to: other, under: 99))
+        XCTAssertTrue(admits(release: true, to: other, under: 99), "releases go out so nothing stays held")
+    }
+
+    func testRealInputTagsCarryTheirStepAndWhetherTheyRelease() {
+        let tag = RealInput.tag(generation: 7, release: true)
+        XCTAssertEqual(RealInput.untag(tag)?.generation, 7)
+        XCTAssertEqual(RealInput.untag(tag)?.release, true)
+        XCTAssertEqual(RealInput.untag(RealInput.tag(generation: .max, release: false))?.generation, .max)
+        XCTAssertEqual(RealInput.untag(RealInput.tag(generation: .max, release: false))?.release, false)
+        XCTAssertNil(RealInput.untag(0), "the person's own input is never the agent's")
+        XCTAssertNil(RealInput.untag(12345))
+    }
+
     func testAppsThatTakeOnlyRealInputGetNoDrags() {
         XCTAssertEqual(RealInput.dragUnavailable.code, "drag_unavailable")
         XCTAssertEqual(RealInput.dragUnavailable.next, "observe")

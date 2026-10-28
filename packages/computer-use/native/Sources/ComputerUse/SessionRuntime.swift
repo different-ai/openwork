@@ -558,6 +558,7 @@ final class SessionRuntime {
         // Its own window in front, never a dialog of another process over it.
         let realInput = front && current.realInput && current.parents.isEmpty
         if realInput, actions.contains(where: { if case .drag = $0 { return true }; return false }) { throw RealInput.dragUnavailable }
+        if realInput { try RealInputGate.shared.arm(pid: current.app.pid, window: current.target.id) }
         // Held through the settle wait, so no other agent's window comes forward mid-batch.
         let focusLease = front ? try await FocusLease.acquire(check: { try self.checkActive(current) }) : nil
         defer { focusLease?.release() }
@@ -755,7 +756,11 @@ final class SessionRuntime {
             }
         }
         // After the app has taken the input in, the person's pointer goes back.
-        if realInput { input.restorePointer() }
+        if realInput {
+            // Anything held back or unconfirmed at the window server ends the step.
+            if let error = await RealInputGate.shared.finish(), failure == nil { failure = error; uncertain = true }
+            input.restorePointer()
+        }
         if failure == nil {
             do { try check() }
             catch { failure = (error as? UseError) ?? UseError("action_interrupted", "Control ended after dispatch.", next: "human_takeover") }

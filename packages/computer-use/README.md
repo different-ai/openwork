@@ -37,8 +37,12 @@ window in front their clicks, scrolls and keys go through the system
 input stream: the real pointer moves to the point, and goes back afterwards
 unless the person moved it. Each press, move and scroll is sent only while the
 app is still in front and its window is the topmost one under the point; if
-anything else comes forward, the step stops before more input goes out. These
-apps get no drags, whose release could drop into a window that came forward.
+anything else comes forward, the step stops before more input goes out. Where
+the system routes input, an event tap drops any of the agent's presses, moves,
+scrolls or keys bound for another app or window, so an app that takes the front
+between the check and the event never receives it; without that tap, these apps
+get no input. They get no drags, whose release could drop into a window that
+came forward.
 A kernel-held lock allows one session per window, so chats in different windows
 work at once. Grants, element references,
 screenshots and receipts live in process memory and are discarded on close.

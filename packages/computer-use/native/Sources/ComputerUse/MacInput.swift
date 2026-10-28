@@ -247,16 +247,19 @@ final class MacInput {
         try mouse(.leftMouseDown, outside, pid, 1, windowID, frame, check: check, quiet: true)
         try mouse(.leftMouseUp, outside, pid, 1, windowID, frame, quiet: true)
     }
-    private func post(_ event: CGEvent, _ pid: pid_t, pointer: Bool = false) {
+    private func post(_ event: CGEvent, _ pid: pid_t, pointer: Bool = false, release: Bool = false) {
         event.setIntegerValueField(.eventSourceUnixProcessID, value: Int64(ProcessInfo.processInfo.processIdentifier))
-        event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
         if realInput {
-            // Presses, moves and scrolls passed `checkRealTarget` just before this;
-            // releases always go out so nothing stays held in another app.
+            // Presses, moves and scrolls passed `checkRealTarget` just before this, and
+            // `RealInputGate` drops any the window server would still hand elsewhere.
+            // Releases always go out so nothing stays held. The window server sets the
+            // target process, which the gate reads.
             if pointer, personPointer == nil { personPointer = CGEvent(source: nil)?.location }
+            RealInputGate.shared.tag(event, release: release || [.leftMouseUp, .rightMouseUp, .otherMouseUp, .keyUp].contains(event.type))
             event.post(tap: .cghidEventTap)
             return
         }
+        event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
         if pointer, routes[pid] == .skyLight, let skyLightPost = Self.skyLightPost {
             skyLightPost(pid, event)
         } else {
@@ -266,6 +269,7 @@ final class MacInput {
     /// Refuses a real press, move or scroll unless it still lands in the selected window.
     private func checkRealTarget(_ pid: pid_t, window: CGWindowID = 0, at point: CGPoint?) throws {
         guard realInput else { return }
+        try RealInputGate.shared.check()
         let windows = ((CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? [])
             .compactMap { value -> (id: CGWindowID, pid: pid_t, bounds: CGRect)? in
                 guard let number = value[kCGWindowNumber as String] as? NSNumber,
@@ -393,7 +397,7 @@ final class MacInput {
         event.type = .flagsChanged
         event.flags = flags
         if !release { try checkRealTarget(pid, at: nil) }
-        post(event, pid)
+        post(event, pid, release: release)
     }
     private func keyCode(_ key: String, flags: CGEventFlags) throws -> CGKeyCode {
         if let code = NativeKey.navigation[key] { return code }

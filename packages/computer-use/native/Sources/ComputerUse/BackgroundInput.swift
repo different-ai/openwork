@@ -83,6 +83,137 @@ enum RealInput {
         guard let top = windows.first(where: { !passThrough.contains($0.id) && $0.bounds.contains(point) }) else { return false }
         return top.id == target && top.pid == pid
     }
+
+    /// Marks the agent's real events in `eventSourceUserData`: the step they belong
+    /// to, and whether the event only releases a press.
+    static func tag(generation: UInt32, release: Bool) -> Int64 {
+        tagMarker << 48 | Int64(generation) << 1 | (release ? 1 : 0)
+    }
+    static func untag(_ value: Int64) -> (generation: UInt32, release: Bool)? {
+        guard value >> 48 == tagMarker else { return nil }
+        return (UInt32(truncatingIfNeeded: value >> 1), value & 1 == 1)
+    }
+    private static let tagMarker: Int64 = 0x4F57
+
+    /// Whether one of the agent's events may reach the process (and, for the
+    /// pointer, the window) the window server is about to hand it to. Releases
+    /// always go, so nothing stays held; every press, move, scroll and key only
+    /// to the selected app, and pointer events only to the selected window.
+    static func admits(release: Bool, target: pid_t, window: CGWindowID, to pid: pid_t, under: CGWindowID) -> Bool {
+        release || pid == target && (under == 0 || under == window)
+    }
+}
+
+/// Binds real input to the selected window where the window server routes it.
+/// The check before each post can race an app that comes forward; an annotated
+/// session tap sees every event with the process it is about to be delivered to,
+/// and drops any of the agent's events bound for another app or window. It fails
+/// closed: without the tap, while the tap is off, or outside the armed step, the
+/// agent's events are not delivered.
+final class RealInputGate: @unchecked Sendable {
+    static let shared = RealInputGate()
+    static let unavailable = UseError("real_input_unavailable", "Input for this app could not be limited to the selected window, so nothing was sent. Use the app's own commands or ask the person.", next: "human_takeover")
+    static let unconfirmed = UseError("input_unconfirmed", "The system did not confirm where the last input went. Observe before continuing.", next: "observe")
+    private let lock = NSLock()
+    private var tap: CFMachPort?
+    private var generation: UInt32 = 0
+    private var armed: (pid: pid_t, window: CGWindowID)?
+    private var posted = 0, seen = 0, diverted = false
+
+    /// Starts a step's real input for `window` of `pid`; throws before anything is sent.
+    func arm(pid: pid_t, window: CGWindowID) throws {
+        guard let tap = start() else { throw Self.unavailable }
+        lock.withLock {
+            generation &+= 1
+            armed = (pid, window); posted = 0; seen = 0; diverted = false
+        }
+        CGEvent.tapEnable(tap: tap, enable: true)
+        guard CGEvent.tapIsEnabled(tap: tap) else { throw Self.unavailable }
+    }
+    /// Marks an event of the armed step, just before it is posted.
+    func tag(_ event: CGEvent, release: Bool) {
+        let value = lock.withLock { () -> Int64 in
+            posted += 1
+            return RealInput.tag(generation: generation, release: release)
+        }
+        event.setIntegerValueField(.eventSourceUserData, value: value)
+    }
+    /// Stops the step once anything was held back or the tap stopped watching.
+    func check() throws {
+        guard let tap = lock.withLock({ diverted ? nil : self.tap }), CGEvent.tapIsEnabled(tap: tap) else { throw RealInput.targetChanged }
+    }
+    /// Waits for the window server to route every posted event, then stops watching.
+    /// Events still in flight stay under the armed check.
+    func finish() async -> UseError? {
+        var waits = 0
+        while waits < 30, lock.withLock({ seen < posted }) {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            waits += 1
+        }
+        let (drained, wasDiverted, tap) = lock.withLock { () -> (Bool, Bool, CFMachPort?) in
+            let drained = seen >= posted
+            if drained { armed = nil }
+            return (drained, diverted, self.tap)
+        }
+        if drained, let tap { CGEvent.tapEnable(tap: tap, enable: false) }
+        return wasDiverted ? RealInput.targetChanged : drained ? nil : Self.unconfirmed
+    }
+
+    private func filter(_ type: CGEventType, _ event: CGEvent) -> Bool {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            // Events may have passed unchecked: the step stops, and the tap comes back.
+            let tap = lock.withLock { () -> CFMachPort? in
+                guard armed != nil else { return nil }
+                diverted = true
+                return self.tap
+            }
+            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            return true
+        }
+        guard let tag = RealInput.untag(event.getIntegerValueField(.eventSourceUserData)) else { return true }
+        let pid = pid_t(truncatingIfNeeded: event.getIntegerValueField(.eventTargetUnixProcessID))
+        let under = CGWindowID(truncatingIfNeeded: event.getIntegerValueField(Self.windowUnderPointer))
+        return lock.withLock {
+            guard let armed, tag.generation == generation else { return false }
+            seen += 1
+            let admitted = RealInput.admits(release: tag.release, target: armed.pid, window: armed.window, to: pid, under: under)
+            if !admitted { diverted = true }
+            return admitted
+        }
+    }
+    // kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent: 0 for keys.
+    private static let windowUnderPointer = CGEventField(rawValue: 92)!
+    private static let types: [CGEventType] = [.mouseMoved, .leftMouseDown, .leftMouseUp, .leftMouseDragged,
+        .rightMouseDown, .rightMouseUp, .rightMouseDragged, .otherMouseDown, .otherMouseUp, .otherMouseDragged,
+        .scrollWheel, .keyDown, .keyUp, .flagsChanged]
+    private static let callback: CGEventTapCallBack = { _, type, event, info in
+        guard let info else { return Unmanaged.passUnretained(event) }
+        return Unmanaged<RealInputGate>.fromOpaque(info).takeUnretainedValue().filter(type, event) ? Unmanaged.passUnretained(event) : nil
+    }
+    /// The tap runs on its own thread, so a busy main thread never holds input up.
+    private func start() -> CFMachPort? {
+        if let tap = lock.withLock({ tap }) { return tap }
+        let ready = DispatchSemaphore(value: 0)
+        let info = Unmanaged.passUnretained(self).toOpaque()
+        var made: CFMachPort?
+        let thread = Thread {
+            let mask = Self.types.reduce(CGEventMask(0)) { $0 | CGEventMask(1) << $1.rawValue }
+            made = CGEvent.tapCreate(tap: .cgAnnotatedSessionEventTap, place: .tailAppendEventTap, options: .defaultTap,
+                eventsOfInterest: mask, callback: Self.callback, userInfo: info)
+            if let made {
+                CGEvent.tapEnable(tap: made, enable: false)
+                CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(nil, made, 0), .commonModes)
+            }
+            ready.signal()
+            if made != nil { CFRunLoopRun() }
+        }
+        thread.name = "computer-use.real-input"
+        thread.qualityOfService = .userInteractive
+        thread.start()
+        ready.wait()
+        lock.withLock { tap = made }
+        return made
+    }
 }
 
 /// Has an app treat a window as active, and for keys as its key window,
