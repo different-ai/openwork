@@ -232,7 +232,7 @@ test("the v2 bridge advertises automation proposals without exposing other app c
     const { context } = await response.json();
     const commands = context.availableAffordances.filter((item: { kind: string }) => item.kind === "command");
     assert.deepEqual(commands.map((item: { id: string }) => item.id).sort(), [
-      "automation.propose", "session.create", "session.group.create", "session.group.move", "session.group.remove", "session.send",
+      "automation.propose", "session.create", "session.group.create", "session.group.move", "session.group.remove", "session.question.answer", "session.send",
     ]);
     const proposal = context.contributions.find((item: { featureId: string }) => item.featureId === "automations");
     assert.equal(proposal.affordances[0].id, "automation.propose");
