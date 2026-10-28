@@ -21,8 +21,8 @@ import { toolTitle, withSafetyHints } from "./tool-labels.js"
  * Every tool runs through the executor execute_capability uses, with the same
  * `{ name, arguments }` it receives, so grants, tool policy, scopes,
  * connection checks, audit and usage counting are unchanged. Every tool has a
- * title and both safety hints (tool-labels.ts), filled in where its source
- * states none.
+ * title and a safety hint (tool-labels.ts), filled in where its source states
+ * none.
  */
 
 export const CONNECT_FULL_TOOL_NAME_MAX_LENGTH = 64

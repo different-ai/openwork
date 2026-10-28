@@ -7,7 +7,7 @@ import { toolTitle, withSafetyHints } from "./tool-labels.js"
  * Standard MCP tools for one connection's own MCP server (connection-server.ts).
  * The server is the namespace, so each tool keeps its provider's name, and each
  * runs as the Connect capability execute_capability takes for it. Every tool has
- * a title and both safety hints (tool-labels.ts).
+ * a title and a safety hint (tool-labels.ts).
  */
 
 /** Under the agent OAuth resource, so its metadata and tokens apply as they do on /mcp/agent. */

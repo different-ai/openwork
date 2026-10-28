@@ -1,7 +1,7 @@
 import type { ToolAnnotations } from "@modelcontextprotocol/server"
 
 /**
- * Every tool Connect lists for a connection has a title and both safety hints,
+ * Every tool Connect lists for a connection has a title and a safety hint,
  * whatever its source states. Clients decide from them which calls need
  * confirmation: Claude runs read-only tools without asking, always asks before
  * destructive ones, and lists a connector only when each tool has a title and
@@ -24,12 +24,14 @@ export function toolTitle(name: string, summary?: string): string {
 }
 
 /**
- * The stated annotations with both safety hints filled in. A hint the source
- * states is kept; a tool not stated read-only is a write, and a write not
- * stated harmless is destructive, which are MCP's own defaults written out.
+ * The stated annotations with the missing safety hints filled in. A tool not
+ * stated read-only is a write, and a write not stated harmless is destructive,
+ * which are MCP's own defaults written out. A read-only tool keeps exactly what
+ * its source states: a provider's read-only claim is never extended into a
+ * claim that the tool is harmless.
  */
 export function withSafetyHints(annotations: unknown): ToolAnnotations {
   const stated: ToolAnnotations = isRecord(annotations) ? annotations as ToolAnnotations : {}
-  if (stated.readOnlyHint === true) return { ...stated, destructiveHint: stated.destructiveHint === true }
+  if (stated.readOnlyHint === true) return stated
   return { ...stated, readOnlyHint: false, destructiveHint: stated.destructiveHint !== false }
 }
