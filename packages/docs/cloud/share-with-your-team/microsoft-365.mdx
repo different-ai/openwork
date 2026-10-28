@@ -113,7 +113,23 @@ Draft access requires mailbox read/write permission. It does not enable the
 separate **Send Outlook email** option. Drafts, reply drafts, and calendar
 events are plain text unless the agent asks for HTML, which keeps links, line
 breaks, tables, and signatures. An HTML reply keeps the quoted original message
-below it. File permissions that mention “all
+below it.
+
+Calendar event creation can also book a Teams meeting: the agent asks for an
+online meeting and the invitation carries a real join link, with no extra
+Microsoft permission. If Microsoft returns no link, for example because Teams
+meetings are turned off for Outlook in your tenant, the agent says so instead of
+reporting a normal invitation.
+
+With the **Outlook attachments** feature turned on for your organization, the
+desktop app can also attach workspace files to a new draft or a reply draft:
+up to ten files, each under 3 MB and 4 MiB in all. You approve each draft in
+the chat, files are sent outside the model's context, and the draft is never
+sent. If a file cannot be attached, the draft is moved to Deleted Items rather
+than left without it. Agents can also read the files attached to an Outlook
+message.
+
+File permissions that mention “all
 files” can include shared files the member can access beyond their own drive,
 such as SharePoint libraries and files shared in Teams. Without them, file search
 and pulls cover only the member's own OneDrive.

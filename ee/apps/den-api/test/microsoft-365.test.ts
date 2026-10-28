@@ -172,6 +172,51 @@ test("calendar event bodies can be HTML, and a body type without a body is refus
   assert.equal("body" in JSON.parse(String(updates.calls[1].init.body)), false)
 })
 
+test("a calendar event can be a Teams meeting, and its join link is returned", async () => {
+  const joinUrl = "https://teams.microsoft.com/l/meetup-join/unit"
+  const { calls, post } = routes(({ init }) => {
+    const sent = JSON.parse(String(init.body))
+    return json(201, { id: "event-1", ...(sent.isOnlineMeeting ? { onlineMeeting: { joinUrl } } : {}) })
+  })
+  const event = { subject: "Sync", start: "2026-11-02T10:00:00Z", end: "2026-11-02T10:30:00Z", attendees: ["blair@example.test"], confirmNotifications: true }
+
+  const meeting = await post("calendar-events", { ...event, isOnlineMeeting: true })
+  assert.equal(meeting.status, 200)
+  const body = await meeting.json()
+  assert.equal(body.event.onlineMeetingUrl, joinUrl)
+  assert.equal(body.warning, undefined)
+  const sent = JSON.parse(String(calls[0].init.body))
+  assert.equal(sent.isOnlineMeeting, true)
+  assert.equal(sent.onlineMeetingProvider, "teamsForBusiness")
+  assert.equal("confirmNotifications" in sent, false)
+
+  assert.equal((await post("calendar-events", event)).status, 200)
+  assert.equal("isOnlineMeeting" in JSON.parse(String(calls[1].init.body)), false)
+
+  for (const invalid of [{ ...event, onlineMeetingProvider: "teamsForBusiness" }, { ...event, isOnlineMeeting: true, onlineMeetingProvider: "zoom" }, { ...event, isOnlineMeetng: true }]) {
+    assert.equal((await post("calendar-events", invalid)).status, 400)
+  }
+  assert.equal(calls.length, 2)
+})
+
+test("a Teams meeting without a join link is read once more, then reported instead of created again", async () => {
+  const { calls, post } = routes(({ init }) => init.method === "GET" ? json(200, { id: "event-1" }) : json(201, { id: "event-1" }))
+  const response = await post("calendar-events", { subject: "Sync", start: "2026-11-02T10:00:00Z", end: "2026-11-02T10:30:00Z", isOnlineMeeting: true })
+  assert.equal(response.status, 200)
+  const body = await response.json()
+  assert.equal(body.event.onlineMeetingUrl, null)
+  assert.match(body.warning, /did not return a Teams join link/)
+  assert.deepEqual(calls.map(({ url, init }) => `${init.method ?? "GET"} ${url.pathname}`), ["POST /v1.0/me/events", "GET /v1.0/me/events/event-1"])
+})
+
+test("an existing event can become a Teams meeting", async () => {
+  const { calls, client } = graph(() => json(200, { id: "event-1", onlineMeeting: { joinUrl: "https://teams.microsoft.com/l/meetup-join/unit" } }))
+  const event = await client.updateCalendarEvent("event-1", { isOnlineMeeting: true })
+  assert.equal(event.onlineMeetingUrl, "https://teams.microsoft.com/l/meetup-join/unit")
+  assert.deepEqual(JSON.parse(String(calls[0].init.body)), { isOnlineMeeting: true, onlineMeetingProvider: "teamsForBusiness" })
+  assert.equal(calls.length, 1)
+})
+
 test("Outlook attachments list with their kind, and only file attachments are downloaded", async () => {
   const listed = graph(() => json(200, { value: [
     { "@odata.type": "#microsoft.graph.fileAttachment", id: "att-file", name: "plan.pdf", contentType: "application/pdf", size: 4, isInline: false },

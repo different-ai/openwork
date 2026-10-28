@@ -9,6 +9,16 @@ const DEFAULT_MAX_CONTENT_CHARACTERS = 200_000
 export const MICROSOFT_MAIL_ATTACHMENT_MAX_BYTES = 3_000_000
 
 export type Microsoft365BodyContentType = "text" | "html"
+export type Microsoft365OnlineMeetingProvider = "teamsForBusiness" | "skypeForBusiness" | "skypeForConsumer"
+type OnlineMeetingInput = { isOnlineMeeting?: boolean; onlineMeetingProvider?: Microsoft365OnlineMeetingProvider }
+
+/** Graph's online-meeting fields; Teams unless another provider is named. Omitted entirely when no meeting is asked for. */
+function graphOnlineMeeting(input: OnlineMeetingInput) {
+  if (input.isOnlineMeeting === undefined) return {}
+  return input.isOnlineMeeting
+    ? { isOnlineMeeting: true, onlineMeetingProvider: input.onlineMeetingProvider ?? "teamsForBusiness" }
+    : { isOnlineMeeting: false }
+}
 
 /** Graph's itemBody; plain text unless HTML is asked for, so markup is never stored as literal text by accident of a default. */
 function graphItemBody(content: string, contentType: Microsoft365BodyContentType | undefined) {
@@ -298,6 +308,7 @@ export function extractMicrosoftMailMessage(json: unknown): Microsoft365MailMess
   return extractMailMessage(json)
 }
 
+const CALENDAR_EVENT_SELECT = "id,subject,bodyPreview,start,end,isAllDay,location,organizer,attendees,webLink,onlineMeeting,onlineMeetingUrl"
 const MAIL_ATTACHMENT_SELECT = "id,name,contentType,size,isInline"
 
 function mailAttachmentKind(type: string): Microsoft365MailAttachment["kind"] {
@@ -718,7 +729,7 @@ export class MicrosoftGraphClient {
     url.searchParams.set("endDateTime", input.end)
     url.searchParams.set("$top", String(input.maxResults))
     url.searchParams.set("$orderby", "start/dateTime")
-    url.searchParams.set("$select", "id,subject,bodyPreview,start,end,isAllDay,location,organizer,attendees,webLink,onlineMeeting,onlineMeetingUrl")
+    url.searchParams.set("$select", CALENDAR_EVENT_SELECT)
     return extractMicrosoftCalendarEvents(await this.requestJson("Microsoft 365 calendar list", url))
   }
 
@@ -809,16 +820,34 @@ export class MicrosoftGraphClient {
     start?: string
     end?: string
     location?: string
-  }): Promise<Microsoft365CalendarEvent> {
-    return extractMicrosoftCalendarEvent(await this.requestMutation(
+  } & OnlineMeetingInput): Promise<Microsoft365CalendarEvent> {
+    return this.withJoinUrl(input, extractMicrosoftCalendarEvent(await this.requestMutation(
       "Microsoft 365 calendar event update", `me/events/${encodeURIComponent(eventId)}`, "PATCH", 200, {
         subject: input.subject,
         body: input.body === undefined ? undefined : graphItemBody(input.body, input.bodyContentType),
         start: input.start === undefined ? undefined : { dateTime: input.start, timeZone: "UTC" },
         end: input.end === undefined ? undefined : { dateTime: input.end, timeZone: "UTC" },
         location: input.location === undefined ? undefined : { displayName: input.location },
+        ...graphOnlineMeeting(input),
       },
-    ))
+    )))
+  }
+
+  /**
+   * Microsoft can attach the Teams meeting a moment after the event write, so
+   * an event that asked for one and came back without a join link is read once
+   * more. It never writes again: the event and any invitations already exist.
+   */
+  private async withJoinUrl(input: OnlineMeetingInput, event: Microsoft365CalendarEvent): Promise<Microsoft365CalendarEvent> {
+    if (input.isOnlineMeeting !== true || event.onlineMeetingUrl || !event.id) return event
+    try {
+      const url = this.url(`me/events/${encodeURIComponent(event.id)}`)
+      url.searchParams.set("$select", CALENDAR_EVENT_SELECT)
+      const reread = extractMicrosoftCalendarEvent(await this.requestJson("Microsoft 365 calendar event read", url))
+      return reread.id === event.id ? reread : event
+    } catch {
+      return event
+    }
   }
 
   async cancelCalendarEvent(eventId: string, comment?: string): Promise<{ eventId: string; status: "accepted" }> {
@@ -840,8 +869,8 @@ export class MicrosoftGraphClient {
     timeZone: string
     location?: string
     attendees?: string[]
-  }): Promise<Microsoft365CalendarEvent> {
-    return extractMicrosoftCalendarEvent(await this.requestMutation("Microsoft 365 calendar event create", "me/events", "POST", 201, {
+  } & OnlineMeetingInput): Promise<Microsoft365CalendarEvent> {
+    return this.withJoinUrl(input, extractMicrosoftCalendarEvent(await this.requestMutation("Microsoft 365 calendar event create", "me/events", "POST", 201, {
       subject: input.subject,
       body: graphItemBody(input.body ?? "", input.bodyContentType),
       start: { dateTime: input.start, timeZone: input.timeZone },
@@ -851,7 +880,8 @@ export class MicrosoftGraphClient {
         emailAddress: { address },
         type: "required",
       })),
-    }))
+      ...graphOnlineMeeting(input),
+    })))
   }
 
   /** Refuses another drive on a connection limited to the member's own OneDrive. */

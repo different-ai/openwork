@@ -10,7 +10,7 @@ import { requireFeature } from "../../features.js"
 import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
-import { DEFAULT_GRAPH_BASE_URL, MICROSOFT_MAIL_ATTACHMENT_MAX_BYTES, MicrosoftGraphClient } from "../../capability-sources/microsoft-graph.js"
+import { DEFAULT_GRAPH_BASE_URL, MICROSOFT_MAIL_ATTACHMENT_MAX_BYTES, MicrosoftGraphClient, type Microsoft365CalendarEvent } from "../../capability-sources/microsoft-graph.js"
 import { getOrgOAuthClient } from "../../capability-sources/oauth-credentials.js"
 import { listNativeProviderUsableEntries, nativeProviderConnectionPolicyError, resolveDefaultNativeProviderCredentialId, type NativeProviderPolicyError } from "../../capability-sources/native-provider-connections.js"
 import { clientSelectedFeatures, getNativeOAuthProvider, providerScopesSatisfy } from "../../capability-sources/provider-registry.js"
@@ -191,6 +191,15 @@ const calendarEventsResponseSchema = z.object({
   events: z.array(calendarEventSchema),
 }).meta({ ref: "Microsoft365CalendarEventsResponse" })
 
+const onlineMeetingFields = {
+  isOnlineMeeting: z.boolean().optional().describe("true makes this a Teams meeting with a join link in the invitation. Do not put \"Microsoft Teams Meeting\" in location instead; that is only text."),
+  onlineMeetingProvider: z.enum(["teamsForBusiness", "skypeForBusiness", "skypeForConsumer"]).optional().describe("Online meeting service; teamsForBusiness when omitted. Only with isOnlineMeeting: true."),
+}
+const providerNeedsMeeting = {
+  check: (value: { isOnlineMeeting?: boolean; onlineMeetingProvider?: string }) => value.onlineMeetingProvider === undefined || value.isOnlineMeeting === true,
+  issue: { message: "onlineMeetingProvider needs isOnlineMeeting: true.", path: ["onlineMeetingProvider"] },
+}
+
 const calendarEventBodySchema = z.object({
   subject: z.string().trim().min(1).max(255),
   body: z.string().max(20_000).optional(),
@@ -201,18 +210,29 @@ const calendarEventBodySchema = z.object({
   location: z.string().trim().max(255).optional(),
   attendees: z.array(z.string().email()).max(100).optional(),
   confirmNotifications: z.literal(true).optional().describe("Required when attendees are listed. Set true only when the user explicitly asked to invite them; Microsoft emails each attendee an invitation."),
-}).refine((value) => Date.parse(value.end) > Date.parse(value.start), {
+  ...onlineMeetingFields,
+}).strict().refine((value) => Date.parse(value.end) > Date.parse(value.start), {
   message: "end must be after start",
   path: ["end"],
 }).refine((value) => !value.attendees?.length || value.confirmNotifications === true, {
   message: "Inviting attendees requires confirmNotifications: true.",
   path: ["confirmNotifications"],
-}).meta({ ref: "Microsoft365CalendarEventBody" })
+}).refine(providerNeedsMeeting.check, providerNeedsMeeting.issue).meta({ ref: "Microsoft365CalendarEventBody" })
 
 const calendarEventResponseSchema = z.object({
   ok: z.literal(true),
   event: calendarEventSchema,
+  warning: z.string().optional().describe("Present when a Teams meeting was asked for but Microsoft returned no join link. The event exists; do not create it again."),
 }).meta({ ref: "Microsoft365CalendarEventResponse" })
+
+/** A meeting asked for without a join link coming back is said out loud, never reported as a plain success. */
+function calendarEventResult(input: { isOnlineMeeting?: boolean }, event: Microsoft365CalendarEvent) {
+  if (input.isOnlineMeeting !== true || event.onlineMeetingUrl) return { ok: true as const, event }
+  return {
+    ok: true as const, event,
+    warning: "The event was saved, but Microsoft did not return a Teams join link. The organization may not allow Teams meetings in Outlook, or the account has no Teams license. Tell the user to open the event in Outlook and turn on Teams meeting; do not create the event again.",
+  }
+}
 
 const calendarEventParamSchema = z.object({ eventId: graphItemIdSchema })
 const calendarEventUpdateBodySchema = z.object({
@@ -223,6 +243,8 @@ const calendarEventUpdateBodySchema = z.object({
   start: z.string().max(40).datetime().optional().describe("New UTC start, with Z suffix. Rescheduling requires both start and end."),
   end: z.string().max(40).datetime().optional().describe("New UTC end, with Z suffix."),
   location: z.string().trim().max(255).optional(),
+  isOnlineMeeting: z.literal(true).optional().describe("true adds a Teams meeting and join link to this event. Microsoft cannot remove one again through this field."),
+  onlineMeetingProvider: onlineMeetingFields.onlineMeetingProvider,
 }).strict()
   .refine(({ confirmNotifications: _confirmation, ...fields }) => Object.values(fields).some((entry) => entry !== undefined), "Provide at least one event field.")
   .refine((value) => (value.start === undefined && value.end === undefined)
@@ -232,6 +254,7 @@ const calendarEventUpdateBodySchema = z.object({
     message: "bodyContentType needs body.",
     path: ["bodyContentType"],
   })
+  .refine(providerNeedsMeeting.check, providerNeedsMeeting.issue)
   .meta({ ref: "Microsoft365CalendarEventUpdateBody" })
 
 const calendarCancelBodySchema = z.object({
@@ -714,13 +737,14 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
 
   app.patch(
     "/v1/capabilities/microsoft-365/calendar-events/:eventId",
-    describeMutation("updateMicrosoft365CalendarEvent", "Edit or reschedule an Outlook calendar event", "Requires Calendars.ReadWrite and calendarWrite. Updates only supplied subject, body, location, or paired UTC start/end. Requires confirmNotifications: true because updates may email attendees.", calendarEventResponseSchema),
+    describeMutation("updateMicrosoft365CalendarEvent", "Edit or reschedule an Outlook calendar event", "Requires Calendars.ReadWrite and calendarWrite. Updates only supplied subject, body, location, or paired UTC start/end; isOnlineMeeting: true adds a Teams meeting. Requires confirmNotifications: true because updates may email attendees.", calendarEventResponseSchema),
     orgMemberRouteMiddleware, boundedMutationBody, paramValidator(calendarEventParamSchema), jsonValidator(calendarEventUpdateBodySchema),
     async (c) => {
       const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["calendarWrite"], "Outlook calendar read/write")
       if (client instanceof Response) return client
       try {
-        return c.json({ ok: true, event: await client.updateCalendarEvent(c.req.valid("param").eventId, c.req.valid("json")) })
+        const input = c.req.valid("json")
+        return c.json(calendarEventResult(input, await client.updateCalendarEvent(c.req.valid("param").eventId, input)))
       } catch (error) { return c.json(graphError(error), 502) }
     },
   )
@@ -1022,7 +1046,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Create an Outlook calendar event as the calling member",
-      description: "Creates an event in the calling member's default calendar. Adding attendees sends Microsoft calendar invitations, so it requires confirmNotifications: true.",
+      description: "Creates an event in the calling member's default calendar. Adding attendees sends Microsoft calendar invitations, so it requires confirmNotifications: true. isOnlineMeeting: true makes it a Teams meeting; check event.onlineMeetingUrl for the join link.",
       responses: {
         200: jsonResponse("Outlook calendar event created.", calendarEventResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -1045,8 +1069,8 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       }
 
       try {
-        const event = await graphClient(token.accessToken).createCalendarEvent(c.req.valid("json"))
-        return c.json({ ok: true, event })
+        const input = c.req.valid("json")
+        return c.json(calendarEventResult(input, await graphClient(token.accessToken).createCalendarEvent(input)))
       } catch (error) {
         return c.json(graphError(error), 502)
       }
