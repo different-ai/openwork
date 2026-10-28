@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactElement } from "react";
+import type { ComponentProps } from "react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { ControlCenterLifecycle, ControlCenterPulse, ControlCenterRevenue, ControlCenterSharing } from "@openwork/types/den/admin-control-center";
 import { SERIES_PALETTE } from "../../../app/(den)/dashboard/_features/analytics/series-colors";
@@ -30,7 +30,7 @@ function TipBox({ active, title, lines }: { active: boolean | undefined; title: 
   </div>;
 }
 
-function Frame({ label, height, children }: { label: string; height: string; children: ReactElement }) {
+function Frame({ label, height, children }: { label: string; height: string; children: ComponentProps<typeof ResponsiveContainer>["children"] }) {
   return <div role="group" aria-label={label} className={`${height} min-w-0 max-w-full overflow-hidden text-xs`}>
     <ResponsiveContainer width="100%" height="100%" minWidth={0}>{children}</ResponsiveContainer>
   </div>;
