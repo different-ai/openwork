@@ -503,10 +503,10 @@ function rewriteSelectedModel(prepared: PreparedRequest, upstream: ResolvedUpstr
   if (modified) prepared.body = JSON.stringify(json)
 }
 
-function buildUpstreamHeaders(request: Request, family: ProtocolFamily, openworkRequestId: string) {
+function buildUpstreamHeaders(request: Request, family: ProtocolFamily, providerHeaders: readonly string[], openworkRequestId: string) {
   const headers = new Headers()
   request.headers.forEach((value, name) => {
-    if (name.toLowerCase() !== GATEWAY_GRANT_HEADER && name.toLowerCase() !== GATEWAY_REQUEST_MODEL_HEADER && isAllowedRequestHeader(family, name)) headers.set(name, value)
+    if (name.toLowerCase() !== GATEWAY_GRANT_HEADER && name.toLowerCase() !== GATEWAY_REQUEST_MODEL_HEADER && isAllowedRequestHeader(family, name, providerHeaders)) headers.set(name, value)
   })
   headers.set("x-openwork-request-id", openworkRequestId)
   return headers
@@ -1064,7 +1064,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       requestBytes: prepared.body === null ? null : Buffer.byteLength(prepared.body),
     })
 
-    const headers = buildUpstreamHeaders(request, resolved.family, openworkRequestId)
+    const headers = buildUpstreamHeaders(request, resolved.family, catalog?.requestHeaders ?? [], openworkRequestId)
     if (auth.kind === "header") headers.set(auth.header.name, auth.header.value)
     else auth.sign({ method, url: prepared.url, headers, body: prepared.body })
 

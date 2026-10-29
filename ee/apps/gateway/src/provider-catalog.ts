@@ -15,7 +15,17 @@ export type CatalogProvider = {
   modelApiPaths?: ReadonlyMap<string, string>
   /** A protocol family the SDK package alone does not identify (Claude on Microsoft Foundry speaks @ai-sdk/anthropic). */
   family?: "microsoft_foundry"
+  /** Request headers this provider's own API requires, forwarded beyond its protocol family's allowlist. */
+  requestHeaders?: readonly string[]
 }
+
+// OpenCode Zen and Go reject a request without the session headers OpenCode
+// sends its own providers.
+const opencodeRequestHeaders = ["x-opencode-session", "x-opencode-request", "x-opencode-project", "x-opencode-client"]
+const providerRequestHeaders = new Map<string, readonly string[]>([
+  ["opencode", opencodeRequestHeaders],
+  ["opencode-go", opencodeRequestHeaders],
+])
 
 export type ProviderCatalog = {
   getCatalogProvider(providerId: string): CatalogProvider | null
@@ -44,8 +54,10 @@ export function createProviderCatalog(raw: unknown): ProviderCatalog {
     for (const [id, value] of Object.entries(withLiteLlmProvider(withMicrosoftFoundryProvider(withBedrockMantleProvider(raw))))) {
       const provider = readCatalogProvider(value)
       if (!provider) continue
-      providers.set(id, id === BEDROCK_MANTLE_PROVIDER_ID ? { ...provider, modelApiPaths: bedrockMantleApiPathsFromCatalog(raw) }
-        : id === MICROSOFT_FOUNDRY_PROVIDER_ID ? { ...provider, family: "microsoft_foundry" } : provider)
+      const entry = id === BEDROCK_MANTLE_PROVIDER_ID ? { ...provider, modelApiPaths: bedrockMantleApiPathsFromCatalog(raw) }
+        : id === MICROSOFT_FOUNDRY_PROVIDER_ID ? { ...provider, family: "microsoft_foundry" as const } : provider
+      const requestHeaders = providerRequestHeaders.get(id)
+      providers.set(id, requestHeaders ? { ...entry, requestHeaders } : entry)
     }
   }
   return {
