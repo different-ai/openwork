@@ -501,6 +501,16 @@
               ],
               "description": "Connect: more MCP server presets: Admins see more reviewed official MCP servers (Airtable, Amplitude, Canva, Fireflies, Hugging Face, Lucid, Mural, Vercel, PostHog, monday.com, Honeycomb, Klaviyo, Semgrep, Cal.com, Tavily, Figma) to add with one click in Manage › Connectors. Each uses the same OAuth or API-key flow as the existing presets. Turning it off hides the new suggestions; existing connections stay. Renders DEN_FEATURE_EXPANDED_MCP_PRESETS."
             },
+            "analyticsDailyTrends": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Analytics: daily trends: Usage & adoption shows active users, sessions and tasks per day for the last 30 days, with a Daily / Weekly switch next to the project filter. Turning it off returns to the 12-week weekly charts. Renders DEN_FEATURE_ANALYTICS_DAILY_TRENDS."
+            },
             "gatewayDashboard": {
               "enum": [
                 "",
