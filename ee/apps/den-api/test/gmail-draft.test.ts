@@ -30,15 +30,15 @@ for (const [name, body] of [
 ]) {
   test(`draft body preserves ${name} line breaks in both alternatives`, () => {
     const { plain, html } = bodyParts(body)
-    assert.equal(plain, body)
-    assert.equal((html.match(/<div>/g) ?? []).length, body.split("\n").length)
+    assert.equal(plain, name === "list" ? body.replace(/^- /gm, "") : body)
+    assert.equal((html.match(/<(?:div|li)[ >]/g) ?? []).length, body.split("\n").length)
   })
 }
 
 test("draft body joins genuine 72-column hard-wrapped prose", () => {
   const { plain, html } = bodyParts(wrapped)
   assert.equal(plain, wrapped.replaceAll("\n", " "))
-  assert.equal((html.match(/<div>/g) ?? []).length, 1)
+  assert.equal((html.match(/<div[ >]/g) ?? []).length, 1)
 })
 
 test("draft body normalizes CRLF without flattening blank lines", () => {
