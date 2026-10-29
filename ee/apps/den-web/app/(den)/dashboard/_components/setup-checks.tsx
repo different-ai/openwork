@@ -1,9 +1,9 @@
 "use client";
 
-import { Loader2, Lock, X } from "lucide-react";
+import { Loader2, Lock, Minus, X } from "lucide-react";
 import type { ReactNode } from "react";
 
-export type SetupCheckStatus = "waiting" | "running" | "current" | "done" | "failed" | "blocked";
+export type SetupCheckStatus = "waiting" | "running" | "current" | "done" | "failed" | "blocked" | "skipped";
 
 export type SetupCheck = {
   id: string;
@@ -24,8 +24,9 @@ function CheckIcon({ status }: { status: SetupCheckStatus }) {
       </svg>
     );
   }
+  if (status === "skipped") return <Minus className="h-[18px] w-[18px] shrink-0 text-gray-400" strokeWidth={1.5} aria-hidden />;
   if (status === "blocked") return <Lock className="h-[18px] w-[18px] shrink-0 text-gray-500" strokeWidth={1.5} aria-hidden />;
-  if (status === "running") return <Loader2 className="h-[18px] w-[18px] shrink-0 animate-spin text-gray-400" aria-hidden />;
+  if (status === "running") return <Loader2 className="h-[18px] w-[18px] shrink-0 motion-safe:animate-spin text-gray-400" aria-hidden />;
   if (status === "failed") {
     return (
       <span aria-hidden className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-red-600 text-white">

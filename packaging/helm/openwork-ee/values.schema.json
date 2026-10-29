@@ -531,6 +531,16 @@
               ],
               "description": "Remember last sign-in method: People who last signed in with a password, Google or GitHub skip the email step next time: Den web lists the sign-in methods with a Last used badge, and Single sign-on returns to the email step. Signing in with SSO forgets the method. Renders DEN_FEATURE_LAST_USED_SIGN_IN."
             },
+            "customConnectorDiscoveryChecks": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Connect: live custom connector checks: When an admin adds a custom MCP by address, show live results for connecting to the server, looking up sign-in settings and checking the sign-in provider before they choose how to connect. Turning it off restores the existing detection display; existing connections keep working. Renders DEN_FEATURE_CUSTOM_CONNECTOR_DISCOVERY_CHECKS."
+            },
             "expandedMcpPresets": {
               "enum": [
                 "",

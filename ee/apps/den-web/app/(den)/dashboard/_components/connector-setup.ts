@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { connectorAccountReady } from "./connector-detail";
 import { type ConnectorRoute, routeSignInMethod } from "./connector-route";
+import type { DiscoveryCheck } from "./connector-discovery-stream";
 import { type ConnectorSignInMethod, connectorSignInMethod, oauthClientSecretRequired, oauthRequestFieldsForTarget } from "./connector-sign-in-method";
 import { libraryQueryKeys } from "./library-data";
 import { credentialModeForAuth, personalApiKeyStatus, usesMemberApiKey } from "./member-api-key";
@@ -89,7 +90,7 @@ function errorMessage(error: unknown, fallback: string): string {
  * saves the key or OAuth app step two asks for, or right away when there is
  * nothing to sign in to.
  */
-export function useConnectorSetup({ target, initialConnectionId, onConnectionCreated, mode = "member", route = null, routeRequired = false }: {
+export function useConnectorSetup({ target, initialConnectionId, onConnectionCreated, mode = "member", route = null, routeRequired = false, liveDiscovery = false }: {
   target: ConnectorTarget | null;
   initialConnectionId: string | null;
   onConnectionCreated?: (connectionId: string) => void;
@@ -98,10 +99,12 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   route?: ConnectorRoute | null;
   /** A custom connector waits for its route before any check creates a connection. */
   routeRequired?: boolean;
+  /** Stream real phase results for the opt-in custom connector checklist. */
+  liveDiscovery?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { orgId, orgContext } = useOrgDashboard();
-  const discover = useDiscoverMcpConnectionRequirements();
+  const { mutateAsync: discoverRequirements } = useDiscoverMcpConnectionRequirements();
   const createConnection = useCreateMcpConnection();
   const updateConnection = useUpdateMcpConnection();
   const deleteConnection = useDeleteMcpConnection();
@@ -109,6 +112,10 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   const usable = useMcpConnections("usable");
   const [discovery, setDiscovery] = useState<McpRequirementsDiscovery | null>(null);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [discoveryPending, setDiscoveryPending] = useState(true);
+  const discoveryIdentity = useRef<string | null>(null);
+  const [discoveryChecks, setDiscoveryChecks] = useState<DiscoveryCheck[]>([]);
+  const [discoveryAttempt, setDiscoveryAttempt] = useState(0);
   const [connectionId, setConnectionId] = useState<string | null>(initialConnectionId);
   const [createdHere, setCreatedHere] = useState(false);
   const [signIn, setSignIn] = useState<SignInState>({ kind: "idle" });
@@ -118,37 +125,54 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   const [skipping, setSkipping] = useState(false);
   const [skipError, setSkipError] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const discoveredKey = useRef<string | null>(null);
   const autoCreated = useRef(false);
 
   const connection: ExternalMcpConnection | null = usable.data?.find((entry) => entry.id === connectionId) ?? null;
   // A chosen route answers what detection could not, so only an unreachable server fails the first check.
-  const findDone = discovery !== null && discovery.status !== "unreachable" && (discovery.status !== "unsupported" || route !== null);
+  const findDone = !discoveryPending && discovery !== null && discovery.status !== "unreachable" && (discovery.status !== "unsupported" || route !== null);
   const awaitingRoute = routeRequired && route === null;
   const method: ConnectorSignInMethod | null = !findDone || !discovery || awaitingRoute
     ? null
     : route ? routeSignInMethod(route) : connectorSignInMethod(discovery, target?.preset);
-  const routeHeaders = route?.requestHeaders;
+  const [probeHeaders, setProbeHeaders] = useState<ConnectorRoute["requestHeaders"] | undefined>();
+  const routeHeaders = route?.requestHeaders ?? probeHeaders;
   const requestHeaders = useMemo(() => routeHeaders ?? [], [routeHeaders]);
-  const requestHeadersKey = JSON.stringify(requestHeaders);
   const signedIn = Boolean(connection && (connection.authType === "none" || connectorAccountReady(connection)));
   const apiKeyConfigured = connection?.authType === "apikey";
   const usesIndividualKeys = Boolean(connection && usesMemberApiKey(connection));
   const tools = useMcpConnectionTools(connectionId ?? "", signedIn && !usesIndividualKeys);
 
+  const discoveryUrl = target?.url;
   useEffect(() => {
-    // A deep link can resolve the catalog entry before the organization loads.
-    // Headers the admin adds can change what the server answers, so they re-run it.
-    const key = `${target?.url ?? ""}\n${requestHeadersKey}`;
-    if (!target || !orgId || discoveredKey.current === key) return;
-    discoveredKey.current = key;
-    setDiscovery(null);
+    if (!discoveryUrl || !orgId) return;
+    const controller = new AbortController();
+    let current = true;
+    const identity = `${orgId}\n${discoveryUrl}`;
+    // Retrying the same server keeps its detected selection and own-app fields mounted.
+    // Different servers/organizations must never inherit the previous discovery.
+    if (discoveryIdentity.current !== identity) setDiscovery(null);
+    discoveryIdentity.current = identity;
+    setDiscoveryPending(true);
     setDiscoveryError(null);
-    // Only the latest request's answer counts when the headers change mid-flight.
-    discover.mutateAsync({ url: target.url, requestHeaders })
-      .then((result) => { if (discoveredKey.current === key) setDiscovery(result); })
-      .catch((error: unknown) => { if (discoveredKey.current === key) setDiscoveryError(errorMessage(error, "OpenWork could not reach it.")); });
-  }, [discover, orgId, requestHeaders, requestHeadersKey, target]);
+    setDiscoveryChecks([]);
+    void discoverRequirements({
+      url: discoveryUrl,
+      requestHeaders,
+      signal: controller.signal,
+      ...(liveDiscovery ? { onCheck: (check: DiscoveryCheck) => {
+        if (!current) return;
+        setDiscoveryChecks((checks) => [...checks.filter((entry) => entry.id !== check.id), check]);
+      } } : {}),
+    }).then((result) => { if (current) { setDiscovery(result); setDiscoveryPending(false); } })
+      .catch((error: unknown) => {
+        if (!current) return;
+        setDiscoveryPending(false);
+        setDiscoveryError(errorMessage(error, "OpenWork could not reach it."));
+        setDiscoveryChecks((checks) => checks.map((check) => check.status === "running"
+          ? { ...check, status: "failed", code: "unavailable" } : check));
+      });
+    return () => { current = false; controller.abort(); };
+  }, [discoverRequirements, discoveryUrl, orgId, requestHeaders, liveDiscovery, discoveryAttempt]);
 
   const stopPolling = useCallback(() => {
     if (pollTimer.current) clearInterval(pollTimer.current);
@@ -450,8 +474,14 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     /** Step two is waiting on a key or OAuth app from this viewer. */
     needsInput: needsAdminInput && mode === "admin" && !connection,
     discovery,
+    discoveryChecks,
+    discoveryFailed: discoveryError !== null,
+    retryDiscovery: (headers?: ConnectorRoute["requestHeaders"]) => {
+      if (headers) setProbeHeaders(headers);
+      setDiscoveryAttempt((attempt) => attempt + 1);
+    },
     /** The first check is still waiting on the server. */
-    discovering: discovery === null && discoveryError === null,
+    discovering: discoveryPending,
     /** OpenWork could not reach the server at all. */
     unreachable: discoveryError !== null || discovery?.status === "unreachable",
     secretRequired: oauthClientSecretRequired(discovery),

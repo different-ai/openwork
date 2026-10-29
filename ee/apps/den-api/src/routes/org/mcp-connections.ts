@@ -3,6 +3,8 @@ import { observeSignInRegistration } from "../../mcp-registration/sign-in.js"
 import { mcpRegistrationStatusByPreset } from "../../mcp-registration/status.js"
 import type { Context, Hono } from "hono"
 import { bodyLimit } from "hono/body-limit"
+import { streamSSE } from "hono/streaming"
+import { streamMcpDiscovery } from "./mcp-discovery-stream.js"
 import type { RequestIdVariables } from "hono/request-id"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
@@ -39,7 +41,7 @@ import { env } from "../../env.js"
 import { recordWorkbotConnection } from "../../workbot/telemetry.js"
 import { connectionRemovalLink, memberSignInLink } from "../../agent-links.js"
 import { appLogger } from "../../observability/logger.js"
-import { organizationFeatureEnabled } from "../../features.js"
+import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import {
   jsonValidator,
   orgMemberRoute,
@@ -2576,6 +2578,46 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           message: error instanceof Error ? error.message : "MCP requirements discovery failed.",
         }, 502)
       }
+    },
+  )
+
+  app.post(
+    "/v1/mcp-connections/discover/stream",
+    describeRoute({
+      tags: ["Authentication"],
+      summary: "Stream external MCP connection requirements checks",
+      description: "Side-effect-free discovery with ordered SSE check events (aggregate server, resource and provider phases), followed by a result event containing the same requirements as /discover, or a safe error event. No client registration, credential writes or extra probes. Disconnecting cancels discovery. Requires customConnectorDiscoveryChecks.",
+      ...{ "x-mcp": false },
+      responses: {
+        200: {
+          description: "SSE check events contain JSON {id: server|resource|provider, status: running|passed|failed|skipped, httpStatus?: number, code?: authentication_required|not_required|issuer_mismatch|unavailable|unsupported}. A result event contains McpRequirementsDiscovery; an error event contains {message: 'The server check could not finish. Try again.'}.",
+          content: { "text/event-stream": { schema: { type: "string" } } },
+        },
+        400: jsonResponse("Invalid request.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        404: jsonResponse("Discovery checks are disabled.", z.object({ error: z.literal("feature_disabled"), feature: z.literal("customConnectorDiscoveryChecks") })),
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("customConnectorDiscoveryChecks"),
+    jsonValidator(discoverConnectionBodySchema),
+    async (c) => {
+      const { url, requestHeaders } = c.req.valid("json")
+      const discoveryHeaders = validateExternalMcpRequestHeaders(requestHeaders ?? [], "discover")
+      if (!discoveryHeaders.ok) return c.json({ error: "invalid_request", message: discoveryHeaders.message }, 400)
+      const canViewSettings = await hasPermission(c, "connections.view")
+      const response = streamSSE(c, (stream) => streamMcpDiscovery({
+        stream,
+        signal: c.req.raw.signal,
+        discover: async (signal, onCheck) => requirementsForCaller(await discoverConnectionRequirements({
+          serverUrl: url,
+          fetch: withExternalMcpRequestHeaders(externalMcpDiscoveryFetch, url, discoveryHeaders.headers),
+          signal,
+          onCheck,
+        }), canViewSettings),
+      }))
+      response.headers.set("Cache-Control", "no-store")
+      return response
     },
   )
 

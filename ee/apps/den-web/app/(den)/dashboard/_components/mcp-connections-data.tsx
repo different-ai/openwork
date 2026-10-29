@@ -3,7 +3,7 @@
 import type { McpRegistrationStatus } from "@openwork/types/den/mcp-registration";
 import { z } from "zod";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { DenRequestCanceledError, DenRequestTimeoutError, getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
+import { DenRequestCanceledError, DenRequestTimeoutError, getRequestError, isReauthRequiredError, requestJson, requestResponse } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { memberApiKeyFailureMessage } from "./member-api-key";
 import {
@@ -12,6 +12,7 @@ import {
 } from "./mcp-tool-error-attribution";
 import type { McpAuthorizationDebugDetails } from "./mcp-authorization-url";
 import { libraryQueryKeys } from "./library-data";
+import { type DiscoveryCheck, DISCOVERY_STREAM_ERROR, readDiscoveryStream } from "./connector-discovery-stream";
 
 const ORG_SCOPE_HEADER = "x-openwork-org-id";
 
@@ -831,21 +832,53 @@ export function useResolveMcpConnection() {
 export function useDiscoverMcpConnectionRequirements() {
   const { orgId } = useOrgDashboard();
   return useMutation({
-    mutationFn: async (input: string | { url: string; requestHeaders?: McpRequestHeaderInput[] }): Promise<McpRequirementsDiscovery> => {
-      const { url, requestHeaders } = typeof input === "string" ? { url: input, requestHeaders: undefined } : input;
-      const { response, payload } = await requestJson(
-        "/v1/mcp-connections/discover",
-        {
-          method: "POST",
-          headers: getOrgScopeHeaders(requireOrgId(orgId)),
-          body: JSON.stringify(requestHeaders?.length ? { url, requestHeaders } : { url }),
-        },
-        20000,
-      );
-      if (!response.ok) {
-        throw getRequestError(payload, response, `Failed to discover MCP requirements (${response.status}).`);
+    mutationFn: async (input: string | {
+      url: string;
+      requestHeaders?: McpRequestHeaderInput[];
+      signal?: AbortSignal;
+      onCheck?: (check: DiscoveryCheck) => void;
+    }): Promise<McpRequirementsDiscovery> => {
+      const { url, requestHeaders, signal, onCheck } = typeof input === "string"
+        ? { url: input, requestHeaders: undefined, signal: undefined, onCheck: undefined }
+        : input;
+      const controller = new AbortController();
+      const abort = () => controller.abort(signal?.reason);
+      if (signal?.aborted) abort();
+      else signal?.addEventListener("abort", abort, { once: true });
+      const deadline = setTimeout(() => controller.abort(), 20000);
+      try {
+        if (onCheck) {
+          const response = await requestResponse("/v1/mcp-connections/discover/stream", {
+            method: "POST",
+            headers: { ...getOrgScopeHeaders(requireOrgId(orgId)), Accept: "text/event-stream" },
+            body: JSON.stringify(requestHeaders?.length ? { url, requestHeaders } : { url }),
+            signal: controller.signal,
+          });
+          if (response.ok && response.body && response.headers.get("content-type")?.includes("text/event-stream")) {
+            return await readDiscoveryStream(response.body, onCheck, controller.signal);
+          }
+          // A kill switch or an older API restores ordinary discovery. Never invent live check results.
+          if (response.status !== 404) throw new Error(DISCOVERY_STREAM_ERROR);
+          await response.body?.cancel();
+        }
+        const { response, payload } = await requestJson(
+          "/v1/mcp-connections/discover",
+          {
+            method: "POST",
+            headers: getOrgScopeHeaders(requireOrgId(orgId)),
+            body: JSON.stringify(requestHeaders?.length ? { url, requestHeaders } : { url }),
+            signal: controller.signal,
+          },
+          20000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to discover MCP requirements (${response.status}).`);
+        }
+        return payload as McpRequirementsDiscovery;
+      } finally {
+        clearTimeout(deadline);
+        signal?.removeEventListener("abort", abort);
       }
-      return payload as McpRequirementsDiscovery;
     },
   });
 }

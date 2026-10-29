@@ -9,6 +9,8 @@ import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import type { OAuthAppInput } from "./connector-setup";
+import { ConnectorDiscoveryChecks } from "./connector-discovery-checks";
+import type { DiscoveryCheck } from "./connector-discovery-stream";
 import { OAuthAppFields } from "./connector-setup-fields";
 import {
   type ConnectorRoute,
@@ -21,7 +23,7 @@ import {
 } from "./connector-route";
 import { ItemHeader, ItemPage, SectionTitle, StepFooter } from "./item-header";
 import { ConnectorLogo } from "./item-logo";
-import type { McpRequirementsDiscovery } from "./mcp-connections-data";
+import type { McpRequirementsDiscovery, McpRequestHeaderInput } from "./mcp-connections-data";
 import { McpCredentialInput } from "./mcp-credential-input";
 
 const OAUTH_APP_FORM_ID = "connector-route-oauth-app";
@@ -100,7 +102,7 @@ function newHeaderRow(): RequestHeaderDraft {
  * (how people sign in, and how OpenWork registers its OAuth app) and lets the
  * admin take another route: their own OAuth app, an API key, or extra headers.
  */
-export function ConnectorRouteStep({ name, url, back, initial = null, discovery, discovering, unreachable, secretRequired, onCancel, onContinue }: {
+export function ConnectorRouteStep({ name, url, back, initial = null, discovery, discovering, unreachable, secretRequired, liveChecks, onCancel, onContinue }: {
   name: string;
   /** The route picked before Back, so going back keeps the admin's choices. */
   initial?: ConnectorRoute | null;
@@ -110,6 +112,7 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
   discovering: boolean;
   unreachable: boolean;
   secretRequired: boolean;
+  liveChecks?: { checks: DiscoveryCheck[]; failed: boolean; onRetry: (headers: McpRequestHeaderInput[]) => void };
   onCancel: () => void;
   onContinue: (route: ConnectorRoute, oauthApp: OAuthAppInput | null) => void;
 }) {
@@ -147,7 +150,7 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
   }
 
   const note = discovering
-    ? `Checking ${name}...`
+    ? liveChecks ? null : `Checking ${name}...`
     : !unreachable && detected.auth === null
       ? `${name} didn't say how people sign in.`
       : null;
@@ -160,7 +163,18 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
         title={`Add ${name}`}
         description={<span className="break-all font-mono text-[13px]" data-testid="connector-route-url">{url}</span>}
       />
-      {unreachable ? (
+      {liveChecks ? (
+        <ConnectorDiscoveryChecks
+          checks={liveChecks.checks}
+          discovering={discovering}
+          failed={liveChecks.failed}
+          onRetry={() => {
+            if (hasProblems) { setShowProblems(true); return; }
+            liveChecks.onRetry(requestHeaders);
+          }}
+        />
+      ) : null}
+      {unreachable && !liveChecks ? (
         <DenNotice
           tone="error"
           message={`OpenWork couldn't reach ${name}. Check the address, or add the header it needs, then continue.`}

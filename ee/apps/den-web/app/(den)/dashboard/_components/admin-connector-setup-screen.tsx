@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessPeopleIds, peopleLabel } from "./access-summary";
 import type { ConnectorRoute } from "./connector-route";
@@ -97,6 +97,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const [showOAuthApp, setShowOAuthApp] = useState(false);
   // A custom connector first shows what OpenWork detected and lets the admin pick another route.
   const isCustom = catalogId === "custom";
+  const liveDiscovery = isCustom && orgFeatureEnabled(orgContext, "customConnectorDiscoveryChecks");
   const initialConnectionId = searchParams.get("connection");
   const [route, setRoute] = useState<ConnectorRoute | null>(null);
   const [previousRoute, setPreviousRoute] = useState<ConnectorRoute | null>(null);
@@ -106,6 +107,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
     target,
     route,
     routeRequired: isCustom && !initialConnectionId,
+    liveDiscovery,
     initialConnectionId,
     onConnectionCreated: (connectionId) => {
       const params = new URLSearchParams(searchParams.toString());
@@ -269,6 +271,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
         discovering={setup.discovering}
         unreachable={setup.unreachable}
         secretRequired={setup.secretRequired}
+        liveChecks={liveDiscovery ? { checks: setup.discoveryChecks, failed: setup.discoveryFailed, onRetry: setup.retryDiscovery } : undefined}
         onCancel={() => router.push(getAddConnectorRoute(orgSlug))}
         onContinue={(chosen, oauthApp) => {
           setRoute(chosen);

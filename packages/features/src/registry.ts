@@ -613,6 +613,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  customConnectorDiscoveryChecks: {
+    label: "Connect: live custom connector checks",
+    description: "When an admin adds a custom MCP by address, show live results for connecting to the server, looking up sign-in settings and checking the sign-in provider before they choose how to connect. Turning it off restores the existing detection display; existing connections keep working.",
+    category: "connect",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/custom-connector-discovery-checks/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   expandedMcpPresets: {
     label: "Connect: more MCP server presets",
     description: "Admins see more reviewed official MCP servers (Airtable, Amplitude, Canva, Fireflies, Hugging Face, Lucid, Mural, Vercel, PostHog, monday.com, Honeycomb, Klaviyo, Semgrep, Cal.com, Tavily, Figma) to add with one click in Manage › Connectors. Each uses the same OAuth or API-key flow as the existing presets. Turning it off hides the new suggestions; existing connections stay.",

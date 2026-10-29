@@ -389,7 +389,16 @@ export type EnterpriseMcpConnectionRequirements = {
   warnings: EnterpriseMcpRequirementWarning[]
 }
 
+export type EnterpriseMcpDiscoveryCheck = {
+  id: "server" | "resource" | "provider"
+  status: "running" | "passed" | "failed" | "skipped"
+  httpStatus?: number
+  code?: "authentication_required" | "not_required" | "issuer_mismatch" | "unavailable" | "unsupported"
+}
+
 export type DiscoverEnterpriseMcpConnectionRequirementsInput = {
+  onCheck?: (check: EnterpriseMcpDiscoveryCheck) => void
+  signal?: AbortSignal
   serverUrl: string
   fetch: EnterpriseMcpFetch
   timeoutMs?: number
