@@ -9,6 +9,15 @@ const test = spec.world(workbotFirstRun, {
 });
 
 test("a new person verifies their email, creates a workspace and returns directly to Workbot", async ({ world, user, probe, step, evidence }) => {
+  // Without a model the opening greeting never saves, so Workbot may show its optional welcome on any arrival.
+  const reachComposer = async (timeoutMs: number) => {
+    const arrival = await probe.eventually(async () => ({
+      ready: (await probe.dom('textarea[aria-label="Message Workbot"]')).elements.length > 0,
+      welcome: await probe.has("Get started"),
+    }), { within: 30_000, label: "Workbot opens the conversation or its optional welcome", until: value => value.ready || value.welcome });
+    if (arrival.welcome) await user.click({ role: "button", label: "Get started" });
+    await user.see({ role: "textbox", label: "Message Workbot" }, { timeoutMs });
+  };
   await step("before: Workbot asks the new person to sign in, not to manage an organization", async () => {
     await user.navigate(world.url);
     await user.see({ testId: "workbot-sign-in-frame" }, { timeoutMs: 90_000 });
@@ -48,12 +57,7 @@ test("a new person verifies their email, creates a workspace and returns directl
     const account: unknown = JSON.parse(await probe.text());
     expect(account).toMatchObject({ organizationName: world.workspaceName, enabled: true });
     await user.navigate(world.url);
-    const arrival = await probe.eventually(async () => ({
-      ready: (await probe.dom('textarea[aria-label="Message Workbot"]')).elements.length > 0,
-      welcome: await probe.has("Get started"),
-    }), { within: 30_000, label: "Workbot opens the conversation or its optional welcome", until: value => value.ready || value.welcome });
-    if (arrival.welcome) await user.click({ role: "button", label: "Get started" });
-    await user.see({ role: "textbox", label: "Message Workbot" }, { timeoutMs: 90_000 });
+    await reachComposer(90_000);
     await user.notSee({ testId: "workbot-workspace-access" });
     expect(new URL(await probe.url()).origin).toBe(world.url);
     evidence.recordAssertionEvidence("The workspace opens in Workbot, not the dashboard", "Workbot has a usable message composer after its real OAuth callback", new URL(await probe.url()).origin === world.url);
@@ -70,6 +74,6 @@ test("a new person verifies their email, creates a workspace and returns directl
     evidence.recordAssertionEvidence("Workspace choice fits a phone viewport", `Document width ${layout.documentWidth}; viewport ${layout.viewportWidth}`, layout.documentWidth <= layout.viewportWidth);
     await user.screenshot();
     await user.click({ role: "button", label: "Continue to Workbot" });
-    await user.see({ role: "textbox", label: "Message Workbot" }, { timeoutMs: 60_000 });
+    await reachComposer(60_000);
   });
 });
