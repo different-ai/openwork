@@ -17,7 +17,14 @@ export type ActivationFacts = {
     pending: number
   }
   skillUsed: boolean
-  ownProvider: { reportedOnDevice: boolean; addedProviderName: string | null }
+  ownProvider: {
+    reportedOnDevice: boolean
+    addedProviderName: string | null
+    /** The organization provides models centrally (Den/managed models), so the member has a provider without setting one up themselves. */
+    orgProvided: boolean
+    /** The member may add their own model provider (desktop policy `allowCustomProviders` !== false). False when the org allows only its own providers, so the step is never an un-completable blocker. */
+    canConfigure: boolean
+  }
   gateway: { canManage: boolean; hasProvider: boolean; providerName: string | null }
   readyConnectionName: string | null
   ownerName: string | null
@@ -51,13 +58,21 @@ export function computeActivationState(facts: ActivationFacts): ActivationState 
       case "use_skill":
         return { id, done: facts.skillUsed }
       case "own_provider": {
-        const { reportedOnDevice, addedProviderName } = facts.ownProvider
-        const done = reportedOnDevice || addedProviderName !== null
-        return {
-          id,
-          done,
-          ...(reportedOnDevice ? { detail: "Your key, on this device" } : addedProviderName ? { detail: `${addedProviderName} added` } : {}),
-        }
+        const { reportedOnDevice, addedProviderName, orgProvided, canConfigure } = facts.ownProvider
+        // The member has a model provider to use once they set one up, the organization provides
+        // models centrally, or the organization has disabled setting up personal providers (so the
+        // step is never an un-completable blocker for someone who cannot act on it).
+        const done = reportedOnDevice || addedProviderName !== null || orgProvided || !canConfigure
+        const detail = reportedOnDevice
+          ? "Your key, on this device"
+          : addedProviderName !== null
+            ? `${addedProviderName} added`
+            : orgProvided
+              ? "Models from your organization"
+              : !canConfigure
+                ? "Your team manages models"
+                : null
+        return { id, done, ...(detail ? { detail } : {}) }
       }
       case "gateway_provider": {
         const done = facts.gateway.hasProvider
