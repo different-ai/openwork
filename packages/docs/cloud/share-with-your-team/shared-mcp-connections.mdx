@@ -175,12 +175,22 @@ Publishing a connector never removes or changes anyone's own local MCP setup.
 
 Want to mention `@openwork` or DM an assistant inside Slack? See [OpenWork in Slack](/slack/overview) (private alpha). The assistant adds a bot installation to this existing user connection; it is available only to approved organizations.
 
-Slack's MCP server doesn't let apps register themselves. A Slack admin creates a
-Slack app once, and OpenWork Cloud uses that app for every member.
+Slack's MCP server doesn't let apps register themselves. Someone with permission
+to manage your Slack app sets it up once, and OpenWork Cloud uses that app for
+every member. Being an OpenWork owner or admin does not automatically give you
+permission to manage the app in Slack.
+
+<Warning>
+**Enable MCP in the Slack app before connecting.** In [Slack API apps](https://api.slack.com/apps),
+open the app whose client ID you will use in OpenWork, go to **Agents**, and turn
+on **MCP**. Saving a client ID and secret, installing the app, or approving Slack
+sign-in does not replace this step. Without it, connecting can fail with
+**The MCP server refused to start a session (HTTP 400)**.
+</Warning>
 
 1. Create or open a Slack app in [Slack API apps](https://api.slack.com/apps).
-2. Open the **Agents** tab in the app settings and turn on the **MCP** toggle.
-   Slack only serves MCP requests for apps that have it turned on.
+2. Open **Agents** in that app's settings and turn on the **MCP** toggle.
+   Confirm it is enabled in the same app whose credentials you enter in step 6.
 3. In **OAuth & Permissions**, add your
    [OAuth redirect URL](#oauth-redirect-url) to the redirect URLs.
 4. Add the **User Token Scopes** your team wants the AI to use. See
@@ -234,9 +244,30 @@ chat:write reactions:write channels:write groups:write im:write mpim:write canva
 
 ### Troubleshooting Slack
 
-- **Members can't connect, but the client ID and secret are right.** Open the
-  app in [Slack API apps](https://api.slack.com/apps), go to the **Agents** tab,
-  and turn on the **MCP** toggle.
+#### Connection failed: HTTP 400
+
+If OpenWork shows **The MCP server refused to start a session (HTTP 400)**,
+check the Slack app's **MCP** toggle first. One confirmed cause is Slack rejecting
+the connection because the app is not enabled for MCP access. This can happen
+after you approve sign-in, even when the client ID and secret are correct.
+
+1. Open [Slack API apps](https://api.slack.com/apps) and select the app whose
+   **Basic Information › App Credentials › Client ID** matches the one saved
+   in OpenWork's Slack connector. Do not enable MCP on a different app.
+2. Go to **Agents** and turn on **MCP**. If you cannot edit that page, ask the
+   person who manages the Slack app to do this; changing your OpenWork role
+   will not grant access to Slack's app settings.
+3. Return to OpenWork and retry **Sign in with Slack**. Members should retry
+   connecting their own accounts; do not recreate the connector or rotate its
+   client secret just to enable MCP.
+
+If MCP is already enabled on the matching app and the error persists, share the
+**Diagnostic reference** from the failure page with support, along with the time
+of the attempt and your time zone. HTTP 400 can have other causes; the reference
+lets support check the provider's response. Never share client secrets or tokens.
+
+#### Other Slack connection problems
+
 - **Slack says the redirect URL is invalid.** Add your
   [OAuth redirect URL](#oauth-redirect-url) to the Slack app's **OAuth &
   Permissions** redirect URLs.
