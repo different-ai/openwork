@@ -1,30 +1,18 @@
 // Asks Jev (TypeSafe System One, https://docs.typesafe.ai/primitives/choice)
-// which route and thinking level should answer a prompt. One Choice question;
-// each option is one route at one thinking level, keyed by an opaque id. Jev
-// sees the option keys and descriptions, never provider or model ids.
-import { AUTO_ROUTER_THINKING_LABELS, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
+// which route should answer a prompt. One Choice question; each option is one
+// route, keyed by an opaque id. Each route runs at its own thinking level, so
+// Jev never chooses one. Jev sees the option keys and descriptions, never
+// provider or model ids.
 
 export type JevOption = {
   key: string
   modelName: string
   useWhen: string
-  thinkingLevel: AutoRouterThinkingLevel
 }
 
 export type JevChoice = { key: string; confidence: number | null; model: string | null }
 
 export type AskJev = (input: { prompt: string; context: string | null; options: JevOption[]; signal?: AbortSignal }) => Promise<JevChoice | null>
-
-const THINKING_DESCRIPTIONS: Record<AutoRouterThinkingLevel, string> = {
-  default: "the model's standard reasoning",
-  none: "no extended reasoning; fastest, for trivial replies",
-  minimal: "almost no reasoning; very fast, for simple replies",
-  low: "light reasoning for straightforward tasks",
-  medium: "moderate reasoning for typical tasks",
-  high: "deep reasoning for complex, multi-step tasks",
-  xhigh: "very deep reasoning for hard problems",
-  max: "the most reasoning, for the hardest problems; slowest and most expensive",
-}
 
 /** Prompts longer than this are trimmed (start and end kept); routing rarely needs more. */
 const PROMPT_LIMIT = 12_000
@@ -39,7 +27,6 @@ export function jevRequestBody(input: { prompt: string; context: string | null; 
   const criteria = Object.fromEntries(input.options.map((option) => [option.key, {
     model: option.modelName,
     use_when: option.useWhen,
-    thinking: `${AUTO_ROUTER_THINKING_LABELS[option.thinkingLevel]}: ${THINKING_DESCRIPTIONS[option.thinkingLevel]}`,
   }]))
   return {
     model: input.model,
@@ -50,7 +37,7 @@ export function jevRequestBody(input: { prompt: string; context: string | null; 
     questions: {
       route: {
         type: "choice",
-        instructions: "An AI assistant must answer latest_request. Which model and thinking level should answer it? Follow each option's use_when. Prefer the least thinking that will still answer well.",
+        instructions: "An AI assistant must answer latest_request. Which model should answer it? Choose the option whose use_when fits best; an option meant for when nothing else matches is only right when no other option fits.",
         criteria,
       },
     },

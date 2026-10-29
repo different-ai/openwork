@@ -40,7 +40,9 @@ const BLOCKED_CHORDS = [
 ].map((parts) => ({ key: parts.at(-1), modifiers: parts.slice(0, -1) }));
 // Chromium on macOS runs these through the app menu, not page key events.
 const EDIT_COMMANDS = { a: "selectAll", z: "undo", "shift+z": "redo" };
-const ACTION_TYPES = ["click", "fill", "select", "set_checked", "key", "scroll", "reveal"];
+const ACTION_TYPES = ["click", "fill", "select", "set_checked", "key", "scroll", "reveal", "attach"];
+/** As many files as the approval card lists; the broker refuses more. */
+const MAX_FILES = 20;
 const PREPARE_CODES = ["stale_observation", "stale_element", "sign_in_required", "unverifiable_focus", "element_disabled", "element_outside_viewport",
   "element_obscured", "not_editable", "not_selectable", "option_unavailable", "not_checkable", "outside_viewport"];
 
@@ -523,9 +525,46 @@ function relevantPassages(text, question, maxChars) {
  * A host that draws the page scaled reports that scale in `inputScale`, since
  * CDP input is in view pixels, and may `capture` the page at full resolution.
  */
+/**
+ * Clicks an upload control with the page's file chooser intercepted, then gives
+ * the input that asked these files. The system file picker never opens.
+ * @returns {Promise<"attached" | "no_file_chooser" | "single_file">}
+ */
+async function attachFiles(contents, point, files, signal, waitMs) {
+  const cdp = contents.debugger;
+  const attached = !cdp.isAttached();
+  if (attached) cdp.attach("1.3");
+  let listener = null;
+  try {
+    const opened = new Promise((resolve) => {
+      listener = (_event, method, params) => { if (method === "Page.fileChooserOpened") resolve(params); };
+      cdp.on("message", listener);
+      setTimeout(() => resolve(null), waitMs).unref?.();
+    });
+    await cdp.sendCommand("Page.enable");
+    await cdp.sendCommand("Page.setInterceptFileChooserDialog", { enabled: true });
+    signal.throwIfAborted();
+    await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    const chooser = await opened;
+    signal.throwIfAborted();
+    if (!chooser || !Number.isInteger(chooser.backendNodeId)) return "no_file_chooser";
+    if (chooser.mode === "selectSingle" && files.length > 1) return "single_file";
+    await cdp.sendCommand("DOM.setFileInputFiles", { files, backendNodeId: chooser.backendNodeId });
+    return "attached";
+  } finally {
+    if (listener) cdp.removeListener("message", listener);
+    if (cdp.isAttached()) await cdp.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false }).catch(() => {});
+    if (attached && cdp.isAttached()) cdp.detach();
+  }
+}
+
 export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isVisible, openTab, navigate,
   allowed, enabled, changed, siteTools, runSiteTool, beforeInput = async (_tab) => {}, inFlight = (_tab, _since) => 0,
-  prepare = async (_tab) => {}, inputScale = (_tab) => 1, capture = (_tab, _viewport) => null }) {
+  prepare = async (_tab) => {}, inputScale = (_tab) => 1, capture = (_tab, _viewport) => null,
+  // A page receives files only after the person approves exactly these, in the chat.
+  checkFiles = /** @type {(paths: string[]) => Promise<void>} */ (async () => { throw new Error("files_unavailable"); }),
+  approveFiles = async (_sessionId, _request, _signal) => false, fileChooserMs = 5000 }) {
   const states = new Map();
   // request_id -> first receipt, per conversation: a retried act never replays input.
   const receipts = new Map();
@@ -729,7 +768,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       ...(passages.length ? {} : { next: "No passage matched. Try other words, or browser_observe with includeText." }) };
   }
   /**
-   * @typedef {{ type?: string, ref?: string, text?: string, checked?: boolean, values?: string[], key?: string, modifiers?: string[], x?: number, y?: number, deltaY?: number }} BrowserAction
+   * @typedef {{ type?: string, ref?: string, text?: string, checked?: boolean, values?: string[], key?: string, modifiers?: string[], x?: number, y?: number, deltaY?: number, files?: string[] }} BrowserAction
    * @param {{ sessionId?: string, operation?: string, args?: { tabId?: string, url?: string, provider?: string, includeImage?: boolean, mode?: string, limit?: number, includeText?: boolean,
    *   query?: {role?: string, name?: string, text?: string, exact?: boolean}, observationId?: string, toolId?: string, input?: unknown, question?: string, maxChars?: number,
    *   action?: BrowserAction, actions?: BrowserAction[], request_id?: string } }} request
@@ -856,13 +895,17 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         if (!observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("stale_observation", "Observe the current page before acting.");
         const keys = new Map();
         for (const [index, action] of actions.entries()) {
-          if (!action || typeof action !== "object" || !ACTION_TYPES.includes(action.type)) fail("invalid_action", "Use click, fill, select, set_checked, key or scroll.");
+          if (!action || typeof action !== "object" || !ACTION_TYPES.includes(action.type)) fail("invalid_action", "Use click, fill, select, set_checked, key, scroll, reveal or attach.");
           if (action.ref !== undefined && (typeof action.ref !== "string" || !action.ref || action.ref.length > 64)) fail("invalid_action", "Use a ref from an observation of this page.");
           if (action.type === "click" && !action.ref) {
             if (index > 0) fail("invalid_action", "An image-coordinate click can only be the first action. Use refs for later steps.");
             if (!observed.digest || state.latest !== observed) fail("image_required", "Observe with includeImage before clicking image coordinates.");
           }
           if (action.type === "fill" && (typeof action.text !== "string" || action.text.length > 8000 || !action.ref)) fail("invalid_action", "Fill needs an observed editable reference and text of at most 8000 characters.");
+          if (action.type === "attach" && (!action.ref || !Array.isArray(action.files) || action.files.length < 1 || action.files.length > 10
+            || !action.files.every((file) => typeof file === "string" && file.startsWith("/") && file.length <= 4096))) {
+            fail("invalid_action", "Attach needs the observed upload control's ref and one to ten absolute file paths.");
+          }
           if (action.type === "select" && (!action.ref || !Array.isArray(action.values) || action.values.length > 200 || !action.values.every(value => typeof value === "string" && value.length <= 8000))) fail("invalid_action", "Select needs an observed select reference and an array of option values.");
           if (action.type === "set_checked" && (!action.ref || typeof action.checked !== "boolean")) fail("invalid_action", "Set_checked needs an observed checkbox, radio or switch reference and checked true or false.");
           if (action.type === "reveal" && !action.ref) fail("invalid_action", "Reveal needs an observed reference.");
@@ -875,6 +918,22 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           ? JSON.stringify([action.type, action.ref ?? null, action.x ?? null, action.y ?? null, keys.get(index)?.chord ?? null]) : null;
         if (actions.some((action, index) => observed.sent.has(signature(action, index)))) {
           fail("repeat_requires_observe", "That click or key was already sent from this observation. Observe to confirm the page before repeating it; nothing was dispatched.");
+        }
+        // Files leave this computer only with the person's yes to exactly these paths.
+        const attaching = actions.filter((action) => action.type === "attach").flatMap((action) => action.files);
+        // The person sees every file before any is sent, so a batch never carries more than the card lists.
+        if (attaching.length > MAX_FILES) fail("invalid_action", `Attach at most ${MAX_FILES} files in one call. Nothing was dispatched.`);
+        if (attaching.length) {
+          let host = "this page";
+          try { host = new URL(observed.url).host || host; } catch { /* Keep the generic name. */ }
+          // Nothing about the files is read before the person answers, so a page cannot probe
+          // paths; afterwards each must be exactly the regular file approved, not a link to another.
+          if (!await approveFiles(sessionId, { app: host, files: attaching }, requestSignal)) {
+            fail("files_declined", "The person did not approve giving these files to the page. Nothing was dispatched.");
+          }
+          requestSignal.throwIfAborted();
+          try { await checkFiles(attaching); }
+          catch { fail("file_unavailable", "Attach readable regular files by their real absolute paths, not links. Nothing was dispatched."); }
         }
         if (!await allowed(observed.url) || state.observations.get(observed.id) !== observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed or access was blocked while preparing the action. Observe again.");
         requestSignal.throwIfAborted();
@@ -902,7 +961,8 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
             break;
           }
           let point;
-          try { point = await isolated(contents, prepareAction, observed.id, action); }
+          // Attach clicks the observed upload control, which opens the page's file chooser.
+          try { point = await isolated(contents, prepareAction, observed.id, action.type === "attach" ? { type: "click", ref: action.ref } : action); }
           catch (error) {
             const code = PREPARE_CODES.find((item) => String(error?.message).includes(item));
             if (!code) throw error;
@@ -931,6 +991,19 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
                 await contents.sendInputEvent({ type: "keyUp", keyCode: "Backspace" });
               }
             }
+          }
+          if (action.type === "attach") {
+            const scale = inputScale(tab);
+            const outcome = await attachFiles(contents, { x: point.x * scale, y: point.y * scale }, action.files, requestSignal, fileChooserMs);
+            if (outcome !== "attached") {
+              const error = outcome === "single_file" ? "This control takes one file. Attach one." : "No file chooser opened. Use the page's upload button or file input ref.";
+              if (!batch) fail(outcome, error);
+              failure = { index, type: action.type, ref: action.ref, code: outcome, error };
+              break;
+            }
+            if (!batch) return { ok: true, dispatched: true, outcome: "attached", files: action.files.length, retrySafe: false, tabId: tab.tabId, next: "observe" };
+            steps.push({ i: index, type: action.type, ref: action.ref, outcome: "attached" });
+            continue;
           }
           if (action.type === "click" || action.type === "scroll" || (action.type === "set_checked" && !point.unchanged)) {
             // sendInputEvent targets the main widget, not an OOPIF's widget.

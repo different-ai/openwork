@@ -123,11 +123,13 @@ export const BACKGROUND_TAB_VIEWPORT: Readonly<Viewport>;
 export function backgroundTabEmulationCommands(viewport?: Viewport): CdpCommand[];
 export function foregroundTabEmulationCommands(): CdpCommand[];
 
-export type AgentViewportKey = "desktop" | "tablet" | "phone";
-export type AgentViewport = Viewport & { label: string; mobile: boolean };
+export type AgentViewportKey = "panel" | "desktop" | "tablet" | "phone";
+/** `fitsPanel`: locks to the page's on-screen size; width and height are the off-screen fallback. */
+export type AgentViewport = Viewport & { label: string; mobile: boolean; fitsPanel?: boolean };
 export const AGENT_VIEWPORTS: Readonly<Record<AgentViewportKey, Readonly<AgentViewport>>>;
 export const DEFAULT_AGENT_VIEWPORT: AgentViewportKey;
 export function agentViewportFor(key: unknown): Readonly<AgentViewport>;
+export function lockedAgentViewport(key: unknown, bounds: Viewport | null): Readonly<AgentViewport>;
 export function fitAgentViewport(viewport: Viewport, bounds: Bounds): { scale: number; bounds: Bounds };
 export function mobileUserAgentOverride(chromeVersion: string): { userAgent: string; userAgentMetadata: Record<string, unknown> };
 export function agentViewportEmulationCommands(viewport: AgentViewport, scale: number, chromeVersion: string): CdpCommand[];

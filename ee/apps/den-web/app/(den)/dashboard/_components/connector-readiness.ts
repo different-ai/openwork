@@ -1,3 +1,4 @@
+import { deriveConnectionState, readinessSignInFailed, type ConnectionReadinessState } from "@openwork/types/den/connection-state";
 import type { ConnectionReadiness, ExternalMcpConnection } from "./mcp-connections-data";
 
 export type ConnectorReadinessState = "Set up" | "Sign in" | "Checking…" | "Ready" | "Couldn't verify" | "Not checked";
@@ -9,13 +10,17 @@ export type ConnectorReadinessView = {
   checking?: boolean;
 };
 
+const readinessLabels = {
+  needs_admin_setup: "Set up",
+  needs_signin: "Sign in",
+  ready: "Ready",
+  could_not_verify: "Couldn't verify",
+  not_checked: "Not checked",
+} as const satisfies Record<ConnectionReadinessState, ConnectorReadinessState>;
+
 function readinessFor(connection: ExternalMcpConnection, view: ConnectorReadinessView): ConnectionReadiness | null | undefined {
   // Older servers have no connector-level status; fall back to the caller's own.
   return view.organization && connection.organizationReadiness !== undefined ? connection.organizationReadiness : connection.readiness;
-}
-
-function signInFailure(readiness: ConnectionReadiness | null | undefined) {
-  return readiness?.status === "could_not_verify" && (readiness.failure === "sign_in_rejected" || readiness.failure === "sign_in_required");
 }
 
 /**
@@ -24,16 +29,11 @@ function signInFailure(readiness: ConnectionReadiness | null | undefined) {
  * and only a rejected or missing sign-in asks someone to sign in.
  */
 export function connectorReadinessState(connection: ExternalMcpConnection, view: ConnectorReadinessView = {}): ConnectorReadinessState | null {
-  const readiness = readinessFor(connection, view);
-  if (readiness === undefined) return null;
-  if (connection.setupRequired || connection.authTypeMismatch || connection.issuerReviewRequired
-    || (connection.credentialMode === "shared" && !connection.connected)) return "Set up";
-  if (connection.needsReconnect) return "Sign in";
-  if (view.checking) return "Checking…";
-  if (readiness?.status === "ready") return "Ready";
-  if (signInFailure(readiness)) return "Sign in";
-  if (connection.credentialMode === "per_member" && !connection.connectedForMe) return "Sign in";
-  return readiness ? "Couldn't verify" : "Not checked";
+  const readiness = deriveConnectionState({ ...connection, readiness: readinessFor(connection, view) }).readiness;
+  if (readiness === null) return null;
+  // A running check replaces every status except the ones it can't change.
+  if (view.checking && readiness !== "needs_admin_setup" && !connection.needsReconnect) return "Checking…";
+  return readinessLabels[readiness];
 }
 
 function formatTime(value: string) {
@@ -46,7 +46,7 @@ export function connectorReadinessNote(connection: ExternalMcpConnection, view: 
   if (state === "Checking…") return "Checking that it connects and its tools can be read.";
   if (state === "Not checked") return "Not checked yet.";
   if (state === "Ready" && readiness) return `Checked ${formatTime(readiness.checkedAt)}`;
-  if ((state === "Couldn't verify" || (state === "Sign in" && signInFailure(readiness))) && readiness) {
+  if ((state === "Couldn't verify" || (state === "Sign in" && readinessSignInFailed(readiness))) && readiness) {
     const reason = readiness.reason ?? "The last check didn't pass.";
     return readiness.lastSuccessfulAt ? `${reason} Last ready ${formatTime(readiness.lastSuccessfulAt)}.` : reason;
   }

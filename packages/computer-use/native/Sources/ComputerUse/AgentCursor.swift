@@ -56,6 +56,9 @@ final class AgentCursor {
     private var cursorPoint: CGPoint?
     private var windowFrame: CGRect = .null
     private var windowID: CGWindowID = 0
+    /// Background sessions: presence sits just above the selected window, so a
+    /// window the person brings in front of it also covers the agent's cursor.
+    private var layered = false
     private var appName = ""
     private var paused = false
     private var canContinue = false
@@ -84,16 +87,16 @@ final class AgentCursor {
 
     // MARK: Session lifecycle
 
-    func begin(windowFrame frame: CGRect, windowID id: CGWindowID, appName name: String) {
+    func begin(windowFrame frame: CGRect, windowID id: CGWindowID, appName name: String, layered: Bool = false) {
         guard enabled else { return }
         generation += 1
         let fresh = window == nil
         paused = false; canContinue = false; narration = nil; hidden = false
-        windowID = id; appName = name
+        windowID = id; appName = name; self.layered = layered
         if fresh { build() }
         window?.alphaValue = 1; badge?.alphaValue = 1
         place(frame)
-        window?.orderFrontRegardless()
+        order()
         refreshPill()
         guard fresh, let window else { return }
         // Draw the frame in, then let the cursor pop in at the window's center.
@@ -424,9 +427,17 @@ final class AgentCursor {
 
     // MARK: Window tracking
 
+    private func order() {
+        guard let window else { return }
+        window.level = layered ? .normal : .statusBar
+        if layered { window.order(.above, relativeTo: Int(windowID)) } else { window.orderFrontRegardless() }
+    }
+
     /// Follows the window when the person moves it, and hides with it.
     private func track() {
         guard window != nil, windowID != 0 else { return }
+        // Windows the person raises go above presence; keep it right above the selected one.
+        if layered { order() }
         let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]])?.first
         let onScreen = info?[kCGWindowIsOnscreen as String] as? Bool ?? false
         let bounds = (info?[kCGWindowBounds as String] as? [String: Any]).flatMap { CGRect(dictionaryRepresentation: $0 as CFDictionary) }

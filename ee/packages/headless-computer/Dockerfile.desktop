@@ -40,6 +40,7 @@ COPY ee/packages/headless-computer/src/scripting/ /usr/local/share/openwork-desk
 RUN chmod 0755 /usr/local/share/openwork-desktop/scripting && chmod 0644 /usr/local/share/openwork-desktop/scripting/*
 COPY --from=desktop-bridge-builder /src/ee/packages/headless-computer/dist/desktop-guest.mjs /usr/local/share/openwork-desktop/guest.mjs
 COPY --from=desktop-bridge-builder /src/ee/packages/headless-computer/dist/desktop-guest.version /usr/local/share/openwork-desktop/guest.version
+COPY --from=desktop-bridge-builder /src/ee/packages/headless-computer/dist/desktop-image.version /usr/local/share/openwork-desktop/image.version
 COPY ee/apps/den-worker-runtime/scripts/cloud-desktop.sh /usr/local/share/openwork-desktop/start.sh
 COPY ee/packages/headless-computer/scripts/desktop-bridge.py /usr/local/sbin/openwork-desktop-bridge
 COPY ee/packages/headless-computer/scripts/vnc-stdio.py /usr/local/share/openwork-desktop/vnc-stdio.py

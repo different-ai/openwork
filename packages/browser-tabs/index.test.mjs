@@ -6,6 +6,7 @@ import {
   agentViewportEmulationCommands,
   agentViewportFor,
   fitAgentViewport,
+  lockedAgentViewport,
 } from "./index.mjs";
 
 test("an agent viewport scales down to fit the panel, centered at the top, and never up", () => {
@@ -19,11 +20,22 @@ test("an agent viewport scales down to fit the panel, centered at the top, and n
     { scale: 1, bounds: { x: 170, y: 20, width: 1280, height: 800 } });
 });
 
-test("the desktop agent size matches background tabs, and unknown sizes fall back to it", () => {
+test("the desktop agent size matches background tabs, and unknown sizes fall back to the panel's size", () => {
   assert.deepEqual([AGENT_VIEWPORTS.desktop.width, AGENT_VIEWPORTS.desktop.height], [BACKGROUND_TAB_VIEWPORT.width, BACKGROUND_TAB_VIEWPORT.height]);
-  assert.equal(agentViewportFor("watch"), AGENT_VIEWPORTS.desktop);
-  assert.equal(agentViewportFor("toString"), AGENT_VIEWPORTS.desktop);
+  assert.equal(agentViewportFor("watch"), AGENT_VIEWPORTS.panel);
+  assert.equal(agentViewportFor("toString"), AGENT_VIEWPORTS.panel);
   assert.equal(agentViewportFor("tablet"), AGENT_VIEWPORTS.tablet);
+});
+
+test("the panel size locks to the page's on-screen size, so fitting it never scales", () => {
+  const bounds = { x: 900, y: 80, width: 480, height: 760 };
+  const locked = lockedAgentViewport("panel", bounds);
+  assert.deepEqual([locked.width, locked.height, locked.mobile], [480, 760, false]);
+  assert.deepEqual(fitAgentViewport(locked, bounds), { scale: 1, bounds });
+  // Off screen it keeps the background size until the panel shows it.
+  assert.deepEqual([lockedAgentViewport("panel", null).width, lockedAgentViewport("panel", null).height], [BACKGROUND_TAB_VIEWPORT.width, BACKGROUND_TAB_VIEWPORT.height]);
+  // A fixed size ignores the panel.
+  assert.equal(lockedAgentViewport("desktop", bounds), AGENT_VIEWPORTS.desktop);
 });
 
 test("emulation keeps the native view's size and only a phone gets touch and a mobile user agent", () => {

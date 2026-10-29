@@ -95,6 +95,7 @@ import {
   runDetachedTask,
 } from "./process-resilience.mjs";
 import { createQuitSequencer } from "./quit-sequence.mjs";
+import { createKeepAwake } from "./keep-awake.mjs";
 import { attachFloatingViewWindow, floatingViewWindowOptions } from "./floating-view-window.mjs";
 import { createStartupLog, startupPhase, withStartupPhase } from "./startup-log.mjs";
 import { createWindowStateStore } from "./window-state.mjs";
@@ -136,6 +137,7 @@ const {
   nativeTheme,
   net: electronNet,
   powerMonitor,
+  powerSaveBlocker,
   Notification: ElectronNotification,
   screen,
   session,
@@ -301,6 +303,7 @@ const uiControlServer = createUiControlServer({
   computerTask: (args, options) => computerControl.execute(args, options),
   computerProgram: (args, options) => computerControl.program(args, options),
   computerScript: (args, options) => computerControl.script(args, options),
+  computerEnabled: () => computerControl.featureEnabled(),
   listWebMcpTools: (args, options) => browserPanel?.listWebMcpTools(args, options) ?? {
     ok: false,
     error: "The built-in browser is not ready.",
@@ -1213,6 +1216,8 @@ const pendingDeepLinks = [];
 const nativeContextMenus = createNativeContextMenus({ Menu, clipboard, getWindow: () => mainWindow });
 
 browserPanel = createBrowserPanel({
+  // A page gets files only after the person approves them in the chat, like a native file panel.
+  approveFiles: (sessionId, request, signal) => computerControl.approveFiles({ sessionId, app: request.app, files: request.files }, { signal }),
   showNativeContextMenu: nativeContextMenus.show,
   closeNativeContextMenu: nativeContextMenus.close,
   remoteDebugPort,
@@ -1561,8 +1566,13 @@ async function disposeRuntimeBeforeQuit() {
   }
 }
 
+const keepAwake = createKeepAwake({ powerSaveBlocker });
+/** Windows already watched so their keep-awake request ends when they close. */
+const keepAwakeSenders = new Set();
+
 const quitSequencer = createQuitSequencer({
   stop: async () => {
+    keepAwake.releaseAll();
     showShutdownScreen();
     desktopAutomationRunner.stop();
     await Promise.all([
@@ -1994,6 +2004,17 @@ const desktopCommandHandlers = {
   "desktopSentryClearSession": async (event, ...args) => {
       return { enabled: clearOpenworkSentrySession() };
   },
+  "desktopSetKeepAwake": async (event, ...args) => {
+      const sender = event.sender;
+      if (args[0] === true && !keepAwakeSenders.has(sender.id)) {
+        keepAwakeSenders.add(sender.id);
+        sender.once("destroyed", () => {
+          keepAwakeSenders.delete(sender.id);
+          keepAwake.forget(sender.id);
+        });
+      }
+      return keepAwake.set(sender.id, args[0] === true);
+  },
   "desktopIntegrationStatus": async (event, ...args) => {
       return linuxDesktopIntegration.getStatus();
   },
@@ -2072,6 +2093,10 @@ const desktopCommandHandlers = {
   "computerSetRemoteEnabled": async (event, enabled) => {
       assertComputerSender(event);
       return computerControl.setRemoteEnabled(enabled === true);
+  },
+  "computerSetBackgroundEnabled": async (event, enabled) => {
+      assertComputerSender(event);
+      return computerControl.setBackgroundEnabled(enabled === true);
   },
   "computerResetPermission": async (event, permission) => {
       assertComputerSender(event);
@@ -2734,6 +2759,9 @@ async function createMainWindowInner() {
     flushPendingDeepLinks();
   });
 
+  // Windows only: never start a staged update while the session is ending.
+  mainWindow.on("session-end", () => holdInstallForSessionEnd());
+
   mainWindow.on("closed", () => {
     browserPanel.destroy();
     mainWindow = null;
@@ -2957,7 +2985,7 @@ if (isDevMode && !app.isPackaged) {
   });
 }
 registerMigrationIpc({ app, ipcMain });
-const { ensureAutoUpdater } = registerUpdaterIpc({
+const { ensureAutoUpdater, holdInstallForSessionEnd } = registerUpdaterIpc({
   app,
   ipcMain,
   getMainWindow: () => mainWindow,

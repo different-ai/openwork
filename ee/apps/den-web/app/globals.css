@@ -1499,3 +1499,26 @@ body {
     }
 
 }
+
+/* Connector sign-in tab: three dots travel from OpenWork to the provider. */
+@keyframes ow-handoff-dot {
+    0%,
+    100% {
+        opacity: 0.2;
+    }
+
+    40% {
+        opacity: 0.9;
+    }
+}
+
+.ow-handoff-dot {
+    animation: ow-handoff-dot 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ow-handoff-dot {
+        animation: none;
+        opacity: 0.45;
+    }
+}

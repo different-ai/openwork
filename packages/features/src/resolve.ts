@@ -22,6 +22,7 @@ import {
   type FeatureKey,
   type FeatureMap,
   type FeatureOverrides,
+  type OutcomeFeatureKey,
 } from "@openwork/features/registry"
 
 /**
@@ -104,6 +105,14 @@ export function featuresByCategory(keys: readonly FeatureKey[] = FEATURE_KEYS): 
   }
   return groups
 }
+
+/** The feature declares `outcomes`: /admin › Features reads whether it ran and worked. */
+export function featureHasOutcomes(key: FeatureKey): key is OutcomeFeatureKey {
+  return featureDefinition(key).outcomes === true
+}
+
+/** Every feature that declares `outcomes`, in registry order. */
+export const OUTCOME_FEATURE_KEYS: readonly OutcomeFeatureKey[] = FEATURE_KEYS.filter(featureHasOutcomes)
 
 /** Internal docs are read in the open-source repo, on the default branch. */
 export const FEATURE_DOCS_BASE_URL = "https://github.com/different-ai/openwork/blob/dev/"

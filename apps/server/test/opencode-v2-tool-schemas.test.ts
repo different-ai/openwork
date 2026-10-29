@@ -21,7 +21,7 @@ async function registeredTools() {
 
 test("every OpenWork tool on OpenCode v2 sends a schema providers accept", async () => {
   const tools = await registeredTools();
-  for (const name of ["openwork_context", "openwork_drive_upload", "openwork_gmail_draft", "browser_act", "computer_run", "computer_act"]) assert.ok(tools.some(tool => tool.name === name), name);
+  for (const name of ["openwork_context", "openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft", "browser_act", "computer_run", "computer_act"]) assert.ok(tools.some(tool => tool.name === name), name);
   for (const tool of tools) assert.deepEqual(providerSchemaProblems(tool.input), [], tool.name);
 });
 

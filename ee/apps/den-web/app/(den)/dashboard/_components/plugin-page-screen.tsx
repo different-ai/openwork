@@ -9,9 +9,11 @@ import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import {
   getLibraryPluginShareRoute,
+  getLibraryPluginSkillRoute,
   getLibraryRoute,
   getOrgAccessFlags,
   getPluginDetailsRoute,
+  getPluginSkillRoute,
   getPluginsRoute,
   orgFeatureEnabled,
 } from "../../_lib/den-org";
@@ -38,7 +40,19 @@ export function pluginChatDeepLink(plugin: Pick<DenPlugin, "name">): string {
   return `openwork://chat?${params.toString()}`;
 }
 
-export function WhatsInside({ plugin, appMcpServersEnabled = false, skillPreviews = false }: { plugin: DenPlugin; appMcpServersEnabled?: boolean; skillPreviews?: boolean }) {
+export function WhatsInside({
+  plugin,
+  appMcpServersEnabled = false,
+  skillPreviews = false,
+  skillHref,
+}: {
+  plugin: DenPlugin;
+  appMcpServersEnabled?: boolean;
+  /** Skills expand inline (libraryConnectorNavigation); takes precedence over skillHref. */
+  skillPreviews?: boolean;
+  /** Opens a skill's own page; omitted rows stay plain text. */
+  skillHref?: (skillId: string) => string;
+}) {
   const rows = [
     ...plugin.authoredApps.map((app) => ({
       key: `app:${app.id}`,
@@ -54,6 +68,7 @@ export function WhatsInside({ plugin, appMcpServersEnabled = false, skillPreview
       title: skillTitle(skill.name),
       description: skill.description,
       kind: "Skill",
+      href: skillHref?.(skill.id),
     })),
     ...plugin.mcps.map((mcp) => ({
       key: `mcp:${mcp.id}`,
@@ -256,7 +271,12 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
         </section>
       ) : null}
 
-      <WhatsInside plugin={data} appMcpServersEnabled={orgContext?.capabilities.appMcpServers === true} skillPreviews={orgFeatureEnabled(orgContext, "libraryConnectorNavigation")} />
+      <WhatsInside
+        plugin={data}
+        appMcpServersEnabled={orgContext?.capabilities.appMcpServers === true}
+        skillPreviews={orgFeatureEnabled(orgContext, "libraryConnectorNavigation")}
+        skillHref={(skillId) => mode === "admin" ? getPluginSkillRoute(orgSlug, pluginId, skillId) : getLibraryPluginSkillRoute(orgSlug, pluginId, skillId)}
+      />
       <AppMcpServers plugin={data} />
 
       {!canManage ? <p className="flex items-center gap-2 text-[13px] text-[var(--dls-text-secondary)]" data-testid="plugin-manage-locked"><LockKeyhole className="size-4 shrink-0" aria-hidden />Only a plugin manager or organization admin can edit or remove it.</p> : null}

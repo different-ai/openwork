@@ -1142,6 +1142,69 @@
       "when": 1793118453819,
       "tag": "0163_auto_router",
       "breakpoints": true
+    },
+    {
+      "idx": 164,
+      "version": "5",
+      "when": 1793132906444,
+      "tag": "0164_agent_member_check",
+      "breakpoints": true
+    },
+    {
+      "idx": 165,
+      "version": "5",
+      "when": 1793152029098,
+      "tag": "0165_feature_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 166,
+      "version": "5",
+      "when": 1793162803488,
+      "tag": "0166_mcp_registration_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 167,
+      "version": "5",
+      "when": 1793202414862,
+      "tag": "0167_agent_member_check_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 168,
+      "version": "5",
+      "when": 1793206007503,
+      "tag": "0168_headless_resume_grant_scopes",
+      "breakpoints": true
+    },
+    {
+      "idx": 169,
+      "version": "5",
+      "when": 1793211225894,
+      "tag": "0169_admin_metric_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 170,
+      "version": "5",
+      "when": 1793214410124,
+      "tag": "0170_better_auth_1_7_7_oauth_client",
+      "breakpoints": true
+    },
+    {
+      "idx": 171,
+      "version": "5",
+      "when": 1793228807541,
+      "tag": "0171_external_mcp_request_headers",
+      "breakpoints": true
+    },
+    {
+      "idx": 172,
+      "version": "5",
+      "when": 1793240505767,
+      "tag": "0172_sandbox_model_keys",
+      "breakpoints": true
     }
   ]
 }

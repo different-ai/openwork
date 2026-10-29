@@ -1,14 +1,20 @@
 import { createHash, randomUUID } from "node:crypto"
-import { and, asc, count, eq, gte, inArray, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
-import { AgentCheckTable as Check, AgentDeliveryTable as Delivery, AgentInstanceTable as Instance } from "@openwork-ee/den-db/schema"
+import { and, asc, count, countDistinct, desc, eq, gte, inArray, isNull, lt, lte, max, or, sql } from "@openwork-ee/den-db/drizzle"
+import {
+  AgentCheckTable as Check,
+  AgentDeliveryTable as Delivery,
+  AgentInstanceTable as Instance,
+  AgentMemberCheckTable as MemberCheck,
+} from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { agentLedgerKey, type AgentItem } from "@openwork/automations/proactive"
 import { db } from "../db.js"
 import { automationAffectedRows, automationUpdateChangedRows } from "../automations/update-result.js"
+import { memberCheckId, type AgentCheckRecord, type MemberCheckRow } from "./checks.js"
 
 /**
  * The only module that reads or writes the agent tables: each member's agent (template version, choices, state,
- * lease) and the delivery ledger that makes every item at most one message.
+ * lease), the delivery ledger that makes every item at most one message, and each member's check records.
  */
 
 export type AgentInstanceRow = typeof Instance.$inferSelect
@@ -30,13 +36,39 @@ export async function ensureAgentInstances(organizationId: DenTypeId<"organizati
   await db.insert(Instance).ignore().values(memberIds.map((memberId) => ({ memberId, organizationId, nextWakeAt: now, createdAt: now, updatedAt: now })))
 }
 
-export type MemberChoiceChange = Partial<Pick<AgentInstanceRow, "status" | "overrides" | "snoozedUntil">>
+export type MemberChoiceChange = Partial<Pick<AgentInstanceRow, "status" | "overrides" | "snoozedUntil" | "preferences">>
+
+function choiceSet(change: MemberChoiceChange, now: Date, wakeNow = false) {
+  const wake = wakeNow || change.status === "on" || change.snoozedUntil === null
+  return { ...change, ...(wake ? { nextWakeAt: now } : {}), updatedAt: now }
+}
 
 /** Saves a member's own choice. Turning on or resuming makes the agent due now. */
 export async function saveMemberChoices(organizationId: DenTypeId<"organization">, memberId: DenTypeId<"member">, change: MemberChoiceChange, now = new Date()) {
-  const wake = change.status === "on" || change.snoozedUntil === null
-  const set = { ...change, ...(wake ? { nextWakeAt: now } : {}), updatedAt: now }
+  const set = choiceSet(change, now)
   await db.insert(Instance).values({ memberId, organizationId, nextWakeAt: now, createdAt: now, ...set }).onDuplicateKeyUpdate({ set })
+}
+
+/**
+ * A member's change that depends on what they have now (their words, the change log, undo): read and written under
+ * the row's lock, so two saves at once never lose a change. `decide` returns the change (null for none), whether the
+ * agent should look again now, and the caller's result.
+ */
+export async function changeMemberAgent<Result>(
+  organizationId: DenTypeId<"organization">,
+  memberId: DenTypeId<"member">,
+  decide: (row: AgentInstanceRow | null) => { change: MemberChoiceChange | null; wake: boolean; result: Result },
+  now = new Date(),
+): Promise<Result> {
+  return db.transaction(async (tx) => {
+    const [row] = await tx.select().from(Instance).where(eq(Instance.memberId, memberId)).limit(1).for("update")
+    const decided = decide(row ?? null)
+    if (decided.change) {
+      const set = choiceSet(decided.change, now, decided.wake)
+      await tx.insert(Instance).values({ memberId, organizationId, nextWakeAt: now, createdAt: now, ...set }).onDuplicateKeyUpdate({ set })
+    }
+    return decided.result
+  })
 }
 
 /** Claims up to `limit` due agents for this instance. */
@@ -108,7 +140,8 @@ export async function reserveAgentDelivery(input: {
     id,
     organizationId: input.organizationId,
     memberId: input.memberId,
-    responsibility: input.item.responsibility,
+    // The preset it fell under, or "anything_else" (a column name kept from before sources).
+    responsibility: input.item.preset ?? "anything_else",
     outcome: input.outcome ?? "pending",
     createdAt: input.now ?? new Date(),
   })
@@ -176,4 +209,116 @@ export async function readAgentMutes(organizationId: DenTypeId<"organization">):
   const muted = new Map<string, number>()
   for (const row of rows) for (const responsibility of new Set(row.overrides?.muted ?? [])) muted.set(responsibility, (muted.get(responsibility) ?? 0) + 1)
   return { members: rows.length, muted }
+}
+
+// ---- Each member's checks (My agent) ---------------------------------------------------------------------------
+
+/**
+ * Records one check. A repeated skip with the same key (Google still disconnected at the same scheduled pass) stays
+ * one row whose time and sentence move forward.
+ */
+export async function recordMemberCheck(record: AgentCheckRecord) {
+  const checkedAt = new Date(record.at)
+  await db
+    .insert(MemberCheck)
+    .values({
+      id: memberCheckId(record.memberId, record.key),
+      organizationId: record.organizationId,
+      memberId: record.memberId,
+      checkedAt,
+      kind: record.kind,
+      outcome: record.outcome,
+      reason: record.reason,
+      summary: record.summary,
+      responsibilities: record.responsibilities,
+      sources: record.sources,
+      message: record.message,
+    })
+    .onDuplicateKeyUpdate({ set: { checkedAt, summary: record.summary } })
+}
+
+const memberCheckColumns = {
+  id: MemberCheck.id,
+  checkedAt: MemberCheck.checkedAt,
+  kind: MemberCheck.kind,
+  outcome: MemberCheck.outcome,
+  reason: MemberCheck.reason,
+  summary: MemberCheck.summary,
+  responsibilities: MemberCheck.responsibilities,
+  sources: MemberCheck.sources,
+  message: MemberCheck.message,
+}
+
+/** The member's checks since `since`, newest first. */
+export async function readMemberChecks(memberId: DenTypeId<"member">, since: Date, limit = 300): Promise<MemberCheckRow[]> {
+  return db
+    .select(memberCheckColumns)
+    .from(MemberCheck)
+    .where(and(eq(MemberCheck.memberId, memberId), gte(MemberCheck.checkedAt, since)))
+    .orderBy(desc(MemberCheck.checkedAt))
+    .limit(limit)
+}
+
+/** The member's most recent check, however long ago. */
+export async function readLastMemberCheck(memberId: DenTypeId<"member">): Promise<MemberCheckRow | null> {
+  const [row] = await db.select(memberCheckColumns).from(MemberCheck).where(eq(MemberCheck.memberId, memberId)).orderBy(desc(MemberCheck.checkedAt)).limit(1)
+  return row ?? null
+}
+
+/** How long check records are kept: members read about this week's checks, and two weeks covers "Earlier this week" on any day. */
+export const MEMBER_CHECK_RETENTION_MS = 14 * 24 * 3_600_000
+
+/** Check records are for "what did it do this week": keep about two weeks. */
+export async function pruneMemberChecks(before: Date) {
+  await db.delete(MemberCheck).where(lt(MemberCheck.checkedAt, before))
+}
+
+// ---- Every organization, for /admin › Features (counts only) ---------------------------------------------------
+
+/**
+ * Checks members' agents ran and messages they sent, per organization and UTC day in [fromDay, toDay], from the
+ * daily counters (every member's agent). Indexed: the organizations that have agents (agent_instance_org), then a
+ * range on the counters' primary key (organization, day) for each.
+ */
+export async function readAgentCheckTotalsByDay(fromDay: string, toDay: string) {
+  const organizations = await db.selectDistinct({ organizationId: Instance.organizationId }).from(Instance)
+  if (!organizations.length) return []
+  const rows = await db
+    .select({
+      organizationId: Check.organizationId,
+      day: Check.day,
+      checks: sql<string>`sum(${Check.checks})`,
+      sent: sql<string>`sum(${Check.sent})`,
+      lastAt: max(Check.updatedAt),
+    })
+    .from(Check)
+    .where(and(inArray(Check.organizationId, organizations.map((row) => row.organizationId)), gte(Check.day, fromDay), lte(Check.day, toDay)))
+    .groupBy(Check.organizationId, Check.day)
+  return rows.map((row) => ({ organizationId: row.organizationId, day: row.day, checks: Number(row.checks ?? 0), sent: Number(row.sent ?? 0), lastAt: row.lastAt }))
+}
+
+/**
+ * Checks that failed (why, as a reason code) per organization and UTC day in [since, until), from the members'
+ * check records: only members with My agent have them, kept MEMBER_CHECK_RETENTION_MS. Indexed: a range on
+ * agent_member_check_time. Never reads the sentence, sources or message reference.
+ */
+export async function readAgentCheckFailuresByDay(since: Date, until: Date) {
+  // Drizzle writes timestamps as UTC wall-clock time, so formatting in the session's zone gives the UTC day.
+  const day = sql<string>`date_format(${MemberCheck.checkedAt}, '%Y-%m-%d')`
+  const rows = await db
+    .select({ organizationId: MemberCheck.organizationId, day, reason: MemberCheck.reason, checks: count(), lastAt: max(MemberCheck.checkedAt) })
+    .from(MemberCheck)
+    .where(and(gte(MemberCheck.checkedAt, since), lt(MemberCheck.checkedAt, until), eq(MemberCheck.outcome, "failed")))
+    .groupBy(MemberCheck.organizationId, day, MemberCheck.reason)
+  return rows.map((row) => ({ organizationId: row.organizationId, day: String(row.day), reason: row.reason, checks: Number(row.checks), lastAt: row.lastAt }))
+}
+
+/** Members whose agent held a message at their daily limit in [since, until), per organization (check records, as above). */
+export async function readAgentDailyLimitMembers(since: Date, until: Date): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ organizationId: MemberCheck.organizationId, members: countDistinct(MemberCheck.memberId) })
+    .from(MemberCheck)
+    .where(and(gte(MemberCheck.checkedAt, since), lt(MemberCheck.checkedAt, until), eq(MemberCheck.reason, "daily_limit")))
+    .groupBy(MemberCheck.organizationId)
+  return new Map(rows.map((row) => [row.organizationId, Number(row.members)]))
 }

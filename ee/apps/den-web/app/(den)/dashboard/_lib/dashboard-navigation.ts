@@ -2,6 +2,7 @@ import {
   BarChart3,
   Box,
   CalendarClock,
+  Radar,
   Globe,
   Laptop,
   LibraryBig,
@@ -27,6 +28,7 @@ import {
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
   getDeploymentsRoute,
+  getLibraryMyAgentRoute,
   getLibraryRoute,
   getMarketplacesRoute,
   getMcpConnectionsRoute,
@@ -95,6 +97,8 @@ export type BuildDashboardNavSectionsInput = {
   canManageDeploymentServices?: boolean;
   /** What clicking Workbot does; a blocked entry stays visible with a marker. */
   workbotEntry?: WorkbotEntry;
+  /** The member's own agent is available to them (see myAgentAvailable). */
+  myBot?: boolean;
 };
 
 export function buildDashboardNavSections({
@@ -107,12 +111,16 @@ export function buildDashboardNavSections({
   desktopPolicyScreenRemoved = false,
   canManageDeploymentServices = false,
   workbotEntry = { kind: "open" },
+  myBot = false,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
   const workItems: DashboardNavItem[] = [
     ...(capabilities.workbot
       ? [{ href: WORKBOT_ENTRY_HREF, label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot", ...workbotNavMarker(workbotEntry) }]
+      : []),
+    ...(myBot && orgSlug
+      ? [{ href: getLibraryMyAgentRoute(orgSlug), label: "My bot", icon: Radar, testId: "dashboard-nav-my-bot" }]
       : []),
     {
       href: orgSlug ? getLibraryRoute(orgSlug) : "#",
@@ -222,6 +230,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Models: ["llm", "provider", "byok", "api key"],
   Permissions: ["access", "roles", "teams", "admin", "rbac"],
   "My Automations": ["schedule", "recurring", "tasks"],
+  "My bot": ["agent", "my agent", "morning brief", "meeting prep", "proactive", "notifications"],
   "My Library": ["skills", "plugins", "connections"],
   "OpenWork Models": ["llm", "provider", "managed", "inference"],
   "OpenWork Web": ["cloud", "sessions"],

@@ -1152,9 +1152,24 @@ function tokenFingerprint(req) {
   return createHash("sha256").update(token).digest("hex").slice(0, 12);
 }
 
+/** Deep subset match: every key the tool declares in whenArguments must equal the call's. */
+function argumentsMatch(expected, actual) {
+  if (expected === undefined) return true;
+  if (expected === null || typeof expected !== "object") return Object.is(expected, actual);
+  if (!actual || typeof actual !== "object") return false;
+  return Object.entries(expected).every(([key, value]) => argumentsMatch(value, actual[key]));
+}
+
+/** The configured variant for this call: the first with that name whose whenArguments match. */
+function configuredToolFor(name, args) {
+  return configuredTools.find((candidate) => candidate.name === name && argumentsMatch(candidate.whenArguments, args ?? {}));
+}
+
 function mcpResult(message) {
   if (toolsConfigured && message.method === "tools/list") {
-    return { tools: configuredTools.map(({ result, delayMs, appHtml, validateRequiredArguments, ...tool }) => tool) };
+    const seen = new Set();
+    return { tools: configuredTools.filter((tool) => !seen.has(tool.name) && seen.add(tool.name))
+      .map(({ result, delayMs, appHtml, validateRequiredArguments, whenArguments, ...tool }) => tool) };
   }
   if (message.method === "resources/read") {
     const tool = configuredTools.find((candidate) => candidate._meta?.ui?.resourceUri === message.params?.uri);
@@ -1163,7 +1178,7 @@ function mcpResult(message) {
     }
   }
   if (message.method === "tools/call") {
-    const tool = configuredTools.find((candidate) => candidate.name === message.params?.name);
+    const tool = configuredToolFor(message.params?.name, message.params?.arguments);
     if (tool) return tool.result;
   }
   switch (message.method) {
@@ -1403,8 +1418,7 @@ async function handleMcp(req, res, entry) {
       args: message.params.arguments ?? message.params.args ?? {},
       tokenId: entry.tokenId,
     }));
-  const responseDelay = Math.max(0, ...entry.toolNames.map((name) =>
-    configuredTools.find((tool) => tool.name === name)?.delayMs ?? 0));
+  const responseDelay = Math.max(0, ...entry.toolCalls.map((call) => configuredToolFor(call.name, call.args)?.delayMs ?? 0));
   if (responseDelay > 0) await new Promise((resolve) => setTimeout(resolve, responseDelay));
   const responses = messages.flatMap((message) => {
     if (!message || typeof message !== "object" || message.id === undefined) return [];

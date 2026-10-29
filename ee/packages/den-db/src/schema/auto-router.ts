@@ -25,8 +25,11 @@ export const AutoRouterTable = mysqlTable(
 
 /**
  * One model the Auto Router may send prompts to: when to use it (`prompt`,
- * shown to Jev) and the thinking levels it may run at. `position` orders the
- * routes; when Jev cannot answer, the first route allowing `high` is used.
+ * shown to Jev) and the thinking level it runs at (`thinking_levels`, a JSON
+ * array kept from when routes had several; the first valid entry is used and
+ * saves write exactly one). `position` orders the routes; position 0 is the
+ * default model, with the fixed default prompt, used when no other route
+ * matches and whenever Jev cannot answer.
  */
 export const AutoRouterRouteTable = mysqlTable(
   "auto_router_route",

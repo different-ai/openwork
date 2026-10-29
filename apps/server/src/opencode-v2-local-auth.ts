@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { opencodeDataDirs } from "@openwork/paths";
+import { dirname, join } from "node:path";
+import { opencodeDataDirs, resolveGlobalOpencodeConfigPath } from "@openwork/paths";
+import { readJsoncFile } from "./jsonc.js";
 import { ORGANIZATION_PROVIDER_ID } from "./organization-provider-gate.js";
 import { loopbackFetch } from "./server-fetch.js";
 import type { ServerConfig } from "./types.js";
@@ -50,6 +51,30 @@ export async function readLocalProviderAuth(path = join(opencodeDataDirs()[0], "
     }
   }
   return { apiKeys, signIns };
+}
+
+/**
+ * Providers written by hand in this computer's own OpenCode config file. The
+ * v1 engine reads that file; v2 is pointed at its own config directory, so the
+ * mirror carries them over. An unreadable or invalid file contributes nothing,
+ * as v1 would refuse it too.
+ */
+export async function readUserConfigProviders(path = resolveGlobalOpencodeConfigPath()): Promise<{
+  directory: string;
+  providers: Record<string, Record<string, unknown>>;
+}> {
+  const directory = dirname(path);
+  let value: unknown;
+  try {
+    value = (await readJsoncFile<unknown>(path, {}, { allowInvalid: true, regularFileOnly: true })).data;
+  } catch {
+    return { directory, providers: {} };
+  }
+  const providers = record(value) && record(value.provider) ? value.provider : {};
+  return {
+    directory,
+    providers: Object.fromEntries(Object.entries(providers).flatMap(([id, provider]) => record(provider) ? [[id, provider]] : [])),
+  };
 }
 
 /** OAuth credentials need their native authorization flow and are not API keys. */
@@ -122,18 +147,73 @@ export function normalizeLocalProviderDefinition(value: unknown): Normalized {
   return { definition: { ...base, npm: shared.npm, ...(shared.url ? { api: shared.url } : {}), models } };
 }
 
+/** A provider the v2 engine's own catalog describes: its name and the environment variables it reads a key from. */
+export interface EngineV2NativeProvider {
+  name: string;
+  env: string[];
+}
+
+/** Catalog providers of the running v2 engine, by id. */
+export type EngineV2NativeProviders = ReadonlyMap<string, EngineV2NativeProvider>;
+
+/**
+ * Read the v2 engine's GET /api/integration answer. A provider that exists
+ * only because OpenWork wrote it into the engine config has a single plain
+ * `key` method; the engine's catalog (models.dev) also declares environment
+ * variables or a sign-in, which is what marks a provider as native here.
+ */
+export function parseEngineV2NativeProviders(value: unknown): Map<string, EngineV2NativeProvider> {
+  const native = new Map<string, EngineV2NativeProvider>();
+  for (const integration of record(value) && Array.isArray(value.data) ? value.data : []) {
+    if (!record(integration) || typeof integration.id !== "string" || !Array.isArray(integration.methods)) continue;
+    const methods = integration.methods.filter(record);
+    if (!methods.some(method => typeof method.type === "string" && method.type !== "key")) continue;
+    native.set(integration.id, {
+      name: typeof integration.name === "string" && integration.name.trim() ? integration.name : integration.id,
+      env: methods.flatMap(method => method.type === "env" && Array.isArray(method.names)
+        ? method.names.filter((name): name is string => typeof name === "string" && name.trim() !== "") : []),
+    });
+  }
+  return native;
+}
+
+const NEEDS_MORE_THAN_A_KEY = /^(?:azure|amazon-bedrock|google-vertex|cloudflare)/;
+
+/**
+ * The key v1 would read from the environment for a catalog provider. Only
+ * providers whose every declared variable is an API key qualify: a provider
+ * that also needs an account, region, resource or project (Bedrock, Vertex,
+ * Azure, Cloudflare) is left to its own setup instead of half-configured.
+ */
+export function environmentProviderKey(id: string, provider: EngineV2NativeProvider, environment: NodeJS.ProcessEnv): string | undefined {
+  if (NEEDS_MORE_THAN_A_KEY.test(id)) return undefined;
+  if (!provider.env.length || !provider.env.every(name => /^[A-Z0-9_]+_API_KEY$/.test(name))) return undefined;
+  for (const name of provider.env) {
+    const value = environment[name]?.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
+
 /**
  * One provider connected on this computer as the v2 mirror sees it: ready to
- * mirror with its definition and key, or skipped with a reason. Row-level
- * actions on a provider added on this computer start from the same answer.
+ * mirror with its definition and key, native to the v2 catalog (only its key
+ * is needed: the engine supplies endpoints, adapters and models), or skipped
+ * with a reason. Row-level actions on a provider added on this computer start
+ * from the same answer.
  */
 export type LocalProvider =
   | { id: string; status: "ready"; definition: Record<string, unknown>; apiKey: string }
+  | { id: string; status: "native"; name: string; apiKey: string }
   | { id: string; status: "skipped"; reason: EngineV2SkippedProviderReason };
 
 export interface LocalProviderOptions {
   /** The organization's provider rule; providers it refuses are never read from the engine or mirrored. */
   allows?: ((providerId: string) => boolean) | null;
+  /** The v2 engine's own catalog; these providers need only a key. */
+  native?: EngineV2NativeProviders;
+  /** Where catalog providers' environment keys are read from, as the v1 engine does. */
+  environment?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -149,13 +229,30 @@ export async function resolveLocalProviders(
   options: LocalProviderOptions = {},
 ): Promise<LocalProvider[]> {
   const local = (id: string) => !(id in configured) && !ORGANIZATION_PROVIDER_ID.test(id);
-  const ids = [...new Set([...auth.apiKeys.keys(), ...auth.signIns])].filter(local).sort((left, right) => left.localeCompare(right));
+  const native = options.native ?? new Map<string, EngineV2NativeProvider>();
+  // Keys from the environment only count for catalog providers nothing else
+  // on this computer connected, and are not "connected" providers: one the
+  // organization refuses is left out silently instead of reported.
+  const environmentKeys = new Map([...native].flatMap(([id, provider]) => {
+    if (auth.apiKeys.has(id) || auth.signIns.has(id) || !local(id)) return [];
+    if (options.allows && !options.allows(id)) return [];
+    const key = options.environment ? environmentProviderKey(id, provider, options.environment) : undefined;
+    return key ? [[id, key] as const] : [];
+  }));
+  const ids = [...new Set([...auth.apiKeys.keys(), ...auth.signIns, ...environmentKeys.keys()])].filter(local)
+    .sort((left, right) => left.localeCompare(right));
   const resolved: LocalProvider[] = [];
   const wanted: string[] = [];
   for (const id of ids) {
+    const apiKey = auth.apiKeys.get(id) ?? environmentKeys.get(id);
+    const catalog = native.get(id);
     if (options.allows && !options.allows(id)) resolved.push({ id, status: "skipped", reason: "policy" });
-    else if (!auth.apiKeys.has(id)) {
+    else if (apiKey === undefined) {
       resolved.push({ id, status: "skipped", reason: "oauth" });
+    } else if (catalog) {
+      // The engine's own catalog supplies trusted endpoints, adapters (also
+      // per model, as for OpenCode Go) and models: it needs only the key.
+      resolved.push({ id, status: "native", name: catalog.name, apiKey });
     } else wanted.push(id);
   }
   if (!wanted.length || !config.opencodeBaseUrl) return resolved;
@@ -184,10 +281,11 @@ export async function localProviderDefinitions(
   auth: LocalProviderAuth,
   configured: Record<string, unknown>,
   options: LocalProviderOptions = {},
-): Promise<{ providers: Record<string, unknown>; skipped: EngineV2SkippedProvider[] }> {
+): Promise<{ providers: Record<string, unknown>; native: Array<{ id: string; name: string; apiKey: string }>; skipped: EngineV2SkippedProvider[] }> {
   const resolved = await resolveLocalProviders(config, auth, configured, options);
   return {
     providers: Object.fromEntries(resolved.flatMap(provider => provider.status === "ready" ? [[provider.id, provider.definition]] : [])),
+    native: resolved.flatMap(provider => provider.status === "native" ? [{ id: provider.id, name: provider.name, apiKey: provider.apiKey }] : []),
     skipped: resolved.flatMap(provider => provider.status === "skipped" ? [{ id: provider.id, reason: provider.reason }] : []),
   };
 }

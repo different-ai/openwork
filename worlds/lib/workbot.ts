@@ -597,7 +597,7 @@ export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: P
   });
   stack.defer(() => workbot.stop().catch(() => undefined));
   await verifyWorkbotPreviews(workbotPreview, runnerPreview);
-  const orgId = await enableWorkbot(den, options.computerSnapshot ? { computerUse: true, remoteComputers: true, workbotDocuments: true } : {});
+  const orgId = await enableWorkbot(den, options.computerSnapshot ? { computerUse: true, browserUse: true, remoteComputers: true, workbotDocuments: true } : {});
   const world: WorkbotWorld = {
     den, orgId, workbotUrl: workbotPreview.browserOrigin, workbotInternal: workbotPreview.browserOrigin,
     denWebPublic: den.ref.webUrl, runnerUrl: runnerPreview.browserOrigin, secrets,

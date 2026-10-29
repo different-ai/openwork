@@ -14,7 +14,7 @@ import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getAiGatewayLimitRoute, getAiGatewayLimitsRoute, type DenOrgMember, type DenOrgTeam } from "../../_lib/den-org";
+import { getAiGatewayLimitRoute, getAiGatewayLimitsRoute, orgFeatureEnabled, type DenOrgMember, type DenOrgTeam } from "../../_lib/den-org";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { useGatewayAccessProviders } from "./gateway-subject-access-data";
 import { providerLimitLabel } from "./provider-limit-scope";
@@ -101,6 +101,8 @@ const DEFAULT_PROVIDER = "default";
 
 function GatewayLimitForm({ orgId, orgSlug, policy, target, teams, members }: EditorProps & { policy?: GatewayUsageLimitPolicy; target?: GatewayLimitTarget }) {
   const id = useId();
+  const { orgContext } = useOrgDashboard();
+  const showRemovedProvider = orgFeatureEnabled(orgContext, "gatewayProviderRemovalLimits");
   const router = useRouter();
   const policies = useGatewayPolicies(orgId);
   const mutation = useGatewayLimitsMutation(orgId);
@@ -200,7 +202,8 @@ function GatewayLimitForm({ orgId, orgSlug, policy, target, teams, members }: Ed
     <div className="flex flex-col" data-testid="gateway-limit-editor">
       <h2 className="text-[20px] font-medium tracking-[-0.01em] text-gray-950">{policy ? policy.name : "New spend limit"}</h2>
 
-      <ProviderCard orgId={orgId} headingId={`${id}-provider`} value={providerId} onChange={setProviderId} />
+      <ProviderCard orgId={orgId} headingId={`${id}-provider`} value={providerId} onChange={setProviderId}
+        removedProviderId={showRemovedProvider && policy?.providerStatus === "removed" ? policy.providerId ?? null : null} />
 
       <section className={`${CARD} mt-3`} aria-labelledby={`${id}-who`}>
         <h3 id={`${id}-who`} className={CARD_TITLE}>Who</h3>
@@ -330,9 +333,12 @@ function GatewayLimitForm({ orgId, orgSlug, policy, target, teams, members }: Ed
 }
 
 /** Which provider the limit governs: every provider without its own limit (default), or one provider. */
-function ProviderCard({ orgId, headingId, value, onChange }: {
+function ProviderCard({ orgId, headingId, value, onChange, removedProviderId = null }: {
   orgId: string; headingId: string; value: string | null; onChange: (value: string | null) => void;
+  /** The saved provider was deleted; the limit applies to nothing until another is chosen. */
+  removedProviderId?: string | null;
 }) {
+  const removed = Boolean(value) && value === removedProviderId;
   const providers = useGatewayAccessProviders(orgId);
   const unverified = providers.isPending || providers.isFetching || providers.isError;
   const options = [
@@ -345,7 +351,7 @@ function ProviderCard({ orgId, headingId, value, onChange }: {
     })),
   ];
   if (value && !providers.data?.some((provider) => provider.id === value)) {
-    options.push({ value, label: providerLimitLabel(value, unverified ? undefined : providers.data), description: "The saved provider scope is unchanged.", icon: <span className="flex h-6 w-6 items-center justify-center rounded-[6px] bg-gray-100 text-gray-500"><Layers className="h-3.5 w-3.5" aria-hidden="true" /></span> });
+    options.push({ value, label: removed ? "Removed provider" : providerLimitLabel(value, unverified ? undefined : providers.data), description: removed ? "Not applied until you choose a provider" : "The saved provider scope is unchanged.", icon: <span className="flex h-6 w-6 items-center justify-center rounded-[6px] bg-gray-100 text-gray-500"><Layers className="h-3.5 w-3.5" aria-hidden="true" /></span> });
   }
   return (
     <section className={`${CARD} mt-5`} aria-labelledby={headingId} data-testid="gateway-limit-provider">
@@ -355,7 +361,7 @@ function ProviderCard({ orgId, headingId, value, onChange }: {
           placeholder="Choose a provider…" searchPlaceholder="Search providers" emptyLabel="No providers"
           onChange={(next) => onChange(next === DEFAULT_PROVIDER ? null : next)} />
       </div>
-      {providers.isPending || providers.isFetching ? <p role="status" className="mt-2 text-[12px] text-gray-500">Checking provider choices. The saved scope is unchanged.</p> : providers.isError ? <DenNotice className="mt-2" tone="error" message="Could not verify provider choices. The saved scope is unchanged." action={<DenButton variant="secondary" onClick={() => void providers.refetch()}>Retry providers</DenButton>} /> : value && !providers.data.some((provider) => provider.id === value) ? <p role="status" className="mt-2 text-[12px] text-gray-500">The saved provider is not in your current list. Keep its scope or choose another provider.</p> : null}
+      {providers.isPending || providers.isFetching ? <p role="status" className="mt-2 text-[12px] text-gray-500">Checking provider choices. The saved scope is unchanged.</p> : providers.isError ? <DenNotice className="mt-2" tone="error" message="Could not verify provider choices. The saved scope is unchanged." action={<DenButton variant="secondary" onClick={() => void providers.refetch()}>Retry providers</DenButton>} /> : removed ? <DenNotice className="mt-2" tone="warning" message="This limit's provider was removed, so it applies to no one. Choose the provider it should cap." /> : value && !providers.data.some((provider) => provider.id === value) ? <p role="status" className="mt-2 text-[12px] text-gray-500">The saved provider is not in your current list. Keep its scope or choose another provider.</p> : null}
       { value ? <p className="mt-2 text-[12px] text-gray-500">People with this limit stop counting this provider toward the default limit.</p> : null}
     </section>
   );

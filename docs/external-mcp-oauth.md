@@ -61,7 +61,11 @@ challenge nor the administrator selects scopes, OpenWork falls back to the
 provider's advertised `scopes_supported` set; this preserves compatibility
 with providers that reject scope-less authorization requests. A configured
 scope set still takes precedence. `offline_access` is requested only when both
-that scope and refresh-token support are advertised.
+that scope and refresh-token support are advertised. Google does not advertise
+`offline_access` and issues refresh tokens only for `access_type=offline` on a
+fresh consent, so sign-in URLs on `accounts.google.com` get
+`access_type=offline` and `prompt=consent` unless the configured sign-in
+address already sets them.
 
 ## Callback routing
 

@@ -4,6 +4,7 @@ import { isWorkbotTurn, type WorkbotTurnFact } from "./workbot-telemetry.js"
 import type { SessionEvents } from "./events.js"
 import { FILE_TOOLS, FILE_TOOL_NAMES, isMemoryPath, normalizePath, runFileTool } from "./files.js"
 import { CellsStore } from "./cells-store.js"
+import { desktopPrompt, desktopToolsFor, desktopViewRefused } from "./desktop-views.js"
 import { localMemory, MemoryUnavailableError, type MemoryAccess, type MemoryResolver } from "./memory.js"
 import type { McpConnector, ToolSession } from "./mcp.js"
 import { createModelAdapter, ModelError, normalizeTranscript, type ModelClient } from "./model.js"
@@ -25,6 +26,7 @@ import {
   type StepResult,
   type StepState,
 } from "./steps.js"
+import { TurnTiming } from "./turn-timing.js"
 
 import {
   MAX_OPEN_TASKS,
@@ -251,6 +253,8 @@ type StepLane = {
   startedAt: number
   steps: number
   toolCalls: number
+  /** Where this run's steps spent their time, for its `turn ended` line. */
+  timing: TurnTiming
   answeredModel?: string
   /** What a step that failed unexpectedly threw, for the error report. */
   thrown?: unknown
@@ -855,7 +859,7 @@ export class Runner {
     // Files and the computer only for conversations that asked for them (see Session.files / .computer).
     const files = session?.files && kind !== "report" ? this.options.files : undefined
     const readOnly = credentials.readOnly === true || kind === "report"
-    const computer = session?.computer && !readOnly ? this.options.computer : undefined
+    const computer = session?.computer && !readOnly && this.options.computer?.available?.(sessionId) !== false ? this.options.computer : undefined
     // Reactions and task tools are for the person's own messages, not for tasks or their reports.
     const reactions = session?.reactions === true && kind === "message" && !readOnly
     const taskTools = session?.tasks === true && kind === "message" && !readOnly
@@ -871,7 +875,7 @@ export class Runner {
       this.options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
       files ? FILES_PROMPT : "",
       computer?.prompt ?? "",
-      session?.desktop && computer?.desktopTools?.length ? "Use desktop to work in the visible browser and native applications. The organization enabled this computer: use it directly when needed. If the person takes control, wait for them to return it before continuing desktop operations." : "",
+      session?.desktop && computer?.desktopTools?.length ? desktopPrompt(session.desktopViews) : "",
       tools || kind === "report" ? "" : "No OpenWork connection is available in this conversation, so connected apps cannot be reached.",
       session?.instructions ?? "",
       memorySection(memoryFiles),
@@ -881,7 +885,7 @@ export class Runner {
     ]
       .filter(Boolean)
       .join("\n\n")
-    const toolSpecs = kind === "report" ? FILE_TOOLS.filter((tool) => READ_ONLY_LOCAL_TOOLS.has(tool.name)) : [...FILE_TOOLS.filter((tool) => !readOnly || READ_ONLY_LOCAL_TOOLS.has(tool.name)), ...(files ? SAVED_FILE_TOOLS.filter((tool) => !readOnly || READ_ONLY_LOCAL_TOOLS.has(tool.name)) : []), ...(computer?.tools ?? []), ...(session?.desktop ? computer?.desktopTools ?? [] : []), ...(reactions ? REACTION_TOOLS : []), ...(taskTools ? TASK_TOOLS : []), ...(session?.documentNavigation && kind === "message" ? [DOCUMENT_NAVIGATION_TOOL] : []), ...(tools?.tools ?? [])]
+    const toolSpecs = kind === "report" ? FILE_TOOLS.filter((tool) => READ_ONLY_LOCAL_TOOLS.has(tool.name)) : [...FILE_TOOLS.filter((tool) => !readOnly || READ_ONLY_LOCAL_TOOLS.has(tool.name)), ...(files ? SAVED_FILE_TOOLS.filter((tool) => !readOnly || READ_ONLY_LOCAL_TOOLS.has(tool.name)) : []), ...(computer?.tools ?? []), ...(session?.desktop ? desktopToolsFor(computer?.desktopTools ?? [], session.desktopViews) : []), ...(reactions ? REACTION_TOOLS : []), ...(taskTools ? TASK_TOOLS : []), ...(session?.documentNavigation && kind === "message" ? [DOCUMENT_NAVIGATION_TOOL] : []), ...(tools?.tools ?? [])]
     return { turn, session, repeatLimits, files, readOnly, computer, reactions, taskTools, memory, baseSystem, toolSpecs }
   }
 
@@ -980,7 +984,8 @@ export class Runner {
         : taskTools && turn && TASK_TOOL_NAMES.has(call.name)
           ? this.runTaskTool(turn, call.name, call.input, context.held)
         : call.name === "desktop" && store.getSession(sessionId)?.desktop && computer?.desktopRun
-          ? await computer.desktopRun(sessionId, call.input, signal).catch((error: unknown) => ({ output: error instanceof Error ? error.message : "Desktop unavailable", isError: true }))
+          ? desktopViewRefused(store.getSession(sessionId)?.desktopViews ?? null, call.input)
+            ?? await computer.desktopRun(sessionId, call.input, signal).catch((error: unknown) => ({ output: error instanceof Error ? error.message : "Desktop unavailable", isError: true }))
         : computer?.toolNames.has(call.name)
           ? await computer.run(sessionId, call.name, call.input).catch((error: unknown) => ({
               output: `The computer didn't respond: ${error instanceof Error ? error.message : "unknown error"}. Its outcome is unknown; check before repeating it.`,
@@ -1015,6 +1020,7 @@ export class Runner {
     let steps = 0
     let answeredModel: string | undefined
     let toolCalls = 0
+    const timing = new TurnTiming()
     let repeat: RepeatState = FRESH_REPEAT
     // Replies in a row that stopped at the output-token cap (see CUT_OFF_INSTRUCTION).
     let cutOffs = 0
@@ -1096,6 +1102,7 @@ export class Runner {
       // The model call index within this turn, counting steps an interrupted run already stored.
       let modelStep = turnMessages().filter((message) => message.role === "assistant").length
       for (let step = 0; step < limits.maxSteps; step += 1) {
+        timing.step()
         signal.throwIfAborted()
         // Between steps: the step a follow-up arrived during has finished, so nothing is cut off mid-way.
         if (superseded()) return wrapUp()
@@ -1130,6 +1137,7 @@ export class Runner {
         let result: Awaited<ReturnType<ModelClient["complete"]>>
         try {
           const model = credentials.modelAccess ? this.scopedModel(credentials.modelAccess) : this.options.model
+          timing.modelStarted()
           result = await model.complete({
             system: stepSystem(setup.baseSystem, repeat.askedToStop, cutOffs),
             messages,
@@ -1141,6 +1149,7 @@ export class Runner {
             ...(events
               ? {
                   onText: (delta: string) => {
+                    timing.output()
                     written += delta
                     events.emit(sessionId, { type: "text", messageId, step: streamStep, delta })
                   },
@@ -1148,7 +1157,10 @@ export class Runner {
                     written = ""
                     events.emit(sessionId, { type: "text", messageId, step: streamStep, delta: "", reset: true })
                   },
-                  onTool: (tool: string) => events.emit(sessionId, { type: "tool", messageId, step: streamStep, tool }),
+                  onTool: (tool: string, description?: string) => {
+                    timing.output()
+                    events.emit(sessionId, { type: "tool", messageId, step: streamStep, tool, ...(description ? { description } : {}) })
+                  },
                 }
               : {}),
           })
@@ -1158,6 +1170,7 @@ export class Runner {
           if (written.trim()) store.appendMessage(sessionId, messageId, { role: "assistant", text: written, toolCalls: [] })
           return wrapUp()
         } finally {
+          timing.modelEnded()
           if (running) running.onSupersede = undefined
         }
         answeredModel = result.model
@@ -1181,7 +1194,7 @@ export class Runner {
           store.setTurnStatus(sessionId, messageId, "completed")
           return
         }
-        const runCall = (call: ToolCall) => this.runCall(setup, call, { sessionId, kind, tools, signal, held: { credentials, at: issuedAt } })
+        const runCall = (call: ToolCall) => timing.tool(call.name, () => this.runCall(setup, call, { sessionId, kind, tools, signal, held: { credentials, at: issuedAt } }))
         // A large output goes to the files bucket first (storage/, with HEADLESS_SEGMENTS on); its row keeps the start.
         const record = async (call: ToolCall, outcome: ToolResult) => {
           const prepared = this.options.storage ? await this.options.storage.prepare(sessionId, toolMessage(call, outcome)) : { message: toolMessage(call, outcome) }
@@ -1240,7 +1253,7 @@ export class Runner {
     } finally {
       clearTimeout(timeout)
       await tools?.close()
-      this.turnEnded({ sessionId, messageId, kind, held: { credentials, at: issuedAt }, answeredModel, steps, toolCalls, startedAt, thrown })
+      this.turnEnded({ sessionId, messageId, kind, held: { credentials, at: issuedAt }, answeredModel, steps, toolCalls, startedAt, timing, thrown })
     }
   }
 
@@ -1248,7 +1261,7 @@ export class Runner {
    * After a turn's run (in one go, or the last step of a step-mode run): its outcome reported, the computer paused,
    * a finished task's report queued, attachments dropped, the conversation named, and one log line.
    */
-  private turnEnded(input: { sessionId: string; messageId: string; kind: JobKind; held: HeldCredentials; answeredModel?: string; steps: number; toolCalls: number; startedAt: number; thrown?: unknown }) {
+  private turnEnded(input: { sessionId: string; messageId: string; kind: JobKind; held: HeldCredentials; answeredModel?: string; steps: number; toolCalls: number; startedAt: number; timing: TurnTiming; thrown?: unknown }) {
     const { store } = this.options
     const { sessionId, messageId, kind, held, steps, toolCalls } = input
     const credentials = held.credentials
@@ -1284,6 +1297,8 @@ export class Runner {
         toolCalls,
         elapsedMs: Date.now() - input.startedAt,
         ...turn?.usage,
+        // Where that time went: names and durations only.
+        timing: input.timing.summary(),
       })}`,
     )
     if (turn?.status === "failed") {
@@ -1317,6 +1332,7 @@ export class Runner {
       startedAt: now,
       steps: 0,
       toolCalls: 0,
+      timing: new TurnTiming(),
     }
     console.log(`[headless-runner] turn started ${JSON.stringify({ sessionId: running.sessionId, messageId: running.messageId, execution: "steps" })}`)
     try {
@@ -1453,7 +1469,7 @@ export class Runner {
       kind,
       controller: new AbortController(),
       superseded: false,
-      steps: { credentialsAt: now, issuedAt: now, inStep: false, finished: false, expanded: new Map(), startedAt: now, steps: 0, toolCalls: 0 },
+      steps: { credentialsAt: now, issuedAt: now, inStep: false, finished: false, expanded: new Map(), startedAt: now, steps: 0, toolCalls: 0, timing: new TurnTiming() },
     }
     this.controllers.set(lane, running)
     this.activeCount += 1
@@ -1527,6 +1543,7 @@ export class Runner {
         steps: lane.steps,
         toolCalls: lane.toolCalls,
         startedAt: lane.startedAt,
+        timing: lane.timing,
         thrown: lane.thrown,
       })
     } catch (error) {
@@ -1645,6 +1662,7 @@ export class Runner {
     startTimer()
     const signal = AbortSignal.any([running.controller.signal, timeout.signal])
     let tools: ToolSession | null = null
+    lane.timing.step()
 
     try {
       signal.throwIfAborted()
@@ -1734,6 +1752,7 @@ export class Runner {
         if (continueFrom) restartText()
         let result: Awaited<ReturnType<ModelClient["complete"]>>
         try {
+          lane.timing.modelStarted()
           result = await chosen.client.complete({
             system: stepSystem(setup.baseSystem, state.repeat.askedToStop, state.cutOffs ?? 0),
             messages,
@@ -1745,6 +1764,7 @@ export class Runner {
             ...(continueFrom ? { continueFrom } : {}),
             // Always streamed: the text so far is what a cut-off step continues from.
             onText: (delta: string) => {
+              lane.timing.output()
               written += delta
               checkpoints.note(written)
               events?.emit(sessionId, { type: "text", messageId, step: modelStep, delta })
@@ -1754,13 +1774,17 @@ export class Runner {
               checkpoints.note(written)
               restartText()
             },
-            onTool: (tool: string) => events?.emit(sessionId, { type: "tool", messageId, step: modelStep, tool }),
+            onTool: (tool: string, description?: string) => {
+              lane.timing.output()
+              events?.emit(sessionId, { type: "tool", messageId, step: modelStep, tool, ...(description ? { description } : {}) })
+            },
           })
         } catch (error) {
           if (!writing.signal.aborted || signal.aborted) throw error
           // The person watched these words stream in, and the next answer picks up from them.
           return end("aborted", "superseded", { messages: written.trim() ? [{ role: "assistant", text: written, toolCalls: [] }] : [] })
         } finally {
+          lane.timing.modelEnded()
           checkpoints.stop()
           running.onSupersede = undefined
         }
@@ -1793,7 +1817,7 @@ export class Runner {
           store.setStepState(sessionId, messageId, state)
         }
         const runCall = (call: ToolCall) =>
-          this.runCall(setup, call, { sessionId, kind, tools, signal, held: { credentials: lane.held?.credentials ?? {}, at: lane.issuedAt } })
+          lane.timing.tool(call.name, () => this.runCall(setup, call, { sessionId, kind, tools, signal, held: { credentials: lane.held?.credentials ?? {}, at: lane.issuedAt } }))
         if (setup.readOnly && answer.toolCalls.length > 1) {
           // A read-only turn can't change anything, so its calls (lookups in the person's apps) run at the same time.
           signal.throwIfAborted()
@@ -1860,6 +1884,7 @@ export class Runner {
     } finally {
       clearTimeout(timer)
       await tools?.close()
+      lane.timing.stepEnded()
     }
   }
 }

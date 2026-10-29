@@ -1,3 +1,4 @@
+import { registerAdminMcpRegistrationRoutes } from "./mcp-registration.js"
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { expireUsageRequestsForMembers } from "@openwork-ee/den-db/gateway-usage-limits"
 import { revokeUpstreamCredentials, revokeInferenceCredentialsForMembers } from "../../llm/inference-provider-lifecycle.js"
@@ -48,6 +49,7 @@ import { registerAdminFreeAutoConversionsRoutes } from "./free-auto-conversions.
 import { registerAdminFreeAutoUsageRoutes } from "./free-auto-usage.js"
 import { registerAdminSecurityRoutes } from "./security.js"
 import { registerAdminDashboardRoute } from "./dashboard.js"
+import { registerAdminControlCenterRoutes } from "./control-center.js"
 import { registerAdminOpportunitiesRoute } from "./opportunities.js"
 import { registerAdminServiceReadinessRoutes } from "./services.js"
 import { registerAdminOrganizationDetailRoutes } from "./organization-detail.js"
@@ -65,6 +67,7 @@ import {
 } from "@openwork-ee/den-db/organization-features"
 import { adminFeatureChangeSchema, serializeFeatureChange } from "./feature-changes.js"
 import { registerAdminMemberFeatureRoutes } from "./member-features.js"
+import { registerAdminFeatureUsageRoutes } from "./feature-usage.js"
 import { updateFeatureRollout, updateOrganizationFeatureOverrides } from "../../features.js"
 import {
   FEATURE_CATEGORIES,
@@ -1435,8 +1438,11 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
   registerAdminFreeAutoConversionsRoutes(app)
   registerAdminSecurityRoutes(app)
   registerAdminMemberFeatureRoutes(app)
+  registerAdminFeatureUsageRoutes(app)
+  registerAdminMcpRegistrationRoutes(app)
   registerAdminOrganizationDetailRoutes(app)
   registerAdminDashboardRoute(app)
+  registerAdminControlCenterRoutes(app)
   registerAdminOpportunitiesRoute(app)
   registerAdminServiceReadinessRoutes(app)
   registerAdminSandboxOrganizationRoutes(app)

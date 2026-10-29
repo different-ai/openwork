@@ -100,6 +100,8 @@ export type GatewayDependencies = {
   loadAutoRouterConfig: LoadAutoRouterConfig
   askJev: AskJev
   autoRouterReasoning: ReasoningStore
+  /** Whether a TypeSafe key is configured; without one Auto is off. */
+  autoRouterRoutingConfigured: boolean
 }
 
 export type GatewayRouteDependencies =
@@ -796,6 +798,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       fetch: input.fetch,
     }),
     autoRouterReasoning: input.autoRouterReasoning ?? createDbReasoningStore(),
+    autoRouterRoutingConfigured: input.autoRouterRoutingConfigured ?? Boolean(env.autoRouter.typesafeApiKey),
   }
 
   // `target` is set by the provider-less routes, which pick the provider from the model alias.
@@ -1248,6 +1251,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
               catalog: dependencies.catalog,
               askJev: dependencies.askJev,
               reasoningStore: dependencies.autoRouterReasoning,
+              routingConfigured: dependencies.autoRouterRoutingConfigured,
               forward: (target) => handleGatewayRequest(c, target),
               onJevError: (error) => console.warn("[gateway] Auto Router could not ask Jev; using the fallback route", {
                 openworkRequestId: c.get("openworkRequestId"),

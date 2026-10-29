@@ -69,7 +69,7 @@ function mergeSnapshotMessageWithCached(snapshotMessage: UIMessage, cachedMessag
   return result;
 }
 
-function messageCreated(message: UIMessage) {
+export function messageCreated(message: UIMessage) {
   const metadata = message.metadata;
   if (!metadata || typeof metadata !== "object" || !("opencode" in metadata)) return null;
 

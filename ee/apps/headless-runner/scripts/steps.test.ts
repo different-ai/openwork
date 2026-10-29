@@ -173,6 +173,31 @@ test("a step-mode turn ends with the same transcript, usage and files as the sam
   assert.equal(stepped.store.stepCheckpoint("hs_same_conversation", "m1"), null)
 })
 
+test("a turn's log line says where its time went, step by step, in either mode", async (t) => {
+  const lines: string[] = []
+  const log = console.log
+  t.mock.method(console, "log", (...args: unknown[]) => {
+    if (typeof args[0] === "string" && args[0].startsWith("[headless-runner] turn ended ")) lines.push(args[0])
+    else log(...args)
+  })
+  for (const execution of [undefined, "steps" as const]) {
+    using directory = tempDir()
+    const { store, runner } = world(directory.directory, { model: notesModel() })
+    store.putSession("hs_timed", { owner: "test" })
+    assert.ok(runner.send({ sessionId: "hs_timed", messageId: "m1", prompt: "Remember milk and eggs", credentials: {}, ...(execution ? { execution } : {}) }).ok)
+    await runner.idle()
+  }
+  assert.equal(lines.length, 2)
+  for (const [index, line] of lines.entries()) {
+    const { timing } = JSON.parse(line.slice("[headless-runner] turn ended ".length)) as { timing: { steps: Array<{ modelMs?: number; firstOutputMs?: number; tools?: Array<{ name: string; ms: number }> }>; modelMs: number; toolMs: number } }
+    assert.deepEqual(timing.steps.map((step) => step.tools?.map((tool) => tool.name) ?? []), [["write_file"], ["read_file"], []])
+    assert.ok(timing.steps.every((step) => typeof step.modelMs === "number"))
+    // Step mode always streams, so each model call also says how soon it started writing.
+    if (index === 1) assert.ok(timing.steps.every((step) => typeof step.firstOutputMs === "number"))
+    assert.ok(timing.modelMs >= 0 && timing.toolMs >= 0)
+  }
+})
+
 test("a step commits all of its messages, its next step and the attempt reset in one transaction, or none of them", () => {
   let fail = false
   const failing = (db: SqlDriver): SqlDriver => ({

@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import type { DynamicToolUIPart } from "ai";
-import { ChevronRight } from "lucide-react";
 import { CapabilityCallLine, DetailsToggle, TechnicalDetailsPanel } from "./capability-call-line";
+import { LaneChevron, LeadingLane, RAIL_LINE, RAIL_ROW, RailDuration, RailMeta } from "./activity-rail";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { getCapabilityCallSentence } from "@/lib/capability-call";
 import { codeModeSummary } from "@/lib/code-mode-summary";
+import type { CapabilityCallSentence } from "@/lib/capability-call";
+import { savedSkillSentence, skillShareFailureReason, skillShareRequest, skillShareSentence } from "@/lib/created-skill";
+import { openWorkNativeSentence } from "@/lib/openwork-native-activity";
+import { useCreatedSkills } from "./created-skill-card";
 import { codeModeScriptError, codeModeToolCalls } from "@/lib/code-mode-tools";
 import type { CurrentToolLifecycle } from "@/lib/current-tool-lifecycle";
 import { formatElapsedSeconds, getToolCallStartedAt, trackToolCallDuration } from "@/lib/tool-call-duration";
@@ -14,8 +18,10 @@ import { resolveConnectorToolIdentity, type ConnectorToolIdentity } from "@/reac
 
 /** Keep the script's activity on the same rail as the rest of the turn. */
 /** The agent reading its own toolbox: plumbing, not work the person asked for. */
-function isToolLookup(call: DynamicToolUIPart) {
-  return call.toolName === "search" || call.toolName.endsWith("search_capabilities");
+export function isToolLookup(call: DynamicToolUIPart) {
+  return call.toolName === "search" || call.toolName.endsWith("search_capabilities")
+    // Reading what the app offers is the same kind of plumbing (T2).
+    || (call.toolName === "openwork_context" && call.state === "output-available");
 }
 
 /**
@@ -64,7 +70,17 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
   // collapsed line, so finishing a step doesn't make the chat jump. Only the
   // person's choice opens a group, and it stays as they left it.
   const open = userOpen ?? false;
-  const failedCalls = calls.filter(call => call.state === "output-error");
+  const { shareLabels } = useCreatedSkills();
+  // The same sentences the rows use, so the group's label and its steps agree.
+  const knownSentence = (call: DynamicToolUIPart): CapabilityCallSentence | null => {
+    const saved = savedSkillSentence(call);
+    if (saved) return { service: null, ...saved };
+    if (skillShareRequest(call)) return { service: null, ...skillShareSentence(shareLabels.get(call.toolCallId) ?? null) };
+    return openWorkNativeSentence(call);
+  };
+  const isBlocked = (call: DynamicToolUIPart) => skillShareRequest(call) !== null && skillShareFailureReason(call) === "blocked";
+  const blockedCalls = calls.filter(isBlocked);
+  const failedCalls = calls.filter(call => call.state === "output-error" && !isBlocked(call));
   const failed = part.state === "output-error";
   const startedAt = running ? getToolCallStartedAt(part) : null;
   const liveDuration = startedAt === null ? null : Math.floor((now - startedAt) / 1_000);
@@ -82,10 +98,10 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
     if (call.toolName.startsWith("openwork-cloud_")) return "OpenWork Cloud";
     return getCapabilityCallSentence(call, { includeQuery: false }).service;
   };
-  const summary = codeModeSummary(calls, { running, failed, serviceName });
+  const summary = codeModeSummary(calls, { running, failed, serviceName, sentence: knownSentence, isBlocked });
   const current = [...calls].reverse().find(call => isToolPartInFlight(call));
   const currentSentence = current && !statusUnknown && !waiting
-    ? getCapabilityCallSentence(current, { connectionName: serviceName(current), includeQuery: false }).present
+    ? (knownSentence(current) ?? getCapabilityCallSentence(current, { connectionName: serviceName(current), includeQuery: false })).present
     : null;
   const waitingOn = running && current && now - lastActivityAt >= 8_000 ? serviceName(current) : null;
   // The same action can be phrased with an article in the group label but not
@@ -106,11 +122,12 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
     if (!inFlight && !failed) return null;
     const reason = shortReason(part);
     return (
-      <div data-code-mode-call={part.toolCallId} className="group/step min-w-0">
-        <div className="flex min-h-6 min-w-0 items-center gap-2 text-sm text-muted-foreground">
-          <span className={cn("shrink-0", running && "ow-text-shimmer")}>{label}</span>
-          {failed && reason ? <span className="min-w-0 truncate text-xs text-muted-foreground">{reason}</span> : null}
-          {duration ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{duration}</span> : null}
+      <div data-code-mode-call={part.toolCallId} className={RAIL_ROW}>
+        <div className={RAIL_LINE}>
+          <LeadingLane>{running ? <span className="size-1 rounded-full bg-muted-foreground" /> : null}</LeadingLane>
+          <span className={cn("shrink-0", failed && "text-destructive", running && "ow-text-shimmer motion-reduce:animate-none")}>{label}</span>
+          {failed && reason ? <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{reason}</span> : null}
+          <RailDuration value={duration} />
           <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={label} alwaysVisible={failed} />
         </div>
         {detailsOpen ? <TechnicalDetailsPanel part={part} /> : null}
@@ -154,23 +171,25 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
 
   return (
     <Collapsible open={open} onOpenChange={setUserOpen} data-code-mode-call={part.toolCallId}>
-      <div className="group/step flex min-w-0 items-center gap-2">
+      <div className={cn(RAIL_ROW, RAIL_LINE)}>
         <CollapsibleTrigger
-          className="group flex min-w-0 max-w-full items-center gap-2 text-start text-sm text-muted-foreground hover:text-foreground"
+          className="group flex min-h-6.5 min-w-0 flex-1 items-center gap-2 text-start text-sm text-muted-foreground hover:text-foreground"
           aria-label={`${label}. ${open ? "Hide steps" : "Show steps"}`}
         >
-          <ChevronRight aria-hidden="true" className={cn("size-4 shrink-0 transition-transform duration-150 ease-out motion-reduce:transition-none", open && "rotate-90")} />
-          <span className={cn("min-w-0 truncate", running && !current && "ow-text-shimmer")}>{label}</span>
-          {calls.length > 0 ? <span className="shrink-0 text-xs">{calls.length} {calls.length === 1 ? "step" : "steps"}</span> : null}
-          {waitingOn ? <span className="shrink-0 text-xs">Waiting on {waitingOn}</span> : null}
-          {failedCalls.length > 0 ? <span className="shrink-0 text-xs">{failedCalls.length} failed</span> : null}
-          {duration ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{duration}</span> : null}
+          <LaneChevron open={open} />
+          <span className={cn("min-w-0 truncate", running && !current && "ow-text-shimmer motion-reduce:animate-none")}>{label}</span>
+          {calls.length > 0 ? <RailMeta>{calls.length} {calls.length === 1 ? "step" : "steps"}</RailMeta> : null}
+          {waitingOn ? <RailMeta>Waiting on {waitingOn}</RailMeta> : null}
+          {failedCalls.length > 0 ? <RailMeta className="text-destructive">{failedCalls.length} failed</RailMeta> : null}
+          {blockedCalls.length > 0 ? <RailMeta>{blockedCalls.length} blocked</RailMeta> : null}
+          <RailDuration value={duration} />
         </CollapsibleTrigger>
         <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={label} alwaysVisible={failed} />
       </div>
       {detailsOpen ? <TechnicalDetailsPanel part={part} /> : null}
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-180 ease-out data-starting-style:h-0 data-ending-style:h-0 motion-reduce:transition-none [&[hidden]:not([hidden='until-found'])]:hidden">
-        <div className="mt-2 flex flex-col gap-1 border-s border-border ps-3">
+        {/* Flat, not boxed (S1): the group's steps indent under its label. */}
+        <div className="mt-2 flex flex-col gap-2 ps-7">
           {rows.map(({ call, repeat }) => (
             <CapabilityCallLine
               key={call.toolCallId}

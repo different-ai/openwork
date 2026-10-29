@@ -540,6 +540,7 @@ async function currentAgentAuthority(input: OwnerScope & { action: AgentAction }
     ownerMemberId: input.ownerMemberId,
     providerId: input.action.model.providerId,
     modelId: input.action.model.modelId,
+    executionTarget: "cloud",
   })
   if (access.ok) return null
   return {

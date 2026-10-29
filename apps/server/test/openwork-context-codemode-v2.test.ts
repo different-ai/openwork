@@ -60,7 +60,7 @@ test("Code Mode queries and commands preserve exceptions, host validation, confi
   const native = await register(bridge);
   try {
     for (const name of ["openwork_context", "openwork_query", "openwork_execute"]) assert.equal(native.tools.get(name)?.options.codemode, true);
-    for (const tool of native.tools.values()) if (tool.name.startsWith("browser_") || tool.name.startsWith("computer_") || tool.name.startsWith("drive_") || tool.name === "openwork_drive_upload" || tool.name === "openwork_gmail_draft") assert.equal(tool.options.codemode, false);
+    for (const tool of native.tools.values()) if (tool.name.startsWith("browser_") || tool.name.startsWith("computer_") || tool.name.startsWith("drive_") || tool.name === "openwork_drive_upload" || tool.name === "openwork_gmail_draft" || tool.name === "openwork_outlook_draft") assert.equal(tool.options.codemode, false);
     const query = native.tools.get("openwork_query");
     const execute = native.tools.get("openwork_execute");
     const before = listedAssignments(await invoke(query, { id: "session.group.list", args: { workspaceId: "ws1" } }));

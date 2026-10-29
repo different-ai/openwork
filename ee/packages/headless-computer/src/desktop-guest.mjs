@@ -9,6 +9,7 @@ import { createBrowserDemonstration } from "@openwork/computer-use/browser-demon
 import { createDesktopApplications } from "./desktop-apps.mjs";
 import { ViewerTickets } from "./viewer-tickets.mjs";
 import { streamBrowser } from "./browser-screencast.mjs";
+import { DESKTOP_PROTOCOL } from "./desktop-protocol.mjs";
 
 const directory = process.env.WORKBOT_DESKTOP_STATE;
 if (!directory) throw new Error("WORKBOT_DESKTOP_STATE is required");
@@ -49,7 +50,7 @@ const server = createServer(async (request, response) => {
     if (request.url === "/health") {
       const browser = await fetch("http://127.0.0.1:9222/json/version", { signal: AbortSignal.timeout(1500) }).then(async result => { await result.body?.cancel(); return result.ok; }).catch(() => false);
       const viewer = await Promise.all([access(viewerScript), access(`${directory}/browser-window`)]).then(() => true, () => false);
-      return json(response, browser && viewer ? 200 : 503, { ok: browser && viewer, version: process.env.WORKBOT_DESKTOP_VERSION ?? "unknown", ...(body.diagnostics === true ? { egress: await browserEgressStatus() } : {}) });
+      return json(response, browser && viewer ? 200 : 503, { ok: browser && viewer, version: process.env.WORKBOT_DESKTOP_VERSION ?? "unknown", protocol: DESKTOP_PROTOCOL, ...(body.diagnostics === true ? { egress: await browserEgressStatus() } : {}) });
     }
     if (request.url === "/browser/demonstration") {
       if (typeof body.sessionId !== "string" || !body.sessionId || body.sessionId.length > 256) return json(response, 400, { error: "invalid_session" });

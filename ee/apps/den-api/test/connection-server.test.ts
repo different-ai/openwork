@@ -86,7 +86,7 @@ function app(overrides: Partial<ConnectionServerRouteDeps> = {}) {
   const calls: Call[] = []
   const deps: ConnectionServerRouteDeps = {
     verify: async () => ({ userId, organizationId, scopes: new Set(["mcp:read", "mcp:write"]), payload: {} }),
-    features: async () => ({ connectionMcpServers: true, managedDeployments: false, remoteSessionSubagents: false }),
+    features: async () => ({ connectionMcpServers: true, managedDeployments: false, remoteSessionSubagents: false, outlookAttachments: false }),
     member: async () => member,
     catalog: async () => [],
     sources,
@@ -155,8 +155,15 @@ test("disabled and App-only tools are hidden and the order never depends on the 
   const reversed = providerConnectionServerTools({ toolPolicy, tools: [...listed].reverse(), capabilityName: (name) => `mcp:emc_x:${name}` })
   assert.deepEqual(forward, reversed)
   assert.deepEqual(forward.map(({ tool }) => tool.name), ["alpha", "middle", "zeta"])
-  assert.deepEqual(forward[0]?.tool.annotations, { destructiveHint: true })
-  assert.deepEqual(forward[1]?.tool, { name: "middle", description: "middle", inputSchema: { type: "object" } })
+  assert.deepEqual(forward[0]?.tool.annotations, { readOnlyHint: false, destructiveHint: true })
+  // A tool its provider leaves unlabeled gets a title from its name and is a destructive write.
+  assert.deepEqual(forward[1]?.tool, {
+    name: "middle",
+    title: "Middle",
+    description: "middle",
+    inputSchema: { type: "object" },
+    annotations: { readOnlyHint: false, destructiveHint: true },
+  })
   assert.deepEqual(forward[2]?.tool.outputSchema, { type: "object", properties: { ok: { type: "boolean" } } })
   assert.equal(forward[2]?.capability, "mcp:emc_x:zeta")
   assert.deepEqual(providerConnectionServerTools({ toolPolicy: { ...toolPolicy, allDisabled: true }, tools: listed, capabilityName: String }), [])
@@ -211,7 +218,7 @@ test("a provider that fails to list its tools is reported without its error text
 })
 
 test("with the feature off the route is not found", async () => {
-  const { hono, calls } = app({ features: async () => ({ connectionMcpServers: false, managedDeployments: false, remoteSessionSubagents: false }) })
+  const { hono, calls } = app({ features: async () => ({ connectionMcpServers: false, managedDeployments: false, remoteSessionSubagents: false, outlookAttachments: false }) })
   const response = await hono.request(`/mcp/agent/servers/${linear.id}`, {
     method: "POST",
     headers: { "content-type": "application/json" },

@@ -29,8 +29,8 @@ test("an admin navigates organizations and member usage without loading every de
     await admin.see({ testId: "admin-breadcrumb-current" }, { text: "Users" });
     const deferred = await adminProbe.dom('[data-admin-deferred="pending"]');
     const traffic = await world.traffic("admin");
-    const ok = deferred.elements.length === 1 && deferred.elements[0].rect.top > 600 && traffic.usage === 0 && traffic.metrics === 0 && traffic.overview === 0;
-    evidence.recordAssertionEvidence("The Users route loads its own page while distant consumption waits", `section top=${deferred.elements[0]?.rect.top}px; viewport=200px; margin=400px; usage=${traffic.usage}; analytics=${traffic.metrics}; overview=${traffic.overview}`, ok);
+    const ok = deferred.elements.length === 1 && deferred.elements[0].rect.top > 520 && traffic.usage === 0 && traffic.metrics === 0 && traffic.overview === 0;
+    evidence.recordAssertionEvidence("The Users route loads its own page while distant consumption waits", `section top=${deferred.elements[0]?.rect.top}px; viewport=120px; margin=400px; usage=${traffic.usage}; analytics=${traffic.metrics}; overview=${traffic.overview}`, ok);
     expect(ok).toBe(true);
     await admin.screenshot();
   });
@@ -248,7 +248,7 @@ test("an admin navigates organizations and member usage without loading every de
     const layout = await adminProbe.dom("body");
     const navigation = await adminProbe.dom('[data-testid="admin-navigation"] a');
     expect(navigation.elements.map((link) => link.text)).toEqual([
-      "Overview", "Users", "Organizations", "Opportunities", "Feature rollouts", "Free Auto usage", "Services",
+      "Overview", "Users", "Organizations", "Opportunities", "Sandboxes", "Features", "Feature rollouts", "Free Auto usage", "Security", "Services",
     ]);
     const visibleSections = navigation.elements.every((link) => link.rect.left >= 0 && link.rect.left + link.rect.width <= navigation.viewportWidth);
     const ok = location.page === 1 && location.search === "Routing organization 00" && layout.documentWidth <= layout.viewportWidth && visibleSections;
@@ -386,6 +386,26 @@ test("an admin navigates organizations and member usage without loading every de
     const location = await world.location();
     const ok = location.pathname === "/admin" && location.active === "Overview";
     evidence.recordAssertionEvidence("The breadcrumb root and active navigation agree on the overview", JSON.stringify(location), ok);
+    expect(ok).toBe(true);
+    await admin.screenshot();
+  });
+
+  await step("after: the overview opens on the Control Center, served from cached snapshots", async () => {
+    await admin.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
+    // Recompute now instead of waiting for the background job's first tick.
+    await admin.click({ testId: "admin-control-center-refresh" });
+    await admin.see({ testId: "admin-control-center-updated" }, { text: /Refreshing every section/ });
+    await admin.see({ testId: "admin-control-center-updated" }, { text: /^Updated/, timeoutMs: 90_000 });
+    await admin.see({ testId: "admin-control-center-attention" });
+    await admin.see({ testId: "admin-control-center-kpis" });
+    const view = await world.controlCenter();
+    const access = await world.controlCenterAccess();
+    const traffic = await world.traffic("admin");
+    const computed = Object.values(view.sections).filter((section) => section.computedAt !== null && section.data !== null).length;
+    const ok = computed === Object.keys(view.sections).length && view.sections.pulse.data !== null
+      && access.read === 403 && access.refresh === 403 && traffic.controlCenter > 0;
+    evidence.recordAssertionEvidence("Every Control Center section comes from a snapshot, and only platform admins can read or refresh them",
+      `sections with snapshots=${computed}/${Object.keys(view.sections).length}; member read=${access.read}, refresh=${access.refresh}; page reads=${traffic.controlCenter}`, ok);
     expect(ok).toBe(true);
     await admin.screenshot();
   });

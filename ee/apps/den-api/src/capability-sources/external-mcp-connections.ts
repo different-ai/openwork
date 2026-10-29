@@ -44,6 +44,12 @@ import {
 } from "./external-mcp-oauth-state-identity.js"
 import { normalizeConnectedAccountScopes, normalizeOAuthClientExtra } from "./oauth-credentials.js"
 import { withExternalMcpCreationRetry } from "./external-mcp-creation-retry.js"
+import {
+  parseStoredExternalMcpRequestHeaders,
+  sameExternalMcpRequestHeaders,
+  serializeExternalMcpRequestHeaders,
+  type ExternalMcpRequestHeader,
+} from "./external-mcp-request-headers.js"
 
 export { normalizeExternalMcpIdentityUrl } from "./external-mcp-oauth-state-identity.js"
 
@@ -507,6 +513,8 @@ export async function createExternalMcpConnection(input: {
   exposeDirectly?: boolean
   apiKey?: string | null
   apiKeyAuthScheme?: "bearer" | "token"
+  /** Already validated. Stored encrypted; values are never returned. */
+  requestHeaders?: ExternalMcpRequestHeader[]
   oauthConfiguration?: ExternalMcpOAuthConfigurationInput | null
   createdByOrgMembershipId: OrgMembershipId
   access: ExternalMcpAccessInput
@@ -538,6 +546,7 @@ export async function createExternalMcpConnection(input: {
     apiKey: input.apiKey ?? null,
     readinessCredentialBinding: input.authType === "apikey" && input.apiKey ? randomUUID() : null,
     apiKeyAuthScheme: input.apiKeyAuthScheme ?? "bearer",
+    requestHeaders: serializeExternalMcpRequestHeaders(input.requestHeaders ?? []),
     oauthConfiguration,
     createdByOrgMembershipId: input.createdByOrgMembershipId,
   } satisfies typeof ExternalMcpConnectionTable.$inferInsert
@@ -966,6 +975,11 @@ export type UpdateExternalMcpConnectionInput = {
   exposeDirectly?: boolean
   apiKey?: string
   apiKeyAuthScheme?: "bearer" | "token"
+  /**
+   * The complete, validated header set to store. Omit to keep the stored
+   * headers. Changing them never clears sign-ins; it only resets readiness.
+   */
+  requestHeaders?: ExternalMcpRequestHeader[]
   oauthClient?: {
     clientId: string
     clientSecret?: string
@@ -1145,11 +1159,14 @@ export async function updateExternalMcpConnection(
       : Boolean(input.oauthClient && (!existingClient || clientIdChanged || clientSecretChanged || clientExtraChanged))
     const apiKeyChanged = input.apiKey !== undefined && existing.apiKey !== input.apiKey
     const exposeDirectlyChanged = input.exposeDirectly !== undefined && existing.exposeDirectly !== input.exposeDirectly
+    const requestHeadersChanged = input.requestHeaders !== undefined
+      && !sameExternalMcpRequestHeaders(parseStoredExternalMcpRequestHeaders(existing.requestHeaders), input.requestHeaders)
     const rowFieldsChanged = existing.name !== input.name
       || existing.url !== input.url
       || existing.authType !== input.authType
       || existing.credentialMode !== input.credentialMode
       || exposeDirectlyChanged
+      || requestHeadersChanged
       || apiKeyChanged
       || apiKeyAuthSchemeChanged
       || identityChanged
@@ -1188,6 +1205,7 @@ export async function updateExternalMcpConnection(
           ...(input.exposeDirectly !== undefined ? { exposeDirectly: input.exposeDirectly } : {}),
           oauthConfiguration: input.authType === "oauth" ? input.oauthConfiguration ?? null : null,
           apiKey: input.authType === "apikey" ? input.apiKey ?? null : null,
+          ...(input.requestHeaders !== undefined ? { requestHeaders: serializeExternalMcpRequestHeaders(input.requestHeaders) } : {}),
           readinessCredentialBinding: randomUUID(),
           readinessCheck: null,
           accessToken: null,
@@ -1216,6 +1234,11 @@ export async function updateExternalMcpConnection(
           apiKeyAuthScheme,
           ...(input.exposeDirectly !== undefined ? { exposeDirectly: input.exposeDirectly } : {}),
           ...(input.apiKey !== undefined ? { apiKey: input.apiKey, readinessCredentialBinding: randomUUID(), readinessCheck: null } : {}),
+          // New headers can change what the server accepts, so the last check
+          // no longer proves anything. Sign-ins and credential identity stay.
+          ...(requestHeadersChanged && input.requestHeaders !== undefined
+            ? { requestHeaders: serializeExternalMcpRequestHeaders(input.requestHeaders), readinessCheck: null }
+            : {}),
           ...(input.oauthConfiguration !== undefined ? { oauthConfiguration: input.oauthConfiguration } : {}),
           ...(input.authType === "none" && input.validatedAt ? { connectedAt: input.validatedAt } : {}),
           updatedAt: changedAt,
@@ -1224,6 +1247,13 @@ export async function updateExternalMcpConnection(
           eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
           eq(ExternalMcpConnectionTable.id, input.connectionId),
         ))
+    }
+
+    if (requestHeadersChanged && !credentialsInvalidated) {
+      await tx.update(ConnectedAccountTable).set({ readinessCheck: null }).where(and(
+        eq(ConnectedAccountTable.organizationId, input.organizationId),
+        eq(ConnectedAccountTable.providerId, input.connectionId),
+      ))
     }
 
     if (accessChanged) {
