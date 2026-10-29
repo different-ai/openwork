@@ -284,6 +284,14 @@ function refreshExistingSession(db: HistoryDatabase, id: string, sourceKey: stri
   return true;
 }
 
+function advanceHistorySequence(db: HistoryDatabase, id: string): void {
+  // Preserve the current owner and never rewind an existing event log.
+  db.prepare(`INSERT INTO event_sequence (aggregate_id, seq, owner_id)
+    SELECT ?, max(coalesce((SELECT max(seq) FROM session_message WHERE session_id = ?1), 0),
+      coalesce((SELECT seq FROM converted.event_sequence WHERE aggregate_id = ?1), 0)), NULL
+    ON CONFLICT(aggregate_id) DO UPDATE SET seq = max(event_sequence.seq, excluded.seq)`).run(id);
+}
+
 /** Pre-ownership checkpoints only represented sessions the copy created.
  * Preserve that meaning when upgrading an already interrupted database. */
 export function ensureHistoryCopyOwnership(db: HistoryDatabase): void {
@@ -341,6 +349,9 @@ export async function copyHistoryBatches(options: {
       const existingSession = db.prepare("SELECT 1 FROM session_v2 WHERE id = ?").get(id);
       if (existingSession) {
         unchanged = !refreshExistingSession(db, id, options.sourceKey, messageColumns);
+        // Recovery may release this checkpoint before raw archiving finishes.
+        // Make its retained projection safe for the next native writer now.
+        advanceHistorySequence(db, id);
         cursor = numberField(db.prepare("SELECT coalesce(max(seq), -1) AS seq FROM converted.session_message WHERE session_id = ?").get(id), "seq");
       } else {
         db.prepare(`INSERT INTO session_v2 (${sessionColumns}) SELECT ${sessionValues} FROM converted.session_v2 WHERE id = ?`).run(id);
@@ -399,11 +410,7 @@ export async function copyHistoryBatches(options: {
         if (db.prepare(`SELECT 1 FROM original.${table} s LEFT JOIN openwork_v1_${table} t ON t.id = s.id AND t.source_key = ?
           WHERE s.session_id = ? AND (t.id IS NULL OR t.data != s.data) LIMIT 1`).get(options.sourceKey, id)) throw new Error("Original history verification failed");
       }
-      // Do not reset an existing sequence owner or rewind the event log.
-      db.prepare(`INSERT INTO event_sequence (aggregate_id, seq, owner_id)
-        SELECT ?, max(coalesce((SELECT max(seq) FROM session_message WHERE session_id = ?1), 0),
-          coalesce((SELECT seq FROM converted.event_sequence WHERE aggregate_id = ?1), 0)), NULL
-        ON CONFLICT(aggregate_id) DO UPDATE SET seq = max(event_sequence.seq, excluded.seq)`).run(id);
+      advanceHistorySequence(db, id);
       db.prepare("UPDATE openwork_history_copy SET completed = 1 WHERE source_key = ? AND session_id = ?").run(options.sourceKey, id);
     });
     if (unchanged) { skipped++; options.progress(id, "skipped"); }
