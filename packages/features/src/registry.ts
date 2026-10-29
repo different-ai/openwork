@@ -95,6 +95,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  desktopUpdateDownloadWindow: {
+    label: "Desktop: restart to update before the download",
+    description: "Restart to update shows in the desktop title bar as soon as an update is found. Clicking it opens a small window that downloads the update with its progress, then restarts, instead of waiting with no sign of the download.",
+    category: "experience",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "reachjalil",
+    docs: "docs/features/desktop-update-download-window/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   nativeAffordanceCodeMode: {
     label: "OpenWork commands in Code Mode",
     description: "Let assistants compose OpenWork queries and sidebar commands in Code Mode using the same checked app actions.",
@@ -575,6 +586,17 @@ export const FEATURES = defineFeatures({
     since: "2026-10",
     author: "benjaminshafii",
     docs: "docs/features/expanded-mcp-presets/README.md",
+    deployments: everywhere,
+    default: false,
+  },
+  analyticsDailyTrends: {
+    label: "Analytics: daily trends",
+    description: "Usage & adoption shows active users, sessions and tasks per day for the last 30 days, with a Daily / Weekly switch next to the project filter. Turning it off returns to the 12-week weekly charts.",
+    category: "administration",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/analytics-daily-trends/README.md",
     deployments: everywhere,
     default: false,
   },

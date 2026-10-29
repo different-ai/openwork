@@ -132,6 +132,8 @@ jobs:
         run: pnpm --filter @openwork/app exec bun test --isolate ./tests/new-task-destination-options.test.ts
       - name: Check desktop links open real Den pages
         run: pnpm --filter @openwork/app test:den-links
+      - name: Test Library connector setup and translated placeholders
+        run: pnpm --filter @openwork/app exec bun test --isolate ./tests/library-connector-setup.test.tsx ./tests/i18n-placeholders.test.ts
       - name: Test sub-agent completion notices live and after reload
         run: pnpm --filter @openwork/app exec bun --conditions=development test --isolate ./tests/subagent-notices.test.tsx
       - name: Test the shared Calendar logic

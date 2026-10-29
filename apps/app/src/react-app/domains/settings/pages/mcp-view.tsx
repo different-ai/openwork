@@ -63,6 +63,7 @@ import {
   type OpencodeConfigFile,
 } from "../../../../app/lib/desktop";
 import { readDenSettings, type DenExternalMcpPreset } from "../../../../app/lib/den";
+import { denConnectorSetupUrl } from "../../../../app/lib/den-dashboard-links";
 import type { DenLibraryConnectionItem, DenLibraryPluginItem } from "../../../../app/lib/den-library";
 import {
   getMcpIdentityKey,
@@ -135,8 +136,10 @@ import { useLibraryCloud, type LibraryEditableSkill, type LibraryShareTarget } f
 import { AddLibraryItemPage } from "./add-library-item-page";
 import { LibraryAddControl } from "./library-add-control";
 import {
+  catalogConnectionNeedsSignIn,
   connectorSummary,
   LibraryConnectorCatalogPage,
+  type LibraryConnectorCatalogSignIn,
   LibraryConnectorSetupPage,
   type LibraryConnectorSetupInput,
 } from "./library-connector-pages";
@@ -692,9 +695,9 @@ export function McpView(props: McpViewProps) {
           authType: preset.authType,
           credentialMode: "per_member",
           apiKey: input.apiKey ?? "",
-          useOAuthClient: Boolean(input.oauthClient),
-          oauthClientId: input.oauthClient?.clientId ?? "",
-          oauthClientSecret: input.oauthClient?.clientSecret ?? "",
+          useOAuthClient: false,
+          oauthClientId: "",
+          oauthClientSecret: "",
         }
         : undefined,
     });
@@ -1598,6 +1601,17 @@ export function McpView(props: McpViewProps) {
     ...cloudConnections.map((item) => item.url),
     ...orgMcpItems.flatMap((item) => (item.orgMcpConnection ? [item.orgMcpConnection.url] : [])),
   ]);
+  // The organization already has these; each person signs in to their own account from the catalog too.
+  const connectorSignInsByUrl = new Map<string, LibraryConnectorCatalogSignIn>();
+  for (const item of orgMcpItems.filter(isOrgMcpConnectionItem)) {
+    const connection = item.orgMcpConnection;
+    const connectOrgMcp = props.connectOrgMcp;
+    if (!connectOrgMcp || !catalogConnectionNeedsSignIn(connection) || connectorSignInsByUrl.has(connection.url)) continue;
+    connectorSignInsByUrl.set(connection.url, {
+      onSignIn: () => connectOrgMcp(connection.id),
+      busy: props.orgMcpConnectingId === connection.id,
+    });
+  }
 
   const rows: LibraryRow[] = [];
 
@@ -1893,6 +1907,7 @@ export function McpView(props: McpViewProps) {
       <LibraryConnectorCatalogPage
         presets={connectorPresets}
         addedUrls={addedConnectorUrls}
+        signInsByUrl={connectorSignInsByUrl}
         onBack={toList}
         onPick={(preset) => setScreen({ kind: "connector-setup", preset })}
         onSomethingElse={() => setScreen({ kind: "create", addKind: "mcp" })}
@@ -1901,9 +1916,12 @@ export function McpView(props: McpViewProps) {
   }
   if (screen.kind === "connector-setup") {
     const preset = screen.preset;
+    const connectorSetupUrl = denConnectorSetupUrl(denBaseUrl, preset.presetId);
     return (
       <LibraryConnectorSetupPage
         preset={preset}
+        canSetUpOrganizationApp={canManageCloudConnections}
+        onSetUpInCloud={connectorSetupUrl ? () => void openDesktopUrl(connectorSetupUrl) : undefined}
         onBack={toList}
         onCatalog={() => setScreen({ kind: "catalog" })}
         onSubmit={(input) => handleConnectorSetup(preset, input)}
