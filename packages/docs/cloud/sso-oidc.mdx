@@ -1,0 +1,228 @@
+---
+title: "OIDC SSO"
+description: "Configure OpenID Connect SSO with Microsoft Entra ID, Amazon Cognito, Google, or another OIDC provider"
+---
+
+Use this guide for **OIDC**, not SAML. OpenWork uses a server-side authorization
+code flow with a client ID and secret. SAML's ACS URL is not an OIDC callback.
+
+## Before you start
+
+You need SSO available for your organization (Team or Enterprise on OpenWork
+Cloud), **Manage single sign-on** (`sso.manage`) permission, permission to create
+a web client at the identity provider, and control of your users' email domain
+if DNS proof is required. Prepare [recovery](#recovery) before enabling SSO.
+Keep the client secret in OpenWork and your approved secret store, never in a
+URL, screenshot, ticket, or source repository.
+
+## 1. Create the provider's web client
+
+Use the matching [provider recipe](#provider-recipes) below. Choose a
+confidential **web application**, not a single-page app, machine-to-machine
+client, or SAML application. Obtain its client ID, client secret and OpenID
+configuration document. Pause before finalizing the callback registration.
+
+If the provider requires a callback before it can create the client, complete
+that required field using your deployment's confirmed web/auth callback, then
+compare it with the generated OpenWork value at step 3 before testing.
+
+## 2. Save the client in OpenWork
+
+In **Settings → SSO**, choose **OIDC** and enter:
+
+| OpenWork field | Value |
+| --- | --- |
+| **Issuer URL** | The exact `issuer` value from the provider's OpenID configuration JSON, not the metadata-document URL, authorize URL, or token URL |
+| **Domain / Users' email domain** | The part after `@` in the users' work email, for example `example.com` for `admin@example.com`; not the IdP tenant hostname |
+| **Client ID** | The web client's ID |
+| **Client Secret** | The secret **value**, not a secret's ID or description |
+| **Scopes** | `openid email profile` |
+| **Token endpoint auth method** | A method supported by this provider/client, such as `client_secret_post` or `client_secret_basic`; see the recipes |
+
+Leave **Use manual OIDC endpoints instead of discovery** unchecked for normal
+discovery. OpenWork discovers the authorization, token, and JWKS endpoints from the issuer's
+`/.well-known/openid-configuration` document. If discovery cannot be used, only
+enter manual endpoints from that document; do not substitute the authorize URL
+for the issuer. Save. The connection is still disabled.
+
+### Change identity provider
+
+After discovery, OpenWork saves the resolved endpoints as manual configuration.
+When you reopen an existing OIDC connection, **Use manual OIDC endpoints instead
+of discovery** can therefore be checked with the previous provider's endpoints
+still filled in. Changing **Issuer URL** alone does not clear those values.
+
+When switching providers, enter the new issuer and client credentials, **uncheck
+Use manual OIDC endpoints instead of discovery**, then save so OpenWork discovers
+the new provider's endpoints. Test the saved configuration again before enabling.
+Clearing endpoint fields alone does not turn discovery on: while the checkbox
+is checked, manual mode requires authorization, token and JWKS endpoints.
+
+## 3. Register OpenWork's Redirect URL
+
+**Copy the Redirect URL OpenWork shows** after save. Register it in the
+provider's callback field, using the mapping below. This is not the **Sign-in
+URL** (which starts an organization login) or SAML's **ACS URL**.
+
+| Provider | Callback field |
+| --- | --- |
+| Microsoft Entra app registration, **Web** platform | **Redirect URIs** |
+| Amazon Cognito app client | **Allowed callback URLs** |
+| Google OAuth **Web application** client | **Authorized redirect URIs** |
+
+<Warning>
+On older self-hosted versions with separate web and API hosts, the displayed
+OIDC Redirect URL can incorrectly use the API host even though authentication
+uses the **web/auth host**. The working callback is on the web/auth host, with
+the same `/api/auth/sso/callback/<provider-id>` path. Upgrade to a version that
+corrects the displayed value, or have your deployment operator confirm the
+actual callback and register that exact URL as a temporary workaround. Do not
+guess a hostname, register wildcards, or change the issuer to work around this
+mismatch. The callback-display correction is separate from this documentation.
+</Warning>
+
+## Provider recipes
+
+These settings configure the provider as OpenWork's IdP. Use values from your
+own client and discovery document, not the examples unchanged.
+
+### Microsoft Entra ID
+
+1. In **Entra ID → App registrations → New registration**, name the app and
+   choose the appropriate **Supported account types** (single tenant for one
+   workforce tenant). Register it. Copy **Application (client) ID**.
+2. Under **Certificates & secrets → Client secrets → New client secret**, create
+   a secret and copy its **Value**, not **Secret ID**, into OpenWork.
+3. From **Endpoints → OpenID Connect metadata document**, open the tenant-specific
+   configuration. Use its `issuer`, normally
+   `https://login.microsoftonline.com/<tenant-guid>/v2.0`. Do not use the
+   `/oauth2/v2.0/authorize` or `/token` URL, or an unresolved `common` issuer template.
+4. Under **Authentication → Add a platform → Web**, set **Redirect URIs** to the
+   OpenWork Redirect URL from step 3 above. Use authorization code flow; implicit
+   grant is not needed for this server-side flow.
+5. Use `openid email profile` and **Token endpoint auth method**
+   `client_secret_post`. Each user who signs in needs a work email address in
+   Entra's **mail** attribute. A UPN or `preferred_username` is not necessarily
+   that email. Apply your tenant's consent and user-assignment policies to the
+   test administrator.
+
+<Note>
+When the provider has a UserInfo endpoint, OpenWork reads the email from that
+response. Adding an optional `email` claim to the ID token alone does not fix
+an empty Entra **mail** attribute: the UserInfo response still needs an email.
+Without it, sign-in fails. The test dialog can currently report that the
+authentication window was closed rather than identify the missing email;
+check the user's mail attribute and UserInfo email before retrying.
+</Note>
+
+See Microsoft's [app-registration guide](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app),
+[OIDC discovery reference](https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc),
+and [UserInfo reference](https://learn.microsoft.com/en-us/entra/identity-platform/userinfo).
+
+### Amazon Cognito
+
+1. In your **User pool → App clients**, create an app client with **Application
+   type → Traditional web application** so it has a **Client ID** and **Client
+   secret**. Configure a user-pool domain for browser sign-in.
+2. Use the pool's OpenID configuration `issuer`, normally
+   `https://cognito-idp.<region>.amazonaws.com/<user-pool-id>`. A pool using
+   Cognito's updated issuer type has a different issuer: copy its actual value.
+   The hosted-login/custom domain and `/oauth2/authorize` are not the issuer.
+3. Set **Allowed callback URLs** to OpenWork's Redirect URL. Under **OAuth grant
+   types**, enable **Authorization code grant**; under **OpenID Connect scopes**,
+   allow `openid`, `email`, and `profile`. Do not use a client-credentials-only app.
+4. Use **Token endpoint auth method** `client_secret_basic` (Cognito also
+   supports `client_secret_post`). Ensure the app client can read the user's
+   email attribute and the test user can sign in through the configured identity provider.
+
+See AWS's [app-client fields](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-client-apps.html)
+and [issuer/discovery endpoints](https://docs.aws.amazon.com/cognito/latest/developerguide/federation-endpoints.html).
+
+### Google
+
+1. In **Google Auth Platform**, configure **Branding** and **Audience** for the
+   intended users. A workforce-only app can use **Internal** when available;
+   an **External** app in testing needs the intended test users added.
+2. Under **Clients → Create client**, choose **Application type → Web
+   application**. Copy **Client ID** and **Client secret** into OpenWork; store
+   the secret securely when it is first shown.
+3. Use issuer `https://accounts.google.com`, confirmed in
+   `https://accounts.google.com/.well-known/openid-configuration`. Do not use
+   Google's authorization endpoint as the issuer.
+4. Add OpenWork's Redirect URL under **Authorized redirect URIs**, **not
+   Authorized JavaScript origins**, and **save** the OAuth client. Google can
+   take a few minutes to apply the saved change; retry after it has propagated
+   if Google shows **Error 400: redirect_uri_mismatch**.
+5. Use `openid email profile` and a supported token-endpoint method such as
+   `client_secret_post`.
+
+<Note>
+Google accepts redirect hosts on a public domain, or localhost/loopback for
+local testing. Private-only hostnames such as those ending in `.test` are not
+accepted. Production redirect URIs must use HTTPS; localhost has a testing
+exception. See Google's [redirect URI validation rules](https://developers.google.com/identity/protocols/oauth2/web-server#uri-validation).
+</Note>
+
+A Google OAuth web client is not a service account or an IAM OAuth client. It
+also does not grant Google Workspace super-admin rights for SAML setup.
+See Google's [OIDC guide](https://developers.google.com/identity/openid-connect/openid-connect)
+and [web-client creation steps](https://developers.google.com/identity/protocols/oauth2/web-server#creatingcred).
+
+## 4. Check email and verify the domain
+
+The provider must return a stable `sub` and an **`email` claim** matching the
+existing OpenWork administrator's email. Requesting the `email` scope alone
+does not guarantee that every provider/account returns an email. Check its
+claim configuration; do not replace the email with a tenant-only username.
+
+For `admin@example.com`, set **Domain / Users' email domain** to `example.com`.
+If OpenWork already shows **Domain verified: Yes**, continue. Otherwise select
+**Request token**, publish the exact displayed DNS `TXT` **Host / name** and
+value, wait until it resolves publicly, then select **Verify domain**. The token
+expires after seven days. Entra tenant-GUID issuers are automatically verified
+in v0.18.58; that does not correct an incorrectly entered email domain.
+
+## 5. Test, then enable
+
+1. Select **Enable Config** or **Enable SSO** to open **Test SSO before enabling it**.
+2. Select **SSO Login** and authenticate as the **same administrator** who started
+   the test. Confirm **Authentication test successful** and the intended account.
+3. After a failure, correct the cause and select **Try SSO login again** once.
+   An in-progress intent can remain after a browser close/reload until its
+   **five-minute expiry**. Finish the existing popup or wait for expiry; do not
+   click repeatedly or resave a configuration that already passed.
+4. Prepare recovery, then explicitly select **Enable SSO**. Edits require a new
+   test; saving and testing alone do not enable member access.
+
+<Warning>
+On a single-organization deployment, enabling SSO blocks email/password sign-in
+for **everyone, including the owner and initial administrator**. Keep the recent
+administrator session open while testing a fresh SSO login in another browser
+profile. A password reset or bootstrap code does not bypass enabled SSO.
+</Warning>
+
+## Recovery
+
+An authorized member with **Manage single sign-on** can disable SSO in
+**Settings → SSO** from a session signed in within the last **two hours**. An
+open tab does not extend this window. Alternatively, use a **pre-created**,
+authorized organization API key in the `x-api-key` header to call
+`POST /v1/sso/disable` on your Den API. API keys skip freshness, not permission
+checks. Disabling keeps the configuration and removes the singleton password
+block; normal account/password protections still apply. If neither path is
+available, escalate to your deployment operator. Fix, retest, then re-enable.
+
+## Troubleshooting
+
+| Message / code | Check and action |
+| --- | --- |
+| Microsoft `AADSTS50011` | Redirect URI mismatch. Compare the registered **Web → Redirect URIs** with OpenWork's Redirect URL and the actual web/auth callback. Check the older split-host warning above. This is not the SAML Reply URL setting. |
+| Cognito `An error was encountered with the requested page.` with `redirect_mismatch` | The generic page can hide a callback mismatch. Compare **Allowed callback URLs** with the actual web/auth callback, including host, scheme, port and path. Confirm the error code before assuming every generic Cognito error is a redirect mismatch. |
+| Google `Error 400: redirect_uri_mismatch` | Add the exact OpenWork Redirect URL to this OAuth client's **Authorized redirect URIs**, not **Authorized JavaScript origins**, and save. Allow a few minutes for the change to apply before retrying. Check Google's public-domain/localhost host rules; do not use the SAML ACS URL. |
+| `OIDC discovery issuer does not match the configured issuer.` | Copy the discovery document's exact `issuer`, not the authorize/token URL, metadata URL or an unresolved tenant template. |
+| `invalid_client` | Check Client ID, secret **value**, expiry, and the supported token endpoint auth method. Never share the secret or tokens to diagnose it. |
+| `account_not_linked` / `SSO authentication did not complete successfully. Check the provider configuration and try again.` | Check the `email` claim, users' email domain, and existing account email first. These errors can have other causes; inspect redacted server diagnostics if they match. |
+| `The SSO authentication test expired. Start a new test and complete it within five minutes.` | Wait for the old intent to expire, then use **Try SSO login again** once. Complete the new test within five minutes. |
+| `For security, confirm it's you before changing workspace settings.` / `fresh_auth_required` | Re-authenticate to renew the two-hour window, or use the pre-created authorized recovery API key if SSO is unavailable. |
+| `This deployment is configured for one organization. Additional organization changes are disabled.` | Sign out of the stale session and sign in again through this deployment's organization **Sign-in URL**. Preserve any separate recovery session. |
+| HTTP `429` | Stop repeated clicks and honor `Retry-After` when present. Production auth defaults to 20 requests per 60 seconds; the separate password endpoint allows 5 requests per 5 minutes and can also have failed-password lockouts. |
