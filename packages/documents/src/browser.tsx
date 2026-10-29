@@ -7,7 +7,7 @@ import { DocumentEditorTab } from "./editor"
 import { documentsAccessFailure, expiredDocumentRecovery, lockDocumentRecovery } from "./access"
 import { DocumentTabs, type DocumentTabControls, type DocumentTabControlsChange } from "./document-tabs"
 import type { DocumentsEditor } from "./model"
-import { documentType, type DocumentItem, type DocumentsProvider, type DocumentsViewContext, type DocumentOpenRequest } from "./index"
+import { documentType, type DocumentItem, type DocumentsProvider, type DocumentsViewContext, type DocumentOpenRequest, type DocumentOpenOutcome } from "./index"
 
 export type DocumentsBrowserProps = {
   provider: DocumentsProvider
@@ -15,6 +15,8 @@ export type DocumentsBrowserProps = {
   /** Include the authenticated organization and person. Never reuse a cache across identities. */
   scope: readonly string[]
   enabled: boolean
+  /** Preview is always available; editing must be explicitly enabled by the host. */
+  editingEnabled?: boolean
   connectionsHref?: string | null
   /** A host's existing sign-in flow, opened separately so recovery stays mounted. */
   signInHref?: string | null
@@ -26,6 +28,8 @@ export type DocumentsBrowserProps = {
   onDirtyChange?(dirty: boolean): void
   onContextChange?(context: DocumentsViewContext | null): void
   openDocument?: DocumentOpenRequest
+  /** What became of `openDocument`: opened, couldn't be opened, or set aside because the person moved on first. */
+  onOpenSettled?(requestId: string, outcome: DocumentOpenOutcome): void
 }
 
 function date(value: string | null) {
@@ -51,7 +55,7 @@ export function DocumentsBrowser(props: DocumentsBrowserProps) {
   return <ScopedDocumentsBrowser key={JSON.stringify([props.scope, props.provider.id])} {...props} />
 }
 
-function ScopedDocumentsBrowser({ provider, editor, scope, enabled, connectionsHref, signInHref, verifyScope, authorization, renderConnect, onDirtyChange, onContextChange, openDocument }: DocumentsBrowserProps) {
+function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabled = false, connectionsHref, signInHref, verifyScope, authorization, renderConnect, onDirtyChange, onContextChange, openDocument, onOpenSettled }: DocumentsBrowserProps) {
   const policy = useRef({ enabled, authorization })
   policy.current = { enabled, authorization }
   const [resources, setResources] = useState<ReadonlyMap<string, DocumentItem>>(new Map())
@@ -121,7 +125,7 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, connectionsH
       return a.name.localeCompare(b.name, undefined, { numeric: true })
     })
   }, [query.data, order])
-  const navigate = (index: number) => { setView("folder"); setActiveTab("files"); setOrder("name"); setFolders(current => current.slice(0, index + 1)); setSelected(null); setSearch(""); setDraft("") }
+  const navigate = (index: number) => { supersede(); setView("folder"); setActiveTab("files"); setOrder("name"); setFolders(current => current.slice(0, index + 1)); setSelected(null); setSearch(""); setDraft("") }
   const open = (item: DocumentItem) => {
     if (item.kind === "folder") { setView("folder"); setActiveTab("files"); setOrder("name"); setFolders(current => [...(view === "recent" ? [{ id: "root", name: provider.rootLabel }] : current), { id: item.id, name: item.name }]); setSearch(""); setDraft(""); setSelected(null) }
     else if (editor) {
@@ -130,20 +134,39 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, connectionsH
       setOpened(current => current.some(file => file.id === item.id) ? current : [...current, item]); setTabOrder(current => current.includes(item.id) ? current : [...current, item.id]); setActiveTab(item.id) }
     else setSelected(item)
   }
+  // A requested document is only opened while it is still what the person is waiting for.
+  const [handled, setHandled] = useState<string>()
+  const handledRef = useRef(handled)
+  const settle = (outcome: DocumentOpenOutcome) => {
+    if (!openDocument || handledRef.current === openDocument.requestId) return
+    handledRef.current = openDocument.requestId
+    setHandled(openDocument.requestId)
+    onOpenSettled?.(openDocument.requestId, outcome)
+  }
+  const pendingOpen = enabled && !authorization && !!openDocument && handled !== openDocument.requestId
+  const alreadyOpen = openDocument ? opened.find(file => file.id === openDocument.fileId || resources.get(file.id)?.id === openDocument.fileId) : undefined
   const requested = useQuery({
     queryKey: ["documents", ...scope, provider.id, "open", openDocument?.requestId, openDocument?.fileId],
     queryFn: ({ signal }) => {
       if (!provider.get || !openDocument) throw new Error("This document provider cannot open links.")
       return provider.get(openDocument.fileId, signal)
     },
-    enabled: enabled && !authorization && !!openDocument, retry: false, gcTime: 0,
+    enabled: pendingOpen && !alreadyOpen, retry: false, gcTime: 0,
     refetchOnWindowFocus: false,
   })
-  const handled = useRef<string | undefined>(undefined)
+  const opening = pendingOpen && !alreadyOpen && !requested.isError
+  // The person choosing anything else in Documents sets a pending request aside, so a slow answer never pulls them back.
+  const supersede = () => { if (pendingOpen) settle("superseded") }
+  const pick = (item: DocumentItem) => { supersede(); open(item) }
+  const selectTab = (id: string) => { supersede(); setActiveTab(id) }
+  const reportedFailure = useRef<string>(undefined)
   useEffect(() => {
-    if (!enabled || authorization || !requested.data || !openDocument || handled.current === openDocument.requestId) return
-    handled.current = openDocument.requestId
-    open(requested.data)
+    if (!pendingOpen || !openDocument) return
+    if (alreadyOpen) { setActiveTab(alreadyOpen.id); settle("opened"); return }
+    if (requested.data) { open(requested.data); settle("opened"); return }
+    // A failure stays pending so "Try again" can still open it; it is reported once per failed attempt.
+    const failure = `${openDocument.requestId}:${requested.errorUpdatedAt}`
+    if (requested.isError && reportedFailure.current !== failure) { reportedFailure.current = failure; onOpenSettled?.(openDocument.requestId, "failed") }
   })
   const queryFailure = documentsAccessFailure(query.error)
   const recentFailure = documentsAccessFailure(recent.error)
@@ -170,10 +193,11 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, connectionsH
   const activeFile = activeItem ? resources.get(activeTab) ?? activeItem : undefined
   const activeDirty = dirtyIds.has(activeTab)
   useEffect(() => {
-    onContextChange?.(!editorEnabled || locks.has(activeTab) ? null : activeFile
+    // While a document opens, the previous one is no longer what the person is looking at.
+    onContextChange?.(opening || !editorEnabled || locks.has(activeTab) ? null : activeFile
       ? { kind: "file", item: activeFile, unsaved: activeDirty }
       : accessLost || query.isError ? null : { kind: "files", view, folderId: folder.id, folderName: folder.name, query: search })
-  }, [editorEnabled, locks, activeTab, accessLost, query.isError, activeFile, activeDirty, view, folder.id, folder.name, search, onContextChange])
+  }, [opening, editorEnabled, locks, activeTab, accessLost, query.isError, activeFile, activeDirty, view, folder.id, folder.name, search, onContextChange])
   const submit = (event: FormEvent) => { event.preventDefault(); setSearch(draft.trim()); setSelected(null) }
   const requestClose = (id: string) => {
     if (busyIds.has(id)) return
@@ -259,40 +283,42 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, connectionsH
   return <section className="ow-documents" aria-label="Documents">
     <aside className="ow-documents-sidebar">
       <div className="ow-documents-source">Documents</div>
-      <button type="button" className="ow-documents-location" aria-current={activeTab === "files" && view === "recent" ? "page" : undefined} onClick={() => { setView("recent"); setActiveTab("files"); setSearch(""); setDraft(""); setOrder("recent") }}><Clock size={16} strokeWidth={1.5} aria-hidden />Recent</button>
+      <button type="button" className="ow-documents-location" aria-current={activeTab === "files" && view === "recent" ? "page" : undefined} onClick={() => { supersede(); setView("recent"); setActiveTab("files"); setSearch(""); setDraft(""); setOrder("recent") }}><Clock size={16} strokeWidth={1.5} aria-hidden />Recent</button>
       <button type="button" className="ow-documents-location" aria-current={activeTab === "files" && view === "folder" ? "page" : undefined} onClick={() => navigate(0)}><Folder size={16} strokeWidth={1.5} aria-hidden />{provider.rootLabel}</button>
       <h2 className="ow-documents-recent-heading">Recent documents</h2>
-      {visible && recentItems.filter(item => !lockedResources.has(item.id)).slice(0, 8).map(item => <button type="button" className="ow-documents-recent-file" key={item.id} onClick={() => open(item)}><ItemIcon item={item} /><span>{item.name}</span></button>)}
+      {visible && recentItems.filter(item => !lockedResources.has(item.id)).slice(0, 8).map(item => <button type="button" className="ow-documents-recent-file" key={item.id} onClick={() => pick(item)}><ItemIcon item={item} /><span>{item.name}</span></button>)}
     </aside>
     <div className="ow-documents-workspace">
-      <div className="ow-document-tabs-row" ref={tabsRow}><DocumentTabs items={editorEnabled ? orderedTabs.filter(item => !locks.has(item.id)) : []} activeId={activeTab} dirtyIds={dirtyIds} busyIds={busyIds} onSelect={setActiveTab} onClose={requestClose} onReorder={setTabOrder}/><div className="ow-document-actions" ref={setActionsHost}/></div>
+      <div className="ow-document-tabs-row" ref={tabsRow}><DocumentTabs items={editorEnabled ? orderedTabs.filter(item => !locks.has(item.id)) : []} activeId={activeTab} dirtyIds={dirtyIds} busyIds={busyIds} onSelect={selectTab} onClose={requestClose} onReorder={setTabOrder}/><div className="ow-document-actions" ref={setActionsHost}/></div>
       {(accessLost || locks.size > 0) && <div className="ow-editor-message ow-documents-recovery" role="status" aria-busy={restoring}><Lock size={16} aria-hidden /><span>{flagOff ? "Documents is off for your workspace. An admin can turn it on." : needsSignIn ? "Sign in again to restore document access." : needsConnection ? recoveryUntil !== null ? "Google Drive needs a fresh connection." : "Connect Google Drive to browse and open your documents. Drive read permission is required." : "Some document access isn't confirmed."}</span>{needsSignIn && reauthenticateHref && <a href={reauthenticateHref} target="_blank" rel="noopener noreferrer">Sign in again</a>}{needsConnection && (renderConnect ? renderConnect(undefined, locks.size > 0) : connectionsHref && <a href={connectionsHref} target="_blank" rel="noopener noreferrer">{locks.size > 0 ? "Reconnect Google Drive" : "Connect Google Drive"}</a>)}{recoveryUntil !== null && locks.size > 0 && <span>Locked recovery is kept in this tab for up to 15 minutes.</span>}<button type="button" disabled={restoring} onClick={() => void restoreRecovery()}>{locks.size > 0 ? "Check access and restore tabs" : "Check browsing access"}</button>{recoveryError && <span>{recoveryError}</span>}</div>}
       {opened.filter(item => locks.has(item.id)).map(item => { const position = tabOrder.indexOf(item.id) + 1; return <div className="ow-editor-message ow-documents-recovery" role="group" aria-label={`Locked document ${position}`} key={item.id}><span>Locked document {position}</span><button type="button" disabled={restoring} aria-label={`Check access for locked document ${position}`} onClick={() => void restoreRecovery(item.id)}>Check access</button><button type="button" disabled={restoring} aria-label={`Discard locked document ${position}`} onClick={() => discardRecovery(item.id)}>Discard</button></div> })}
       {refreshFailed && activeTab !== "files" && <div className="ow-editor-message" role="status">Couldn't refresh documents. Your open document is unchanged.<button type="button" onClick={() => { void query.refetch(); void recent.refetch() }}>Try again</button></div>}
-    {enabled && openDocument && requested.isError && <div className="ow-documents-notice" role="status">Couldn't open this document. Check your Drive connection and access. <button type="button" onClick={() => void requested.refetch()}>Try again</button></div>}
-    <div className="ow-documents-main" hidden={activeTab !== "files" || accessLost}>
+    {pendingOpen && requested.isError && <div className="ow-documents-notice" role="status">Couldn't open this document. Check your Drive connection and access. <button type="button" onClick={() => void requested.refetch()}>Try again</button></div>}
+    {opening && !accessLost && <section className="ow-document-editor" role="status" aria-label="Opening document" aria-busy="true" data-testid="document-opening"><div className="ow-document-opening" aria-hidden="true"><div/><div/><div/><div/><div/></div></section>}
+    <div className="ow-documents-main" hidden={opening || activeTab !== "files" || accessLost}>
       <header className="ow-documents-toolbar" hidden={!editorEnabled}>
         <form onSubmit={submit} role="search" className="ow-documents-search"><Search size={16} strokeWidth={1.5} aria-hidden /><input aria-label={`Search ${folder.name}`} placeholder={`Search in ${folder.name}`} value={draft} maxLength={500} onChange={event => setDraft(event.target.value)} /><button type="submit">Search</button></form>
         <button type="button" title="Refresh documents" aria-label="Refresh documents" disabled={!enabled || query.isFetching} onClick={() => { void query.refetch(); void recent.refetch() }}><RefreshCw size={16} strokeWidth={1.5} /></button>
         <div className="ow-documents-layout" role="group" aria-label="Document view"><button type="button" aria-label="List view" aria-pressed={layout === "list"} onClick={() => setLayout("list")}><List size={16} strokeWidth={1.5} /></button><button type="button" aria-label="Grid view" aria-pressed={layout === "grid"} onClick={() => setLayout("grid")}><Grid2X2 size={16} strokeWidth={1.5} /></button></div>
       </header>
-      <div className="ow-documents-heading" hidden={!editorEnabled}><nav aria-label="Folder breadcrumbs">{(view === "recent" ? [{ id: "recent", name: "Recent" }] : folders).map((entry, index) => <span key={`${entry.id}-${index}`}>{index > 0 && <ChevronRight size={14} aria-hidden />}<button type="button" onClick={() => view === "recent" ? setActiveTab("files") : navigate(index)} aria-current={index === folders.length - 1 ? "location" : undefined}>{entry.name}</button></span>)}</nav><label>Sort by <select aria-label="Sort documents" value={order} onChange={event => setOrder(event.target.value === "modified" ? "modified" : event.target.value === "recent" ? "recent" : "name")}><option value="recent">Drive order</option><option value="name">Name</option><option value="modified">Last modified</option></select></label></div>
+      <div className="ow-documents-heading" hidden={!editorEnabled}><nav aria-label="Folder breadcrumbs">{(view === "recent" ? [{ id: "recent", name: "Recent" }] : folders).map((entry, index) => <span key={`${entry.id}-${index}`}>{index > 0 && <ChevronRight size={14} aria-hidden />}<button type="button" onClick={() => view === "recent" ? selectTab("files") : navigate(index)} aria-current={index === folders.length - 1 ? "location" : undefined}>{entry.name}</button></span>)}</nav><label>Sort by <select aria-label="Sort documents" value={order} onChange={event => setOrder(event.target.value === "modified" ? "modified" : event.target.value === "recent" ? "recent" : "name")}><option value="recent">Drive order</option><option value="name">Name</option><option value="modified">Last modified</option></select></label></div>
       {editorEnabled && search && <div className="ow-documents-notice">Results for “{search}” <button type="button" onClick={() => { setDraft(""); setSearch("") }}>Clear search</button></div>}
       {accessLost ? null
         : query.isError ? <div className="ow-documents-state" role="status"><p>Couldn't load your documents.</p><button type="button" onClick={() => { void query.refetch(); void recent.refetch() }}>Try again</button></div>
         : query.isPending ? <div className="ow-documents-skeleton" aria-label="Loading documents" aria-busy="true">{Array.from({ length: 8 }, (_, index) => <div key={index} />)}</div>
         : <><div className="ow-documents-content">
           <div className="ow-documents-listing">
-            {layout === "list" ? <table><thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Last modified</th><th scope="col">Size</th></tr></thead><tbody>{listedItems.map(item => <tr key={item.id} data-selected={selected?.id === item.id}><td><button type="button" className="ow-documents-file" onClick={() => open(item)}><ItemIcon item={item} /><span>{item.name}</span></button></td><td>{documentType(item)}</td><td>{date(item.modifiedTime)}</td><td>{size(item.size)}</td></tr>)}</tbody></table>
-              : <div className="ow-documents-grid">{listedItems.map(item => <button type="button" key={item.id} className="ow-documents-tile" data-selected={selected?.id === item.id} onClick={() => open(item)}><ItemIcon item={item} /><strong>{item.name}</strong><span>{documentType(item)}</span></button>)}</div>}
+            {layout === "list" ? <table><thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Last modified</th><th scope="col">Size</th></tr></thead><tbody>{listedItems.map(item => <tr key={item.id} data-selected={selected?.id === item.id}><td><button type="button" className="ow-documents-file" onClick={() => pick(item)}><ItemIcon item={item} /><span>{item.name}</span></button></td><td>{documentType(item)}</td><td>{date(item.modifiedTime)}</td><td>{size(item.size)}</td></tr>)}</tbody></table>
+              : <div className="ow-documents-grid">{listedItems.map(item => <button type="button" key={item.id} className="ow-documents-tile" data-selected={selected?.id === item.id} onClick={() => pick(item)}><ItemIcon item={item} /><strong>{item.name}</strong><span>{documentType(item)}</span></button>)}</div>}
             {listedItems.length === 0 && <div className="ow-documents-state"><Folder size={24} strokeWidth={1.5} /><p>{lockedResources.size > 0 ? "Some documents are locked." : search ? "No documents match your search." : view === "recent" ? "No recent documents in Drive." : "This folder is empty."}</p></div>}
             {query.hasNextPage && <button type="button" className="ow-documents-more" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>Load more</button>}
             {query.data?.pages.some(page => page.incomplete) && <p className="ow-documents-notice" role="status">Google couldn't search every drive. Some files may be missing.</p>}
+            {query.data?.pages[0]?.unavailable?.map(entry => <p className="ow-documents-notice" role="status" data-unavailable-source={entry.source.id} key={entry.source.id}>{entry.code === "needs_connection" ? `Connect ${entry.source.label} to see its files here.` : `Couldn't load ${entry.source.label}.`} {entry.message}{entry.code === "needs_connection" && renderConnect?.(entry.connectionId, false)}</p>)}
           </div>
-          {visible && selected && <aside className="ow-documents-detail" aria-label="Document details"><div className="ow-documents-detail-heading"><Info size={16} aria-hidden /><span>Details</span><button type="button" aria-label="Close document details" onClick={() => setSelected(null)}><X size={16} /></button></div><ItemIcon item={selected} /><h2>{selected.name}</h2><dl><dt>Type</dt><dd>{documentType(selected)}</dd><dt>Last modified</dt><dd>{date(selected.modifiedTime)}</dd><dt>Size</dt><dd>{size(selected.size)}</dd></dl>{selected.openUrl ? <a className="ow-documents-open" href={selected.openUrl} target="_blank" rel="noopener noreferrer">Open in {provider.label}<ExternalLink size={14} aria-hidden /></a> : <p>This file has no available link.</p>}</aside>}
+          {visible && selected && <aside className="ow-documents-detail" aria-label="Document details"><div className="ow-documents-detail-heading"><Info size={16} aria-hidden /><span>Details</span><button type="button" aria-label="Close document details" onClick={() => setSelected(null)}><X size={16} /></button></div><ItemIcon item={selected} /><h2>{selected.name}</h2><dl><dt>Type</dt><dd>{documentType(selected)}</dd><dt>Last modified</dt><dd>{date(selected.modifiedTime)}</dd><dt>Size</dt><dd>{size(selected.size)}</dd></dl>{selected.openUrl ? <a className="ow-documents-open" href={selected.openUrl} target="_blank" rel="noopener noreferrer">Open in {selected.source?.label ?? provider.label}<ExternalLink size={14} aria-hidden /></a> : <p>This file has no available link.</p>}</aside>}
         </div></>}
     </div>
-    {editor && opened.map(item => <DocumentEditorTab toolbarHost={actionsHost} key={item.id} item={item} editor={editor} enabled={editorEnabled && !locks.has(item.id)} active={editorEnabled && !locks.has(item.id) && activeTab === item.id} scope={scope} connectionsHref={connectionsHref} renderConnect={renderConnect} onDirtyChange={updateDirty} onSavingChange={updateSaving} onResourceChange={resourceChanged} onControlsChange={registerControls} onClose={() => close(item.id)} />)}
+    {editor && opened.map(item => <DocumentEditorTab toolbarHost={actionsHost} key={item.id} item={item} editor={editor} editingEnabled={editingEnabled} enabled={editorEnabled && !locks.has(item.id)} active={editorEnabled && !locks.has(item.id) && !opening && activeTab === item.id} scope={scope} connectionsHref={connectionsHref} renderConnect={renderConnect} onDirtyChange={updateDirty} onSavingChange={updateSaving} onResourceChange={resourceChanged} onControlsChange={registerControls} onClose={() => close(item.id)} />)}
     </div>
   </section>
 }

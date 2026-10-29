@@ -37,7 +37,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.22.1
       - uses: ./.github/actions/setup-browser
       - name: Verify browser-only setup leaves OAuth handoff disabled
         shell: bash
@@ -57,7 +57,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.22.1
       - uses: pnpm/action-setup@v4
       - run: |
           pnpm --filter @openwork/review-app... --filter @openwork/world... --filter @openwork/types... install --frozen-lockfile --ignore-scripts

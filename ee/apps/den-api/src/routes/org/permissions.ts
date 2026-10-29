@@ -702,10 +702,10 @@ async function assignTeamsToSet(tx: TeamMutationTransaction, input: {
 async function teamRoleChangeEvents(tx: TeamMutationTransaction, organizationId: OrganizationId, changes: TeamRoleChanges, before: ReadonlyMap<PermissionSetId, TeamLink[]>, options: { skip?: PermissionSetId } = {}) {
   const setIds = [...changes.keys()].filter((setId) => setId !== options.skip)
   if (setIds.length === 0) return []
-  const [after, sets] = await Promise.all([
-    readTeamLinks(tx, organizationId, setIds),
-    tx.select().from(PermissionSetTable).where(and(eq(PermissionSetTable.organizationId, organizationId), inArray(PermissionSetTable.id, setIds))),
-  ])
+  // Sequential on purpose: a PlanetScale transaction runs one query at a time, and
+  // overlapping queries fail with "transaction ... in use" (an intermittent 500).
+  const after = await readTeamLinks(tx, organizationId, setIds)
+  const sets = await tx.select().from(PermissionSetTable).where(and(eq(PermissionSetTable.organizationId, organizationId), inArray(PermissionSetTable.id, setIds)))
   const events = []
   for (const set of sets) {
     const change = changes.get(set.id)

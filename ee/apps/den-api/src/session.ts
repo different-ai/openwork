@@ -5,6 +5,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 import type { Context, MiddlewareHandler } from "hono"
 import { getSignedCookie } from "hono/cookie"
 import { DEN_API_KEY_HEADER, getApiKeySessionById, type DenApiKeySession } from "./api-keys.js"
+import { sessionTokenMatches } from "./session-token.js"
 import { auth, DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX } from "./auth.js"
 import { cache, type CachedAuthSession } from "./cache.js"
 import { db } from "./db.js"
@@ -152,6 +153,14 @@ export function verifyInternalMcpPrincipalHeader(header: string | null): Interna
   }
 
   return parsed
+}
+
+/**
+ * The request is a Connect capability call: an agent acting for the member (in Slack or Workbot chat), not the
+ * member's own browser. Only Den signs this header, so a caller cannot claim it.
+ */
+export function cameThroughConnect(headers: Headers): boolean {
+  return verifyInternalMcpPrincipalHeader(headers.get(INTERNAL_MCP_PRINCIPAL_HEADER)) !== null
 }
 
 /** The MCP credential identifier carried by a verified internal principal header (audit attribution only). */
@@ -356,7 +365,7 @@ async function getSessionFromToken(token: string, requestContext?: SessionReques
         updatedAt: now,
       })
       .where(and(
-        eq(AuthSessionTable.token, token),
+        sessionTokenMatches(token),
         gt(AuthSessionTable.expiresAt, now),
         lte(AuthSessionTable.expiresAt, refreshCutoff),
         lt(AuthSessionTable.expiresAt, nextExpiresAt),
@@ -399,9 +408,9 @@ export async function revokeBearerSession(headers: Headers) {
   const rows = await db
     .select({ id: AuthSessionTable.id, userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)
-    .where(eq(AuthSessionTable.token, token))
+    .where(sessionTokenMatches(token))
     .limit(1)
-  await db.delete(AuthSessionTable).where(eq(AuthSessionTable.token, token))
+  await db.delete(AuthSessionTable).where(sessionTokenMatches(token))
   // Sign-out/revocation is the authoritative point that invalidates cached auth.
   await cache.auth.revokeSession(token)
   const session = rows[0]

@@ -9,12 +9,15 @@ import { tokenRoute } from "../middleware/index.js"
 import { appLogger } from "../observability/logger.js"
 import { jsonResponse } from "../openapi.js"
 import { activeHeadlessResumeGrantMember, exchangeHeadlessResumeGrant, findHeadlessResumeGrant } from "./resume-grants.js"
+import { HEADLESS_INDEX_MAX_UPDATES, HEADLESS_INDEX_ROUTE, headlessIndexRequestSchema, ingestHeadlessIndexUpdates } from "./session-index.js"
 
 /**
- * The headless runner's one call back into Den: exchanging a turn's resume grant (feature `headlessDurableTurns`)
- * for a fresh member-scoped MCP token, so it can continue the turn after a restart or refresh a long turn's token.
- * Authenticated with DEN_HEADLESS_RUNNER_CALLBACK_TOKEN (404 when unset). Internal: not in the published API document
- * and never an MCP capability. Never log the grant or the token.
+ * The headless runner's calls back into Den, both authenticated with DEN_HEADLESS_RUNNER_CALLBACK_TOKEN (404 when
+ * unset), internal (not in the published API document) and never MCP capabilities:
+ * - exchanging a turn's resume grant (saved step turns) for a fresh member-scoped MCP token, so it can
+ *   continue the turn after a restart or refresh a long turn's token. Never log the grant or the token.
+ * - reporting sessions' content-free totals and state to Den's session index, each update with the capability Den
+ *   minted for that session (session-index.ts). Never log a capability.
  */
 
 const logger = appLogger.child({ component: "headless_resume_token" })
@@ -48,6 +51,15 @@ const exchangeErrorSchema = z.object({
 })
 const rateLimitedSchema = z.object({ error: z.literal("rate_limited"), retryAfterMs: z.number().int().positive() })
 
+const indexResultSchema = z.object({
+  sessionId: z.string(),
+  version: z.number().int(),
+  status: z.enum(["ok", "stale", "rejected"]),
+  error: z.enum(["invalid_update", "capability_invalid", "capability_expired", "capability_mismatch", "index_disabled", "rate_limited", "session_conflict"]).optional(),
+})
+const indexResponseSchema = z.object({ results: z.array(indexResultSchema) })
+const indexErrorSchema = z.object({ error: z.enum(["not_found", "unauthorized", "invalid_request", "index_failed"]) })
+
 /** Compares digests, so neither the value nor its length leaks through timing. */
 function sameSecret(presented: string, expected: string) {
   const left = new Uint8Array(crypto.createHash("sha256").update(presented).digest())
@@ -59,7 +71,51 @@ function bearer(header: string | undefined) {
   return header?.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : null
 }
 
+/** The runner's callback token, checked in constant time; a response when it is missing, wrong or not configured. */
+function callbackRefusal(header: string | undefined): { error: "not_found"; status: 404 } | { error: "unauthorized"; status: 401 } | null {
+  const callbackToken = env.headlessRunnerCallbackToken
+  if (!callbackToken) return { error: "not_found", status: 404 }
+  const presented = bearer(header)
+  if (presented === null || !sameSecret(presented, callbackToken)) return { error: "unauthorized", status: 401 }
+  return null
+}
+
 export function registerHeadlessRunnerRoutes<T extends Env>(app: Hono<T>) {
+  app.post(
+    HEADLESS_INDEX_ROUTE,
+    describeHeadlessRoute({
+      tags: ["Internal"],
+      "x-mcp": false,
+      operationId: "reportHeadlessSessionIndex",
+      security: [{ headlessRunnerCallbackToken: [] }],
+      summary: "Report headless sessions' content-free totals and state to Den's session index",
+      description: `For the headless runner only, with \`Authorization: Bearer $DEN_HEADLESS_RUNNER_CALLBACK_TOKEN\`. Body \`{ updates: [{ capability, sessionId, version, fields }] }\`, at most ${HEADLESS_INDEX_MAX_UPDATES}. Each update carries the index capability Den minted with the session's turn; the organization, member and kind come from it alone and \`sessionId\` must be its session. Idempotent on (sessionId, version): a version at or below the stored one is \`stale\` and changes nothing. One result per update, in order: \`ok\`, \`stale\`, or \`rejected\` with a code (\`rate_limited\` per session and organization: keep and retry it; \`index_disabled\` is no longer sent but older runners keep and retry it too). Rejections are audited. Answers 404 when DEN_HEADLESS_RUNNER_CALLBACK_TOKEN is not configured.`,
+      responses: {
+        200: jsonResponse("One result per update.", indexResponseSchema),
+        400: jsonResponse("The body is not `{ updates: [...] }` with 1 to 50 updates.", indexErrorSchema),
+        401: jsonResponse("Missing or wrong callback token.", indexErrorSchema),
+        404: jsonResponse("Runner callbacks are not configured on this deployment.", indexErrorSchema),
+        500: jsonResponse("The index could not be written; retry with backoff.", indexErrorSchema),
+      },
+    }),
+    tokenRoute,
+    async (c) => {
+      const refused = callbackRefusal(c.req.header("authorization"))
+      if (refused) return c.json({ error: refused.error }, refused.status)
+      const body = headlessIndexRequestSchema.safeParse(await c.req.json().catch(() => null))
+      if (!body.success) return c.json({ error: "invalid_request" as const }, 400)
+      try {
+        const requestId: unknown = c.get("requestId")
+        const results = await ingestHeadlessIndexUpdates(body.data.updates, { requestId: typeof requestId === "string" ? requestId : null })
+        return c.json({ results }, 200)
+      } catch (error) {
+        logger.error("headless session index ingest failed", { error_name: error instanceof Error ? error.name : typeof error })
+        return c.json({ error: "index_failed" as const }, 500)
+      }
+    },
+  )
+
+
   app.post(
     "/v1/headless/resume-token",
     describeHeadlessRoute({
@@ -69,7 +125,7 @@ export function registerHeadlessRunnerRoutes<T extends Env>(app: Hono<T>) {
       security: [{ headlessRunnerCallbackToken: [] }],
       summary: "Exchange a headless turn's resume grant for a fresh MCP token",
       description:
-        "For the headless runner only, with `Authorization: Bearer $DEN_HEADLESS_RUNNER_CALLBACK_TOKEN`. Body `{ grant, sessionId, messageId }`. Exchanges the resume grant Den minted with a turn for a fresh member-scoped MCP token (at most an hour, same read-only setting) for that turn, its background tasks and their reports, while the member is still active and `headlessDurableTurns` is on. 403 answers are permanent for the grant. Answers 404 when DEN_HEADLESS_RUNNER_CALLBACK_TOKEN is not configured.",
+        "For the headless runner only, with `Authorization: Bearer $DEN_HEADLESS_RUNNER_CALLBACK_TOKEN`. Body `{ grant, sessionId, messageId }`. Exchanges the resume grant Den minted with a turn for a fresh member-scoped MCP token (at most an hour, same read-only setting) for that turn, its background tasks and their reports, while the member is still active. 403 answers are permanent for the grant. Answers 404 when DEN_HEADLESS_RUNNER_CALLBACK_TOKEN is not configured.",
       responses: {
         200: jsonResponse("A fresh MCP token for the turn.", exchangeResponseSchema),
         400: jsonResponse("The body is not `{ grant, sessionId, messageId }`.", exchangeErrorSchema),

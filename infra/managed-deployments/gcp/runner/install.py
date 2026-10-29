@@ -34,7 +34,7 @@ def release_images(manifest, version):
     return dict(images)
 
 APIS = ["iam.googleapis.com", "iamcredentials.googleapis.com", "serviceusage.googleapis.com",
-        "storage.googleapis.com", "run.googleapis.com", "sqladmin.googleapis.com",
+        "cloudresourcemanager.googleapis.com", "storage.googleapis.com", "run.googleapis.com", "sqladmin.googleapis.com",
         "secretmanager.googleapis.com", "artifactregistry.googleapis.com", "compute.googleapis.com",
         "dns.googleapis.com", "cloudscheduler.googleapis.com", "monitoring.googleapis.com"]
 RUNNER_ROLES = ["roles/run.admin", "roles/cloudsql.admin", "roles/secretmanager.admin",

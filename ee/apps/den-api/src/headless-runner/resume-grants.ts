@@ -3,16 +3,18 @@ import { and, eq, inArray, isNull, lt, sql } from "@openwork-ee/den-db/drizzle"
 import { HeadlessResumeGrantTable, HeadlessResumeRevocationTable, MemberTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
-import { organizationFeatureEnabled } from "../features.js"
 import { mintHeadlessRunMcpToken, revokeHeadlessRunMcpToken } from "../mcp/headless-run-token-mint.js"
 import { appLogger } from "../observability/logger.js"
 import { checkRateLimit } from "../utils/rate-limit.js"
 import type { HeadlessModelAccess } from "@openwork-ee/headless-protocol"
-import { cloudAgentGatewayEnabled, organizationCloudModel } from "../workbot/model.js"
+import { organizationCloudModelSelection } from "../workbot/model.js"
 import { cloudAgentGatewayAccess } from "../workbot/gateway-model.js"
+import { isWorkbotManagedLuna } from "@openwork/types/den/workbot-settings"
+import { workbotManagedLunaAccess } from "../workbot/managed-luna.js"
+import { indexCapabilityForTurn, type HeadlessIndexKind } from "./session-index.js"
 
 /**
- * Resume grants (feature `headlessDurableTurns`): a narrow credential Den hands the headless runner with each turn,
+ * Resume grants: a narrow credential Den hands the headless runner with each turn,
  * which the runner can only exchange (POST /v1/headless/resume-token) for a fresh member-scoped MCP token for that
  * exact turn, its background tasks (`<messageId>.tN`) and their reports (`<messageId>.tN.r`). It lets the runner
  * continue a turn on its own after a restart, deploy or failover, and refresh a long turn's token in place.
@@ -67,7 +69,7 @@ async function pruneExpiredHeadlessResumeGrants(now: Date) {
 
 /**
  * Mints a resume grant for one turn. Only trusted server code that has already authorized the member for this turn
- * may call it, and only where `headlessDurableTurns` is on (see mintHeadlessTurnCredentials).
+ * may call it (see mintHeadlessTurnCredentials).
  */
 export async function mintHeadlessResumeGrant(input: {
   userId: string
@@ -75,6 +77,8 @@ export async function mintHeadlessResumeGrant(input: {
   sessionId: string
   messageId: string
   readOnly?: boolean
+  /** Extra scopes the turn's read-only token carries; every exchanged token gets them too. */
+  scopes?: readonly string[]
   /** When the member was authorized for this turn; stored as the grant's `createdAt`. */
   now?: Date
 }): Promise<{ grant: string; grantId: string; expiresAt: Date }> {
@@ -90,6 +94,7 @@ export async function mintHeadlessResumeGrant(input: {
     sessionId: input.sessionId,
     messageId: input.messageId,
     readOnly: input.readOnly === true,
+    scopes: input.readOnly === true && input.scopes?.length ? [...input.scopes] : null,
     tokenHash: hashHeadlessResumeGrant(grant),
     expiresAt,
     createdAt: now,
@@ -103,8 +108,8 @@ function boundId(value: string | undefined): value is string {
 }
 
 /**
- * A resume grant for the turn, or undefined: when `headlessDurableTurns` is off for the organization, when the turn's
- * session or message is unknown, or when minting fails (the turn then runs exactly as without the feature).
+ * A resume grant for the turn, or undefined when its session or message is unknown, or minting fails.
+ * Mint failures do not prevent the turn from running.
  */
 async function resumeGrantForTurn(input: {
   userId: string
@@ -112,12 +117,12 @@ async function resumeGrantForTurn(input: {
   sessionId?: string
   messageId?: string
   readOnly?: boolean
+  scopes?: readonly string[]
   authorizedAt: Date
 }): Promise<string | undefined> {
   const { sessionId, messageId } = input
   if (!boundId(sessionId) || !boundId(messageId)) return undefined
   try {
-    if (!(await organizationFeatureEnabled(input.organizationId, "headlessDurableTurns"))) return undefined
     const { grant } = await mintHeadlessResumeGrant({ ...input, sessionId, messageId, now: input.authorizedAt })
     return grant
   } catch (error) {
@@ -128,31 +133,36 @@ async function resumeGrantForTurn(input: {
 }
 
 /**
- * The credentials Den sends with one headless turn: a member-scoped MCP token and, where `headlessDurableTurns` is on
- * and the turn's session and message are known, a resume grant. Without the feature the result has no
- * `resumeGrant` field at all, so nothing changes for callers or the runner.
+ * The credentials Den sends with one headless turn: a member-scoped MCP token and, when the turn's session and
+ * message are known, a resume grant. `indexCapability`: only where the caller
+ * names its kind (`indexKind`) and the session is known (session-index.ts).
  */
 export async function mintHeadlessTurnCredentials(input: {
   userId: string
   organizationId: string
   ttlMs?: number
   readOnly?: boolean
+  /** Extra scopes for a read-only token (a background agent's sources); never on a writing one. */
+  scopes?: readonly string[]
   sessionId?: string
   messageId?: string
   /** Exact selected alias; never an upstream credential or client-supplied route. */
   model?: string
-  /** Trusted caller recovery retains the persisted turn's inference domain across rollout rollback. */
-  modelAccessRequired?: boolean
-}): Promise<{ token: string; tokenId: string; expiresAt: Date; resumeGrant?: string; modelAccess?: HeadlessModelAccess }> {
+  /** Which surface the conversation belongs to, for its index capability; without it none is minted. */
+  indexKind?: HeadlessIndexKind
+  /** The member the turn is for, when the caller knows it (Workbot); looked up from the user otherwise. */
+  memberId?: string
+}): Promise<{ token: string; tokenId: string; expiresAt: Date; resumeGrant?: string; modelAccess?: HeadlessModelAccess; indexCapability?: string }> {
   // Taken before anything is minted: a credential revocation after this moment outranks the grant (see
   // headlessResumeGrantAuthorizedBeforeRevocation), however long minting takes.
   const authorizedAt = new Date()
-  const modelAccess = input.modelAccessRequired || await cloudAgentGatewayEnabled(input.organizationId)
-    ? await cloudAgentGatewayAccess(input, input.model ?? await organizationCloudModel(input) ?? "")
-    : undefined
+  const modelAccess = input.indexKind === "workbot" && input.model && isWorkbotManagedLuna(input.model)
+    ? await workbotManagedLunaAccess(input, input.model)
+    : await cloudAgentGatewayAccess(input, input.model ?? await organizationCloudModelSelection(input) ?? "")
   const minted = await mintHeadlessRunMcpToken(input)
   const resumeGrant = await resumeGrantForTurn({ ...input, authorizedAt })
-  return { ...minted, ...(resumeGrant ? { resumeGrant } : {}), ...(modelAccess ? { modelAccess } : {}) }
+  const indexCapability = await indexCapabilityForTurn(input)
+  return { ...minted, ...(resumeGrant ? { resumeGrant } : {}), modelAccess, ...(indexCapability ? { indexCapability } : {}) }
 }
 
 export type HeadlessResumeGrantError =
@@ -162,7 +172,6 @@ export type HeadlessResumeGrantError =
   | "grant_mismatch"
   | "membership_inactive"
   | "model_unavailable"
-  | "feature_disabled"
 
 /** The stored grant behind a presented one, or null when it is malformed or unknown. */
 export async function findHeadlessResumeGrant(grant: string): Promise<GrantRow | null> {
@@ -224,7 +233,7 @@ export type HeadlessResumeExchange =
 
 /**
  * Exchanges a found grant for a fresh MCP token, checking in order: revoked (marked, or authorized before the member's
- * last credential revocation), expired, bound to this turn, member still active, feature on, rate limit. `memberId`
+ * last credential revocation), expired, bound to this turn, member still active, rate limit. `memberId`
  * is the active membership (null when it ended).
  */
 export async function exchangeHeadlessResumeGrant(
@@ -245,9 +254,6 @@ export async function exchangeHeadlessResumeGrant(
   if (row.expiresAt.getTime() <= now.getTime()) return { ok: false, status: 403, error: "grant_expired" }
   if (!headlessResumeGrantCovers(row, input)) return { ok: false, status: 403, error: "grant_mismatch" }
   if (!input.memberId) return { ok: false, status: 403, error: "membership_inactive" }
-  if (!(await organizationFeatureEnabled(row.organizationId, "headlessDurableTurns"))) {
-    return { ok: false, status: 403, error: "feature_disabled" }
-  }
   const retryAfterSeconds = await checkRateLimit(
     headlessResumeGrantRateLimitKey(row.id),
     HEADLESS_RESUME_GRANT_EXCHANGES_PER_WINDOW,
@@ -260,12 +266,13 @@ export async function exchangeHeadlessResumeGrant(
     if (!input.model) return { ok: false, status: 403, error: "model_unavailable" }
     try {
       // The persisted turn keeps its selected alias across rollout rollback; current member access is rechecked.
-      modelAccess = await cloudAgentGatewayAccess(row, input.model)
+      modelAccess = await (isWorkbotManagedLuna(input.model) ? workbotManagedLunaAccess : cloudAgentGatewayAccess)(row, input.model)
     } catch {
       return { ok: false, status: 403, error: "model_unavailable" }
     }
   }
-  const minted = await mintHeadlessRunMcpToken({ userId: row.userId, organizationId: row.organizationId, readOnly: row.readOnly })
+  // The same allowlist as the turn's first token (a background agent's sources): a resumed turn reads no more.
+  const minted = await mintHeadlessRunMcpToken({ userId: row.userId, organizationId: row.organizationId, readOnly: row.readOnly, ...(row.scopes?.length ? { scopes: row.scopes } : {}) })
   await input.afterMint?.()
   // A credential revocation may have run between the checks above and the mint. Revocation records its moment before
   // deleting the member's tokens (credential-revocation.ts), so either it deleted this token already, or it is visible

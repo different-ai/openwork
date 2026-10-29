@@ -1,0 +1,11 @@
+# Build/push this OCI image first, then create a Daytona LINUX_VM snapshot
+# from its pinned registry digest. Daytona VM snapshots do not build Dockerfiles.
+ARG OPENWORK_RUNTIME_IMAGE
+FROM ${OPENWORK_RUNTIME_IMAGE}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    chromium chromium-sandbox xvfb xauth x11-utils openbox xdotool imagemagick python3 dbus-x11 fonts-liberation util-linux x11vnc sudo iptables \
+    && useradd --create-home --shell /bin/sh openwork-browser \
+    && rm -rf /var/lib/apt/lists/*
+COPY ee/apps/den-worker-runtime/scripts/cloud-desktop.sh /usr/local/bin/openwork-cloud-desktop
+RUN chmod 0755 /usr/local/bin/openwork-cloud-desktop

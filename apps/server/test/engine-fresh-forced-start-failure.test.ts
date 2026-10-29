@@ -28,7 +28,7 @@ async function profile(run: (config: ServerConfig) => Promise<void>) {
     host: "127.0.0.1", port: 0, token: "test", hostToken: "host-test", configPath: join(directory, "server.json"),
     approval: { mode: "auto", timeoutMs: 1000 }, corsOrigins: [], workspaces: [], authorizedRoots: [], readOnly: false,
     startedAt: Date.now(), tokenSource: "generated", hostTokenSource: "generated", logFormat: "json", logRequests: false,
-    freshInstallEngine: "v2", engineAutoUpgrade: true, engineForcePolicy: true,
+    freshInstallEngine: "v2",
   };
   try { await run(config); }
   finally {

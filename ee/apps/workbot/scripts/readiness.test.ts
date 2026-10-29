@@ -130,3 +130,14 @@ test("catalog loss inside a correction send preserves history, correction and ne
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
   }
 })
+
+test("a tap on Show me or Carry on without me leaves the draft being typed alone", () => {
+  const composer = createComposerState(async () => { throw new Error("No uploads in this test") })
+  composer.setText("My half-typed reply")
+  const id = composer.enqueue({ id: "message_switch", text: "Show me what you're doing on screen.", keepDraft: true })
+  const snapshot = composer.getSnapshot()
+  assert.equal(snapshot.text, "My half-typed reply")
+  const pending = snapshot.pending.find(entry => entry.id === id)
+  assert.deepEqual(pending?.uploads, [])
+  assert.equal(pending && "keepDraft" in pending, false)
+})

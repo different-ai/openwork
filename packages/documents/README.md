@@ -24,6 +24,17 @@ provider/editor contracts without embedding Workbot.
   locked, retryable or individually discardable. Hosts must implement
   `verifyScope`; without it recovery remains locked. A full page refresh does
   not restore memory-only drafts.
+- Files open as lightweight read-only previews without an Office session or a
+  Cloud worker startup. Word and Excel use the existing bounded readers;
+  PowerPoint and OpenDocument show bounded text previews. PDF/images and native
+  Google previews continue through their existing routes.
+- `workbotDocumentEditing` (cloud and self-hosted, off by default) adds **Edit**
+  when the member also has write access. Native Google/text edits stay inline.
+  Office editing starts the full engine only after this action, keeps the
+  preview visible with progress until the document loads, and offers cancel,
+  retry and Open in Drive on failure. **Preview** closes a clean editing session.
+- Turning editing off blocks new sessions and saves without disabling previews
+  or unmounting existing drafts. Existing sessions can still be closed.
 - Explicit Save to Drive writes to the original file; no background writes.
 
 The Office recovery peer in these browser tests proves owner/session lifecycle,
@@ -36,13 +47,14 @@ Representative engine and received-snapshot recovery require their own proofs.
 | Excel `.xlsx` | OpenWork formatting controls, formula bar and worksheets; the engine retains formulas, recalculation, charts, sorting/filtering | Explicit Save to Drive updates the original Office file |
 | PowerPoint `.pptx` | Slide thumbnails, text/shapes, formatting, add/duplicate/delete, layouts, speaker notes and presentation mode | Explicit Save to Drive updates the original PowerPoint file |
 | OpenDocument `.odt` / `.ods` / `.odp` | Full document, spreadsheet or presentation engine with the same OpenWork controls | Explicit Save to Drive updates the original OpenDocument file in its original format |
-| Native Google Doc / Sheet / Slides | Exported Word / Excel / PowerPoint copy in the full editor, with a visible copy notice | First save creates an Office file in My Drive; later saves update that copy. The native original is preserved. Use Open original in Drive to edit it natively |
+| Native Google Doc / Sheet | Lightweight preview, with inline edits after choosing Edit | Explicit save updates the original through Google APIs |
+| Native Google Slides | PDF preview and Open in Google Slides | Edit in Google Slides; no Office copy |
 | UTF-8 text | Plain text editing, up to 1 MB | Explicit save to the original file |
 | PDF and common raster images | Read-only inline preview | No edits |
 | Other formats | Link to original editor | No edits |
 
-The Office editor is a real, separately hosted engine, loaded only when an
-Office tab opens. It is not bundled into chat or model context. It is not the
+The Office editor is a real server engine, loaded only after choosing **Edit**
+on an Office preview with editing enabled. It is not bundled into chat or model context. It is not the
 Microsoft Word/Excel product. Macro-enabled packages are refused, and the
 service must run with macro execution disabled. No third-party plugins are
 installed by the integration. Complex OOXML round trips can differ from desktop Office;
@@ -161,7 +173,7 @@ DATABASE_REDIS_URL=rediss://<private shared Redis>
 
 With `DEN_DOCUMENTS_EDITOR=cloud-worker`, OpenWork Cloud runs no shared editor.
 Den resolves the member's Cloud worker the way OpenWork Web, remote sessions and
-Cloud Automations do: it creates or wakes it when the organization has OpenWork
+Cloud Automations do: it creates or wakes it on the explicit Edit action when the organization has OpenWork
 Web, and otherwise offers Open in Drive. The worker snapshot
 (`ee/apps/den-worker-runtime/Dockerfile.daytona-snapshot`) installs the unbranded
 CODE packages with this integration; its bootstrap starts the engine as the `cool`

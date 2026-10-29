@@ -4,7 +4,12 @@ import { createGatewayBearerKey, gatewayBearerKey, gatewayBearerKeyMatchesDigest
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 
-/** Member fence serializes issuance/rotation with joins and offboarding, including an empty key store. */
+/**
+ * Member fence serializes issuance/rotation with joins and offboarding, including an empty key store. Every
+ * writer of a member's key holds that member's row lock, so the key itself is read without a lock: a locking
+ * read of a key that does not exist yet takes a gap lock that other new members of the organization share, and
+ * their inserts then deadlock. The read happens after the fence, so it sees every committed change to the key.
+ */
 export async function ensureMemberGatewayKey(input: {
   organizationId: typeof MemberTable.$inferSelect.organizationId
   memberId: typeof MemberTable.$inferSelect.id
@@ -14,7 +19,7 @@ export async function ensureMemberGatewayKey(input: {
       .where(and(eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt))).for("update")
     if (!member?.userId) throw new Error("member_not_found")
     const [existing] = await tx.select().from(GatewayKeyTable)
-      .where(and(eq(GatewayKeyTable.organization_id, input.organizationId), eq(GatewayKeyTable.org_membership_id, input.memberId))).for("update")
+      .where(and(eq(GatewayKeyTable.organization_id, input.organizationId), eq(GatewayKeyTable.org_membership_id, input.memberId)))
     if (existing?.status === "active" && existing.revoked_at === null) {
       try {
         const key = gatewayBearerKey(existing.encrypted_key)

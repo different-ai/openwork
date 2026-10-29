@@ -179,13 +179,22 @@ function columns(db: HistoryDatabase, table: string, schema: string): string[] {
   return db.prepare(`SELECT name FROM pragma_table_info(?, ?) ORDER BY cid`).all(table, schema).map(row => stringField(row, "name"));
 }
 
-function sameSchema(db: HistoryDatabase, table: string): string {
+/** Nullable columns a newer v1 engine adds that the pinned v2 target does not
+ * have yet. The copy keeps the target's columns; the value stays in the original
+ * v1 database, which is never changed. OpenCode v1.18.33 records project
+ * archiving, which the pinned v2 does not read. */
+const ADDITIVE_SOURCE_COLUMNS: Readonly<Record<string, readonly string[]>> = { project: ["time_archived"] };
+
+function sameSchema(db: HistoryDatabase, table: string): string[] {
   const target = columns(db, table, "main");
-  const source = columns(db, table, "converted");
-  if (!source.length || JSON.stringify([...target].sort()) !== JSON.stringify([...source].sort())) throw new Error(`Unsupported OpenCode history schema (${table}); nothing was overwritten. Missing: ${target.filter(name => !source.includes(name)).join(", ")}; extra: ${source.filter(name => !target.includes(name)).join(", ")}`);
+  const additive = (name: string) => !target.includes(name) && (ADDITIVE_SOURCE_COLUMNS[table] ?? []).includes(name);
   const shape = (schema: string) => db.prepare(`SELECT name, upper(type) AS type, "notnull", pk FROM pragma_table_info(?, ?) ORDER BY name`).all(table, schema);
-  if (JSON.stringify(shape("main")) !== JSON.stringify(shape("converted"))) throw new Error(`Unsupported OpenCode history column types (${table}); nothing was overwritten.`);
-  return target.map(identifier).join(", ");
+  const converted = shape("converted");
+  const tolerated = converted.filter(row => additive(stringField(row, "name")) && !numberField(row, "notnull") && !numberField(row, "pk"));
+  const source = columns(db, table, "converted").filter(name => !tolerated.some(row => stringField(row, "name") === name));
+  if (!source.length || JSON.stringify([...target].sort()) !== JSON.stringify([...source].sort())) throw new Error(`Unsupported OpenCode history schema (${table}); nothing was overwritten. Missing: ${target.filter(name => !source.includes(name)).join(", ")}; extra: ${source.filter(name => !target.includes(name)).join(", ")}`);
+  if (JSON.stringify(shape("main")) !== JSON.stringify(converted.filter(row => !tolerated.includes(row)))) throw new Error(`Unsupported OpenCode history column types (${table}); nothing was overwritten.`);
+  return target;
 }
 
 /** The target engine must be stopped. Rows, their original v1 archive and the
@@ -197,9 +206,13 @@ export async function copyHistoryBatches(options: {
   signal?: AbortSignal;
 }): Promise<{ imported: number; skipped: number }> {
   const db = options.database;
-  const sessionColumns = sameSchema(db, "session_v2");
-  const messageColumns = sameSchema(db, "session_message");
-  const projectColumns = sameSchema(db, "project");
+  const sessionTarget = sameSchema(db, "session_v2");
+  const sessionColumns = sessionTarget.map(identifier).join(", ");
+  // OpenCode v2 cannot unarchive a chat yet, so a copied v1 archive would lock
+  // it read-only forever. Copy it as active; openwork_v1_session keeps the time.
+  const sessionValues = sessionTarget.map(name => name === "time_archived" ? "NULL" : identifier(name)).join(", ");
+  const messageColumns = sameSchema(db, "session_message").map(identifier).join(", ");
+  const projectColumns = sameSchema(db, "project").map(identifier).join(", ");
   sameSchema(db, "event_sequence");
   if (db.prepare("SELECT 1 FROM original.session s LEFT JOIN converted.session_v2 t ON t.id = s.id WHERE t.id IS NULL LIMIT 1").get()) {
     throw new Error("The native converter did not account for every original chat. Original history and staging were preserved.");
@@ -231,7 +244,7 @@ export async function copyHistoryBatches(options: {
     }
     transaction(db, () => {
       if (checkpoint) return;
-      db.prepare(`INSERT INTO session_v2 (${sessionColumns}) SELECT ${sessionColumns} FROM converted.session_v2 WHERE id = ?`).run(id);
+      db.prepare(`INSERT INTO session_v2 (${sessionColumns}) SELECT ${sessionValues} FROM converted.session_v2 WHERE id = ?`).run(id);
       db.prepare("INSERT INTO openwork_history_copy (source_key, session_id) VALUES (?, ?)").run(options.sourceKey, id);
     });
     let cursor = checkpoint ? numberField(checkpoint, "cursor") : -1;

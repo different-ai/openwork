@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, join, resolve, sep } from "node:path"
 import { AwsClient } from "aws4fetch"
 
@@ -17,6 +17,11 @@ export type BlobStore = {
   /** Null when the object does not exist. */
   get(key: string): Promise<Uint8Array<ArrayBuffer> | null>
   delete(key: string): Promise<void>
+  /**
+   * Every object under a prefix, with when it was last written (epoch ms): for orphan cleanup of sealed segments and
+   * large bodies (storage/), which deletes only old objects nothing references. Optional for test stores.
+   */
+  list?(prefix: string): Promise<Array<{ key: string; lastModified: number }>>
 }
 
 /** Keys are runner-generated (`sessions/<id>/<fileId>`); this only guards against a key escaping the folder. */
@@ -49,6 +54,24 @@ export function diskBlobStore(directory: string): BlobStore {
     },
     async delete(key) {
       await rm(pathOf(key), { force: true })
+    },
+    async list(prefix) {
+      const folder = prefix.endsWith("/") ? prefix.slice(0, -1) : dirname(prefix)
+      const found: Array<{ key: string; lastModified: number }> = []
+      let entries: string[]
+      try {
+        entries = await readdir(pathOf(folder), { recursive: true })
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return []
+        throw error
+      }
+      for (const entry of entries) {
+        const key = `${folder}/${entry.split(sep).join("/")}`
+        if (!key.startsWith(prefix)) continue
+        const info = await stat(pathOf(key)).catch(() => null)
+        if (info?.isFile()) found.push({ key, lastModified: info.mtimeMs })
+      }
+      return found
     },
   }
 }
@@ -114,5 +137,34 @@ export function s3BlobStore(options: S3Options): BlobStore {
       if (!response.ok && response.status !== 404) throw await fail("delete", response)
       await response.body?.cancel()
     },
+    // ListObjectsV2, page by page.
+    async list(prefix) {
+      safeKey(prefix.replace(/\/$/, ""))
+      const bucketUrl = options.forcePathStyle ? `${base.origin}/${encodeURIComponent(options.bucket)}` : `${base.protocol}//${options.bucket}.${base.host}/`
+      const found: Array<{ key: string; lastModified: number }> = []
+      let token: string | null = null
+      for (let page = 0; page < 1_000; page += 1) {
+        const url = new URL(bucketUrl)
+        url.searchParams.set("list-type", "2")
+        url.searchParams.set("prefix", prefix)
+        if (token) url.searchParams.set("continuation-token", token)
+        const request = await client.sign(url.toString(), { method: "GET" })
+        const response = await (options.fetch ?? fetch)(request, { signal: AbortSignal.timeout(S3_TIMEOUT_MS) })
+        if (!response.ok) throw await fail("list", response)
+        const xml = await response.text()
+        for (const match of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+          const key = xmlText(/<Key>([\s\S]*?)<\/Key>/.exec(match[1] ?? "")?.[1])
+          const modified = Date.parse(xmlText(/<LastModified>([\s\S]*?)<\/LastModified>/.exec(match[1] ?? "")?.[1]))
+          if (key) found.push({ key, lastModified: Number.isFinite(modified) ? modified : 0 })
+        }
+        token = /<IsTruncated>true<\/IsTruncated>/.test(xml) ? xmlText(/<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(xml)?.[1]) || null : null
+        if (!token) break
+      }
+      return found
+    },
   }
+}
+
+function xmlText(value: string | undefined) {
+  return (value ?? "").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&amp;", "&")
 }

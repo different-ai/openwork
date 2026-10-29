@@ -75,7 +75,7 @@ function isCodemodeJsonSchema(value: unknown): value is Tool.JsonSchema {
   return isRecord(value)
 }
 
-function denInputJsonSchema(operation: McpToolOperation): Tool.JsonSchema {
+export function denInputJsonSchema(operation: McpToolOperation): Tool.JsonSchema {
   const serialized = JSON.stringify(z.toJSONSchema(operation.inputSchema), (key, value: unknown) => key === "~standard" ? undefined : value)
   const schema: unknown = JSON.parse(serialized)
   return isCodemodeJsonSchema(schema) ? schema : {}
@@ -260,7 +260,7 @@ export async function buildNativeProviderToolTree(input: {
   }
 }
 
-async function mapConcurrent<T, R>(items: readonly T[], limit: number, visit: (item: T) => Promise<R>): Promise<Array<R | undefined>> {
+export async function mapConcurrent<T, R>(items: readonly T[], limit: number, visit: (item: T) => Promise<R>): Promise<Array<R | undefined>> {
   const results: Array<R | undefined> = Array.from({ length: items.length })
   let nextIndex = 0
   const worker = async () => {

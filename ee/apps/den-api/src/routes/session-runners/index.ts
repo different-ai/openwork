@@ -205,7 +205,7 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
           items.push({ kind: "remote_session_create", commandId: command.id })
         }
       }
-      const enginePolicy = await (options.readEnginePolicy ?? readOrganizationEnginePolicy)(identity.organizationId)
+      const enginePolicy = await (options.readEnginePolicy ?? readOrganizationEnginePolicy)(identity.organizationId, identity.ownerMemberId)
       c.header("Cache-Control", "no-store")
       return c.json(automationRunnerWorkResponseSchema.parse({ items, enginePolicy }))
     },
@@ -232,7 +232,7 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
       if (!audited.ok) return audited.response
       const stored = await service.saveDesktopRunnerInventory(identity, c.req.valid("json"))
       if (!stored) return c.json({ error: "runner_not_registered" }, 404)
-      const enginePolicy = await (options.readEnginePolicy ?? readOrganizationEnginePolicy)(identity.organizationId)
+      const enginePolicy = await (options.readEnginePolicy ?? readOrganizationEnginePolicy)(identity.organizationId, identity.ownerMemberId)
       c.header("Cache-Control", "no-store")
       return c.json(desktopRunnerInventoryResponseSchema.parse({ ok: true, updatedAt: Date.now(), enginePolicy }))
     },

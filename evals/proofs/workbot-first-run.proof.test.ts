@@ -41,7 +41,7 @@ test("a new person verifies their email, creates a workspace and returns directl
     await probe.eventually(() => probe.url(), { within: 60_000, label: "the OAuth callback returns to Workbot", until: url => new URL(url).origin === world.url && new URL(url).pathname === "/" });
     await user.navigate(`${world.url}/v1/workbot/me`);
     const account: unknown = JSON.parse(await probe.text());
-    expect(account).toMatchObject({ organizationName: world.workspaceName, enabled: true, firstRun: true });
+    expect(account).toMatchObject({ organizationName: world.workspaceName, enabled: true });
     await user.navigate(world.url);
     const arrival = await probe.eventually(async () => ({
       ready: (await probe.dom('textarea[aria-label="Message Workbot"]')).elements.length > 0,

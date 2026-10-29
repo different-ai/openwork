@@ -2,6 +2,9 @@
   "name": "@openwork-ee/diagnostics",
   "private": true,
   "version": "0.0.0",
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0 --port ${DIAGNOSTICS_PORT:-3010}",
     "build": "next build",
@@ -10,7 +13,7 @@
   },
   "dependencies": {
     "@openwork/types": "workspace:*",
-    "next": "16.3.8",
+    "next": "16.4.1",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

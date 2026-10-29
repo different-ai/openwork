@@ -1,12 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { createHeadlessRunnerClient } from "../../../packages/headless-protocol/src/client.ts"
+import { browserTeachingPrompt, readBrowserTeachingPrompt } from "../../../../packages/types/src/browser-demonstration.ts"
 import { editWorkbotMessage, type WorkbotActor } from "../../../packages/workbot-server/src/service.ts"
 import { readWorkbotContextPrompt, readWorkbotCorrectionPrompt, workbotContextPrompt, workbotCorrectionPrompt, WORKBOT_MAX_MESSAGE_CHARS } from "../../../../packages/types/src/workbot-context.ts"
 
 const actor: WorkbotActor = { organizationId: "org_example", organizationName: "Example", organizationMetadata: {}, memberId: "member_example", userId: "user_example", firstName: "Alex" }
 
-function fixture() {
+function fixture(originalText = "Use Monday") {
   const calls: Array<{ method: string; path: string; body: Record<string, unknown> }> = []
   let refuse = true
   const turns = ["wb_original1", "wb_followup1"]
@@ -23,7 +24,7 @@ function fixture() {
         const removed = turns.splice(0)
         return Response.json({ removed })
       }
-      if (method === "GET") return Response.json({ turns: turns.map((messageId, index) => ({ messageId, status: "completed", createdAt: 100 + index, error: null })), messages: turns.map(messageId => ({ role: "user", messageId, text: "Use Monday" })), finalAssistantText: "Earlier answer" })
+      if (method === "GET") return Response.json({ turns: turns.map((messageId, index) => ({ messageId, status: "completed", createdAt: 100 + index, error: null })), messages: turns.map(messageId => ({ role: "user", messageId, text: originalText })), finalAssistantText: "Earlier answer" })
       if (method === "PUT") return Response.json({ id: path.split("/").pop() })
       if (refuse) return Response.json({ error: "too_many_queued" }, { status: 429 })
       if (typeof body.messageId === "string" && !turns.includes(body.messageId)) turns.push(body.messageId)
@@ -86,4 +87,20 @@ test("an unknown original never sends or deletes anything", async () => {
   assert.deepEqual(await editWorkbotMessage(actor, { id: "unknown01", newId: "corrected1", text: "Use Friday" }, { client: runner.client, canSchedule: async () => false }), { ok: false, code: "unknown_message" })
   assert.equal(runner.calls.some(call => call.method === "POST"), false)
   assert.deepEqual(runner.turns, ["wb_original1", "wb_followup1"])
+})
+
+
+test("correcting a teaching message preserves its focused step and read-only turn credentials", async () => {
+  const original = browserTeachingPrompt("Collect this status", [{ id: 4, kind: "extract", target: { role: "text", name: "Status", tag: "dd" }, field: "status", explanation: "Use this field" }], { phase: "paused", stepId: 4 })
+  const runner = fixture(original)
+  runner.accept()
+  assert.deepEqual(await editWorkbotMessage(actor, { id: "original1", newId: "corrected3", text: "Collect the registration status" }, { client: runner.client, canSchedule: async () => false }), { ok: true })
+  const sent = runner.calls.find(call => call.method === "POST")
+  assert.equal(typeof sent?.body.prompt, "string")
+  const prompt = String(sent?.body.prompt)
+  assert.match(prompt, /"focusedStepId":4/)
+  assert.equal(readWorkbotCorrectionPrompt(readBrowserTeachingPrompt(prompt)).text, "Collect the registration status")
+  const credentials = sent?.body.credentials
+  assert.ok(typeof credentials === "object" && credentials !== null && "readOnly" in credentials)
+  assert.equal(credentials.readOnly, true)
 })

@@ -75,6 +75,23 @@ run "safe_stateful_defaults" {
   }
 }
 
+run "small_trial_storage_default" {
+  command = plan
+  assert {
+    condition     = google_sql_database_instance.this[0].settings[0].disk_size == 20 && google_sql_database_instance.this[0].settings[0].disk_autoresize
+    error_message = "Small / trial must start with 20 GB storage and retain automatic growth."
+  }
+}
+
+run "explicit_legacy_storage_is_preserved" {
+  command = plan
+  variables { database = { disk_size_gb = 10 } }
+  assert {
+    condition     = google_sql_database_instance.this[0].settings[0].disk_size == 10
+    error_message = "Users with an existing 10 GB disk must be able to opt out before applying the increase."
+  }
+}
+
 run "disposable_database" {
   command = apply
   variables { deletion_protection = false }

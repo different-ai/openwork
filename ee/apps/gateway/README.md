@@ -31,6 +31,23 @@ then `PORT`, then `INFERENCE_PORT`, then `8791`. Local development scripts use
 `GATEWAY_PORT` with the deprecated `INFERENCE_PORT` fallback. Development mode
 retains its existing non-production defaults; use `.env.example` for a local setup.
 
+## Auto Router
+
+Auto (feature `autoRouter`, cloud only) routes each OpenAI chat request sent
+with model `openwork-auto` to one of the organization's Auto Router models
+(`src/auto-router/`, `docs/features/auto-router/README.md`). Set on Gateway:
+
+| Variable | Default |
+| --- | --- |
+| `TYPESAFE_API_KEY` | Unset: Auto always uses the fallback route |
+| `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` |
+| `AUTO_ROUTER_JEV_MODEL` | `jev-latest` |
+| `AUTO_ROUTER_JEV_TIMEOUT_MS` | `4000` (200-30000) |
+| `DEN_DEPLOYMENT` | `self_hosted`; must match Den API (`cloud`) for cloud-only features |
+
+Gateway reads features with the same rules as Den API, so also give it the
+same `DEN_FEATURE_*` operator locks.
+
 ## Stable Contracts
 
 The service rename keeps deployment and Models contracts stable. The Gateway

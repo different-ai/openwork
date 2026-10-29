@@ -143,6 +143,22 @@ clear both token env aliases so `envFrom` cannot accidentally turn them on.
 Shared deployment flags, origins, database keys, and tokens must not be overridden
 through per-app `env` when enabled; Helm rejects conflicting configuration.
 
+Auto Model Routing (feature `autoRouter`) asks Jev, through TypeSafe's API,
+which of the organization's models should answer each Auto request. Give the
+gateway a TypeSafe API key; without one, Auto always uses its fallback model:
+
+```yaml
+secret:
+  keys:
+    typesafeApiKey: TYPESAFE_API_KEY # key name in the Secret
+  values:
+    typesafeApiKey: "<TypeSafe API key>" # or add it to secret.existingSecret
+```
+
+The gateway reads it as `TYPESAFE_API_KEY` (optional). `AUTO_ROUTER_JEV_MODEL`
+and `AUTO_ROUTER_JEV_TIMEOUT_MS` can be set through `gateway.env`. The feature
+is cloud-only, so it also needs `config.deployment: cloud`.
+
 Retention is separate from member Automations and remains opt-in after the
 accounting migration:
 
@@ -222,6 +238,48 @@ published before this default (0.18.46 and earlier) ship `image.tag: latest`,
 which floats to the newest release on every pull; check with
 `helm show values oci://ghcr.io/different-ai/charts/openwork-ee --version X | grep -A1 '^image:'`
 and, when it prints `tag: latest`, also pass `--set image.tag=X`.
+
+OpenCode v2 history migration is automatic; no Helm feature value or admin
+switch is required. Upgrade the desktop application as well as the chart/server.
+Old `config.features.engineV2ForceUpgrade` entries are accepted but ignored and
+can be removed. Migration keeps backups, waits for idle, and respects explicit
+manual engine choices. See [engine migration](../../../docs/opencode-engine-migration.md).
+
+### Node.js security baseline and image upgrades
+
+Deploy newly published OpenWork application images built with **stable Node.js
+24.x >=24.22.1**. Re-rendering or upgrading only the chart does not patch the
+runtime inside an existing image. Pin the new OpenWork application release with
+`image.tag` (or upgrade to its matching published chart), and review any
+per-component image tag overrides, including legacy `inference.image.tag` and
+canonical `gateway.image.tag`, so they do not retain older images. Update mirrored
+images to the newly built release as well; do not merely retag an old image.
+
+`Chart.appVersion` is the **OpenWork application release**, not the Node.js
+version. Do not set it or `image.tag` to `24.22.1` to request a runtime upgrade.
+
+After upgrading, run the existing test hook:
+
+```sh
+helm test openwork-ee --logs
+```
+
+The `env-probe` Job uses the configured Den API image and reports its actual
+Node.js version, platform, and architecture. It fails for older runtimes,
+prereleases, or other Node.js major versions, in addition to its existing
+environment and custom-CA checks. This is an operator-invoked post-deployment
+check, not an install/upgrade admission gate. It proves the runtime in the probe's
+Den API image only: separately verify the Den web, Gateway/inference, and any other
+application images you deploy, especially with per-component overrides. Helm
+rendering cannot inspect an image's runtime or prove that running pods have
+pulled the new image.
+
+Local regression checks (no cluster required):
+
+```sh
+node --test packaging/helm/openwork-ee/tests/node-runtime.mjs
+bash packaging/helm/openwork-ee/tests/image-tag-and-migration-hook.sh
+```
 
 Create a values file for the target environment:
 
@@ -348,66 +406,49 @@ config:
 ```
 
 - `""` (the default) follows `/admin`, which starts from the default listed
-  below.
+  in `values.yaml`.
 - `"true"` or `"false"` locks the feature for everyone. `/admin` shows "Set by
   deployment config" for it. The `/admin` kill switch still turns it off.
 
 Each key renders `DEN_FEATURE_<KEY>` for den-api. Features that are not part
 of self-hosted installs have no key, so they can't be turned on here. A key
-that isn't listed below fails `helm install` through `values.schema.json`.
+that isn't declared in `values.schema.json` fails `helm install`.
 
 `config.deployment` (`DEN_DEPLOYMENT`) is `self_hosted` unless this is
 OpenWork Cloud. Don't change it on a customer install.
 
-<!-- BEGIN GENERATED features (pnpm features:sync) -->
-| `config.features.*` | Environment variable | Default | What it does |
-| --- | --- | --- | --- |
-| `cloudAgentGateway` | `DEN_FEATURE_CLOUD_AGENT_GATEWAY` | default off | Choose and run cloud-agent models through the organization's AI Gateway access instead of the runner's shared model credentials. |
-| `liveProviderSync` | `DEN_FEATURE_LIVE_PROVIDER_SYNC` | default off | Keep desktop OpenCode v2 models up to date with the organization's AI Gateway in real time. |
-| `offlineRecovery` | `DEN_FEATURE_OFFLINE_RECOVERY` | default off | Show compact App connection failures and a discreet offline indicator in OpenCode v2 conversations. |
-| `secureSecretFields` | `DEN_FEATURE_SECURE_SECRET_FIELDS` | default off | When an agent sets up a connection, plugin or AI Gateway provider that needs keys, people enter them in private fields in the chat and the agent continues once they are saved. Key fields across OpenWork and OpenWork Cloud can be shown while typing and show saved keys as Replace rows. |
-| `modelsAnalyticsUi` | `DEN_FEATURE_MODELS_ANALYTICS_UI` | default off | Organization admins can view Models & usage analytics and shared model usage limits. Deprecated 2026-10-14: UI hidden behind modelsAnalyticsUi (default off). Most likely delete within 4 weeks (by 2026-11-11) unless an org depends on it. |
-| `taskAnalyticsUi` | `DEN_FEATURE_TASK_ANALYTICS_UI` | default off | Members with analytics access can view task activity and consumption, and admins can configure analytics integrations. Deprecated 2026-10-14: UI hidden behind taskAnalyticsUi (default off). Most likely delete within 4 weeks (by 2026-11-11) unless an org depends on it. |
-| `managedDeployments` | `DEN_FEATURE_MANAGED_DEPLOYMENTS` | default off (cloud only) | Organization admins install OpenWork in their own AWS account or Google Cloud project and see its health and updates in OpenWork, and agents connected to OpenWork can create and follow those deployments. |
-| `slackAssistant` | `DEN_FEATURE_SLACK_ASSISTANT` | default off | Answers Slack mentions and DMs for the organization after the Slack connector is set up. |
-| `workbotTeamLinks` | `DEN_FEATURE_WORKBOT_TEAM_LINKS` | default off | Members with team management access can open their organization's Workbot settings and app connections from Workbot. |
-| `workbotFirstRun` | `DEN_FEATURE_WORKBOT_FIRST_RUN` | default off | People signing in to Workbot choose or create their workspace without leaving sign-in, with a clear next action when Workbot is unavailable. |
-| `workbotInlineConnect` | `DEN_FEATURE_WORKBOT_INLINE_CONNECT` | default off | Members connect their assigned apps directly from Workbot and return to the same view after consent. |
-| `workbotDocuments` | `DEN_FEATURE_WORKBOT_DOCUMENTS` | default off | Members browse recent Google Drive files and folders in Workbot, open documents in tabs, and save supported text and spreadsheet edits to Drive. |
-| `workbotWorkspaceAssistant` | `DEN_FEATURE_WORKBOT_WORKSPACE_ASSISTANT` | default off | Members ask Workbot about the document or calendar view they have open, chat without leaving their work, and navigate from a compact sidebar. |
-| `workbotGuidedNavigation` | `DEN_FEATURE_WORKBOT_GUIDED_NAVIGATION` | default off | Workbot offers to open the documents it mentions, and the conversation stays open beside the document. Needs the workspace assistant. |
-| `automationCalendar` | `DEN_FEATURE_AUTOMATION_CALENDAR` | default off | Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar. |
-| `engineV2ForceUpgrade` | `DEN_FEATURE_ENGINE_V2_FORCE_UPGRADE` | default off | Desktop and web instances copy chats with a backup and switch to OpenCode v2 automatically when idle, without asking for consent. |
-| `engineV2Upgrade` | `DEN_FEATURE_ENGINE_V2_UPGRADE` | default off | Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines. |
-| `remoteSessionEvents` | `DEN_FEATURE_REMOTE_SESSION_EVENTS` | default off | MCP clients can subscribe to changes in their remote session receipts and read the current state after reconnecting. |
-| `remoteSessionSubagents` | `DEN_FEATURE_REMOTE_SESSION_SUBAGENTS` | default off | A task the agent starts on the cloud or another computer shows in the chat like a sub-agent: whether it is working, needs an answer or finished, and its conversation, which people can open, follow up on and stop. |
-| `headlessDurableTurns` | `DEN_FEATURE_HEADLESS_DURABLE_TURNS` | default off | Workbot, Slack and Automations answers keep going after a restart, deploy or server failure, without waiting for someone to reopen the chat. |
-<!-- END GENERATED features -->
+See [`config.features` in values.yaml](./values.yaml) for supported keys,
+defaults and descriptions. The
+[feature registry](../../../packages/features/src/registry.ts) is the source
+of truth.
 
-The table and the `config.features` block are generated: run `pnpm features:sync`
-after changing the registry.
+The `config.features` block and values schema are generated: run
+`pnpm features:sync` after changing the registry.
 
-### Automations rollout
+### Automations settings
 
-The Helm chart advertises Automations as unavailable by default for self-hosted
-and customer-managed deployments. Availability and server shutdown are
-separate so a Den upgrade cannot remove routes beneath an older published
-Desktop:
+Automations are on by default. Organization admins choose in **Settings ›
+Automations** whether members can use Desktop Automations (run on a member's
+signed-in desktop) and Cloud Automations (run headlessly in OpenWork Cloud;
+these also need the headless runner, `DEN_HEADLESS_RUNNER_URL`). These settings
+are generally available on cloud and self-hosted deployments.
+
+Availability and server shutdown remain separate so a Den upgrade cannot remove
+routes beneath an older published Desktop:
 
 | `automationsEnabled` | `automationsRuntimeEnabled` | Behavior |
 | --- | --- | --- |
+| `"true"` (default) | `"true"` (default) | Automations are available and execute normally. |
 | `"false"` | `"true"` | New Desktops hide Automations; legacy routes and scheduling remain available during the upgrade window. |
 | `"false"` | `"false"` | Automations are hard-disabled: routes, MCP resources, and scheduler startup are omitted. |
-| `"true"` | `"true"` | Automations are available and execute normally. |
 | `"true"` | `"false"` | The runtime shutdown wins and Desktop receives `automationsEnabled: false`. |
 
-Set both values explicitly when the deployment is ready to run Automations:
+To turn Automations off for the whole install:
 
 ```yaml
 config:
   public:
-    automationsEnabled: "true"
-    automationsRuntimeEnabled: "true"
+    automationsEnabled: "false"
 ```
 
 These render `DEN_AUTOMATIONS_ENABLED=true` and
@@ -974,6 +1015,17 @@ If `secret.create=false`, add those keys to the existing Secret referenced by
 `SMTP_HOST`; leave `smtpHost` blank only when SMTP-backed transactional email
 should be disabled.
 
+Invitation emails tell people to reply for help and include a "Report abuse"
+link. Set `config.email.supportAddress` (rendered as `EMAIL_SUPPORT_ADDRESS`)
+to send both to your help desk; when it is blank, replies go to the person who
+sent the invitation and the email omits the report link:
+
+```yaml
+config:
+  email:
+    supportAddress: "it-help@example.com"
+```
+
 ## Tenancy Mode
 
 The chart defaults to a private single-org deployment:
@@ -1246,6 +1298,198 @@ The hook Job currently renders `DATABASE_URL` and `DEN_DB_ENCRYPTION_KEY` into
 the Job environment when `secret.create=true`, because pre-install hooks run
 before normal chart resources. Avoid sharing `kubectl describe job` output
 without redacting secrets.
+
+## Admin-team permission recovery
+
+### Quick example — dummy installation
+
+**Prerequisite:** complete the normal application/database upgrade with the
+recovery feature disabled first. This example is synthetic: namespace
+`my-openwork`, release `openwork`, one organization **Example Corp**, and its
+only designated, non-SCIM Admin team `admins`. Keep your usual `values.yaml`
+untouched; add a separate **recovery.yaml** overlay:
+
+```yaml
+config:
+  features:
+    administratorRecovery: "true"
+  administratorRecovery:
+    mode: apply
+    team: admins
+    expectedMembers: 4
+```
+
+#### 1. Run the repair and read the Job log
+
+First find the release name and chart version:
+
+```sh
+helm list --namespace my-openwork
+```
+
+Use that release name in the upgrade command. This example uses `openwork`:
+
+```sh
+helm upgrade openwork <chart> --namespace my-openwork -f values.yaml -f recovery.yaml
+```
+
+The Job always uses the normal `migrations.hookDeletePolicy` in both Secret
+modes (default: delete after success). Capture the result **during the upgrade
+in a second terminal**, before successful-hook cleanup removes it. Replace the
+Job placeholder with `<release fullname>-migrate`, including any fullname override:
+
+```sh
+umask 077
+until kubectl --namespace my-openwork logs -f job/<release-fullname>-migrate > recovery.log 2>/dev/null; do
+  sleep 2
+done
+```
+
+This explicit loop retries startup errors without relying on the kubectl client's
+own retry behavior. Start it promptly for the new migration Job. When retrying a
+failed upgrade, wait until Helm has replaced the previous failed Job so you do
+not capture its old log. If the loop does not finish, inspect the Job's status
+and your access rather than leaving it unattended.
+
+Keep `recovery.log` privately; it contains the full member roster. A refused run
+(for example, an `expectedMembers` mismatch) makes Helm report **`UPGRADE FAILED`**.
+That failure is expected for a refusal: in this single-organization example, no
+repair changes are written and the existing Den workloads keep running. It is
+not a successful upgrade. Under the normal default policy, the failed Job and
+its log stay readable until the next upgrade:
+
+```sh
+kubectl --namespace my-openwork logs job/<release-fullname>-migrate
+```
+
+Read that log, correct the reported configuration, and only then retry.
+
+With the default `migrations.hook: true`, this is a **pre-upgrade** Job: a
+recovery refusal or SQL error makes bootstrap exit nonzero and, once the Job
+fails, **blocks `helm upgrade` before the new application resources are applied**.
+Existing application resources are not replaced by that failed hook. Correct the
+reported configuration or disable the recovery overlay before retrying; disabling
+it does not revoke a previously committed repair. If hooks are disabled, the
+migration Job is an ordinary resource and does not provide this pre-upgrade gate.
+
+Apply is transactional **per organization**. A failed organization's set, grants,
+team link and membership revision roll back together, leaving no consumed repair
+fence. An earlier organization in a multi-organization `teams` map may already
+have committed; the whole map is not one transaction. Retrying skips those
+committed repairs. Recovery never converts existing table charsets or collations.
+
+**Illustrative REFUSED output**, generated by the real compiled checker on lab
+Example Corp data, with random IDs normalized to obvious dummy placeholders.
+The lab initially had an extra fifth member. These are not real people or IDs:
+
+```text
+ADMIN RECOVERY REFUSED — nothing was changed. Expected 4 members in team admins (tem_00000000000000000000000001), found 5.
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000001","name":"Example Owner","role":"owner","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":true}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000002","name":"Example Admin","role":"member","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":false}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000003","name":"Example Teammate","role":"member","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":false}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000004","name":"Example Member","role":"member","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":false}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000005","name":"Example Extra Member","role":"member","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":false}
+Next step 1: If this list is right, set expectedMembers to 5 and run again.
+Next step 2: Otherwise, ask the owner to remove the person from the team first, then run again.
+```
+
+Approve the **whole list**, not just its count. If five is correct, change the
+overlay's count to five. Otherwise ask the owner to remove the unexpected person
+before retrying. The synthetic owner removed the fifth member, so the same
+four-member overlay then produced this **real-output-derived illustrative log**:
+
+```text
+APPLIED — these 4 members now have the 14 permissions
+{"event":"administrator_recovery_applied","organization":{"id":"org_00000000000000000000000001","slug":"org_00000000000000000000000001","name":"Example Corp"},"team":{"id":"tem_00000000000000000000000001","name":"admins"},"role":{"id":"pms_00000000000000000000000001","name":"Restored administrator permissions"},"peopleCount":4}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000001","name":"Example Owner","role":"owner","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":true}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000002","name":"Example Admin","role":"member","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":false}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000003","name":"Example Teammate","role":"member","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":false}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000004","name":"Example Member","role":"member","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":false}
+UNDO — Members > Roles: unlink or delete Restored administrator permissions (pms_00000000000000000000000001). Disabling or removing the recovery setting stops future runs; it does not revoke these permissions.
+Existing Admin-role user decisions remain in force; owners already had all permissions.
+```
+
+`role` is the direct role; `viaTeam: true` shows that the recovery is through
+this team. Owners are listed but already had all permissions. Do not copy the
+illustrative IDs into a real installation.
+
+#### 2. Verify in Den
+
+Open **Members > Roles**, find **Restored administrator permissions** and inspect
+its team and 14-key policy. As an intended recipient, test changing a different
+non-owner test member's role, then restore that test member's role. If undo is
+needed, the owner can unlink or delete this custom role in **Members > Roles**.
+The repair does not undo unrelated actions performed while access was granted.
+
+#### 3. Drop the overlay on the next upgrade
+
+```sh
+helm upgrade openwork <chart> --namespace my-openwork -f values.yaml
+```
+
+Do not pass `recovery.yaml` or `--reuse-values`. The feature returns to its
+disabled default; the granted role stays. Disabling/removing the setting stops
+future runs, **not existing access**. Re-running an already-consumed repair
+prints `ALREADY APPLIED` and does not recreate access the owner removed.
+
+### Optional: preview first
+
+Use the same overlay with `mode: check` (the default mode when the flag is on),
+then run the same two-file Helm command and read the migrate Job log. It prints
+the resolved organization/team, existing custom roles and full active roster,
+plus what apply would do, without database changes. Change only the overlay to
+`mode: apply` after approval. A count mismatch refuses in check mode too.
+
+### Multiple Admin teams and multiple organizations
+
+A **name** is accepted only when the organization has exactly one designated,
+non-SCIM Admin team. With several Admin teams, name selection refuses and prints
+the candidate IDs/names. Use the intended team's ID, even if its name is unique.
+Ordinary admins can rename teams; they cannot use renaming to get past this
+multiple-Admin-team refusal. IDs remain stable and still require designation,
+same-org scope and no SCIM mappings/projections.
+
+When more than one organization exists, add its ID or exact slug:
+
+```yaml
+config:
+  administratorRecovery:
+    organization: "<organization-id-or-slug>"
+    team: "<designated-admin-team-id>"
+```
+
+The alternative `teams` map also accepts org IDs/slugs and team IDs/names. Use it
+**instead of** the single `organization`/`team` fields, never both. Duplicate org
+aliases and ambiguous matches refuse rather than choosing a first row.
+
+### Detailed behavior and caveats
+
+- The **explicit feature flag** is the ON/OFF switch. Flag off is a silent
+  recovery no-op: no target resolution, preview or repair writes. Ordinary
+  database upgrades continue normally. Neither the chart nor bootstrap enables
+  the flag automatically. Global kill and an explicit org override false win
+  even over an installation-level enable. Hosted Cloud uses only its existing
+  per-org override, not a new operator tool.
+- `check` and `apply` are maintenance operations on an already-upgraded database.
+  They refuse missing migration receipts or pending migrations instead of running
+  migration, schema-repair or default-reconciliation writes first. Check is a
+  read-only transaction; apply validates the count before any repair write.
+- Logs list every active team membership with ID, display name, direct role and
+  via-team/connection/setup-agent status. Email columns are not selected/logged;
+  address-like labels are redacted. Restrict log access, capture the result during
+  the upgrade before normal Job cleanup, and keep the reviewed log privately.
+  The chart still passes database credentials as literal Job values when it
+  creates the Secret itself; that pre-existing injection behavior is unchanged.
+- Existing Admin-role user decisions remain in force. The roster output is not a
+  complete effective-access difference against every other role. Existing custom
+  roles are not merged or replaced; review them separately.
+- **Expected count is not exact roster binding.** A same-size swap is not caught;
+  fingerprint/roster binding remains a follow-up. An authorized change before apply
+  is included. Later authorized additions inherit the team's role.
+- Apply uses existing permission storage and does not change direct member roles,
+  built-in Admin defaults or ownership. A permanent fence prevents replay after
+  owner key revocation, roster removal or role deletion. API-pod restart is not a
+  repair trigger. Physical deletion of all repair history is outside this fence.
 
 ## Install links
 

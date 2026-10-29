@@ -14,7 +14,7 @@ export async function workbotFirstRun(seed: Seed) {
     const world = await bootWorkbot(resources, undefined, {
       live: false,
       // Deployment cache keys cannot be shared across other local worlds' disposable MySQL databases.
-      denEnv: { DATABASE_REDIS_URL: redis.url, DEN_ORG_MODE: "multi_org", DEN_REQUIRE_EMAIL_VERIFICATION: "true", DEN_FEATURE_WORKBOT_FIRST_RUN: "true" },
+      denEnv: { DATABASE_REDIS_URL: redis.url, DEN_ORG_MODE: "multi_org", DEN_REQUIRE_EMAIL_VERIFICATION: "true" },
     });
     const runId = `${Date.now().toString(36)}${process.pid.toString(36)}`;
     const person = personDefaults("first-workbot", undefined, runId);

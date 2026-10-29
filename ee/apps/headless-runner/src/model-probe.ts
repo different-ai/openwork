@@ -16,7 +16,7 @@ export type ModelProbe = (model: string, signal: AbortSignal, modelAccess?: Head
 export function sanitizeModelError(error: unknown): ModelProbeError {
   if (error instanceof ModelError) {
     if (error.code === "model_http_401" || error.code === "model_http_403") return "authentication_failed"
-    if (error.code === "model_http_402") return "payment_required"
+    if (error.code === "model_http_402" || error.code === "model_payment_required") return "payment_required"
     if (error.code === "model_bad_response") return "invalid_response"
   }
   return "provider_unavailable"

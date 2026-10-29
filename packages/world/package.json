@@ -14,7 +14,7 @@
     "openwork-world": "./bin/world.mjs"
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=24.22.1 <25"
   },
   "dependencies": {
     "@openwork/paths": "workspace:*"

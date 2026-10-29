@@ -21,9 +21,7 @@ export { headlessRunnerConfig, stepLabel }
 export type HeadlessDeps = HeadlessRunnerDeps
 
 type SlackModelDeps = {
-  gatewayEnabled: (organizationId: string) => Promise<boolean>
   cloudModel: (actor: HeadlessRunnerActor, fallback?: string | null) => Promise<string | null>
-  legacyModel: (installation: { organizationId: string; model: string | null }) => Promise<string | undefined>
 }
 
 /** Resolve only after the invoking member is known; gateway denials never select a deployment default. */
@@ -33,16 +31,11 @@ export async function slackTurnModel(
   suppliedDeps?: SlackModelDeps,
 ) {
   const deps: SlackModelDeps = suppliedDeps ?? await import("../workbot/model.js").then((policy) => ({
-    gatewayEnabled: policy.cloudAgentGatewayEnabled,
     cloudModel: policy.organizationCloudModelSelection,
-    legacyModel: policy.slackAssistantModel,
   }))
-  if (await deps.gatewayEnabled(installation.organizationId)) {
-    const model = await deps.cloudModel({ organizationId: installation.organizationId, userId: actor.userId }, installation.model)
-    if (!model) throw new Error("cloud_agent_model_unavailable")
-    return model
-  }
-  return deps.legacyModel(installation)
+  const model = await deps.cloudModel({ organizationId: installation.organizationId, userId: actor.userId }, installation.model)
+  if (!model) throw new Error("cloud_agent_model_unavailable")
+  return model
 }
 
 /** Slack answers only on a deployment with a headless runner (a self-hosted install may not have one). */
@@ -60,8 +53,8 @@ export function slackHeadlessDeps(base: HeadlessDeps | null = defaultHeadlessRun
     ...base,
     // Loaded lazily: the minter pulls in the auth and database modules.
     mintToken: async (input) => {
-      // A resume grant (feature `headlessDurableTurns`) passes through unchanged with the token.
-      const minted = await (await import("../headless-runner/resume-grants.js")).mintHeadlessTurnCredentials(input)
+      // A resume grant and an index capability pass through unchanged with the token.
+      const minted = await (await import("../headless-runner/resume-grants.js")).mintHeadlessTurnCredentials({ ...input, indexKind: "slack" })
       try {
         const { recordSlackRunToken } = await import("./desktop-handoff.js")
         await recordSlackRunToken({ tokenId: minted.tokenId, expiresAt: minted.expiresAt, userId: input.userId, messageId: input.messageId })
@@ -180,9 +173,22 @@ function stepOf(tool: { id: string; name: string; input: Record<string, unknown>
 const retryable = (error: string): RunnerFailure => ({ ok: false, error, retryable: true, retryAfterMs: 5_000 })
 const unknownSession: RunnerFailure = { ok: false, error: "unknown_session", retryable: false }
 
+export type SlackRunnerOptions = {
+  /**
+   * Test injection for protocol compatibility; production always sends step-by-step turns.
+   */
+  stepTurns?: () => Promise<boolean>
+}
+
+/** The Slack worker always runs turns step by step. */
+export function slackRunnerForActor(actor: HeadlessRunnerActor, suppliedDeps: HeadlessDeps | null = slackHeadlessDeps()): SlackRunner {
+  return createSlackRunner(actor, suppliedDeps)
+}
+
 export function createSlackRunner(
   actor: HeadlessRunnerActor,
   suppliedDeps: HeadlessDeps | null = slackHeadlessDeps(),
+  options: SlackRunnerOptions = {},
 ): SlackRunner {
   if (!suppliedDeps) {
     const missing: RunnerFailure = { ok: false, error: "headless_runner_not_configured", retryable: false }
@@ -206,6 +212,8 @@ export function createSlackRunner(
       if (!saved.ok && (saved.status === 404 || saved.error === "invalid_session_id")) return unknownSession
       if (!saved.ok) return retryable(`headless_put_${saved.status}`)
     }
+    // Re-sending a turn keeps the mode the runner stored for it, so a resume may carry the field either way.
+    const execution: "steps" | undefined = (options.stepTurns ? await options.stepTurns().catch(() => false) : true) ? "steps" : undefined
     // One fresh, member-scoped MCP token per admitted run; the runner holds it in memory only.
     let sent
     try {
@@ -230,6 +238,7 @@ export function createSlackRunner(
         prompt: input.prompt,
         ...(model ? { model } : {}),
         ...(modelAccessRequired ? { modelAccessRequired: true } : {}),
+        ...(execution ? { execution } : {}),
       })
     } catch {
       // Credential/model access refusals are not a reason to retry on another model.

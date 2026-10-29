@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { BACKUP_PROMPT, CONNECT_PROMPT, GATEWAY_PROMPT, secureKeysInChat } from "../worlds/secure-keys-in-chat.ts";
+import { CONNECT_PROMPT, GATEWAY_PROMPT, secureKeysInChat } from "../worlds/secure-keys-in-chat.ts";
 
 const test = spec.world(secureKeysInChat, {
   timeout: 900_000,
@@ -20,7 +20,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 test("an admin adds a key-protected service and an AI Gateway provider by entering keys privately in chat", async ({ world, user, probe, step, evidence }) => {
-  await step("before: the agent sets up the service without its key and a private field appears in the chat", async () => {
+  await step("before: the agent sets up the service by its stable key without the key, and a private field appears in the chat", async () => {
     await world.scriptConnection();
     await user.type("composer", CONNECT_PROMPT, { verify: true });
     await user.click({ role: "button", label: "Run task" });
@@ -134,29 +134,6 @@ test("an admin adds a key-protected service and an AI Gateway provider by enteri
     const modelSaw = (await world.mock.agentRequests()).filter((call) => call.privateSentinelSeen).length;
     expect(modelSaw).toBe(0);
     evidence.recordAssertionEvidence("The gateway provider becomes ready without exposing its key", `Shared credential ready: ${ready}; model requests containing a key: ${modelSaw}`, ready && !provider?.text.includes(world.keys.gateway) && modelSaw === 0);
-    await user.screenshot();
-  });
-
-  await step("with the rollout off, agents are sent to OpenWork Cloud as before and saved keys stay saved", async () => {
-    await world.scriptBackup();
-    await user.type("composer", BACKUP_PROMPT, { replace: true, verify: true });
-    await user.click({ role: "button", label: "Run task" });
-    await user.see({ text: "Add the API key for Backup status service" }, { timeoutMs: 120_000 });
-    await user.see({ text: "Add the backup service's key in the field above." }, { timeoutMs: 60_000 });
-    await world.setFeature(false);
-    const attempt = await world.agentMcp("execute_capability", { name: "postMcpConnections", body: { name: "Another service", url: world.statusUrl, authType: "apikey", credentialMode: "shared", access: { orgWide: true } } });
-    const message = isRecord(attempt.body) && typeof attempt.body.message === "string" ? attempt.body.message : "";
-    expect(message).toContain("API-key connections cannot be created from the agent");
-    await user.reload();
-    await user.see({ text: "API key for Backup status service" }, { timeoutMs: 60_000 });
-    await user.see({ text: "Adding keys in chat is off for your organization. Use OpenWork Cloud instead." });
-    // After a reload only recent turns render; the earlier connection is checked in Den.
-    await user.see({ text: "Team OpenRouter: key saved" });
-    const status = await world.connection();
-    expect(isRecord(status) && status.connected).toBe(true);
-    const fields = (await probe.dom(`${card} input`)).elements;
-    expect(fields).toHaveLength(0);
-    evidence.recordAssertionEvidence("Turning off in-chat key entry preserves saved connections", `Connected: ${isRecord(status) && status.connected}; key entry fields: ${fields.length}`, isRecord(status) && status.connected === true && fields.length === 0);
     await user.screenshot();
   });
 });

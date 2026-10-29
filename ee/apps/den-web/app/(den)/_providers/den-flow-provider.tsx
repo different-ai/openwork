@@ -166,6 +166,17 @@ function clearPendingAuthIntent() {
   window.sessionStorage.removeItem(PENDING_AUTH_INTENT_STORAGE_KEY);
 }
 
+type SessionRequest = ReturnType<typeof requestJson>;
+type EarlySessionRequest = { token: string | null; epoch: number; request: SessionRequest };
+
+function requestSession(authToken: string | null): SessionRequest {
+  const headers = new Headers();
+  if (authToken) {
+    headers.set("Authorization", `Bearer ${authToken}`);
+  }
+  return requestJson("/v1/me", { method: "GET", headers }, 12000);
+}
+
 export function DenFlowProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -173,6 +184,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const continuationRef = useRef<SetupContinuation | null>(null);
   const handoffBusyRef = useRef(false);
   const sessionEpochRef = useRef(0);
+  // The first session check starts alongside runtime config; hydration still
+  // commits only after config loads, so guards see both together.
+  const earlySessionRequestRef = useRef<EarlySessionRequest | null>(null);
   const landingGenerationRef = useRef(0);
   const [authMode, setAuthModeState] = useState<AuthMode>("sign-up");
   const [email, setEmail] = useState("");
@@ -476,14 +490,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function refreshSession(quiet = false, isCurrent = () => true) {
+  async function refreshSession(quiet = false, isCurrent = () => true, started: SessionRequest | null = null) {
     const epoch = sessionEpochRef.current;
-    const headers = new Headers();
-    if (authToken) {
-      headers.set("Authorization", `Bearer ${authToken}`);
-    }
-
-    const { response, payload } = await requestJson("/v1/me", { method: "GET", headers }, 12000);
+    const { response, payload } = await (started ?? requestSession(authToken));
     if (!isCurrent() || epoch !== sessionEpochRef.current) return null;
 
     if (!response.ok) {
@@ -1068,6 +1077,14 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }, [authToken]);
 
   useEffect(() => {
+    if (runtimeConfigLoaded) return;
+    const request = requestSession(authToken);
+    // Consumed by the hydration effect below; never leave a rejection unhandled.
+    request.catch(() => undefined);
+    earlySessionRequestRef.current = { token: authToken, epoch: sessionEpochRef.current, request };
+  }, [authToken, runtimeConfigLoaded]);
+
+  useEffect(() => {
     if (!runtimeConfigLoaded) {
       return;
     }
@@ -1079,8 +1096,11 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     const hydrateSession = async () => {
       const epoch = sessionEpochRef.current;
+      const early = earlySessionRequestRef.current;
+      earlySessionRequestRef.current = null;
+      const started = early && early.token === authToken && early.epoch === epoch ? early.request : null;
       try {
-        await refreshSession(true, () => !cancelled);
+        await refreshSession(true, () => !cancelled, started);
         if (!cancelled && epoch === sessionEpochRef.current) {
           setHydratedSession({ token: authToken });
           setMemberAuthCheckStatus("ready");

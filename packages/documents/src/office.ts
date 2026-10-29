@@ -1,4 +1,4 @@
-import { buildZip, cellInputFromText, columnLetters, listZipEntries, openXlsxWorkbook, parseCellReference, parseRange, parsedXmlText, readZipEntryData, readZipTextEntry, unsafeFormulaReason, utf8Bytes, utf8Text, xmlText, zipEntryMap } from "@openwork/workbook"
+import { extractOfficeText, buildZip, cellInputFromText, columnLetters, listZipEntries, openXlsxWorkbook, parseCellReference, parseRange, parsedXmlText, readZipEntryData, readZipTextEntry, unsafeFormulaReason, utf8Bytes, utf8Text, xmlText, zipEntryMap } from "@openwork/workbook"
 import type { DocumentSave, EditorDocument, EditorRequest, TextDocument } from "./model"
 
 const escapeXml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;")
@@ -122,3 +122,10 @@ export async function patchWord(bytes: Uint8Array, save: Extract<DocumentSave, {
 }
 
 export { cellInputFromText, unsafeFormulaReason, columnLetters }
+
+/** The same bounded text extraction used by Workbot attachments, without an Office session. */
+export async function openOfficeTextPreview(bytes: Uint8Array, type: string) {
+  if (type === "pptx") return extractOfficeText("pptx", bytes)
+  const content = listZipEntries(bytes).find(entry => entry.name === "content.xml")
+  return content ? xmlText(utf8Text(await readZipEntryData(bytes, content))).slice(0, 24_000) : ""
+}

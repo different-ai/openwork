@@ -18,7 +18,7 @@ const MARKER = "<!-- warden-clearance -->";
 // review and could upload a forged receipt; the rest would let one PR rewrite
 // the reviewer for every later PR. Other CI, AGENTS.md, and skills are reviewed
 // like any code (Warden's runtime does not load AGENTS.md or skills from the PR).
-const GUARDED = /^(\.github\/workflows\/warden(-clearance|-check-backfill)?\.yml$|\.github\/scripts\/warden-(clearance|report|check)\.mjs$|warden\.toml$|\.warden\/)/;
+const GUARDED = /^(\.github\/workflows\/warden(-clearance|-check-backfill|-quick)?\.yml$|\.github\/scripts\/warden-(clearance|report|check|fast)\.mjs$|warden\.toml$|\.warden\/)/;
 
 const count = (value) => Number.isSafeInteger(value) && value >= 0;
 

@@ -1,12 +1,13 @@
 # Connecting accounts in Workbot
 
-`workbotInlineConnect` is off by default on cloud and self-hosted deployments.
-The existing `DEN_WORKBOT_URL` fixes the only allowed Workbot origin; no new
-provider credentials or product environment switches are introduced.
+Members connect their assigned apps from Workbot on cloud and self-hosted
+deployments whenever `DEN_WORKBOT_URL` is configured. That URL fixes the only
+allowed Workbot origin; no new provider credentials or product environment
+switches are introduced.
 
 Workbot posts a connection ID, a bounded path-only return, and a random attempt
 ID to `/v1/workbot/connections/:connectionId/connect/start`. Den verifies the
-OAuth grant, write scope, active membership, and both Workbot flags. It re-enters
+OAuth grant, write scope, active membership, and the configured Workbot origin. It re-enters
 the existing member connection start with an in-process signed principal. The
 token's organization is authoritative: a browser header cannot select another
 organization. Existing native-provider grants, external per-member grants, and
@@ -14,8 +15,7 @@ shared-credential management permissions remain in force.
 
 The existing OAuth state signs the member, organization, connection binding,
 expiry, attempt ID, Workbot origin, and return path. Existing provider callback,
-PKCE, issuer, and credential-persistence validation remains in place. A callback
-may finish after the flag is killed, but no new inline flow can start. Changing
+PKCE, issuer, and credential-persistence validation remains in place. Changing
 the configured origin prevents a previously signed return from being used.
 
 The signed Workbot completion page reports sign-in, not a ready connection,
@@ -51,8 +51,8 @@ resume only after the matching fresh identity has committed to the UI's authoriz
 policy; the separate sign-in recovery link is unchanged.
 
 A blocked popup offers an explicit same-tab action. A callback without an opener
-offers a return link to the signed Workbot path. When inline connect is off,
-the existing specific-connection Den link remains available, honestly labelled
+offers a return link to the signed Workbot path. When no Workbot origin is
+configured, the existing specific-connection Den link remains available, honestly labelled
 “Finish in the new tab”, with readiness auto-detection. No migration, rollout,
 or provider setup is performed by this change.
 

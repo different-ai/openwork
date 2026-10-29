@@ -1,4 +1,3 @@
-import { createHmac, timingSafeEqual } from "node:crypto"
 import { Hono, type Context } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -6,6 +5,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { GOOGLE_DRIVE_EXPORT_FORMATS, GOOGLE_DRIVE_PULL_CHUNK_BYTES, GOOGLE_DRIVE_PULL_MAX_BYTES } from "@openwork/types/google-drive-upload"
 import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/request-capture.js"
 import { resolvePublicApiBaseUrl } from "../../capability-sources/generic-oauth.js"
+import { signLink, verifyLink } from "../../capability-sources/signed-links.js"
 import { env } from "../../env.js"
 import { cloudTransportReadRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator, tokenRoute } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -221,34 +221,17 @@ async function streamDriveContent(
   return c.body(capped(upstream.body, range ? GOOGLE_DRIVE_PULL_CHUNK_BYTES : GOOGLE_DRIVE_PULL_MAX_BYTES), upstream.status === 206 ? 206 : 200, headers)
 }
 
-type DownloadLinkPayload = { v: 1; o: string; u: string; m: string; c: string | null; f: string; x: string | null; e: number }
+const downloadLinkPayloadSchema = z.object({
+  v: z.literal(1), o: z.string(), u: z.string(), m: z.string(), c: z.string().nullable(),
+  f: driveIdSchema, x: z.string().nullable(), e: z.number().int(),
+})
 
-function linkSignature(payload: string) {
-  return createHmac("sha256", env.betterAuthSecret).update(DOWNLOAD_LINK_DOMAIN).update("\0").update(payload).digest("base64url")
+function signDownloadLink(payload: z.infer<typeof downloadLinkPayloadSchema>) {
+  return signLink(DOWNLOAD_LINK_DOMAIN, payload)
 }
 
-function signDownloadLink(payload: DownloadLinkPayload) {
-  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url")
-  return `${encoded}.${linkSignature(encoded)}`
-}
-
-function verifyDownloadLink(token: string): DownloadLinkPayload | null {
-  const [encoded, signature, extra] = token.split(".")
-  if (!encoded || !signature || extra !== undefined) return null
-  const expected = new TextEncoder().encode(linkSignature(encoded))
-  const received = new TextEncoder().encode(signature)
-  if (expected.byteLength !== received.byteLength || !timingSafeEqual(expected, received)) return null
-  try {
-    const payload: unknown = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"))
-    const parsed = z.object({
-      v: z.literal(1), o: z.string(), u: z.string(), m: z.string(), c: z.string().nullable(),
-      f: driveIdSchema, x: z.string().nullable(), e: z.number().int(),
-    }).safeParse(payload)
-    if (!parsed.success || parsed.data.e * 1000 < Date.now()) return null
-    return parsed.data
-  } catch {
-    return null
-  }
+function verifyDownloadLink(token: string) {
+  return verifyLink(DOWNLOAD_LINK_DOMAIN, token, downloadLinkPayloadSchema)
 }
 
 /** Drive file downloads for host file transport and shell clients; bytes never enter tool results. */

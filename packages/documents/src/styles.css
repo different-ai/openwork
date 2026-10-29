@@ -63,6 +63,10 @@
 .ow-documents-notice { color: var(--doc-muted); padding: 12px 0; }
 .ow-documents-notice button { text-decoration: underline; margin-left: 8px; }
 .ow-documents-more { display: block; margin: 20px auto; border: 1px solid var(--doc-line) !important; padding: 8px 20px !important; }
+.ow-document-opening { display: flex; flex-direction: column; gap: 18px; width: min(100%, 760px); margin: 0 auto; padding: 48px 32px; }
+.ow-document-opening div { height: 12px; border-radius: 4px; background: var(--doc-chip); }
+.ow-document-opening div:first-child { height: 24px; width: 55%; margin-bottom: 20px; }
+.ow-document-opening div:last-child { width: 68%; }
 .ow-documents-skeleton div { height: 48px; border-bottom: 1px solid var(--doc-line); background: linear-gradient(90deg, var(--doc-chip) 45%, transparent 45%); background-size: 60% 12px; background-repeat: no-repeat; background-position: 8px center; }
 @media (max-width: 1000px) { .ow-documents-sidebar { width: 150px; } .ow-documents-detail { width: 220px; } .ow-documents-content { flex-wrap: wrap; } .ow-documents-detail { width: 100%; border-left: 0; border-top: 1px solid var(--doc-line); padding: 20px 0; } }
 @media (max-width: 640px) { .ow-documents-sidebar { display: none; } .ow-documents-main { padding: 16px; } .ow-documents-toolbar { flex-wrap: wrap; gap: 8px; } .ow-documents-search { flex-basis: 100%; } .ow-documents th:nth-child(2), .ow-documents td:nth-child(2), .ow-documents th:last-child, .ow-documents td:last-child { display: none; } .ow-documents th:first-child { width: 65%; } .ow-documents-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); } }
@@ -184,3 +188,36 @@
 .ow-editor-colors input { width: 28px; height: 28px; padding: 2px; border: 1px solid var(--doc-line); border-radius: 6px; background: transparent; cursor: pointer; }
 .ow-editor-colors input:focus-visible { outline: 2px solid var(--doc-muted); outline-offset: 2px; }
 @media (max-width: 800px) { .ow-document-commandbar { gap: 2px; padding-inline: 8px; } .ow-editor-tools-label { display: none; } }
+
+/* Keep the file visible while the requested Office session starts. */
+.ow-document-mode, .ow-document-preview-owner { position: relative; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.ow-document-mode[hidden], .ow-document-preview-owner[hidden] { display: none; }
+.ow-office-opening { position: absolute; inset: 0; pointer-events: none; min-height: 0; }
+.ow-office-opening > .ow-editor-message { pointer-events: auto; background: var(--doc-bg); }
+.ow-office-opening .ow-office-canvas { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+.ow-editor-starting { display: flex; gap: 8px; align-items: center; }
+.ow-editor-starting-indicator { width: 16px; height: 16px; border: 2px solid var(--doc-line); border-top-color: currentColor; border-radius: 50%; animation: ow-editor-starting 1s linear infinite; }
+@keyframes ow-editor-starting { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ow-editor-starting-indicator { animation: none; } }
+
+.ow-editor-toolbar .ow-document-information { display: inline-flex; align-items: center; justify-content: center; }
+.ow-document-information-positioner { z-index: 60; }
+.ow-document-information-tooltip { box-sizing: border-box; max-width: min(320px, var(--available-width)); max-height: var(--available-height); overflow: auto; padding: 8px 12px; border-radius: 6px; background: var(--doc-bg); color: var(--doc-text); box-shadow: 0 0 0 1px var(--doc-line); font: 12px/1.5 system-ui, sans-serif; }
+
+.ow-editor-binary { position: relative; display: flex; flex: 1; min-height: 0; }
+.ow-editor-preview-loading { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; background: var(--doc-bg); color: var(--doc-muted); pointer-events: none; }
+
+/* Unsaved changes: a modal dialog, as in desktop apps. */
+.ow-unsaved-dialog { width: min(420px, calc(100vw - 32px)); padding: 24px; border: 1px solid var(--doc-line, #e5e5e5); border-radius: 12px; background: var(--doc-surface, #fff); color: var(--doc-text, #111); box-shadow: 0 24px 48px rgb(0 0 0 / 0.18); font: 14px/1.5 system-ui, sans-serif; }
+.ow-unsaved-dialog::backdrop { background: rgb(0 0 0 / 0.32); }
+.ow-unsaved-dialog h2 { margin: 0 0 8px; font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
+.ow-unsaved-dialog p { margin: 0; color: var(--doc-muted, #666); }
+.ow-unsaved-dialog .ow-unsaved-dialog-error { margin-top: 12px; color: #b42318; }
+.ow-unsaved-dialog-actions { display: flex; gap: 8px; margin-top: 24px; }
+.ow-unsaved-dialog-actions button { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--doc-line, #e5e5e5); background: var(--doc-surface, #fff); color: var(--doc-text, #111); font: inherit; cursor: pointer; }
+.ow-unsaved-dialog-actions button:disabled { opacity: 0.5; cursor: default; }
+.ow-unsaved-dialog-actions .ow-unsaved-dialog-discard { margin-right: auto; }
+.ow-unsaved-dialog-actions .ow-unsaved-dialog-save { border-color: var(--doc-text, #111); background: var(--doc-text, #111); color: var(--doc-bg, #fff); font-weight: 600; }
+.ow-unsaved-dialog-actions button:hover:not(:disabled) { background: var(--doc-chip, #f2f2f2); }
+.ow-unsaved-dialog-actions .ow-unsaved-dialog-save:hover:not(:disabled) { background: var(--doc-text, #111); opacity: 0.88; }
+@media (max-width: 480px) { .ow-unsaved-dialog-actions { flex-wrap: wrap; } .ow-unsaved-dialog-actions .ow-unsaved-dialog-discard { margin-right: 0; order: 3; } }

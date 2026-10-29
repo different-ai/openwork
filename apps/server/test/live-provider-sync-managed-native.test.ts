@@ -24,7 +24,7 @@ test("real managed V2 owner transitions and fail-closed fresh rollout boot", { t
   t.after(() => rm(root, { recursive: true, force: true }));
   const plugins = join(root, "plugins");
   await mkdir(plugins);
-  const entries = ["openwork-gateway-quota-v2", "openwork-provider-filters-v2", "openwork-mcp-results-v2", "openwork-mcp-readiness-v2", "openwork-agent-permissions-v2", "openwork-context-v2"];
+  const entries = ["openwork-gateway-quota-v2", "openwork-provider-filters-v2", "openwork-mcp-results-v2", "openwork-mcp-readiness-v2", "openwork-visible-reasoning-v2", "openwork-agent-permissions-v2", "openwork-context-v2"];
   const buildPlugins = spawnSync("bun", ["build", ...entries.map(name => join(repo, "apps/server/src/opencode-plugins", `${name}.ts`)), "--target=node", "--format=esm", `--outdir=${plugins}`], { cwd: repo, encoding: "utf8", timeout: 30_000 });
   assert.equal(buildPlugins.status, 0, buildPlugins.stderr);
   const buildProvider = spawnSync("bun", ["build", join(repo, "packages/opencode-plugin/server.ts"), "--target=node", "--format=esm", `--outfile=${join(plugins, "openwork-provider-sync-v2.js")}`], { cwd: repo, encoding: "utf8", timeout: 30_000 });

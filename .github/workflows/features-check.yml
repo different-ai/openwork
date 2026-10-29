@@ -1,7 +1,7 @@
 name: Feature registry check
 
 # The feature registry (packages/features/src/registry.ts) generates the Helm
-# chart's config.features block, values schema and README table. This job
+# chart's config.features block and values schema. This job
 # fails when those are stale, when the chart renders DEN_FEATURE_* names that
 # den-api does not read, when a Dockerfile misses a workspace package its
 # service needs, or when code adds a DEN_*_ENABLED switch or reads
@@ -15,8 +15,6 @@ on:
       - "packaging/helm/openwork-ee/**"
       - "scripts/features-sync.mjs"
       - "scripts/check-docker-workspace-packages.mjs"
-      - "scripts/check-ui-guardrails*"
-      - "scripts/ui-guardrails-baseline.json"
       - ".github/workflows/features-check.yml"
       - "package.json"
       - "packaging/docker/**"
@@ -48,7 +46,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -56,7 +54,7 @@ jobs:
           version: 11.4.0
 
       - name: Install the registry's dependencies
-        run: pnpm install --frozen-lockfile --filter "@openwork/features" --filter "@different-ai/openwork-workspace"
+        run: pnpm install --frozen-lockfile --filter "@openwork/features"
 
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
@@ -66,9 +64,3 @@ jobs:
 
       - name: Check the feature registry
         run: pnpm features:check
-
-      - name: Test UI guardrails
-        run: pnpm test:ui-guardrails
-
-      - name: Ratchet UI guardrails
-        run: pnpm check:ui-guardrails

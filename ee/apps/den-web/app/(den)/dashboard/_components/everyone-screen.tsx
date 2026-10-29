@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowLeft, Laptop, Compass, Layers, ShieldCheck, SquareTerminal } from "lucide-react";
+import { ArrowLeft, Laptop, Compass, Layers, ScrollText, ShieldCheck, SquareTerminal } from "lucide-react";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import { getMembersTeamsRoute, getOrgAccessFlags, getPermissionSetRoute } from "../../_lib/den-org";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
@@ -12,9 +12,10 @@ import { IconTile } from "./access-rows";
 import { AgentsPanel, agentsTabVisible } from "./agent-permissions-editor";
 import { ItemPanel, ItemRow } from "./item-list";
 import { ModelsPanel, modelsTabVisible } from "./team-models-panel";
+import { PromptsPanel, promptsTabVisible } from "./prompts-panel";
 import { usePermissionSets } from "./permissions-data";
 
-export type EveryoneTab = "role" | "agents" | "browser" | "models" | "desktop";
+export type EveryoneTab = "role" | "agents" | "browser" | "models" | "prompts" | "desktop";
 
 /**
  * Members › Teams › Everyone: every member, including people in no team.
@@ -31,6 +32,7 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
   const showBrowser = showAgents;
   const showDesktop = desktopPolicyScreenRemoved(orgContext);
   const showModels = modelsTabVisible(orgContext);
+  const showPrompts = promptsTabVisible(orgContext);
   const [chosenTab, setChosenTab] = useState<EveryoneTab | null>(initialTab);
   // The tab is in the address, so a reload or a shared link opens it again.
   const chooseTab = (tab: EveryoneTab) => {
@@ -42,6 +44,7 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
   const activeTab: EveryoneTab = chosenTab === "agents" && showAgents ? "agents"
     : chosenTab === "browser" && showBrowser ? "browser"
       : chosenTab === "models" && showModels ? "models"
+      : chosenTab === "prompts" && showPrompts ? "prompts"
         : chosenTab === "desktop" && showDesktop ? "desktop" : "role";
   const memberCount = orgContext?.members.length ?? 0;
   const canViewSets = Boolean(orgContext && access?.canViewPermissions);
@@ -52,6 +55,7 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
     ...(showAgents ? [{ value: "agents" as const, label: "Agents", icon: SquareTerminal }] : []),
     ...(showBrowser ? [{ value: "browser" as const, label: "Browser", icon: Compass }] : []),
     ...(showModels ? [{ value: "models" as const, label: "Models", icon: Layers }] : []),
+    ...(showPrompts ? [{ value: "prompts" as const, label: "Prompts", icon: ScrollText }] : []),
     ...(showDesktop ? [{ value: "desktop" as const, label: "Desktop", icon: Laptop }] : []),
   ];
 
@@ -97,6 +101,10 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
         ) : activeTab === "models" ? (
           <div role="tabpanel" aria-label="Models">
             <ModelsPanel team={null} />
+          </div>
+        ) : activeTab === "prompts" ? (
+          <div role="tabpanel" aria-label="Prompts">
+            <PromptsPanel team={null} />
           </div>
         ) : (
           <div role="tabpanel" aria-label="Agents">

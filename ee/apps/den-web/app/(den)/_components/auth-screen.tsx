@@ -9,7 +9,7 @@ import { AuthPanel } from "./auth-panel";
 import { OnboardingTexture } from "./onboarding-texture";
 import { McpAppFact, McpStoryTiles, mcpStoryCopy } from "../../mcp/mcp-story";
 import { useMcpClient } from "../../mcp/use-mcp-client";
-import { useWorkbotFirstRun } from "../../mcp/use-workbot-first-run";
+import { isWorkbotSignIn } from "../../mcp/workbot-sign-in";
 import { SetupFrame } from "./setup-frame";
 import { SetupFacts, SetupPanelBody, SetupSkeletonRows } from "./setup-frame-parts";
 import { TemporaryAuthNotice } from "./temporary-auth-notice";
@@ -124,7 +124,7 @@ function AgentSignInScreen({ status }: { status: "checking" | "redirecting" | "e
   }, []);
   const client = useMcpClient(oauthQuery);
   const story = mcpStoryCopy(client);
-  const workbot = useWorkbotFirstRun(oauthQuery);
+  const workbot = isWorkbotSignIn(oauthQuery);
   return (
     <SetupFrame
       workbot={workbot}

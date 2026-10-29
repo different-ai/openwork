@@ -30,7 +30,6 @@ import { cn } from "@/lib/utils"
 import { McpAppLoading } from "./mcp-app-loading"
 import { Button } from "@/components/ui/button"
 import { t } from "@/i18n"
-import { useOfflineRecoveryFeature } from "@/react-app/domains/session/status/use-offline-recovery-feature"
 import {
   formatMcpAppDiagnostic,
   safeMcpAppDiagnosticMessage,
@@ -281,8 +280,7 @@ function isRetiredFirstPartyConfirmation(toolName: string, result: PreservedMcpA
 const CHAT_MCP_APP_UNAVAILABLE_NOTICE = "Interactive view unavailable. The normal tool result is still available."
 
 export function McpAppDiagnosticNotice({ error, notice, onRetry, engine }: { error: McpAppDiagnostic; notice: string; onRetry?: () => void; engine?: "v1" | "v2" }) {
-  const enabled = useOfflineRecoveryFeature(engine === "v2")
-  const compact = enabled && (error.causeCode === "server_unavailable" || error.causeCode === "mcp_unreachable")
+  const compact = engine === "v2" && (error.causeCode === "server_unavailable" || error.causeCode === "mcp_unreachable")
   const [detailsCopied, setDetailsCopied] = useState(false)
   const details = formatMcpAppDiagnostic(error)
   return (

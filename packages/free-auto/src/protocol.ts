@@ -93,6 +93,8 @@ export type DesktopFreeAccessStatus = {
   modelID: typeof DESKTOP_FREE_MODEL_ID;
   allowance: {
     limitUsd: number; usedUsd: number; remainingUsd: number; resetsAt: string;
+    /** Unlimited is independent from the weekly counters, which remain visible for accounting. */
+    unlimited?: boolean;
   } | null;
   catalog?: ManagedModelRecommendation[];
   defaultPinned?: boolean;

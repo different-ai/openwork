@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
-import { Building, Check, Cloud, Laptop, Lock, Pin, PinOff } from "lucide-react";
+import { Building, Check, Cloud, Laptop, Lock, Pin, PinOff, Sparkles } from "lucide-react";
 import type { ModelOption, ModelRef } from "@/app/types";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -9,7 +9,7 @@ import { AutoPickerRecovery, useObservedAutoAccessSnapshot } from "@/react-app/d
 import { autoNotOffered, autoPickerCopy, autoQuietlyUnavailable, freeAutoSwitchedOff, type AutoPickerState } from "@/app/lib/inference-access";
 import type { MenuAction } from "@/components/ui/action-menu-model";
 import { Command, CommandCollection, CommandGroup, CommandGroupLabel, CommandHeader, CommandInput, CommandItem, CommandList, CommandPanel } from "@/components/ui/command";
-import { immutableModelPin, isAutoModel, isPinModelShortcut, markExplicitModelChoice, modelGroups, modelMakerId, modelSource, modelStateLabel, modelSubtitle, modelTitle, orderedModelPins, retainedModelCopy, withAutoDefaultPin, MODEL_SOURCE_LABELS, type ModelGroup, type ModelPickerCatalogState, type RetainedModelSelection } from "./model-catalog";
+import { AUTO_ROUTER_GROUP, fixedModelTitle, immutableModelPin, isAutoModel, isAutoRouterModel, isPinModelShortcut, markExplicitModelChoice, modelGroups, modelMakerId, modelSource, modelStateLabel, modelSubtitle, modelTitle, orderedModelPins, retainedModelCopy, withAutoDefaultPin, MODEL_SOURCE_LABELS, type ModelGroup, type ModelPickerCatalogState, type RetainedModelSelection } from "./model-catalog";
 import { modelRefKey, useModelCollectionsStore } from "@/react-app/domains/session/models/model-collections-store";
 import { PickerNotice } from "./picker-notice";
 import { resolveSearchIntent, searchIntentSummary, searchIntentTag, searchModels } from "./model-search";
@@ -27,12 +27,15 @@ function ProviderMark({ model, description, retained = false }: { model: ModelRe
   const maker = retained ? null : modelMakerId(model);
   return <div data-slot="model-provider-mark" className="flex size-4 shrink-0 items-center justify-center">
     {isAutoModel(model) ? <OpenWorkMark className="size-4 text-dls-accent dark:text-foreground" />
+      : isAutoRouterModel(model) ? <Sparkles aria-hidden="true" strokeWidth={1.5} className="size-4 text-dls-accent dark:text-foreground" />
       : <ProviderIcon providerId={maker ?? (retained ? undefined : model.providerID)} providerName={maker ? undefined : description} size={16} />}
   </div>;
 }
 
 /** Search results, ranked in one unlabeled list. */
 const SEARCH_GROUP = "Search results";
+/** Groups shown without a label: search results, and Auto, which names itself. */
+const UNLABELED_GROUPS = new Set([SEARCH_GROUP, AUTO_ROUTER_GROUP]);
 /** Groups that list several providers' models together; rows there name their provider. */
 const MIXED_GROUPS = new Set(["Pinned", "Recent", "OpenWork Models", SEARCH_GROUP]);
 
@@ -154,7 +157,7 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
   const retained = retainedSelection && modelRefKey(retainedSelection.model) === modelRefKey(current)
     && !options.some((option) => modelRefKey(option) === modelRefKey(current) && !option.disabled) ? retainedSelection : undefined;
   const retainedCopy = retained ? retainedModelCopy(retained.reason) : null;
-  const retainedName = retained ? (isAutoModel(retained.model) ? "Auto" : retained.title ? modelTitle({ ...retained.model, title: retained.title, description: retained.description }) : "Saved model") : "";
+  const retainedName = retained ? (fixedModelTitle(retained.model) ?? (retained.title ? modelTitle({ ...retained.model, title: retained.title, description: retained.description }) : "Saved model")) : "";
   const retainedVisible = retained && (!query.trim() || `${retainedName} ${retained.description ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
   const retainedState = retained && isAutoModel(retained.model) && autoRow && autoRow.state !== "ready" ? autoPickerCopy(autoRow.state, false, undefined, autoRow.code, autoRow.resetsAt).subtitle : retainedCopy?.subtitle;
   const retainedSubtitle = [retained && !isAutoModel(retained.model) ? retained.description?.trim() : null, retainedState].filter(Boolean).join(" · ");
@@ -194,11 +197,11 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
           <Button size="sm" variant="outline" className="mt-2" onClick={clearSearch}>Clear search</Button>
         </div> : null}
         {empty ? <div role="status" className="flex flex-col items-center gap-1 px-4 py-7 text-center text-sm" data-testid="model-catalog-empty">
-          <p>No models yet</p><p className="text-muted-foreground">{onConnectProvider ? <>Connect a provider, or turn Auto back on in {onOpenProviderSettings ? <button type="button" className="text-foreground underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none" onClick={onOpenProviderSettings}>AI providers</button> : "AI providers"}.</> : "Your organization manages model access. Ask your workspace owner or admin."}</p>
+          <p>No models yet</p><p className="text-muted-foreground">{onConnectProvider ? <>Connect a provider, or turn OpenWork Free back on in {onOpenProviderSettings ? <button type="button" className="text-foreground underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none" onClick={onOpenProviderSettings}>AI providers</button> : "AI providers"}.</> : "Your organization manages model access. Ask your workspace owner or admin."}</p>
         </div> : null}
         <CommandList>
           {(group: ModelGroup) => <CommandGroup key={group.value} items={group.items}>
-            {group.value === mergedLabel || group.value === SEARCH_GROUP ? null : <CommandGroupLabel className="flex min-h-7 items-center">{group.value}</CommandGroupLabel>}
+            {group.value === mergedLabel || UNLABELED_GROUPS.has(group.value) ? null : <CommandGroupLabel className="flex min-h-7 items-center">{group.value}</CommandGroupLabel>}
             <CommandCollection>{(option: ModelOption) => {
               const key = modelRefKey(option);
               const name = modelTitle(option);
@@ -209,7 +212,7 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
               const subtitle = autoState ? autoPickerCopy(autoState, false, undefined, autoRow?.code, autoRow?.resetsAt).subtitle : active && failed ? `${modelSubtitle(option)}${modelSubtitle(option) ? " · " : ""}availability not verified` : modelSubtitle(option);
               // The name always wins the row. One quiet line under it carries where the model
               // comes from (only where a group mixes providers) and what is true about it now.
-              const meta = autoState || isAutoModel(option) ? subtitle
+              const meta = autoState || isAutoModel(option) || isAutoRouterModel(option) ? subtitle
                 : [MIXED_GROUPS.has(group.value) ? option.description?.trim() : null, modelStateLabel(option),
                   active && failed ? "Availability not verified" : null].filter(Boolean).join(" · ");
               // Options typed in the search show only where they apply; the line above the list says the rest.

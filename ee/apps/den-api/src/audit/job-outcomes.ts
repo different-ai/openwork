@@ -6,7 +6,7 @@ import type { AuditOrigin } from "@openwork-ee/den-db/audit-log"
 // requestId null), category "execution". The starting request keeps its own
 // request-bound operation (.requested/.accepted); the job operation carries the
 // background start (scheduler only) and the single terminal outcome.
-// scripts/check-audit-route-coverage.ts renders this list into COVERAGE.md and
+// scripts/check-audit-route-coverage.ts validates this list and
 // coverage.ts adds the event types to the supported catalog.
 
 export type AuditJobOutcomeDeclaration = Readonly<{
@@ -61,13 +61,17 @@ export const auditJobOutcomeDeclarations = [
     eventType: "connector_sync.completed", kind: CONNECTOR_SYNC_JOB_KIND, target: "connector_sync_event", parents: ["connector_instance", "organization"],
     actor: "system den-api.github-sync (no initiator is persisted on connector_sync_event)", origins: ["webhook", "api", "scheduler"],
     idempotencyKey: "connector_sync:<eventId>:completed:<completedAt ms>",
-    emitters: ["src/workers/github-sync.ts:processDueGithubSyncEvents → recordConnectorSyncCompleted"],
+    emitters: [
+      "src/workers/github-sync.ts:processDueGithubSyncEvents → recordConnectorSyncCompleted",
+      "src/workers/github-sync.ts:reclaimStaleGithubSyncEvents → recordConnectorSyncCompleted",
+      "src/workers/github-sync.ts:supersedeQueuedGithubSyncEvents → recordConnectorSyncCompleted",
+    ],
     startedBy: [
       "POST /v1/connector-instances/:connectorInstanceId/sync-now", "POST /v1/connector-targets/:connectorTargetId/resync",
       "POST /v1/connector-sync-events/:connectorSyncEventId/retry", "POST /v1/webhooks/connectors/github", "reconcile loop",
     ],
     evidence: "Outcome succeeded (completed, partial, ignored) | failed; reasonCode = terminal status; change snapshot status running → terminal with attemptCount and discovered/created plugin and materialized object counts only. Never repository names, paths, file contents, plugin names or error messages.",
-    limitations: "GitHub connector events only. Transient failures re-queued for another attempt record nothing until the event is terminal. Origin from the event: reconcile → scheduler, manual_resync → api, otherwise webhook.",
+    limitations: "GitHub connector events only. Transient failures re-queued for another attempt record nothing until the event is terminal. An abandoned running event put back for another attempt records nothing; one out of attempts records failed. A queued event closed because a sync claimed for its target covers it records ignored (summary outcome superseded). Origin from the event: reconcile → scheduler, manual_resync → api, otherwise webhook.",
   },
 ] as const satisfies readonly AuditJobOutcomeDeclaration[]
 

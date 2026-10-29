@@ -10,6 +10,10 @@
  * membership changes (revokeOrganizationApiKeysForMember; enabled → false).
  */
 export const domainChangeEmitters: Readonly<Record<string, string>> = {
+  // Retired with organization grants (2026-10): nothing emits them any more; kept so past events stay filterable.
+  "organization.benefit_setting.updated": "retired (organization grants)",
+  "organization.benefit_grant.created": "retired (organization grants)",
+  "organization.benefit_grant.revoked": "retired (organization grants)",
   "api_key.created": "audit/domain/api-keys.ts", "api_key.deleted": "audit/domain/api-keys.ts", "api_key.revoked": "audit/domain/api-keys.ts",
   "invitation.created": "audit/domain/invitations.ts", "invitation.refreshed": "audit/domain/invitations.ts", "invitation.canceled": "audit/domain/invitations.ts",
   "invitation.rejected": "audit/domain/invitations.ts",

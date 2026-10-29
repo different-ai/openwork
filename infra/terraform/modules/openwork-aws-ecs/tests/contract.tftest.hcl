@@ -86,6 +86,23 @@ run "singleton_api_only_security_and_defaults" {
     error_message = "Default release images must be immutable."
   }
 }
+run "small_trial_database_default" {
+  command = plan
+  assert {
+    condition     = aws_db_instance.this[0].instance_class == "db.t4g.small" && aws_db_instance.this[0].allocated_storage == 20 && !aws_db_instance.this[0].apply_immediately
+    error_message = "Small / trial must default to a 2 GiB database with 20 GiB storage and deferred modifications."
+  }
+}
+
+run "explicit_legacy_micro_is_preserved" {
+  command = plan
+  variables { database = { instance_class = "db.t4g.micro" } }
+  assert {
+    condition     = aws_db_instance.this[0].instance_class == "db.t4g.micro" && !aws_db_instance.this[0].apply_immediately
+    error_message = "Existing direct users must be able to pin micro without opting into an immediate restart."
+  }
+}
+
 run "common_outputs_are_native_identifiers" {
   command = apply
   assert {

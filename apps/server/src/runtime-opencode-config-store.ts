@@ -8,6 +8,13 @@ export { runtimeDbPath, runtimeStorageDir } from "./runtime-db.js";
 
 export type RuntimeOpencodeConfig = {
   managedPolicy?: DesktopConfig;
+  /**
+   * The organization's Prompts for the signed-in member, already in order and
+   * joined, appended to OpenWork's agent instructions. Den-owned like
+   * managedPolicy: written only by the cloud provider sync and never sent to
+   * the engine as a config key.
+   */
+  managedPrompt?: string;
   default_agent?: string;
   plugin?: string[];
   disabled_providers?: string[];
@@ -38,9 +45,11 @@ function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
   const permission = isRecord(value.permission) ? value.permission : undefined;
   const externalDirectory = permission && isRecord(permission.external_directory) ? permission.external_directory : undefined;
   const provider = isRecord(value.provider) ? value.provider : undefined;
+  const managedPrompt = typeof value.managedPrompt === "string" && value.managedPrompt.trim() ? value.managedPrompt : undefined;
   return {
     ...(defaultAgent ? { default_agent: defaultAgent } : {}),
     ...(value.managedPolicy !== undefined ? { managedPolicy: desktopConfigSchema.parse(value.managedPolicy) } : {}),
+    ...(managedPrompt ? { managedPrompt } : {}),
     ...(plugin ? { plugin } : {}),
     ...(disabledProviders ? { disabled_providers: disabledProviders } : {}),
     ...(mcp ? { mcp } : {}),
@@ -228,9 +237,12 @@ export async function listRuntimeOpencodeConfigRows(config: ServerConfig): Promi
   }
 }
 
+/** What ordinary runtime writers may change: Den-owned fields are kept as they are. */
+export type EditableRuntimeOpencodeConfig = Omit<RuntimeOpencodeConfig, "managedPolicy" | "managedPrompt">;
+
 export async function writeGlobalRuntimeOpencodeConfig(
   config: ServerConfig,
-  updater: (current: Omit<RuntimeOpencodeConfig, "managedPolicy">) => Omit<RuntimeOpencodeConfig, "managedPolicy">,
+  updater: (current: EditableRuntimeOpencodeConfig) => EditableRuntimeOpencodeConfig,
 ): Promise<{ config: RuntimeOpencodeConfig; changed: boolean }> {
   return await writeRuntimeOpencodeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID, updater);
 }
@@ -278,6 +290,7 @@ export function mergeRuntimeOpencodeConfigLayers(
 
   return normalizeRuntimeOpencodeConfig({
     ...(base.managedPolicy ? { managedPolicy: base.managedPolicy } : {}),
+    ...(base.managedPrompt ? { managedPrompt: base.managedPrompt } : {}),
     ...(base.default_agent || overlay.default_agent ? { default_agent: overlay.default_agent ?? base.default_agent } : {}),
     ...(plugin.length ? { plugin } : {}),
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
@@ -580,11 +593,22 @@ function updateRuntimeConfig(
 export function writeRuntimeOpencodeConfig(
   config: ServerConfig,
   workspaceId: string,
-  updater: (current: Omit<RuntimeOpencodeConfig, "managedPolicy">) => Omit<RuntimeOpencodeConfig, "managedPolicy">,
+  updater: (current: EditableRuntimeOpencodeConfig) => EditableRuntimeOpencodeConfig,
 ): Promise<{ config: RuntimeOpencodeConfig; changed: boolean }> {
   return updateRuntimeConfig(config, workspaceId, (current) => {
-    const { managedPolicy, ...editable } = current;
-    return { ...updater(editable), managedPolicy };
+    const { managedPolicy, managedPrompt, ...editable } = current;
+    return { ...updater(editable), managedPolicy, managedPrompt };
+  });
+}
+
+/**
+ * Sets the member's organization Prompts text, or clears it with "". Only the
+ * cloud provider sync, at the verified Den-session boundary, calls this.
+ */
+export function writeManagedPrompt(config: ServerConfig, prompt: string) {
+  return updateRuntimeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID, (current) => {
+    const { managedPrompt: _previous, ...rest } = current;
+    return prompt.trim() ? { ...rest, managedPrompt: prompt } : rest;
   });
 }
 

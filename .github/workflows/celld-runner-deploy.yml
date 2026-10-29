@@ -14,13 +14,8 @@ on:
   push:
     branches:
       - dev
-    paths:
-      - "ee/apps/headless-runner/**"
-      - "ee/packages/headless-protocol/**"
-      - "ee/packages/headless-computer/**"
-      - "packages/sandbox-daytona/**"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/celld-runner-deploy.yml"
+    # Classify the runner's dependency closure before requesting production
+    # approval. Keeping a second package list here misses transitive inputs.
   workflow_dispatch:
     inputs:
       compat_base:
@@ -37,14 +32,40 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: celld-runner-deploy
-  cancel-in-progress: false
-
+# Only selected deploys acquire the fleet lock. Unrelated pushes must not
+# replace a pending runner deployment before its inputs can be classified.
 jobs:
+  changes:
+    name: Detect runner build inputs
+    if: github.repository == 'different-ai/openwork'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      affected: ${{ steps.classify.outputs.affected }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - name: Classify runner build inputs
+        id: classify
+        env:
+          BUILD_BASE: ${{ github.event.before }}
+          BUILD_HEAD: ${{ github.sha }}
+        # Unknown ranges and manual deploys keep the full preflight/deploy path.
+        run: node .github/scripts/build-inputs.mjs --target headless-runner --base "${BUILD_BASE:-0000000000000000000000000000000000000000}" --head "$BUILD_HEAD"
+
   deploy:
     name: Deploy runner to celld
-    if: github.repository == 'different-ai/openwork'
+    needs: changes
+    if: github.repository == 'different-ai/openwork' && needs.changes.outputs.affected == 'true'
+    concurrency:
+      group: celld-runner-deploy
+      cancel-in-progress: false
     runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: celld-production
     timeout-minutes: 30
@@ -61,6 +82,8 @@ jobs:
       # fleet prefix: celld never reads it.
       DEPLOY_RECORD: s3://openwork-celld/ci/fleet-deployed.json
       RUNNER_VARS: ${{ secrets.CELLD_RUNNER_VARS }}
+      # Optional plain override so snapshot rotations don't require rewriting the secret JSON blob.
+      HEADLESS_COMPUTER_SNAPSHOT: ${{ vars.HEADLESS_COMPUTER_SNAPSHOT }}
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       RENDER_OWNER_ID: tea-cspud29u0jms7384itk0
       RENDER_SERVICE_ID: srv-db3upfjbc2fs73c1ii70
@@ -92,7 +115,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -103,6 +126,47 @@ jobs:
         run: |
           pnpm install --filter "@openwork-ee/headless-runner..." --frozen-lockfile
           pnpm --filter "@openwork-ee/headless-runner^..." --if-present run build
+
+      # New computers start from the configured snapshot, named after its desktop image (dist/desktop-image.version).
+      # The runner installs its own guest into a computer built from the same image, keeps driving one from an older
+      # image while their protocols match, and replaces that one once it is idle. A runner whose image changed needs a
+      # snapshot of it, so build that snapshot here, with the runner's own Freestyle key, and bundle the runner with it.
+      # A later run with the same image finds it already built; a guest-only change builds nothing. If the build fails,
+      # stop before the fleet changes.
+      - name: Use a computer snapshot built for this runner
+        id: snapshot
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          computer="$(printf '%s' "$RUNNER_VARS" | jq -r '.HEADLESS_COMPUTER // ""')"
+          desktop="$(printf '%s' "$RUNNER_VARS" | jq -r '.HEADLESS_COMPUTER_DESKTOP // ""')"
+          snapshot="$(printf '%s' "$RUNNER_VARS" | jq -r '.HEADLESS_COMPUTER_SNAPSHOT // ""')"
+          if [ -n "${HEADLESS_COMPUTER_SNAPSHOT:-}" ]; then snapshot="$HEADLESS_COMPUTER_SNAPSHOT"; fi
+          if [ "$computer" != "freestyle" ] || [ "$desktop" != "true" ]; then
+            echo "No Freestyle desktop computers configured; nothing to check."
+            exit 0
+          fi
+          identity="$(head -c 16 ee/packages/headless-computer/dist/desktop-image.version)"
+          if ! [[ "$snapshot" =~ ^workbot-desktop-freestyle-([0-9a-f]{16})$ ]]; then
+            echo "::warning title=Computer snapshot not checked::$snapshot isn't named by snapshot:build:freestyle-desktop, so its desktop can't be compared with this runner's ($identity)."
+            exit 0
+          fi
+          built="${BASH_REMATCH[1]}"
+          if [ "$built" = "$identity" ]; then
+            echo "$snapshot was built for this runner's desktop."
+            exit 0
+          fi
+          expected="workbot-desktop-freestyle-$identity"
+          key="$(printf '%s' "$RUNNER_VARS" | jq -r '.FREESTYLE_API_KEY // ""')"
+          if [ -z "$key" ]; then
+            echo "::error title=Computer snapshot is out of date::$snapshot was built for desktop $built, but this runner's desktop is $identity, and CELLD_RUNNER_VARS has no FREESTYLE_API_KEY to build $expected with."
+            exit 1
+          fi
+          echo "::add-mask::$key"
+          echo "$snapshot was built for desktop $built; this runner's desktop is $identity, so it needs $expected."
+          FREESTYLE_API_KEY="$key" HEADLESS_COMPUTER_SNAPSHOT="$expected" \
+            pnpm --filter @openwork-ee/headless-computer snapshot:build:freestyle-desktop
+          echo "name=$expected" >> "$GITHUB_OUTPUT"
 
       - name: Check model and smoke result boundaries
         run: pnpm --filter @openwork-ee/headless-runner exec tsx --test scripts/model-responses.test.ts scripts/celld-smoke-result.test.ts
@@ -153,14 +217,27 @@ jobs:
       # GitHub masks the whole secret, not the values inside it.
       - name: Bundle the runner
         env:
+          HEADLESS_COMPUTER_SNAPSHOT: ${{ steps.snapshot.outputs.name || vars.HEADLESS_COMPUTER_SNAPSHOT }}
           HEADLESS_SENTRY_DSN: ${{ secrets.HEADLESS_SENTRY_DSN }}
           HEADLESS_DEN_API_URL: ${{ vars.HEADLESS_DEN_API_URL }}
           HEADLESS_DEN_CALLBACK_TOKEN: ${{ secrets.HEADLESS_DEN_CALLBACK_TOKEN }}
           HEADLESS_GRANT_KEY: ${{ secrets.HEADLESS_GRANT_KEY }}
+          # Session storage (sealing and large outputs, OWNER-CELLS.md): plain variables, not secrets, so they can be
+          # turned on or off without rewriting CELLD_RUNNER_VARS. Unset keeps whatever CELLD_RUNNER_VARS says (default off).
+          HEADLESS_SEGMENTS: ${{ vars.HEADLESS_SEGMENTS }}
+          HEADLESS_HOT_LIMIT_BYTES: ${{ vars.HEADLESS_HOT_LIMIT_BYTES }}
+          HEADLESS_SEGMENT_TARGET_BYTES: ${{ vars.HEADLESS_SEGMENT_TARGET_BYTES }}
+          HEADLESS_LARGE_BODY_BYTES: ${{ vars.HEADLESS_LARGE_BODY_BYTES }}
         run: |
           set -euo pipefail
           umask 077
           printf '%s' "$RUNNER_VARS" > "$RUNNER_TEMP/vars.json"
+          # The snapshot this run built, else the plain environment variable; when neither, keep the secret's value.
+          if [ -n "${HEADLESS_COMPUTER_SNAPSHOT:-}" ]; then
+            jq --arg snapshot "$HEADLESS_COMPUTER_SNAPSHOT" '. + { HEADLESS_COMPUTER_SNAPSHOT: $snapshot }' \
+              "$RUNNER_TEMP/vars.json" > "$RUNNER_TEMP/vars.merged.json"
+            mv "$RUNNER_TEMP/vars.merged.json" "$RUNNER_TEMP/vars.json"
+          fi
           # Error reporting (opt-in): the DSN lives in its own secret so it can change without rewriting
           # CELLD_RUNNER_VARS. The version is the runner's source tree hash, not the commit, so an unchanged runner
           # still bundles to the same content hash and nodes don't re-adopt it.
@@ -170,7 +247,7 @@ jobs:
               + { HEADLESS_RUNNER_VERSION: (.HEADLESS_RUNNER_VERSION // $version) }
           ' "$RUNNER_TEMP/vars.json" > "$RUNNER_TEMP/vars.merged.json"
           mv "$RUNNER_TEMP/vars.merged.json" "$RUNNER_TEMP/vars.json"
-          # Self-resume (headlessDurableTurns): the runner refuses a partial set, so merge all three or none.
+          # Self-resume (saved step turns): the runner refuses a partial set, so merge all three or none.
           if [ -n "${HEADLESS_DEN_API_URL:-}" ] && [ -n "${HEADLESS_DEN_CALLBACK_TOKEN:-}" ] && [ -n "${HEADLESS_GRANT_KEY:-}" ]; then
             jq --arg url "$HEADLESS_DEN_API_URL" --arg token "$HEADLESS_DEN_CALLBACK_TOKEN" --arg key "$HEADLESS_GRANT_KEY" \
               '. + { HEADLESS_DEN_API_URL: $url, HEADLESS_DEN_CALLBACK_TOKEN: $token, HEADLESS_GRANT_KEY: $key }' \
@@ -180,12 +257,29 @@ jobs:
             echo "::warning title=Self-resume not configured::set all of HEADLESS_DEN_API_URL (variable), HEADLESS_DEN_CALLBACK_TOKEN and HEADLESS_GRANT_KEY (secrets) on celld-production, or none"
           fi
           jq -r '.[]' "$RUNNER_TEMP/vars.json" | while IFS= read -r value; do [ -n "$value" ] && echo "::add-mask::$value"; done
+          # Storage settings are merged after masking: they are not secret, and masking a value like "on" would hide that
+          # text in every later log line. Checked here so a typo fails before anything is bundled.
+          if [ -n "${HEADLESS_SEGMENTS:-}" ] && [ "$HEADLESS_SEGMENTS" != "on" ] && [ "$HEADLESS_SEGMENTS" != "off" ]; then
+            echo "::error::HEADLESS_SEGMENTS must be on or off"; exit 1
+          fi
+          for name in HEADLESS_HOT_LIMIT_BYTES HEADLESS_SEGMENT_TARGET_BYTES HEADLESS_LARGE_BODY_BYTES; do
+            value="${!name:-}"
+            if [ -n "$value" ] && ! [[ "$value" =~ ^[0-9]+$ ]]; then echo "::error::$name must be a whole number of bytes"; exit 1; fi
+          done
+          jq --arg segments "${HEADLESS_SEGMENTS:-}" --arg hot "${HEADLESS_HOT_LIMIT_BYTES:-}" \
+            --arg target "${HEADLESS_SEGMENT_TARGET_BYTES:-}" --arg body "${HEADLESS_LARGE_BODY_BYTES:-}" '
+            . + (if $segments != "" then { HEADLESS_SEGMENTS: $segments } else {} end)
+              + (if $hot != "" then { HEADLESS_HOT_LIMIT_BYTES: $hot } else {} end)
+              + (if $target != "" then { HEADLESS_SEGMENT_TARGET_BYTES: $target } else {} end)
+              + (if $body != "" then { HEADLESS_LARGE_BODY_BYTES: $body } else {} end)
+          ' "$RUNNER_TEMP/vars.json" > "$RUNNER_TEMP/vars.merged.json"
+          mv "$RUNNER_TEMP/vars.merged.json" "$RUNNER_TEMP/vars.json"
           # What the bundle is configured with, without any value: every value above is masked, so settings are named,
           # and a few that decide behaviour are described in words that are never a value.
           echo "Runner settings in the bundle: $(jq -r 'keys | join(", ")' "$RUNNER_TEMP/vars.json")"
           jq -r '
             def state(k): if (.[k] // "") == "" or .[k] == "off" then "disabled" else "enabled" end;
-            "computer: \(state("HEADLESS_COMPUTER")); saved files: \(state("HEADLESS_FILES")); error reporting: \(state("HEADLESS_SENTRY_DSN")); self-resume: \(if (.HEADLESS_DEN_API_URL and .HEADLESS_DEN_CALLBACK_TOKEN and .HEADLESS_GRANT_KEY) then "enabled" else "disabled" end)"
+            "computer: \(state("HEADLESS_COMPUTER")); saved files: \(state("HEADLESS_FILES")); error reporting: \(state("HEADLESS_SENTRY_DSN")); self-resume: \(if (.HEADLESS_DEN_API_URL and .HEADLESS_DEN_CALLBACK_TOKEN and .HEADLESS_GRANT_KEY) then "enabled" else "disabled" end); sealing: \(state("HEADLESS_SEGMENTS"))"
           ' "$RUNNER_TEMP/vars.json"
           cd ee/apps/headless-runner
           pnpm exec tsx scripts/celld-bundle.ts "$RUNNER_TEMP/celld" "$RUNNER_TEMP/vars.json"
@@ -277,6 +371,7 @@ jobs:
           JOB_STATUS: ${{ job.status }}
           FLEET_OUTCOME: ${{ steps.fleet.outcome }}
           COMPAT_OUTCOME: ${{ steps.compat.outcome }}
+          SNAPSHOT_OUTCOME: ${{ steps.snapshot.outcome }}
           UNCHANGED: ${{ steps.fleet.outputs.unchanged }}
           VERSION: ${{ steps.fleet.outputs.version }}
           PREVIOUS: ${{ steps.live.outputs.version }}
@@ -301,6 +396,9 @@ jobs:
           elif [ "$FLEET_OUTCOME" = "success" ]; then
             outcome="failed"
             summary=":red_circle: Runner \`$VERSION\` is in the fleet bucket but only ${ADOPTED:-?} of ${INSTANCES:-?} nodes adopted it (was \`$previous\`)."
+          elif [ "$SNAPSHOT_OUTCOME" = "failure" ]; then
+            outcome="failed"
+            summary=":red_circle: Runner deploy stopped: its computer desktop changed and building the new snapshot failed. Rerun once the run's snapshot step says why. The fleet stays on \`$previous\`."
           elif [ "$COMPAT_OUTCOME" = "failure" ]; then
             outcome="failed"
             summary=":red_circle: Runner deploy stopped: the live runner and this one can't serve each other during a switch. The fleet stays on \`$previous\`."

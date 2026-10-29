@@ -1,7 +1,7 @@
 import { dirname, resolve } from "node:path";
 import { openworkServerConfigPath } from "@openwork/paths";
 import type { ApprovalMode, ApprovalConfig, ServerConfig, WorkspaceConfig, LogFormat } from "./types.js";
-import { buildWorkspaceInfos } from "./workspaces.js";
+import { buildWorkspaceInfos, hasExternalOpencode } from "./workspaces.js";
 import { parseList, readJsonFile, shortId } from "./utils.js";
 
 export interface CliArgs {
@@ -18,6 +18,7 @@ export interface CliArgs {
   opencodePassword?: string;
   workspaces: string[];
   corsOrigins?: string[];
+  allowedHosts?: string[];
   readOnly?: boolean;
   verbose?: boolean;
   logFormat?: LogFormat;
@@ -40,6 +41,7 @@ interface FileConfig {
   approval?: Partial<ApprovalConfig>;
   workspaces?: WorkspaceConfig[];
   corsOrigins?: string[];
+  allowedHosts?: string[];
   authorizedRoots?: string[];
   readOnly?: boolean;
   opencodeBaseUrl?: string;
@@ -183,6 +185,11 @@ export function parseCliArgs(argv: string[]): CliArgs {
       index += 1;
       continue;
     }
+    if (value === "--allowed-hosts") {
+      args.allowedHosts = parseList(argv[index + 1]);
+      index += 1;
+      continue;
+    }
     if (value === "--read-only") {
       args.readOnly = true;
       continue;
@@ -198,7 +205,8 @@ export function printHelp(): void {
     "Commands:",
     "  web                      Serve the OpenWork web UI + API on one origin with a",
     "                           managed OpenCode engine (downloaded on first run).",
-    "                           Defaults: --host 127.0.0.1, --approval auto, workspace = cwd.",
+    "                           Defaults: --host 127.0.0.1, --approval auto, workspace = cwd,",
+    "                           answering only loopback, IP and --host names.",
     "    --open                 Open the browser once listening",
     "    --no-bootstrap-token   Require pasting the client token instead of auto sign-in",
     "",
@@ -216,6 +224,7 @@ export function printHelp(): void {
     "  --opencode-password <pass> OpenCode server password",
     "  --workspace <path>       Workspace root (repeatable)",
     "  --cors <origins>          Comma-separated origins or *",
+    "  --allowed-hosts <names>  Comma-separated extra host names to answer (e.g. behind a proxy) or *",
     "  --read-only              Disable writes",
     "  --log-format <format>     Log output format: pretty | json",
     "  --log-requests           Log incoming requests (default: true)",
@@ -312,6 +321,10 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const envCorsOrigins = process.env.OPENWORK_CORS_ORIGINS;
   const parsedEnvCors = envCorsOrigins ? parseList(envCorsOrigins) : null;
   const corsOrigins = cli.corsOrigins ?? parsedEnvCors ?? fileConfig.corsOrigins ?? ["*"];
+  // `web` serves the signed-in UI, so it answers only loopback, IP and configured host names.
+  const envAllowedHosts = process.env.OPENWORK_ALLOWED_HOSTS;
+  const parsedEnvAllowedHosts = envAllowedHosts ? parseList(envAllowedHosts) : null;
+  const allowedHosts = cli.allowedHosts ?? parsedEnvAllowedHosts ?? fileConfig.allowedHosts ?? (cli.web ? [] : undefined);
 
   const envReadOnly = process.env.OPENWORK_READONLY;
   const parsedReadOnly = envReadOnly
@@ -344,11 +357,15 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     hostToken,
     configPath,
     opencodeBaseUrl,
+    // Capture caller-supplied connections before CLI/embedded managed startup
+    // fills both the global and workspace URLs with its own local engine.
+    externalOpencode: hasExternalOpencode({ opencodeBaseUrl, workspaces }),
     opencodeDirectory,
     opencodeUsername,
     opencodePassword,
     approval,
     corsOrigins,
+    ...(allowedHosts ? { allowedHosts } : {}),
     workspaces,
     authorizedRoots,
     readOnly,
@@ -358,7 +375,6 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     logFormat,
     logRequests,
     ...(process.env.OPENWORK_FRESH_INSTALL_ENGINE === "v2" ? { freshInstallEngine: "v2" } : {}),
-    engineAutoUpgrade: process.env.OPENWORK_ENGINE_AUTO_UPGRADE === "1",
-    engineForcePolicy: process.env.OPENWORK_ENGINE_FORCE_POLICY === "1" || process.env.OPENWORK_ENGINE_AUTO_UPGRADE !== undefined,
+    engineAutoUpgrade: process.env.OPENWORK_ENGINE_AUTO_UPGRADE !== "0",
   };
 }

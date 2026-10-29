@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { OpenWorkMark } from "../components/icons";
 import "./style.css";
 
 export const metadata = {
@@ -12,6 +13,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       <body>
         <header className="masthead">
           <a href="/">
+            <OpenWorkMark />
             openwork<span>/ review</span>
           </a>
         </header>

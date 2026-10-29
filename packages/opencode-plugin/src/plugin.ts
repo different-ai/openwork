@@ -38,7 +38,8 @@ import type {
   PluginDefinition,
   RemoteMcpConfig,
 } from "./opencode.ts"
-import { fetchGatewayInventory, toProviderRecord, type GatewayProvider, type ProviderRecord } from "./providers.ts"
+import { fetchSharedGatewayInventory, inventoryRequestTicket } from "./inventory-fetch.ts"
+import { toProviderRecord, type GatewayProvider, type ProviderRecord } from "./providers.ts"
 import type { RemoteRunnerController } from "./remote-runner.ts"
 
 export const PLUGIN_ID = "openwork"
@@ -356,6 +357,7 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
       }
 
       const refreshOnce = async (force: boolean) => {
+        const ticket = inventoryRequestTicket()
         const epoch = generation
         const current = () => !disposed && epoch === generation
         const connection = await ctx.integration.connection.active(INTEGRATION_ID).catch(() => undefined)
@@ -438,7 +440,7 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
           syncStream(session, liveProviderSync)
           const [gateway, mcp] = await Promise.all([
             options.providers
-              ? fetchGatewayInventory(fetcher, session, refreshController.signal).then((inventory) => ({ providers: inventory.providers, apiKey: inventory.apiKey }))
+              ? fetchSharedGatewayInventory({ fetch: fetcher, session, scope: "den", ticket, signal: refreshController.signal }).then((inventory) => ({ providers: inventory.providers, apiKey: inventory.apiKey }))
               : Promise.resolve(null),
             options.mcp
               ? (async () => {

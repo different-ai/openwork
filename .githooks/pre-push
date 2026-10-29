@@ -1,0 +1,39 @@
+#!/bin/sh
+# Optional Warden quick review before pushing; never commits or pushes.
+# Opt in: git config --local openwork.wardenPrePush true
+# Skip once: git push --no-verify
+[ "$(git config --bool openwork.wardenPrePush 2>/dev/null)" = "true" ] || exit 0
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+# Review only when pushing the checked-out commit; other refs are left to CI.
+head="$(git rev-parse HEAD)"
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  case "$local_sha" in
+    0000000000000000000000000000000000000000|"$head") ;;
+    *) echo "Warden quick review skipped: pushing a commit other than HEAD."; exit 0 ;;
+  esac
+done
+
+# Run the reviewer from origin/dev, not from the branch being pushed, so a
+# branch can't change the code that handles your key.
+ref=origin/dev
+if ! git cat-file -e "$ref:.github/scripts/warden-fast.mjs" 2>/dev/null; then
+  echo "Warden quick review skipped: $ref doesn't have it yet."
+  exit 0
+fi
+tmp="$(mktemp -d)" || exit 0
+trap 'rm -rf "$tmp"' EXIT
+for file in warden-fast.mjs contributor-screen.mjs contributor-policy.mjs; do
+  git show "$ref:.github/scripts/$file" > "$tmp/$file" || exit 0
+done
+
+node "$tmp/warden-fast.mjs" local
+status=$?
+if [ "$status" -eq 1 ]; then
+  echo "Push stopped: fix the findings above, or push anyway with git push --no-verify." >&2
+  exit 1
+fi
+if [ "$status" -ne 0 ]; then
+  echo "Warden quick review couldn't finish; pushing anyway. CI's Warden still reviews this push." >&2
+fi
+exit 0

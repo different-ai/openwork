@@ -28,6 +28,7 @@ test("a member keeps separate chat drafts and one draft across Home and Document
     await user.click({ role: "button", label: "Open workspace navigation" });
     await user.click({ role: "button", label: "Open Project brief.txt" });
     await user.see({ role: "textbox", label: "Message Workbot" }, { value: "My unsent planning question" });
+    await user.click({ role: "button", label: /^Edit$/ });
     await user.type({ role: "textbox", label: "Document text" }, "Unsaved project draft", { replace: true });
     await user.type({ role: "textbox", label: "Message Workbot" }, "A follow-up about this view", { replace: true });
     await user.press("Enter");

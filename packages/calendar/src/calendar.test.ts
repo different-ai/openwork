@@ -124,5 +124,10 @@ describe("calendar time and layout", () => {
     expect(describeSchedule(weekdays, ZONE, "en-US")).toBe("Every weekday at 9:00 AM");
     expect(describeSchedule({ kind: "weekly", timezone: ZONE, daysOfWeek: [5], hour: 15, minute: 0 }, ZONE, "en-US")).toBe("Every Friday at 3:00 PM");
     expect(describeSchedule({ kind: "daily", timezone: "Europe/Berlin", hour: 8, minute: 0 }, ZONE, "en-US")).toMatch(/^Every day at 8:00 AM GMT\+[12]$/);
+    expect(describeSchedule({ kind: "interval", timezone: ZONE, everyHours: 3, daysOfWeek: [1, 2, 3, 4, 5], startHour: 9, endHour: 18 }, ZONE, "en-US"))
+      .toBe("Every 3 hours from 9:00 AM to 6:00 PM on weekdays");
+    expect(describeSchedule({ kind: "interval", timezone: ZONE, everyHours: 1, daysOfWeek: [0, 1, 2, 3, 4, 5, 6], startHour: 0, endHour: 24 }, ZONE, "en-US")).toBe("Every hour");
+    expect(describeSchedule({ kind: "calendar", timezone: ZONE, edge: "end", offsetMinutes: 5, rule: { withExternalAttendees: true } }, ZONE, "en-US"))
+      .toBe("After each meeting (+5 min) with people outside your organization");
   });
 });

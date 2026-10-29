@@ -1,6 +1,6 @@
 import { peopleMemberCondition } from "./setup-agent-members.js"
 import { asc, and, eq, gt, isNull, lt, lte } from "@openwork-ee/den-db/drizzle"
-import { readFeatureRollouts, readOrganizationFeatureOverrides } from "@openwork-ee/den-db/organization-features"
+import { readFeatureRollouts, readMemberFeatureOverrides, readOrganizationFeatureOverrides, readMembersWithFeatureOverrides } from "@openwork-ee/den-db/organization-features"
 import { AuthSessionTable, AuthUserTable, InvitationTable, MemberTable, OAuthConsentTable, OrganizationTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { isFeatureKey, type FeatureOverrides, type FeatureRollouts } from "@openwork/features"
 import { normalizeDenTypeId, type DenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
@@ -10,7 +10,9 @@ import { db } from "./db.js"
 import { env } from "./env.js"
 import { bumpGeneration, readManyThroughGeneration, readThroughGeneration, type GenerationCacheEntry } from "./generation-cache.js"
 import { roleIncludesOwner } from "./organization-member-guards.js"
+import { deploymentServiceReadinessSchema, type DeploymentServiceReadiness } from "@openwork/types/den/service-readiness"
 import { getDenSessionExpiresAt, getDenSessionRefreshCutoff } from "./session-lifetime.js"
+import { isSessionTokenDigest, sessionTokenDigest, sessionTokenMatches, storedSessionTokenDigest } from "./session-token.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -18,7 +20,7 @@ type UserId = typeof AuthUserTable.$inferSelect.id
 type OAuthConsentId = typeof OAuthConsentTable.$inferSelect.id
 
 type CacheParent = "auth" | "features" | "org"
-type CacheChild = "generation" | "inventory-generation" | "grant" | "grant-revoked" | "member" | "member-revoked" | "members" | "member-teams" | "overrides" | "rollouts" | "session" | "session-id" | "session-revoked" | "session-id-revoked"
+type CacheChild = "generation" | "inventory-generation" | "grant" | "grant-revoked" | "member" | "member-overrides" | "member-revoked" | "members" | "member-teams" | "overrides" | "rollouts" | "session" | "session-id" | "session-revoked" | "session-id-revoked"
 
 type CacheKeyInput = {
   parent: CacheParent
@@ -344,6 +346,18 @@ function parseCachedFeatureRollouts(raw: string | null): FeatureRollouts | null 
   return rollouts
 }
 
+function parseCachedStringList(raw: string | null): string[] | null {
+  if (!raw) {
+    return null
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) && parsed.every((id) => typeof id === "string") ? parsed : null
+  } catch {
+    return null
+  }
+}
+
 function parseCachedFeatureOverrides(raw: string | null): FeatureOverrides | null {
   const parsed = parseJsonRecord(raw)
   if (!parsed) {
@@ -398,7 +412,8 @@ function parseCachedActiveGrant(raw: string | null) {
   return id ? { id } : null
 }
 
-function parseCachedAuthSession(raw: string | null, now: Date): CachedAuthSession | null {
+/** A cached session for the client `token` it was looked up by; entries never store the token. */
+function parseCachedAuthSession(raw: string | null, now: Date, token: string): CachedAuthSession | null {
   if (!raw) {
     return null
   }
@@ -416,7 +431,6 @@ function parseCachedAuthSession(raw: string | null, now: Date): CachedAuthSessio
   const session = parsed.session
   const user = parsed.user
   const id = readDenId("session", session.id)
-  const token = readString(session.token)
   const userId = readDenId("user", session.userId)
   const expiresAt = readDate(session.expiresAt)
   const createdAt = readDate(session.createdAt)
@@ -535,6 +549,25 @@ async function loadOrgMembers(organizationId: OrgId): Promise<CachedOrgMember[]>
   })
 }
 
+/**
+ * Once sessionTokenHashing is on, a session still stored as its token is
+ * rewritten as the hash the first time it is used (session-token.ts).
+ */
+async function hashLegacySessionToken(sessionId: DenTypeId<"session">, token: string) {
+  try {
+    // Lazy import: features.ts reads its rollouts through this module.
+    const { deploymentFeatureEnabled } = await import("./features.js")
+    if (!(await deploymentFeatureEnabled("sessionTokenHashing"))) return
+    await db
+      .update(AuthSessionTable)
+      .set({ token: sessionTokenDigest(token) })
+      .where(and(eq(AuthSessionTable.id, sessionId), eq(AuthSessionTable.token, token)))
+  } catch (error) {
+    // The session is valid either way; it is hashed on a later use.
+    console.error("openwork_session_token_hash_failed", { error })
+  }
+}
+
 async function loadAuthSession(token: string, now: Date): Promise<CachedAuthSession | null> {
   const rows = await db
     .select({
@@ -562,16 +595,20 @@ async function loadAuthSession(token: string, now: Date): Promise<CachedAuthSess
     })
     .from(AuthSessionTable)
     .innerJoin(AuthUserTable, eq(AuthSessionTable.userId, AuthUserTable.id))
-    .where(and(eq(AuthSessionTable.token, token), gt(AuthSessionTable.expiresAt, now)))
+    .where(and(sessionTokenMatches(token), gt(AuthSessionTable.expiresAt, now)))
     .limit(1)
 
   const row = rows[0]
   if (!row) {
     return null
   }
+  if (!isSessionTokenDigest(row.session.token)) {
+    await hashLegacySessionToken(row.session.id, row.session.token)
+  }
   return {
     session: {
       ...row.session,
+      token,
       id: normalizeDenTypeId("session", row.session.id),
       userId: normalizeDenTypeId("user", row.session.userId),
       activeOrganizationId: row.session.activeOrganizationId
@@ -654,8 +691,8 @@ function logFeatureCacheError(stage: "get" | "set", child: CacheChild, id: strin
 /**
  * Feature flags are resolved on every org request. Every replica shares one
  * generation for all feature rows, bumped by den-api's feature writers
- * (features.ts updateFeatureRollout / updateOrganizationFeatureOverrides) after
- * the write. Successful bumps invalidate every replica immediately; the TTL
+ * (features.ts updateFeatureRollout / updateOrganizationFeatureOverrides /
+ * updateMemberFeatureOverrides) after the write. Successful bumps invalidate every replica immediately; the TTL
  * bounds failed bumps and external writes. Permission grants are always read
  * from the database by permissions/resolve.ts, never from this flag cache.
  */
@@ -671,6 +708,16 @@ function featureOverridesEntry(organizationId: OrgId): GenerationCacheEntry<Feat
     parse: parseCachedFeatureOverrides,
     load: () => readOrganizationFeatureOverrides(db, organizationId),
   }
+}
+
+/**
+ * Deployment-wide: the few active members with any override. Everyone else
+ * skips the member read. Only membership is cached, never override values.
+ */
+const membersWithFeatureOverridesEntry: GenerationCacheEntry<string[]> = {
+  entryKey: (generation) => cacheKey({ parent: "features", child: "member-overrides", id: generation }),
+  parse: parseCachedStringList,
+  load: () => readMembersWithFeatureOverrides(db),
 }
 
 function getFeatureRollouts(): Promise<FeatureRollouts> {
@@ -693,16 +740,29 @@ function getOrganizationFeatureOverrides(organizationId: OrgId): Promise<Feature
   })
 }
 
-/** Rollouts and one organization's overrides together: one Redis round trip while the generation is unchanged. */
-async function getOrganizationFeatureState(organizationId: OrgId): Promise<{ rollouts: FeatureRollouts; overrides: FeatureOverrides }> {
-  const [rollouts, overrides] = await readManyThroughGeneration<[FeatureRollouts, FeatureOverrides]>({
+/**
+ * Rollouts and one organization's overrides: one Redis round trip while the
+ * generation is unchanged. With a user, the same round trip says whether they
+ * have member overrides; only those few members read them, fresh, from the
+ * database, so the active-membership check always runs on live rows.
+ */
+async function getOrganizationFeatureState(organizationId: OrgId, userId?: UserId): Promise<{ rollouts: FeatureRollouts; overrides: FeatureOverrides; memberOverrides: FeatureOverrides }> {
+  const read = <T extends unknown[]>(entries: { [K in keyof T]: GenerationCacheEntry<T[K]> }) => readManyThroughGeneration<T>({
     redis: activeRedisClient,
     generationKey: FEATURES_GENERATION_KEY,
-    entries: [featureRolloutsEntry, featureOverridesEntry(organizationId)],
+    entries,
     ttlSeconds: DEFAULT_CACHE_TTL_SECONDS,
     onError: (stage, error) => logFeatureCacheError(stage, "generation", organizationId, error),
   })
-  return { rollouts, overrides }
+  if (!userId) {
+    const [rollouts, overrides] = await read<[FeatureRollouts, FeatureOverrides]>([featureRolloutsEntry, featureOverridesEntry(organizationId)])
+    return { rollouts, overrides, memberOverrides: {} }
+  }
+  const [rollouts, overrides, membersWithOverrides] = await read<[FeatureRollouts, FeatureOverrides, string[]]>([
+    featureRolloutsEntry, featureOverridesEntry(organizationId), membersWithFeatureOverridesEntry,
+  ])
+  const memberOverrides = membersWithOverrides.includes(`${organizationId}:${userId}`) ? await readMemberFeatureOverrides(db, organizationId, userId) : {}
+  return { rollouts, overrides, memberOverrides }
 }
 
 async function invalidateFeatures() {
@@ -719,8 +779,10 @@ async function invalidateFeatures() {
 
 async function getAuthSessionResult(token: string): Promise<CacheResult<CachedAuthSession | null>> {
   const now = new Date()
-  const keyInput = { parent: "auth", child: "session", id: token } as const
-  const revokedKeyInput = { parent: "auth", child: "session-revoked", id: token } as const
+  // Keyed by the token's hash, so Redis holds no usable token either.
+  const digest = sessionTokenDigest(token)
+  const keyInput = { parent: "auth", child: "session", id: digest } as const
+  const revokedKeyInput = { parent: "auth", child: "session-revoked", id: digest } as const
   const key = cacheKey(keyInput)
   const revokedKey = cacheKey(revokedKeyInput)
   const redis = activeRedisClient
@@ -729,7 +791,7 @@ async function getAuthSessionResult(token: string): Promise<CacheResult<CachedAu
       if (await redis.get(revokedKey)) {
         return { value: null, source: "cache" }
       }
-      const cached = parseCachedAuthSession(await redis.get(key), now)
+      const cached = parseCachedAuthSession(await redis.get(key), now, token)
       if (cached) {
         return { value: cached, source: "cache" }
       }
@@ -746,7 +808,8 @@ async function getAuthSessionResult(token: string): Promise<CacheResult<CachedAu
   const ttl = Math.min(AUTH_SESSION_MAX_TTL_SECONDS, Math.ceil((loaded.session.expiresAt.getTime() - now.getTime()) / 1000))
   if (ttl > 0) {
     try {
-      await setUnlessRevoked({ redis, key, revokedKey, value: JSON.stringify(loaded), ttlSeconds: ttl })
+      const { token: _token, ...session } = loaded.session
+      await setUnlessRevoked({ redis, key, revokedKey, value: JSON.stringify({ ...loaded, session }), ttlSeconds: ttl })
     } catch (error) {
       console.error("openwork_cache_set_failed", { ...cacheLogDetails(keyInput), error })
     }
@@ -828,30 +891,45 @@ async function getActiveGrant(grantId: OAuthConsentId) {
   return loaded
 }
 
+/**
+ * The cache ids a session token form is keyed under: its hash, and while
+ * replicas from before hashing may still run, a client's token itself.
+ */
+function authSessionCacheIds(token: string): string[] {
+  const digest = storedSessionTokenDigest(token)
+  return digest === sessionTokenDigest(token) ? [digest, token] : [digest]
+}
+
+/** Accepts a client's token or a stored or sealed form of it (session-token.ts). */
 async function deleteAuthSession(token: string) {
-  const keyInput = { parent: "auth", child: "session", id: token } as const
-  const key = cacheKey(keyInput)
-  try {
-    const cached = parseCachedAuthSession(await activeRedisClient?.get(key) ?? null, new Date())
-    await activeRedisClient?.del(key)
-    if (cached) {
-      await deleteAuthSessionId(cached.session.id)
+  for (const id of authSessionCacheIds(token)) {
+    const keyInput = { parent: "auth", child: "session", id } as const
+    const key = cacheKey(keyInput)
+    try {
+      const cached = parseCachedAuthSession(await activeRedisClient?.get(key) ?? null, new Date(), token)
+      await activeRedisClient?.del(key)
+      if (cached) {
+        await deleteAuthSessionId(cached.session.id)
+      }
+    } catch (error) {
+      console.error("openwork_cache_delete_failed", { ...cacheLogDetails(keyInput), error })
     }
-  } catch (error) {
-    console.error("openwork_cache_delete_failed", { ...cacheLogDetails(keyInput), error })
   }
 }
 
+/** Accepts a client's token or a stored or sealed form of it (session-token.ts). */
 async function revokeAuthSession(token: string) {
-  const revokedKeyInput = { parent: "auth", child: "session-revoked", id: token } as const
   // Revocation tombstones stop a concurrent cache-miss loader from repopulating
   // a deleted session without adding a live DB check to cache hits. Write the
   // tombstone and delete the entry independently, as revokeAuthGrant does:
   // Redis can refuse writes (out of memory) while it still accepts deletes.
-  try {
-    await activeRedisClient?.set(cacheKey(revokedKeyInput), "1", "EX", AUTH_SESSION_MAX_TTL_SECONDS)
-  } catch (error) {
-    console.error("openwork_cache_delete_failed", { ...cacheLogDetails(revokedKeyInput), error })
+  for (const id of authSessionCacheIds(token)) {
+    const revokedKeyInput = { parent: "auth", child: "session-revoked", id } as const
+    try {
+      await activeRedisClient?.set(cacheKey(revokedKeyInput), "1", "EX", AUTH_SESSION_MAX_TTL_SECONDS)
+    } catch (error) {
+      console.error("openwork_cache_delete_failed", { ...cacheLogDetails(revokedKeyInput), error })
+    }
   }
   await deleteAuthSession(token)
 }
@@ -1051,6 +1129,25 @@ async function bumpInventoryRevisions(organizationIds: string[]) {
 }
 
 export const cache = {
+  // Optional shared diagnostics only, never authorization. No extra Redis client,
+  // infrastructure requirement or raw errors in this cache path.
+  serviceReadiness: {
+    async load(configurationFingerprint: string): Promise<DeploymentServiceReadiness | null> {
+      if (!activeRedisClient || !/^[a-f0-9]{64}$/.test(configurationFingerprint)) return null
+      try {
+        const raw = await activeRedisClient.get(`cache:service-readiness:v2:${configurationFingerprint}`)
+        if (!raw || raw.length > 32_768) return null
+        // Version-1 snapshots (removed services, no notes or durations) fail the
+        // version-2 schema and are ignored; server facts are never shared.
+        const parsed = deploymentServiceReadinessSchema.safeParse(JSON.parse(raw))
+        return parsed.success ? { ...parsed.data, server: null } : null
+      } catch { return null }
+    },
+    async save(configurationFingerprint: string, snapshot: DeploymentServiceReadiness): Promise<void> {
+      if (!activeRedisClient || !/^[a-f0-9]{64}$/.test(configurationFingerprint)) return
+      try { await activeRedisClient.set(`cache:service-readiness:v2:${configurationFingerprint}`, JSON.stringify({ ...snapshot, server: null }), "EX", 86_400) } catch { /* Best effort, no secrets in errors. */ }
+    },
+  },
   auth: {
     session: getAuthSession,
     sessionResult: getAuthSessionResult,

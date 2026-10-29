@@ -75,6 +75,30 @@ for baseline checks and known limits.
 
 ### Upgrade notes
 
+**Database sizing default: `db.t4g.micro` → `db.t4g.small` (2 GiB memory).**
+Existing direct Terraform users who omitted `database.instance_class` will see an
+**in-place instance-class change** in their next plan. Apply schedules it for
+the next RDS maintenance window by default (`apply_immediately = false`); the
+class change restarts the database and interrupts connections when performed.
+With `apply_immediately = true`, it restarts during apply instead. Review pending
+modifications and arrange maintenance before applying.
+[AWS documents modification timing here](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.DBInstance.Modifying.html).
+
+Estimated Single-AZ MySQL instance cost in **us-east-1** rises from **$11.68 to
+$23.36/month (+$11.68)** at 730 hours ($0.016 → $0.032/hour, public list prices
+checked 2026-10-19). This excludes storage, CPU credits, backups, networking,
+taxes and discounts; see [RDS pricing](https://aws.amazon.com/rds/mysql/pricing/).
+To keep the old size, add this to the module call **before upgrading**, merging
+it into your existing `database` object without dropping other settings:
+
+```hcl
+database = { instance_class = "db.t4g.micro" }
+```
+
+Micro retains its low-memory risk. API/web defaults and managed installer size
+pins are unchanged. See the [Small / trial table](/self-host/deploy-to-your-cloud/overview#small--trial-sizing)
+for the cross-cloud baseline; it is not a user-capacity guarantee.
+
 The first upgrade from a per-task migration module requires maintenance: freeze independent deployers and retries, scale the **old** API to zero, disable replacement/autoscaling and manual legacy launches, wait for all old tasks and DB sessions/in-flight DDL to terminate, and fence legacy DDL credentials where feasible. Only then apply the new module with the target replica count. Reducing to one task alone is not an exclusion barrier. Do not restore a legacy migration-capable task definition during rollback. This orders deployments; it does not add the application-level migration lock, dirty marker or schema compatibility protocol.
 
 Existing inputs remain, including the deprecated nested `database.deletion_protection` alias. Floating image tags are now rejected: pin the current digests before upgrading. Use one state/release coordinator per physical database. Migration failure or an unknown outcome blocks rollout and requires inspection, not automatic SQL retry. See the [module upgrade notes](https://github.com/different-ai/openwork/tree/dev/infra/terraform/modules/openwork-aws-ecs#upgrade-notes) for the full fence and secret-conversion procedure.

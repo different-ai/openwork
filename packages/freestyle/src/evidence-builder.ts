@@ -164,7 +164,6 @@ printf %s ${sha} > /opt/openwork-preview/built-from-sha
 ${EVIDENCE_DEPENDENCIES_RECIPE}
 pnpm --filter @openwork-ee/den-api run build:workspace-dependencies
 pnpm --filter openwork-server build
-pnpm --filter @openwork/sdk build
 systemctl daemon-reload
 systemctl start openwork-evidence
 for attempt in $(seq 1 480); do

@@ -15,7 +15,7 @@ Sign in with your OpenWork account in the browser and pick your organization. Th
 
 1. An admin shares skills and service connections with people or teams in OpenWork.
 2. Each person adds the same gateway URL to their preferred MCP client and signs in.
-3. The agent uses `search_capabilities` to find an authorized capability and `execute_capability` to use it. It can also use `list_skills` and `get_skill` to retrieve skill instructions.
+3. The agent uses `search_capabilities` to find an authorized capability and `execute_capability` to use it. It can also use `list_skills` and `get_skill` to retrieve skill instructions. Clients that support the [MCP Skills extension](https://modelcontextprotocol.io/seps/2640-skills-extension) discover the same skills on their own through `skills/list`.
 4. OpenWork applies the member's access grants and connection tool settings to requests through the gateway.
 
 Your team sets things up once, instead of copying MCP settings and skills into every client.

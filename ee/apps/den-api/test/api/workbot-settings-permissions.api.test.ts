@@ -5,10 +5,16 @@ import { AuthSessionTable } from "@openwork-ee/den-db/schema"
 import type { PermissionKey } from "@openwork/types/den/permissions"
 import { modelProbeFixture } from "../../../headless-runner/scripts/model-probe-fixture.js"
 import { bootDen, field, strings, summary, type Member } from "./harness.js"
+import { grantGatewayModels, memberGatewayKey, stubPublicModelCatalog } from "./gateway-fixture.js"
 
-const runner = await modelProbeFixture()
-const den = await bootDen({ env: { DEN_HEADLESS_RUNNER_URL: runner.url, DEN_HEADLESS_RUNNER_TOKEN: "r".repeat(32) } })
-after(async () => { await den.close(); await runner.close() })
+// Workbot models come from each caller's own AI Gateway access; the synthetic provider stands in for the Gateway.
+const runner = await modelProbeFixture({ protocol: "openai-responses" })
+const restoreFetch = stubPublicModelCatalog()
+const den = await bootDen({ env: {
+  DEN_HEADLESS_RUNNER_URL: runner.url, DEN_HEADLESS_RUNNER_TOKEN: "r".repeat(32),
+  GATEWAY_ENABLED: "true", GATEWAY_PROXY_BASE_URL: runner.providerUrl, GATEWAY_PUBLIC_BASE_URL: runner.providerUrl,
+} })
+after(async () => { restoreFetch(); await den.close(); await runner.close() })
 const path = "/v1/org/workbot-settings"
 const probe = `${path}/test-default-model`
 
@@ -33,6 +39,10 @@ test("view-only and manage-only members can always read; writes/probes remain ma
     assert.equal(field(context.body, "currentMember", "isOwner"), false)
     people.push({ member, read: role.read, manage: role.manage })
   }
+  // Every person, including the one without permissions, holds a Luna Gateway grant: model access never confers
+  // permission to read or change the organization's Workbot settings.
+  const { "gpt-6-luna": luna } = await grantGatewayModels(den, workspace.owner, workspace.orgId, people.map(person => person.member))
+  for (const person of people) runner.acceptModelKey(await memberGatewayKey(workspace.orgId, person.member))
 
   for (const person of people) {
     const call = den.as(person.member, workspace.orgId)
@@ -42,7 +52,7 @@ test("view-only and manage-only members can always read; writes/probes remain ma
       assert.equal(field(read.body, "defaultReadiness"), "available")
     } else {
       assert.equal(field(read.body, "models"), undefined)
-      assert.equal(read.text.includes("gateway/luna"), false)
+      assert.equal(read.text.includes(String(luna)), false)
     }
     const saved = await call("PUT", path, { model: null })
     assert.equal(saved.status, person.manage ? 200 : 403, summary(saved))

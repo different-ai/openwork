@@ -16,24 +16,18 @@ const alias = "gateway/member-model"
 const actor = { organizationId: "org_1", userId: "usr_1" }
 const modelAccess: HeadlessModelAccess = { baseUrl: "https://gateway.example/v1", apiKey: "member-key", protocol: "openai" }
 
-test("Slack resolves the invoking member's model only with the gateway flag on", async () => {
+test("Slack resolves the invoking member's model", async () => {
   const installation = { organizationId: actor.organizationId, model: "legacy/slack" }
-  let legacyCalls = 0
   const deps = {
-    gatewayEnabled: async () => true,
     cloudModel: async (received: typeof actor, fallback?: string | null) => {
       assert.deepEqual(received, actor)
       assert.equal(fallback, installation.model)
       return alias
     },
-    legacyModel: async () => { legacyCalls += 1; return installation.model },
   }
   assert.equal(await slackTurnModel(installation, actor, deps), alias)
-  assert.equal(legacyCalls, 0)
-  assert.equal(await slackTurnModel(installation, actor, { ...deps, gatewayEnabled: async () => false }), installation.model)
-  await assert.rejects(slackTurnModel(installation, actor, { ...deps, cloudModel: async () => { throw new Error("denied") } }), /denied/)
-  await assert.rejects(slackTurnModel(installation, actor, { ...deps, cloudModel: async () => null }), /unavailable/)
-  assert.equal(legacyCalls, 1)
+  await assert.rejects(slackTurnModel(installation, actor, { cloudModel: async () => { throw new Error("denied") } }), /denied/)
+  await assert.rejects(slackTurnModel(installation, actor, { cloudModel: async () => null }), /unavailable/)
 })
 
 test("Slack interruption refreshes credentials for the stored turn model", async () => {
@@ -54,7 +48,7 @@ test("Slack lost-send recovery never resolves today's inaccessible default", asy
   const minted: Array<Parameters<HeadlessRunnerDeps["mintToken"]>[0]> = []
   const runner = createSlackRunner(actor, {
     config: { url: "http://runner:8795", token: "t".repeat(40) }, maxTokenTtlMs: 3_600_000,
-    modelAccessRequired: async () => false, // Rollout has since been disabled.
+    modelAccessRequired: async () => true,
     mintToken: async (input) => { minted.push(input); return { token: "member-token", modelAccess } },
     fetch: async (_url, init) => init?.method === "POST"
       ? Response.json({ state: "existing" }, { status: 202 })
@@ -70,7 +64,7 @@ test("Slack lost-send recovery never resolves today's inaccessible default", asy
   assert.equal(minted[0]?.modelAccessRequired, true)
 })
 
-test("Slack foreground and background resumes preserve scoped access after rollout is disabled", async () => {
+test("Slack foreground and background resumes keep the stored model with scoped access", async () => {
   const minted: Array<Parameters<HeadlessRunnerDeps["mintToken"]>[0]> = []
   const turns = [
     { messageId: "msg_1", status: "interrupted", model: alias, modelAccessRequired: true, error: null },
@@ -79,7 +73,7 @@ test("Slack foreground and background resumes preserve scoped access after rollo
   ]
   const runner = createSlackRunner(actor, {
     config: { url: "http://runner:8795", token: "t".repeat(40) }, maxTokenTtlMs: 3_600_000,
-    modelAccessRequired: async () => false,
+    modelAccessRequired: async () => true,
     mintToken: async (input) => { minted.push(input); return { token: "member-token", modelAccess } },
     fetch: async (_url, init) => init?.method === "POST"
       ? Response.json({ state: "existing" }, { status: 202 })
@@ -150,9 +144,9 @@ function automationHarness(options: { savedModel?: string; mintDenied?: boolean;
   }
   const deps = {
     client: createHeadlessRunnerClient(runner), ownerUserId: async () => actor.userId, stillHeadless: async () => true,
-    gatewayEnabled: async () => true, cloudModel: async () => alias,
+    cloudModel: async () => alias,
     gatewayCatalog: async () => ({ defaultModel: alias, models: [{ id: alias, name: "Member model" }] }),
-    defaultModel: async () => { throw new Error("must not read legacy default") }, sleep: async () => {}, pollIntervalMs: 0,
+    sleep: async () => {}, pollIntervalMs: 0,
   }
   return { input, deps, sent, minted }
 }
@@ -176,9 +170,8 @@ test("gateway Automations keep the saved model on recovery despite a changed def
   assert.equal(harness.sent[0]?.model, "gateway/original")
 })
 
-test("Automation receipt and interrupted-loop recovery retain scoped access after rollout is disabled", async () => {
+test("Automation receipt and interrupted-loop recovery retain scoped access", async () => {
   const harness = automationHarness({ savedModel: "gateway/original", scoped: true, interruptAfterSend: true })
-  harness.deps.gatewayEnabled = async () => false
   harness.deps.cloudModel = async () => { throw new Error("must not reselect") }
   assert.equal((await executeHeadlessAgent(harness.input, harness.deps)).ok, true)
   assert.equal(harness.minted.length, 2)
@@ -190,20 +183,11 @@ test("Automation receipt and interrupted-loop recovery retain scoped access afte
 
 test("Automation interrupted-loop recovery discovers the stored marker even without a previous receipt", async () => {
   const harness = automationHarness({ scoped: true, interruptAfterSend: true })
-  harness.deps.gatewayEnabled = async () => false
-  const result = await executeHeadlessAgent(harness.input, { ...harness.deps, defaultModel: async () => alias })
+  const result = await executeHeadlessAgent(harness.input, harness.deps)
   assert.equal(result.ok, true)
   assert.equal(harness.minted.length, 2)
   assert.equal(harness.minted[0]?.modelAccessRequired, undefined)
   assert.equal(harness.minted[1]?.modelAccessRequired, true)
-})
-
-test("legacy Automation sends omit the scoped access marker", async () => {
-  const harness = automationHarness({ savedModel: "gateway/original" })
-  harness.deps.gatewayEnabled = async () => false
-  assert.equal((await executeHeadlessAgent(harness.input, harness.deps)).ok, true)
-  assert.equal(harness.minted.length, 1)
-  assert.equal("modelAccessRequired" in (harness.minted[0] ?? {}), false)
 })
 
 test("gateway credential refusal is recoverable needs-attention, not fallback or private error details", async () => {

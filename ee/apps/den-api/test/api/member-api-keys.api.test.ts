@@ -49,8 +49,6 @@ before(async () => {
   orgId = created.orgId
   owner = created.owner
   riley = await den.newMember(owner, orgId, "Riley Member")
-  const enabled = await den.setFeature(orgId, "secureSecretFields", true)
-  assert.equal(enabled.status, 200, summary(enabled))
   ownerToken = await den.mintMcpToken(owner, orgId)
   rileyToken = await den.mintMcpToken(riley, orgId)
 })

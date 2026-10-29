@@ -1,7 +1,7 @@
-import { peopleMemberCondition } from "./setup-agent-members.js"
 import { recordFreeAutoPurchase } from "./free-auto-purchases.js"
+import { FREE_AUTO_CONVERSION_WINDOW_DAYS } from "@openwork-ee/den-db"
 import Stripe from "stripe"
-import { and, eq, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, eq, isNotNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   MemberTable,
   OrgSubscriptionStatus,
@@ -13,12 +13,34 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { db } from "./db.js"
 import { env } from "./env.js"
-import type { DenOrgMode } from "./env.js"
 import { setInferenceEnabled } from "./inference.js"
-import { assertOrganizationManagedModelsAllowed } from "./organization-metadata.js"
+import { assertOrganizationManagedModelsAllowed, updateOrganizationMetadata } from "./organization-metadata.js"
 import { appLogger } from "./observability/logger.js"
 import { isOpenWorkWebAvailable } from "./openwork-web-availability.js"
 import { hasOpenWorkWebComplimentaryAccess, resolveOpenWorkWebAccess } from "./openwork-web-access.js"
+import { parseOrganizationPlan } from "./entitlements.js"
+import {
+  billingNotConfiguredMessage,
+  PLAN_CURRENCY,
+  PLAN_INTERVAL,
+  quotePlan,
+  TEAM_PLAN_UNIT_AMOUNT,
+  type BillingNotConfiguredProduct,
+  type BillingPlans,
+  type BillingPlanSummary,
+  type PlanCheckoutTier,
+  type SeatPlanQuote,
+} from "@openwork/types/den/billing-plans"
+import {
+  PER_PERSON_PRICING_MODEL,
+  PLAN_OPENWORK_PRODUCT,
+  planTierFromSubscriptionMetadata,
+  reconcileOrganizationPlan,
+} from "./billing-plans.js"
+import { enterpriseSubscriptionQuantity, minimumUsersFromStripeMetadata, normalizeUserCount, OPENWORK_WEB_QUANTITY_DEFINITION, type OrganizationBillingQuantities } from "./billing-quantities.js"
+import { billingUserCondition, getOrganizationBillingQuantities } from "./billing-users.js"
+import { getOrganizationPlanState } from "./organization-plan-state.js"
+import { personAddRefusal } from "./organization-plan.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -29,11 +51,10 @@ const STRIPE_API_VERSION = "2026-04-22.dahlia"
 const INFERENCE_SUBSCRIPTION_TYPE = "inference" as const
 const SEAT_SUBSCRIPTION_TYPE = "seat" as const
 const WEB_SUBSCRIPTION_TYPE = "web" as const
-export const FREE_ORG_SEAT_COUNT = 5
+const ENTERPRISE_SUBSCRIPTION_TYPE = "enterprise" as const
 export const OPENWORK_WEB_UNIT_AMOUNT = 5000
 export const OPENWORK_WEB_CURRENCY = "usd" as const
 export const OPENWORK_WEB_INTERVAL = "month" as const
-export const OPENWORK_WEB_QUANTITY_DEFINITION = "joined_non_removed_members" as const
 const ACTIVE_STATUSES = new Set<OrgSubscriptionStatusValue>(["active", "trialing"])
 const ONGOING_STATUSES = new Set<OrgSubscriptionStatusValue>(["active", "trialing", "incomplete", "past_due", "unpaid", "paused"])
 // Stripe keeps retrying a `past_due` subscription (Smart Retries) and only
@@ -83,6 +104,17 @@ function requireOpenWorkWebPriceId() {
   return priceId
 }
 
+function requireEnterprisePriceId() {
+  if (!env.stripe.enterprisePriceId) {
+    throw new Error("stripe_enterprise_price_id_missing")
+  }
+  return env.stripe.enterprisePriceId
+}
+
+function requirePlanPriceId(plan: PlanCheckoutTier) {
+  return plan === "enterprise" ? requireEnterprisePriceId() : requireSeatPriceId()
+}
+
 function requirePriceIdForSubscriptionType(subscriptionType: StripeCheckoutSubscriptionType) {
   switch (subscriptionType) {
     case INFERENCE_SUBSCRIPTION_TYPE:
@@ -91,6 +123,68 @@ function requirePriceIdForSubscriptionType(subscriptionType: StripeCheckoutSubsc
       return requireSeatPriceId()
     case WEB_SUBSCRIPTION_TYPE:
       return requireOpenWorkWebPriceId()
+  }
+}
+
+/**
+ * The deployment does not sell this product: a configuration state the API
+ * answers with 503 `billing_not_configured`, never a 500.
+ */
+export class BillingNotConfiguredError extends Error {
+  readonly product: BillingNotConfiguredProduct
+
+  constructor(product: BillingNotConfiguredProduct) {
+    super(billingNotConfiguredMessage(product))
+    this.name = "BillingNotConfiguredError"
+    this.product = product
+  }
+}
+
+/** Whether this deployment has the Stripe key and the price a product needs. */
+export function isBillingProductConfigured(product: BillingNotConfiguredProduct) {
+  if (!env.stripe.secretKey) return false
+  switch (product) {
+    case "inference":
+      return Boolean(env.stripe.inferencePriceId)
+    case "seat":
+    case "team":
+      return Boolean(env.stripe.seatPriceId)
+    case "enterprise":
+      return Boolean(env.stripe.enterprisePriceId)
+    case "web":
+      return Boolean(env.stripe.openworkWebPriceId)
+    case "portal":
+    case "checkout":
+      return true
+  }
+}
+
+export function assertBillingProductConfigured(product: BillingNotConfiguredProduct) {
+  if (!isBillingProductConfigured(product)) throw new BillingNotConfiguredError(product)
+}
+
+/**
+ * Configuration failures thrown deep in a Stripe call (a missing key or price,
+ * a price that does not match its contract), mapped to the product that is not
+ * sold. Anything else is not a configuration failure and stays an error.
+ */
+export function billingNotConfiguredProductForError(error: unknown, fallback: BillingNotConfiguredProduct): BillingNotConfiguredProduct | null {
+  if (error instanceof BillingNotConfiguredError) return error.product
+  if (!(error instanceof Error)) return null
+  switch (error.message) {
+    case "stripe_secret_key_missing":
+      return fallback
+    case "stripe_inference_price_id_missing":
+      return "inference"
+    case "stripe_seat_price_id_missing":
+      return fallback === "team" ? "team" : "seat"
+    case "stripe_enterprise_price_id_missing":
+      return "enterprise"
+    case "stripe_openwork_web_not_available":
+    case "stripe_openwork_web_price_contract_invalid":
+      return "web"
+    default:
+      return null
   }
 }
 
@@ -171,6 +265,9 @@ function parseSubscriptionType(value: string | null | undefined): OrgSubscriptio
     case WEB_SUBSCRIPTION_TYPE:
     case "openwork_web":
       return WEB_SUBSCRIPTION_TYPE
+    case ENTERPRISE_SUBSCRIPTION_TYPE:
+    case "openwork_enterprise":
+      return ENTERPRISE_SUBSCRIPTION_TYPE
     default:
       return null
   }
@@ -190,6 +287,21 @@ function getSubscriptionMetadata(subscription: Stripe.Subscription) {
   return getBillingMetadata(subscription.metadata)
 }
 
+function priceProductId(price: Stripe.Price | null | undefined) {
+  const product = price?.product
+  if (!product) return null
+  return typeof product === "string" ? product : product.id
+}
+
+/**
+ * Enterprise prices are custom for each customer, so an Enterprise
+ * subscription is recognised by the configured Enterprise product rather than
+ * a single price.
+ */
+function isEnterprisePrice(price: Stripe.Price | null | undefined) {
+  return Boolean(env.stripe.enterpriseProductId && priceProductId(price) === env.stripe.enterpriseProductId)
+}
+
 function subscriptionTypeFromStripeSubscription(subscription: Stripe.Subscription, item: Stripe.SubscriptionItem | null) {
   const metadataType = getSubscriptionMetadata(subscription).subscriptionType
   if (metadataType) {
@@ -200,8 +312,14 @@ function subscriptionTypeFromStripeSubscription(subscription: Stripe.Subscriptio
   if (env.stripe.seatPriceId && priceId === env.stripe.seatPriceId) {
     return SEAT_SUBSCRIPTION_TYPE
   }
+  if (env.stripe.enterprisePriceId && priceId === env.stripe.enterprisePriceId) {
+    return SEAT_SUBSCRIPTION_TYPE
+  }
   if (env.stripe.openworkWebPriceId && priceId === env.stripe.openworkWebPriceId) {
     return WEB_SUBSCRIPTION_TYPE
+  }
+  if (isEnterprisePrice(item?.price)) {
+    return ENTERPRISE_SUBSCRIPTION_TYPE
   }
 
   return INFERENCE_SUBSCRIPTION_TYPE
@@ -211,7 +329,7 @@ async function activeMemberCount(organizationId: OrgId) {
   const [row] = await db
     .select({ count: sql<number>`count(*)` })
     .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, organizationId), peopleMemberCondition()))
+    .where(and(eq(MemberTable.organizationId, organizationId), billingUserCondition()))
   return Math.max(0, Number(row?.count ?? 0))
 }
 
@@ -222,9 +340,15 @@ async function joinedMemberCount(organizationId: OrgId) {
     .where(and(
       eq(MemberTable.organizationId, organizationId),
       isNotNull(MemberTable.joinedAt),
-      peopleMemberCondition(),
+      billingUserCondition(),
     ))
-  return normalizeSeatCount(Number(row?.count ?? 0))
+  return normalizeUserCount(Number(row?.count ?? 0))
+}
+
+/** Counted people ("N joined, M invited"): pending invitations count toward the plan. */
+export async function getOrganizationPeopleCounts(organizationId: OrgId) {
+  const [people, joined] = await Promise.all([activeMemberCount(organizationId), joinedMemberCount(organizationId)])
+  return { people, joined: Math.min(joined, people), invited: Math.max(0, people - joined) }
 }
 
 async function organizationOpenWorkWebComplimentaryAccess(organizationId: OrgId) {
@@ -234,19 +358,6 @@ async function organizationOpenWorkWebComplimentaryAccess(organizationId: OrgId)
     .where(eq(OrganizationTable.id, organizationId))
     .limit(1)
   return hasOpenWorkWebComplimentaryAccess(rows[0]?.metadata)
-}
-
-export function isOpenWorkWebBillableMember(input: { joinedAt: Date | null; removedAt: Date | null }) {
-  return input.joinedAt !== null && input.removedAt === null
-}
-
-export function calculateOpenWorkWebBilling(input: { joinedMemberCount: number }) {
-  const quantity = normalizeSeatCount(input.joinedMemberCount)
-  return {
-    quantity,
-    unitAmount: OPENWORK_WEB_UNIT_AMOUNT,
-    expectedMonthlyTotal: quantity * OPENWORK_WEB_UNIT_AMOUNT,
-  }
 }
 
 export function isEligibleOpenWorkWebSubscriptionStatus(status: string | null | undefined) {
@@ -287,64 +398,11 @@ export function openWorkWebPaymentStatus(status: string | null | undefined, paym
   }
 }
 
-function normalizeSeatCount(value: number) {
-  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0
-}
-
-function normalizeAdditionalFreeSeats(value: unknown) {
-  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 0
-}
-
-export function additionalFreeSeatCountFromMetadata(metadata: Record<string, unknown> | null | undefined) {
-  return normalizeAdditionalFreeSeats(metadata?.seatsFreeAdditional)
-}
-
 // Seat billing only gates member additions on hosted multi-org deployments
 // where Stripe seat billing is configured. Single-org (self-hosted /
 // enterprise) deployments never restrict member count, and without Stripe
 // configured the 402 would be a dead end the operator cannot resolve.
-export function isSeatBillingGateEnabled(input: {
-  orgMode: DenOrgMode
-  stripeSecretKey: string | undefined
-  stripeSeatPriceId: string | undefined
-}) {
-  return input.orgMode === "multi_org" && Boolean(input.stripeSecretKey && input.stripeSeatPriceId)
-}
-
-export function calculateOrganizationSeatBillingCounts(input: {
-  memberCount: number
-  metadata?: Record<string, unknown> | null
-  additionalFreeSeats?: number
-}) {
-  const total = normalizeSeatCount(input.memberCount)
-  const additionalFree = input.additionalFreeSeats === undefined
-    ? additionalFreeSeatCountFromMetadata(input.metadata)
-    : normalizeAdditionalFreeSeats(input.additionalFreeSeats)
-  const free = FREE_ORG_SEAT_COUNT + additionalFree
-  const chargeable = Math.max(0, total - free)
-
-  return {
-    total,
-    chargeable,
-    free,
-    includedFree: FREE_ORG_SEAT_COUNT,
-    additionalFree,
-  }
-}
-
-export async function getOrganizationSeatBillingCounts(input: { organizationId: OrgId; memberCount?: number }) {
-  const memberCountPromise = typeof input.memberCount === "number"
-    ? Promise.resolve(input.memberCount)
-    : activeMemberCount(input.organizationId)
-  const metadataPromise = db
-    .select({ metadata: OrganizationTable.metadata })
-    .from(OrganizationTable)
-    .where(eq(OrganizationTable.id, input.organizationId))
-    .limit(1)
-
-  const [memberCount, rows] = await Promise.all([memberCountPromise, metadataPromise])
-  return calculateOrganizationSeatBillingCounts({ memberCount, metadata: rows[0]?.metadata })
-}
+export { isSeatBillingGateEnabled } from "./organization-plan.js"
 
 async function findOrgSubscriptionByType(organizationId: OrgId, subscriptionType: OrgSubscriptionTypeValue) {
   return db
@@ -368,6 +426,10 @@ async function findSeatSubscriptionByOrg(organizationId: OrgId) {
 
 async function findWebSubscriptionByOrg(organizationId: OrgId) {
   return findOrgSubscriptionByType(organizationId, WEB_SUBSCRIPTION_TYPE)
+}
+
+async function findEnterpriseSubscriptionByOrg(organizationId: OrgId) {
+  return findOrgSubscriptionByType(organizationId, ENTERPRISE_SUBSCRIPTION_TYPE)
 }
 
 async function findOrgSubscriptionByStripeId(stripeSubscriptionId: string) {
@@ -460,9 +522,58 @@ export async function organizationHasActiveInferenceSubscription(organizationId:
   return Boolean(row && ACTIVE_STATUSES.has(row.status))
 }
 
+/** A payment problem with an existing subscription should lead to billing, not an upgrade offer. */
+export async function organizationHasOngoingInferenceSubscription(organizationId: OrgId) {
+  const row = await findInferenceSubscriptionByOrg(organizationId)
+  return Boolean(row && ONGOING_STATUSES.has(row.status))
+}
+
 export async function organizationHasActiveSeatSubscription(organizationId: OrgId) {
   const row = await findSeatSubscriptionByOrg(organizationId)
   return Boolean(row && ACTIVE_STATUSES.has(row.status))
+}
+
+// Paid plans stay unlocked while Stripe is still collecting a failed renewal.
+const PAID_PLAN_STATUSES = new Set<OrgSubscriptionStatusValue>(["active", "trialing", "past_due"])
+
+export async function organizationHasActiveEnterpriseSubscription(organizationId: OrgId) {
+  const row = await findEnterpriseSubscriptionByOrg(organizationId)
+  return Boolean(row && PAID_PLAN_STATUSES.has(row.status))
+}
+
+/**
+ * Keeps the organization's plan in step with its paid plan subscriptions:
+ * an Enterprise subscription makes it Enterprise, a Team plan (seat)
+ * subscription makes it Team (at any size), and ending them returns it to
+ * Free. Admin-set and grandfathered plans are left alone.
+ */
+async function syncOrganizationPlanFromSubscriptions(organizationId: OrgId, seatSubscription?: Stripe.Subscription) {
+  const [seatRow, enterpriseRow] = await Promise.all([
+    findSeatSubscriptionByOrg(organizationId),
+    findEnterpriseSubscriptionByOrg(organizationId),
+  ])
+  // Sales-led Enterprise outranks the self-serve plan. A self-serve Enterprise
+  // purchase uses the seat subscription, so do not reconcile it back to Team.
+  const enterpriseActive = enterpriseRow && PAID_PLAN_STATUSES.has(enterpriseRow.status) ? enterpriseRow : null
+  const seatTier = seatSubscription
+    ? planTierFromSubscriptionMetadata(seatSubscription.metadata)
+    : env.stripe.enterprisePriceId && seatRow?.stripe_price_id === env.stripe.enterprisePriceId
+      ? "enterprise"
+      : "team"
+  await updateOrganizationMetadata(organizationId, (current) => {
+    const next = reconcileOrganizationPlan({
+      current: parseOrganizationPlan(current),
+      status: enterpriseActive ? enterpriseActive.status : seatRow?.status ?? "canceled",
+      tier: enterpriseActive ? "enterprise" : seatTier,
+      legacyWithoutCharge: !enterpriseActive && Boolean(seatRow && seatRow.quantity < 1),
+    })
+    if (!next) return current
+    return { ...current, plan: next }
+  })
+}
+
+function isPlanSubscriptionType(type: OrgSubscriptionTypeValue) {
+  return type === SEAT_SUBSCRIPTION_TYPE || type === ENTERPRISE_SUBSCRIPTION_TYPE
 }
 
 function isEligibleOpenWorkWebSubscriptionRow(row: Awaited<ReturnType<typeof findWebSubscriptionByOrg>>) {
@@ -496,30 +607,30 @@ export async function organizationHasOngoingOpenWorkWebSubscription(organization
   return Boolean(row && isOngoingOpenWorkWebSubscriptionStatus(row.status))
 }
 
+/**
+ * Whether one more person may join the organization, by any path: an email
+ * invitation, SSO sign-up, a verified-domain join or SCIM. One rule for all of
+ * them (organization-plan.ts). `reason` tells a refusal on Free (offer the
+ * Team plan) from a full plan a platform admin set (ask for more seats).
+ */
 export async function getOrganizationSeatAddEligibility(organizationId: OrgId) {
-  const seatCounts = await getOrganizationSeatBillingCounts({ organizationId })
-  const gateEnabled = isSeatBillingGateEnabled({
-    orgMode: env.orgMode,
-    stripeSecretKey: env.stripe.secretKey,
-    stripeSeatPriceId: env.stripe.seatPriceId,
-  })
-  if (!gateEnabled || seatCounts.total < seatCounts.free) {
-    return {
-      allowed: true,
-      currentCount: seatCounts.total,
-      freeSeatCount: seatCounts.free,
-      billableSeatCount: seatCounts.chargeable,
-      hasActiveSeatSubscription: false,
-    }
-  }
-
-  const hasActiveSeatSubscription = await organizationHasActiveSeatSubscription(organizationId)
+  const [plan, { seats }, hasActiveSeatSubscription, hasActiveEnterpriseSubscription] = await Promise.all([
+    getOrganizationPlanState(organizationId),
+    getOrganizationBillingQuantities(organizationId),
+    organizationHasActiveSeatSubscription(organizationId),
+    organizationHasActiveEnterpriseSubscription(organizationId),
+  ])
+  if (!plan) throw new Error("organization_not_found")
+  const refusal = personAddRefusal(plan)
   return {
-    allowed: hasActiveSeatSubscription,
-    currentCount: seatCounts.total,
-    freeSeatCount: seatCounts.free,
-    billableSeatCount: seatCounts.chargeable,
+    allowed: refusal === null,
+    reason: refusal,
+    plan,
+    currentCount: plan.users,
+    freeSeatCount: seats.free,
+    billableSeatCount: seats.chargeable,
     hasActiveSeatSubscription,
+    hasActiveEnterpriseSubscription,
   }
 }
 
@@ -578,6 +689,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
       : status === "active"
     : false
   const quantity = item?.quantity ?? 0
+  const minimumQuantity = subscriptionType === ENTERPRISE_SUBSCRIPTION_TYPE ? minimumUsersFromStripeMetadata(subscription.metadata) : 0
   const priceId = typeof item?.price?.id === "string" ? item.price.id : null
   const period = subscriptionPeriod(subscription, item)
   const now = new Date()
@@ -592,6 +704,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
     stripe_price_id: priceId,
     stripe_subscription_item_id: item?.id ?? null,
     quantity,
+    minimum_quantity: minimumQuantity,
     current_period_start: period.start,
     current_period_end: period.end,
     cancel_at_period_end: subscription.cancel_at_period_end,
@@ -612,6 +725,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
       stripe_price_id: values.stripe_price_id,
       stripe_subscription_item_id: values.stripe_subscription_item_id,
       quantity: values.quantity,
+      minimum_quantity: values.minimum_quantity,
       current_period_start: values.current_period_start,
       current_period_end: values.current_period_end,
       cancel_at_period_end: values.cancel_at_period_end,
@@ -639,6 +753,9 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
       // by the Checkout handlers once payment is confirmed.
       await activatePurchasedInference(organizationId)
     }
+  }
+  if (isPlanSubscriptionType(subscriptionType)) {
+    await syncOrganizationPlanFromSubscriptions(organizationId, subscriptionType === SEAT_SUBSCRIPTION_TYPE ? subscription : undefined)
   }
 
   return findOrgSubscriptionByStripeId(subscription.id)
@@ -671,6 +788,7 @@ export async function refreshOrgSubscriptionFromStripe(stripeSubscriptionId: str
   const item = firstSubscriptionItem(subscription)
   const status = subscriptionStatus(subscription.status)
   const quantity = item?.quantity ?? 0
+  const minimumQuantity = existing?.type === ENTERPRISE_SUBSCRIPTION_TYPE ? minimumUsersFromStripeMetadata(subscription.metadata) : 0
   const priceId = typeof item?.price?.id === "string" ? item.price.id : null
   const paymentFailed = existing?.type === WEB_SUBSCRIPTION_TYPE
     ? existing.payment_failed
@@ -685,6 +803,7 @@ export async function refreshOrgSubscriptionFromStripe(stripeSubscriptionId: str
       stripe_price_id: priceId,
       stripe_subscription_item_id: item?.id ?? null,
       quantity,
+      minimum_quantity: minimumQuantity,
       current_period_start: period.start,
       current_period_end: period.end,
       cancel_at_period_end: subscription.cancel_at_period_end,
@@ -695,7 +814,11 @@ export async function refreshOrgSubscriptionFromStripe(stripeSubscriptionId: str
     })
     .where(eq(OrgSubscriptionTable.stripe_subscription_id, subscription.id))
 
-  return findOrgSubscriptionByStripeId(subscription.id)
+  const row = await findOrgSubscriptionByStripeId(subscription.id)
+  if (row && isPlanSubscriptionType(row.type)) {
+    await syncOrganizationPlanFromSubscriptions(row.organization_id)
+  }
+  return row
 }
 
 export async function findOrCreateStripeCustomer(input: {
@@ -817,7 +940,7 @@ async function createOpenWorkWebCheckoutSession(input: {
   cancelUrl: string
 }) {
   await validateOpenWorkWebPrice(input.priceId)
-  const quantity = await joinedMemberCount(input.organizationId)
+  const quantity = (await getOrganizationBillingQuantities(input.organizationId)).web.quantity
   if (quantity < 1) {
     throw new Error("stripe_openwork_web_quantity_empty")
   }
@@ -1015,7 +1138,7 @@ export async function createOrgSubscriptionCheckoutSession(input: {
     }
   }
 
-  const quantity = Math.max(1, await activeMemberCount(input.organizationId))
+  const quantity = (await getOrganizationBillingQuantities(input.organizationId)).models.quantity
   await assertOrganizationManagedModelsAllowed(input.organizationId)
   return stripe().checkout.sessions.create({
     mode: "subscription",
@@ -1030,6 +1153,138 @@ export async function createOrgSubscriptionCheckoutSession(input: {
       metadata,
     },
   })
+}
+
+function planSubscriptionMetadata(input: { organizationId: OrgId; orgMemberId: MemberId; plan: PlanCheckoutTier }) {
+  return {
+    org_id: input.organizationId,
+    created_by_org_member_id: input.orgMemberId,
+    openwork_product: PLAN_OPENWORK_PRODUCT,
+    subscription_type: SEAT_SUBSCRIPTION_TYPE,
+    plan_tier: input.plan,
+    pricing_model: PER_PERSON_PRICING_MODEL,
+  }
+}
+
+export type PlanCheckoutResult = { kind: "checkout"; url: string } | { kind: "updated" }
+
+/** Same plan already paid for, or a plan whose payment Stripe is still collecting. */
+export class PlanSubscriptionExistsError extends Error {
+  readonly reason: "same_plan" | "payment_pending"
+
+  constructor(reason: "same_plan" | "payment_pending") {
+    super("stripe_plan_subscription_exists")
+    this.name = "PlanSubscriptionExistsError"
+    this.reason = reason
+  }
+}
+
+/**
+ * Moves a paid plan to another tier on its existing subscription: the price
+ * and quantity change only after Stripe collects any proration immediately.
+ * A declined payment (including required authentication) leaves the existing
+ * subscription and plan unchanged; only a successful update is synced.
+ */
+async function changePlanOnExistingSubscription(input: {
+  organizationId: OrgId
+  orgMemberId: MemberId
+  plan: PlanCheckoutTier
+  addPeople: number
+  stripeSubscriptionId: string
+}): Promise<PlanCheckoutResult> {
+  const subscription = await stripe().subscriptions.retrieve(input.stripeSubscriptionId)
+  const status = subscriptionStatus(subscription.status)
+  if (!ACTIVE_STATUSES.has(status)) {
+    await upsertOrgSubscriptionFromStripe(subscription)
+    throw new PlanSubscriptionExistsError("payment_pending")
+  }
+  if (planTierFromSubscriptionMetadata(subscription.metadata) === input.plan) {
+    await upsertOrgSubscriptionFromStripe(subscription)
+    throw new PlanSubscriptionExistsError("same_plan")
+  }
+  const item = firstSubscriptionItem(subscription)
+  if (!item) {
+    throw new Error("stripe_plan_subscription_item_missing")
+  }
+  const quantity = quotePlan({ plan: input.plan, people: await activeMemberCount(input.organizationId), addPeople: input.addPeople }).people
+  const updated = await stripe().subscriptions.update(subscription.id, {
+    items: [{ id: item.id, price: requirePlanPriceId(input.plan), quantity }],
+    proration_behavior: "always_invoice",
+    payment_behavior: "error_if_incomplete",
+    metadata: planSubscriptionMetadata(input),
+  }).catch((error: unknown) => {
+    if (error instanceof Stripe.errors.StripeCardError) throw new PlanSubscriptionExistsError("payment_pending")
+    throw error
+  })
+  await upsertOrgSubscriptionFromStripe(updated, `plan-change:${subscription.id}:${input.plan}`)
+  return { kind: "updated" }
+}
+
+/**
+ * Starts paying for a plan (Team or Enterprise) per person: a subscription
+ * Checkout for every counted person (joined and invited) plus `addPeople`.
+ * It becomes the organization's single seat subscription, and paying sets the
+ * plan tier. An organization that already pays for another tier is moved on
+ * its existing subscription instead (`kind: "updated"`).
+ */
+export async function createPlanCheckout(input: {
+  organizationId: OrgId
+  orgMemberId: MemberId
+  email: string
+  name: string
+  plan: PlanCheckoutTier
+  addPeople: number
+  successUrl: string
+  cancelUrl: string
+}): Promise<PlanCheckoutResult> {
+  assertBillingProductConfigured(input.plan)
+  const priceId = requirePlanPriceId(input.plan)
+  const metadata = planSubscriptionMetadata(input)
+
+  const tracked = await findSeatSubscriptionByOrg(input.organizationId)
+  if (tracked?.stripe_subscription_id && ONGOING_STATUSES.has(tracked.status)) {
+    return changePlanOnExistingSubscription({ ...input, stripeSubscriptionId: tracked.stripe_subscription_id })
+  }
+
+  const customer = await findOrCreateStripeCustomer({
+    organizationId: input.organizationId,
+    email: input.email,
+    name: input.name,
+    metadata: {
+      org_id: input.organizationId,
+      created_by_org_member_id: input.orgMemberId,
+      openwork_product: PLAN_OPENWORK_PRODUCT,
+    },
+  })
+
+  // Stripe may hold a plan subscription our row has not seen yet (a webhook
+  // still in flight); never start a second one next to it.
+  const untracked = await findOngoingStripeSubscription({
+    customer,
+    organizationId: input.organizationId,
+    subscriptionType: SEAT_SUBSCRIPTION_TYPE,
+  })
+  if (untracked) {
+    await upsertOrgSubscriptionFromStripe(untracked)
+    return changePlanOnExistingSubscription({ ...input, stripeSubscriptionId: untracked.id })
+  }
+
+  const quantity = quotePlan({ plan: input.plan, people: await activeMemberCount(input.organizationId), addPeople: input.addPeople }).people
+  const session = await stripe().checkout.sessions.create({
+    mode: "subscription",
+    customer,
+    allow_promotion_codes: true,
+    line_items: [{ price: priceId, quantity }],
+    success_url: input.successUrl,
+    cancel_url: input.cancelUrl,
+    client_reference_id: input.organizationId,
+    metadata,
+    subscription_data: { metadata },
+  })
+  if (!session.url) {
+    throw new Error("stripe_checkout_url_missing")
+  }
+  return { kind: "checkout", url: session.url }
 }
 
 export async function createInferenceCheckoutSession(input: Omit<Parameters<typeof createOrgSubscriptionCheckoutSession>[0], "subscriptionType">) {
@@ -1092,13 +1347,13 @@ function serializeOpenWorkWebSubscription(row: Awaited<ReturnType<typeof findWeb
   } : null
 }
 
-async function loadOpenWorkWebBillingSummary(organizationId: OrgId) {
-  const [row, memberCount, complimentaryAccess] = await Promise.all([
+async function loadOpenWorkWebBillingSummary(organizationId: OrgId, loadedQuantities?: OrganizationBillingQuantities) {
+  const [row, quantities, complimentaryAccess] = await Promise.all([
     findWebSubscriptionByOrg(organizationId),
-    joinedMemberCount(organizationId),
+    loadedQuantities ?? getOrganizationBillingQuantities(organizationId),
     organizationOpenWorkWebComplimentaryAccess(organizationId),
   ])
-  const billing = calculateOpenWorkWebBilling({ joinedMemberCount: memberCount })
+  const quantity = quantities.web.quantity
   const hasEligibleSubscription = isEligibleOpenWorkWebSubscriptionRow(row)
   const access = resolveOpenWorkWebAccess({
     deploymentAvailable: isOpenWorkWebAvailable(),
@@ -1114,9 +1369,9 @@ async function loadOpenWorkWebBillingSummary(organizationId: OrgId) {
       currency: OPENWORK_WEB_CURRENCY,
       interval: OPENWORK_WEB_INTERVAL,
       quantityDefinition: OPENWORK_WEB_QUANTITY_DEFINITION,
-      quantityDescription: "Every joined, non-removed organization member; pending invitations are excluded.",
-      quantity: billing.quantity,
-      expectedMonthlyTotal: billing.expectedMonthlyTotal,
+      quantityDescription: "Every organization member and every pending invitation that has not expired.",
+      quantity,
+      expectedMonthlyTotal: quantity * OPENWORK_WEB_UNIT_AMOUNT,
       hasEligibleSubscription,
       ...access,
       subscription: serializeOpenWorkWebSubscription(row),
@@ -1140,17 +1395,78 @@ export async function getOpenWorkWebBillingSummary(organizationId: OrgId) {
   return (await loadOpenWorkWebBillingSummary(organizationId)).summary
 }
 
-export async function getOrgBillingSummary(input: { organizationId: OrgId; includePortalUrl?: boolean; returnUrl: string }) {
-  const row = await findInferenceSubscriptionByOrg(input.organizationId)
-  const seatRow = await findSeatSubscriptionByOrg(input.organizationId)
-  const webBillingState = await loadOpenWorkWebBillingSummary(input.organizationId)
+/** Plans this organization may buy by card: its feature is on and the deployment sells it. */
+export function billingPlanOffers(input: { teamPlan: boolean; selfServeEnterprise: boolean }): BillingPlans {
+  return {
+    team: {
+      available: input.teamPlan && isBillingProductConfigured("team"),
+      unitAmount: TEAM_PLAN_UNIT_AMOUNT,
+      currency: PLAN_CURRENCY,
+      interval: PLAN_INTERVAL,
+    },
+    enterprise: {
+      available: input.selfServeEnterprise && isBillingProductConfigured("enterprise"),
+      unitAmount: env.stripe.enterpriseUnitAmount,
+      currency: PLAN_CURRENCY,
+      interval: PLAN_INTERVAL,
+    },
+  }
+}
+
+/**
+ * The Team quote attached to a seat 402: the workspace after this invitation,
+ * every person at the Team price ("6 people x $10 = $60/month").
+ */
+export async function getSeatPlanQuote(input: { organizationId: OrgId; currentCount: number; teamPlanEnabled: boolean }): Promise<SeatPlanQuote> {
+  const counts = await getOrganizationPeopleCounts(input.organizationId)
+  const quote = quotePlan({ plan: "team", people: input.currentCount, addPeople: 1 })
+  return {
+    plan: "team",
+    people: quote.people,
+    joined: counts.joined,
+    invited: counts.invited,
+    unitAmount: quote.unitAmount,
+    monthlyTotal: quote.monthlyTotal,
+    currency: PLAN_CURRENCY,
+    interval: PLAN_INTERVAL,
+    available: input.teamPlanEnabled && isBillingProductConfigured("team"),
+  }
+}
+
+export async function getOrgBillingSummary(input: {
+  organizationId: OrgId
+  includePortalUrl?: boolean
+  returnUrl: string
+  planFeatures?: { teamPlan: boolean; selfServeEnterprise: boolean }
+}) {
+  const quantities = await getOrganizationBillingQuantities(input.organizationId)
+  const [row, seatRow, enterpriseRow, webBillingState] = await Promise.all([
+    findInferenceSubscriptionByOrg(input.organizationId),
+    findSeatSubscriptionByOrg(input.organizationId),
+    findEnterpriseSubscriptionByOrg(input.organizationId),
+    loadOpenWorkWebBillingSummary(input.organizationId, quantities),
+  ])
   const webRow = webBillingState.row
-  const seatCounts = await getOrganizationSeatBillingCounts({ organizationId: input.organizationId })
+  const seatCounts = quantities.seats
+  const [peopleCounts, organizationPlan] = await Promise.all([
+    getOrganizationPeopleCounts(input.organizationId),
+    getOrganizationPlanState(input.organizationId),
+  ])
+  const plan: BillingPlanSummary = {
+    tier: organizationPlan?.tier ?? "free",
+    source: organizationPlan?.source ?? "default",
+    people: peopleCounts.people,
+    joined: peopleCounts.joined,
+    invited: peopleCounts.invited,
+    freeSeatCount: seatCounts.free,
+    userLimit: organizationPlan?.userLimit ?? null,
+    endsAt: organizationPlan?.endsAt ?? null,
+  }
   const hasActiveSubscription = Boolean(row && ACTIVE_STATUSES.has(row.status))
   const hasActiveSeatSubscription = Boolean(seatRow && ACTIVE_STATUSES.has(seatRow.status))
   const hasEligibleWebSubscription = isEligibleOpenWorkWebSubscriptionRow(webRow)
   let portalUrl: string | null = null
-  if (input.includePortalUrl && (row?.stripe_customer_id || seatRow?.stripe_customer_id || webRow?.stripe_customer_id)) {
+  if (input.includePortalUrl && (row?.stripe_customer_id || seatRow?.stripe_customer_id || webRow?.stripe_customer_id || enterpriseRow?.stripe_customer_id)) {
     try {
       portalUrl = (await createInferencePortalSession({ organizationId: input.organizationId, returnUrl: input.returnUrl })).url
     } catch (error) {
@@ -1165,7 +1481,7 @@ export async function getOrgBillingSummary(input: { organizationId: OrgId; inclu
       unitAmount: 1000,
       currency: "usd",
       interval: "month",
-      memberCount: seatCounts.total,
+      memberCount: quantities.models.users,
       hasActiveSubscription,
       portalUrl,
       subscription: serializeSubscription(row),
@@ -1175,11 +1491,18 @@ export async function getOrgBillingSummary(input: { organizationId: OrgId; inclu
         unitAmount: 1000,
         currency: "usd",
         interval: "month",
-        freeSeatCount: seatCounts.free,
-        seatsFreeAdditional: seatCounts.additionalFree,
-        billableSeatCount: seatCounts.chargeable,
+        freeSeatCount: quantities.seats.free,
+        seatsFreeAdditional: quantities.seats.additionalFree,
+        billableSeatCount: quantities.seats.chargeable,
         hasActiveSubscription: hasActiveSeatSubscription,
         subscription: serializeSubscription(seatRow),
+      },
+      enterprise: {
+        hasActiveSubscription: Boolean(enterpriseRow && PAID_PLAN_STATUSES.has(enterpriseRow.status)),
+        users: quantities.users,
+        minimumUsers: enterpriseRow?.minimum_quantity ?? 0,
+        billableUsers: enterpriseSubscriptionQuantity({ users: quantities.users, minimumUsers: enterpriseRow?.minimum_quantity ?? 0 }),
+        subscription: serializeSubscription(enterpriseRow),
       },
       web: {
         ...webBillingState.summary,
@@ -1189,20 +1512,53 @@ export async function getOrgBillingSummary(input: { organizationId: OrgId; inclu
         subscription: serializeSubscription(webRow),
       },
     },
+    plan,
+    plans: billingPlanOffers(input.planFeatures ?? { teamPlan: false, selfServeEnterprise: false }),
   }
 }
 
-export async function syncInferenceSubscriptionQuantityAfterMemberChange(input: { organizationId: OrgId; memberCount: number }) {
-  if (!env.stripe.secretKey) {
+type BillingSubscriptionRow = NonNullable<Awaited<ReturnType<typeof findOrgSubscriptionByType>>>
+
+function stripeQuantityForSubscription(row: BillingSubscriptionRow, quantities: OrganizationBillingQuantities) {
+  switch (row.type) {
+    case SEAT_SUBSCRIPTION_TYPE:
+      return quantities.seats.chargeable
+    case WEB_SUBSCRIPTION_TYPE:
+      return quantities.web.quantity
+    case INFERENCE_SUBSCRIPTION_TYPE:
+      return quantities.models.quantity
+    case ENTERPRISE_SUBSCRIPTION_TYPE:
+      return enterpriseSubscriptionQuantity({ users: quantities.users, minimumUsers: row.minimum_quantity })
+    default:
+      return null
+  }
+}
+
+/**
+ * Only subscriptions Stripe is billing normally (active or trialing) follow
+ * the user count. OpenWork Web also requires its configured price and no
+ * failed payment, the same rule that grants access to it.
+ */
+function subscriptionFollowsUserCount(row: BillingSubscriptionRow | null): row is BillingSubscriptionRow {
+  if (!row || !row.stripe_subscription_item_id) return false
+  if (row.type === WEB_SUBSCRIPTION_TYPE) return isEligibleOpenWorkWebSubscriptionRow(row)
+  return ACTIVE_STATUSES.has(row.status)
+}
+
+async function syncSubscriptionQuantity(row: BillingSubscriptionRow | null, quantities: OrganizationBillingQuantities) {
+  if (!subscriptionFollowsUserCount(row) || !row.stripe_subscription_item_id) {
     return
   }
-
-  const row = await findInferenceSubscriptionByOrg(input.organizationId)
-  if (!row || !ACTIVE_STATUSES.has(row.status) || !row.stripe_subscription_item_id) {
+  const quantity = stripeQuantityForSubscription(row, quantities)
+  // Stripe rejects quantity 0 on the per-user OpenWork Web price.
+  if (quantity === null || (row.type === WEB_SUBSCRIPTION_TYPE && quantity < 1)) {
     return
   }
-
-  const quantity = Math.max(1, input.memberCount)
+  // Already right: skip, so the subscription.updated webhook this update
+  // causes does not trigger another update.
+  if (row.quantity === quantity) {
+    return
+  }
   await stripe().subscriptionItems.update(row.stripe_subscription_item_id, {
     quantity,
     // Accrue prorations onto the next monthly invoice instead of charging
@@ -1210,46 +1566,45 @@ export async function syncInferenceSubscriptionQuantityAfterMemberChange(input: 
     // consolidated invoice per cycle; add/remove churn nets out.
     proration_behavior: "create_prorations",
   })
+  // Show the quantity Stripe accepted immediately, before its webhook arrives.
+  await db
+    .update(OrgSubscriptionTable)
+    .set({ quantity, updated_at: new Date() })
+    .where(eq(OrgSubscriptionTable.id, row.id))
 }
 
-export async function syncSeatSubscriptionQuantityAfterMemberChange(input: { organizationId: OrgId; memberCount: number }) {
+/**
+ * Brings every active subscription's Stripe quantity in line with the
+ * organization's current users: Team seats, Enterprise, OpenWork Models and
+ * OpenWork Web.
+ * Call after a member or pending invitation is added or removed, or after the
+ * free seat count changes.
+ */
+export async function syncOrganizationBillingQuantities(input: { organizationId: OrgId }) {
   if (!env.stripe.secretKey) {
     return
   }
-
-  const row = await findSeatSubscriptionByOrg(input.organizationId)
-  if (!row || !ACTIVE_STATUSES.has(row.status) || !row.stripe_subscription_item_id) {
-    return
+  const [quantities, seatRow, inferenceRow, webRow, enterpriseRow] = await Promise.all([
+    getOrganizationBillingQuantities(input.organizationId),
+    findSeatSubscriptionByOrg(input.organizationId),
+    findInferenceSubscriptionByOrg(input.organizationId),
+    findWebSubscriptionByOrg(input.organizationId),
+    findEnterpriseSubscriptionByOrg(input.organizationId),
+  ])
+  for (const row of [seatRow, inferenceRow, webRow, enterpriseRow]) {
+    await syncSubscriptionQuantity(row, quantities)
   }
-
-  const seatCounts = await getOrganizationSeatBillingCounts(input)
-  await stripe().subscriptionItems.update(row.stripe_subscription_item_id, {
-    quantity: seatCounts.chargeable,
-    // See syncInferenceSubscriptionQuantityAfterMemberChange: one invoice per
-    // cycle instead of a card charge per seat change.
-    proration_behavior: "create_prorations",
-  })
 }
 
-export async function syncWebSubscriptionQuantityAfterMemberChange(input: { organizationId: OrgId; memberCount: number }) {
+async function syncOpenWorkWebQuantity(organizationId: OrgId) {
   if (!env.stripe.secretKey) {
     return
   }
-
-  const row = await findWebSubscriptionByOrg(input.organizationId)
-  if (!isEligibleOpenWorkWebSubscriptionRow(row) || !row?.stripe_subscription_item_id) {
-    return
-  }
-
-  const quantity = await joinedMemberCount(input.organizationId)
-  if (quantity < 1 || row.quantity === quantity) {
-    return
-  }
-
-  await stripe().subscriptionItems.update(row.stripe_subscription_item_id, {
-    quantity,
-    proration_behavior: "create_prorations",
-  })
+  const [quantities, row] = await Promise.all([
+    getOrganizationBillingQuantities(organizationId),
+    findWebSubscriptionByOrg(organizationId),
+  ])
+  await syncSubscriptionQuantity(row, quantities)
 }
 
 async function createSeatSubscriptionFromSetupCheckoutSession(session: Stripe.Checkout.Session, eventId: string) {
@@ -1280,6 +1635,9 @@ async function createSeatSubscriptionFromSetupCheckoutSession(session: Stripe.Ch
     {
       customer: session.customer,
       default_payment_method: paymentMethod,
+      // Created at 0 so the idempotent request is identical on every retry
+      // (webhook and checkout sync both land here); the real quantity is set
+      // right after.
       items: [{ price: requireSeatPriceId(), quantity: 0 }],
       metadata: {
         org_id: metadata.organizationId,
@@ -1291,7 +1649,11 @@ async function createSeatSubscriptionFromSetupCheckoutSession(session: Stripe.Ch
     { idempotencyKey: `openwork-seat-subscription-${session.id}` },
   )
 
-  return upsertOrgSubscriptionFromStripe(subscription, eventId)
+  const row = await upsertOrgSubscriptionFromStripe(subscription, eventId)
+  // An organization that is already past its free seats owes for them from
+  // the start, not only after the next member change.
+  await syncSubscriptionQuantity(row, await getOrganizationBillingQuantities(metadata.organizationId as OrgId))
+  return row
 }
 
 export async function syncSeatCheckoutSession(input: { organizationId: OrgId; sessionId: string }) {
@@ -1430,10 +1792,15 @@ async function expireNonWebSubscriptionAfterPaymentFailure(
   if (row.type === INFERENCE_SUBSCRIPTION_TYPE) {
     await setInferenceEnabled({ organizationId: row.organization_id, enabled: false })
   }
+  if (isPlanSubscriptionType(row.type)) {
+    await syncOrganizationPlanFromSubscriptions(row.organization_id)
+  }
 }
 
 /** Analytics failures never fail invoice settlement or cause another billing mutation. */
 async function recordPaidInvoiceConversion(subscription: Stripe.Subscription, row: typeof OrgSubscriptionTable.$inferSelect | null, invoiceId: string) {
+  // A subscription started before the attribution window can never convert; skip the extra Stripe read for renewals.
+  if (Date.now() - subscription.created * 1000 > FREE_AUTO_CONVERSION_WINDOW_DAYS * 86_400_000) return
   try {
     const invoice = await stripe().invoices.retrieve(invoiceId)
     if (invoice.status === "paid" && invoice.amount_paid > 0
@@ -1627,10 +1994,7 @@ async function applyStripeWebhookEvent(event: Stripe.Event) {
           await recordFreeAutoPurchase({ subscription, row, paidAt: new Date(event.created * 1000) })
         }
         if (row?.type === WEB_SUBSCRIPTION_TYPE && isEligibleOpenWorkWebSubscriptionStatus(subscription.status)) {
-          await syncWebSubscriptionQuantityAfterMemberChange({
-            organizationId: row.organization_id,
-            memberCount: row.quantity,
-          })
+          await syncOpenWorkWebQuantity(row.organization_id)
         }
       }
       break
@@ -1640,10 +2004,7 @@ async function applyStripeWebhookEvent(event: Stripe.Event) {
     case "customer.subscription.deleted": {
       const row = await syncCurrentStripeSubscription((event.data.object as Stripe.Subscription).id, event.id)
       if (row?.type === WEB_SUBSCRIPTION_TYPE && isEligibleOpenWorkWebSubscriptionStatus(row.status)) {
-        await syncWebSubscriptionQuantityAfterMemberChange({
-          organizationId: row.organization_id,
-          memberCount: row.quantity,
-        })
+        await syncOpenWorkWebQuantity(row.organization_id)
       }
       break
     }
@@ -1655,12 +2016,183 @@ async function applyStripeWebhookEvent(event: Stripe.Event) {
         eventId: event.id,
       })
       if (row && isEligibleOpenWorkWebSubscriptionRow(row)) {
-        await syncWebSubscriptionQuantityAfterMemberChange({
-          organizationId: row.organization_id,
-          memberCount: row.quantity,
-        })
+        await syncOpenWorkWebQuantity(row.organization_id)
       }
       break
     }
+  }
+}
+
+export class EnterpriseBillingError extends Error {
+  constructor(
+    readonly code:
+      | "stripe_not_configured"
+      | "enterprise_product_not_configured"
+      | "enterprise_price_invalid"
+      | "enterprise_subscription_exists"
+      | "enterprise_subscription_missing"
+      | "organization_not_found",
+    message: string,
+  ) {
+    super(message)
+    this.name = "EnterpriseBillingError"
+  }
+}
+
+function requireEnterpriseBillingConfigured() {
+  if (!env.stripe.secretKey) {
+    throw new EnterpriseBillingError("stripe_not_configured", "Stripe is not configured on this deployment.")
+  }
+  if (!env.stripe.enterpriseProductId) {
+    throw new EnterpriseBillingError("enterprise_product_not_configured", "STRIPE_ENTERPRISE_PRODUCT_ID is not set on den-api.")
+  }
+}
+
+async function validateEnterprisePrice(priceId: string) {
+  const price = await stripe().prices.retrieve(priceId).catch(() => null)
+  if (
+    !price
+    || !price.active
+    || !isEnterprisePrice(price)
+    || price.type !== "recurring"
+    || price.billing_scheme !== "per_unit"
+    || price.recurring?.usage_type !== "licensed"
+  ) {
+    throw new EnterpriseBillingError(
+      "enterprise_price_invalid",
+      "The price must be an active, recurring, per-user price on the Enterprise product.",
+    )
+  }
+  return price
+}
+
+/**
+ * Starts the sales-led Enterprise plan for an organization: a Stripe
+ * subscription on a custom per-user price of the Enterprise product, billed by
+ * invoice, never below the committed minimum users. Stripe then sends the
+ * invoices, and its webhooks keep the plan and quantity in step.
+ *
+ * A Team plan (seat) subscription is canceled with a prorated credit so the
+ * organization is not billed twice. An admin-set or grandfathered plan is
+ * handed over to Stripe: it becomes Enterprise from Stripe and follows the
+ * subscription from then on.
+ */
+export async function createEnterpriseSubscription(input: {
+  organizationId: OrgId
+  priceId: string
+  minimumUsers: number
+  billingEmail: string
+  daysUntilDue: number
+  requestedByUserId: string
+}) {
+  requireEnterpriseBillingConfigured()
+  await validateEnterprisePrice(input.priceId)
+
+  const existing = await findEnterpriseSubscriptionByOrg(input.organizationId)
+  if (existing?.stripe_subscription_id) {
+    const refreshed = await refreshOrgSubscriptionFromStripe(existing.stripe_subscription_id)
+    if (refreshed && ONGOING_STATUSES.has(refreshed.status)) {
+      throw new EnterpriseBillingError("enterprise_subscription_exists", "This organization already has an Enterprise subscription.")
+    }
+  }
+
+  const organization = await db
+    .select({ name: OrganizationTable.name })
+    .from(OrganizationTable)
+    .where(eq(OrganizationTable.id, input.organizationId))
+    .limit(1)
+    .then((rows) => rows[0] ?? null)
+  if (!organization) {
+    throw new EnterpriseBillingError("organization_not_found", "Organization not found.")
+  }
+
+  const customer = await findOrCreateStripeCustomer({
+    organizationId: input.organizationId,
+    email: input.billingEmail,
+    name: organization.name,
+    metadata: { org_id: input.organizationId, openwork_product: "openwork_enterprise" },
+  })
+
+  const minimumUsers = normalizeUserCount(input.minimumUsers)
+  const { users } = await getOrganizationBillingQuantities(input.organizationId)
+  const quantity = enterpriseSubscriptionQuantity({ users, minimumUsers })
+  const metadata = {
+    org_id: input.organizationId,
+    openwork_product: "openwork_enterprise",
+    subscription_type: ENTERPRISE_SUBSCRIPTION_TYPE,
+    minimum_users: String(minimumUsers),
+    created_by_platform_admin_user_id: input.requestedByUserId,
+  }
+  const subscription = await stripe().subscriptions.create({
+    customer,
+    items: [{ price: input.priceId, quantity }],
+    collection_method: "send_invoice",
+    days_until_due: input.daysUntilDue,
+    metadata,
+  }, {
+    idempotencyKey: `openwork-enterprise-subscription:${input.organizationId}:${existing?.stripe_subscription_id ?? "initial"}:${input.priceId}:${minimumUsers}`,
+  })
+
+  // Hand an admin-set or grandfathered plan over to Stripe before syncing, so
+  // the plan follows this subscription from now on.
+  await updateOrganizationMetadata(input.organizationId, (current) => {
+    const plan = parseOrganizationPlan(current)
+    if (plan.source !== "manual" && plan.source !== "grandfathered") return current
+    const stored = typeof current.plan === "object" && current.plan !== null && !Array.isArray(current.plan) ? current.plan : {}
+    return { ...current, plan: { ...stored, tier: "enterprise", source: "stripe" } }
+  })
+  const row = await upsertOrgSubscriptionFromStripe(subscription, `enterprise-admin-create:${subscription.id}`)
+
+  const seatRow = await findSeatSubscriptionByOrg(input.organizationId)
+  if (seatRow?.stripe_subscription_id && ONGOING_STATUSES.has(seatRow.status)) {
+    try {
+      await stripe().subscriptions.cancel(seatRow.stripe_subscription_id, {
+        prorate: true,
+        invoice_now: true,
+        cancellation_details: { comment: "Replaced by the OpenWork Enterprise plan." },
+      })
+      await refreshOrgSubscriptionFromStripe(seatRow.stripe_subscription_id)
+    } catch (error) {
+      logger.error("failed to cancel the Team plan subscription after starting Enterprise", {
+        organization_id: input.organizationId,
+        stripe_subscription_id: seatRow.stripe_subscription_id,
+        error,
+      })
+    }
+  }
+
+  return row
+}
+
+/**
+ * Changes the committed minimum users on an organization's Enterprise
+ * subscription (a contract change). The minimum lives in the subscription's
+ * Stripe metadata; the stored row and the Stripe quantity follow.
+ */
+export async function updateEnterpriseMinimumUsers(input: { organizationId: OrgId; minimumUsers: number }) {
+  requireEnterpriseBillingConfigured()
+  const row = await findEnterpriseSubscriptionByOrg(input.organizationId)
+  if (!row?.stripe_subscription_id || !ONGOING_STATUSES.has(row.status)) {
+    throw new EnterpriseBillingError("enterprise_subscription_missing", "This organization has no ongoing Enterprise subscription.")
+  }
+  const subscription = await stripe().subscriptions.update(row.stripe_subscription_id, {
+    metadata: { minimum_users: String(normalizeUserCount(input.minimumUsers)) },
+  })
+  const updated = await upsertOrgSubscriptionFromStripe(subscription, `enterprise-admin-minimum:${subscription.id}:${Date.now()}`)
+  await syncSubscriptionQuantity(updated, await getOrganizationBillingQuantities(input.organizationId))
+  return findEnterpriseSubscriptionByOrg(input.organizationId)
+}
+
+export async function getEnterpriseBillingAdminState(organizationId: OrgId) {
+  const [row, quantities] = await Promise.all([
+    findEnterpriseSubscriptionByOrg(organizationId),
+    getOrganizationBillingQuantities(organizationId),
+  ])
+  return {
+    configured: Boolean(env.stripe.secretKey && env.stripe.enterpriseProductId),
+    users: quantities.users,
+    minimumUsers: row?.minimum_quantity ?? 0,
+    billableUsers: enterpriseSubscriptionQuantity({ users: quantities.users, minimumUsers: row?.minimum_quantity ?? 0 }),
+    subscription: serializeSubscription(row),
   }
 }

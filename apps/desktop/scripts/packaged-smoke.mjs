@@ -81,6 +81,12 @@ try {
   run("server-import", binary, ["--input-type=module", "-e",
     `const server = await import(${JSON.stringify(embedded)}); if (typeof server.startEmbeddedServer !== "function") throw new Error("Missing embedded server export");`],
   15_000, { ELECTRON_RUN_AS_NODE: "1", NODE_PATH: "", NODE_OPTIONS: "" }, output);
+  run("engine-cold-start", binary, ["--test", join(repo, "apps/desktop/test/engine-cold-start.test.mjs")],
+    45_000, {
+      ELECTRON_RUN_AS_NODE: "1", NODE_PATH: "", NODE_OPTIONS: "",
+      OPENWORK_TEST_EMBEDDED_MODULE_URL: embedded,
+      OPENWORK_TEST_ENGINE_BIN: sidecar,
+    }, output);
   await bootPackagedDesktop("desktop-boot", binary, 90_000);
   report.passed = true;
 } finally {

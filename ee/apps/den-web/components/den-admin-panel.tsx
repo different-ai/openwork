@@ -3,15 +3,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { DenButton } from "../app/(den)/_components/ui/button";
-import { AdminDashboard } from "./admin/admin-dashboard";
-import { DenSelect } from "../app/(den)/_components/ui/select";
-import { Copy, Pencil, Trash2 } from "lucide-react";
+import { AdminDashboard, QuickFind } from "./admin/admin-dashboard";
+import { AdminControlCenter } from "./admin/control-center/admin-control-center";
+import { Check, Copy, Download, Search, Trash2 } from "lucide-react";
+import { planEndLabel } from "../app/(den)/_lib/plan-display";
 import { mapFeatures } from "@openwork/features";
 import { denApiCredentials, denBrowserEndpoint } from "../app/(den)/_lib/den-api-origin";
 import { withStoredBearer } from "./admin/admin-request";
 import { adminOrganizationHref, useAdminListLocation, type AdminDataSection } from "./admin/admin-list-location";
 import { AdminDeferredContent } from "./admin/admin-deferred-content";
 import { AdminAccessScreen } from "./admin/admin-access-screen";
+import { AdminRecentOrganizationsPanel, AdminRecentOrganizationsStrip } from "./admin/admin-recent-organizations";
 import { parseAdminOrganizationFeatures, type AdminOrganizationFeatures } from "./admin/admin-organization-feature-controls";
 
 type AccessState = "ready" | "signed-out" | "forbidden" | "error";
@@ -158,6 +160,12 @@ type AdminOrganization = {
   freeSeatCount: number;
   seatsFreeAdditional: number;
   billableSeatCount: number;
+  /** Users the plan allows, counting pending invitations; null when nothing limits it. */
+  userLimit: number | null;
+  /** Display-only end date of a plan a platform admin set, YYYY-MM-DD. */
+  endsAt: string | null;
+  ended: boolean;
+  paidBy: "none" | "stripe_team" | "stripe_enterprise";
   features: AdminOrganizationFeatures | null;
   openworkWebAccess: AdminOpenWorkWebAccess;
 };
@@ -449,6 +457,10 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
           freeSeatCount: toNumberValue(value.freeSeatCount) || DEFAULT_FREE_SEAT_COUNT,
           seatsFreeAdditional: toNumberValue(value.seatsFreeAdditional),
           billableSeatCount: toNumberValue(value.billableSeatCount),
+          userLimit: typeof value.userLimit === "number" ? value.userLimit : null,
+          endsAt: toStringValue(value.endsAt),
+          ended: value.ended === true,
+          paidBy: value.paidBy === "stripe_team" || value.paidBy === "stripe_enterprise" ? value.paidBy : "none",
           features: isRecord(value.featureStates) || isRecord(value.capabilities)
             ? parseAdminOrganizationFeatures(value.featureStates, value.capabilities)
             : null,
@@ -764,8 +776,12 @@ function buildFixtureOrganization(index: number, includeFeatures = false): Admin
     freeSeatCount: target ? 25 : DEFAULT_FREE_SEAT_COUNT,
     seatsFreeAdditional: target ? 20 : 0,
     billableSeatCount: target ? 103 : 0,
+    userLimit: target ? 500 : 5,
+    endsAt: null,
+    ended: false,
+    paidBy: "none",
     features: includeFeatures ? mapFeatures((key) => {
-      const enabled = target && (key === "secureSecretFields" || key === "workbotTeamLinks");
+      const enabled = target && key === "workbotDocuments";
       return { enabled, source: "everyone", everyone: enabled, killed: false, override: null, overrideApplies: true };
     }) : null,
     openworkWebAccess: {
@@ -977,32 +993,6 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-async function patchJson(path: string, body: unknown) {
-  const endpoint = denBrowserEndpoint(path);
-  const response = await fetch(endpoint, {
-    method: "PATCH",
-    credentials: denApiCredentials(endpoint),
-    headers: withStoredBearer({
-      Accept: "application/json",
-      "Content-Type": "application/json"
-    }),
-    body: JSON.stringify(body)
-  });
-
-  const text = await response.text();
-  let payload: unknown = null;
-
-  if (text) {
-    try {
-      payload = JSON.parse(text);
-    } catch {
-      payload = text;
-    }
-  }
-
-  return { response, payload };
-}
-
 async function postJson(path: string, body: unknown) {
   const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
@@ -1148,6 +1138,10 @@ function formatHours(hours: number | null): string {
 
 function formatOptionalCount(value: number | null): string {
   return value === null ? "Deferred" : String(value);
+}
+
+function formatCount(value: number): string {
+  return new Intl.NumberFormat().format(value);
 }
 
 function formatUsageAmount(value: number): string {
@@ -1331,25 +1325,6 @@ function PlanPill({ tier }: { tier: AdminOrganization["plan"]["tier"] }) {
   );
 }
 
-function OpenWorkWebAccessPill({ access }: { access: AdminOpenWorkWebAccess }) {
-  const label = access.hasOngoingSubscription
-    ? "Paid subscription"
-    : access.complimentaryAccess
-      ? "Complimentary"
-      : "No access";
-  const palette = access.hasOngoingSubscription
-    ? "border-violet-200 bg-violet-50 text-violet-700"
-    : access.complimentaryAccess
-      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-      : "border-slate-200 bg-slate-100 text-slate-600";
-
-  return (
-    <span className={`inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-medium ${palette}`}>
-      {label}
-    </span>
-  );
-}
-
 export function DenAdminPanel({ initialPayload, section }: { initialPayload: unknown; section: AdminDataSection }) {
   const viewMode = section;
   const { search: routeSearch, draftSearch, page: routePage, offset: routeOffset, setSearch, setPage } = useAdminListLocation();
@@ -1366,13 +1341,6 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
   const [includeBilling, setIncludeBilling] = useState(false);
   const [usersLoading, setUsersLoading] = useState(false);
   const [organizationsLoading, setOrganizationsLoading] = useState(false);
-  const [orgDrafts, setOrgDrafts] = useState<Record<string, { tier: AdminOrganization["plan"]["tier"]; seatLimit: string }>>({});
-  const [savingOrgId, setSavingOrgId] = useState<string | null>(null);
-  const [freeSeatsDialog, setFreeSeatsDialog] = useState<{ org: AdminOrganization; totalFreeSeats: string } | null>(null);
-  const [savingFreeSeatsOrgId, setSavingFreeSeatsOrgId] = useState<string | null>(null);
-  const [openworkWebAccessDialog, setOpenWorkWebAccessDialog] = useState<{ org: AdminOrganization; enabled: boolean; reason: string } | null>(null);
-  const [savingOpenWorkWebAccessOrgId, setSavingOpenWorkWebAccessOrgId] = useState<string | null>(null);
-  const [openworkWebAccessError, setOpenWorkWebAccessError] = useState<{ orgId: string; message: string } | null>(null);
   const [deleteUserDialog, setDeleteUserDialog] = useState<AdminUser | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [adminEmail, setAdminEmail] = useState("");
@@ -1862,167 +1830,6 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
     organizationSearchStartedAtRef.current = null;
   }, [organizationQuery, organizationsLoading, payload]);
 
-  useEffect(() => {
-    if (!payload) {
-      setOrgDrafts({});
-      return;
-    }
-
-    const drafts: Record<string, { tier: AdminOrganization["plan"]["tier"]; seatLimit: string }> = {};
-    for (const org of payload.organizations) {
-      drafts[org.id] = { tier: org.plan.tier, seatLimit: String(org.seatLimit) };
-    }
-    setOrgDrafts(drafts);
-  }, [payload?.organizations]);
-
-  const saveOrganizationPlan = useCallback(async (org: AdminOrganization) => {
-    const draft = orgDrafts[org.id];
-    if (!draft) {
-      return;
-    }
-
-    const seatLimit = Number(draft.seatLimit);
-    if (!Number.isInteger(seatLimit) || seatLimit < 1) {
-      setError("Seat limit must be a positive whole number.");
-      return;
-    }
-
-    setSavingOrgId(org.id);
-    setError(null);
-
-    try {
-      const { response, payload: nextPayload } = await patchJson(`/v1/admin/organizations/${org.id}/plan`, {
-        tier: draft.tier,
-        seatLimit
-      });
-
-      if (!response.ok) {
-        setError(getErrorMessage(nextPayload, `Could not update ${org.name}.`));
-        return;
-      }
-
-      setPayload((current) => {
-        if (!current) {
-          return current;
-        }
-        return {
-          ...current,
-          organizations: current.organizations.map((entry) => entry.id === org.id
-            ? { ...entry, plan: { ...entry.plan, tier: draft.tier, source: "manual" }, seatLimit }
-            : entry)
-        };
-      });
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unknown network error");
-    } finally {
-      setSavingOrgId(null);
-    }
-  }, [orgDrafts]);
-
-  const saveOrganizationFreeSeats = useCallback(async () => {
-    if (!freeSeatsDialog) {
-      return;
-    }
-
-    const totalFreeSeats = Number(freeSeatsDialog.totalFreeSeats);
-    if (!Number.isInteger(totalFreeSeats) || totalFreeSeats < DEFAULT_FREE_SEAT_COUNT) {
-      setError(`Free seats must be a whole number at least ${DEFAULT_FREE_SEAT_COUNT}.`);
-      return;
-    }
-
-    setSavingFreeSeatsOrgId(freeSeatsDialog.org.id);
-    setError(null);
-
-    try {
-      const { response, payload: nextPayload } = await patchJson(`/v1/admin/organizations/${freeSeatsDialog.org.id}/free-seats`, {
-        totalFreeSeats
-      });
-
-      if (!response.ok) {
-        setError(getErrorMessage(nextPayload, `Could not update free seats for ${freeSeatsDialog.org.name}.`));
-        return;
-      }
-
-      const updatedOrganization = isRecord(nextPayload) && isRecord(nextPayload.organization) ? nextPayload.organization : null;
-      setPayload((current) => {
-        if (!current || !updatedOrganization) {
-          return current;
-        }
-        return {
-          ...current,
-          organizations: current.organizations.map((entry) => entry.id === freeSeatsDialog.org.id
-            ? {
-              ...entry,
-              memberCount: toNumberValue(updatedOrganization.memberCount),
-              freeSeatCount: toNumberValue(updatedOrganization.freeSeatCount),
-              seatsFreeAdditional: toNumberValue(updatedOrganization.seatsFreeAdditional),
-              billableSeatCount: toNumberValue(updatedOrganization.billableSeatCount)
-            }
-            : entry)
-        };
-      });
-      setFreeSeatsDialog(null);
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unknown network error");
-    } finally {
-      setSavingFreeSeatsOrgId(null);
-    }
-  }, [freeSeatsDialog]);
-
-  const saveOpenWorkWebAccess = useCallback(async () => {
-    if (!openworkWebAccessDialog) {
-      return;
-    }
-
-    const reason = openworkWebAccessDialog.reason.trim();
-    if (reason.length < 3) {
-      setOpenWorkWebAccessError({ orgId: openworkWebAccessDialog.org.id, message: "Add a short reason for the audit log." });
-      return;
-    }
-
-    const { org, enabled } = openworkWebAccessDialog;
-    setSavingOpenWorkWebAccessOrgId(org.id);
-    setOpenWorkWebAccessError(null);
-    setError(null);
-
-    try {
-      const { response, payload: nextPayload } = await putJson(`/v1/admin/organizations/${org.id}/openwork-web-access`, {
-        enabled,
-        reason
-      });
-      if (!response.ok) {
-        const message = getErrorMessage(nextPayload, `Could not update OpenWork Web access for ${org.name}.`);
-        setOpenWorkWebAccessError({ orgId: org.id, message });
-        setError(message);
-        return;
-      }
-
-      const updatedOrganization = isRecord(nextPayload) && isRecord(nextPayload.organization) ? nextPayload.organization : null;
-      if (!updatedOrganization) {
-        throw new Error("The OpenWork Web access response was incomplete.");
-      }
-      const openworkWebAccess = parseAdminOpenWorkWebAccess(updatedOrganization.openworkWebAccess);
-      setPayload((current) => {
-        if (!current) {
-          return current;
-        }
-        return {
-          ...current,
-          organizations: current.organizations.map((entry) => entry.id === org.id
-            ? { ...entry, openworkWebAccess }
-            : entry)
-        };
-      });
-      setOpenWorkWebAccessDialog(null);
-    } catch (nextError) {
-      const message = nextError instanceof Error ? nextError.message : "Unknown network error";
-      setOpenWorkWebAccessError({ orgId: org.id, message });
-      setError(message);
-    } finally {
-      setSavingOpenWorkWebAccessOrgId(null);
-    }
-  }, [openworkWebAccessDialog]);
-
   const deleteUser = useCallback(async () => {
     if (!deleteUserDialog) {
       return;
@@ -2054,18 +1861,20 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
 
     if (viewMode === "organizations") {
       downloadCsv(`den-organizations-${date}.csv`, [
-        ["id", "name", "slug", "plan", "plan_source", "seat_limit", "free_seats", "additional_free_seats", "chargeable_seats", "members", "created_at"],
+        ["id", "name", "slug", "plan", "plan_source", "paid_by", "users", "user_limit", "ends_at", "free_seats", "additional_free_seats", "chargeable_seats", "created_at"],
         ...filteredOrganizations.map((org) => [
           org.id,
           org.name,
           org.slug,
           org.plan.tier,
           org.plan.source,
-          String(org.seatLimit),
+          org.paidBy,
+          String(org.memberCount),
+          org.userLimit === null ? "" : String(org.userLimit),
+          org.endsAt ?? "",
           String(org.freeSeatCount),
           String(org.seatsFreeAdditional),
           String(org.billableSeatCount),
-          String(org.memberCount),
           org.createdAt ?? ""
         ])
       ]);
@@ -2148,6 +1957,17 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
             >
               {refreshing ? "Refreshing..." : "Refresh"}
             </button>
+            {section !== "overview" ? (
+              <button
+                type="button"
+                onClick={exportCsv}
+                disabled={viewMode === "organizations" ? filteredOrganizations.length === 0 : filteredUsers.length === 0}
+                className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Download size={15} strokeWidth={1.75} aria-hidden="true" />
+                Export current page CSV
+              </button>
+            ) : null}
 
           </div>
         </div>
@@ -2159,7 +1979,12 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
         ) : null}
 
         {section === "overview" ? <>
-        <AdminDashboard refreshKey={payload.generatedAt} totalOrganizations={payload.summary.totalOrganizations} totalUsers={payload.summary.totalUsers} onAccessDenied={handleDashboardAccessDenied} />
+        <QuickFind />
+        <AdminControlCenter onAccessDenied={handleDashboardAccessDenied} />
+        <section aria-labelledby="admin-gateway-usage-title" className="border-t border-slate-200 pt-5">
+          <h2 id="admin-gateway-usage-title" className="text-sm font-semibold text-slate-950">AI gateway usage</h2>
+          <AdminDashboard quickFind={false} refreshKey={payload.generatedAt} totalOrganizations={payload.summary.totalOrganizations} totalUsers={payload.summary.totalUsers} onAccessDenied={handleDashboardAccessDenied} />
+        </section>
         <details className="border-t border-slate-200 py-4">
           <summary className="w-fit cursor-pointer text-sm font-medium text-slate-700 focus-visible:outline-2 focus-visible:outline-slate-500">More analytics</summary>
           <div className="mt-4"><DenButton size="sm" variant="secondary" loading={analyticsLoading} onClick={() => void loadAnalytics()}>{analyticsLoaded ? "Refresh analytics" : "Load analytics"}</DenButton></div>
@@ -2234,16 +2059,6 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
       </div>
 
       {section !== "overview" ? <div className="py-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={exportCsv}
-              disabled={viewMode === "organizations" ? filteredOrganizations.length === 0 : filteredUsers.length === 0}
-              className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Export current page CSV
-            </button>
-        </div>
 
         {isAdminScaleFixtureEnabled() ? (
           <div data-testid="admin-scale-eval-status" className="mt-4 rounded-md border border-violet-200 bg-violet-50 px-4 py-3 text-sm leading-6 text-violet-900">
@@ -2258,10 +2073,11 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
         ) : null}
 
         {viewMode === "organizations" ? (
-          <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between" data-testid="admin-orgs-page">
-            <div className="grid w-full max-w-xl gap-2">
-              <label className="grid gap-2">
-                <span className="text-xs font-medium text-slate-500">Search organizations</span>
+          <div className="grid gap-4" data-testid="admin-orgs-page">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <label className="relative block w-full max-w-xl">
+                <span className="sr-only">Search organizations</span>
+                <Search size={16} strokeWidth={1.75} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   maxLength={160}
                   aria-label="Search organizations"
@@ -2274,36 +2090,41 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
                     setOrganizationVisibleDurationMs(null);
                     setSearch(event.target.value);
                   }}
-                  placeholder="Org name, slug, or id"
-                  className="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
+                  placeholder="Search by name, slug, or id"
+                  className="w-full rounded-md border border-slate-200 bg-white py-2.5 pl-9 pr-4 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
                 />
               </label>
-              <p className="text-xs leading-5 text-slate-500">
-                Page {routePage} · {payload.organizationPage.total} matching organizations · {pageDurationLabel} {payload.organizationPage.durationMs} ms{organizationVisibleDurationMs === null ? "" : ` · browser visible ${organizationVisibleDurationMs} ms`}
-              </p>
+              <div className="flex shrink-0 items-center gap-3">
+                <p className="text-xs tabular-nums text-slate-500" title={`${pageDurationLabel} ${payload.organizationPage.durationMs} ms${organizationVisibleDurationMs === null ? "" : ` · browser visible ${organizationVisibleDurationMs} ms`}`}>
+                  {payload.organizationPage.total === 0
+                    ? "No matches"
+                    : `${formatCount(payload.organizationPage.offset + 1)}–${formatCount(payload.organizationPage.offset + payload.organizationPage.returned)} of ${formatCount(payload.organizationPage.total)}`}
+                </p>
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPage(Math.max(1, routePage - 1));
+                    }}
+                    disabled={organizationsLoading || payload.organizationPage.offset === 0}
+                    className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPage(routePage + 1);
+                    }}
+                    disabled={organizationsLoading || !payload.organizationPage.hasMore}
+                    className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setPage(Math.max(1, routePage - 1));
-                }}
-                disabled={organizationsLoading || payload.organizationPage.offset === 0}
-                className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setPage(routePage + 1);
-                }}
-                disabled={organizationsLoading || !payload.organizationPage.hasMore}
-                className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Next
-              </button>
-            </div>
+            <AdminRecentOrganizationsStrip />
           </div>
         ) : (
           <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -2373,155 +2194,76 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
         <div className="mt-6 grid gap-3">
           {viewMode === "organizations" ? (
             filteredOrganizations.length > 0 ? (
-              <>
+              <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                <div aria-hidden="true" className="hidden border-b border-slate-200 bg-slate-50/80 px-4 py-2 text-xs font-medium text-slate-500 lg:grid lg:grid-cols-[minmax(0,1fr)_12rem_12rem] lg:gap-4 xl:grid-cols-[minmax(0,1fr)_12rem_7rem_12rem]">
+                  <span>Organization</span><span>Users</span><span className="hidden xl:block">Created</span><span className="text-right">Actions</span>
+                </div>
+                <ul className="divide-y divide-slate-200">
                 {filteredOrganizations.map((org) => {
-              const draft = orgDrafts[org.id] ?? { tier: org.plan.tier, seatLimit: String(org.seatLimit) };
-              const changed = draft.tier !== org.plan.tier || draft.seatLimit !== String(org.seatLimit);
+              const limited = org.paidBy === "none" && org.userLimit !== null;
+              const full = limited && org.userLimit !== null && org.memberCount >= org.userLimit;
+              const share = limited && org.userLimit ? Math.min(100, Math.round((org.memberCount / org.userLimit) * 100)) : 0;
+              const endLabel = planEndLabel(org.endsAt, org.ended);
 
               return (
-                <div key={org.id} data-testid={`admin-org-row-${org.slug}`} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 900px" }} className="min-w-0 rounded-md border border-slate-200 bg-white px-4 py-4">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Link href={adminOrganizationHref(org.id, routeSearch, routePage)} prefetch={false} className="truncate text-base font-semibold text-slate-950 hover:underline">{org.name}</Link>
+                <li key={org.id} data-testid={`admin-org-row-${org.slug}`} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 64px" }} className="min-w-0">
+                  <div className="grid min-w-0 grid-cols-2 items-center gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_12rem_12rem] lg:gap-4 xl:grid-cols-[minmax(0,1fr)_12rem_7rem_12rem]">
+                    <div className="col-span-2 min-w-0 lg:col-span-1">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <Link href={adminOrganizationHref(org.id, routeSearch, routePage)} prefetch={false} className="min-w-0 truncate text-sm font-semibold text-slate-950 hover:underline">{org.name}</Link>
                         <PlanPill tier={org.plan.tier} />
                       </div>
-                      <p className="mt-1 truncate text-sm text-slate-500">/{org.slug} · {org.id}</p>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600">
-                        {org.memberCount} / {org.seatLimit} seats
-                      </span>
-                      <span className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
-                        {org.freeSeatCount} free
-                      </span>
-                      <span className="inline-flex items-center rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
-                        {org.billableSeatCount} chargeable
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                    <MetaCell label="Created" value={formatDateTime(org.createdAt)} />
-                    <MetaCell label="Plan source" value={formatProvider(org.plan.source)} />
-                    <MetaCell label="Members" value={String(org.memberCount)} />
-                    <div>
-                      <p className="text-xs font-medium text-slate-500">Free seats</p>
-                      <div className="mt-1 flex items-center gap-2">
-                        <p className="text-sm text-slate-700">{org.freeSeatCount}</p>
+                      <div className="mt-0.5 flex min-w-0 items-center gap-1 text-xs text-slate-500">
+                        <span className="min-w-0 truncate font-mono">{org.slug && org.slug !== org.id ? `/${org.slug} · ${org.id}` : org.id}</span>
                         <button
                           type="button"
-                          aria-label={`Edit free seats for ${org.name}`}
-                          onClick={() => setFreeSeatsDialog({ org, totalFreeSeats: String(org.freeSeatCount) })}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                          aria-label={`Copy id for ${org.name}`}
+                          title="Copy organization id"
+                          onClick={() => {
+                            void copyOrgId(org.id);
+                          }}
+                          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700"
                         >
-                          <Pencil size={13} aria-hidden="true" />
+                          {copiedOrgId === org.id ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
                         </button>
                       </div>
-                      <p className="mt-1 text-xs text-slate-400">
-                        {org.seatsFreeAdditional > 0 ? `${org.seatsFreeAdditional} additional` : "Default included"}
-                      </p>
                     </div>
-                  </div>
 
-                  <Link href={adminOrganizationHref(org.id, routeSearch, routePage, "features")} prefetch={false}
-                    data-testid="admin-organization-features-link" className="mt-4 inline-block text-sm font-medium text-slate-700 underline-offset-2 hover:underline">
-                    Features
-                  </Link>
-
-                  <div className="mt-4 border-t border-slate-200 pt-4" data-testid="admin-openwork-web-access">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-xs font-medium text-slate-500">OpenWork Web billing access</p>
-                          <OpenWorkWebAccessPill access={org.openworkWebAccess} />
+                    <div className="min-w-0" data-testid={`admin-org-users-${org.slug}`}>
+                      <p className="text-sm tabular-nums text-slate-700">
+                        {limited && org.userLimit !== null
+                          ? <>{formatCount(org.memberCount)} / {formatCount(org.userLimit)}{endLabel ? <span className={org.ended ? "text-amber-700" : "text-slate-500"}> · {endLabel}</span> : null}</>
+                          : <>{formatCount(org.memberCount)} <span className="text-slate-500">· {org.paidBy === "none" ? "no limit" : "paid in Stripe"}</span></>}
+                      </p>
+                      {limited ? (
+                        <div className="mt-1 h-1 w-full max-w-[8rem] overflow-hidden rounded-full bg-slate-100" aria-hidden="true">
+                          <div className={`h-full rounded-full ${full ? "bg-slate-700" : "bg-slate-400"}`} style={{ width: `${Math.max(share, 4)}%` }} />
                         </div>
-                        <p className="mt-2 text-sm leading-6 text-slate-600">
-                          {org.openworkWebAccess.hasOngoingSubscription
-                            ? `A ${org.openworkWebAccess.subscriptionStatus ?? "current"} Stripe subscription controls access and billing.`
-                            : org.openworkWebAccess.complimentaryAccess
-                              ? "All joined members can use OpenWork Web without a Stripe subscription or per-member charge, even when deployment-wide availability is off."
-                              : "No complimentary grant or ongoing paid OpenWork Web subscription."}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        data-testid="admin-openwork-web-access-action"
-                        onClick={() => setOpenWorkWebAccessDialog({
-                          org,
-                          enabled: !org.openworkWebAccess.complimentaryAccess,
-                          reason: ""
-                        })}
-                        disabled={savingOpenWorkWebAccessOrgId === org.id || (!org.openworkWebAccess.complimentaryAccess && org.openworkWebAccess.hasOngoingSubscription)}
-                        className="inline-flex shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {savingOpenWorkWebAccessOrgId === org.id
-                          ? "Saving..."
-                          : org.openworkWebAccess.complimentaryAccess
-                            ? "Revoke complimentary access"
-                            : "Grant complimentary access"}
-                      </button>
+                      ) : null}
                     </div>
-                    {!org.openworkWebAccess.complimentaryAccess && org.openworkWebAccess.hasOngoingSubscription ? (
-                      <p className="mt-2 text-xs leading-5 text-amber-700">
-                        Cancel or finish the paid subscription in Stripe before granting complimentary access.
-                      </p>
-                    ) : null}
-                    {openworkWebAccessError?.orgId === org.id ? (
-                      <p data-testid="admin-openwork-web-access-error" className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
-                        {openworkWebAccessError.message}
-                      </p>
-                    ) : null}
+
+                    <p className="text-sm text-slate-600 lg:hidden xl:block" title={formatDateTime(org.createdAt)}><span className="xl:hidden">Created </span>{org.createdAt ? formatRelativeTime(org.createdAt) : "—"}</p>
+
+                    <div className="col-span-2 flex flex-wrap items-center justify-end gap-1 lg:col-span-1">
+                      <Link href={adminOrganizationHref(org.id, routeSearch, routePage, "features")} prefetch={false}
+                        data-testid="admin-organization-features-link" className="rounded-md px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950">
+                        Features
+                      </Link>
+                      <Link href={adminOrganizationHref(org.id, routeSearch, routePage, "billing")} prefetch={false}
+                        data-testid="admin-organization-billing-link" aria-label={`Billing for ${org.name}`} className="rounded-md px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950">
+                        Billing
+                      </Link>
+                    </div>
                   </div>
-
-                  <div className="mt-4 grid gap-3 border-t border-slate-200 pt-4 lg:grid-cols-[12rem_10rem_auto] lg:items-end">
-                    <label className="grid min-w-0 gap-2">
-                      <span className="text-xs font-medium text-slate-500">Plan</span>
-                      <DenSelect
-                        value={draft.tier}
-                        onChange={(event) => {
-                          const tier = event.target.value === "enterprise" || event.target.value === "team" ? event.target.value : "free";
-                          setOrgDrafts((current) => ({ ...current, [org.id]: { ...draft, tier } }));
-                        }}
-                        className="w-full min-w-0 rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
-                      >
-                        <option value="free">Free</option>
-                        <option value="team">Team</option>
-                        <option value="enterprise">Enterprise</option>
-                      </DenSelect>
-                    </label>
-
-                    <label className="grid min-w-0 gap-2">
-                      <span className="text-xs font-medium text-slate-500">Seats</span>
-                      <input
-                        type="number"
-                        min={1}
-                        value={draft.seatLimit}
-                        onChange={(event) => setOrgDrafts((current) => ({ ...current, [org.id]: { ...draft, seatLimit: event.target.value } }))}
-                        className="w-full min-w-0 rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
-                      />
-                    </label>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void saveOrganizationPlan(org);
-                      }}
-                      disabled={!changed || savingOrgId === org.id}
-                      className="inline-flex items-center justify-center rounded-md bg-slate-950 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {savingOrgId === org.id ? "Saving..." : "Save access"}
-                    </button>
-                  </div>
-                </div>
+                </li>
               );
                 })}
-              </>
+                </ul>
+              </div>
             ) : (
-              <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
+              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
                 <p className="text-base font-semibold text-slate-950">No organizations match</p>
-                <p className="mt-2 text-sm leading-7 text-slate-500">Try a different search.</p>
+                <p className="mt-2 text-sm leading-7 text-slate-500">Try a different name, slug, or id.</p>
               </div>
             )
           ) : filteredUsers.length > 0 ? filteredUsers.map((user) => {
@@ -2768,128 +2510,6 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
 
         <p className="mt-6 text-xs leading-6 text-slate-500">Snapshot generated {formatDateTime(payload.generatedAt)}.</p>
       </div> : null}
-
-      {openworkWebAccessDialog ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="openwork-web-access-dialog-title"
-          onClick={() => setOpenWorkWebAccessDialog(null)}
-        >
-          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Organization billing access</p>
-            <h2 id="openwork-web-access-dialog-title" className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-slate-950">
-              {openworkWebAccessDialog.enabled ? "Grant" : "Revoke"} complimentary OpenWork Web?
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              {openworkWebAccessDialog.enabled
-                ? `${openworkWebAccessDialog.org.name} will receive OpenWork Web for every joined member without a Stripe subscription or per-member charge, even when deployment-wide availability is off.`
-                : `${openworkWebAccessDialog.org.name} will lose complimentary access immediately unless an independently eligible paid subscription exists.`}
-            </p>
-
-            <label className="mt-5 grid gap-2">
-              <span className="text-xs font-medium text-slate-500">Reason for audit log</span>
-              <textarea
-                data-testid="admin-openwork-web-access-reason"
-                rows={3}
-                maxLength={500}
-                value={openworkWebAccessDialog.reason}
-                onChange={(event) => setOpenWorkWebAccessDialog({ ...openworkWebAccessDialog, reason: event.target.value })}
-                placeholder="For example: Internal OpenWork administration organization"
-                className="resize-none rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
-              />
-            </label>
-
-            {openworkWebAccessError?.orgId === openworkWebAccessDialog.org.id ? (
-              <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs leading-5 text-red-700">
-                {openworkWebAccessError.message}
-              </p>
-            ) : null}
-
-            <div className="mt-6 flex flex-wrap justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setOpenWorkWebAccessDialog(null)}
-                disabled={savingOpenWorkWebAccessOrgId === openworkWebAccessDialog.org.id}
-                className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                data-testid="admin-openwork-web-access-confirm"
-                onClick={() => {
-                  void saveOpenWorkWebAccess();
-                }}
-                disabled={savingOpenWorkWebAccessOrgId === openworkWebAccessDialog.org.id || openworkWebAccessDialog.reason.trim().length < 3}
-                className="inline-flex items-center justify-center rounded-md bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {savingOpenWorkWebAccessOrgId === openworkWebAccessDialog.org.id
-                  ? "Saving..."
-                  : openworkWebAccessDialog.enabled
-                    ? "Grant access"
-                    : "Revoke access"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {freeSeatsDialog ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="free-seats-dialog-title"
-          onClick={() => setFreeSeatsDialog(null)}
-        >
-          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Organization billing</p>
-            <h2 id="free-seats-dialog-title" className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-slate-950">
-              Edit free seats
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              Set the total number of free seats for {freeSeatsDialog.org.name}. The default {DEFAULT_FREE_SEAT_COUNT} seats stay included; OpenWork saves only the additional seats in organization metadata.
-            </p>
-
-            <label className="mt-5 grid gap-2">
-              <span className="text-xs font-medium text-slate-500">Total free seats</span>
-              <input
-                type="number"
-                min={DEFAULT_FREE_SEAT_COUNT}
-                value={freeSeatsDialog.totalFreeSeats}
-                onChange={(event) => setFreeSeatsDialog({ ...freeSeatsDialog, totalFreeSeats: event.target.value })}
-                className="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
-              />
-            </label>
-
-            <p className="mt-3 rounded-md bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500">
-              Additional metadata value to save: {Math.max(0, Number(freeSeatsDialog.totalFreeSeats) - DEFAULT_FREE_SEAT_COUNT) || 0}
-            </p>
-
-            <div className="mt-6 flex flex-wrap justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setFreeSeatsDialog(null)}
-                className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void saveOrganizationFreeSeats();
-                }}
-                disabled={savingFreeSeatsOrgId === freeSeatsDialog.org.id}
-                className="inline-flex items-center justify-center rounded-md bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {savingFreeSeatsOrgId === freeSeatsDialog.org.id ? "Saving..." : "Save"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {deleteUserDialog ? (
         <div

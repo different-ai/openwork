@@ -1,0 +1,62 @@
+---
+title: "Diagnostics"
+description: "Check that desktop apps connect, AI providers are set up correctly, and your installation's services work, from Settings › Diagnostics or one API call."
+---
+
+**Settings › Diagnostics** in your organization dashboard shows whether your organization's setup works, before someone runs into a problem. It is the same page on OpenWork Cloud, single-organization installs and self-hosted installs.
+
+| Section | What it tells you | Who sees it |
+| --- | --- | --- |
+| Desktop app | How long desktop apps take to start and connect to OpenWork in the last 24 hours, and which launches failed and why | People who can view desktop policies |
+| AI providers | Whether each provider accepts its key and serves the models you configured, without sending a prompt | People who can view AI Gateway providers |
+| Connectors | Whether the Slack assistant's token works and when it last received an event; which Google APIs your Google Workspace connector can use | People who can view connections |
+| Installation | Self-hosted: the OpenWork server, database, AI Gateway, headless runner, Workbot and email, with how long each check took. Cloud: managed by OpenWork | Self-hosted installation administrators only |
+| Advanced | The network check from the OpenWork server | People who can view network diagnostics |
+
+A section you don't have access to stays visible with a lock and names the permission it needs.
+
+## Desktop app
+
+Each launch of the desktop app sends one small report to your OpenWork server: the app version, platform, how many milliseconds it took to open the window, start the local engine, sign in to OpenWork and load your organization's tools, and, if it failed, at which step and a short reason such as *certificate not trusted* or *server name not found*. Reports contain no file paths, URLs, email addresses or message content.
+
+If a device can't reach your OpenWork server at all, the app keeps the report and sends it the next time it connects, so certificate and DNS problems still show up here. People who were never signed in send nothing. Reports are deleted after 30 days.
+
+<Tip>
+If launches fail with **certificate not trusted**, see [Certificate trust and proxies](/start-here/certificate-trust-and-proxies).
+</Tip>
+
+## AI providers
+
+OpenWork checks each provider with the key your organization saved and lists the models it serves. It never sends a prompt, so checks cost nothing.
+
+- **Ready**: the key works and the models you configured are served.
+- **Key rejected**: the provider answered 401 or 403. Update the key.
+- **Model missing**: a model people can pick isn't served by this endpoint. Remove it or fix the deployment name.
+- **Unreachable**: the endpoint didn't answer. Check the address and your network rules.
+- **Not checked**: Vertex, Microsoft Foundry and Bedrock API keys can't be checked without a model request. Bedrock access keys are checked with AWS STS, which proves the key but not model access.
+
+Providers where each person signs in with their own account are never checked with someone else's credentials; the page shows how many people are connected and how many need to sign in again.
+
+## Installation (self-hosted)
+
+Installation administrators see each service and how long its check took:
+
+- **OpenWork server**: version, when it started and how long it took to start.
+- **Database**: a real query.
+- **AI Gateway**, **Headless runner**, **Workbot**: authenticated health checks. Resumable answers appear as a detail of the headless runner.
+- **Email**: OpenWork signs in to your SMTP server, or checks that your Resend key works and the `EMAIL_FROM` domain is verified. No message is sent.
+
+Installation administrators are the people on your installation's administrator list: the first administrator from setup, plus anyone in `DEN_BOOTSTRAP_ADMIN_EMAILS`. Organization owners and admins don't get installation details unless they are on that list.
+
+## Check from a script
+
+Use an organization API key to read the same data after a deploy:
+
+```bash
+curl -fsS -H "Authorization: Bearer $OPENWORK_API_KEY" \
+  "https://openwork.example.com/api/den/v1/org/diagnostics?strict=1"
+```
+
+With `strict=1` the request fails with `503` when anything needs urgent attention, such as a rejected provider key or an unreachable service. Use `POST /v1/org/diagnostics/check` to start a fresh check. If the API key belongs to an installation administrator, the response includes the Installation section.
+
+If the OpenWork server itself can't answer, use the `/health` and `/ready` endpoints and your deployment logs instead.

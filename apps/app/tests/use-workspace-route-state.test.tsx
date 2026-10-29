@@ -458,6 +458,26 @@ for (const staleCompletesFirst of [true, false]) {
   });
 }
 
+test("a workspace whose OpenCode config is invalid shows that error instead of an empty chat list", async () => {
+  await mount();
+  await publishRouting(false);
+  const message = "OpenCode can't use the config file /tmp/ws_1/opencode.json: provider.x.reasoning: Expected boolean. Fix or remove that setting, then try again.";
+  const selected = requests.find((request) => request.workspaceId === "ws_1");
+  if (!selected) throw new Error("Expected the selected workspace's inventory request");
+  await act(async () => {
+    selected.response.reject(Object.assign(new Error(message), { code: "opencode_config_invalid", status: 400 }));
+  });
+  expect(route().selectedWorkspaceError).toBe(message);
+  // After the file is fixed, Retry lists again and the error clears.
+  let reload: Promise<void> = Promise.resolve();
+  await act(async () => { reload = route().reloadWorkspaceSessions("ws_1"); });
+  const retried = requests.filter((request) => request.workspaceId === "ws_1").at(-1);
+  expect(retried).not.toBe(selected);
+  await act(async () => { retried?.response.resolve([session("ws_1", "kept")]); await reload; });
+  expect(route().selectedWorkspaceError).toBeNull();
+  expect(route().sessionsByWorkspaceId.ws_1.map((item) => item.id)).toEqual(["kept"]);
+});
+
 test("offline recovery reloads cleared inventories even when the unselected scope is unchanged", async () => {
   await mount();
   await publishRouting(false);

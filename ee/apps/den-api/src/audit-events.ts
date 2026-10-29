@@ -5,6 +5,9 @@ import { appLogger } from "./observability/logger.js"
 import { AUDIT_ALERT_OPERATIONAL_MARKER } from "./operational-log-markers.js"
 
 export const ORGANIZATION_AUDIT_ACTIONS = {
+  benefitSettingUpdated: "organization.benefit_setting.updated",
+  benefitGrantCreated: "organization.benefit_grant.created",
+  benefitGrantRevoked: "organization.benefit_grant.revoked",
   apiKeyCreated: "organization.api_key.created",
   apiKeyDeleted: "organization.api_key.deleted",
   invitationCreated: "organization.invitation.created",

@@ -21,9 +21,11 @@ import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } fro
 import type { DenResourceSnapshot } from "./den-types";
 import type { CloudImportedMarketplace, CloudImportedPlugin, CloudImportedProvider } from "../cloud/import-state";
 import { desktopFreeAccessStatusSchema } from "./inference-access";
+import { claudeImportItemsSchema, claudeImportResultsSchema } from "./claude-import";
 
 const desktopFreePreferencesSchema = z.object({ enabled: z.boolean(), available: z.boolean(), canEnable: z.boolean(), refresh: z.enum(["reloaded", "deferred"]).optional() });
 export type DesktopFreePreferences = z.infer<typeof desktopFreePreferencesSchema>;
+const desktopFreeAnalyticsSchema = z.object({ enabled: z.boolean() });
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -176,9 +178,36 @@ export interface EngineV2PreviewStatus {
   v1HistoryAvailable?: boolean;
   mirroredProviderIds: string[];
   skippedProviderIds: string[];
+  /** Why each skipped provider is not on OpenCode v2. Older servers, and the rollout switched off, omit it. */
+  skippedProviders?: EngineV2SkippedProvider[];
   catalogModelIds: string[];
   lastMirroredAt?: string;
   lastError?: string;
+}
+
+/**
+ * `policy`: the organization allows only its own providers. Every other
+ * reason means the provider is connected on this computer but OpenCode v2
+ * cannot use it yet (`oauth` sign-ins, `unsupported` adapters, `metadata` or
+ * `credentials` it could not read). A reason a newer server adds reads as
+ * `unsupported`, never as ready.
+ */
+export type EngineV2SkippedProviderReason = "policy" | "oauth" | "unsupported" | "metadata" | "credentials";
+
+export interface EngineV2SkippedProvider {
+  id: string;
+  reason: EngineV2SkippedProviderReason;
+}
+
+const ENGINE_V2_SKIP_REASONS: readonly EngineV2SkippedProviderReason[] = ["policy", "oauth", "unsupported", "metadata", "credentials"];
+
+function parseEngineV2SkippedProviders(value: unknown): EngineV2SkippedProvider[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.flatMap((item): EngineV2SkippedProvider[] => {
+    if (!item || typeof item !== "object" || !("id" in item) || typeof item.id !== "string" || !item.id) return [];
+    const reason = "reason" in item ? ENGINE_V2_SKIP_REASONS.find((known) => known === item.reason) : undefined;
+    return [{ id: item.id, reason: reason ?? "unsupported" }];
+  });
 }
 
 const workspaceDefaultModelRefSchema = z.object({
@@ -213,6 +242,7 @@ function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
   ) {
     throw new Error("Invalid OpenCode v2 engine preview status response.");
   }
+  const skippedProviders = parseEngineV2SkippedProviders("skippedProviders" in value ? value.skippedProviders : undefined);
   return {
     migration: parseEngineV2Migration("migration" in value ? value.migration : undefined),
     ...("v1HistoryAvailable" in value && typeof value.v1HistoryAvailable === "boolean"
@@ -233,6 +263,7 @@ function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
     binSource: "binSource" in value && typeof value.binSource === "string" ? value.binSource : undefined,
     mirroredProviderIds: value.mirroredProviderIds,
     skippedProviderIds: value.skippedProviderIds,
+    ...(skippedProviders ? { skippedProviders } : {}),
     catalogModelIds: value.catalogModelIds,
     lastMirroredAt: "lastMirroredAt" in value && typeof value.lastMirroredAt === "string" ? value.lastMirroredAt : undefined,
     lastError: "lastError" in value && typeof value.lastError === "string" ? value.lastError : undefined,
@@ -1673,8 +1704,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
   return {
     baseUrl,
+    cloudComputerStatus: () => requestJson<{ ready: boolean; paused: boolean; busy: boolean; sessionId: string | null }>(baseUrl, "/cloud-computer/status", { token, timeoutMs: 15_000 }),
+    cloudComputerFrame: () => requestJson<{ dataUrl: string; width: number; height: number; screenWidth: number; screenHeight: number; generation: number }>(baseUrl, "/cloud-computer/frame", { token, timeoutMs: 15_000 }),
+    cloudComputerInteract: (body: Record<string, unknown>) => requestJson<unknown>(baseUrl, "/cloud-computer/interact", { token, method: "POST", body, timeoutMs: 15_000 }),
     desktopFreePreferences: async () => desktopFreePreferencesSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preferences", { hostToken, timeoutMs: timeouts.config })),
     setDesktopFreeEnabled: async (enabled: boolean) => desktopFreePreferencesSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preferences", { hostToken, method: "PUT", body: { enabled }, timeoutMs: timeouts.cloudMcpReconcile })),
+    setDesktopFreeAnalytics: async (enabled: boolean) => desktopFreeAnalyticsSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/analytics", { hostToken, method: "PUT", body: { enabled }, timeoutMs: timeouts.config })),
     desktopFreeStatus: async () => desktopFreeAccessStatusSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/status", { token, timeoutMs: 15_000 })),
     desktopFreePreflight: async () => desktopFreeAccessStatusSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preflight", { token, method: "POST", timeoutMs: 15_000 })),
     token,
@@ -2310,6 +2345,44 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "DELETE",
       }),
+    listClaudeCodeSessions: async (workspaceId: string) =>
+      claudeImportItemsSchema.parse(
+        await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/code`, { token, hostToken, timeoutMs: 60_000 }),
+      ).items,
+    importClaudeCodeSessions: async (workspaceId: string, ids: string[]) =>
+      claudeImportResultsSchema.parse(
+        await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/code`, {
+          token,
+          hostToken,
+          method: "POST",
+          body: { ids },
+          timeoutMs: 10 * 60_000,
+        }),
+      ).results,
+    readClaudeExport: async (workspaceId: string, file: File, selection?: { importIds: string[] }) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("mode", selection ? "import" : "preview");
+      if (selection) form.append("ids", JSON.stringify(selection.importIds));
+      const result = await requestMultipartRaw(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/export`, {
+        token,
+        hostToken,
+        method: "POST",
+        body: form,
+        timeoutMs: 10 * 60_000,
+      });
+      let parsed: unknown = null;
+      try { parsed = result.text ? JSON.parse(result.text) : null; } catch { parsed = null; }
+      if (!result.ok) {
+        const error = z.object({ code: z.string().optional(), message: z.string().optional() }).safeParse(parsed);
+        throw new OpenworkServerError(
+          result.status,
+          error.success ? error.data.code ?? "request_failed" : "request_failed",
+          error.success && error.data.message ? error.data.message : "This file could not be read.",
+        );
+      }
+      return parsed;
+    },
     uploadInbox: async (workspaceId: string, file: File, options?: { path?: string }) => {
       const id = workspaceId.trim();
       if (!id) throw new Error("workspaceId is required");

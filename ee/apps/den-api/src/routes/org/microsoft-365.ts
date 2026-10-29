@@ -6,21 +6,24 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
-import { jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
-import { jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { requireFeature } from "../../features.js"
+import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
+import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
-import { MicrosoftGraphClient, MicrosoftGraphMutationOutcomeUnknownError, MicrosoftGraphRequestError } from "../../capability-sources/microsoft-graph.js"
+import { DEFAULT_GRAPH_BASE_URL, MICROSOFT_MAIL_ATTACHMENT_MAX_BYTES, MicrosoftGraphClient, type Microsoft365CalendarEvent } from "../../capability-sources/microsoft-graph.js"
 import { getOrgOAuthClient } from "../../capability-sources/oauth-credentials.js"
 import { listNativeProviderUsableEntries, nativeProviderConnectionPolicyError, resolveDefaultNativeProviderCredentialId, type NativeProviderPolicyError } from "../../capability-sources/native-provider-connections.js"
 import { clientSelectedFeatures, getNativeOAuthProvider, providerScopesSatisfy } from "../../capability-sources/provider-registry.js"
 import { listTeamsForMember } from "../../orgs.js"
 import { INTERNAL_CAPABILITY_CONNECTOR_HEADER, readInternalCapabilityConnectorId } from "../../session.js"
 import type { OrgRouteVariables } from "./shared.js"
+import { driveIdSchema, driveItemNameSchema, driveItemSchema, graphError, graphErrorStatus, graphItemIdSchema, needsConnectionSchema, upstreamErrorSchema, type Microsoft365Access, type Microsoft365Identity } from "./microsoft-365-shared.js"
+import { registerMicrosoftDriveFileRoutes, type MicrosoftDriveFileRouteOptions } from "./microsoft-drive-files.js"
+import { registerMicrosoftDocumentRoutes } from "./microsoft-documents.js"
+
+const FILE_WRITE_FEATURES: readonly string[] = ["filesWrite", "filesFull"]
 
 const CONNECT_MICROSOFT_ACCOUNT_MESSAGE = "Connect your Microsoft work account first: open Settings > Connect and use Connect your account on the Microsoft 365 row, or connect from the OpenWork Cloud dashboard."
-
-const graphItemIdSchema = z.string().trim().min(1).max(512)
-  .refine((value) => value !== "." && value !== ".." && !/[\s/\\?#]/.test(value), "Use a Microsoft Graph item id, not a path or URL.")
 
 const emailAddressSchema = z.object({
   name: z.string(),
@@ -69,13 +72,17 @@ const mailMessageResponseSchema = z.object({
   message: mailMessageSchema,
 }).meta({ ref: "Microsoft365MailMessageResponse" })
 
+const bodyContentTypeSchema = z.enum(["text", "html"]).default("text")
+  .describe("How Outlook stores body: text (default) or html. Use html for links, line breaks, tables, or an HTML signature; markup sent as text shows as literal tags.")
+
 const mailDraftBodySchema = z.object({
   to: z.array(z.string().email()).min(1).max(50),
   cc: z.array(z.string().email()).max(50).optional(),
   bcc: z.array(z.string().email()).max(50).optional(),
   subject: z.string().trim().min(1).max(998),
   body: z.string().max(200_000),
-}).meta({ ref: "Microsoft365MailDraftBody" })
+  bodyContentType: bodyContentTypeSchema,
+}).strict().meta({ ref: "Microsoft365MailDraftBody" })
 
 const mailDraftResponseSchema = z.object({
   ok: z.literal(true),
@@ -94,7 +101,54 @@ const mailSendResponseSchema = z.object({
 
 const mailReplyDraftBodySchema = z.object({
   comment: z.string().trim().min(1).max(20_000).describe("Reply text to save in a draft for user review; this does not send mail."),
+  bodyContentType: bodyContentTypeSchema,
 }).strict().meta({ ref: "Microsoft365MailReplyDraftBody" })
+
+const MAIL_DRAFT_UPLOAD_MAX_FILES = 10
+const MAIL_DRAFT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024
+const MAIL_DRAFT_UPLOAD_BODY_MAX_BYTES = MAIL_DRAFT_UPLOAD_MAX_BYTES + (256 * 1024)
+const MIME_TYPE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
+
+const mailAttachmentSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  contentType: z.string(),
+  size: z.number().nullable(),
+  isInline: z.boolean().describe("Shown inside the message body, such as a signature image, rather than as a separate file."),
+  kind: z.enum(["file", "item", "reference", "unknown"]).describe("Only file attachments have bytes to download; item is an attached Outlook item and reference a link to a cloud file."),
+}).meta({ ref: "Microsoft365MailAttachment" })
+
+const mailAttachmentsResponseSchema = z.object({
+  ok: z.literal(true),
+  attachments: z.array(mailAttachmentSchema),
+}).meta({ ref: "Microsoft365MailAttachmentsResponse" })
+
+const mailAttachmentParamSchema = z.object({
+  messageId: graphItemIdSchema.describe("Microsoft Graph message id."),
+  attachmentId: graphItemIdSchema.describe("Attachment id from the mail-attachments capability."),
+})
+
+const mailAttachmentResponseSchema = z.object({
+  ok: z.literal(true),
+  attachment: mailAttachmentSchema.extend({
+    contentBase64: z.string().nullable().describe("Standard base64-encoded file bytes; decode locally to reconstruct the file."),
+    contentUnavailableReason: z.enum(["not_a_file", "file_too_large"]).nullable(),
+  }),
+}).meta({ ref: "Microsoft365MailAttachmentResponse" })
+
+const connectionIdSchema = z.string().regex(/^(microsoft-365|emc_[A-Za-z0-9]+)$/).optional()
+
+// The multipart payload of a draft with attachments: a new message, or a reply to one.
+const mailDraftUploadPayloadSchema = z.union([
+  mailDraftBodySchema.extend({ connectionId: connectionIdSchema }).strict(),
+  z.object({ replyToMessageId: graphItemIdSchema, comment: mailReplyDraftBodySchema.shape.comment, bodyContentType: bodyContentTypeSchema, connectionId: connectionIdSchema }).strict(),
+])
+
+const mailDraftUploadResponseSchema = z.object({
+  ok: z.literal(true),
+  draft: mailMessageSchema,
+  attachments: z.array(z.object({ name: z.string(), contentType: z.string(), size: z.number().int().nonnegative() })),
+}).meta({ ref: "Microsoft365MailDraftWithAttachmentsResponse" })
 
 const mailMessageUpdateBodySchema = z.object({
   isRead: z.boolean().optional(),
@@ -137,37 +191,70 @@ const calendarEventsResponseSchema = z.object({
   events: z.array(calendarEventSchema),
 }).meta({ ref: "Microsoft365CalendarEventsResponse" })
 
+const onlineMeetingFields = {
+  isOnlineMeeting: z.boolean().optional().describe("true makes this a Teams meeting with a join link in the invitation. Do not put \"Microsoft Teams Meeting\" in location instead; that is only text."),
+  onlineMeetingProvider: z.enum(["teamsForBusiness", "skypeForBusiness", "skypeForConsumer"]).optional().describe("Online meeting service; teamsForBusiness when omitted. Only with isOnlineMeeting: true."),
+}
+const providerNeedsMeeting = {
+  check: (value: { isOnlineMeeting?: boolean; onlineMeetingProvider?: string }) => value.onlineMeetingProvider === undefined || value.isOnlineMeeting === true,
+  issue: { message: "onlineMeetingProvider needs isOnlineMeeting: true.", path: ["onlineMeetingProvider"] },
+}
+
 const calendarEventBodySchema = z.object({
   subject: z.string().trim().min(1).max(255),
   body: z.string().max(20_000).optional(),
+  bodyContentType: bodyContentTypeSchema,
   start: z.string().datetime(),
   end: z.string().datetime(),
   timeZone: z.string().trim().min(1).max(100).default("UTC"),
   location: z.string().trim().max(255).optional(),
   attendees: z.array(z.string().email()).max(100).optional(),
-}).refine((value) => Date.parse(value.end) > Date.parse(value.start), {
+  confirmNotifications: z.literal(true).optional().describe("Required when attendees are listed. Set true only when the user explicitly asked to invite them; Microsoft emails each attendee an invitation."),
+  ...onlineMeetingFields,
+}).strict().refine((value) => Date.parse(value.end) > Date.parse(value.start), {
   message: "end must be after start",
   path: ["end"],
-}).meta({ ref: "Microsoft365CalendarEventBody" })
+}).refine((value) => !value.attendees?.length || value.confirmNotifications === true, {
+  message: "Inviting attendees requires confirmNotifications: true.",
+  path: ["confirmNotifications"],
+}).refine(providerNeedsMeeting.check, providerNeedsMeeting.issue).meta({ ref: "Microsoft365CalendarEventBody" })
 
 const calendarEventResponseSchema = z.object({
   ok: z.literal(true),
   event: calendarEventSchema,
+  warning: z.string().optional().describe("Present when a Teams meeting was asked for but Microsoft returned no join link. The event exists; do not create it again."),
 }).meta({ ref: "Microsoft365CalendarEventResponse" })
+
+/** A meeting asked for without a join link coming back is said out loud, never reported as a plain success. */
+function calendarEventResult(input: { isOnlineMeeting?: boolean }, event: Microsoft365CalendarEvent) {
+  if (input.isOnlineMeeting !== true || event.onlineMeetingUrl) return { ok: true as const, event }
+  return {
+    ok: true as const, event,
+    warning: "The event was saved, but Microsoft did not return a Teams join link. The organization may not allow Teams meetings in Outlook, or the account has no Teams license. Tell the user to open the event in Outlook and turn on Teams meeting; do not create the event again.",
+  }
+}
 
 const calendarEventParamSchema = z.object({ eventId: graphItemIdSchema })
 const calendarEventUpdateBodySchema = z.object({
   confirmNotifications: z.literal(true).describe("The user explicitly authorized this update and potential attendee email notifications from Microsoft Graph."),
   subject: z.string().trim().min(1).max(255).optional(),
   body: z.string().max(20_000).optional(),
+  bodyContentType: z.enum(["text", "html"]).optional().describe("How Outlook stores body: text (default) or html. Only allowed together with body."),
   start: z.string().max(40).datetime().optional().describe("New UTC start, with Z suffix. Rescheduling requires both start and end."),
   end: z.string().max(40).datetime().optional().describe("New UTC end, with Z suffix."),
   location: z.string().trim().max(255).optional(),
+  isOnlineMeeting: z.literal(true).optional().describe("true adds a Teams meeting and join link to this event. Microsoft cannot remove one again through this field."),
+  onlineMeetingProvider: onlineMeetingFields.onlineMeetingProvider,
 }).strict()
   .refine(({ confirmNotifications: _confirmation, ...fields }) => Object.values(fields).some((entry) => entry !== undefined), "Provide at least one event field.")
   .refine((value) => (value.start === undefined && value.end === undefined)
     || (value.start !== undefined && value.end !== undefined && Date.parse(value.end) > Date.parse(value.start)),
   "Rescheduling requires both start and end, with end after start.")
+  .refine((value) => value.bodyContentType === undefined || value.body !== undefined, {
+    message: "bodyContentType needs body.",
+    path: ["bodyContentType"],
+  })
+  .refine(providerNeedsMeeting.check, providerNeedsMeeting.issue)
   .meta({ ref: "Microsoft365CalendarEventUpdateBody" })
 
 const calendarCancelBodySchema = z.object({
@@ -187,27 +274,22 @@ const calendarDeleteResponseSchema = z.object({
 }).meta({ ref: "Microsoft365CalendarDeleteResponse" })
 
 const driveFilesQuerySchema = z.object({
-  query: z.string().trim().min(1).max(500).describe("Text to search in OneDrive file names and content."),
+  query: z.string().trim().min(1).max(500).describe("Text to search in file names and content."),
   maxResults: z.coerce.number().int().min(1).max(25).default(10).describe("Maximum files to return, capped at 25."),
+  pageToken: z.string().regex(/^\d{1,6}$/).optional().describe("nextPageToken from the previous page of the same search."),
 })
 
 const driveFileParamSchema = z.object({
   itemId: graphItemIdSchema.describe("Microsoft Graph drive item id."),
 })
 
-const driveItemSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  size: z.number().nullable(),
-  modifiedTime: z.string(),
-  webUrl: z.string(),
-  mimeType: z.string(),
-  kind: z.enum(["file", "folder", "unknown"]),
-}).meta({ ref: "Microsoft365DriveItem" })
+const driveRefQuerySchema = z.object({ driveId: driveIdSchema.optional() })
 
 const driveFilesResponseSchema = z.object({
   ok: z.literal(true),
   files: z.array(driveItemSchema),
+  scope: z.enum(["all", "myDrive"]).describe("all: every OneDrive and SharePoint file the member can open; myDrive: only their own OneDrive, because the connection lacks the all-files permission."),
+  nextPageToken: z.string().nullable(),
 }).meta({ ref: "Microsoft365DriveFilesResponse" })
 
 const driveFileResponseSchema = z.object({
@@ -223,6 +305,7 @@ const driveFileResponseSchema = z.object({
 }).meta({ ref: "Microsoft365DriveFileResponse" })
 
 const driveFileWriteBodySchema = z.object({
+  driveId: driveIdSchema.optional(),
   path: z.string().trim().min(1).max(512)
     .refine((value) => !value.split("/").some((segment) => segment === "." || segment === ".."), "path cannot contain . or .. segments"),
   content: z.string().max(200_000),
@@ -233,15 +316,15 @@ const driveFileWriteResponseSchema = z.object({
   file: driveItemSchema,
 }).meta({ ref: "Microsoft365DriveFileWriteResponse" })
 
-const driveItemNameSchema = z.string().trim().min(1).max(255)
-  .refine((value) => value !== "." && value !== ".." && !/["*:<>?\/\\|\u0000-\u001f]/.test(value) && !value.endsWith("."), "Use one valid OneDrive file or folder name, not a path.")
 const driveItemUpdateBodySchema = z.object({
+  driveId: driveIdSchema.optional(),
   name: driveItemNameSchema.optional(),
-  parentId: graphItemIdSchema.optional().describe("Destination folder id within the calling member's same OneDrive; cross-drive moves are not supported."),
+  parentId: graphItemIdSchema.optional().describe("Destination folder id within the item's same drive; cross-drive moves are not supported."),
 }).strict().refine((value) => value.name !== undefined || value.parentId !== undefined, "Provide name or parentId.")
   .meta({ ref: "Microsoft365DriveItemUpdateBody" })
 const driveFolderBodySchema = z.object({
-  parentId: graphItemIdSchema.describe("Existing parent folder id in the calling member's OneDrive."),
+  driveId: driveIdSchema.optional(),
+  parentId: graphItemIdSchema.describe("Existing parent folder id in that drive."),
   name: driveItemNameSchema,
 }).strict().meta({ ref: "Microsoft365DriveFolderBody" })
 
@@ -259,6 +342,7 @@ const teamsMessagesQuerySchema = z.object({
 
 const teamsMessageBodySchema = z.object({
   content: z.string().trim().min(1).max(20_000),
+  confirmSend: z.literal(true).describe("Must be true only after the user explicitly asked to send this message to this chat. Finding the chat or drafting the text is not send authorization."),
 }).meta({ ref: "Microsoft365TeamsMessageBody" })
 
 const teamsChatSchema = z.object({
@@ -292,47 +376,32 @@ const teamsMessageResponseSchema = z.object({
   message: teamsMessageSchema,
 }).meta({ ref: "Microsoft365TeamsMessageResponse" })
 
-const needsConnectionSchema = z.object({
-  error: z.literal("needs_connection"),
-  message: z.string(),
-}).meta({ ref: "Microsoft365NeedsConnectionError" })
-
-const upstreamErrorSchema = z.object({
-  error: z.literal("microsoft_graph_error"),
-  message: z.string(),
-  outcome: z.literal("unknown").optional(),
-  retryable: z.literal(false).optional(),
-}).meta({ ref: "Microsoft365GraphError" })
-
 export type Microsoft365AccessToken =
   | { kind: "ok"; accessToken: string; scopes: string[] | null; enabledFeatures: string[] }
   | { kind: "needs_connection"; message: string }
   | { kind: "microsoft_graph_error"; message: string }
   | NativeProviderPolicyError
 
-export type Microsoft365AccessTokenResolver = (input: {
-  organizationId: DenTypeId<"organization">
-  orgMembershipId: DenTypeId<"member">
-}) => Promise<Microsoft365AccessToken>
+export type Microsoft365AccessTokenResolver = (input: Microsoft365Identity) => Promise<Microsoft365AccessToken>
 
 export type Microsoft365RouteOptions = {
   graphBaseUrl?: string
   fetch?: typeof fetch
   resolveAccessToken?: Microsoft365AccessTokenResolver
   memberRoute?: MiddlewareHandler<{ Variables: OrgRouteVariables }>
+  /** Host file transport routes; tests inject a member instead of an MCP access token. */
+  transportRoute?: MicrosoftDriveFileRouteOptions["transportRoute"]
+  transportReadRoute?: MicrosoftDriveFileRouteOptions["transportReadRoute"]
 }
 
-async function defaultAccessTokenResolver(input: {
-  organizationId: DenTypeId<"organization">
-  orgMembershipId: DenTypeId<"member">
-}): Promise<Microsoft365AccessToken> {
+async function defaultAccessTokenResolver({ connectionId, ...input }: Microsoft365Identity): Promise<Microsoft365AccessToken> {
   const provider = getNativeOAuthProvider("microsoft-365")
   if (!provider) {
     return { kind: "microsoft_graph_error", message: "microsoft-365 provider is not registered." }
   }
   const headers = getContext().req.raw.headers
-  const requestedConnectorId = readInternalCapabilityConnectorId(headers)
-  if (headers.has(INTERNAL_CAPABILITY_CONNECTOR_HEADER) && !requestedConnectorId) {
+  const requestedConnectorId = connectionId !== undefined ? connectionId : readInternalCapabilityConnectorId(headers)
+  if (connectionId === undefined && headers.has(INTERNAL_CAPABILITY_CONNECTOR_HEADER) && !requestedConnectorId) {
     return { kind: "needs_connection", message: CONNECT_MICROSOFT_ACCOUNT_MESSAGE }
   }
   const memberTeams = await listTeamsForMember({ organizationId: input.organizationId, memberId: input.orgMembershipId })
@@ -394,19 +463,6 @@ function disabledFeatureMessage(label: string): string {
   return `The workspace administrator has disabled ${label} for the Microsoft 365 connection.`
 }
 
-function graphError(error: unknown): { error: "microsoft_graph_error"; message: string; outcome?: "unknown"; retryable?: false } {
-  if (error instanceof MicrosoftGraphMutationOutcomeUnknownError) {
-    return { error: "microsoft_graph_error", message: error.message, outcome: "unknown", retryable: false }
-  }
-  if (error instanceof MicrosoftGraphRequestError) {
-    return { error: "microsoft_graph_error", message: error.message }
-  }
-  return {
-    error: "microsoft_graph_error",
-    message: error instanceof Error ? error.message : "Microsoft Graph request failed.",
-  }
-}
-
 function describeMutation(operationId: string, summary: string, description: string, responseSchema: z.ZodType) {
   return describeRoute({
     operationId,
@@ -434,6 +490,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
   options: Microsoft365RouteOptions = {},
 ) {
   app.use("/v1/capabilities/microsoft-365/*", contextStorage())
+  app.use("/v1/documents/microsoft-365/*", contextStorage())
   const resolveAccessToken = options.resolveAccessToken ?? defaultAccessTokenResolver
   const orgMemberRouteMiddleware = options.memberRoute ?? orgMemberRoute()
   const boundedMutationBody = bodyLimit({
@@ -441,24 +498,66 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     onError: (c) => c.json({ error: "invalid_request", message: "Request exceeds 1 MiB." }, 413),
   })
 
-  function graphClient(accessToken: string, signal?: AbortSignal) {
+  function graphClient(accessToken: string, signal?: AbortSignal, timeoutMs?: number, ownDriveOnly?: boolean) {
     return new MicrosoftGraphClient({
       accessToken,
       baseUrl: options.graphBaseUrl ?? env.microsoftGraphBaseUrl,
       fetch: options.fetch,
       signal,
+      timeoutMs,
+      ownDriveOnly,
     })
+  }
+
+  /** Other drives, SharePoint included, need the all-files permission: full access to save there, read-all to read. */
+  function ownDriveOnly(token: Extract<Microsoft365AccessToken, { kind: "ok" }>, write: boolean) {
+    return !featureGranted(token, write ? ["filesFull"] : ["filesReadAll", "filesFull"])
+  }
+
+  const access: Microsoft365Access = async ({ features, label, ...identity }) => {
+    const token = await resolveAccessToken(identity)
+    if (token.kind === "microsoft_graph_error") return { ok: false, status: 502, body: { error: token.kind, message: token.message } }
+    if (token.kind === "needs_connection" || token.kind === "policy_blocked") return { ok: false, status: token.kind === "policy_blocked" ? 403 : 409, body: { error: token.kind, message: token.message } }
+    if (!featureEnabled(token, features)) return { ok: false, status: 409, body: { error: "needs_connection", message: disabledFeatureMessage(label) } }
+    if (!featureGranted(token, features)) return { ok: false, status: 409, body: { error: "needs_connection", message: missingPermissionMessage(label) } }
+    const write = features.every((feature) => FILE_WRITE_FEATURES.includes(feature))
+    return { ok: true, graph: (client = {}) => graphClient(token.accessToken, client.signal, client.timeoutMs, ownDriveOnly(token, write)) }
   }
 
   async function mutationClient(payload: OrgRouteVariables["organizationContext"], signal: AbortSignal, features: readonly string[], label: string) {
     if (!payload) return Response.json({ error: "unauthorized" }, { status: 401 })
-    const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
-    if (token.kind === "microsoft_graph_error") return Response.json({ error: token.kind, message: token.message }, { status: 502 })
-    if (token.kind === "needs_connection" || token.kind === "policy_blocked") return Response.json({ error: token.kind, message: token.message }, { status: token.kind === "policy_blocked" ? 403 : 409 })
-    if (!featureEnabled(token, features)) return Response.json({ error: "needs_connection", message: disabledFeatureMessage(label) }, { status: 409 })
-    if (!featureGranted(token, features)) return Response.json({ error: "needs_connection", message: missingPermissionMessage(label) }, { status: 409 })
-    return graphClient(token.accessToken, signal)
+    const granted = await access({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id, features, label })
+    if (!granted.ok) return Response.json(granted.body, { status: granted.status })
+    return granted.graph({ signal })
   }
+
+  registerMicrosoftDriveFileRoutes(app, {
+    access,
+    graphBaseUrl: options.graphBaseUrl ?? env.microsoftGraphBaseUrl,
+    fetch: options.fetch,
+    memberRoute: orgMemberRouteMiddleware,
+    transportRoute: options.transportRoute,
+    transportReadRoute: options.transportReadRoute,
+  })
+
+  // Documents reads need any OneDrive permission and saving a write permission; other
+  // people's drives and SharePoint follow the same all-files rule as the file routes.
+  registerMicrosoftDocumentRoutes(app, {
+    memberRoute: orgMemberRouteMiddleware,
+    graphBaseUrl: options.graphBaseUrl ?? env.microsoftGraphBaseUrl ?? DEFAULT_GRAPH_BASE_URL,
+    fetch: options.fetch ?? fetch,
+    async access(c) {
+      const payload = c.get("organizationContext")
+      if (!payload) return { ok: false, reply: c.json({ error: "unauthorized", message: "Sign in to your workspace." }, 401) }
+      const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
+      if (token.kind === "microsoft_graph_error") return { ok: false, reply: c.json({ error: token.kind, message: token.message }, 502) }
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") return { ok: false, reply: c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409) }
+      const read = ["filesRead", "filesWrite", "filesReadAll", "filesFull"]
+      if (!featureEnabled(token, read)) return { ok: false, reply: c.json({ error: "needs_connection", message: disabledFeatureMessage("OneDrive access") }, 409) }
+      if (!featureGranted(token, read)) return { ok: false, reply: c.json({ error: "needs_connection", message: missingPermissionMessage("OneDrive read") }, 409) }
+      return { ok: true, accessToken: token.accessToken, canWrite: featureGranted(token, FILE_WRITE_FEATURES), otherDrives: { read: !ownDriveOnly(token, false), write: !ownDriveOnly(token, true) } }
+    },
+  })
 
   app.post(
     "/v1/capabilities/microsoft-365/mail-drafts/:messageId/send",
@@ -475,14 +574,138 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
 
   app.post(
     "/v1/capabilities/microsoft-365/mail-message/:messageId/reply-draft",
-    describeMutation("createMicrosoft365ReplyDraft", "Create a reply draft for a selected Outlook message", "Uses Graph createReply with Mail.ReadWrite and mailDraft. Preserves the selected message's reply context. Saves a draft for user review and never sends it.", mailDraftResponseSchema),
+    describeMutation("createMicrosoft365ReplyDraft", "Create a reply draft for a selected Outlook message", "Uses Graph createReply with Mail.ReadWrite and mailDraft. Preserves the selected message's reply context. With bodyContentType html, the comment is written as HTML above the quoted message. Saves a draft for user review and never sends it.", mailDraftResponseSchema),
     orgMemberRouteMiddleware, boundedMutationBody, paramValidator(mailMessageParamSchema), jsonValidator(mailReplyDraftBodySchema),
     async (c) => {
       const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["mailDraft"], "Outlook draft creation")
       if (client instanceof Response) return client
       try {
-        return c.json({ ok: true, draft: await client.createMailReplyDraft(c.req.valid("param").messageId, c.req.valid("json").comment) })
+        return c.json({ ok: true, draft: await client.createMailReplyDraft(c.req.valid("param").messageId, c.req.valid("json").comment, c.req.valid("json").bodyContentType) })
       } catch (error) { return c.json(graphError(error), 502) }
+    },
+  )
+
+  app.get(
+    "/v1/capabilities/microsoft-365/mail-attachments/:messageId",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "List an Outlook message's attachments as the calling member",
+      description: "Lists one Outlook message's attachments with their name, type, size and kind. Only file attachments have bytes: pass one's id to the mail-attachment capability to download it. Read-only.",
+      responses: {
+        200: jsonResponse("Outlook attachments returned.", mailAttachmentsResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
+      },
+    }),
+    orgMemberRouteMiddleware, requireFeature("outlookAttachments"), paramValidator(mailMessageParamSchema),
+    async (c) => {
+      const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["mailRead"], "Outlook mail read")
+      if (client instanceof Response) return client
+      try {
+        return c.json({ ok: true, attachments: await client.listMailAttachments(c.req.valid("param").messageId) })
+      } catch (error) { return c.json(graphError(error), 502) }
+    },
+  )
+
+  app.get(
+    "/v1/capabilities/microsoft-365/mail-attachment/:messageId/:attachmentId",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "Download an Outlook attachment's bytes as the calling member",
+      description: "Downloads one file attachment from an Outlook message as base64, up to 10 MiB, using the attachment id from the mail-attachments capability. Decode contentBase64 locally to reconstruct the file, e.g. a PDF or spreadsheet. Attached Outlook items, cloud links and larger files return contentUnavailableReason instead.",
+      responses: {
+        200: jsonResponse("Outlook attachment returned.", mailAttachmentResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
+      },
+    }),
+    orgMemberRouteMiddleware, requireFeature("outlookAttachments"), paramValidator(mailAttachmentParamSchema),
+    async (c) => {
+      const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["mailRead"], "Outlook mail read")
+      if (client instanceof Response) return client
+      try {
+        const { messageId, attachmentId } = c.req.valid("param")
+        return c.json({ ok: true, attachment: await client.getMailAttachment(messageId, attachmentId) })
+      } catch (error) { return c.json(graphError(error), 502) }
+    },
+  )
+
+  app.post(
+    "/v1/direct-uploads/microsoft-365/mail-drafts",
+    describeRoute({
+      tags: ["Direct uploads"],
+      security: [{ mcpAccessToken: [] }],
+      summary: "Create an Outlook draft or reply draft with direct multipart workspace attachments",
+      description: "Authenticated host transport for openwork-cloud-uploads. Creates the draft, attaches each file and never sends it. If a file cannot be attached, the new draft moves to Deleted Items. Attachment bytes are not stored or shown to the model.",
+      responses: {
+        200: jsonResponse("Outlook draft created with its attachments.", mailDraftUploadResponseSchema),
+        400: jsonResponse("The multipart draft request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Microsoft Graph rejected the request or the outcome is unknown.", upstreamErrorSchema),
+      },
+    }),
+    options.transportRoute ?? cloudTransportRoute(),
+    requireFeature("outlookAttachments"),
+    bodyLimit({
+      maxSize: MAIL_DRAFT_UPLOAD_BODY_MAX_BYTES,
+      onError: (c) => c.json({ error: "invalid_request", message: "Direct upload request is too large." }, 413),
+    }),
+    async (c) => {
+      const form = await c.req.formData()
+      const files = form.getAll("file").filter((value): value is File => value instanceof File)
+      const totalBytes = files.reduce((total, file) => total + file.size, 0)
+      if (files.length < 1 || files.length > MAIL_DRAFT_UPLOAD_MAX_FILES || totalBytes > MAIL_DRAFT_UPLOAD_MAX_BYTES
+        || files.some((file) => file.size < 1 || file.size > MICROSOFT_MAIL_ATTACHMENT_MAX_BYTES || !file.name.trim())) {
+        return c.json({ error: "invalid_request", message: "Attach one to ten named, non-empty files, each under 3 MB and up to 4 MiB in all." }, 400)
+      }
+      const payloadValue = form.get("payload")
+      let payloadJson: unknown = null
+      try {
+        payloadJson = typeof payloadValue === "string" ? JSON.parse(payloadValue) : null
+      } catch {
+        payloadJson = null
+      }
+      const parsed = mailDraftUploadPayloadSchema.safeParse(payloadJson)
+      if (!parsed.success) {
+        return c.json({ error: "invalid_request", message: `The draft payload is invalid: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "payload"} ${issue.message}`).join("; ")}` }, 400)
+      }
+      const payload = c.get("organizationContext")
+      if (!payload) return c.json({ error: "unauthorized" }, 401)
+      const granted = await access({
+        organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id, connectionId: parsed.data.connectionId ?? null,
+        features: ["mailDraft"], label: "Outlook draft creation",
+      })
+      if (!granted.ok) return c.json(granted.body, granted.status)
+      const client = granted.graph({ signal: c.req.raw.signal })
+
+      let draft: Awaited<ReturnType<MicrosoftGraphClient["createMailDraft"]>>
+      try {
+        draft = "replyToMessageId" in parsed.data
+          ? await client.createMailReplyDraft(parsed.data.replyToMessageId, parsed.data.comment, parsed.data.bodyContentType)
+          : await client.createMailDraft(parsed.data)
+      } catch (error) { return c.json(graphError(error), 502) }
+
+      const attachments: { name: string; contentType: string; size: number }[] = []
+      for (const file of files) {
+        const name = file.name.replace(/[\r\n]/g, " ").trim()
+        const mimeType = file.type.split(";", 1)[0]?.trim() ?? ""
+        const contentType = MIME_TYPE.test(mimeType) ? mimeType : "application/octet-stream"
+        try {
+          await client.addMailAttachment(draft.id, { name, contentType, content: new Uint8Array(await file.arrayBuffer()) })
+          attachments.push({ name, contentType, size: file.size })
+        } catch (error) {
+          // Never leave a draft that is missing a file the person asked for; cleanup outlives a dropped request.
+          const removed = await granted.graph().deleteMailDraft(draft.id).then(() => true, () => false)
+          return c.json(removed
+            ? { error: "microsoft_graph_error", message: `Outlook did not attach ${name}, so the new draft was moved to Deleted Items. ${graphError(error).message}` }
+            : { error: "microsoft_graph_error", message: `Outlook did not attach ${name}, and the new draft may still be in Drafts without every file. Check Drafts before trying again.`, outcome: "unknown", retryable: false },
+          502)
+        }
+      }
+      return c.json({ ok: true, draft: { ...draft, hasAttachments: true }, attachments })
     },
   )
 
@@ -514,13 +737,14 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
 
   app.patch(
     "/v1/capabilities/microsoft-365/calendar-events/:eventId",
-    describeMutation("updateMicrosoft365CalendarEvent", "Edit or reschedule an Outlook calendar event", "Requires Calendars.ReadWrite and calendarWrite. Updates only supplied subject, body, location, or paired UTC start/end. Requires confirmNotifications: true because updates may email attendees.", calendarEventResponseSchema),
+    describeMutation("updateMicrosoft365CalendarEvent", "Edit or reschedule an Outlook calendar event", "Requires Calendars.ReadWrite and calendarWrite. Updates only supplied subject, body, location, or paired UTC start/end; isOnlineMeeting: true adds a Teams meeting. Requires confirmNotifications: true because updates may email attendees.", calendarEventResponseSchema),
     orgMemberRouteMiddleware, boundedMutationBody, paramValidator(calendarEventParamSchema), jsonValidator(calendarEventUpdateBodySchema),
     async (c) => {
       const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["calendarWrite"], "Outlook calendar read/write")
       if (client instanceof Response) return client
       try {
-        return c.json({ ok: true, event: await client.updateCalendarEvent(c.req.valid("param").eventId, c.req.valid("json")) })
+        const input = c.req.valid("json")
+        return c.json(calendarEventResult(input, await client.updateCalendarEvent(c.req.valid("param").eventId, input)))
       } catch (error) { return c.json(graphError(error), 502) }
     },
   )
@@ -553,27 +777,28 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
 
   app.patch(
     "/v1/capabilities/microsoft-365/drive-file/:itemId",
-    describeMutation("updateMicrosoft365DriveItem", "Rename or move a OneDrive item within the same drive", "Requires Files.ReadWrite (or Files.ReadWrite.All) and filesWrite (or filesFull). Updates only the name and/or parent folder id in the caller's OneDrive; cannot move across drives or upload content.", driveFileWriteResponseSchema),
+    describeMutation("updateMicrosoft365DriveItem", "Rename or move a OneDrive or SharePoint item within the same drive", "Requires Files.ReadWrite and filesWrite for the member's own OneDrive, or Files.ReadWrite.All and filesFull for other drives. Updates only the name and/or parent folder id; cannot move across drives or upload content.", driveFileWriteResponseSchema),
     orgMemberRouteMiddleware, boundedMutationBody, paramValidator(driveFileParamSchema), jsonValidator(driveItemUpdateBodySchema),
     async (c) => {
       const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["filesWrite", "filesFull"], "OneDrive write")
       if (client instanceof Response) return client
       try {
-        return c.json({ ok: true, file: await client.updateDriveItem(c.req.valid("param").itemId, c.req.valid("json")) })
-      } catch (error) { return c.json(graphError(error), 502) }
+        const { driveId, ...update } = c.req.valid("json")
+        return c.json({ ok: true, file: await client.updateDriveItem({ driveId, itemId: c.req.valid("param").itemId }, update) })
+      } catch (error) { return c.json(graphError(error), graphErrorStatus(error)) }
     },
   )
 
   app.post(
     "/v1/capabilities/microsoft-365/drive-folders",
-    describeMutation("createMicrosoft365DriveFolder", "Create a folder in the calling member's OneDrive", "Requires Files.ReadWrite (or Files.ReadWrite.All) and filesWrite (or filesFull). Creates one folder under an existing parent id. Name conflicts fail without overwriting or silently renaming anything.", driveFileWriteResponseSchema),
+    describeMutation("createMicrosoft365DriveFolder", "Create a folder in OneDrive or a SharePoint library", "Requires Files.ReadWrite and filesWrite for the member's own OneDrive, or Files.ReadWrite.All and filesFull for other drives. Creates one folder under an existing parent id. Name conflicts fail without overwriting or silently renaming anything.", driveFileWriteResponseSchema),
     orgMemberRouteMiddleware, boundedMutationBody, jsonValidator(driveFolderBodySchema),
     async (c) => {
       const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["filesWrite", "filesFull"], "OneDrive write")
       if (client instanceof Response) return client
       try {
         return c.json({ ok: true, file: await client.createDriveFolder(c.req.valid("json")) })
-      } catch (error) { return c.json(graphError(error), 502) }
+      } catch (error) { return c.json(graphError(error), graphErrorStatus(error)) }
     },
   )
 
@@ -701,10 +926,10 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     "/v1/capabilities/microsoft-365/drive-files",
     describeRoute({
       tags: ["Capability Sources"],
-      summary: "Search OneDrive files as the calling member",
-      description: "Searches the calling member's OneDrive by name and content, returning source links. This capability is delegated and read-only.",
+      summary: "Search OneDrive and SharePoint files as the calling member",
+      description: "Searches file names and content across every OneDrive and SharePoint library the member can open (including files shared with them and Teams files) when the connection has the all-files permission; otherwise only the member's own OneDrive, as scope reports. Results carry driveId and id for reading, pulling or saving. Read-only.",
       responses: {
-        200: jsonResponse("OneDrive files returned.", driveFilesResponseSchema),
+        200: jsonResponse("Files returned.", driveFilesResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
@@ -726,8 +951,15 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
 
       try {
         const query = c.req.valid("query")
-        const files = await graphClient(token.accessToken).searchDriveItems({ query: query.query, maxResults: query.maxResults })
-        return c.json({ ok: true, files })
+        const client = graphClient(token.accessToken, undefined, undefined, ownDriveOnly(token, false))
+        if (featureGranted(token, ["filesReadAll", "filesFull"])) {
+          const from = query.pageToken ? Number(query.pageToken) : 0
+          const page = await client.searchFiles({ query: query.query, maxResults: query.maxResults, from })
+          return c.json({ ok: true, files: page.files, scope: "all" as const, nextPageToken: page.nextFrom === null ? null : String(page.nextFrom) })
+        }
+        if (query.pageToken) return c.json({ error: "invalid_request", message: "Searching only your own OneDrive returns one page." }, 400)
+        const files = await client.searchDriveItems({ query: query.query, maxResults: query.maxResults })
+        return c.json({ ok: true, files, scope: "myDrive" as const, nextPageToken: null })
       } catch (error) {
         return c.json(graphError(error), 502)
       }
@@ -738,8 +970,8 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     "/v1/capabilities/microsoft-365/drive-file/:itemId",
     describeRoute({
       tags: ["Capability Sources"],
-      summary: "Read a OneDrive text or binary file as the calling member",
-      description: "Returns OneDrive metadata and content using strict-UTF-8 content sniffing: text is returned regardless of MIME type, while binary files are returned as standard base64 up to 10 MiB. Folders and oversized files return metadata with an explicit contentUnavailableReason.",
+      summary: "Read a OneDrive or SharePoint text or binary file as the calling member",
+      description: "Returns metadata and content using strict-UTF-8 content sniffing: text is returned regardless of MIME type, while binary files are returned as standard base64 up to 10 MiB. Folders and oversized files return metadata with an explicit contentUnavailableReason. Pass driveId for files outside the member's own OneDrive.",
       responses: {
         200: jsonResponse("OneDrive file returned.", driveFileResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -749,6 +981,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     }),
     orgMemberRouteMiddleware,
     paramValidator(driveFileParamSchema),
+    queryValidator(driveRefQuerySchema),
     async (c) => {
       const payload = c.get("organizationContext")
       const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
@@ -763,9 +996,10 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
 
       try {
         const { itemId } = c.req.valid("param")
-        return c.json({ ok: true, file: await graphClient(token.accessToken).getDriveItemWithContent(itemId) })
+        const { driveId } = c.req.valid("query")
+        return c.json({ ok: true, file: await graphClient(token.accessToken, undefined, undefined, ownDriveOnly(token, false)).getDriveItemWithContent({ driveId, itemId }) })
       } catch (error) {
-        return c.json(graphError(error), 502)
+        return c.json(graphError(error), graphErrorStatus(error))
       }
     },
   )
@@ -812,7 +1046,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Create an Outlook calendar event as the calling member",
-      description: "Creates an event in the calling member's default calendar. Adding attendees can send Microsoft calendar invitations.",
+      description: "Creates an event in the calling member's default calendar. Adding attendees sends Microsoft calendar invitations, so it requires confirmNotifications: true. isOnlineMeeting: true makes it a Teams meeting; check event.onlineMeetingUrl for the join link.",
       responses: {
         200: jsonResponse("Outlook calendar event created.", calendarEventResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -835,8 +1069,8 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       }
 
       try {
-        const event = await graphClient(token.accessToken).createCalendarEvent(c.req.valid("json"))
-        return c.json({ ok: true, event })
+        const input = c.req.valid("json")
+        return c.json(calendarEventResult(input, await graphClient(token.accessToken).createCalendarEvent(input)))
       } catch (error) {
         return c.json(graphError(error), 502)
       }
@@ -848,7 +1082,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Create or replace a OneDrive text file as the calling member",
-      description: "Creates or replaces a bounded UTF-8 text file at a path in the calling member's OneDrive.",
+      description: "Creates or replaces a bounded UTF-8 text file at a path in the calling member's OneDrive, or in another drive such as a SharePoint library with driveId. For Office, PDF or other binary files, use an upload session.",
       responses: {
         200: jsonResponse("OneDrive file written.", driveFileWriteResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -871,10 +1105,10 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       }
 
       try {
-        const file = await graphClient(token.accessToken).putDriveTextFile(c.req.valid("json"))
+        const file = await graphClient(token.accessToken, undefined, undefined, ownDriveOnly(token, true)).putDriveTextFile(c.req.valid("json"))
         return c.json({ ok: true, file })
       } catch (error) {
-        return c.json(graphError(error), 502)
+        return c.json(graphError(error), graphErrorStatus(error))
       }
     },
   )
@@ -960,7 +1194,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Send a message to an existing Microsoft Teams chat as the calling member",
-      description: "Sends one message to an existing Teams chat. The operation cannot create a new chat.",
+      description: "Sends one message to an existing Teams chat after explicit user confirmation (confirmSend: true). The operation cannot create a new chat.",
       responses: {
         200: jsonResponse("Teams chat message sent.", teamsMessageResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),

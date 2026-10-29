@@ -57,6 +57,11 @@ export function workbotEventIdentity(actor: WorkbotTelemetryActor, type: string,
   return { id: eventIdFromHex(hash.slice(0, 32)), sessionId: `wb:${hash}` }
 }
 
+/** The same identity scheme for any at-most-once member fact (for example a Get set up step): one row per key. */
+export function stableTelemetryEventId(actor: WorkbotTelemetryActor, type: string, key: string) {
+  return workbotEventIdentity(actor, type, key).id
+}
+
 /** Encode 128 public identifier bits as a TypeID; this is not credential/password storage. */
 function eventIdFromHex(hex: string) {
   let value = BigInt(`0x${hex}`)

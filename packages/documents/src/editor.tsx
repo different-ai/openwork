@@ -1,11 +1,12 @@
 "use client"
 
 import { z } from "zod"
-import { EditorActions } from "./editor-actions"
+import { DocumentInformation, EditorActions } from "./editor-actions"
 import { useQuery } from "@tanstack/react-query"
 import { ArrowLeft, ArrowRight, ExternalLink, Save, X } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { OfficeEditorTab } from "./office-editor"
+import { UnsavedChangesDialog } from "./unsaved-dialog"
 import { googleAppNames, officeMimeTypes } from "./office-engine"
 import { columnLetters } from "@openwork/workbook"
 import { DocumentsError, type DocumentItem } from "./index"
@@ -13,14 +14,27 @@ import type { DocumentSave, DocumentsEditor, EditorDocument, SpreadsheetDocument
 import type { DocumentTabControlsChange } from "./document-tabs"
 
 export function DocumentEditorTab(props: Parameters<typeof BasicDocumentEditorTab>[0]) {
-  if (props.editor.office && officeMimeTypes.has(props.item.mimeType)) return <OfficeEditorTab {...props} editor={props.editor.office} />
-  return <BasicDocumentEditorTab {...props} />
+  const [editing, setEditing] = useState(false)
+  const [officeReady, setOfficeReady] = useState(false)
+  // A combined editor names which providers have the full Office editor; OneDrive files edit inline.
+  const office = officeMimeTypes.has(props.item.mimeType) && (props.editor.hasOffice?.(props.item.id) ?? true) ? props.editor.office : undefined
+  const fullEditor = editing && office
+  return <div className="ow-document-mode" hidden={!props.active}>
+    <div className="ow-document-preview-owner" hidden={!!fullEditor && officeReady} inert={!!fullEditor}>
+      <BasicDocumentEditorTab {...props} editing={editing && !office} onEdit={() => setEditing(true)} showActions={!fullEditor} onControlsChange={fullEditor ? undefined : props.onControlsChange} />
+    </div>
+    {fullEditor && <OfficeEditorTab {...props} editor={office} editingEnabled={props.editingEnabled === true} onReadyChange={setOfficeReady} onPreview={() => { setEditing(false); setOfficeReady(false) }} />}
+  </div>
 }
 
-function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, active, scope, connectionsHref, renderConnect, onDirtyChange, onSavingChange, onControlsChange, onClose }: { toolbarHost?: HTMLElement | null; item: DocumentItem; editor: DocumentsEditor; enabled: boolean; active: boolean; scope: readonly string[]; connectionsHref?: string | null; renderConnect?(connectionId?: string, reconnect?: boolean): ReactNode; onDirtyChange?(id: string, dirty: boolean): void; onSavingChange?(id: string, saving: boolean): void; onResourceChange?(tabId: string, resource: DocumentItem): void; onControlsChange?: DocumentTabControlsChange; onClose(): void }) {
+function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEnabled = false, editing = false, onEdit, showActions = true, active, scope, connectionsHref, renderConnect, onDirtyChange, onSavingChange, onControlsChange, onClose }: { toolbarHost?: HTMLElement | null; item: DocumentItem; editor: DocumentsEditor; enabled: boolean; editingEnabled?: boolean; editing?: boolean; onEdit?(): void; showActions?: boolean; active: boolean; scope: readonly string[]; connectionsHref?: string | null; renderConnect?(connectionId?: string, reconnect?: boolean): ReactNode; onDirtyChange?(id: string, dirty: boolean): void; onSavingChange?(id: string, saving: boolean): void; onResourceChange?(tabId: string, resource: DocumentItem): void; onControlsChange?: DocumentTabControlsChange; onClose(): void }) {
+  // Where this file is saved, in the words people see: "Drive" or "OneDrive".
+  const storage = item.source?.storage ?? "Drive"
   const [sheetId, setSheetId] = useState<string>()
   const [startRow, setStartRow] = useState(1)
-  const [connectionId, setConnectionId] = useState<string>()
+  // Pin the selected Drive account without changing the query identity after its first response.
+  const connection = useRef<string>(undefined)
+  const connectionId = connection.current
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [formulas, setFormulas] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
@@ -30,7 +44,7 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, active, sc
   const [closing, setClosing] = useState(false)
   const dirty = Object.keys(draft).length > 0
   const accessCheck = useRef<() => Promise<void>>(async () => { throw new Error("The document is not open.") })
-  accessCheck.current = async () => { await editor.open(item.id, { sheetId, startRow, connectionId }) }
+  accessCheck.current = async () => { await editor.open(item.id, { sheetId, startRow, connectionId: connection.current }) }
   const closeAction = useRef<() => void>(() => {})
   closeAction.current = () => { if (!saving) { if (dirty) setClosing(true); else onClose() } }
   useEffect(() => {
@@ -40,13 +54,16 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, active, sc
   useEffect(() => { onSavingChange?.(item.id, saving); return () => onSavingChange?.(item.id, false) }, [item.id, saving, onSavingChange])
   useEffect(() => { onDirtyChange?.(item.id, dirty); return () => onDirtyChange?.(item.id, false) }, [dirty, item.id, onDirtyChange])
   const query = useQuery({
-    queryKey: ["documents", ...scope, "editor", item.id, sheetId, startRow, connectionId],
-    queryFn: ({ signal }) => editor.open(item.id, { sheetId, startRow, connectionId }, signal),
+    queryKey: ["documents", ...scope, "editor", item.id, sheetId, startRow, editingEnabled],
+    queryFn: async ({ signal }) => {
+      const document = await editor.open(item.id, { sheetId, startRow, connectionId: connection.current }, signal)
+      connection.current ??= document.connectionId
+      return document
+    },
     enabled: enabled && active,
     retry: false, gcTime: 0, staleTime: Infinity, refetchOnWindowFocus: false,
   })
   const data = query.data
-  useEffect(() => { if (data && !connectionId) setConnectionId(data.connectionId) }, [data, connectionId])
   useEffect(() => {
     if (!dirty) return
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = "" }
@@ -58,7 +75,7 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, active, sc
     setDraft(current => { const next = { ...current }; if (value === base) delete next[key]; else next[key] = value; return next })
   }
   const save = async () => {
-    if (!data || !dirty || saving || !enabled) return
+    if (!data || !dirty || saving || !enabled || !editingEnabled || !editing) return
     let payload: DocumentSave
     const common = { revision: data.revision, connectionId: data.connectionId }
     if (data.kind === "spreadsheet") payload = { ...common, kind: "spreadsheet", sheetId: data.activeSheetId, changes: Object.entries(draft).map(([key, value]) => { const [row, column] = key.split(":").map(Number); return { row, column, value, formula: formulas.has(key) } }) }
@@ -72,20 +89,23 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, active, sc
       setDraft({}); setFormulas(new Set()); setSaved(true)
       if (closing) onClose()
       else await query.refetch()
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "Couldn't confirm the save. Check Drive before trying again."); setNeedsConnection(failure instanceof DocumentsError && failure.code === "needs_connection") }
+    } catch (failure) { setError(failure instanceof Error ? failure.message : `Couldn't confirm the save. Check ${storage} before trying again.`); setNeedsConnection(failure instanceof DocumentsError && failure.code === "needs_connection") }
     finally { setSaving(false) }
   }
-  const readonly = !enabled || !data?.canEdit || saving
+  const readonly = !enabled || !editingEnabled || !editing || !data?.canEdit || saving
   const googleApp = googleAppNames[item.mimeType]
+  const reconnectLabel = `Reconnect ${item.source?.label ?? "Google Drive"}`
+  const information = editing && editingEnabled ? [data?.notice, data && !data.canEdit && data.kind !== "preview" ? "Editing requires write access to this file and the connector's enabled write permission." : null].filter(Boolean).join(" ") : ""
   return <section className="ow-document-editor" hidden={!active} aria-label={item.name}>
-    <EditorActions active={active} host={toolbarHost}><span role="status">{saving ? "Saving to Drive…" : dirty ? "Unsaved changes" : saved ? "Saved to Drive" : data?.canEdit ? "Saved in Drive" : "Read-only"}</span>{item.openUrl && (googleApp
+    <EditorActions active={active && showActions} host={toolbarHost}><span role="status">{saving ? `Saving to ${storage}…` : dirty ? "Unsaved changes" : saved ? `Saved to ${storage}` : !editing ? "Preview" : data?.canEdit ? `Saved in ${storage}` : "Read-only"}</span>{information && <DocumentInformation>{information}</DocumentInformation>}{item.openUrl && (googleApp
       ? <a className="ow-editor-open-google" href={item.openUrl} target="_blank" rel="noopener noreferrer"><ExternalLink size={15} aria-hidden />Open in {googleApp}</a>
-      : <a href={item.openUrl} target="_blank" rel="noopener noreferrer" aria-label="Open original in Drive"><ExternalLink size={16} /></a>)}<button type="button" disabled={!dirty || readonly} onClick={() => void save()}><Save size={15} aria-hidden />Save to Drive</button>{!onControlsChange && <button type="button" aria-label={`Close ${item.name}`} disabled={saving} onClick={() => closeAction.current()}><X size={16} /></button>}</EditorActions>
-    {closing && <div className="ow-editor-message" role="status">Keep changes to {item.name}?<button type="button" onClick={() => void save()} disabled={readonly}>Save and close</button><button type="button" onClick={() => setClosing(false)}>Keep editing</button><button type="button" onClick={onClose} disabled={saving}>Discard changes</button></div>}
+      : <a href={item.openUrl} target="_blank" rel="noopener noreferrer" aria-label={`Open original in ${storage}`}><ExternalLink size={16} /></a>)}{editingEnabled && !editing && data?.canEdit && <button type="button" disabled={!enabled} onClick={onEdit}>Edit</button>}{editing && <button type="button" disabled={!dirty || readonly} onClick={() => void save()}><Save size={15} aria-hidden />Save to {storage}</button>}{!onControlsChange && <button type="button" aria-label={`Close ${item.name}`} disabled={saving} onClick={() => closeAction.current()}><X size={16} /></button>}</EditorActions>
+    {editing && !editingEnabled && <div className="ow-editor-message" role="status">Editing is off for this workspace. Your draft is kept in this tab.</div>}
+    {closing && <UnsavedChangesDialog name={item.name} saveLabel={`Save to ${storage}`} saving={saving} canSave={!readonly} error={error} onSave={() => void save()} onDiscard={onClose} onCancel={() => setClosing(false)} />}
     {!enabled ? <div className="ow-editor-message">Documents is off for this workspace. Your draft remains in this tab.</div>
-      : query.isError ? <div className="ow-editor-message" role="status">{query.error instanceof Error ? query.error.message : "Couldn't open this document."}{query.error instanceof DocumentsError && query.error.code === "needs_connection" && (renderConnect ? renderConnect(connectionId, true) : connectionsHref && <a href={connectionsHref} target="_blank" rel="noopener noreferrer">Reconnect Google Drive</a>)}<button type="button" onClick={() => void query.refetch()}>Try again</button></div>
+      : query.isError ? <div className="ow-editor-message" role="status">{query.error instanceof Error ? query.error.message : "Couldn't open this document."}{query.error instanceof DocumentsError && query.error.code === "needs_connection" && (renderConnect ? renderConnect(connectionId ?? item.source?.connectionId, true) : connectionsHref && <a href={connectionsHref} target="_blank" rel="noopener noreferrer">{reconnectLabel}</a>)}<button type="button" onClick={() => void query.refetch()}>Try again</button></div>
       : !data ? <div className="ow-documents-skeleton" aria-busy="true" aria-label="Opening document"><div/><div/><div/></div>
-      : <>{data.notice && <div className="ow-editor-message">{data.notice}</div>}{!data.canEdit && data.kind !== "preview" && <div className="ow-editor-message">Read-only. Editing requires write access to this file and the connector's enabled write permission.</div>}{error && <div className="ow-editor-message" role="alert">{error}{needsConnection && (renderConnect ? renderConnect(connectionId, true) : connectionsHref && <a href={connectionsHref} target="_blank" rel="noopener noreferrer">Reconnect Google Drive</a>)}<button type="button" disabled={saving} onClick={() => { setDraft({}); setFormulas(new Set()); setError(null); void query.refetch() }}>Reload latest and discard edits</button></div>}
+      : <>{error && <div className="ow-editor-message" role="alert">{error}{needsConnection && (renderConnect ? renderConnect(connectionId ?? item.source?.connectionId, true) : connectionsHref && <a href={connectionsHref} target="_blank" rel="noopener noreferrer">{reconnectLabel}</a>)}<button type="button" disabled={saving} onClick={() => { setDraft({}); setFormulas(new Set()); setError(null); void query.refetch() }}>Reload latest and discard edits</button></div>}
         {data.kind === "spreadsheet" ? <Spreadsheet data={data} draft={draft} formulas={formulas} setFormulas={setFormulas} readonly={readonly} change={change} onSheet={id => { setSheetId(id); setStartRow(1); setSaved(false) }} onPage={row => { setStartRow(row); setSaved(false) }} dirty={dirty} />
           : data.kind === "document" ? <RichDocument data={data} draft={draft} readonly={readonly} change={change} />
           : data.kind === "text" ? <textarea className="ow-editor-plain" aria-label="Document text" value={draft.text ?? data.text} readOnly={readonly} onChange={event => change("text", event.target.value, data.text)} />
@@ -101,7 +121,7 @@ function Spreadsheet({ data, draft, formulas, setFormulas, readonly, change, onS
   const cellLabel = (() => { const [row, column] = selected.split(":").map(Number); return `${columnLetters(column)}${row}` })()
   const toggleFormula = (checked: boolean) => { const next = new Set(formulas); if (checked) next.add(selected); else next.delete(selected); setFormulas(next) }
   return <div className="ow-editor-spreadsheet">
-    <div className="ow-editor-formula"><label>{cellLabel}<input aria-label={`Edit ${cellLabel}`} value={draft[selected] ?? original} readOnly={readonly} onChange={event => change(selected, event.target.value, original)} /></label><label><input type="checkbox" checked={formulas.has(selected)} disabled={readonly || draft[selected] === undefined} onChange={event => toggleFormula(event.target.checked)} />Save as formula</label></div>
+    <div className="ow-editor-formula"><label>{cellLabel}<input aria-label={`Edit ${cellLabel}`} value={draft[selected] ?? original} readOnly={readonly} onChange={event => change(selected, event.target.value, original)} /></label>{!readonly && <label><input type="checkbox" checked={formulas.has(selected)} disabled={draft[selected] === undefined} onChange={event => toggleFormula(event.target.checked)} />Save as formula</label>}</div>
     <div className="ow-editor-grid-scroll"><table className="ow-editor-grid"><thead><tr><th aria-label="Row"/>{Array.from({ length: Math.min(26, data.sheets.find(sheet => sheet.id === data.activeSheetId)?.columns ?? 26) }, (_, column) => <th scope="col" key={column}>{columnLetters(column + 1)}</th>)}</tr></thead><tbody>{Array.from({ length: data.endRow - data.startRow + 1 }, (_, offset) => { const row = data.startRow + offset; return <tr key={row}><th scope="row">{row}</th>{Array.from({ length: Math.min(26, data.sheets.find(sheet => sheet.id === data.activeSheetId)?.columns ?? 26) }, (_, index) => { const column = index + 1; const key = `${row}:${column}`; const cell = cells.get(key); const base = cell?.formula ? `=${cell.formula}` : cell?.text ?? ""; return <td key={column} data-active={selected === key}><input aria-label={`${columnLetters(column)}${row}`} value={draft[key] ?? base} readOnly={readonly} onFocus={() => setSelected(key)} onChange={event => change(key, event.target.value, base)} onPaste={event => {
       const text = event.clipboardData.getData("text/plain")
       if (readonly || !/[\t\n]/.test(text)) return
@@ -116,7 +136,7 @@ function Spreadsheet({ data, draft, formulas, setFormulas, readonly, change, onS
       const next = document.querySelector<HTMLInputElement>(`.ow-document-editor:not([hidden]) input[aria-label="${columnLetters(column + direction[1])}${row + direction[0]}"]`)
       if (next) { event.preventDefault(); next.focus() }
     }} /></td> })}</tr> })}</tbody></table></div>
-    <footer className="ow-editor-sheets"><nav aria-label="Worksheets">{data.sheets.map(sheet => <button type="button" key={sheet.id} aria-current={sheet.id === data.activeSheetId ? "page" : undefined} disabled={dirty || readonly && sheet.id === data.activeSheetId} onClick={() => onSheet(sheet.id)}>{sheet.name}</button>)}</nav><button type="button" aria-label="Previous rows" disabled={dirty || data.startRow === 1} onClick={() => onPage(Math.max(1, data.startRow - 50))}><ArrowLeft size={14} /></button><span>Rows {data.startRow}–{data.endRow}</span><button type="button" aria-label="Next rows" disabled={dirty || data.endRow >= (data.sheets.find(s => s.id === data.activeSheetId)?.rows ?? 1000)} onClick={() => onPage(data.startRow + 50)}><ArrowRight size={14}/></button></footer>
+    <footer className="ow-editor-sheets"><nav aria-label="Worksheets">{data.sheets.map(sheet => <button type="button" key={sheet.id} aria-current={sheet.id === data.activeSheetId ? "page" : undefined} disabled={dirty || sheet.id === data.activeSheetId} onClick={() => onSheet(sheet.id)}>{sheet.name}</button>)}</nav><button type="button" aria-label="Previous rows" disabled={dirty || data.startRow === 1} onClick={() => onPage(Math.max(1, data.startRow - 50))}><ArrowLeft size={14} /></button><span>Rows {data.startRow}–{data.endRow}</span><button type="button" aria-label="Next rows" disabled={dirty || data.endRow >= (data.sheets.find(s => s.id === data.activeSheetId)?.rows ?? 1000)} onClick={() => onPage(data.startRow + 50)}><ArrowRight size={14}/></button></footer>
     {dirty && <div className="ow-editor-message">Save these edits before changing worksheets or rows. Values are literal unless you choose “Save as formula”.</div>}
   </div>
 }
@@ -132,8 +152,18 @@ function RichDocument({ data, draft, readonly, change }: { data: TextDocument; d
 }
 function DocumentPreview({ data, editor, item }: { data: Extract<EditorDocument, { kind: "preview" }>; editor: DocumentsEditor; item: DocumentItem }) {
   const url = `${editor.contentUrl(item.id)}?connectionId=${encodeURIComponent(data.connectionId)}`
-  // Google Slides previews as a PDF export of the presentation.
-  if (data.mimeType === "application/pdf" || data.mimeType === "application/vnd.google-apps.presentation") return <iframe className="ow-editor-preview" src={url} title={item.name} sandbox="allow-same-origin" />
-  if (["image/png", "image/jpeg", "image/gif", "image/webp"].includes(data.mimeType)) return <div className="ow-editor-image"><img src={url} alt={item.name} /></div>
-  return <div className="ow-documents-state"><p>This format needs its original editor.</p>{item.openUrl && <a href={item.openUrl} target="_blank" rel="noopener noreferrer">Open in Drive</a>}</div>
+  // Keep one mounted viewer while its protected file bytes load, including Slides' PDF export.
+  const pdf = data.mimeType === "application/pdf" || data.mimeType === "application/vnd.google-apps.presentation"
+  if (pdf || ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(data.mimeType)) return <BinaryPreview key={url} url={url} item={item} pdf={pdf} />
+  return <div className="ow-documents-state"><p>No inline preview is available.</p>{item.openUrl && <a href={item.openUrl} target="_blank" rel="noopener noreferrer">Open in {item.source?.storage ?? "Drive"}</a>}</div>
+}
+
+function BinaryPreview({ url, item, pdf }: { url: string; item: DocumentItem; pdf: boolean }) {
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading")
+  return <div className="ow-editor-binary" aria-busy={state === "loading"}>
+    {state === "loading" && <div className="ow-editor-preview-loading" role="status">Loading {pdf ? "PDF" : "image"} preview…</div>}
+    {state === "error" ? <div className="ow-documents-state"><p>Couldn't load this preview.</p><button type="button" onClick={() => setState("loading")}>Try again</button>{item.openUrl && <a href={item.openUrl} target="_blank" rel="noopener noreferrer">Open in {item.source?.storage ?? "Drive"}</a>}</div>
+      : pdf ? <iframe className="ow-editor-preview" src={url} title={item.name} sandbox="allow-same-origin" onLoad={() => setState("ready")} onError={() => setState("error")} />
+      : <div className="ow-editor-image"><img src={url} alt={item.name} onLoad={() => setState("ready")} onError={() => setState("error")} /></div>}
+  </div>
 }

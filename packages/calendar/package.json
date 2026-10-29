@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@openwork/types": "workspace:*",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "peerDependencies": {
     "@tanstack/react-query": "^5.90.3"

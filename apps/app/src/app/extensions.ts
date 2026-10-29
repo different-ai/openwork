@@ -165,8 +165,8 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     resources: [
       {
         type: "opencode-plugin",
-        id: "opencode-chrome-devtools",
-        packageName: "opencode-chrome-devtools",
+        id: "openwork-chrome-devtools",
+        label: "OpenWork browser tools",
         required: true,
       },
     ],

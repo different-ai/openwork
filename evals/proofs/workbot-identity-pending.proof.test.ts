@@ -10,6 +10,7 @@ test("pending identity verification masks retained drafts and portals before the
   await step("before: the original owner has an unsaved draft and a visible navigation portal", async () => {
     await user.navigate(`${world.url}documents`);
     await user.click({ role: "button", label: "Project brief.txt", nth: 0 });
+    await user.click({ role: "button", label: /^Edit$/ });
     await user.type({ role: "textbox", label: "Document text" }, "Private draft during identity verification", { replace: true });
     await user.click({ role: "button", label: "Open workspace navigation" });
     await user.see({ role: "button", label: "Open Project brief.txt" });

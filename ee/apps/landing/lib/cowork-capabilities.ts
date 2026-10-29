@@ -13,7 +13,7 @@ import type { CompareSource } from "./compare";
  *   on this site (`/docs/...` pages are built from packages/docs/*.mdx).
  */
 
-export const capabilitiesCheckedAt = "2026-09-27";
+export const capabilitiesCheckedAt = "2026-10-27";
 
 export type Support = "yes" | "partial" | "no";
 
@@ -55,6 +55,8 @@ const A = {
   adminConsole: "https://claude.com/docs/third-party/claude-desktop/admin-console",
   linux: "https://code.claude.com/docs/en/desktop-linux",
   changelog: "https://claude.com/docs/cowork/changelog",
+  slack: "https://claude.com/docs/connectors/slack",
+  computerUse: "https://support.claude.com/en/articles/14128542-let-claude-use-your-computer-in-cowork",
   pricing: "https://claude.com/pricing/enterprise"
 } as const;
 
@@ -84,11 +86,19 @@ export const capabilityGroups: CapabilityGroup[] = [
         cells: {
           enterprise: yes(A.matrix),
           thirdParty: no(A.matrix),
-          openwork: planned(partial("/docs/cloud/run-in-the-cloud/open-cloud-in-browser", "OpenWork Web is in preview as a paid add-on."))
+          openwork: yes("/docs/cloud/run-in-the-cloud/open-cloud-in-browser", "OpenWork Web runs on OpenWork Cloud or your own deployment.")
         }
       },
       {
-        label: "Start work from your phone or Slack",
+        label: "Start work from Slack",
+        cells: {
+          enterprise: yes(A.slack),
+          thirdParty: no(A.matrix),
+          openwork: yes("/docs/slack/overview", "An admin turns on OpenWork in Slack for the organization.")
+        }
+      },
+      {
+        label: "Phone app",
         cells: { enterprise: yes(A.matrix), thirdParty: no(A.matrix), openwork: planned(no("/roadmap")) }
       },
       {
@@ -121,11 +131,30 @@ export const capabilityGroups: CapabilityGroup[] = [
         cells: { enterprise: yes(A.matrix), thirdParty: yes(A.matrix), openwork: yes("/docs/start-here/do-work-with-it/control-the-browser") }
       },
       {
+        label: "Computer use with desktop apps",
+        cells: {
+          enterprise: partial(A.computerUse, "In beta, on macOS and Windows."),
+          thirdParty: no(A.matrix),
+          openwork: yes("/docs/changelog", "On macOS and Windows.")
+        }
+      },
+      {
         label: "Artifacts and interactive app views",
         cells: {
           enterprise: yes(A.matrix),
           thirdParty: yes(A.matrix),
-          openwork: planned(partial("/roadmap", "Artifacts ship today; live artifacts and MCP Apps are in preview."))
+          openwork: yes("/docs/dashboards/build-an-mcp-app", "Artifacts, live artifacts, and MCP Apps in chat and on dashboards.")
+        }
+      },
+      {
+        label: "Projects to group related chats and files",
+        cells: {
+          enterprise: yes(A.matrix),
+          thirdParty: yes(A.matrix),
+          openwork: partial(
+            "/docs/start-here/migrate-from-claude-cowork",
+            "Work is organized in workspaces and folders. Claude projects are not migrated automatically yet."
+          )
         }
       },
       {
@@ -141,7 +170,7 @@ export const capabilityGroups: CapabilityGroup[] = [
         cells: {
           enterprise: yes(A.overview),
           thirdParty: yes(A.overview),
-          openwork: partial("/roadmap", "Docker or microsandbox workspaces, with platform and setup limits.")
+          openwork: partial("/roadmap", "Agent work can run in isolated cloud computers; there is no local sandbox yet.")
         }
       }
     ]
@@ -154,7 +183,7 @@ export const capabilityGroups: CapabilityGroup[] = [
         cells: {
           enterprise: yes(A.matrix),
           thirdParty: yes(A.matrix),
-          openwork: planned(partial("/docs/changelog", "Automations run on a schedule; event triggers are next."))
+          openwork: planned(partial("/docs/changelog", "Automations run on a schedule on desktop or in the cloud; event triggers are next."))
         }
       },
       {
@@ -162,7 +191,7 @@ export const capabilityGroups: CapabilityGroup[] = [
         cells: {
           enterprise: yes(A.changelog, "Scheduled tasks can move to the cloud."),
           thirdParty: no(A.overview, "Sessions run on the device."),
-          openwork: planned(partial("/docs/changelog", "Automations can run in OpenWork Cloud where enabled; hosted workspaces are in progress."))
+          openwork: yes("/docs/changelog", "Cloud Automations run in OpenWork Cloud or on your own runners.")
         }
       },
       {
@@ -170,7 +199,7 @@ export const capabilityGroups: CapabilityGroup[] = [
         cells: {
           enterprise: yes(A.changelog),
           thirdParty: yes(A.changelog),
-          openwork: planned(partial("/docs/changelog", "Automations keep receipts and recover missed runs; full run history and approvals are next."))
+          openwork: planned(partial("/docs/changelog", "Run history, receipts, and missed-run recovery ship; approvals in the middle of a run are next."))
         }
       }
     ]
@@ -206,7 +235,7 @@ export const capabilityGroups: CapabilityGroup[] = [
         label: "SSO, SCIM, teams, and custom roles",
         cells: {
           enterprise: yes(A.matrix),
-          thirdParty: partial(A.adminConsole, "Through the Enterprise Admin Console, which is in beta and hosted by Anthropic."),
+          thirdParty: partial(A.adminConsole, "Through the Enterprise Admin Console, hosted by Anthropic and provisioned on request."),
           openwork: yes("/docs/cloud/members-and-rbac")
         }
       },
@@ -215,8 +244,9 @@ export const capabilityGroups: CapabilityGroup[] = [
         cells: {
           enterprise: yes(A.matrix),
           thirdParty: yes(A.config),
-          openwork: planned(
-            partial("/docs/changelog", "Allowed desktop versions are enforced; other policies are paused while they are redesigned.")
+          openwork: yes(
+            "/docs/cloud/share-with-your-team/agent-permissions",
+            "Model access, allowed versions, and agent permissions for commands, file edits, websites, and local skills and MCP servers."
           )
         }
       },
@@ -232,8 +262,8 @@ export const capabilityGroups: CapabilityGroup[] = [
         label: "Usage analytics, OpenTelemetry, and audit log",
         cells: {
           enterprise: yes(A.matrix),
-          thirdParty: partial(A.matrix, "OpenTelemetry export; no Analytics or Compliance API."),
-          openwork: planned(partial("/docs/cloud/security-and-operations", "Usage analytics and audit events ship; OpenTelemetry coverage is in progress."))
+          thirdParty: partial(A.matrix, "OpenTelemetry export; the Compliance API only in Admin Console organizations, and no Analytics API."),
+          openwork: planned(partial("/docs/cloud/security-and-operations", "Usage analytics and an audit log with API and CSV export ship; OpenTelemetry export is next."))
         }
       },
       {
@@ -256,6 +286,8 @@ export const capabilitySources: CompareSource[] = [
   { label: "3P overview", href: A.overview },
   { label: "3P plugins and MCP", href: A.extensions },
   { label: "Claude Desktop on Linux", href: A.linux },
+  { label: "Claude in Slack", href: A.slack },
+  { label: "Claude computer use", href: A.computerUse },
   { label: "Claude Enterprise pricing", href: A.pricing },
   { label: "OpenWork roadmap", href: "/roadmap" },
   { label: "OpenWork pricing", href: "/docs/start-here/pricing-and-licensing" }
@@ -284,14 +316,14 @@ export function totalsText(totals: SupportTotals): string {
   return totals.partial > 0 ? `${totals.yes} (+${totals.partial} partial)` : `${totals.yes}`;
 }
 
-export function capabilitySubtitle(): string {
-  return `${capabilityRows.length} capabilities, checked against each vendor's own docs. Yes, Partial, or No for what ships today.`;
+export function capabilitySubtitle(rows: CapabilityRow[] = capabilityRows): string {
+  return `${rows.length} capabilities, checked against each vendor's own docs. Yes, Partial, or No for what ships today.`;
 }
 
 /** Footnote numbers for cells with a note, in reading order. */
-export function capabilityFootnotes(): { id: string; number: number; note: string; source: string }[] {
+export function capabilityFootnotes(rows: CapabilityRow[] = capabilityRows): { id: string; number: number; note: string; source: string }[] {
   const notes: { id: string; number: number; note: string; source: string }[] = [];
-  for (const row of capabilityRows) {
+  for (const row of rows) {
     for (const column of capabilityColumns) {
       const cell = row.cells[column.key];
       if (cell.note) notes.push({ id: footnoteId(row, column.key), number: notes.length + 1, note: cell.note, source: cell.source });

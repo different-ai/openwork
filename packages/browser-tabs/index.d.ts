@@ -35,6 +35,8 @@ export type BrowserPanelTab = {
     | { code: "page_load_failed" | "blocked_by_organization"; message: string; url: string; errorCode: number; errorDescription: string }
     | null;
   browserTask?: { status: "idle" | "running" | "paused" | "needs_attention"; operation: string | null };
+  /** Set while the agent controls the tab: the fixed size it lays out at and how far it is scaled to fit. */
+  agentViewport?: { key: AgentViewportKey; width: number; height: number; scale: number } | null;
   siteToolCount: number;
   siteTools: Array<{
     toolId?: string;
@@ -120,6 +122,17 @@ export const BACKGROUND_TAB_VIEWPORT: Readonly<Viewport>;
 
 export function backgroundTabEmulationCommands(viewport?: Viewport): CdpCommand[];
 export function foregroundTabEmulationCommands(): CdpCommand[];
+
+export type AgentViewportKey = "panel" | "desktop" | "tablet" | "phone";
+/** `fitsPanel`: locks to the page's on-screen size; width and height are the off-screen fallback. */
+export type AgentViewport = Viewport & { label: string; mobile: boolean; fitsPanel?: boolean };
+export const AGENT_VIEWPORTS: Readonly<Record<AgentViewportKey, Readonly<AgentViewport>>>;
+export const DEFAULT_AGENT_VIEWPORT: AgentViewportKey;
+export function agentViewportFor(key: unknown): Readonly<AgentViewport>;
+export function lockedAgentViewport(key: unknown, bounds: Viewport | null): Readonly<AgentViewport>;
+export function fitAgentViewport(viewport: Viewport, bounds: Bounds): { scale: number; bounds: Bounds };
+export function mobileUserAgentOverride(chromeVersion: string): { userAgent: string; userAgentMetadata: Record<string, unknown> };
+export function agentViewportEmulationCommands(viewport: AgentViewport, scale: number, chromeVersion: string): CdpCommand[];
 export function createBrowserTabRegistry(): BrowserTabRegistry;
 export function browserTabsForSession<Tab extends { ownerSessionId: string | null }>(tabs: Tab[], sessionId: string): Tab[];
 export function activeBrowserTabIdForSession(

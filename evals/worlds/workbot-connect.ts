@@ -189,7 +189,7 @@ export async function workbotConnect(seed: Seed, { place }: { place: Place }, op
     // on warm generated output and pulled the product graph into eval layers.
     den = await seed.den({ web: false, org: { name: "Example workspace", admin: { name: "Member Example" }, members: options.draftRecovery ? { other: { name: "Other Member" } } : {} }, trustedOrigins: [provider.url, workbotUrl], env: { DEN_WORKBOT_URL: workbotUrl, DEN_API_PUBLIC_URL: provider.url, DEN_GOOGLE_API_BASE_URL: provider.url, DEN_GOOGLE_OAUTH_AUTHORIZE_URL: `${provider.url}/authorize`, DEN_GOOGLE_OAUTH_TOKEN_URL: `${provider.url}/token`, DEN_GOOGLE_OAUTH_USERINFO_URL: `${provider.url}/userinfo`, DEN_ALLOW_PRIVATE_MCP_URLS: "true", DEN_PLAN_GATING_ENABLED: "false", RESEND_API_KEY: "", SMTP_HOST: "", LOOPS_API_KEY: "", STRIPE_SECRET_KEY: "" } });
     const owner = den.admin;
-    const orgId = await enableOrganizationCapabilities(seed, owner, { workbotDocuments: true, workbotInlineConnect: true });
+    const orgId = await enableOrganizationCapabilities(seed, owner, { workbotDocuments: true });
     const call = (session: DenSession, method: "GET" | "POST", path: string, body?: unknown) => requestDen(session.token, method, path, { orgId, body });
     const mint = async (session: DenSession) => {
       const issued = await call(session, "POST", "/v1/mcp/token", { scopes: ["mcp:read", "mcp:write"] });

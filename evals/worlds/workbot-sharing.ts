@@ -24,7 +24,6 @@ export async function workbotSharing(_seed: Seed, { place }: { place: Place }) {
             return json({ name: "Workspace Owner", email: "member@example.test", userId: "user_example", organizationId: "org_example", organizationName: "Invitation workspace", enabled: true, calendar: false, sideChats: false, denUrl: "https://den.example.test",
               // An older Den can still return this hint. Neither on nor off should reveal a control.
               shareWorkbot: { enabled: page.searchParams.get("sharing") === "on" },
-              ...(persona === "unknown" ? {} : { teamLinks: { enabled: true, settings: persona === "admin", apps: persona === "admin" } }),
             });
           }
           if (url.pathname === "/v1/workbot") return json({ available: true, name: "Workbot", organizationName: "Invitation workspace", status: "idle", turns: [{ id: "turn_example", text: "Help with my work", sentAt: 1792346400000, finishedAt: 1792346400000, status: "done", attachments: [], outputs: [], parts: [{ kind: "text", text: "What would you like to work on?" }], modelSteps: 1, error: null, greeting: false }], hasEarlier: false, filesEnabled: false });

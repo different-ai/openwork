@@ -331,6 +331,10 @@ describe("Open Outlook, Open Calendar and Open Drive", () => {
     }
     const file = await toolValue("file_write", { path: "broken.docx", content: "not a real zip" }); const p = await json(await fetch(`${base}/preview/${string(file.id)}`)); expect(p.kind).toBe("Download only");
     expect((await fetch(`${base}/reset`, { method: "POST", headers: { origin: "https://hostile.invalid" } })).status).toBe(403);
+    // Hosted behind an HTTPS proxy: the page's own https origin is accepted, another site's is not.
+    const host = new URL(base).host;
+    expect((await fetch(`${base}/reset`, { method: "POST", headers: { origin: `https://${host}`, "x-forwarded-proto": "https" } })).status).toBe(200);
+    expect((await fetch(`${base}/reset`, { method: "POST", headers: { origin: "https://hostile.invalid", "x-forwarded-proto": "https" } })).status).toBe(403);
   });
 
   test("rejects oversized uploads, malformed input and unsafe cross-origin requests without mutation", async () => {

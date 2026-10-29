@@ -1,17 +1,58 @@
 import type { DenExternalMcpConnection } from "../../../app/lib/den";
+import { providerSetupProblem } from "../connections/connection-sign-in-problem";
 
-export function recordedConnectorState(connection: DenExternalMcpConnection) {
-  if (connection.readiness === undefined) return null;
-  if (connection.setupRequired || connection.issuerReviewRequired || (connection.credentialMode === "shared" && !connection.connected)) return "Set up";
-  if (connection.needsReconnect || (connection.credentialMode === "per_member" && !connection.connectedForMe)) return "Sign in";
-  return connection.readiness?.status === "ready" ? "Ready" : "Couldn't verify";
+export type RecordedConnectorState = "Set up" | "Change setting" | "Sign in" | "Checking…" | "Ready" | "Couldn't verify" | "Not checked";
+
+export type RecordedConnectorView = {
+  checking?: boolean;
+  /**
+   * libraryConnectorOrgSetup: a setting in the service's own app that blocks
+   * sign-in is shown, with Den's reason, before any "Sign in".
+   */
+  providerSetup?: boolean;
+};
+
+type Readiness = NonNullable<DenExternalMcpConnection["readiness"]>;
+
+function signInFailure(readiness: Readiness | null | undefined) {
+  return readiness?.status === "could_not_verify" && (readiness.failure === "sign_in_rejected" || readiness.failure === "sign_in_required");
 }
 
-export function recordedConnectorNote(connection: DenExternalMcpConnection) {
-  if (recordedConnectorState(connection) === "Ready" && connection.readiness) {
-    return `Checked ${new Date(connection.readiness.checkedAt).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}`;
+/**
+ * Mirrors Den web's connector-readiness: never checked is "Not checked", only
+ * a recorded check that did not pass is "Couldn't verify", and only a
+ * rejected or missing sign-in asks someone to sign in.
+ */
+export function recordedConnectorState(connection: DenExternalMcpConnection, view: RecordedConnectorView = {}): RecordedConnectorState | null {
+  const readiness = connection.readiness;
+  if (readiness === undefined) return null;
+  if (connection.setupRequired || connection.issuerReviewRequired || (connection.credentialMode === "shared" && !connection.connected)) return "Set up";
+  // Signing in again cannot work until the setting changes, so this wins over needsReconnect.
+  if (view.providerSetup && providerSetupProblem(connection)) return "Change setting";
+  if (connection.needsReconnect) return "Sign in";
+  if (view.checking) return "Checking…";
+  if (readiness?.status === "ready") return "Ready";
+  if (signInFailure(readiness)) return "Sign in";
+  if (connection.credentialMode === "per_member" && !connection.connectedForMe) return "Sign in";
+  return readiness ? "Couldn't verify" : "Not checked";
+}
+
+function formatTime(value: string) {
+  return new Date(value).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+}
+
+export function recordedConnectorNote(connection: DenExternalMcpConnection, view: RecordedConnectorView = {}) {
+  const state = recordedConnectorState(connection, view);
+  const readiness = connection.readiness;
+  if (state === "Change setting") return providerSetupProblem(connection)?.reason ?? "";
+  if (state === "Checking…") return "Checking that it connects and its tools can be read.";
+  if (state === "Not checked") return "Not checked yet.";
+  if (state === "Ready" && readiness) return `Checked ${formatTime(readiness.checkedAt)}`;
+  if ((state === "Couldn't verify" || (state === "Sign in" && signInFailure(readiness))) && readiness) {
+    const reason = readiness.reason ?? "The last check didn't pass.";
+    return readiness.lastSuccessfulAt ? `${reason} Last ready ${formatTime(readiness.lastSuccessfulAt)}.` : reason;
   }
-  const reason = connection.readiness?.reason ?? "Not checked yet.";
-  const lastReady = connection.readiness?.lastSuccessfulAt;
-  return lastReady ? `${reason} Last ready ${new Date(lastReady).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}.` : reason;
+  if (state === "Sign in") return connection.credentialMode === "per_member" ? "Sign in to use and check this connection." : "An admin needs to reconnect this connection.";
+  if (state === "Set up") return "An admin needs to finish setting this up.";
+  return "";
 }

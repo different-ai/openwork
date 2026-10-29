@@ -228,7 +228,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const result = await db.transaction(async (tx) => {
         const [row] = await tx.select().from(ManagedDeploymentTable).where(and(eq(ManagedDeploymentTable.id, id), eq(ManagedDeploymentTable.org_id, org.organization.id))).limit(1).for("update")
         if (!row) return { error: "deployment_not_found", status: 404 } as const
-        if (!await organizationFeatureEnabled(org.organization.id, "managedDeployments", { database: tx, lock: "share" })) return { error: "feature_disabled", status: 404 } as const
+        if (!await organizationFeatureEnabled(org.organization.id, "managedDeployments", { database: tx, lock: "share", userId: org.currentMember.userId })) return { error: "feature_disabled", status: 404 } as const
         const release = releaseFor(row)
         if (!release) return { error: "release_not_configured", status: 503 } as const
         const [active] = row.active_run_id ? await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, row.active_run_id)).limit(1) : []

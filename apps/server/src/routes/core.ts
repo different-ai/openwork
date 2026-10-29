@@ -7,7 +7,7 @@ import {
   writeConnectState,
 } from "../connect-state.js";
 import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
-import { readOpenWorkConnectSkillContent, readOpenWorkConnectSkillIndex, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
+import { readOpenWorkConnectSkillContent, readOpenWorkConnectSkillContents, readOpenWorkConnectSkillIndex, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
 import { readOpenWorkAutomationCatalog, renderOpenWorkAutomationInstruction } from "../connect-automation-catalog.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { syncManagedProviderAuth, type ManagedProviderAuthResult } from "../managed-provider-auth.js";
@@ -309,9 +309,18 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   });
 
   addRoute(routes, "POST", "/experimental/connect/skills/read", "client", async (ctx) => {
-    // One listed skill's SKILL.md for native delivery; Den rechecks access.
+    // Listed skills' SKILL.md for native delivery; Den rechecks access.
     const body = await readJsonBody(ctx.request);
-    if (typeof body.url !== "string" || !body.url.startsWith("skill://") || body.url.length > 2_048) {
+    const validUrl = (url: unknown): url is string => typeof url === "string" && url.startsWith("skill://") && url.length <= 2_048;
+    if (Array.isArray(body.urls)) {
+      // Several bodies on one Den session; `use` marks a message that uses them.
+      if (body.urls.length === 0 || body.urls.length > 150 || !body.urls.every(validUrl)) {
+        return jsonResponse({ ok: false, reason: "invalid_url" }, 400);
+      }
+      const contents = await readOpenWorkConnectSkillContents(config, body.urls, { use: body.use === true });
+      return jsonResponse({ ok: true, contents: Object.fromEntries(contents) });
+    }
+    if (!validUrl(body.url)) {
       return jsonResponse({ ok: false, reason: "invalid_url" }, 400);
     }
     const content = await readOpenWorkConnectSkillContent(config, body.url);

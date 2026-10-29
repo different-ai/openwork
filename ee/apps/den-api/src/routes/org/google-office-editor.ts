@@ -5,7 +5,7 @@ import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { nativeOfficeFormats, officeFileTypeSchema, officeFormats, officeSessionSchema, officeStatusSchema } from "@openwork/documents/office-engine"
-import { createCollaboraService, officeTicketMatches, validateOfficePackage, officeBytes, OFFICE_TTL_SECONDS, type OfficeDraft } from "@openwork/documents/office-server"
+import { createCollaboraService, officeDraftHasUnsavedEdits, officeTicketMatches, validateOfficePackage, officeBytes, OFFICE_TTL_SECONDS, type OfficeDraft } from "@openwork/documents/office-server"
 import { documentIdSchema } from "@openwork/documents/model"
 import { OFFICE_EDITOR_STARTING, placeOfficeEditor } from "../../documents-office-editor.js"
 import { configuredOfficeStore, holdOfficeWorker, releaseOfficeWorker } from "../../documents-office-store.js"
@@ -46,12 +46,17 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
   // Each session keeps the editor it opened on: the operator's service or the member's Cloud worker.
   const serviceFor = (serverUrl: string) => createCollaboraService({ serverUrl: validOrigin(serverUrl), ...origins! })
   const draftEditor = (draft: OfficeDraft) => draft.editorUrl ?? env.documentsOffice.serverUrl
-  const enabled = async (id: string) => await organizationFeatureEnabled(id, "workbotDocuments")
+  const enabled = async (id: string, userId: string) => await organizationFeatureEnabled(id, "workbotDocuments", { userId })
   const guard: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
     const context = c.get("organizationContext")
-    if (!context || !await enabled(context.organization.id)) return c.json({ error: "feature_disabled", message: "Documents is off for this workspace." }, 403)
+    if (!context?.features.workbotDocuments) return c.json({ error: "feature_disabled", message: "Documents is off for this workspace." }, 403)
     if (!store || !origins) return c.json({ error: "office_not_configured", message: "Full document editing is not set up for this workspace. An administrator can enable the document editor. You can open this file in Drive." }, 503)
     c.header("cache-control", "no-store")
+    await next()
+  }
+  const editingGuard: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
+    const context = c.get("organizationContext")
+    if (!context?.features.workbotDocumentEditing) return c.json({ error: "feature_disabled", message: "Document editing is off for this workspace." }, 403)
     await next()
   }
   const description = (operationId: string, summary: string, schema: z.ZodType, security?: []) => {
@@ -83,32 +88,69 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
   }
   const serviceAuthorized = async (c: Parameters<MiddlewareHandler<{ Variables: OrgRouteVariables }>>[0], draft: OfficeDraft) => {
     const context = await getOrganizationContextForUser({ organizationId: normalizeDenTypeId("organization", draft.organizationId), userId: normalizeDenTypeId("user", draft.userId) })
-    if (!context || context.currentMember.id !== draft.memberId || !await enabled(draft.organizationId)) return false
+    if (!context || context.currentMember.id !== draft.memberId || !await enabled(draft.organizationId, draft.userId)) return false
     c.set("organizationContext", context)
     const auth = await selected(c, draft.connectionId)
     if (!auth.ok) return false
     return (await metadata(c, auth.deps, draft.savedFileId ?? draft.fileId)).ok
   }
 
-  app.post(ROOT, description("openGoogleDriveOfficeEditor", "Open a document, spreadsheet or presentation editor", officeSessionSchema), orgMemberRoute(), guard, bodyLimit({ maxSize: 1024 }), paramValidator(params), async c => {
+  app.post(ROOT, description("openGoogleDriveOfficeEditor", "Open a document, spreadsheet or presentation editor", officeSessionSchema), orgMemberRoute(), editingGuard, guard, bodyLimit({ maxSize: 1024 }), paramValidator(params), async c => {
     if (!store || !origins) return failure(c, "The document editor is unavailable.")
     try {
       const { fileId } = c.req.valid("param"); const auth = await selected(c); if (!auth.ok) return auth.reply
       const member = c.get("organizationContext")!
-      const placement = await placeOfficeEditor({ organizationId: member.organization.id, userId: member.currentMember.userId })
-      if (placement.status === "starting") return starting(c, placement.message)
-      if (placement.status === "unavailable") return failure(c, placement.message)
       const meta = await metadata(c, auth.deps, fileId); if (!meta.ok) return meta.reply
       const native = Object.hasOwn(nativeOfficeFormats, meta.file.mimeType) ? nativeOfficeFormats[meta.file.mimeType] : null
       const fileType = native ?? officeFileTypeSchema.options.find(type => officeFormats[type].mimeType === meta.file.mimeType)
       if (!fileType) return failure(c, "Open a Word, Excel, PowerPoint or OpenDocument file, or a Google Doc, Sheet or Slides presentation.")
+      const canWrite = canWriteDriveDocument(auth.token.account.scopes, auth.token.enabledScopes)
+      if (!canWrite || (native === null && !meta.file.capabilities?.canEdit)) return c.json({ error: "read_only", message: "You have read-only access to this file. You can keep reading the preview." }, 403)
+      // Reopening a file (after a reload, or from another tab) returns to its open session
+      // instead of starting another. Unsaved edits always come back; an unedited session is
+      // only reused while the Drive file is unchanged.
+      // Both paths place the editor at most once per request.
+      let placed: Awaited<ReturnType<typeof placeOfficeEditor>> | undefined
+      const place = async () => placed ??= await placeOfficeEditor({ organizationId: member.organization.id, userId: member.currentMember.userId })
+      const open = await store.findOpen({ organizationId: member.organization.id, memberId: member.currentMember.id, connectionId: auth.connectionId, fileId })
+      if (open) {
+        const placement = await place()
+        if (placement.status === "starting") return starting(c, placement.message)
+        if (placement.status === "unavailable") return failure(c, placement.message)
+        const reopened = await store.lock(open.id, async () => {
+          const current = await store.get(open.id)
+          if (!current) return null
+          if (!officeDraftHasUnsavedEdits(current) && current.revision !== meta.file.version) {
+            await store.remove(current)
+            if (current.workerId) await releaseOfficeWorker(current.workerId, current.id)
+            return null
+          }
+          if (current.workerId && current.workerId !== placement.workerId) await releaseOfficeWorker(current.workerId, current.id)
+          current.expiresAt = Date.now() + OFFICE_TTL_SECONDS * 1000
+          current.canEdit = current.canEdit && canWrite
+          // The draft lives in Den, so it can open in whichever editor serves the member now.
+          if (placement.workerId) { current.editorUrl = placement.serverUrl; current.workerId = placement.workerId }
+          else { delete current.editorUrl; delete current.workerId }
+          await store.put(current)
+          return current
+        })
+        if (reopened) {
+          let session: Awaited<ReturnType<ReturnType<typeof serviceFor>["session"]>>
+          try { session = await serviceFor(placement.serverUrl).session(reopened) }
+          catch (error) { if (placement.workerId) return starting(c, OFFICE_EDITOR_STARTING); throw error }
+          if (reopened.workerId) await holdOfficeWorker(reopened.workerId, reopened.id)
+          return c.json(session)
+        }
+      }
       const url = fileUrl(fileId, native ? "/export" : ""); url.searchParams.set(native ? "mimeType" : "alt", native ? officeFormats[fileType].mimeType : "media")
       const media = await requestGoogleAction(c, auth.deps, READ, url); if (!media.ok) return media.reply
       const bytes = await officeBytes(media.response); await validateOfficePackage(bytes, fileType)
       const latest = await metadata(c, auth.deps, fileId); if (!latest.ok) return latest.reply
       if (meta.file.version !== latest.file.version) return failure(c, "This file changed while opening. Open the latest version again.")
+      const placement = await place()
+      if (placement.status === "starting") return starting(c, placement.message)
+      if (placement.status === "unavailable") return failure(c, placement.message)
       const context = c.get("organizationContext")!
-      const canWrite = canWriteDriveDocument(auth.token.account.scopes, auth.token.enabledScopes)
       const draft: OfficeDraft = {
         id: randomUUID(), organizationId: context.organization.id, memberId: context.currentMember.id, userId: context.currentMember.userId, connectionId: auth.connectionId,
         fileId, revision: meta.file.version, name: native ? `${meta.file.name}.${fileType}` : meta.file.name, mimeType: officeFormats[fileType].mimeType, fileType,
@@ -135,7 +177,7 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
     } catch (error) { return failure(c, error instanceof Error ? error.message : "Couldn't check the save.") }
   })
 
-  app.post(`${ROOT}/:sessionId/save`, description("saveGoogleDriveOfficeEditor", "Save an Office snapshot to Drive", z.object({ fileId: documentIdSchema })), orgMemberRoute(), guard, paramValidator(sessionParams), jsonValidator(z.object({ draftVersion: z.number().int().min(0) }).strict()), async c => {
+  app.post(`${ROOT}/:sessionId/save`, description("saveGoogleDriveOfficeEditor", "Save an Office snapshot to Drive", z.object({ fileId: documentIdSchema })), orgMemberRoute(), editingGuard, guard, paramValidator(sessionParams), jsonValidator(z.object({ draftVersion: z.number().int().min(0) }).strict()), async c => {
     if (!store) return failure(c, "The document editor is unavailable.")
     try {
       const expected = c.req.valid("json").draftVersion
@@ -163,7 +205,7 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
         if (!result.ok) return result.reply
         const saved = z.object({ id: documentIdSchema, version: z.string() }).parse(await readGoogleActionJson(result.response))
         if (!copy && saved.id !== target) throw new Error("The save response could not be verified. Check the file in Drive before reopening it.")
-        draft.savedFileId = saved.id; draft.revision = saved.version; draft.uncertain = false
+        draft.savedFileId = saved.id; draft.revision = saved.version; draft.uncertain = false; draft.savedDraftVersion = draft.draftVersion
         await store.put(draft)
         return c.json({ fileId: saved.id })
       }))
@@ -185,6 +227,9 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
     const bearer = c.req.header("authorization")?.replace(/^Bearer /i, "")
     if (!draft || !origins || !draftEditor(draft) || !officeTicketMatches(draft, c.req.query("access_token") ?? bearer) || !await serviceAuthorized(c, draft)) return null
     if (write) {
+      // A rollout pause must not tell the engine that file access was revoked:
+      // its 403 handling can invalidate unsaved content. No staging/write succeeds.
+      if (!await organizationFeatureEnabled(draft.organizationId, "workbotDocumentEditing", { userId: draft.userId })) throw new Response(JSON.stringify({ error: "document_editing_disabled" }), { status: 503, headers: { "content-type": "application/json", "retry-after": "5" } })
       const auth = await selected(c, draft.connectionId)
       if (!draft.canEdit || !auth.ok || !canWriteDriveDocument(auth.token.account.scopes, auth.token.enabledScopes)) return null
       const meta = await metadata(c, auth.deps, draft.savedFileId ?? draft.fileId)
@@ -238,7 +283,7 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
   app.post(SERVICE, description("lockOfficeFile", "Manage a temporary editor session lock", z.object({ ok: z.boolean() }), []), tokenRoute, bodyLimit({ maxSize: 1024 }), async c => {
     if (!store) return c.json({ error: "not_found" }, 403)
     try {
-      const draft = await wopiDraft(c, true)
+      const draft = await wopiDraft(c, c.req.header("x-wopi-override") !== "UNLOCK")
       if (!draft) return c.json({ error: "not_found" }, 403)
       const action = c.req.header("x-wopi-override"); const requested = c.req.header("x-wopi-lock") ?? ""
       if (!["LOCK", "UNLOCK", "REFRESH_LOCK", "GET_LOCK"].includes(action ?? "") || requested.length > 1024) return c.json({ error: "unsupported_operation" }, 400)

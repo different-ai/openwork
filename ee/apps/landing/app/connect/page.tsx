@@ -79,7 +79,7 @@ export default async function ConnectPage() {
               <div className="flex h-[132px] flex-col justify-center gap-2.5 rounded-[14px] bg-white px-[18px] shadow-[0_0_0_1px_rgba(1,22,39,0.08)]">
                 <span className="text-sm font-medium text-[#111827]">Name your workspace</span>
                 <span className="flex h-[34px] items-center justify-between rounded-lg px-3 text-[13px] text-[#111827] shadow-[0_0_0_1px_#E5E7EB]">
-                  Sam&apos;s workspace <span className="text-[#6B7280]">5 free seats</span>
+                  Sam&apos;s workspace <span className="text-[#6B7280]">Free plan · up to 5 users</span>
                 </span>
                 <span className="self-start rounded-lg bg-[var(--lp-ink)] px-3 py-1.5 text-xs text-white">
                   Create workspace and authorize
@@ -163,7 +163,7 @@ export default async function ConnectPage() {
             </h2>
             <div className="mt-4 grid border-y border-[var(--lp-border)] md:grid-cols-3">
               <Tier name="Solo" price="Free" note="Just you, every client you use." first />
-              <Tier name="Team" price="First 5 seats free" note="Then $10 per seat a month." />
+              <Tier name="Team" price="$10 per user a month" note="The Free plan covers up to 5 users." />
               <Tier name="Enterprise" price="Talk to us" note="SCIM, audit and your own hosting." />
             </div>
           </section>

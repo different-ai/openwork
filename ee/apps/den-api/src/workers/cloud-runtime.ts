@@ -6,12 +6,7 @@ import {
 } from "@openwork-ee/cloud-runtime/orchestrator"
 import type { ProviderEndpointKind, SandboxProvider } from "@openwork/sandbox"
 import { createDaytonaProvider, DAYTONA_PROVIDER_ID } from "@openwork/sandbox-daytona"
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { WorkerTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { db } from "../db.js"
 import { env } from "../env.js"
-import { organizationFeatureEnabled } from "../features.js"
 import { appLogger } from "../observability/logger.js"
 import { createDatabaseRuntimeInstanceStore } from "./cloud-runtime-store.js"
 
@@ -41,6 +36,8 @@ const providers: Record<string, {
       apiUrl: env.daytona.apiUrl,
       target: env.daytona.target,
       snapshot: env.daytona.snapshot ?? null,
+      ...(env.daytona.sandboxClass === "linux-vm" ? { platform: { os: "linux", isolation: "microvm" }, supportsPause: true } : {}),
+      ...(env.daytona.sandboxClass === "linux-vm" && env.daytona.autoDeleteInterval > 0 ? { idleRetentionMinutes: env.daytona.autoDeleteInterval } : {}),
       image: env.daytona.image,
       resources: {
         cpu: env.daytona.resources.cpu,
@@ -84,18 +81,6 @@ function workerActivityHeartbeatUrl(workerId: string) {
   return `${base}/v1/workers/${encodeURIComponent(workerId)}/activity-heartbeat`
 }
 
-/** Resolve the org policy on every launch, never from the cached orchestrator. */
-async function workerEnginePolicy(workerId: string) {
-  const [worker] = await db
-    .select({ orgId: WorkerTable.org_id })
-    .from(WorkerTable)
-    .where(eq(WorkerTable.id, normalizeDenTypeId("worker", workerId)))
-    .limit(1)
-  return {
-    engineV2ForceUpgrade: worker ? await organizationFeatureEnabled(worker.orgId, "engineV2ForceUpgrade") : false,
-  }
-}
-
 /** Workers run the document editor only when Den places it there. */
 export function documentsEditorForWorkers() {
   const config = env.documentsOffice
@@ -124,8 +109,9 @@ export function cloudRuntimeOrchestratorConfig(): CloudRuntimeOrchestratorConfig
     port: runtime.openworkPort,
     publicEndpoint: runtime.public,
     lifecycle: {
-      autoStopMinutes: runtime.autoStopInterval,
-      autoArchiveMinutes: runtime.autoArchiveInterval,
+      ...(runtime.sandboxClass === "linux-vm"
+        ? { autoStopMinutes: 0, autoPauseMinutes: runtime.autoPauseInterval }
+        : { autoStopMinutes: runtime.autoStopInterval, autoArchiveMinutes: runtime.autoArchiveInterval }),
       autoDeleteMinutes: runtime.autoDeleteInterval,
     },
     resources: {
@@ -143,9 +129,9 @@ export function cloudRuntimeOrchestratorConfig(): CloudRuntimeOrchestratorConfig
     activityHeartbeatUrl: workerActivityHeartbeatUrl,
     documentsEditor: documentsEditorForWorkers() ?? undefined,
     bootstrap: {
+      ...(runtime.sandboxClass === "linux-vm" ? { cloudComputerDisplay: ":99" } : {}),
       imageDescription: "Daytona runtime image",
       rebuildHint: "rebuild and republish the Daytona snapshot",
-      enginePolicy: workerEnginePolicy,
     },
   }
 }

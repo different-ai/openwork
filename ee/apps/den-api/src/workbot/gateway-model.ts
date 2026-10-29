@@ -1,13 +1,19 @@
 import type { HeadlessModelAccess, HeadlessModelCatalog } from "@openwork-ee/headless-protocol"
 import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import { WORKBOT_DEFAULT_MODEL_ID } from "@openwork/types/den/workbot-settings"
+import type { WorkbotAccessReason } from "@openwork/types/den/workbot-settings"
 import type { GatewayProviderSummary } from "@openwork/types/den/gateway"
 import { gatewayProviderUrl, readProviderConfigNpm } from "../llm/inference-provider-config.js"
 
 export type CloudAgentGatewayActor = { organizationId: string; userId: string }
 export type CloudAgentGatewayProtocol = HeadlessModelAccess["protocol"]
 export type CloudAgentGatewayAccess = HeadlessModelAccess
-export type CloudAgentGatewaySummary = Pick<GatewayProviderSummary, "id" | "providerId" | "status" | "providerConfig" | "models">
+export type CloudAgentGatewaySummary = Pick<GatewayProviderSummary, "id" | "providerId" | "status" | "providerConfig" | "models"> & Partial<Pick<GatewayProviderSummary, "authorizationRequests">>
+export class CloudAgentGatewayAccessError extends Error {
+  constructor(readonly reason: WorkbotAccessReason) {
+    super("cloud_agent_gateway_model_unavailable")
+  }
+}
 export type CloudAgentGatewayModel = {
   id: string
   name: string
@@ -59,6 +65,7 @@ export type CloudAgentGatewaySnapshot = { memberId: string; gatewayBaseUrl: stri
 export type CloudAgentGatewayDeps = {
   snapshot: (actor: CloudAgentGatewayActor) => Promise<CloudAgentGatewaySnapshot>
   memberKey: (actor: CloudAgentGatewayActor, memberId: string) => Promise<string>
+  missingModelReason?: (actor: CloudAgentGatewayActor, memberId: string, model: string) => Promise<WorkbotAccessReason>
 }
 
 /** Injectable boundary for focused authorization tests. No catalog or access is cached between calls. */
@@ -74,7 +81,13 @@ export function createCloudAgentGatewayModelService(deps: CloudAgentGatewayDeps)
     async access(actor: CloudAgentGatewayActor, model: string): Promise<CloudAgentGatewayAccess> {
       const snapshot = await current(actor)
       const selected = snapshot.models.find((entry) => entry.id === model)
-      if (!selected) throw new Error("cloud_agent_gateway_model_unavailable")
+      if (!selected) {
+        const reason = !snapshot.summaries.some(provider => provider.status === "active") ? "gateway_provider_missing"
+          : !parseGatewayModelAlias(model) ? "gateway_model_unavailable"
+          : snapshot.summaries.some(provider => provider.authorizationRequests?.some(request => request.models?.some(entry => entry.id === model))) ? "gateway_authentication_required"
+          : await deps.missingModelReason?.(actor, snapshot.memberId, model) ?? "gateway_model_unavailable"
+        throw new CloudAgentGatewayAccessError(reason)
+      }
       const apiKey = await deps.memberKey(actor, snapshot.memberId)
       return { baseUrl: selected.baseUrl, apiKey, protocol: selected.protocol }
     },
@@ -88,7 +101,7 @@ const databaseDeps: CloudAgentGatewayDeps = {
       import("@openwork-ee/den-db/drizzle"), import("@openwork-ee/den-db/schema"), import("@openwork-ee/utils/typeid"),
       import("../db.js"), import("../env.js"), import("../llm/gateway-matrix.js"), import("../llm/litellm-issued.js"), import("@openwork-ee/utils/litellm-catalog"),
     ])
-    if (!env.gatewayEnabled) throw new Error("cloud_agent_gateway_not_configured")
+    if (!env.gatewayEnabled) throw new CloudAgentGatewayAccessError("gateway_not_configured")
     const organizationId = normalizeDenTypeId("organization", actor.organizationId)
     const userId = normalizeDenTypeId("user", actor.userId)
     const [member] = await db.select({ id: MemberTable.id }).from(MemberTable)
@@ -110,6 +123,28 @@ const databaseDeps: CloudAgentGatewayDeps = {
       summaries.push(summary)
     }
     return { memberId: member.id, gatewayBaseUrl: env.gatewayPublicBaseUrl, summaries }
+  },
+  async missingModelReason(actor, memberId, model) {
+    const selection = parseGatewayModelAlias(model)
+    if (!selection) return "gateway_model_unavailable"
+    const [{ and, eq }, { GatewayProviderTable: Provider, GatewayProviderModelTable: Model, GatewayModelGroupTable: Group, GatewayModelGroupModelTable: Link, GatewayCredentialSetTable: Set, GatewayProviderAccessTable: Access }, { normalizeDenTypeId }, { db }, { memberGatewayTeams, effectiveGatewayGrants }] = await Promise.all([
+      import("@openwork-ee/den-db/drizzle"), import("@openwork-ee/den-db/schema"), import("@openwork-ee/utils/typeid"), import("../db.js"), import("../llm/inference-provider-lifecycle.js"),
+    ])
+    // Diagnose the saved alias without issuing credentials or mutating providers/defaults.
+    const [row] = await db.select({ providerId: Provider.id, mode: Set.credential_mode }).from(Model)
+      .innerJoin(Provider, and(eq(Provider.id, Model.gateway_provider_id), eq(Provider.organization_id, normalizeDenTypeId("organization", actor.organizationId)), eq(Provider.status, "active")))
+      .innerJoin(Group, and(eq(Group.id, selection.modelGroupId), eq(Group.gateway_provider_id, Provider.id), eq(Group.status, "active")))
+      .innerJoin(Link, and(eq(Link.model_group_id, Group.id), eq(Link.gateway_provider_model_id, Model.id)))
+      .innerJoin(Set, and(eq(Set.id, selection.credentialSetId), eq(Set.gateway_provider_id, Provider.id), eq(Set.status, "active")))
+      .where(eq(Model.id, selection.gatewayProviderModelId)).limit(1)
+    if (!row) return "gateway_model_unavailable"
+    const member = normalizeDenTypeId("member", memberId)
+    const [grants, teams] = await Promise.all([
+      db.select().from(Access).where(and(eq(Access.gateway_provider_id, row.providerId), eq(Access.model_group_id, selection.modelGroupId), eq(Access.credential_set_id, selection.credentialSetId))),
+      memberGatewayTeams(db, normalizeDenTypeId("organization", actor.organizationId), member),
+    ])
+    if (!effectiveGatewayGrants(grants, member, teams.map(team => team.id)).length) return "gateway_member_access_missing"
+    return row.mode === "member" ? "gateway_authentication_required" : "gateway_credentials_unavailable"
   },
   async memberKey(actor, memberId) {
     const [{ ensureMemberGatewayKey }, { normalizeDenTypeId }] = await Promise.all([

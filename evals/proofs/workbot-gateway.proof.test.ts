@@ -23,38 +23,15 @@ function modelLabel(name: string): RegExp {
 test("an owner chooses an Anthropic gateway model for Workbot without granting it to another member", async ({ world, user, probe, step, evidence }) => {
   const member = user.on(world.member);
   const memberProbe = probe.on(world.member);
-  await step("before: Workbot offers only the deployment's OpenAI runner model", async () => {
-    await user.see({ role: "combobox", label: "Default model" }, { value: "Default (Another model)" });
-    await user.click({ role: "combobox", label: "Default model" });
-    await user.see({ role: "option", label: /Another model$/ });
-    await user.notSee({ role: "option", label: modelLabel(world.anthropic.name) });
-    await user.notSee({ role: "option", label: modelLabel(world.openai.name) });
-    const settings = await probe.api(world.admin, "/v1/org/workbot-settings", { headers: world.scope });
-    const ids = modelIds(record(settings.body).models);
-    expect(ids).toEqual(["gateway/other"]);
-    evidence.recordAssertionEvidence("The rollout starts with the legacy deployment catalog", `HTTP ${settings.response.status}; usable models=${ids.join(", ")}; configured gateway models absent`, settings.response.ok && ids.join() === "gateway/other");
-    await user.screenshot();
-    await user.press("Escape");
-  });
-  await step("the owner enables cloud agents' shared AI Gateway with one feature switch", async () => {
-    await user.navigate(world.featureUrl);
-    await user.click({ role: "link", label: "Features" });
-    await user.see({ testId: "admin-capability-cloudAgentGateway" });
-    const off = (await probe.dom('[data-testid="admin-capability-cloudAgentGateway"][aria-checked="false"]')).elements.length === 1;
-    expect(off).toBe(true);
-    await user.click({ testId: "admin-capability-cloudAgentGateway" });
-    const enabled = await probe.eventually(async () => (await probe.dom('[data-testid="admin-capability-cloudAgentGateway"][aria-checked="true"]:not([disabled])')).elements.length === 1, { within: 10_000, until: value => value, label: "saved shared gateway rollout" });
-    expect(enabled).toBe(true);
-    evidence.recordAssertionEvidence("Only the owner turns on the default-off rollout", `Before=${off ? "off" : "on"}; after=${enabled ? "on and saved" : "not saved"}`, off && enabled);
-    await user.screenshot();
-  });
-  await step("after: Workbot offers the owner's configured Anthropic and OpenAI gateway models", async () => {
-    await user.navigate(world.settingsUrl);
+  await step("Workbot offers the owner's configured Anthropic and OpenAI gateway models", async () => {
     await user.see({ role: "combobox", label: "Default model" });
     await user.click({ role: "combobox", label: "Default model" });
     await user.see({ role: "option", label: modelLabel(world.anthropic.name) });
     await user.see({ role: "option", label: modelLabel(world.openai.name) });
     await user.notSee({ role: "option", label: /Another model$/ });
+    // One default model: no separate "Default: …" entry and no second "Workbot default" row.
+    await user.notSee({ role: "option", label: /^Default/ });
+    await user.notSee({ text: "Workbot default" });
     const response = await probe.api(world.admin, "/v1/org/workbot-settings", { headers: world.scope });
     const ids = modelIds(record(response.body).models);
     expect(ids.sort()).toEqual([world.anthropic.id, world.openai.id].sort());
@@ -65,6 +42,12 @@ test("an owner chooses an Anthropic gateway model for Workbot without granting i
   await step("the owner's Anthropic default survives saving and reloading", async () => {
     await user.click({ role: "button", label: "Save model" });
     await user.see({ text: `Saved. New messages use ${world.anthropic.name}.` });
+    await user.see({ testId: "workbot-default-readiness" }, { text: "Available" });
+    // Saving never narrows the list: every model stays choosable straight after the save.
+    await user.click({ role: "combobox", label: "Default model" });
+    await user.see({ role: "option", label: modelLabel(world.anthropic.name) });
+    await user.see({ role: "option", label: modelLabel(world.openai.name) });
+    await user.press("Escape");
     await user.reload();
     await user.see({ role: "combobox", label: "Default model" }, { value: world.anthropic.name });
     const response = await probe.api(world.admin, "/v1/org/workbot-settings", { headers: world.scope });
@@ -77,7 +60,8 @@ test("an owner chooses an Anthropic gateway model for Workbot without granting i
   await step("another model manager cannot choose the owner's unassigned Anthropic default", async () => {
     await member.reload();
     await member.see({ role: "combobox", label: "Default model" }, { value: "Unavailable model" });
-    await member.see({ text: "The organization's saved model isn't available to you. Ask your model administrator to check your AI Gateway access." });
+    await member.see({ text: /Workbot can't use the saved model right now, so new messages won't send\./ });
+    await member.see({ testId: "workbot-default-readiness" }, { text: "Unavailable" });
     await member.notSee({ text: /New messages use the default model/ });
     await member.notSee({ text: world.anthropic.id });
     await member.click({ role: "combobox", label: "Default model" });

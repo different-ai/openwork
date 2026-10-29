@@ -7,13 +7,22 @@ set -euo pipefail
 #   bash .devcontainer/test-server-on-daytona.sh [branch-or-commit]
 #   bash .devcontainer/test-server-on-daytona.sh [branch-or-commit] --force-install
 #   bash .devcontainer/test-server-on-daytona.sh [branch-or-commit] --seed
-#
+#   bash .devcontainer/test-server-on-daytona.sh [ref] --private --ttl 1440
+# CPU/memory overrides require the Dockerfile fallback; snapshots fix resources.
+# Options: --private, --cpu <cores>, --memory-gib <GiB>, --ttl <1-1440 minutes>,
+#          --preview-expiry-seconds <1-86400> (default 86400).
+# TTL is provider-enforced wall-clock time from VM creation, including startup.
 # Creates a Daytona sandbox, starts MySQL + Den API + Den Web,
-# waits for health checks, and prints public preview URLs.
+# waits for health checks, and prints signed preview URLs.
 
 REF=""
 FORCE_INSTALL=0
 RUN_SEED=0
+PRIVATE=0
+CPU=""
+MEMORY_GIB=""
+TTL_MINUTES=""
+PREVIEW_EXPIRY_SECONDS=86400
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Pid + random suffix so parallel invocations (multiple features/worktrees)
 # never collide on the second-granularity timestamp.
@@ -57,8 +66,27 @@ while [ "$#" -gt 0 ]; do
       shift
       DAYTONA_AUTO_STOP_MINUTES="${1:?missing auto-stop minutes}"
       ;;
+    --private)
+      PRIVATE=1
+      ;;
+    --cpu)
+      shift
+      CPU="${1:?missing CPU cores}"
+      ;;
+    --memory-gib)
+      shift
+      MEMORY_GIB="${1:?missing memory GiB}"
+      ;;
+    --ttl)
+      shift
+      TTL_MINUTES="${1:?missing TTL minutes}"
+      ;;
+    --preview-expiry-seconds)
+      shift
+      PREVIEW_EXPIRY_SECONDS="${1:?missing preview expiry seconds}"
+      ;;
     --help|-h)
-      sed -n '1,13p' "$0"
+      sed -n '1,17p' "$0"
       exit 0
       ;;
     --*)
@@ -98,19 +126,52 @@ if [ "$DAYTONA_AUTO_STOP_MINUTES" -gt 1440 ]; then
   exit 1
 fi
 
+# Validate every provider limit before making any infrastructure calls.
+node -e '
+const [cpu, memory, ttl, expiry] = process.argv.slice(1);
+for (const [name, raw, max, required] of [["cpu", cpu, 2147483647, false], ["memory GiB", memory, 2147483647, false], ["TTL minutes", ttl, 1440, false], ["preview expiry seconds", expiry, 86400, true]]) {
+  if (!raw && !required) continue;
+  const value = Number(raw);
+  if (!/^[0-9]+$/.test(raw) || !Number.isSafeInteger(value) || value < 1 || value > max) {
+    console.error(`ERROR: ${name} must be a whole number from 1 through ${max}`);
+    process.exit(1);
+  }
+}
+' "$CPU" "$MEMORY_GIB" "$TTL_MINUTES" "$PREVIEW_EXPIRY_SECONDS"
+
+if [ -n "${OPENWORK_DEN_EXTRA_ENV_B64:-}" ] && printf %s "$OPENWORK_DEN_EXTRA_ENV_B64" | base64 -d 2>/dev/null | grep -qx 'OPENWORK_WORKSHOP_PRIVATE_COHOST=1'; then
+  if [ "$PRIVATE" -ne 1 ]; then
+    echo "ERROR: workshop private cohosting requires --private." >&2
+    exit 1
+  fi
+fi
+
 snapshot_id() {
   daytona snapshot list -f json | node -e 'const name = process.argv[1]; let input = ""; process.stdin.on("data", (chunk) => input += chunk); process.stdin.on("end", () => { const snapshot = JSON.parse(input).find((item) => item.name === name); if (snapshot) process.stdout.write(snapshot.id || snapshot.name); });' "$1"
 }
 
 SNAPSHOT_ID="$(snapshot_id "$DAYTONA_SERVER_SNAPSHOT")"
-CREATE_ARGS=(--name "$SANDBOX" --auto-stop "$DAYTONA_AUTO_STOP_MINUTES" --public --target "$DAYTONA_TARGET")
+CREATE_ARGS=(--name "$SANDBOX" --auto-stop "$DAYTONA_AUTO_STOP_MINUTES" --target "$DAYTONA_TARGET")
+if [ "$PRIVATE" -ne 1 ]; then CREATE_ARGS+=(--public); fi
+[ -n "$TTL_MINUTES" ] && CREATE_ARGS+=(--ttl "$TTL_MINUTES")
 if [ -n "$SNAPSHOT_ID" ]; then
+  if [ -n "$CPU" ] || [ -n "$MEMORY_GIB" ]; then
+    echo "ERROR: Daytona snapshot resources are fixed; omit --cpu/--memory-gib or select the Dockerfile fallback." >&2
+    exit 1
+  fi
   echo "==> Using Daytona server snapshot: $DAYTONA_SERVER_SNAPSHOT"
   CREATE_ARGS+=(--snapshot "$SNAPSHOT_ID")
 else
   echo "==> Daytona server snapshot '$DAYTONA_SERVER_SNAPSHOT' not found; building from Dockerfile."
-  CREATE_ARGS+=(--dockerfile "$ROOT_DIR/.devcontainer/Dockerfile.daytona-server" --cpu 4 --memory 8 --disk 10)
+  # CLI 0.200.1 help wrongly says MB: a local fake-API probe confirmed the raw
+  # --memory value is POSTed unchanged. Current OpenAPI/SDK units are GB/GiB.
+  # Snapshot creates always retain their baked resources.
+  CPU="${CPU:-4}"
+  MEMORY_GIB="${MEMORY_GIB:-8}"
+  CREATE_ARGS+=(--dockerfile "$ROOT_DIR/.devcontainer/Dockerfile.daytona-server" --disk 10)
 fi
+[ -n "$CPU" ] && CREATE_ARGS+=(--cpu "$CPU")
+[ -n "$MEMORY_GIB" ] && CREATE_ARGS+=(--memory "$MEMORY_GIB")
 
 echo "==> Creating server sandbox: $SANDBOX"
 echo "    Ref: $REF"
@@ -126,6 +187,18 @@ trap cleanup_failed_provision EXIT
 daytona create "${CREATE_ARGS[@]}"
 created=1
 
+if [ "$PRIVATE" -eq 1 ]; then
+  # An omitted --public is a request, not proof. Never start Den on an exposed VM.
+  daytona info "$SANDBOX" -f json | node -e '
+let input = "";
+process.stdin.on("data", chunk => input += chunk);
+process.stdin.on("end", () => {
+  try { if (JSON.parse(input).public === false) return; } catch {}
+  console.error("ERROR: provider did not confirm public:false for private sandbox");
+  process.exit(1);
+});'
+fi
+
 echo "==> Waiting for sandbox exec readiness..."
 exec_ready=0
 for _ in $(seq 1 60); do
@@ -140,8 +213,8 @@ if [ "$exec_ready" -ne 1 ]; then
   exit 1
 fi
 
-DEN_WEB_URL="$(daytona preview-url "$SANDBOX" -p "$DEN_WEB_PORT" --expires 86400 2>/dev/null | grep -v "^time=")"
-DEN_API_URL="$(daytona preview-url "$SANDBOX" -p "$DEN_API_PORT" --expires 86400 2>/dev/null | grep -v "^time=")"
+DEN_WEB_URL="$(daytona preview-url "$SANDBOX" -p "$DEN_WEB_PORT" --expires "$PREVIEW_EXPIRY_SECONDS" 2>/dev/null | grep -v "^time=")"
+DEN_API_URL="$(daytona preview-url "$SANDBOX" -p "$DEN_API_PORT" --expires "$PREVIEW_EXPIRY_SECONDS" 2>/dev/null | grep -v "^time=")"
 
 # Caller Den env may turn on the AI Gateway. The gateway service then runs in
 # this sandbox next to Den, and desktops reach it through its own preview URL.
@@ -152,7 +225,7 @@ if [ -n "${OPENWORK_DEN_EXTRA_ENV_B64:-}" ]; then
   if printf '%s\n' "$extra_env" | grep -qx 'GATEWAY_ENABLED=true'; then
     extra_port="$(printf '%s\n' "$extra_env" | sed -n 's/^GATEWAY_PORT=\([0-9]\{1,5\}\)$/\1/p' | head -n1)"
     [ -n "$extra_port" ] && GATEWAY_PORT="$extra_port"
-    GATEWAY_URL="$(daytona preview-url "$SANDBOX" -p "$GATEWAY_PORT" --expires 86400 2>/dev/null | grep -v "^time=")"
+    GATEWAY_URL="$(daytona preview-url "$SANDBOX" -p "$GATEWAY_PORT" --expires "$PREVIEW_EXPIRY_SECONDS" 2>/dev/null | grep -v "^time=")"
   fi
 fi
 
@@ -184,7 +257,7 @@ BOOTSTRAP_ADMIN_EMAILS_B64="$(printf %s "${DEN_BOOTSTRAP_ADMIN_EMAILS:-}" | base
 case "${OPENWORK_DEN_EXTRA_ENV_B64:-}" in
   *[!A-Za-z0-9+/=]*) echo "ERROR: OPENWORK_DEN_EXTRA_ENV_B64 must be base64." >&2; exit 1 ;;
 esac
-daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; OPENWORK_DEN_EXTRA_ENV_B64=\"${OPENWORK_DEN_EXTRA_ENV_B64:-}\" DEN_BOOTSTRAP_ADMIN_EMAILS=\"\$(printf %s $BOOTSTRAP_ADMIN_EMAILS_B64 | base64 -d)\" DEN_GENERATED_ARTIFACT_VIEWS_ENABLED=\"$DEN_GENERATED_ARTIFACT_VIEWS_ENABLED\" DEN_WEB_PUBLIC_URL=\"$DEN_WEB_URL\" DEN_API_PUBLIC_URL=\"$DEN_API_URL\" GATEWAY_PUBLIC_URL=\"$GATEWAY_URL\" DEN_WEB_PORT=$DEN_WEB_PORT DEN_API_PORT=$DEN_API_PORT RUN_SEED=$RUN_SEED bash .devcontainer/start-daytona-server.sh'"
+daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; OPENWORK_DAYTONA_PRIVATE_SANDBOX=$PRIVATE OPENWORK_DEN_EXTRA_ENV_B64=\"${OPENWORK_DEN_EXTRA_ENV_B64:-}\" DEN_BOOTSTRAP_ADMIN_EMAILS=\"\$(printf %s $BOOTSTRAP_ADMIN_EMAILS_B64 | base64 -d)\" DEN_GENERATED_ARTIFACT_VIEWS_ENABLED=\"$DEN_GENERATED_ARTIFACT_VIEWS_ENABLED\" DEN_WEB_PUBLIC_URL=\"$DEN_WEB_URL\" DEN_API_PUBLIC_URL=\"$DEN_API_URL\" GATEWAY_PUBLIC_URL=\"$GATEWAY_URL\" DEN_WEB_PORT=$DEN_WEB_PORT DEN_API_PORT=$DEN_API_PORT RUN_SEED=$RUN_SEED bash .devcontainer/start-daytona-server.sh'"
 
 echo "==> Waiting for public Den Web health (up to ${MAX_WAIT}s)..."
 elapsed=0

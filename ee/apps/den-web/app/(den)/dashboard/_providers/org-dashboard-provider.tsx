@@ -16,7 +16,6 @@ import { usePathname, useRouter } from "next/navigation";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, getRequestError, isReauthRequiredError, requestJson, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../../_lib/den-flow";
 import { ReauthDialog } from "../../_components/reauth-dialog";
-import { DenSecretRevealProvider } from "../../_components/ui/secret-input";
 import {
   type DenOrgContext,
   type DenOrgSummary,
@@ -30,6 +29,7 @@ import {
   roleIncludesCanonicalRole,
   permissionLockReason,
 } from "../../_lib/den-org";
+import { bootOrgContextFor, shouldStartOrgBootRequests } from "../../_lib/org-boot-requests";
 import { consumeOrgSelectionRequest, shouldOpenOrgSelection } from "../../_lib/org-selection";
 import { restoreRememberedOrganization, setActiveOrganizationAndRemember } from "../../_lib/org-memory";
 import { ORG_SCOPE_HEADER, OrganizationNotFoundError, getRequestOrgScope, setRequestOrgScope } from "../../_lib/org-scope";
@@ -79,6 +79,23 @@ type PendingReauthMutation = {
   reject: (error: unknown) => void;
 };
 
+type OrgBootRequest = ReturnType<typeof requestJson>;
+type OrgBootRequests = { directory: OrgBootRequest; context: OrgBootRequest };
+
+function requestOrgDirectory(): OrgBootRequest {
+  return requestJson("/v1/me/orgs", { method: "GET", cache: "no-store" }, 12000);
+}
+
+function startOrgBootRequests(): OrgBootRequests {
+  const directory = requestOrgDirectory();
+  // No workspace header: Den answers for the session's active workspace.
+  const context = requestJson("/v1/org", { method: "GET", cache: "no-store" }, 12000);
+  // A load that never consumes them (signed out, unmounted) must not leave rejections unhandled.
+  directory.catch(() => undefined);
+  context.catch(() => undefined);
+  return { directory, context };
+}
+
 const OrgDashboardContext = createContext<OrgDashboardContextValue | null>(null);
 const ORG_SETTINGS_PATH = "/dashboard/org-settings";
 const ORG_SETTINGS_UPDATED_MESSAGE = "Workspace settings updated.";
@@ -102,6 +119,10 @@ export function OrgDashboardProvider({
   const pendingReauthMutationsRef = useRef<PendingReauthMutation[]>([]);
   const pathnameRef = useRef(pathname);
   const [reauthDialogOpen, setReauthDialogOpen] = useState(false);
+  // A full page load starts the workspace list and the active workspace's
+  // details while the session check runs, instead of after it. The first load
+  // consumes them; every later load (switches, refreshes, retries) asks again.
+  const bootRequestsRef = useRef<OrgBootRequests | null>(null);
   const orgLoadRef = useRef<{
     generation: number;
     switching: boolean;
@@ -163,8 +184,8 @@ export function OrgDashboardProvider({
     return target;
   }
 
-  async function loadOrgDirectory() {
-    const { response, payload } = await requestJson("/v1/me/orgs", { method: "GET", cache: "no-store" }, 12000);
+  async function loadOrgDirectory(started: OrgBootRequest | null = null) {
+    const { response, payload } = await (started ?? requestOrgDirectory());
     if (!response.ok) {
       throw new Error(getErrorMessage(payload, `Failed to load organizations (${response.status}).`));
     }
@@ -188,7 +209,13 @@ export function OrgDashboardProvider({
     }
   }
 
-  async function loadOrgContext(organizationId: string) {
+  async function loadOrgContext(organizationId: string, started: OrgBootRequest | null = null) {
+    if (started) {
+      // The unscoped boot request answers for the session's active workspace.
+      // Use it only when that is the workspace being opened; otherwise ask again.
+      const early = bootOrgContextFor(await started.catch(() => null), organizationId);
+      if (early) return early;
+    }
     const { response, payload } = await requestJson(
       "/v1/org",
       { method: "GET", headers: { [ORG_SCOPE_HEADER]: organizationId }, cache: "no-store" },
@@ -239,6 +266,7 @@ export function OrgDashboardProvider({
     const isCurrent = () => orgLoadRef.current.mounted
       && generation === orgLoadRef.current.generation && orgLoadRef.current.userId === userId;
     if (!user) {
+      bootRequestsRef.current = null;
       orgLoadRef.current.organizationId = null;
       orgLoadRef.current.switching = false;
       setRequestOrgScope(null);
@@ -256,9 +284,11 @@ export function OrgDashboardProvider({
     setOrgSelectionOpen(false);
     setOrgError(null);
     const hasWorkbotLink = new URL(window.location.href).searchParams.has("workbotOrganizationId");
+    const boot = bootRequestsRef.current;
+    bootRequestsRef.current = null;
 
     try {
-      let directoryPayload = await loadOrgDirectory();
+      let directoryPayload = await loadOrgDirectory(boot?.directory ?? null);
       if (!isCurrent()) return;
       const linkedOrgId = linkedWorkbotOrganization(window.location.href, directoryPayload.orgs);
       if (linkedOrgId && setupOrganizationId && linkedOrgId !== setupOrganizationId) {
@@ -358,10 +388,10 @@ export function OrgDashboardProvider({
         if (!isCurrent()) return;
       }
 
-      const context = await loadOrgContext(targetOrg.id);
+      const context = await loadOrgContext(targetOrg.id, boot?.context ?? null);
       if (!isCurrent()) return;
       if (linkedOrgId) {
-        if (!orgFeatureEnabled(context, "workbotTeamLinks")) throw new Error("Team links are off for this workspace. A platform admin can turn them on.");
+        if (!orgFeatureEnabled(context, "workbotIncludedModels") && !orgFeatureEnabled(context, "workbotUsageRecovery")) throw new Error("Workbot recovery links are off for this workspace. A platform admin can turn them on.");
         // Consume only after the exact workspace loaded. Later explicit switches stay authoritative.
         const url = new URL(window.location.href);
         url.searchParams.delete("workbotOrganizationId");
@@ -989,7 +1019,11 @@ export function OrgDashboardProvider({
 
   useEffect(() => {
     orgLoadRef.current.mounted = true;
+    if (!sessionHydrated && shouldStartOrgBootRequests(window.location.href, getRequestOrgScope())) {
+      bootRequestsRef.current = startOrgBootRequests();
+    }
     return () => {
+      bootRequestsRef.current = null;
       orgLoadRef.current.mounted = false;
       orgLoadRef.current.generation += 1;
       orgLoadRef.current.switching = false;
@@ -1010,6 +1044,8 @@ export function OrgDashboardProvider({
     }
 
     if (orgLoadRef.current.userId !== (user?.id ?? null)) {
+      // Boot requests belong to the session this page loaded with.
+      if (orgLoadRef.current.userId !== null) bootRequestsRef.current = null;
       orgLoadRef.current.userId = user?.id ?? null;
       orgLoadRef.current.organizationId = null;
       setRequestOrgScope(null);
@@ -1065,7 +1101,6 @@ export function OrgDashboardProvider({
 
   return (
     <OrgDashboardContext.Provider value={value}>
-      <DenSecretRevealProvider enabled={orgFeatureEnabled(orgContext, "secureSecretFields")}>
       {setupOrganizationId && (orgContext?.organization.id !== setupOrganizationId
         || activeOrgId !== setupOrganizationId || getRequestOrgScope() !== setupOrganizationId) ? (
         <div className="grid min-h-[420px] place-content-center gap-3 px-6 text-sm text-gray-600" data-testid="setup-workspace-restoring">
@@ -1073,7 +1108,6 @@ export function OrgDashboardProvider({
           {!orgBusy ? <button type="button" onClick={() => void refreshOrgData()} className="font-medium text-gray-900 underline underline-offset-4">Retry setup workspace</button> : null}
         </div>
       ) : children}
-      </DenSecretRevealProvider>
       <ReauthDialog
         open={reauthDialogOpen}
         user={user}

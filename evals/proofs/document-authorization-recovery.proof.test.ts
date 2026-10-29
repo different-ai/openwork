@@ -15,8 +15,10 @@ for (const fault of [
     await step("before: the member has a text draft and an open Office session", async () => {
       world.makeOfficeAvailable();
       await user.click({ role: "button", label: "Project brief.txt" });
+      await user.click({ role: "button", label: /^Edit$/ });
       await user.type({ role: "textbox", label: "Document text" }, "Retained owner draft", { replace: true });
       await user.click({ role: "button", label: "Analysis.xlsx", nth: 0 });
+      await user.click({ role: "button", label: /^Edit$/ });
       await probe.eventually(() => world.officeLaunches(), { within: 5000, label: "the Office session was posted into its frame", until: values => values.length > 0 });
       closes = world.officeCloses().length;
       launches = world.officeLaunches().length;
@@ -62,6 +64,7 @@ test("a different signed-in person cannot see a retained owner's open portal", a
   await step("before: the member has a draft and an open workspace navigation dialog", async () => {
     await user.navigate(`${world.url}documents`);
     await user.click({ role: "button", label: "Project brief.txt", nth: 0 });
+    await user.click({ role: "button", label: /^Edit$/ });
     await user.type({ role: "textbox", label: "Document text" }, "Private owner draft", { replace: true });
     await user.click({ role: "button", label: "Open workspace navigation" });
     await user.see({ role: "button", label: "Open Project brief.txt" });
@@ -135,10 +138,13 @@ test("a member recovers an authorized draft without losing it to another denied 
   await user.resizeViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   await step("before: two text drafts and an Office tab with a failed initial open exist", async () => {
     await user.click({ role: "button", label: "Project brief.txt" });
+    await user.click({ role: "button", label: /^Edit$/ });
     await user.type({ role: "textbox", label: "Document text" }, "Keep this authorized draft", { replace: true });
     await user.click({ role: "button", label: "Budget notes.txt", nth: 0 });
+    await user.click({ role: "button", label: /^Edit$/ });
     await user.type({ role: "textbox", label: "Document text" }, "Separate budget draft", { replace: true });
     await user.click({ role: "button", label: "Analysis.xlsx", nth: 0 });
+    await user.click({ role: "button", label: /^Edit$/ });
     await user.see({ text: "The document service isn't available." });
     evidence.recordAssertionEvidence("The missing Office session is a real initial-open failure", `Office open attempts=${world.officeOpens().length}; mounted Office frames=${(await probe.dom(".ow-office-frame")).elements.length}`, world.officeOpens().length > 0 && (await probe.dom(".ow-office-frame")).elements.length === 0);
     await user.screenshot();
@@ -180,6 +186,7 @@ test("discarding retained recovery cannot give the next account the previous con
     world.seedOwnerConversation(question);
     await user.navigate(`${world.url}documents`);
     await user.click({ role: "button", label: "Project brief.txt", nth: 0 });
+    await user.click({ role: "button", label: /^Edit$/ });
     await user.type({ role: "textbox", label: "Document text" }, "Private original-account draft", { replace: true });
     await user.click({ role: "button", label: "Open workspace navigation" });
     await user.click({ role: "button", label: "Home" });

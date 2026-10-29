@@ -3,7 +3,7 @@ import { createServer } from "node:http"
 import { test } from "node:test"
 import { Hono } from "hono"
 import { createAuth, type AppEnv } from "../src/server/auth.js"
-import { createDen, denSessionSchema } from "../src/server/den.js"
+import { createDen, denSessionSchema, WorkbotTurnAccessError } from "../src/server/den.js"
 import { loadConfig } from "../src/server/config.js"
 import { registerWorkbotRoutes } from "../src/server/routes.js"
 
@@ -43,6 +43,7 @@ function gatewayApp(url: string, model: string, gatewayModels = true) {
   const den = { ...createDen({ apiUrl: url, publicUrl: config.publicUrl }), webUrl: async () => "http://localhost:3091" }
   const auth = createAuth({ config, den })
   const app = new Hono<AppEnv>()
+  app.onError((error, c) => error instanceof WorkbotTurnAccessError ? error.response() : c.json({ error: "internal_error" }, 500))
   registerWorkbotRoutes(app, { config, den, sameOrigin: auth.sameOrigin, member: async (c, next) => {
     const who = denSessionSchema.parse({ ...session, gatewayModels, verifyModel: true, model })
     c.set("member", { session: { id: "session_test", userId: who.user.id, organizationId: who.organization.id, tokens: { accessToken: "access", expiresAt: Date.now() + 60000 }, createdAt: Date.now() }, accessToken: "access", den: who })
@@ -50,6 +51,34 @@ function gatewayApp(url: string, model: string, gatewayModels = true) {
   } })
   return app
 }
+
+test("credential refusals preserve only allowlisted recovery facts through Workbot HTTP, before execution", async () => {
+  let denial: { status: number; body: unknown } = { status: 403, body: {} }
+  let turns = 0
+  const server = await fixture((path, method) => {
+    if (path === "/v1/workbot/run-token") return denial
+    if (method === "GET" && path.startsWith("/v1/sessions?")) return { body: { sessions: [] } }
+    if (method === "GET" && path.startsWith("/v1/sessions/")) return { status: 404, body: { error: "unknown_session" } }
+    if (method === "PUT") return { body: { id: decodeURIComponent(path.split("/").at(-1) ?? "") } }
+    if (method === "POST" && path.endsWith("/turns")) { turns++; return { status: 202, body: { state: "accepted" } } }
+    return { status: 404, body: {} }
+  })
+  try {
+    const app = gatewayApp(server.url, "saved-alias")
+    for (const reason of ["gateway_not_configured", "gateway_provider_missing", "gateway_member_access_missing", "gateway_model_unavailable", "gateway_authentication_required", "gateway_credentials_unavailable", "oauth_scope_missing", "rate_limited", "unknown-private-detail"]) {
+      denial = { status: reason === "rate_limited" ? 429 : 403, body: { error: "workbot_turn_access_denied", reason, apiKey: "fixture-private-credential", message: "fixture-private-response-body" } }
+      const response = await app.request("http://localhost:3090/v1/workbot/messages", { method: "POST", headers: { origin: "http://localhost:3090", "content-type": "application/json" }, body: JSON.stringify({ id: "message_refused", text: "Keep this message" }) })
+      assert.equal(response.status, denial.status)
+      assert.equal(response.headers.get("cache-control"), "no-store")
+      assert.deepEqual(await response.json(), { error: "workbot_turn_access_denied", reason: reason === "unknown-private-detail" ? "model_access_unavailable" : reason })
+    }
+    denial = { status: 403, body: { error: "insufficient_scope", message: "fixture-private-response-body" } }
+    const hello = await app.request("http://localhost:3090/v1/workbot/hello", { method: "POST", headers: { origin: "http://localhost:3090", "content-type": "application/json" }, body: "{}" })
+    assert.equal(hello.status, 403)
+    assert.deepEqual(await hello.json(), { error: "workbot_turn_access_denied", reason: "oauth_scope_missing" })
+    assert.equal(turns, 0)
+  } finally { await server.close() }
+})
 
 test("session parser keeps the nonsecret gateway flag but strips credentials", () => {
   assert.equal(denSessionSchema.parse(session).gatewayModels, false)
@@ -95,6 +124,9 @@ test("gateway routes skip the runner catalog and keep model credentials only in 
       return { body: { token: "mcp-token", modelAccess } }
     }
     if (path === "/v1/models") { catalogReads++; return { status: 503, body: {} } }
+    // Workbot lists the person's chats (none yet) and, before creating the main chat, checks it isn't in a cell.
+    if (method === "GET" && path.startsWith("/v1/sessions?")) return { body: { sessions: [] } }
+    if (method === "GET" && path.startsWith("/v1/sessions/hs_c_")) return { status: 404, body: { error: "unknown_session" } }
     if (method === "GET" && path.startsWith("/v1/sessions/")) {
       const url = new URL(path, "http://runner")
       assert.equal(url.searchParams.get("messageId"), "wb_message_001")

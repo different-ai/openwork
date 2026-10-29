@@ -2,8 +2,8 @@ import { z } from "zod"
 
 export const MCP_APP_CONFIG_SCHEMA_VERSION = "openwork.mcp-app/1"
 export const MCP_APP_PAYLOAD_KIND = "authored_mcp_app"
-export const MCP_APP_MAX_STORAGE_BYTES = 1024 * 1024
-export const MCP_APP_MAX_HTML_BYTES = 768 * 1024
+export const MCP_APP_MAX_STORAGE_BYTES = 2 * 1024 * 1024
+export const MCP_APP_MAX_HTML_BYTES = 1536 * 1024
 /** Every App's own MCP server opens it with this one tool. */
 export const MCP_APP_LAUNCH_TOOL_NAME = "open_app"
 export const MCP_APP_MAX_TOOLS = 20

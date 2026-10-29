@@ -6,7 +6,7 @@ import type { Store } from "./store.js"
 
 /**
  * Turns that keep going on their own. A caller that sends a turn with a resume grant (Den mints one per turn when
- * `headlessDurableTurns` is on) lets the runner:
+ * the turn is named) lets the runner:
  *
  * - refresh the turn's MCP token in place when it would otherwise pause for `credentials_refresh`, and
  * - resume the turn itself when it was cut off (`runner_restarted`, `runner_shutdown`) or paused anyway.
@@ -75,6 +75,23 @@ export class SelfResume {
   /** Resolves once every grant received so far is written. */
   async settled() {
     while (this.writes.size) await Promise.all([...this.writes])
+  }
+
+  /**
+   * The grant kept for a turn (its own, or the one of the turn that started it), for a step-mode turn whose held
+   * credentials were lost with the process: it gets a fresh token with `refresh`. Null without a readable one.
+   */
+  async keptGrant(sessionId: string, messageId: string): Promise<string | null> {
+    if (this.configError) return null
+    await this.settled()
+    const kept = this.options.store.resumeGrantOf(sessionId, messageId)
+    if (!kept) return null
+    const grant = await this.options.vault.open(kept.sealed)
+    if (grant) return grant
+    // Sealed with another key, or damaged: no grant, so the turn waits for its caller.
+    this.options.store.setResumeGrant(sessionId, kept.holder, null)
+    void this.options.errors?.report({ code: "resume_grant_unreadable", level: "warning", tags: { sessionId, messageId } })
+    return null
   }
 
   /** A fresh token for a running turn (in place of pausing it), or null when Den won't give one now. */

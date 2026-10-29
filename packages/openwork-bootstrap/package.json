@@ -18,6 +18,6 @@
     "check": "node --check bin/openwork.mjs && node --check evals/agent-test-evidence-openwork-bootstrap.mjs && node --check evals/agent-test-evidence-openwork-app-install.mjs && node --check evals/agent-test-evidence-linux-container.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24.22.1 <25"
   }
 }

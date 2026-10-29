@@ -11,6 +11,98 @@ const test = spec.world(browserWithoutPermissionPrompts, {
   },
 });
 
+test("a conversation completes a changing application form and verifies one submission", async ({ world, user, agent, probe, step, evidence }) => {
+  const task = (operation: BrowserTaskInput["operation"], args: BrowserTaskInput["args"] = {}) => agent.browserTask({ sessionId: world.session.sessionId, operation, args });
+  const witness = () => probe.browserFixtureState(world.origin);
+  let tabId: string;
+  const act = async (name: string, action: NonNullable<NonNullable<BrowserTaskInput["args"]>["action"]>) => {
+    const seen = await task("observe", { tabId });
+    expect(seen.ok).toBe(true);
+    const ref = seen.elements?.find(element => element.name === name)?.ref;
+    if (!ref) throw new Error(`No observed form control named ${name}.`);
+    const values = action.type === "select" ? action.values?.map(label => {
+      const option = seen.elements?.find(element => element.ref === ref)?.options?.find(option => option.label === label);
+      if (!option) throw new Error(`No observed option named ${label}.`);
+      return option.value;
+    }) : undefined;
+    return task("act", { tabId, observationId: seen.observationId, action: { ...action, ...(values ? { values } : {}), ref } });
+  };
+
+  await step("before: the application contains old values and has not been submitted", async () => {
+    await user.click({ text: world.session.title });
+    const opened = await task("open", { url: `${world.origin}/forms` });
+    if (!opened.ok || !opened.tabId) throw new Error("The application form did not open.");
+    tabId = opened.tabId;
+    await user.see({ role: "button", label: "Take over" });
+    const seen = await task("observe", { tabId });
+    // Values the page already held stay in the page; the agent sees only that the field is filled.
+    const company = seen.elements?.find(element => element.name === "Company name");
+    expect(company).toMatchObject({ filled: true, valueWithheld: true, required: true });
+    expect(company).not.toHaveProperty("value");
+    const options = seen.elements?.find(element => element.name === "Country")?.options;
+    expect(options).toContainEqual(expect.objectContaining({ label: "Unavailable", disabled: true }));
+    expect(options?.every(option => /^o\d+$/.test(option.value))).toBe(true);
+    expect(seen.elements?.find(element => element.name === "Business account")?.checked).toBe(false);
+    expect((await witness()).formSubmissions).toHaveLength(0);
+    evidence.recordAssertionEvidence("The agent can inspect the existing form", "Accessible labels, old values, required fields, checked state and unavailable options are visible; submissions: 0", seen.ok);
+    await user.screenshot();
+  });
+
+  await step("the conversation replaces values and sees validation while live updates continue", async () => {
+    expect(await act("Company name", { type: "fill", text: "Example studio" })).toMatchObject({ ok: true, outcome: "verified", control: { value: "Example studio" } });
+    expect(await act("Email", { type: "fill", text: "invalid-address" })).toMatchObject({ ok: true, control: { valid: false } });
+    expect(await act("Email", { type: "fill", text: "person@example.test" })).toMatchObject({ ok: true, control: { value: "person@example.test", valid: true } });
+    expect(await act("Seats", { type: "fill", text: "42" })).toMatchObject({ ok: true, control: { value: "42" } });
+    expect(await act("Start date", { type: "fill", text: "2026-10-20" })).toMatchObject({ ok: true, control: { value: "2026-10-20" } });
+    expect(await act("Notes", { type: "fill", text: "" })).toMatchObject({ ok: true, control: { value: "" } });
+    expect(await act("Notes", { type: "fill", text: "Café studio\nSecond line" })).toMatchObject({ ok: true, control: { value: "Café studio\nSecond line" } });
+    const normalized = await act("Normalized code", { type: "fill", text: "lowercase" });
+    expect(normalized).toMatchObject({ ok: false, code: "value_mismatch", control: { filled: true, valueWithheld: true } });
+    expect(normalized.control).not.toHaveProperty("value");
+    expect(await act("Normalized code", { type: "fill", text: "READY" })).toMatchObject({ ok: true });
+    await user.see({ role: "button", label: "Take over" });
+    evidence.recordAssertionEvidence("Field receipts verify entries while withholding unmatched values", "Old values replaced; notes cleared and filled with Unicode/multiline text; invalid email exposed; normalized mismatch reported with its value withheld", (await witness()).formSubmissions.length === 0);
+    await user.screenshot();
+  });
+
+  await step("the conversation selects options and sets controls without toggling them twice", async () => {
+    expect(await act("Country", { type: "select", values: ["Unavailable"] })).toMatchObject({ ok: false, code: "option_unavailable", dispatched: false });
+    expect(await act("Country", { type: "select", values: ["United Kingdom"] })).toMatchObject({ ok: true, control: { selectedValues: [expect.stringMatching(/^o\d+$/)] } });
+    expect(await act("Languages", { type: "select", values: ["English", "French"] })).toMatchObject({ ok: true, control: { selectedValues: [expect.stringMatching(/^o\d+$/), expect.stringMatching(/^o\d+$/)] } });
+    expect(await act("Business account", { type: "set_checked", checked: true })).toMatchObject({ ok: true, dispatched: true, control: { checked: true } });
+    expect(await act("Business account", { type: "set_checked", checked: true })).toMatchObject({ ok: true, dispatched: false, control: { checked: true } });
+    expect(await act("Tax reference", { type: "fill", text: "EXAMPLE-42" })).toMatchObject({ ok: true });
+    expect(await act("Express delivery", { type: "set_checked", checked: true })).toMatchObject({ ok: true, control: { checked: true } });
+    expect(await act("Email updates", { type: "set_checked", checked: true })).toMatchObject({ ok: true, control: { checked: true } });
+    expect(await act("Office", { type: "click" })).toMatchObject({ ok: true });
+    const focused = await task("observe", { tabId });
+    expect(await task("act", { tabId, observationId: focused.observationId, action: { type: "key", key: "ArrowDown" } })).toMatchObject({ ok: true });
+    expect(await act("Account reference", { type: "fill", text: "changed" })).toMatchObject({ ok: false, code: "not_editable", dispatched: false });
+    expect(await act("Unavailable field", { type: "fill", text: "changed" })).toMatchObject({ ok: false, code: "element_disabled", dispatched: false });
+    await user.see({ role: "button", label: "Take over" });
+    evidence.recordAssertionEvidence("Selections and conditional fields retain the intended state", "Single/multiple options, native/custom checked controls and the conditional tax field are set; repeated set_checked dispatches no click", (await witness()).formSubmissions.length === 0);
+    await user.screenshot();
+  });
+
+  await step("after: the page saves exactly one application with the requested values", async () => {
+    expect(await act("Submit application", { type: "click" })).toMatchObject({ ok: true, dispatched: true });
+    const saved = await probe.eventually(witness, { within: 5000, label: "the form records the submission", until: state => state.formSubmissions.length === 1 });
+    expect(saved.formSubmissions).toEqual([expect.objectContaining({
+      company: "Example studio", email: "person@example.test", seats: "42", start: "2026-10-20",
+      notes: "Café studio\nSecond line", country: "uk", languages: ["en", "fr"], business: "on",
+      tax: "EXAMPLE-42", delivery: "express", updates: true, office: "Paris", code: "READY",
+      ticks: expect.any(Number), events: expect.objectContaining({ input: expect.any(Number), change: expect.any(Number), blur: expect.any(Number) }),
+    })]);
+    const submission = saved.formSubmissions[0];
+    expect(submission?.ticks).toBeGreaterThan(0);
+    const seen = await task("observe", { tabId });
+    expect(seen.text).toContain("Application saved");
+    await user.see({ role: "button", label: "Take over" });
+    evidence.recordAssertionEvidence("The page and server agree on one completed application", JSON.stringify(saved.formSubmissions), saved.formSubmissions.length === 1 && seen.text?.includes("Application saved") === true);
+    await user.screenshot();
+  });
+});
+
 test("a conversation uses page controls and website tools without prompts while other conversations stay private", async ({ world, user, agent, probe, step, evidence }) => {
   const sessionId = world.session.sessionId;
   const task = (operation: BrowserTaskInput["operation"], args: BrowserTaskInput["args"] = {}) => agent.browserTask({ sessionId, operation, args });

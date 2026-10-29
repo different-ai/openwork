@@ -1,5 +1,5 @@
 import type { ModelOption, ModelRef } from "@/app/types";
-import { isAutoModel, modelSource, modelTitle, nextModelSource, nextPinnedModel, orderedModelPins, MODEL_SOURCE_LABELS } from "@/react-app/domains/models/model-catalog";
+import { managesOwnBehavior, modelSource, modelTitle, nextModelSource, nextPinnedModel, orderedModelPins, MODEL_SOURCE_LABELS } from "@/react-app/domains/models/model-catalog";
 
 export function commandPaletteModelTarget(workbench: { focusedPane: string; secondary: { sessionId: string; draftDestination?: unknown } | null }, primarySessionId: string | null) {
   if (workbench.focusedPane !== "secondary" || !workbench.secondary) return primarySessionId;
@@ -37,8 +37,8 @@ export function createCommandPaletteModelControls(input: CommandPaletteModelCont
   const nextPinnedOption = input.options.find((option) => option.providerID === nextPin?.providerID && option.modelID === nextPin.modelID);
   const cycle = (option: ModelOption | undefined | null) => {
     if (!option || option.disabled) return null;
-    // Auto manages its own settings, so it never inherits the previous model's effort.
-    const behavior = !isAutoModel(option) && option.behaviorOptions?.some((choice) => choice.value === input.behavior) ? input.behavior : null;
+    // OpenWork Free and Auto manage their own settings, so they never inherit the previous model's effort.
+    const behavior = !managesOwnBehavior(option) && option.behaviorOptions?.some((choice) => choice.value === input.behavior) ? input.behavior : null;
     input.onSelect({ providerID: option.providerID, modelID: option.modelID }, behavior, option);
     return modelTitle(option);
   };

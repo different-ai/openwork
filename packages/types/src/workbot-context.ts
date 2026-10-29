@@ -2,6 +2,8 @@ import { z } from "zod"
 
 const id = z.string().min(1).max(512).regex(/^[A-Za-z0-9_-]+$/)
 const label = z.string().trim().min(1).max(512)
+/** A request to open one Drive file beside the chat; the host still checks access before anything loads. */
+export const workbotDocumentNavigationSchema = z.object({ fileId: id }).strict()
 const instant = z.number().int().min(0).max(8_640_000_000_000_000)
 const selection = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("meeting"), provider: z.enum(["google", "microsoft"]), id: z.string().min(1).max(512).regex(/^[A-Za-z0-9_=.@+/-]+$/), title: label }).strict(),
@@ -11,10 +13,17 @@ const selection = z.discriminatedUnion("kind", [
 /** A snapshot of visible metadata at Send, never document bytes, a permission, or a live screen feed. */
 export const workbotViewContextSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("documents"), view: z.enum(["recent", "folder"]), folderId: id, folderName: label, query: z.string().max(500) }).strict(),
-  z.object({ kind: z.literal("document"), provider: z.literal("google-drive"), fileId: id, title: label, mimeType: z.string().min(1).max(255), unsaved: z.boolean() }).strict(),
+  z.object({ kind: z.literal("document"), provider: z.enum(["google-drive", "microsoft-365"]), fileId: id, title: label, mimeType: z.string().min(1).max(255), unsaved: z.boolean() }).strict(),
   z.object({ kind: z.literal("calendar"), view: z.enum(["day", "week", "month"]), start: instant, end: instant, timeZone: z.string().min(1).max(64).refine(value => { try { new Intl.DateTimeFormat("en", { timeZone: value }); return true } catch { return false } }, "Choose a valid time zone."), selected: selection.optional() }).strict(),
+  /** The tab in front of Workbot's Browser view: its id on the computer, address and title. */
+  z.object({ kind: z.literal("browser"), tabId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/), url: z.string().max(2048), title: z.string().max(512) }).strict(),
 ]).refine(value => value.kind !== "calendar" || value.end > value.start && value.end - value.start <= 370 * 86_400_000, "Choose a valid calendar range.")
 export type WorkbotViewContext = z.infer<typeof workbotViewContextSchema>
+
+/** Document and calendar views run read-only; the browser tab on screen is the one the person wants Workbot to work in. */
+export function workbotContextReadOnly(context: WorkbotViewContext | undefined) {
+  return context !== undefined && context.kind !== "browser"
+}
 
 /** The runner limits the complete prompt, including resource and correction envelopes. */
 export const WORKBOT_MAX_MESSAGE_CHARS = 100_000
@@ -47,11 +56,16 @@ export function readWorkbotCorrectionPrompt(prompt: string): { text: string; cor
 const PREFIX = "[OpenWork visible context v1]\n"
 const END = "\n[End OpenWork visible context]\n\n"
 
-/** Only opaque resource identifiers and typed view coordinates reach the model.
- * Display names, search text and provider-supplied MIME labels stay out of the prompt. */
+const mimeType = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$/
+
+/** Identifiers and typed view coordinates reach the model. An open document also keeps its title and a
+ * well-formed MIME type, JSON-quoted as data, so the model knows what the person is looking at; folder names,
+ * search text, calendar titles and a browser tab's address and title stay out of the prompt. A page writes its own
+ * title and address, and a browser turn can act, so the model gets the tab's id and reads the page with its tools. */
 export function workbotContextForModel(value: WorkbotViewContext): WorkbotViewContext {
   const context = workbotViewContextSchema.parse(value)
-  if (context.kind === "document") return { kind: context.kind, provider: context.provider, fileId: context.fileId, title: "Current document", mimeType: "application/octet-stream", unsaved: context.unsaved }
+  if (context.kind === "browser") return { kind: context.kind, tabId: context.tabId, url: "", title: "Current tab" }
+  if (context.kind === "document") return { kind: context.kind, provider: context.provider, fileId: context.fileId, title: context.title, mimeType: mimeType.test(context.mimeType) ? context.mimeType : "application/octet-stream", unsaved: context.unsaved }
   if (context.kind === "documents") return { kind: context.kind, view: context.view, folderId: context.folderId, folderName: "Current folder", query: "" }
   return { kind: context.kind, view: context.view, start: context.start, end: context.end,
     timeZone: new Intl.DateTimeFormat("en", { timeZone: context.timeZone }).resolvedOptions().timeZone,
@@ -80,15 +94,16 @@ export function googleDriveFileId(href: string): string | null {
   try {
     const url = new URL(href)
     if (url.protocol !== "https:" || url.username || url.password || url.port) return null
-    const path = url.hostname === "docs.google.com" ? /^\/(?:document|spreadsheets|presentation)\/d\/([A-Za-z0-9_-]{1,512})(?:\/|$)/.exec(url.pathname)
+    const path = url.hostname === "docs.google.com" ? /^\/(?:document|spreadsheets|presentation)(?:\/u\/\d+)?\/d\/([A-Za-z0-9_-]{1,512})(?:\/|$)/.exec(url.pathname)
       : url.hostname === "drive.google.com" ? /^\/file\/d\/([A-Za-z0-9_-]{1,512})(?:\/|$)/.exec(url.pathname) : null
     if (path) return path[1] ?? null
-    const queryId = url.hostname === "drive.google.com" && url.pathname === "/open" ? url.searchParams.get("id") : null
+    const queryId = url.hostname === "drive.google.com" && (url.pathname === "/open" || url.pathname === "/uc") ? url.searchParams.get("id") : null
     return queryId && id.safeParse(queryId).success ? queryId : null
   } catch { return null }
 }
 
 export function workbotContextLabel(context: WorkbotViewContext) {
+  if (context.kind === "browser") return context.title || context.url || "Browser tab"
   if (context.kind === "document") return context.title
   if (context.kind === "documents") return context.query ? `Search in ${context.folderName}` : context.folderName
   return context.selected?.title ?? `${context.view[0]?.toUpperCase()}${context.view.slice(1)} calendar`

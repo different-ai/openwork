@@ -1,3 +1,4 @@
+import { describeCalendarMoment } from "@openwork/types/automation-schedule"
 import type { AutomationSchedule } from "@openwork/types/automations"
 
 import { compareDates, type CalendarRange, type LocalDate } from "./time"
@@ -20,11 +21,31 @@ export function timeZoneLabel(timeZone: string, at = Date.now(), locale?: string
   }
 }
 
-/** "Every Friday at 3:00 PM PDT", "Every weekday at 9:00 AM", "Once on Thu, Oct 8 at 4:00 PM". */
+/** "Every Friday at 3:00 PM PDT", "Every weekday at 9:00 AM", "Every 3 hours from 9:00 AM to 6:00 PM on weekdays", "Once on Thu, Oct 8 at 4:00 PM". */
 export function describeSchedule(schedule: AutomationSchedule, displayTimeZone: string, locale?: string): string {
   const zone = schedule.timezone === displayTimeZone ? "" : ` ${timeZoneLabel(schedule.timezone, Date.now(), locale)}`
   if (schedule.kind === "once") {
     return `Once on ${new Intl.DateTimeFormat(locale, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: schedule.timezone }).format(new Date(schedule.at))}${zone}`
+  }
+  if (schedule.kind === "calendar") {
+    const rule = [
+      schedule.rule.withExternalAttendees ? " with people outside your organization" : "",
+      schedule.rule.titleIncludes ? ` titled with "${schedule.rule.titleIncludes}"` : "",
+    ].join("")
+    return `${describeCalendarMoment(schedule)}${rule}`
+  }
+  if (schedule.kind === "interval") {
+    const every = schedule.everyHours === 1 ? "Every hour" : `Every ${schedule.everyHours} hours`
+    const window = schedule.startHour === 0 && schedule.endHour === 24
+      ? ""
+      : ` from ${timeOfDay(schedule.startHour, 0, locale)} to ${timeOfDay(schedule.endHour % 24, 0, locale)}`
+    const days = [...schedule.daysOfWeek].sort((left, right) => left - right)
+    const on = days.length === 7 ? ""
+      : days.join(",") === "1,2,3,4,5" ? " on weekdays"
+        : days.join(",") === "0,6" ? " on weekends"
+          : days.length === 1 ? ` on ${WEEKDAY_NAMES[days[0]!]}`
+            : ` on ${days.map((day) => WEEKDAY_SHORT[day]).join(", ")}`
+    return `${every}${window}${on}${zone}`
   }
   const at = `${timeOfDay(schedule.hour, schedule.minute, locale)}${zone}`
   if (schedule.kind === "daily") return `Every day at ${at}`

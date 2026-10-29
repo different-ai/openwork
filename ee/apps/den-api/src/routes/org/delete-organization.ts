@@ -14,6 +14,7 @@ import {
   AuditUsageFactTable,
   CapabilityUsageEventTable,
   CapabilityUsageRollupTable,
+  FeatureUsageTable,
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
   ConfigObjectVersionTable,
@@ -31,6 +32,7 @@ import {
   DesktopConnectGrantTable,
   DesktopPolicyMemberTable,
   DesktopPolicyTable,
+  DesktopStartupReportTable,
   ExternalIdentityTable,
   ExternalMcpConnectionAccessGrantTable,
   ExternalMcpConnectionTable,
@@ -93,6 +95,9 @@ import {
   WorkerTokenTable,
   WorkspaceBootstrapTable,
   WorkspaceClaimTable,
+  HeadlessResumeGrantTable,
+  HeadlessResumeRevocationTable,
+  SandboxOrganizationTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { deleteModelsAnalyticsForOrganization } from "@openwork-ee/telemetry"
@@ -101,6 +106,9 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { deleteOrganizationAgentPermissions } from "../../agent-permissions.js"
 import { deleteOrganizationDefaultModels } from "../../default-model.js"
+import { deleteOrganizationPrompts } from "../../prompts.js"
+import { deleteHeadlessSessionIndexForOrganization } from "../../headless-runner/session-index.js"
+import { unlessResumeTableMissing } from "../../headless-runner/resume-grant-revocation.js"
 import { addAuditRequestResource } from "../../audit/request-capture.js"
 import { cache } from "../../cache.js"
 import { db } from "../../db.js"
@@ -110,6 +118,7 @@ import { denTypeIdSchema, forbiddenSchema, jsonResponse, notFoundSchema, unautho
 import { appLogger } from "../../observability/logger.js"
 import { invalidateWebOriginApprovalCache } from "../../organization-web-origins.js"
 import { cancelOrganizationSubscriptions } from "../../stripe-billing.js"
+import { deleteSandboxModelKeyForOrganization } from "../../sandbox-organizations.js"
 import { ensureOwner, orgAccessFailureStatus, type OrgRouteVariables } from "./shared.js"
 
 type OrganizationMemberId = typeof MemberTable.$inferSelect.id
@@ -391,6 +400,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
       })
 
       await cancelOrganizationSubscriptions({ organizationId })
+      await deleteSandboxModelKeyForOrganization(organizationId)
 
       let affectedSessions: Array<{ id: typeof AuthSessionTable.$inferSelect.id; token: typeof AuthSessionTable.$inferSelect.token }> = []
       await db.transaction(async (tx) => {
@@ -552,6 +562,11 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(TelemetrySessionDimensionTable).where(eq(TelemetrySessionDimensionTable.org_id, organizationId))
         await tx.delete(CapabilityUsageEventTable).where(eq(CapabilityUsageEventTable.organization_id, organizationId))
         await tx.delete(CapabilityUsageRollupTable).where(eq(CapabilityUsageRollupTable.organization_id, organizationId))
+        await tx.delete(FeatureUsageTable).where(eq(FeatureUsageTable.organization_id, organizationId))
+        await deleteHeadlessSessionIndexForOrganization(tx, organizationId)
+        // Resume grants are useless once the members are gone (the exchange needs an active member); delete them too.
+        await unlessResumeTableMissing("headless_resume_grant", () => tx.delete(HeadlessResumeGrantTable).where(eq(HeadlessResumeGrantTable.organizationId, organizationId)))
+        await unlessResumeTableMissing("headless_resume_revocation", () => tx.delete(HeadlessResumeRevocationTable).where(eq(HeadlessResumeRevocationTable.organizationId, organizationId)))
         await tx.delete(TeamTable).where(eq(TeamTable.organizationId, organizationId))
 
         await tx.delete(OrgSubscriptionTable).where(eq(OrgSubscriptionTable.organization_id, organizationId))
@@ -565,13 +580,16 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(InferenceOrgLimitPolicyTable).where(eq(InferenceOrgLimitPolicyTable.organization_id, organizationId))
         await tx.delete(InferenceOrgUsageBucketTable).where(eq(InferenceOrgUsageBucketTable.organization_id, organizationId))
         await tx.delete(InferenceOrgUpstreamProviderKeyTable).where(eq(InferenceOrgUpstreamProviderKeyTable.organization_id, organizationId))
+        await tx.delete(SandboxOrganizationTable).where(eq(SandboxOrganizationTable.organizationId, organizationId))
 
         await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.organizationId, organizationId))
         await deleteOrganizationAgentPermissions(tx, organizationId)
         await deleteOrganizationDefaultModels(tx, organizationId)
+        await deleteOrganizationPrompts(tx, organizationId)
         await tx.delete(DesktopPolicyTable).where(eq(DesktopPolicyTable.organizationId, organizationId))
 
         await tx.delete(OrganizationDiagnosticCredentialTable).where(eq(OrganizationDiagnosticCredentialTable.organizationId, organizationId))
+        await tx.delete(DesktopStartupReportTable).where(eq(DesktopStartupReportTable.organizationId, organizationId))
         await tx.delete(OrganizationWebOriginTable).where(eq(OrganizationWebOriginTable.organizationId, organizationId))
 
         await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.organizationId, organizationId))

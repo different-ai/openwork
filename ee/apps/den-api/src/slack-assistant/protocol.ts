@@ -59,7 +59,6 @@ export function isInvocation(event: SlackEvent) {
   )
 }
 export function canUseSlackAssistant(input: {
-  capabilityEnabled: boolean
   enabled: boolean
   individualAccounts: boolean
   activeMember: boolean
@@ -67,7 +66,6 @@ export function canUseSlackAssistant(input: {
   connected: boolean
 }) {
   return (
-    input.capabilityEnabled &&
     input.enabled &&
     input.individualAccounts &&
     input.activeMember &&

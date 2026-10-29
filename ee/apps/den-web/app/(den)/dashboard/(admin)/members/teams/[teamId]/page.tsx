@@ -1,6 +1,6 @@
 import { TeamDetailScreen, type TeamDetailTab } from "../../../../_components/team-detail-screen";
 
-const TABS: readonly TeamDetailTab[] = ["role", "overview", "access", "agents", "browser", "models", "desktop"];
+const TABS: readonly TeamDetailTab[] = ["role", "overview", "access", "agents", "browser", "models", "prompts", "desktop"];
 
 export default async function TeamDetailPage({
   params,

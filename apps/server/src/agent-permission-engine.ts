@@ -117,17 +117,22 @@ export function agentPermissionEngineV2Rules(rules: readonly AgentPermissionRule
 /**
  * The decision a v2 permission evaluation ends with: the engine's, made at
  * least as strict as the organization's, with the rule that blocks a call
- * named in its message.
+ * named in its message. The engine asks about each command of a line on its
+ * own and leaves out bare assignments, so `commandLine`, the whole line of the
+ * shell call when known, supplies the values that may name a command's
+ * program (`x=rm; $x -rf dir`). It is used only when it holds every resource.
  */
 export function agentPermissionEngineV2Decision(
   rules: readonly AgentPermissionRule[],
   action: string,
   resources: readonly string[],
   engineEffect: "allow" | "ask" | "deny",
+  commandLine?: string,
 ): { effect: "allow" | "ask" | "deny"; message?: string } {
   const ourAction = v2Action(action);
   if (!ourAction) return { effect: engineEffect };
-  const parsed = ourAction === "shell" ? resources.map(parseShellCommands) : [];
+  const assigned = commandLine !== undefined && resources.every((resource) => commandLine.includes(resource)) ? assignedValues(commandLine) : undefined;
+  const parsed = ourAction === "shell" ? resources.map((resource) => parseShellCommands(resource, assigned)) : [];
   const commands = ourAction === "shell" ? parsed.flatMap((entry) => entry.commands) : resources;
   const ours = decideAgentPermission(rules, ourAction, commands);
   if (ours.effect === "deny" && ours.rule) return { effect: "deny", message: agentPermissionDenialMessage(ours.rule, ours.resource) };
@@ -286,6 +291,60 @@ function namesProgramDynamically(command: string): boolean {
   return program !== "[" && program !== "[[" && /[$`*?[{]/.test(program);
 }
 
+/** `NAME=value` where the value is literal text, possibly quoted, not something the shell computes. */
+const LITERAL_ASSIGNMENT = /(?<![^\s;&|(){}`'"])([A-Za-z_][A-Za-z0-9_]*)=((?:[^\s;&|()<>'"`$\\]|'[^']*'|"[^"$`\\]*")+)(?![^\s;&|()<>'"`])/g;
+
+/** `for NAME in words`, up to the end of the line or the next `;`. */
+const FOR_LOOP = /\bfor\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+([^;\n]*)/g;
+
+/** The literal values a command line gives each of its variables (see assignedValues). */
+export type AssignedValues = ReadonlyMap<string, ReadonlySet<string>>;
+
+/**
+ * The literal values a command line gives each variable anywhere in it,
+ * including in scripts it hands to other shells: `x=rm`, `export x='rm'`,
+ * `x=rm $x` and `for x in ls rm`. A value the shell computes (`x=$(…)`) is left out.
+ */
+function assignedValues(text: string): AssignedValues {
+  const values = new Map<string, Set<string>>();
+  const assign = (name: string, value: string) => {
+    if (!value || /[$`]/.test(value)) return;
+    const known = values.get(name) ?? new Set<string>();
+    values.set(name, known.add(value));
+  };
+  const scanned = text.slice(0, SHELL_PARSE_BUDGET);
+  for (const [, name, value] of scanned.matchAll(LITERAL_ASSIGNMENT)) assign(name!, shellWords(value!).join(" "));
+  for (const [, name, list] of scanned.matchAll(FOR_LOOP)) {
+    const words = shellWords(list!);
+    const end = words.indexOf("do");
+    for (const word of end === -1 ? words : words.slice(0, end)) assign(name!, word);
+  }
+  return values;
+}
+
+/** `$x` and `${x}`, and `${x:-word}`, `${x:=word}` and `${x:+word}`, whose word may be what they expand to. */
+const VARIABLE_REFERENCE = /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?::?[-=+]([^}]*))?\}|([A-Za-z_][A-Za-z0-9_]*))/g;
+
+/** Most commands one variable-named program resolves to; further combinations of values are not tried. */
+const RESOLVED_COMMANDS_LIMIT = 32;
+
+/**
+ * The command with each variable in its program name replaced by every value
+ * the line gives it, or the word a `${x:-word}` names: after `x=rm`, `$x -rf dir`
+ * may run `rm -rf dir`. Variables nothing on the line sets stay as they are.
+ */
+function resolvedCommands(command: string, values: AssignedValues): string[] {
+  const program = /^\S*/.exec(command)?.[0] ?? "";
+  let resolved = [command];
+  for (const [reference, braced, word, plain] of program.matchAll(VARIABLE_REFERENCE)) {
+    const options = new Set(values.get((braced ?? plain)!));
+    if (word && !/[$`]/.test(word)) options.add(word);
+    if (options.size === 0) continue;
+    resolved = resolved.flatMap((entry) => [...options].map((value) => entry.replaceAll(reference, value))).slice(0, RESOLVED_COMMANDS_LIMIT);
+  }
+  return resolved.filter((entry) => entry !== command);
+}
+
 /**
  * The scripts a command hands to another shell (`bash -c '…'`,
  * `bash --noprofile -o pipefail -c '…'`, `sudo -u x sh -lc '…'`,
@@ -333,12 +392,17 @@ function wrappedCommands(command: string, spend: Spend): string[] {
  * a wrapper such as `sudo` runs, searched again in turn. A rough split only
  * adds candidates, so a pattern can block more than the line runs, never less.
  *
+ * A program named through a variable is also searched with each value
+ * `assigned` gives it: by default the line's own assignments, or those of the
+ * whole line the command belongs to.
+ *
  * `unchecked` says the line runs something no pattern can be checked against:
- * a program named through an expansion (`x=rm; $x -rf dir`), scripts nested
- * deeper than are searched, or more text than one parse reads. A script that
- * only exists when the line runs (`curl … | sh`) is checked as written.
+ * a program named through an expansion (`$x -rf dir`), even one resolved
+ * from the line, since its variable may hold something else when it runs,
+ * scripts nested deeper than are searched, or more text than one parse reads.
+ * A script that only exists when the line runs (`curl … | sh`) is checked as written.
  */
-export function parseShellCommands(command: string): { commands: string[]; unchecked: boolean } {
+export function parseShellCommands(command: string, assigned: AssignedValues = assignedValues(command)): { commands: string[]; unchecked: boolean } {
   const found = new Set<string>();
   let unchecked = false;
   let budget = SHELL_PARSE_BUDGET;
@@ -359,7 +423,9 @@ export function parseShellCommands(command: string): { commands: string[]; unche
       const command = withoutShellKeywords(candidate);
       const stripped = withoutAssignments(command);
       for (const entry of [candidate, withoutAssignments(candidate), command, stripped, byProgramName(stripped)]) found.add(entry);
-      if (namesProgramDynamically(stripped)) unchecked = true;
+      if (!namesProgramDynamically(stripped)) return;
+      unchecked = true;
+      for (const resolved of resolvedCommands(stripped, assigned)) visit(resolved, depth + 1);
     };
     add(line);
     // Quotes do not change what runs: `"rm" -rf x` runs rm.

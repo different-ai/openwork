@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { z } from "zod"
 import { createApp } from "../src/app.js"
+import { CellsStore } from "../src/cells-store.js"
 import type { ModelClient } from "../src/model.js"
 import { nodeSqlite } from "../src/node-sqlite.js"
 import { Runner } from "../src/runner.js"
@@ -101,4 +102,70 @@ test("an export that is busy, foreign, cut off or from a newer runner moves noth
   assert.equal(busy.status, 409)
   assert.equal(await errorOf(busy), "session_busy")
   assert.equal((await source.request("/v1/sessions/hs_not_here_at_all/export")).status, 404)
+})
+
+test("a chat on its owner's memory carries that memory, and imports merge it into the owner's (newest wins, nothing deleted)", async () => {
+  using source = runner()
+  using target = runner()
+  const sourceCells = CellsStore.of(source.store)
+  let clock = 1_000
+  const at = () => (clock += 1_000)
+  // Two chats of one owner on the owner's memory, exported at different times: the first with an older note.
+  const first = source.store.putSession(`hs_c_${"1".repeat(32)}`, { owner, memoryScope: "owner" }).session.id
+  const second = source.store.putSession(`hs_c_${"2".repeat(32)}`, { owner, memoryScope: "owner" }).session.id
+  finishedTurn(source.store, first, "m1", "One.")
+  finishedTurn(source.store, second, "m2", "Two.")
+  const write = (path: string, content: string) => sourceCells.mergeOwnerMemory(owner, [{ path, content, updated_at: at() }])
+  write("memory/about.md", "Old note")
+  write("memory/team.md", "Ana")
+  const firstExport = await (await source.request(`/v1/sessions/${first}/export`)).text()
+  assert.deepEqual(z.object({ owner_memory: z.array(z.object({ path: z.string(), content: z.string() }).loose()) }).loose().parse(JSON.parse(firstExport)).owner_memory.map(({ path, content }) => ({ path, content })), [
+    { path: "memory/about.md", content: "Old note" },
+    { path: "memory/team.md", content: "Ana" },
+  ])
+  write("memory/about.md", "New note")
+  write("memory/plans.md", "Ship it")
+  const secondExport = await (await source.request(`/v1/sessions/${second}/export`)).text()
+  // A chat with memory of its own carries none of the owner's: its export is as before.
+  const own = source.store.putSession("hs_own_memory_chat0001", { owner }).session.id
+  finishedTurn(source.store, own, "m3", "Three.")
+  assert.equal("owner_memory" in z.record(z.string(), z.unknown()).parse(await (await source.request(`/v1/sessions/${own}/export`)).json()), false)
+
+  // Imported newest first, then the older one: the older note doesn't replace the newer, nothing goes.
+  assert.equal((await target.request(`/v1/sessions/${second}/import`, { method: "POST", body: secondExport })).status, 201)
+  target.store.db.prepare("INSERT INTO owner_memory (owner, path, content, size, updated_at) VALUES (?, 'memory/local.md', 'kept', 4, 1)").run(owner)
+  assert.equal((await target.request(`/v1/sessions/${first}/import`, { method: "POST", body: firstExport })).status, 201)
+  const targetCells = CellsStore.of(target.store)
+  assert.deepEqual(targetCells.ownerMemoryFiles(owner).map(({ path, content }) => ({ path, content })), [
+    { path: "memory/about.md", content: "New note" },
+    { path: "memory/local.md", content: "kept" },
+    { path: "memory/plans.md", content: "Ship it" },
+    { path: "memory/team.md", content: "Ana" },
+  ])
+  // Node's own memory access reads it for the imported chats, and the files API shows it.
+  const content = await target.request(`/v1/sessions/${first}/files/content?path=memory/plans.md`)
+  assert.equal(await content.text(), "Ship it")
+  // Exported again from Node, it carries the owner's memory as Node has it now.
+  const again = z.object({ owner_memory: z.array(z.object({ path: z.string() }).loose()) }).loose().parse(await (await target.request(`/v1/sessions/${second}/export`)).json())
+  assert.equal(again.owner_memory.length, 4)
+})
+
+test("owner memory in an import needs an owner and memory/ paths", async () => {
+  using source = runner()
+  const id = source.store.putSession(`hs_c_${"3".repeat(32)}`, { owner, memoryScope: "owner" }).session.id
+  finishedTurn(source.store, id, "m1", "One.")
+  CellsStore.of(source.store).mergeOwnerMemory(owner, [{ path: "memory/a.md", content: "a", updated_at: 5 }])
+  const conversation = z.record(z.string(), z.unknown()).parse(await (await source.request(`/v1/sessions/${id}/export`)).json())
+  const session = z.record(z.string(), z.unknown()).parse(conversation.session)
+  for (const [label, body] of [
+    ["no owner", { ...conversation, session: { ...session, owner: null } }],
+    ["a path outside memory/", { ...conversation, owner_memory: [{ path: "notes.md", content: "x", updated_at: 1 }] }],
+    ["a path that escapes", { ...conversation, owner_memory: [{ path: "memory/../x.md", content: "x", updated_at: 1 }] }],
+  ] as const) {
+    using world = runner()
+    const response = await world.request(`/v1/sessions/${id}/import`, { method: "POST", body: JSON.stringify(body) })
+    assert.equal(response.status, 400, label)
+    assert.equal(world.store.getSession(id), null, label)
+    assert.equal(CellsStore.of(world.store).ownerMemoryFiles(owner).length, 0, label)
+  }
 })

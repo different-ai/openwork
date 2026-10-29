@@ -3,8 +3,9 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { z } from "zod";
-import { workbotViewContextSchema, WORKBOT_MAX_MESSAGE_CHARS, type WorkbotViewContext } from "@openwork/types/workbot-context";
+import { workbotDocumentNavigationSchema, workbotViewContextSchema, WORKBOT_MAX_MESSAGE_CHARS, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import { errorMessage as getErrorMessage, hostFetch, workbotHost } from "./host";
+import { workbotAccessFailureSchema, type WorkbotAccessReason } from "@openwork/types/den/workbot-settings";
 
 const requestJson = (path: string, init?: RequestInit, timeoutMs?: number) => workbotHost().requestJson(path, init, timeoutMs);
 
@@ -39,8 +40,17 @@ const stepSchema = z.object({
   startedAt: z.number().nullable(),
   finishedAt: z.number().nullable(),
   updates: z.array(z.string()).default([]),
+  /** Work in the computer's browser; absent for its other apps (and from older servers). */
+  surface: z.literal("browser").optional(),
+  /** Commands on the computer with no screen to watch (running Blender from the command line); absent for screen work. */
+  background: z.literal(true).optional(),
+  /** Whether Workbot put this screen work in front of the person: the last value it gave; absent when it gave none. */
+  shown: z.boolean().optional(),
+  /** Web pages it opened in the browser, each with a stable id for its link (/browser/<id>). */
+  pages: z.array(z.object({ id: z.string(), url: z.string(), title: z.string() })).optional(),
 });
 export type WorkbotStep = z.infer<typeof stepSchema>;
+export type WorkbotPage = NonNullable<WorkbotStep["pages"]>[number];
 const partSchema = z.discriminatedUnion("kind", [
   /** `step`: the model call the words came from, so the page keeps one bubble per call. Older servers omit it. */
   z.object({ kind: z.literal("text"), text: z.string(), step: z.number().optional() }),
@@ -61,6 +71,7 @@ const turnSchema = z.object({
   id: z.string(),
   text: z.string(),
   context: workbotViewContextSchema.optional(),
+  navigation: z.array(z.object({ id: z.string(), fileId: workbotDocumentNavigationSchema.shape.fileId })).default([]),
   sentAt: z.number().nullable(),
   finishedAt: z.number().nullable(),
   status: z.enum(["queued", "working", "done", "failed", "stopped"]),
@@ -72,6 +83,7 @@ const turnSchema = z.object({
   parts: z.array(partSchema),
   modelSteps: z.number(),
   error: z.string().nullable(),
+  modelIssue: z.enum(["free_limit", "usage_limit", "payment_required"]).optional(),
   /** A failed message that can work if answered again: "Try again" answers it again in place. */
   retryable: z.boolean().default(true),
   /** Bigger jobs this message handed to background tasks: shown where they started until they report back. */
@@ -129,7 +141,11 @@ export function useWorkbotThread(input: { turns: number; awaiting: boolean; live
 export type LiveText = {
   step: number;
   text: string;
-  working?: { on: "computer" | "other"; since: number };
+  /**
+   * `background`: commands on its computer, with no screen to watch. `update`: what that computer work is doing, in
+   * its own words, before the step is stored.
+   */
+  working?: { on: "computer" | "other"; since: number; background?: true; update?: string };
   /** What earlier model calls of this turn wrote, kept until the conversation's next read has it. */
   earlier?: Array<{ step: number; text: string }>;
 };
@@ -137,7 +153,7 @@ export type LiveText = {
 const liveEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("changed"), messageId: z.string(), status: z.string().optional() }),
   z.object({ type: z.literal("text"), messageId: z.string(), step: z.number(), delta: z.string(), reset: z.boolean().optional() }),
-  z.object({ type: z.literal("working"), messageId: z.string(), step: z.number(), on: z.enum(["computer", "other"]) }),
+  z.object({ type: z.literal("working"), messageId: z.string(), step: z.number(), on: z.enum(["computer", "other"]), background: z.literal(true).optional(), update: z.string().optional() }),
 ]);
 
 async function openStream(signal: AbortSignal, chat: string | null) {
@@ -201,7 +217,10 @@ export function useWorkbotLive(enabled: boolean) {
         // A finished model call's words stay until the conversation's next read has them, so they never blink out.
         const earlier = !sameStep && previous?.text ? [...(previous.earlier ?? []), { step: previous.step, text: previous.text }].slice(-3) : (previous?.earlier ?? []);
         if (value.type === "working") {
-          return { ...current, [value.messageId]: { step: value.step, text: sameStep ? previous.text : "", earlier, working: { on: value.on, since: Date.now() } } };
+          // A call saying what it does arrives after its start; until a later call says, the same kind of work keeps it.
+          const kept = sameStep && previous.working?.on === value.on && previous.working.background === value.background ? previous.working.update : undefined;
+          const update = value.update ?? kept;
+          return { ...current, [value.messageId]: { step: value.step, text: sameStep ? previous.text : "", earlier, working: { on: value.on, since: Date.now(), ...(value.background ? { background: true as const } : {}), ...(update ? { update } : {}) } } };
         }
         const text = value.reset || !sameStep ? value.delta : previous.text + value.delta;
         return { ...current, [value.messageId]: { step: value.step, text, earlier, ...(sameStep && previous.working && !value.reset ? { working: previous.working } : {}) } };
@@ -250,7 +269,7 @@ export function useWorkbotLive(enabled: boolean) {
 }
 
 export class WorkbotSendError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly accessReason?: WorkbotAccessReason) {
     super(message);
     this.name = "WorkbotSendError";
   }
@@ -261,6 +280,8 @@ export const MAX_MESSAGE_CHARS = WORKBOT_MAX_MESSAGE_CHARS;
 
 /** Why sending was refused, in the person's words. */
 function sendRefused(status: number, payload: unknown) {
+  const access = workbotAccessFailureSchema.safeParse(payload);
+  if (access.success) return new WorkbotSendError("Workbot's model access needs attention.", status, access.data.reason);
   if (status === 429) {
     const limited = typeof payload === "object" && payload !== null && "error" in payload && payload.error === "rate_limited";
     return new WorkbotSendError(limited ? "You're sending messages quickly. Try again in a minute." : "Too many messages are waiting. Try again when this one is answered.", 429);
@@ -272,7 +293,7 @@ export function useSendWorkbotMessage() {
   const queryClient = useQueryClient();
   const chat = useWorkbotChat();
   return useMutation({
-    mutationFn: async (input: { id: string; text: string; attachments?: string[]; context?: WorkbotViewContext }) => {
+    mutationFn: async (input: { id: string; text: string; attachments?: string[]; context?: WorkbotViewContext; teachingId?: string; teachingStepId?: number }) => {
       if (input.text.length > MAX_MESSAGE_CHARS) throw new WorkbotSendError("That's too long for one message. Send it as a file instead.", 400);
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const { response, payload } = await requestJson(inChat("/v1/workbot/messages", chat), {
@@ -397,7 +418,7 @@ export function useStartWorkbot() {
     mutationFn: async () => {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const { response, payload } = await requestJson("/v1/workbot/hello", { method: "POST", body: JSON.stringify({ timeZone }) }, 30_000);
-      if (!response.ok) throw new Error(getErrorMessage(payload, "Couldn't start."));
+      if (!response.ok) throw sendRefused(response.status, payload);
       const parsed = z.object({ started: z.boolean() }).safeParse(payload);
       if (!parsed.success) throw new Error("Couldn't start.");
       return parsed.data;

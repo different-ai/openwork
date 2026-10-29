@@ -246,9 +246,9 @@ variable "require_email_verification" {
 }
 
 variable "automations_enabled" {
-  description = "Enable Automations."
+  description = "Automations for the whole install (on by default; organization admins can turn Desktop or Cloud Automations off in Settings)."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "dashboards_enabled" {
@@ -498,7 +498,7 @@ variable "database_url" {
 variable "database" {
   description = "RDS settings."
   type = object({
-    instance_class        = optional(string, "db.t4g.micro")
+    instance_class        = optional(string, "db.t4g.small")
     engine_version        = optional(string, "8.4")
     allocated_storage_gb  = optional(number, 20)
     max_allocated_storage = optional(number, 100)

@@ -2,7 +2,7 @@ import { callFunctionOnSurface, evaluateOnSurface } from "./surface.ts";
 import type { Surface } from "./surface.ts";
 import type { CdpClient } from "./cdp.ts";
 
-export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator" | "combobox" | "listbox" | "alert" | "heading" | "progressbar" | "radio";
+export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator" | "combobox" | "listbox" | "alert" | "heading" | "progressbar" | "radio" | "dialog";
 export type TargetMatcher = string | RegExp;
 
 export type Target = string | {
@@ -370,6 +370,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       if (explicit) return explicit;
       const tag = element.tagName.toLowerCase();
       if (tag === "button") return "button";
+      if (tag === "dialog") return "dialog";
       if (tag === "select") return element instanceof HTMLSelectElement && (element.multiple || element.size > 1) ? "listbox" : "combobox";
       if (/^h[1-6]$/.test(tag)) return "heading";
       if (tag === "a" && element.hasAttribute("href")) return "link";
@@ -414,7 +415,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
         ? 'h1, h2, h3, h4, h5, h6, [role="heading"]'
         : target.text && !target.role && !target.label && !target.placeholder && !target.testId
           ? 'body *'
-          : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"], [role="menuitem"], [role="tab"], [role="option"], [role="separator"], [role="alert"], [role="progressbar"], [role="radio"], [data-testid]';
+          : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"], [role="menuitem"], [role="tab"], [role="option"], [role="separator"], [role="alert"], [role="progressbar"], [role="radio"], [role="dialog"], dialog, [data-testid]';
     const candidates = [...document.querySelectorAll<HTMLElement>(selector)].filter((element: Element) => {
       if (target.role && implicitRole(element) !== target.role) return false;
       if (target.placeholder !== undefined && (element.getAttribute("placeholder") ?? element.getAttribute("aria-placeholder")) !== target.placeholder) return false;

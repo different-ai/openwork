@@ -56,7 +56,6 @@ export async function workbotGateway(seed: Seed) {
       if (!result.response.ok) throw new Error(`Fixture setup ${method} ${path}: HTTP ${result.response.status} ${result.text.slice(0, 300)}`);
       return record(result.body);
     }
-    // Leave cloudAgentGateway at its actual off default; the owner enables it in the proof.
     await write(`/v1/admin/organizations/${organizationId}/capabilities`, "PUT", { capabilities: { workbot: true, permissions: true } });
     const team = record((await write("/v1/teams", "POST", { name: "Restricted model managers", memberIds: [memberId(restricted.email)] })).team);
     await write("/v1/permissions/sets", "POST", { teamId: text(team.id), permissions: [{ key: "inference.manage", status: "allow" }] });
@@ -81,7 +80,6 @@ export async function workbotGateway(seed: Seed) {
     const member = await seed.web({ den, signedInAs: restricted, startPath: "/dashboard/workbot-settings", headless: true, viewport });
     return {
       web, member, admin: den.admin, restricted, scope, openai, anthropic, settingsUrl,
-      featureUrl: `${den.ref.webUrl}/admin/organizations/${organizationId}`,
       completionCount: () => runner.calls().length + upstreamCalls.length,
       secretsAbsent: (value: string) => Object.values(keys).every(key => !value.includes(key)) && !value.includes("fixture-model-key") && !value.includes("ow_gw_"),
       async [Symbol.asyncDispose]() { await resources.disposeAsync(); },

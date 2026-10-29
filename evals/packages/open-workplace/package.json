@@ -13,9 +13,11 @@
     "start:microsoft365": "node src/microsoft365.mjs",
     "start:atlassian": "node src/atlassian.mjs",
     "start:atlassian-web": "node src/atlassian-web.mjs",
+    "start:workshop": "node src/workshop.mjs",
+    "workshop:roster": "node src/workshop-roster.mjs",
     "test": "node --test src/*.test.mjs"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24.22.1 <25"
   }
 }

@@ -48,10 +48,13 @@ const docsOnlyFile = path => path.startsWith("packages/docs/") || path.endsWith(
 // workflow. Packaged journeys need packaged binaries: app-smoke runs in packaged
 // smoke on every PR, and packaged-update-install (macOS) only when it changes.
 const PACKAGED_ONLY = /^(packaged-[^/]+|app-smoke)\.e2e\.test\.ts$/;
+// Too slow for every push (it relaunches the desktop app twice, ~8.5 min).
+// The nightly Core journeys workflow still runs it, and so does any PR that changes it.
+export const NIGHTLY_ONLY = new Set(["thread-continues-after-restart.e2e.test.ts"]);
 export function everyCoreJourney(root = repoRoot) {
   const directory = new URL("evals/core/", root);
   if (!existsSync(directory)) return [];
-  return readdirSync(directory).filter(name => name.endsWith(".e2e.test.ts") && !PACKAGED_ONLY.test(name)).map(name => `evals/core/${name}`);
+  return readdirSync(directory).filter(name => name.endsWith(".e2e.test.ts") && !PACKAGED_ONLY.test(name) && !NIGHTLY_ONLY.has(name)).map(name => `evals/core/${name}`);
 }
 
 // Every E2E spec the PR added or changed is a proof of its work, plus every

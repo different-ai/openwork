@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { openworkInstallMarkerPaths, resolveFreshInstallEngine } from "../electron/runtime.mjs";
+import { openworkInstallMarkerPaths, resolveDesktopEngineAutoUpgrade, resolveFreshInstallEngine } from "../electron/runtime.mjs";
 
 function withProfile(run) {
   const dir = mkdtempSync(join(tmpdir(), "openwork-fresh-install-"));
@@ -47,4 +47,13 @@ test("an explicit OPENWORK_ENGINE_V2_PREVIEW always wins over the new-install de
   withProfile(({ markerPaths }) => {
     assert.equal(resolveFreshInstallEngine({ markerPaths, env: { OPENWORK_ENGINE_V2_PREVIEW: "0" } }), undefined);
   });
+});
+
+test("new desktop versions move existing v1 installs to v2 in the background unless the engine is pinned", () => {
+  assert.equal(resolveDesktopEngineAutoUpgrade({}), true);
+  // Test harnesses and support pin an engine explicitly; that keeps today's behavior.
+  assert.equal(resolveDesktopEngineAutoUpgrade({ OPENWORK_ENGINE_V2_PREVIEW: "0" }), undefined);
+  assert.equal(resolveDesktopEngineAutoUpgrade({ OPENWORK_ENGINE_V2_PREVIEW: "1" }), undefined);
+  assert.equal(resolveDesktopEngineAutoUpgrade({ OPENWORK_ENGINE_AUTO_UPGRADE: "0" }), undefined);
+  assert.equal(resolveDesktopEngineAutoUpgrade({ OPENWORK_ENGINE_AUTO_UPGRADE: "1" }), undefined);
 });

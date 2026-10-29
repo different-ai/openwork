@@ -39,6 +39,17 @@ const MEMBERS_AREA_KEYS: readonly PermissionKey[] = [
   "invitations.manage", "members.update", "members.delete", "teams.view", "teams.manage", "teams.manage_admin",
 ];
 
+/** Each Diagnostics section's permission; any one opens the page and the rest show locked. */
+const DIAGNOSTICS_KEYS: readonly PermissionKey[] = [
+  "desktop_policies.view", "gateway_providers.view", "llm_providers.view", "connections.view", "egress_diagnostics.view",
+];
+
+/** Settings › Diagnostics opens with any section's permission. Installation operators are handled in canOpenAdminRoute. */
+export function canViewDiagnostics(access: DenOrgAccessFlags): boolean {
+  return access.canViewDesktopPolicies || access.canViewGatewayProviders || access.canViewAllLlmProviders
+    || access.canViewAllConnections || access.canViewEgressDiagnostics;
+}
+
 const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   {
     prefix: getAiGatewayRoute(),
@@ -53,7 +64,7 @@ const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { prefix: getWorkbotSettingsRoute(), allowed: (access) => access.canViewModelsSettings || access.canManageModelsSettings, needs: ["inference.view", "inference.manage"] },
   { prefix: getDeploymentsRoute(), allowed: (access) => access.canViewDeployments, needs: ["deployments.view"] },
   { prefix: getAnalyticsRoute(), allowed: (access) => access.canViewUsageAnalytics, needs: ["usage_analytics.view"] },
-  { prefix: getDiagnosticsRoute(), allowed: (access) => access.canViewEgressDiagnostics, needs: ["egress_diagnostics.view"] },
+  { prefix: getDiagnosticsRoute(), allowed: canViewDiagnostics, needs: DIAGNOSTICS_KEYS },
   { prefix: getIntegrationsRoute(), allowed: (access) => access.canManageSyncSources, needs: ["connectors.manage"] },
   {
     prefix: getMembersRoute(),
@@ -96,8 +107,13 @@ function ruleFor(pathname: string): AdminRouteRule | null {
   return match;
 }
 
-/** Whether the member can open this admin-area page. */
-export function canOpenAdminRoute(pathname: string, access: DenOrgAccessFlags): boolean {
+/**
+ * Whether the member can open this admin-area page. A self-hosted installation
+ * administrator (server-verified, never an organization role) also opens
+ * Settings › Diagnostics for its Installation section, even as a plain member.
+ */
+export function canOpenAdminRoute(pathname: string, access: DenOrgAccessFlags, canManageDeploymentServices = false): boolean {
+  if (pathname === getDiagnosticsRoute() && canManageDeploymentServices === true) return true;
   if (!access.canViewSettings) return false;
   const rule = ruleFor(pathname);
   return rule ? rule.allowed(access) : true;

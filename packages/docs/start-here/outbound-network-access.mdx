@@ -88,6 +88,7 @@ These hosts are only needed when the corresponding feature, provider, connection
 
 | Feature group | Hostnames | What breaks when blocked |
 | --- | --- | --- |
+| Remote computer use with Daytona | `app.daytona.io` or the configured Daytona API host, plus the provider's sandbox connection host | The configured Daytona computer cannot connect; local computer use is unaffected. |
 | OpenAI direct features | `api.openai.com` | Direct OpenAI Realtime voice and image-generation features fail for users who configured OpenAI. |
 | Google Workspace through Cloud | Browser: `accounts.google.com`, `mail.google.com`. Den: `oauth2.googleapis.com`, `www.googleapis.com`, `gmail.googleapis.com`. | Browser sign-in and Gmail links, or Cloud token refresh and Workspace actions, fail on the component where access is blocked. |
 | Built-in MCP presets | `mcp.notion.com`, `mcp.linear.app`, `mcp.sentry.dev`, `mcp.stripe.com`, `mcp.context7.com`, `mcp.slack.com` | That specific MCP preset cannot connect. |

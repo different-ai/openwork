@@ -57,23 +57,18 @@ test("the agent is told to end its turn and never to ask for the key in chat", (
   assert.match(credentialPromptInstruction(null), /^A private field for this API key/)
 })
 
-test("agents are offered AI Gateway provider creation only while secure keys in chat is on", () => {
-  const create = { method: "POST", path: "/v1/inference-providers" }
+test("agents are offered AI Gateway provider creation", () => {
   const base = { generatedArtifactViewsEnabled: true, managedDeploymentsEnabled: false }
-  assert.equal(catalogOperationAvailableToCapabilities({ ...base, secureSecretFieldsEnabled: false }, create), false)
-  assert.equal(catalogOperationAvailableToCapabilities(base, create), false)
-  assert.equal(catalogOperationAvailableToCapabilities({ ...base, secureSecretFieldsEnabled: true }, create), true)
-  // Other provider routes are unaffected by the rollout.
-  assert.equal(catalogOperationAvailableToCapabilities({ ...base, secureSecretFieldsEnabled: false }, { method: "GET", path: "/v1/inference-providers/model-management" }), true)
+  assert.equal(catalogOperationAvailableToCapabilities(base, { method: "POST", path: "/v1/inference-providers" }), true)
+  assert.equal(catalogOperationAvailableToCapabilities(base, { method: "GET", path: "/v1/inference-providers/model-management" }), true)
 })
 
-test("the shared-key route is hidden, rollout-gated, human-only and never echoes provider text", () => {
+test("the shared-key route is hidden, human-only and never echoes provider text", () => {
   const source = readFileSync(new URL("../src/routes/org/mcp-connections.ts", import.meta.url), "utf8")
   const start = source.indexOf('"/v1/mcp-connections/:connectionId/shared-credential"')
   assert.ok(start > 0)
   const route = source.slice(start, source.indexOf("app.post(", start))
   assert.match(route, /describeRoute\(\{ hide: true \}\)/)
-  assert.match(route, /requireFeature\("secureSecretFields"\)/)
   assert.match(route, /orgPermissionRoute\("connections\.manage"\)/)
   assert.match(route, /session\.id === "mcp_internal" \|\| c\.get\("apiKey"\)/)
   assert.ok(!route.includes("jsonValidator("), "a shared validator could echo the submitted value")
@@ -95,7 +90,7 @@ test("each AI Gateway provider asks for the credential it actually uses; LiteLLM
   assert.equal(credentialPromptSchema.safeParse({ ...prompt, target: { ...prompt.target, credentialKind: "api_key_map" } }).success, false)
 })
 
-test("agents never send secrets; API keys may not while secure keys in chat is on", async () => {
+test("agents and API keys never send secrets", async () => {
   const { bodyCarriesSecret } = await import("../src/middleware/refuse-machine-secrets.js")
   assert.equal(bodyCarriesSecret({ apiKey: sentinel }, ["apiKey"]), true)
   assert.equal(bodyCarriesSecret({ apiKeys: { OPENAI_API_KEY: sentinel } }, ["apiKey", "apiKeys"]), true)

@@ -28,9 +28,9 @@ const BUILDER_KIND = "openwork-daytona-builder-v1";
 const VM_SIZE = { cpu: 4, memory: 8, disk: 10 };
 const ROOT = "/opt/openwork-preview";
 
-const NODE_VERSION = "v24.21.0";
-/** From https://nodejs.org/dist/v24.21.0/SHASUMS256.txt (node-v24.21.0-linux-x64.tar.xz). */
-const NODE_SHA256 = "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6";
+const NODE_VERSION = "v24.22.1";
+/** From https://nodejs.org/dist/v24.22.1/SHASUMS256.txt (node-v24.22.1-linux-x64.tar.xz). */
+const NODE_SHA256 = "6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6";
 
 /** Node 24, Bun and git on plain Ubuntu; Freestyle's base image ships them. */
 const BASE_RECIPE = `export DEBIAN_FRONTEND=noninteractive
@@ -41,7 +41,7 @@ curl -fsSL -o /tmp/node.tar.xz https://nodejs.org/dist/${NODE_VERSION}/node-${NO
 echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c -
 tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner
 rm /tmp/node.tar.xz
-node -e 'if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("Node 24 or newer is required")'
+test "$(node --version)" = ${NODE_VERSION}
 # openwork-server's build bundles its plugins with Bun.
 npm install --global bun@1.3.14
 bun --version`;
@@ -287,7 +287,6 @@ ${checkoutRecipe(sha)}
 ${EVIDENCE_DEPENDENCIES_RECIPE}
 pnpm --filter @openwork-ee/den-api run build:workspace-dependencies
 pnpm --filter openwork-server build
-pnpm --filter @openwork/sdk build
 systemctl daemon-reload
 systemctl start openwork-evidence
 for attempt in $(seq 1 480); do

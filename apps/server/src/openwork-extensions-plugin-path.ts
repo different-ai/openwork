@@ -33,6 +33,7 @@ export function openworkPluginPath(name: string, here?: string): string {
 
 export const openworkExtensionsPreviewPluginPath = () => openworkPluginPath("openwork-extensions-preview");
 export const openworkChromeDevtoolsPluginPath = () => openworkPluginPath("openwork-chrome-devtools");
+export const openworkComputerUsePluginPath = () => openworkPluginPath("openwork-computer-use");
 export const openworkCapabilitiesKnowledgePluginPath = () => openworkPluginPath("openwork-capabilities-knowledge");
 export const openworkAnthropicAdaptiveThinkingPluginPath = () => openworkPluginPath("openwork-anthropic-adaptive-thinking");
 export const openworkAnthropicToolSchemaPluginPath = () => openworkPluginPath("openwork-anthropic-tool-schema");
@@ -54,4 +55,6 @@ export const openworkContextV2PluginPath = () => openworkPluginPath("openwork-co
 export const openworkProviderFiltersV2PluginPath = () => openworkPluginPath("openwork-provider-filters-v2");
 export const openworkMcpResultsV2PluginPath = () => openworkPluginPath("openwork-mcp-results-v2");
 export const openworkMcpReadinessV2PluginPath = () => openworkPluginPath("openwork-mcp-readiness-v2");
+export const openworkVisibleReasoningV2PluginPath = () => openworkPluginPath("openwork-visible-reasoning-v2");
+export const openworkAutoRouteV2PluginPath = () => openworkPluginPath("openwork-auto-route-v2");
 export const openworkAgentPermissionsV2PluginPath = () => openworkPluginPath("openwork-agent-permissions-v2");

@@ -23,7 +23,7 @@ after(async () => { await den.close(); await provider.close(); await external.cl
 const body = () => ({ requestId: randomUUID(), returnPath: "/documents?chat=sidechat000000001" })
 const route = (id: string) => `/v1/workbot/connections/${id}/connect/start`
 
-test("a Workbot grant connects only its own organization; scope, grants, permissions and the kill switch remain enforced", async () => {
+test("a Workbot grant connects only its own organization; scope, grants and permissions remain enforced", async () => {
   const { owner, orgId } = await den.createOrg(await den.signUp("Owner Example"), "Connect workspace")
   const member = await den.newMember(owner, orgId, "Member Example")
   const other = await den.createOrg(await den.signUp("Other Example"), "Other workspace")
@@ -31,9 +31,6 @@ test("a Workbot grant connects only its own organization; scope, grants, permiss
   const call = den.as(owner, orgId)
   assert.equal((await den.request(null, "POST", route("google-workspace"), { body: body() })).status, 401)
   assert.equal((await den.request(member.token, "POST", route("google-workspace"), { orgId, body: body() })).status, 401)
-  assert.equal((await den.request(token, "POST", route("google-workspace"), { body: body() })).status, 404)
-  assert.equal((await den.request(token, "POST", route("google-workspace"), { body: body() })).status, 404)
-  await den.setFeature(orgId, "workbotInlineConnect", true)
   const readGrant = await den.request(member.token, "POST", "/v1/mcp/token", { orgId, body: { scopes: ["mcp:read"] } })
   assert.equal((await den.request(text(field(readGrant.body, "token"), "read token"), "POST", route("google-workspace"), { body: body() })).status, 403)
   for (const returnPath of ["https://other.example.test/", "//other.example.test/", "/\\other.example.test/", "/\nother"]) {
@@ -58,9 +55,6 @@ test("a Workbot grant connects only its own organization; scope, grants, permiss
   const callback = new URL(text(authorization.searchParams.get("redirect_uri"), "redirect URI"))
   callback.searchParams.set("state", text(authorization.searchParams.get("state"), "state"))
   callback.searchParams.set("code", "member")
-  // Disabling starts must not strand an already authenticated transaction.
-  await den.setFeature(orgId, "workbotInlineConnect", false)
-  assert.equal((await den.request(token, "POST", route("google-workspace"), { body: body() })).status, 404)
   const complete = await den.request(null, "GET", callback.pathname + callback.search)
   assert.equal(complete.status, 200, summary(complete))
   assert.ok(complete.text.includes('"ok":true'))
@@ -80,7 +74,6 @@ test("a Workbot grant connects only its own organization; scope, grants, permiss
 
 test("denied, forged, expired, incomplete and reconnect callbacks never claim an unverified connection", async () => {
   const { owner, orgId } = await den.createOrg(await den.signUp("Connect Example"), "Recovery workspace")
-  await den.setFeature(orgId, "workbotInlineConnect", true)
   const token = await den.mintMcpToken(owner, orgId)
   await den.as(owner, orgId)("POST", "/v1/oauth-providers/google-workspace/client", { clientId: "fixture-client", clientSecret: "fixture-secret", features: ["driveRead"] })
   const begin = async () => {
@@ -128,7 +121,6 @@ test("denied, forged, expired, incomplete and reconnect callbacks never claim an
 
 test("external member OAuth preserves issuer, replay and Workbot return binding", async () => {
   const { owner, orgId } = await den.createOrg(await den.signUp("External Example"), "External workspace")
-  await den.setFeature(orgId, "workbotInlineConnect", true)
   const member = await den.newMember(owner, orgId, "External Member")
   const token = await den.mintMcpToken(member, orgId)
   const created = await den.as(owner, orgId)("POST", "/v1/mcp-connections", { name: "Google Calendar", url: external.mcpUrl, authType: "oauth", credentialMode: "per_member", access: { orgWide: true } })

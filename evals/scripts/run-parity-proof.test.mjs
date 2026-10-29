@@ -30,6 +30,12 @@ test("a failed or incomplete live proof cannot become a passing CI preparation s
   }
 });
 
+test("the v2 Drive upload proof runs on the v2 engine with pinned binaries, not as a skipped legacy proof", () => {
+  assert.deepEqual(parityProofPlan("evals/proofs/opencode-v2-drive-upload.proof.test.ts"), [
+    { engine: "v2", args: ["evals/bin/evals.mjs", "opencode-v2-drive-upload.proof.test.ts", "--local", "--engine", "v2"] },
+  ]);
+});
+
 test("existing connector parity retains both v1 and v2 execution", () => {
   assert.deepEqual(parityProofPlan("evals/core/agent-connection-journey.e2e.test.ts").map(item => item.engine), ["v1", "v2"]);
 });

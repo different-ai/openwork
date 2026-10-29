@@ -3,6 +3,7 @@ import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { performance as nodePerformance } from "node:perf_hooks";
 import { resolveEvalEngine, type MockHandle, type Place, type Seed } from "@openwork/env";
+import { configureProvider } from "./chat.ts";
 import type { MockAgentToolStep, MockAgentWorkload } from "@openwork/labs";
 import { readHeadlessRuntimeManifest, resolveHeadlessWorldRuntimePaths } from "@openwork/world";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,10 @@ function record(value: unknown): value is Record<string, unknown> {
 /** Real app, server and pinned engine; only the paid model transport is synthetic. */
 export async function engineParity(seed: Seed, { place }: { place: Place }, options: { mock?: MockHandle; env?: Record<string, string> } = {}) {
   const engine = resolveEvalEngine();
+  // A fixture-owned provider, not OpenCode Zen: production policy must still
+  // retire Zen while these journeys exercise the real engines on our mock.
+  const bootstrapModel = { provider: "parity-witness", model: "parity-starter", name: "Parity witness" };
+  const bootstrapRef = `${bootstrapModel.provider}/${bootstrapModel.model}`;
   const binary = engine === "v1" ? process.env.OPENWORK_OPENCODE_BIN ?? "opencode" : process.env.OPENWORK_OPENCODE2_BIN ?? "opencode2";
   const { stdout } = await promisify(execFile)(binary, ["--version"], { timeout: 15_000 });
   const engineVersion = stdout.trim().replace(/^opencode2\s+/, "").replace(/^v/, "");
@@ -32,16 +37,21 @@ export async function engineParity(seed: Seed, { place }: { place: Place }, opti
       body: JSON.stringify({ workloads: [{ promptMarker: prompt, latestUserTurn: true, finalReply: reply, steps: [] }] }) });
     if (!configured.ok) throw new Error("Could not configure initial model witness");
     await mkdir(workspacePath, { recursive: true });
-    await writeFile(join(workspacePath, "opencode.json"), JSON.stringify({
+    const bootstrapConfig = {
       permission: { skill: "allow" },
-      provider: { opencode: {
+      model: bootstrapRef,
+      small_model: bootstrapRef,
+      provider: { [bootstrapModel.provider]: {
+        name: "Parity witness",
         npm: "@ai-sdk/openai-compatible",
         options: { baseURL: `${mock.url}/v1`, apiKey: "parity-starter-only" },
-        whitelist: ["big-pickle"],
-        models: { "big-pickle": { name: "Big Pickle", tool_call: true,
+        whitelist: [bootstrapModel.model],
+        models: { [bootstrapModel.model]: { name: bootstrapModel.name, tool_call: true,
+          limit: { context: 128_000, output: 16_384 },
           provider: { npm: "@ai-sdk/openai-compatible", api: `${mock.url}/v1` } } },
       } },
-    }));
+    };
+    await writeFile(join(workspacePath, "opencode.json"), JSON.stringify(bootstrapConfig));
     const startedAt = nodePerformance.now();
     const app = await seed.appWeb({ name: "engine-parity", workspacePath, env: {
       OPENWORK_CLOUD_PROVIDER_SYNC_INTERVAL_MS: "1000",
@@ -50,6 +60,10 @@ export async function engineParity(seed: Seed, { place }: { place: Place }, opti
       ...(process.env.OPENWORK_OPENCODE2_BIN ? { OPENWORK_OPENCODE2_BIN: process.env.OPENWORK_OPENCODE2_BIN } : {}),
       ...options.env,
     } });
+    // Select the fixture model explicitly: other discoverable providers (for
+    // example a local Ollama) must never receive this synthetic workload.
+    const workspace = await seed.workspace(app, workspacePath);
+    await configureProvider(seed, app, workspace.workspaceId, bootstrapModel.provider, bootstrapModel.model, bootstrapConfig, engine);
     const interactiveMs = nodePerformance.now() - startedAt;
     const paths = resolveHeadlessWorldRuntimePaths(fileURLToPath(new URL("../../", import.meta.url)), app.handle.name);
     const manifest = await readHeadlessRuntimeManifest(paths.runtimeManifestPath);
@@ -70,7 +84,7 @@ export async function engineParity(seed: Seed, { place }: { place: Place }, opti
       return { status: response.status, body: value };
     };
     return {
-      app, engine, engineVersion, mock, prompt, reply, interactiveMs, startedAt, workspacePath, request,
+      app, engine, engineVersion, mock, prompt, reply, interactiveMs, startedAt, workspacePath, request, bootstrapModel,
       documentIdentity: () => seed.evalIn(app, () => performance.timeOrigin),
       route: () => seed.evalIn(app, () => location.hash || `#${location.pathname}`),
       async reloadRequests() {

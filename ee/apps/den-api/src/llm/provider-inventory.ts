@@ -2,6 +2,7 @@ import { and, eq, gt, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, GatewayCredentialSetTable, GatewayKeyTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { db } from "../db.js"
 import { env } from "../env.js"
+import { sessionTokenMatches } from "../session-token.js"
 import { organizationFeatureEnabled } from "../features.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
 import { buildGatewayModelConfig, buildGatewayProviderConfig, gatewayConfigurationError, gatewayModelConfigurationError } from "./inference-provider-config.js"
@@ -31,13 +32,13 @@ export async function readProviderInventoryRevision(principal: ProviderInventory
   return db.transaction(async (tx) => {
     const now = new Date()
     const [session] = await tx.select({ id: AuthSessionTable.id }).from(AuthSessionTable)
-      .where(and(eq(AuthSessionTable.id, principal.sessionId), eq(AuthSessionTable.token, principal.sessionToken), eq(AuthSessionTable.userId, principal.userId), gt(AuthSessionTable.expiresAt, now)))
+      .where(and(eq(AuthSessionTable.id, principal.sessionId), sessionTokenMatches(principal.sessionToken), eq(AuthSessionTable.userId, principal.userId), gt(AuthSessionTable.expiresAt, now)))
     const [member] = await tx.select({ id: MemberTable.id }).from(MemberTable)
       .innerJoin(OrganizationTable, eq(OrganizationTable.id, MemberTable.organizationId))
       .where(and(eq(MemberTable.id, principal.memberId), eq(MemberTable.userId, principal.userId), eq(MemberTable.organizationId, principal.organizationId), isNull(MemberTable.removedAt)))
     // Passing the transaction deliberately bypasses the feature cache. A kill
     // switch or org revocation closes an already-open stream on its next check.
-    if (!session || !member || !await organizationFeatureEnabled(principal.organizationId, "liveProviderSync", { database: tx })) {
+    if (!session || !member || !await organizationFeatureEnabled(principal.organizationId, "liveProviderSync", { database: tx, userId: principal.userId })) {
       throw new Error("Provider inventory is no longer authorized.")
     }
     const providers = await tx.select().from(GatewayProviderTable).where(and(eq(GatewayProviderTable.organization_id, principal.organizationId), eq(GatewayProviderTable.status, "active")))

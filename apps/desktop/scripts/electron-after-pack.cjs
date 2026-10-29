@@ -1,6 +1,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const asar = require("@electron/asar");
+const { Arch } = require("electron-builder");
+
+const computerUseHelperAppName = "OpenWork Computer Use.app";
 
 const sidecarBases = [
   "opencode",
@@ -96,14 +100,39 @@ function verifyRuntimeDependencies(context) {
   }
 }
 
-function copyExecutableTargetToAlias(sidecarsDir, targetName, aliasName) {
+function signComputerUseHelper(context) {
+  const appPath = resolveMacAppPath(context);
+  if (!appPath) return;
+
+  const helperPath = path.join(appPath, "Contents", "Resources", "helpers", computerUseHelperAppName);
+  if (!fs.existsSync(helperPath)) {
+    throw new Error(`Missing Computer Use helper app at ${helperPath}`);
+  }
+
+  const identity = process.env.OPENWORK_COMPUTER_USE_CODESIGN_IDENTITY
+    || process.env.CSC_NAME
+    || process.env.APPLE_CODESIGN_IDENTITY
+    || "-";
+  const args = ["--force", "--deep", "--options", "runtime", "--sign", identity];
+  if (identity !== "-") args.push("--timestamp");
+  args.push(helperPath);
+
+  const result = spawnSync("codesign", args, { stdio: "inherit" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`codesign failed for Computer Use helper app with status ${result.status}`);
+  }
+}
+
+function moveTargetToCanonical(sidecarsDir, targetName, aliasName) {
   const targetPath = path.join(sidecarsDir, targetName);
   if (!fs.existsSync(targetPath)) {
     throw new Error(`Missing packaged sidecar for target: ${targetName}`);
   }
 
   const aliasPath = path.join(sidecarsDir, aliasName);
-  fs.copyFileSync(targetPath, aliasPath);
+  fs.rmSync(aliasPath, { force: true });
+  fs.renameSync(targetPath, aliasPath);
   try {
     fs.chmodSync(aliasPath, 0o755);
   } catch {
@@ -111,13 +140,16 @@ function copyExecutableTargetToAlias(sidecarsDir, targetName, aliasName) {
   }
 }
 
-async function afterPack(context) {
-  verifyRuntimeDependencies(context);
-  const triple = targetTriple(context.electronPlatformName, context.arch);
-  if (!triple) return;
+function canonicalizeSidecars(context) {
+  // electron-builder passes the numeric Arch enum, not its string name.
+  const arch = typeof context.arch === "number" ? Arch[context.arch] : context.arch;
+  const triple = targetTriple(context.electronPlatformName, arch);
+  if (!triple) throw new Error(`Unsupported sidecar target: ${context.electronPlatformName}/${arch}`);
 
   const sidecarsDir = resolveSidecarsDir(context);
-  if (!sidecarsDir || !fs.existsSync(sidecarsDir)) return;
+  if (!sidecarsDir || !fs.existsSync(sidecarsDir)) {
+    throw new Error(`Missing packaged sidecars directory: ${sidecarsDir || context.appOutDir}`);
+  }
 
   const isWindows = context.electronPlatformName === "win32";
   const executableSuffix = isWindows ? ".exe" : "";
@@ -126,20 +158,21 @@ async function afterPack(context) {
   for (const base of sidecarBases) {
     const aliasName = `${base}${executableSuffix}`;
     const targetName = `${base}-${triple}${executableSuffix}`;
-    copyExecutableTargetToAlias(sidecarsDir, targetName, aliasName);
+    // Preparation keeps target triples for cross-arch/dev builds. The shipped
+    // layout needs only the plain name, also used by CLI/PATH consumers.
+    moveTargetToCanonical(sidecarsDir, targetName, aliasName);
     keep.add(aliasName);
-    keep.add(targetName);
   }
 
   const versionsAlias = "versions.json";
-  const versionsTarget = `versions.json-${triple}${executableSuffix}`;
+  const versionsTarget = `versions.json-${triple}`;
   const versionsTargetPath = path.join(sidecarsDir, versionsTarget);
   if (!fs.existsSync(versionsTargetPath)) {
     throw new Error(`Missing packaged sidecar metadata for target: ${versionsTarget}`);
   }
-  fs.copyFileSync(versionsTargetPath, path.join(sidecarsDir, versionsAlias));
+  fs.rmSync(path.join(sidecarsDir, versionsAlias), { force: true });
+  fs.renameSync(versionsTargetPath, path.join(sidecarsDir, versionsAlias));
   keep.add(versionsAlias);
-  keep.add(versionsTarget);
 
   for (const entry of fs.readdirSync(sidecarsDir)) {
     if (!keep.has(entry)) {
@@ -148,6 +181,13 @@ async function afterPack(context) {
   }
 }
 
+async function afterPack(context) {
+  verifyRuntimeDependencies(context);
+  canonicalizeSidecars(context);
+  signComputerUseHelper(context);
+}
+
 module.exports = afterPack;
 module.exports.default = afterPack;
 module.exports.normalizeAsarEntryPath = normalizeAsarEntryPath;
+module.exports.canonicalizeSidecars = canonicalizeSidecars;

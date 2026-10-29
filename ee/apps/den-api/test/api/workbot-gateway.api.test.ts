@@ -1,10 +1,9 @@
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
-import { workbotOwner } from "@openwork-ee/headless-protocol/workbot-routing"
 import { bootDen, field, isRecord, list, startFakeHttpServer, summary, text, type Call, type Member } from "./harness.js"
 
 // Only the outside catalog and runner are synthetic. Authentication, permissions,
-// provider matrices, feature rollout and Workbot routes use the real Den app/MySQL.
+// provider matrices and Workbot routes use the real Den app/MySQL.
 const realFetch = globalThis.fetch
 const upstreamSecrets = ["fixture-openai-private-key", "fixture-anthropic-private-key", "fixture-other-org-private-key"]
 const runnerToken = "fixture-runner-authentication-token-123456789"
@@ -12,7 +11,6 @@ const gatewayBaseUrl = "http://127.0.0.1:8791"
 const probes: Record<string, unknown>[] = []
 let catalogRequests = 0
 let runnerCatalogRequests = 0
-let admittedTurn: { owner: string; sessionId: string; messageId: string; model: string } | null = null
 globalThis.fetch = async (input, init) => {
   const url = input instanceof Request ? input.url : String(input)
   if (url !== "https://models.openworklabs.com/api.json") return realFetch(input, init)
@@ -33,15 +31,6 @@ const runner = await startFakeHttpServer((request, raw, response) => {
   if (request.method === "GET" && request.url === "/v1/models") {
     runnerCatalogRequests++
     response.end(JSON.stringify({ defaultModel: "gateway/legacy", verified: true, models: [{ id: "gateway/legacy", name: "Legacy global runner model" }] }))
-    return
-  }
-  if (request.method === "GET" && request.url?.startsWith("/v1/sessions/")) {
-    const url = new URL(request.url, "http://runner")
-    if (!admittedTurn || url.pathname !== `/v1/sessions/${admittedTurn.sessionId}` || url.searchParams.get("expectedOwner") !== admittedTurn.owner || request.headers["x-openwork-headless-owner"] !== admittedTurn.owner) {
-      response.writeHead(404).end(JSON.stringify({ error: "unknown_session" }))
-      return
-    }
-    response.end(JSON.stringify({ turns: [{ messageId: admittedTurn.messageId, model: admittedTurn.model, modelAccessRequired: true, status: "interrupted", error: null }], messages: [], finalAssistantText: "" }))
     return
   }
   if (request.method === "POST" && request.url === "/v1/model-probe") {
@@ -75,7 +64,7 @@ function modelIds(response: Call): unknown[] {
   return list(field(response.body, "models")).map(model => model.id).sort()
 }
 
-test("Workbot uses current member Gateway grants, exact org defaults and private per-run credentials, with rollback", { timeout: 90_000 }, async () => {
+test("Workbot uses current member Gateway grants, exact org defaults and private per-run credentials", { timeout: 90_000 }, async () => {
   const a = await den.createOrg(await den.signUp("Gateway Owner A"), "Gateway workspace A")
   const b = await den.createOrg(await den.signUp("Gateway Owner B"), "Gateway workspace B")
   const member = await den.newMember(a.owner, a.orgId, "Gateway Viewer")
@@ -94,13 +83,7 @@ test("Workbot uses current member Gateway grants, exact org defaults and private
   const session = (person: Member) => den.request(text(tokens.get(person.userId), "MCP token"), "GET", "/v1/workbot/session")
   const run = (person: Member, model?: string) => den.request(text(tokens.get(person.userId), "MCP token"), "POST", "/v1/workbot/run-token", { body: model === undefined ? {} : { model } })
 
-  // The new flag is off unless explicitly rolled out: original runner catalog and
-  // legacy credential response still work, even for a member without model grants.
-  const legacy = safe(await owner("GET", settingsPath))
-  assert.deepEqual(modelIds(legacy), ["gateway/legacy"])
-  assert.equal(field(safe(await session(a.owner)).body, "gatewayModels"), undefined)
-  assert.equal(field(ok(await run(noGrant)).body, "modelAccess"), undefined)
-  assert.ok(runnerCatalogRequests > 0)
+  assert.equal(field(safe(await run(a.owner), 403).body, "reason"), "gateway_provider_missing")
 
   async function configuredProvider(call: ReturnType<typeof den.as>, providerId: string, modelIds: string[], secret: string, audience: Member[]) {
     const created = safe(await call("POST", "/v1/inference-providers", { name: `Fixture ${providerId}`, providerId, modelIds }), 201)
@@ -133,8 +116,7 @@ test("Workbot uses current member Gateway grants, exact org defaults and private
   const claude = await alias(member, a.orgId, anthropic.id, "claude-fixture")
   const otherLuna = await alias(b.owner, b.orgId, other.id, "gpt-6-luna")
   assert.notEqual(luna, otherLuna)
-  const legacyReads = runnerCatalogRequests
-  for (const org of [a, b]) ok(await den.setFeature(org.orgId, "cloudAgentGateway", true))
+  const runnerReads = runnerCatalogRequests
   const catalog = safe(await owner("GET", settingsPath))
   assert.deepEqual(modelIds(catalog), [luna, imposter, claude].sort())
   assert.equal(field(catalog.body, "defaultModel"), luna, "Luna is identified by upstream ID, not the imposter display name")
@@ -150,6 +132,7 @@ test("Workbot uses current member Gateway grants, exact org defaults and private
   safe(await den.as(b.owner, a.orgId)("GET", settingsPath), 404)
   for (const model of [otherLuna, "gateway/legacy", "gpt-6-luna", `openai/${luna}`]) safe(await owner("PUT", settingsPath, { model }), 400)
 
+  safe(await owner("PUT", settingsPath, { model: luna }))
   const initial = safe(await session(a.owner))
   assert.equal(field(initial.body, "model"), luna)
   assert.equal(field(initial.body, "gatewayModels"), true)
@@ -158,10 +141,25 @@ test("Workbot uses current member Gateway grants, exact org defaults and private
   // A selected org default never grants access or falls back to the shared runner key.
   for (const person of [member, noGrant, manager]) {
     const denied = safe(await run(person), 403)
-    assert.equal(field(denied.body, "error"), "cloud_model_unavailable")
+    assert.equal(field(denied.body, "error"), "workbot_turn_access_denied")
+    assert.equal(field(denied.body, "reason"), "gateway_member_access_missing")
     assert.equal(field(denied.body, "token"), undefined)
     assert.equal(field(denied.body, "modelAccess"), undefined)
   }
+  const readOnlyToken = ok(await den.request(a.owner.token, "POST", "/v1/mcp/token", { orgId: a.orgId, body: { scopes: ["mcp:read"] } }))
+  const scopeRefused = safe(await den.request(text(field(readOnlyToken.body, "token"), "read-only token"), "POST", "/v1/workbot/run-token", { body: { model: luna } }), 403)
+  assert.equal(field(scopeRefused.body, "reason"), "oauth_scope_missing")
+  // Simulate a default saved before Gateway aliases: refusal diagnoses it without migrating it.
+  const [{ db }, { eq }, { OrganizationTable }, { normalizeDenTypeId }] = await Promise.all([
+    import("../../src/db.js"), import("@openwork-ee/den-db/drizzle"), import("@openwork-ee/den-db/schema"), import("@openwork-ee/utils/typeid"),
+  ])
+  const organizationId = normalizeDenTypeId("organization", a.orgId)
+  const [saved] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId))
+  assert.ok(saved)
+  await db.update(OrganizationTable).set({ metadata: { ...saved.metadata, workbot: { model: "gateway/legacy" } } }).where(eq(OrganizationTable.id, organizationId))
+  assert.equal(field(safe(await run(a.owner), 403).body, "reason"), "gateway_model_unavailable")
+  assert.equal(field(safe(await session(a.owner)).body, "model"), "gateway/legacy", "refusal leaves the invalid saved default intact")
+  await db.update(OrganizationTable).set({ metadata: saved.metadata }).where(eq(OrganizationTable.id, organizationId))
   const ownerRun = ok(await run(a.owner))
   const ownerKey = text(field(ownerRun.body, "modelAccess", "apiKey"), "owner member gateway key")
   const ownerConnect = ok(await owner("GET", `/v1/inference-providers/${openai.id}/connect`))
@@ -174,8 +172,9 @@ test("Workbot uses current member Gateway grants, exact org defaults and private
   assert.equal(field(memberRun.body, "modelAccess", "protocol"), "anthropic")
   assert.equal(field(memberRun.body, "modelAccess", "baseUrl"), `${gatewayBaseUrl}/api/v1/providers/${anthropic.id}`)
   assert.equal(memberKey, field(ok(await den.as(member, a.orgId)("GET", `/v1/inference-providers/${anthropic.id}/connect`)).body, "inferenceProvider", "apiKey"))
-  safe(await run(member, luna), 403)
-  safe(await run(a.owner, otherLuna), 403)
+  assert.equal(field(safe(await run(member, luna), 403).body, "reason"), "gateway_member_access_missing")
+  assert.equal(field(safe(await run(a.owner, otherLuna), 403).body, "reason"), "gateway_model_unavailable")
+  assert.equal(field(safe(await run(a.owner, "gateway/legacy"), 403).body, "reason"), "gateway_model_unavailable")
   const otherRun = ok(await run(b.owner))
   const otherKey = text(field(otherRun.body, "modelAccess", "apiKey"), "other org gateway key")
   assert.notEqual(otherKey, ownerKey)
@@ -192,9 +191,8 @@ test("Workbot uses current member Gateway grants, exact org defaults and private
   assert.equal(field(safe(await owner("POST", `${settingsPath}/test-default-model`, {})).body, "status"), "answered")
   assert.deepEqual(probes[1], { model: luna, modelAccess: { apiKey: ownerKey, baseUrl: `${gatewayBaseUrl}/api/v1/providers/${openai.id}`, protocol: "openai-responses" } })
 
-  // A durable interrupted Gateway turn must rehydrate its original member's
-  // access even after rollout rollback, not switch to the deployment credential.
-  ok(await den.setFeature(a.orgId, "headlessDurableTurns", true))
+  // A durable interrupted Gateway turn rehydrates its original member's access,
+  // never the deployment credential.
   const turn = { sessionId: "hs_gateway_resume_fixture", messageId: "msg-gateway-resume" }
   const durable = ok(await den.request(text(tokens.get(member.userId), "member MCP token"), "POST", "/v1/workbot/run-token", { body: { ...turn, model: claude } }))
   const grant = text(field(durable.body, "resumeGrant"), "durable resume grant")
@@ -203,15 +201,10 @@ test("Workbot uses current member Gateway grants, exact org defaults and private
     headers: { authorization: "Bearer fixture-private-runner-callback-token-123456789" }, body: exchangeBody,
   })
   safe(await den.request(null, "POST", "/v1/headless/resume-token", { body: exchangeBody }), 401)
-  ok(await den.setFeature(a.orgId, "cloudAgentGateway", false))
   const resumed = ok(await exchange())
-  assert.deepEqual(field(resumed.body, "modelAccess"), field(memberRun.body, "modelAccess"), "rollback preserves member-scoped access for an interrupted Gateway turn")
+  assert.deepEqual(field(resumed.body, "modelAccess"), field(memberRun.body, "modelAccess"), "an interrupted Gateway turn keeps member-scoped access")
   const callerResume = () => den.request(text(tokens.get(member.userId), "member MCP token"), "POST", "/v1/workbot/run-token", { body: { ...turn, model: claude, modelAccessRequired: true } })
-  safe(await callerResume(), 403)
-  // The outside runner now witnesses an actually admitted scoped turn, not an OAuth caller's assertion.
-  admittedTurn = { ...turn, owner: workbotOwner(a.orgId, member.memberId), model: claude }
-  safe(await den.request(text(tokens.get(a.owner.userId), "owner MCP token"), "POST", "/v1/workbot/run-token", { body: { ...turn, model: claude, modelAccessRequired: true } }), 403)
-  assert.deepEqual(field(ok(await callerResume()).body, "modelAccess"), field(memberRun.body, "modelAccess"), "caller-driven recovery retains the scoped credential domain after rollback")
+  assert.deepEqual(field(ok(await callerResume()).body, "modelAccess"), field(memberRun.body, "modelAccess"), "caller-driven recovery keeps the scoped credential domain")
   safe(await owner("DELETE", `/v1/inference-providers/${anthropic.id}/access-grants/${anthropic.grantIds[1]}`), 204)
   const refusedResume = safe(await exchange(), 403)
   assert.equal(field(refusedResume.body, "error"), "model_unavailable")
@@ -220,7 +213,6 @@ test("Workbot uses current member Gateway grants, exact org defaults and private
   const refusedCallerResume = safe(await callerResume(), 403)
   assert.equal(field(refusedCallerResume.body, "modelAccess"), undefined)
   assert.equal(field(refusedCallerResume.body, "token"), undefined)
-  ok(await den.setFeature(a.orgId, "cloudAgentGateway", true))
 
   // Readiness is live, not a cached owner snapshot: disabling a credential set
   // removes aliases even though grants and the selected default remain saved.
@@ -233,16 +225,8 @@ test("Workbot uses current member Gateway grants, exact org defaults and private
   safe(await run(a.owner, luna), 403)
   assert.deepEqual(modelIds(safe(await den.as(member, a.orgId)("GET", settingsPath))), [])
   safe(await run(member, claude), 403)
-  assert.equal(runnerCatalogRequests, legacyReads, "Gateway rollout never consults the runner's global catalog")
-
-  ok(await den.setFeature(a.orgId, "cloudAgentGateway", false))
-  const rollback = safe(await owner("GET", settingsPath))
-  assert.equal(field(rollback.body, "model"), luna, "rollback must not erase the exact saved alias")
-  assert.deepEqual(modelIds(rollback), ["gateway/legacy"])
-  assert.equal(field(safe(await session(a.owner)).body, "gatewayModels"), undefined)
-  assert.equal(field(ok(await run(noGrant)).body, "modelAccess"), undefined, "off restores the original credential behavior")
-  ok(await den.setFeature(a.orgId, "cloudAgentGateway", true))
-  assert.equal(field(safe(await owner("GET", settingsPath)).body, "model"), luna)
+  assert.equal(runnerCatalogRequests, runnerReads, "Workbot settings never consult the runner's global catalog")
+  assert.equal(field(safe(await owner("GET", settingsPath)).body, "model"), luna, "an unavailable default keeps its exact saved alias")
   safe(await run(a.owner), 403)
   for (const response of safeResponses) {
     for (const secret of [...upstreamSecrets, runnerToken, ownerKey, memberKey, otherKey]) assert.equal(response.text.includes(secret), false, "safe public responses must not expose inference credentials")

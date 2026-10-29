@@ -21,7 +21,6 @@ test("a member sees no link-only sharing or replacement invitation placeholder",
       await user.notSee({ text: "A link doesn't grant access. Ask your team admin to invite coworkers." });
       await user.notSee({ text: "Sharing is off. A platform admin can turn it on." });
       await user.notSee({ role: "button", label: "Invite coworkers" });
-      await user.notSee({ role: "button", label: "Team settings" });
       const controls = await probe.dom(removed);
       expect(controls.elements).toHaveLength(0);
       expect(world.writes()).toEqual([]);
@@ -34,20 +33,9 @@ test("a member sees no link-only sharing or replacement invitation placeholder",
     await user.navigate(`${world.url}?sharing=on&persona=unknown`);
     await user.resizeViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
     await user.see({ role: "textbox", label: "Message Workbot" });
-    await user.notSee({ role: "button", label: "Team settings" });
     const controls = await probe.dom(removed);
     expect(controls.elements).toHaveLength(0);
     evidence.recordAssertionEvidence("Missing permission facts reveal no share fallback", `share controls=${controls.elements.length}; writes=${world.writes().length}`, controls.elements.length === 0 && world.writes().length === 0);
-    await user.screenshot();
-  });
-  await step("authorized team settings links remain available without a share card", async () => {
-    await user.navigate(`${world.url}?sharing=on&persona=admin`);
-    await user.click({ role: "button", label: "Team settings" });
-    await user.see({ role: "link", label: /^Workbot settings/ });
-    await user.see({ role: "link", label: /^Manage apps for your team/ });
-    const controls = await probe.dom(removed);
-    expect(controls.elements).toHaveLength(0);
-    evidence.recordAssertionEvidence("Team management is unchanged", `settings and apps links visible; share controls=${controls.elements.length}`, controls.elements.length === 0);
     await user.screenshot();
   });
   await step("a failed identity check keeps its recovery rather than offering sharing", async () => {

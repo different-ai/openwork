@@ -9,10 +9,13 @@ import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import {
   getLibraryPluginShareRoute,
+  getLibraryPluginSkillRoute,
   getLibraryRoute,
   getOrgAccessFlags,
   getPluginDetailsRoute,
+  getPluginSkillRoute,
   getPluginsRoute,
+  orgFeatureEnabled,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessAddedToast, ownedAccessStatus } from "./access-summary";
@@ -29,20 +32,27 @@ import { usePluginAccess } from "./plugin-access-data";
 import { type DenPlugin, pluginQueryKeys, usePlugin } from "./plugin-data";
 import { PluginPageSkeleton } from "./plugin-skeletons";
 import { WhoCanUseIt } from "./who-can-use-it";
+import { SkillPreview, skillTitle } from "./skill-preview";
+export { skillTitle } from "./skill-preview";
 
 export function pluginChatDeepLink(plugin: Pick<DenPlugin, "name">): string {
   const params = new URLSearchParams({ prompt: `Use ${plugin.name} to help me with this: ` });
   return `openwork://chat?${params.toString()}`;
 }
 
-/** Skill names are stored as slugs; people read "Prep a sales call". */
-export function skillTitle(name: string): string {
-  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)) return name;
-  const words = name.replace(/-/g, " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-export function WhatsInside({ plugin, appMcpServersEnabled = false }: { plugin: DenPlugin; appMcpServersEnabled?: boolean }) {
+export function WhatsInside({
+  plugin,
+  appMcpServersEnabled = false,
+  skillPreviews = false,
+  skillHref,
+}: {
+  plugin: DenPlugin;
+  appMcpServersEnabled?: boolean;
+  /** Skills expand inline (libraryConnectorNavigation); takes precedence over skillHref. */
+  skillPreviews?: boolean;
+  /** Opens a skill's own page; omitted rows stay plain text. */
+  skillHref?: (skillId: string) => string;
+}) {
   const rows = [
     ...plugin.authoredApps.map((app) => ({
       key: `app:${app.id}`,
@@ -58,6 +68,7 @@ export function WhatsInside({ plugin, appMcpServersEnabled = false }: { plugin: 
       title: skillTitle(skill.name),
       description: skill.description,
       kind: "Skill",
+      href: skillHref?.(skill.id),
     })),
     ...plugin.mcps.map((mcp) => ({
       key: `mcp:${mcp.id}`,
@@ -79,9 +90,12 @@ export function WhatsInside({ plugin, appMcpServersEnabled = false }: { plugin: 
       <SectionTitle title="What's inside" />
       <ItemPanel>
         {rows.length === 0 ? <p className="px-5 py-4 text-[13px] text-gray-500">Nothing inside yet.</p> : null}
-        {rows.map((row) => (
-          <ItemRow compact key={row.key} logo={row.logo} title={row.title} description={row.description || undefined} href={"href" in row && typeof row.href === "string" ? row.href : undefined} action={<span className="text-[12px] text-gray-500">{row.kind}</span>} />
-        ))}
+        {rows.map((row) => {
+          const skill = skillPreviews ? plugin.skills.find((entry) => row.key === `skill:${entry.id}`) : undefined;
+          return skill ? <SkillPreview key={row.key} skill={skill} /> : (
+            <ItemRow compact key={row.key} logo={row.logo} title={row.title} description={row.description || undefined} href={"href" in row && typeof row.href === "string" ? row.href : undefined} action={<span className="text-[12px] text-gray-500">{row.kind}</span>} />
+          );
+        })}
       </ItemPanel>
     </section>
   );
@@ -257,7 +271,12 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
         </section>
       ) : null}
 
-      <WhatsInside plugin={data} appMcpServersEnabled={orgContext?.capabilities.appMcpServers === true} />
+      <WhatsInside
+        plugin={data}
+        appMcpServersEnabled={orgContext?.capabilities.appMcpServers === true}
+        skillPreviews={orgFeatureEnabled(orgContext, "libraryConnectorNavigation")}
+        skillHref={(skillId) => mode === "admin" ? getPluginSkillRoute(orgSlug, pluginId, skillId) : getLibraryPluginSkillRoute(orgSlug, pluginId, skillId)}
+      />
       <AppMcpServers plugin={data} />
 
       {!canManage ? <p className="flex items-center gap-2 text-[13px] text-[var(--dls-text-secondary)]" data-testid="plugin-manage-locked"><LockKeyhole className="size-4 shrink-0" aria-hidden />Only a plugin manager or organization admin can edit or remove it.</p> : null}

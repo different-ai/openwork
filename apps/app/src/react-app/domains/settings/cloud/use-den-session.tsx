@@ -22,6 +22,7 @@ import {
   type DenOrgSummary,
 } from "@/app/lib/den";
 import { markDesktopSignInInitiated, readOrgSelectionPending } from "@/app/lib/den-sign-in-intent";
+import { clearSignInReturnTarget } from "@/app/lib/den-sign-in-return";
 import { clearDesktopBootstrapConfig } from "@/app/lib/desktop";
 import { exchangeHandoffAndSignIn } from "@/app/lib/den-handoff";
 import { parseManualAuthInput } from "@/app/lib/manual-auth-input";
@@ -226,6 +227,8 @@ export function useDenSession({
     (mode: "sign-in" | "sign-up") => {
       const url = buildDenAuthUrl(baseUrl, mode);
       const usesPasteHandoff = new URL(url).searchParams.get("desktopAuth") === "1";
+      // A sign-in started here supersedes one started from a conversation.
+      clearSignInReturnTarget();
       markDesktopSignInInitiated();
       setSigninFallbackUrl(url);
       setStatusMessage(
@@ -502,6 +505,8 @@ export function useDenSession({
     setAuthBusy(true);
     setAuthError(null);
     setStatusMessage(t("den.signing_in"));
+    // A sign-in finished here supersedes one started from a conversation.
+    clearSignInReturnTarget();
 
     try {
       // The helper exchanges, persists, and dispatches the success/error session events.

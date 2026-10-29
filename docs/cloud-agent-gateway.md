@@ -23,10 +23,8 @@ The initial runner integration supports its existing Anthropic Messages, OpenAI 
 
 The trusted server-to-server turn credential envelope carries `modelAccess` (Gateway base URL, protocol and member Gateway bearer key). It does not belong in browser session metadata, transcripts, model prompts, logs or durable turn storage. The runner uses the selected route and model for both answers and automatic titles. A credential-ready catalog is not evidence of a successful paid completion; the diagnostic probe remains separate.
 
-## Recovery and rollout
+## Recovery
 
-`cloudAgentGateway` is off by default on cloud and self-hosted deployments. Deploy the optional runner protocol support before enabling Den callers; old runners reject the new strict credential fields rather than silently use deployment credentials.
+Every cloud-agent turn on cloud and self-hosted deployments gets its model through the AI Gateway; the runner needs the matching protocol support, and old runners reject the strict credential fields rather than silently use deployment credentials.
 
 Scoped turns persist only a nonsecret `modelAccessRequired` marker and their selected model. The existing resume grant binds recovery to the original organization, user, session and message. Its authenticated exchange rechecks current Gateway access for that model and rehydrates credentials in memory, including background tasks and reports. Missing or revoked access must stop recovery, never select the deployment key.
-
-Turning the rollout off restores legacy admission for new work without deleting model preferences, history, sessions or receipts. Already-scoped durable work still reauthorizes through Gateway; it must not switch billing identities or providers in the middle of a turn. If a saved Gateway alias is unavailable in the legacy catalog, an administrator can choose a legacy model. No live rollout or deployment is performed by this change.

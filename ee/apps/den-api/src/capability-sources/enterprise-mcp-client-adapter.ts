@@ -13,6 +13,7 @@ import {
 } from "@openwork/enterprise-mcp-client"
 import { env } from "../env.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
+import { parseStoredExternalMcpRequestHeaders, withExternalMcpRequestHeaders } from "./external-mcp-request-headers.js"
 import { memberApiKeyStillCurrent, rejectMemberApiKey, resolveMemberApiKey, type ExternalMcpConnectionRow } from "./external-mcp-connections.js"
 import { memberApiKeyAuthorization, usesMemberApiKey } from "./member-api-key.js"
 import {
@@ -225,6 +226,13 @@ function createOperationClient(
   memberApiKey: MemberApiKeyCredential | undefined,
 ): EnterpriseMcpClient {
   const member = input.member
+  // Administrator request headers go on the innermost fetch, and only to the
+  // MCP URL itself, so OAuth servers, diagnostics and inspection never see them.
+  const networkFetch = withExternalMcpRequestHeaders(
+    guardedFetch,
+    input.connection.url,
+    parseStoredExternalMcpRequestHeaders(input.connection.requestHeaders),
+  )
   const fetchForCaller: typeof guardedFetch = memberApiKey && member
     ? async (resource, init) => {
       const credential = memberApiKey
@@ -238,7 +246,7 @@ function createOperationClient(
       if (request.url !== new URL(input.connection.url).href || request.headers.get("authorization") !== memberApiKeyAuthorization(credential.key, input.connection.apiKeyAuthScheme)) {
         throw new Error("Connection credentials or destination changed. Reconnect and retry.")
       }
-      const response = await guardedFetch(resource, { ...init, redirect: "error" })
+      const response = await networkFetch(resource, { ...init, redirect: "error" })
       if (response.status === 401) await rejectMemberApiKey(input.connection, member.orgMembershipId, credential)
       return response
     }
@@ -251,9 +259,9 @@ function createOperationClient(
           if (destination !== new URL(input.connection.url).href && destination !== tokenEndpoint) {
             throw new Error("Manual sign-in configuration does not allow discovery or another endpoint.")
           }
-          return guardedFetch(resource, { ...init, redirect: "manual" })
+          return networkFetch(resource, { ...init, redirect: "manual" })
         }
-      : guardedFetch
+      : networkFetch
   const diagnosticFetch = createExternalMcpDiagnosticFetch({
     fetch: fetchForCaller,
     endpoint: input.connection.url,

@@ -31,7 +31,8 @@ export type OfficeEditor = {
   open(fileId: string, signal?: AbortSignal): Promise<OfficeSession>
   status(fileId: string, sessionId: string, signal?: AbortSignal): Promise<OfficeStatus>
   save(fileId: string, sessionId: string, draftVersion: number): Promise<{ fileId: string }>
-  close(fileId: string, sessionId: string): Promise<void>
+  /** `keepalive` lets the close finish while the page unloads. */
+  close(fileId: string, sessionId: string, options?: { keepalive?: boolean }): Promise<void>
 }
 
 /** Provider-independent Office transport; hosts choose their own file route. */
@@ -42,7 +43,7 @@ export function officeEditor(request: (path: string, init?: RequestInit) => Prom
     open: async (fileId, signal) => officeSessionSchema.parse(await post(path(fileId), {}, signal)),
     status: async (fileId, id, signal) => officeStatusSchema.parse(await request(path(fileId, id), { signal })),
     save: async (fileId, id, draftVersion) => z.object({ fileId: z.string() }).parse(await post(`${path(fileId, id)}/save`, { draftVersion })),
-    close: async (fileId, id) => { await post(`${path(fileId, id)}/close`) },
+    close: async (fileId, id, options) => { await request(`${path(fileId, id)}/close`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}", keepalive: options?.keepalive }) },
   }
 }
 

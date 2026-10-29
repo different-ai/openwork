@@ -286,7 +286,16 @@ export async function readAdminOrganizationInsights(organizationId: typeof Gatew
   const people = db.select({ kind: sql<string>`'person'`.as("kind"), id: sql<string>`${sources.seriesId}`.as("id"), ...totals }).from(sources).leftJoin(MemberTable, scope).where(current)
     .groupBy(sources.seriesId).having(sql`sum(${sources.requestCount}) > 0`).orderBy(desc(sql`sum(${sources.requestCount})`), asc(sources.seriesId)).limit(8).as("insight_people")
   const snapshot = periods.unionAll(daily).unionAll(db.select().from(people)).as("insight_snapshot")
-  const rows = await db.with(sources).select().from(snapshot)
+  const modelSources = gatewayUsageSources(organizationId, { groupBy: "model", days: 30, filterIds: [] }, from / 1000, (today + DAY_MS) / 1000)
+  const modelQuery = db.with(modelSources).select({
+    id: modelSources.seriesId,
+    requests: sql<string>`sum(${modelSources.requestCount})`, tokens: sql<string>`sum(${modelSources.totalTokens})`, costMicroUsd: sql<string>`sum(${modelSources.totalCostMicroUsd})`,
+    unreportedRequests: sql<string | null>`case when count(${modelSources.unreportedRequests}) = count(*) then sum(${modelSources.unreportedRequests}) else null end`,
+    unpricedRequests: sql<string | null>`case when count(${modelSources.unpricedRequests}) = count(*) then sum(${modelSources.unpricedRequests}) else null end`,
+    successfulRequests: sql<string>`sum(${modelSources.successfulRequests})`, lastActiveDay: sql<string | null>`max(case when ${modelSources.requestCount} > 0 then ${modelSources.date} end)`,
+  }).from(modelSources).groupBy(modelSources.seriesId).having(sql`sum(${modelSources.requestCount}) > 0`).orderBy(desc(sql`sum(${modelSources.requestCount})`), asc(modelSources.seriesId)).limit(8)
+  // The period snapshot and the model ranking are independent; read them together.
+  const [rows, modelRows] = await Promise.all([db.with(sources).select().from(snapshot), modelQuery])
   const parseUsage = (row: Omit<typeof rows[number], "id" | "kind" | "activeMembers">) => ({
     requests: safeCount(row.requests), tokens: safeCount(row.tokens), costMicroUsd: safeCount(row.costMicroUsd),
     unreportedRequests: row.unreportedRequests === null ? null : safeCount(row.unreportedRequests),
@@ -301,14 +310,6 @@ export async function readAdminOrganizationInsights(organizationId: typeof Gatew
   const top = rows.filter((row) => row.kind === "person").sort((a, b) => safeCount(b.requests) - safeCount(a.requests) || a.id.localeCompare(b.id))
   const members = top.length ? await db.select({ id: MemberTable.id, userId: MemberTable.userId, name: AuthUserTable.name, email: AuthUserTable.email, removedAt: MemberTable.removedAt, isSetupAgent: MemberTable.isSetupAgent })
     .from(MemberTable).leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id)).where(and(eq(MemberTable.organizationId, organizationId), sql`${MemberTable.id} in (${sql.join(top.map((row) => sql`${row.id}`), sql`, `)})`)) : []
-  const modelSources = gatewayUsageSources(organizationId, { groupBy: "model", days: 30, filterIds: [] }, from / 1000, (today + DAY_MS) / 1000)
-  const modelRows = await db.with(modelSources).select({
-    id: modelSources.seriesId,
-    requests: sql<string>`sum(${modelSources.requestCount})`, tokens: sql<string>`sum(${modelSources.totalTokens})`, costMicroUsd: sql<string>`sum(${modelSources.totalCostMicroUsd})`,
-    unreportedRequests: sql<string | null>`case when count(${modelSources.unreportedRequests}) = count(*) then sum(${modelSources.unreportedRequests}) else null end`,
-    unpricedRequests: sql<string | null>`case when count(${modelSources.unpricedRequests}) = count(*) then sum(${modelSources.unpricedRequests}) else null end`,
-    successfulRequests: sql<string>`sum(${modelSources.successfulRequests})`, lastActiveDay: sql<string | null>`max(case when ${modelSources.requestCount} > 0 then ${modelSources.date} end)`,
-  }).from(modelSources).groupBy(modelSources.seriesId).having(sql`sum(${modelSources.requestCount}) > 0`).orderBy(desc(sql`sum(${modelSources.requestCount})`), asc(modelSources.seriesId)).limit(8)
   return {
     from: day(from), to: day(today), previousFrom: day(previousFrom), previousTo: day(from - DAY_MS),
     current: currentRow ? parse(currentRow) : zero, previous: previousRow ? parse(previousRow) : zero,

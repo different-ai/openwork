@@ -19,6 +19,7 @@ import {
   getOrgAccessFlags,
   getPluginRoute,
 } from "../../../_lib/den-org";
+import { myAgentAvailable } from "../my-agent-availability";
 import { useDenFlow } from "../../../_providers/den-flow-provider";
 import {
   buildDashboardNavSections,
@@ -54,6 +55,8 @@ type PaletteEntry = {
 type DenCommandPaletteProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Returns true when it handled the navigation itself (the Workbot entry while Workbot has no AI provider). */
+  interceptNavigation?: (href: string) => boolean;
 };
 
 function matchesQuery(entry: PaletteEntry, query: string): boolean {
@@ -111,7 +114,7 @@ function PaletteGroup({
   );
 }
 
-export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps) {
+export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: DenCommandPaletteProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
@@ -158,6 +161,8 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
       runtimeConfigLoaded,
 
       desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),
+      canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
+      myBot: myAgentAvailable(orgContext),
     });
     return flattenNavigationForSearch(sections)
       .filter((entry) => entry.href !== "#")
@@ -242,6 +247,7 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
       // Navigation should still work when browser storage is unavailable.
     }
     onOpenChange(false);
+    if (interceptNavigation?.(entry.href)) return;
     if (/^https?:\/\//.test(entry.href)) {
       window.open(entry.href, "_blank", "noopener,noreferrer");
       return;

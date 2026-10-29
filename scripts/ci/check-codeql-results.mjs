@@ -2,10 +2,18 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
+// Default setup keys, plus the advanced-setup workflow that replaced it.
+const advancedSetupAnalysisKey = ".github/workflows/codeql.yml:analyze";
 const defaultSetupAnalysisKeys = new Set([
   "dynamic/github-code-scanning/codeql:upload",
   "dynamic/github-code-scanning/codeql:analyze",
+  advancedSetupAnalysisKey,
 ]);
+const codeqlWorkflowPaths = new Set(["dynamic/github-code-scanning/codeql", ".github/workflows/codeql.yml"]);
+
+function isCodeqlBaselineKey(key) {
+  return typeof key === "string" && (key.startsWith("dynamic/github-code-scanning/codeql:") || key === advancedSetupAnalysisKey);
+}
 
 function successfulDefaultSetupAnalysis(analysis) {
   return analysis.tool?.name === "CodeQL" && !analysis.error &&
@@ -15,7 +23,7 @@ function successfulDefaultSetupAnalysis(analysis) {
 
 export function defaultSetupBaseline(analyses) {
   const latest = analyses.find((analysis) => analysis.tool?.name === "CodeQL" && !analysis.error &&
-    typeof analysis.analysis_key === "string" && analysis.analysis_key.startsWith("dynamic/github-code-scanning/codeql:"));
+    isCodeqlBaselineKey(analysis.analysis_key));
   if (!latest) throw new Error("No successful default-setup baseline found; inspect CodeQL on the default branch.");
   if (!successfulDefaultSetupAnalysis(latest) || typeof latest.commit_sha !== "string" || !latest.commit_sha) {
     throw new Error("Unsupported CodeQL default-setup baseline; inspect the latest uploaded analysis.");
@@ -64,7 +72,7 @@ async function main() {
     // Only query workflow state when coverage is incomplete.
     const runs = missing.length ? api(`${prefix}/actions/runs?head_sha=${pull.head.sha}&per_page=100`, true) : [];
     const active = runs.flatMap((page) => page.workflow_runs).some((run) =>
-      run.path === "dynamic/github-code-scanning/codeql" && run.status !== "completed"
+      codeqlWorkflowPaths.has(run.path?.split("@")[0]) && run.status !== "completed"
     );
     if (!missing.length) {
       lines.push(`- #${pull.number} (${pull.head.sha.slice(0, 7)}): all language results uploaded.`);

@@ -6,6 +6,7 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     testing: "src/testing.ts",
+    proactive: "src/proactive.ts",
   },
   external: ["@openwork/types", "zod"],
   format: ["esm"],

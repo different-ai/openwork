@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["../worlds/workshop-*.ts", "../worlds/lib/workshop-*.ts", "packages/cdp/src/browser-globals.d.ts"],
+  "exclude": ["results"]
+}

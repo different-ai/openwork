@@ -7,12 +7,17 @@ import { readGatewayUsageScope } from "@/app/lib/gateway-usage-scope";
 import { refreshGatewayUsageAfterCompletion } from "../../cloud/gateway-usage-refresh";
 import { gatewayUsageQueryPrefix } from "../../cloud/gateway-usage-state";
 import { mergeReplyMetadata, replyModelFromInfo } from "./reply-model";
+import { providerCredentialScope, useProviderCredentialHealth } from "../../connections/provider-auth/credential-health";
+import { isProviderCredentialRejection } from "./session-error";
 import { closeSessionBrowserTabs } from "@/app/lib/desktop";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
+import { noteActivationRunCompleted } from "../../cloud/activation/use-activation";
 import { observeModelsTaskEvent } from "@/app/lib/models-task-analytics";
 import { createClient, unwrap } from "@/app/lib/opencode";
-import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
+import { AUTO_ROUTES_EVENT, createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
+import { useAutoRouteStore } from "./auto-route-store";
+import { autoRouterReplyRoutes } from "@openwork/types/den/auto-router";
 import { perfNow, recordPerfLog } from "@/app/lib/perf-log";
 import { isGeneratedSessionTitle } from "@/app/lib/session-title";
 import { normalizeEvent } from "@/app/utils";
@@ -35,7 +40,7 @@ import {
 import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
 import type { LatestSessionHistory } from "../surface/session-render-state";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
-import { upsertMessageByChronology } from "./message-merge";
+import { messageCreated, upsertMessageByChronology } from "./message-merge";
 import { isOrphanedInteraction, isTerminalToolPart, terminalToolCallIds, terminalTranscriptToolCallIds } from "./orphaned-interactions";
 import {
   useSessionActivityStore,
@@ -137,7 +142,7 @@ type SyncEntry = {
   statusReconcileFailures: number;
   runActiveObservedAt: Map<string, number>;
   assistantMessageCompletedAt: Map<string, number>;
-  gatewayUsageRuns: Map<string, { scope: number; key: string; providerId: string | null; completed: boolean }>;
+  gatewayUsageRuns: Map<string, { scope: number; key: string; providerId: string | null; completed: boolean; startedAt: number; failed: boolean; responseCompleted: boolean }>;
   nativeSequenceBySession: Map<string, { sequence: number; revision: number }>;
   nativeSequenceRevision: number;
   nativeTerminalSessions: Set<string>;
@@ -157,8 +162,8 @@ type DeltaFlushScheduler = (
 ) => () => void;
 
 let gatewayUsageRunSequence = 0;
-function newGatewayUsageRun(key: string): { scope: number; key: string; providerId: string | null; completed: boolean } {
-  return { scope: readGatewayUsageScope().generation, key, providerId: null, completed: false };
+function newGatewayUsageRun(key: string): { scope: number; key: string; providerId: string | null; completed: boolean; startedAt: number; failed: boolean; responseCompleted: boolean } {
+  return { scope: readGatewayUsageScope().generation, key, providerId: null, completed: false, startedAt: 0, failed: false, responseCompleted: false };
 }
 
 function gatewayUsageProviderId(value: unknown): string | null {
@@ -993,11 +998,23 @@ function toUIParts(part: Part): UIMessage["parts"] {
   return [mapped];
 }
 
+/**
+ * A message is created once. OpenCode v2 reports the start of each new text,
+ * reasoning or tool stream as the reply's `created`; keeping the first stops a
+ * reply from jumping below a follow-up sent while it was being written, which
+ * is also the order history shows after a reload.
+ */
+function keepFirstCreated<T extends { opencode: object }>(metadata: T, firstCreated: number | null): T {
+  const created: unknown = Reflect.get(metadata.opencode, "created");
+  if (firstCreated === null || typeof created !== "number" || created <= firstCreated) return metadata;
+  return { ...metadata, opencode: { ...metadata.opencode, created: firstCreated } };
+}
+
 function upsertMessage(messages: UIMessage[], next: UIMessage) {
   const index = messages.findIndex((message) => message.id === next.id);
   if (next.metadata !== undefined) {
     const existing = messages[index];
-    const merged = existing ? { ...existing, ...next, metadata: mergeReplyMetadata(existing.metadata, next.metadata), parts: next.parts.length > 0 ? next.parts : existing.parts } : next;
+    const merged = existing ? { ...existing, ...next, metadata: keepFirstCreated(mergeReplyMetadata(existing.metadata, next.metadata), messageCreated(existing)), parts: next.parts.length > 0 ? next.parts : existing.parts } : next;
     return upsertMessageByChronology(messages, merged);
   }
   if (index === -1) return [...messages, next];
@@ -1201,7 +1218,14 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       entry.nativeTerminalSessions.delete(sessionId);
       applySessionRunStatus(entry, workspaceId, sessionId, { type: "busy" });
       const usageRun = entry.gatewayUsageRuns.get(sessionId);
-      if (usageRun) usageRun.providerId = gatewayUsageProviderId(event.properties);
+      if (usageRun) {
+        usageRun.providerId = gatewayUsageProviderId(event.properties);
+        const props = event.properties;
+        const timestamp = props && typeof props === "object" && "timestamp" in props ? props.timestamp : undefined;
+        // Receiving/reconciling a busy run is not its start time. Unknown or
+        // replayed starts cannot provide evidence about a replacement key.
+        if (typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0) usageRun.startedAt = timestamp;
+      }
     } else if (event.type === "session.execution.progress") {
       clearSessionRetry(entry, workspaceId, sessionId);
     } else if (event.type === "session.execution.failed") {
@@ -1237,6 +1261,16 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       discoverTaskSessions(entry, session.id);
     }
     for (const listener of entry.sessionCreatedListeners.keys()) listener(session);
+    return;
+  }
+
+  if (event.type === AUTO_ROUTES_EVENT) {
+    // Auto replies' routing decisions; any session, tracked or not, so a
+    // background chat shows them once opened.
+    const props = event.properties;
+    if (!props || typeof props !== "object") return;
+    const sessionId = Reflect.get(props, "sessionID");
+    if (typeof sessionId === "string") useAutoRouteStore.getState().publish(sessionId, autoRouterReplyRoutes(Reflect.get(props, "routes")));
     return;
   }
 
@@ -1307,6 +1341,13 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (sessionId) {
       const sessionError = sessionErrorFromProperties(event.properties);
       const errorPresentation = presentOpencodeSessionError(sessionError);
+      const credentialRun = entry.gatewayUsageRuns.get(sessionId);
+      if (credentialRun) {
+        credentialRun.failed = true;
+        if (credentialRun.providerId && isProviderCredentialRejection(sessionError)) {
+          useProviderCredentialHealth.getState().observe(workspaceId, credentialRun.providerId, "rejected", credentialRun.startedAt);
+        }
+      }
       if (errorPresentation.gatewayUsage) void queryClient.invalidateQueries({ queryKey: gatewayUsageQueryPrefix });
       const errorText = describeOpencodeSessionError(sessionError);
       const runStartedAt = takeTaskRunStart(sessionId);
@@ -1473,9 +1514,13 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       return;
     }
     const usageRun = entry.gatewayUsageRuns.get(info.sessionID);
-    if (usageRun && info.role === "assistant") usageRun.providerId = gatewayUsageProviderId(info) ?? usageRun.providerId;
+    if (usageRun && info.role === "assistant") {
+      usageRun.providerId = gatewayUsageProviderId(info) ?? usageRun.providerId;
+      if (usageRun.startedAt === 0 && typeof info.time?.created === "number" && info.time.created > 0) usageRun.startedAt = info.time.created;
+    }
     useSessionActivityStore.getState().markMessageRole(workspaceId, info.sessionID, info.id, info.role);
     if (info.role === "assistant" && typeof info.time?.completed === "number") {
+      if (usageRun && !("error" in info && info.error)) usageRun.responseCompleted = true;
       const observedAt = perfNow();
       entry.assistantMessageCompletedAt.set(info.sessionID, observedAt);
       const runActiveAt = entry.runActiveObservedAt.get(info.sessionID);
@@ -1843,6 +1888,7 @@ function applySessionRunStatus(
 
   const live = isLiveStatus(status);
   if (live && (!wasLive || !entry.gatewayUsageRuns.has(sessionId))) {
+    useProviderCredentialHealth.getState().bindWorkspace(workspaceId, providerCredentialScope(entry.input.baseUrl));
     entry.gatewayUsageRuns.set(sessionId, newGatewayUsageRun(`${workspaceId}:${sessionId}:run:${++gatewayUsageRunSequence}`));
   }
   if (v2 && !live) {
@@ -1869,6 +1915,7 @@ function applySessionRunStatus(
         duration_ms: Date.now() - runStartedAt,
       });
       trackTaskCompleted(sessionId, Date.now() - runStartedAt);
+      noteActivationRunCompleted(sessionId, Date.now() - runStartedAt);
       notifyDesktopEvent({ type: "task.completed", sessionId });
       entry.titleRecovery?.observe(sessionId);
     }
@@ -1879,6 +1926,9 @@ function applySessionRunStatus(
       entry.gatewayUsageRuns.set(sessionId, usageRun);
       if (!usageRun.completed) {
         usageRun.completed = true;
+        if (usageRun.providerId && !usageRun.failed && (options.completed === true || usageRun.responseCompleted)) {
+          useProviderCredentialHealth.getState().observe(workspaceId, usageRun.providerId, "verified", usageRun.startedAt);
+        }
         if (usageRun.providerId === null || usageRun.providerId.startsWith("ipr_")) {
           refreshGatewayUsageAfterCompletion(usageRun.scope, usageRun.key);
         }
@@ -1952,6 +2002,7 @@ async function reconcileSessionMessages(entry: SyncEntry, sessionId: string, mes
       if (messages.some(({ info, parts }) => info.sessionID !== sessionId || (messageId && info.id !== messageId)
         || parts.some((part) => part.sessionID !== sessionId || part.messageID !== info.id))) return;
       const workspaceId = entry.input.workspaceId;
+      observeProviderCredentialMessages(workspaceId, messages);
       const queryClient = getReactQueryClient();
       flushSessionDeltas(entry, workspaceId, sessionId);
       queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId), (current = []) => applyRevertCursor(
@@ -2413,6 +2464,22 @@ async function refreshSessionTodos(workspaceId: string, sessionId: string) {
   await queryClient.invalidateQueries({ queryKey });
 }
 
+/** Durable messages recover authentication evidence even when the new task's
+ * first lifecycle events arrived before its chat route attached to the stream. */
+export function observeProviderCredentialMessages(workspaceId: string, messages: ReadonlyArray<{
+  info: { role: string; providerID?: string; time?: { created?: number; completed?: number }; finish?: string; error?: unknown };
+}>) {
+  for (const { info } of messages) {
+    if (info.role !== "assistant" || !info.providerID || !info.time?.created) continue;
+    const observedAt = info.time.completed ?? info.time.created;
+    if (info.error && isProviderCredentialRejection(info.error)) {
+      useProviderCredentialHealth.getState().observe(workspaceId, info.providerID, "rejected", info.time.created, observedAt);
+    } else if (!info.error && info.time.completed && info.finish && !["error", "aborted"].includes(info.finish)) {
+      useProviderCredentialHealth.getState().observe(workspaceId, info.providerID, "verified", info.time.created, observedAt);
+    }
+  }
+}
+
 export function seedSessionState(
   workspaceId: string,
   snapshot: OpenworkSessionHistory,
@@ -2422,6 +2489,7 @@ export function seedSessionState(
   if (options.preview && snapshot.session.revert?.messageID) return;
   const queryClient = getReactQueryClient();
   const key = transcriptKey(workspaceId, snapshot.session.id);
+  observeProviderCredentialMessages(workspaceId, snapshot.messages);
   const projected = snapshotToUIMessages(snapshot);
   let incoming = projected;
   // Commit against the old text before merging a cumulative snapshot, never

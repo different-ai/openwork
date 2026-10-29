@@ -1,6 +1,6 @@
 import { and, eq, gt, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
-import { ensureMemberGatewayKey } from "../../gateway-keys.js"
+import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
 import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -48,6 +48,7 @@ import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, n
 import { setSessionActiveOrganization } from "../../orgs.js"
 import { clampUtf8Bytes, PROJECTION_TEXT_MAX_BYTES } from "../org/plugin-system/projection-text.js"
 import type { AuthContextVariables } from "../../session.js"
+import { requestClientIpKey } from "../../request-client-ip.js"
 import {
   DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
   DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
@@ -202,11 +203,6 @@ function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex")
 }
 
-function requestAddress(headers: Headers) {
-  const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-  return forwarded || headers.get("x-real-ip")?.trim() || "unknown"
-}
-
 /** Teammates saved at setup, handed to the new owner to invite. */
 async function teammateInvitesFor(bootstrapId: string, role: string): Promise<{ teammateEmails?: string[] }> {
   if (role !== "owner") return {}
@@ -275,7 +271,7 @@ async function checkBootstrapRateLimit(key: string, now: number) {
 
 async function enforceBootstrapRateLimit(headers: Headers) {
   const now = Date.now()
-  return checkBootstrapRateLimit(`bootstrap:workspace:${requestAddress(headers)}`, now)
+  return checkBootstrapRateLimit(`bootstrap:workspace:${requestClientIpKey(headers)}`, now)
 }
 
 type BootstrapTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -720,7 +716,9 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (session?.id) {
         await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), result.organization.id)
       }
-      await ensureMemberGatewayKey({ organizationId: result.organization.id, memberId: result.memberId })
+      // Same as any other join: billing follows the new user count and the
+      // member gets a gateway key.
+      await runPostOrganizationMemberChangeHooks({ organizationId: result.organization.id, memberId: result.memberId, change: "added" })
       // A claim link also ends the agent's pre-claim credentials.
       await revokePreclaimCredentials(result.bootstrapId)
       await retirePreclaimAgent(result.bootstrapId)
@@ -895,7 +893,9 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (session?.id) {
         await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), result.organization.id)
       }
-      await ensureMemberGatewayKey({ organizationId: result.organization.id, memberId: result.memberId })
+      // Same as any other join: billing follows the new user count and the
+      // member gets a gateway key.
+      await runPostOrganizationMemberChangeHooks({ organizationId: result.organization.id, memberId: result.memberId, change: "added" })
       return c.json({ ok: true, organization: result.organization, ...(await teammateInvitesFor(lookup.bootstrapId, result.organization.role)) })
     },
   )

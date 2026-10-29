@@ -5,39 +5,65 @@ and **Migrate chats to OpenCode v2**. Advanced settings uses the same engine
 commands. Both hand off to one app-wide owner (`shell/engine-migration.tsx`)
 for the switch check, the migration consent, and migration progress, so a
 migration stays visible after the surface that started it closes. Switching
-engines never migrates history. V1 remains the default. Desktop packages include
+engines never migrates history. V2 is the default. Desktop packages include
 both pinned native executables; v2's download fallback remains available for
 standalone servers.
 
-## Organization-managed rollout
+## Automatic migration (no rollout flag)
 
-`engineV2ForceUpgrade` is off by default on cloud and self-hosted deployments.
-When an organization's resolved flag is on, desktop and web hosts reuse the
-same backup/copy migration in the background, wait for idle, and select v2
-without consent. Desktop shows only the existing non-blocking progress banner;
-web shows no engine upgrade UI. Fresh profiles select v2 without a history copy.
-The optional desktop `engineV2Upgrade` invitation still works when force is off.
-All app feature observers use the shared guarded `useOrgFeature` hook: cached
-organization data cannot bypass a desktop-only guard.
+Desktop versions from October 2026 move every install still on v1 to v2 in the
+background, signed in or not, using the backup/copy migration below. An install
+whose person explicitly switched back to v1 (a manual choice with a recorded
+time) keeps v1; installs that never chose are moved. A pinned engine
+(`OPENWORK_ENGINE_V2_PREVIEW` or `OPENWORK_ENGINE_AUTO_UPGRADE`, used by test
+harnesses and support) keeps today's behavior.
 
-Turning the flag off switches only force-owned instances back to v1, once idle.
-An explicit manual engine choice clears that ownership, so it is not reverted.
+Automatic migration does not depend on Den, sign-in, feature resolution, or a
+Helm value. The `engineV2ForceUpgrade` flag is retired: previous organization,
+member, deployment and kill-switch values are ignored. Older Den responses
+containing `upgrade: false` cannot stop migration or return an upgraded host
+to v1. The renderer only observes local host status; it does not fetch a
+migration feature flag or send engine policy writes.
+
+Desktop and hosted web hosts still on v1 reuse the same backup/copy migration
+in the background, wait for idle, and select v2 without consent. Desktop shows
+only the existing non-blocking progress banner; web shows no engine upgrade
+UI. Fresh profiles select v2 without a history copy. People can still switch
+or migrate manually from the desktop command palette or Advanced settings;
+explicit manual engine choices remain respected.
+
 Neither direction deletes history: v1 originals remain in place and new v2
-chats remain in v2 storage for a later switch back. Policy updates do not abort
-a copy or a running task. Failures keep v1 selected, retain a durable error and
-backup receipt, and retry only on a later boot with a one-minute-to-one-day
-bounded exponential backoff. Source chat changes during copying or v2 startup
-prevent the switch; a later attempt restores the pre-copy v2 baseline under
-the existing migration ownership lock before copying a fresh v1 snapshot.
+chats remain in v2 storage for a later switch back. Failures keep v1 selected,
+retain a durable error and backup receipt, and retry only on a later boot with
+a one-minute-to-one-day bounded exponential backoff. Source chat changes during
+copying or v2 startup prevent the switch; a later attempt restores the pre-copy
+v2 baseline under the existing migration ownership lock before copying a fresh
+v1 snapshot.
 
-Hosted bootstrap sets `OPENWORK_ENGINE_FORCE_POLICY=1` and an explicit
-`OPENWORK_ENGINE_AUTO_UPGRADE=1` or `0`; registered runner inventory and worker
-activity responses refresh the same resolved policy. An absent policy on a
-standalone server does not mean an organization requested a revert. Web
-snapshots bake the pinned, integrity-checked v2 executable and set
-`OPENWORK_OPENCODE2_BIN`, so boot never downloads it. The sandbox's existing
-checkpoint policy retains three snapshots of runtime data and engine state
-as an additional safety net; there is no new restore UI.
+Hosted bootstrap always enables automatic migration. Runner inventory and
+worker activity keep returning `upgrade: true` for compatibility with older
+runtimes, without looking up a rollout flag. Web snapshots bake the pinned,
+integrity-checked v2 executable and set `OPENWORK_OPENCODE2_BIN`, so boot never
+downloads it. The sandbox's existing checkpoint policy retains three snapshots
+of runtime data and engine state as an additional safety net; there is no new
+restore UI.
+
+### Deployment instructions
+
+Upgrade the desktop application and hosted server/chart to a version containing
+this change. There is no migration toggle to enable in `/admin` or
+`config.features` in Helm. Existing `engineV2ForceUpgrade` Helm values remain
+accepted for upgrade compatibility but are ignored and can be removed. An old
+Den does not block a new desktop's automatic migration. Conversely, older
+desktops that still consume Den policy receive `upgrade: true` from a new Den.
+The public and signed-in feature responses also retain a deprecated constant
+`engineV2ForceUpgrade: true` for older desktop renderers; this is not an editable
+feature, and stored off/kill-switch values cannot change it.
+Local support/test environment overrides and explicit manual v1 choices are
+separate from the retired rollout flag and still take precedence. Explicitly
+configured external engines are not local migration sources: automatic migration
+must not replace their routing with a host-local sidecar or copy unrelated local
+history.
 
 ## Running tasks, switching, and migration progress
 
@@ -77,7 +103,9 @@ on both engines.
 
 ## What migration does
 
-Migration requires the OpenWork host token and explicit confirmation. It takes
+Manually requested migration requires the OpenWork host token and explicit
+confirmation; automatic migration is host-owned and does not ask for consent.
+It takes
 an immutable SQLite snapshot of the active profile's v1 database, including
 committed WAL writes. The original database is never modified.
 

@@ -66,7 +66,7 @@ async function prepareDesktop(stack, world, outputs) {
 }
 for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, async () => { await stack.disposeAsync(); process.exit(0); });
 try {
-  const world = await bootAcmeWeb(stack, { app: templateOrigins.app, den: templateOrigins.den, api: templateOrigins.api });
+  const world = await bootAcmeWeb(stack, { app: templateOrigins.app, den: templateOrigins.den, api: templateOrigins.api }, undefined, { v2Only: true });
   await mark("world-services");
   const { web, den, gatewayUrl } = world;
   const outputs = Object.fromEntries(Object.entries(acmeWebOutputs(world)).map(([key, entry]) => [key, typeof entry === "string" ? { value: entry } : entry]));

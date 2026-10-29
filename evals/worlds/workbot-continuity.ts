@@ -47,7 +47,7 @@ export async function workbotContinuity(_seed: Seed, { place }: { place: Place }
           const json = (body: unknown, status = 200) => { res.statusCode = status; res.setHeader("content-type", "application/json"); res.end(JSON.stringify(body)); };
           const chat = url.searchParams.get("chat") ?? "main";
           const history = referring.searchParams.get("history") === "long";
-          if (url.pathname === "/v1/workbot/me") return json({ name: "Alex", email: "alex@example.test", userId: "user_example", organizationId: "org_example", organizationName: "Example", enabled: true, calendar: true, documents: true, workspaceAssistant: referring.searchParams.get("assistant") !== "off", canSchedule: false, sideChats: true, denUrl: "https://workspace.example.test" });
+          if (url.pathname === "/v1/workbot/me") return json({ name: "Alex", email: "alex@example.test", userId: "user_example", organizationId: "org_example", organizationName: "Example", enabled: true, calendar: true, documents: true, documentEditing: true, nativeDictation: referring.searchParams.get("dictation") === "on", workspaceAssistant: referring.searchParams.get("assistant") !== "off", canSchedule: false, sideChats: true, denUrl: "https://workspace.example.test" });
           if (url.pathname === "/v1/workbot") {
             const count = Math.min(200, Number(url.searchParams.get("turns") ?? 30));
             requests.push(count);

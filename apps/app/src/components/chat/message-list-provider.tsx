@@ -11,7 +11,9 @@ import type { ConnectorToolIdentity } from "@/react-app/domains/connections/conn
 import type { OpenworkServerClient } from "@/app/lib/openwork-server"
 import type { McpAppOrigin } from "./mcp-app-origin"
 import { publicModelTitle } from "@/react-app/domains/models/model-catalog"
-import type { ReplyModelTitleResolver } from "@/react-app/domains/session/sync/reply-model"
+import type { AutoRouteNameResolver, ReplyModelTitleResolver } from "@/react-app/domains/session/sync/reply-model"
+import type { AutoRouterReplyRoute } from "@openwork/types/den/auto-router"
+import { useSessionAutoRoutes } from "@/react-app/domains/session/sync/auto-route-store"
 import { useModelPickerCatalogStore } from "@/react-app/domains/session/models/model-collections-store"
 import type { ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
 
@@ -32,6 +34,9 @@ interface MessageListContextValue {
   displaySuggestions: boolean
   providerConnectedCount: number
   resolveReplyModelTitle: ReplyModelTitleResolver
+  /** Auto (feature `autoRouter`): the gateway's routing decisions for this session's replies. */
+  autoRoutes: readonly AutoRouterReplyRoute[]
+  resolveAutoRouteName: AutoRouteNameResolver
   connectorIdentities: ConnectorToolIdentity[]
   /**
    * True while the workspace sync layer cannot validate live run status
@@ -50,6 +55,8 @@ interface MessageListContextValue {
   onStopSubagentSession?: (sessionId: string) => void | Promise<void>
   /** Re-submit an interrupted run by sending its recovery prompt. */
   onResumeInterrupted?: (recoveryPrompt: string) => void
+  /** Open one Library item's detail, by the same id Library rows use. Absent where there is no Library. */
+  onOpenLibraryDetail?: (detailId: string) => void
   onMcpReconnect: (
     action: ChatToolReconnectAction,
     onProgress: (progress: ChatToolReconnectProgress) => void,
@@ -81,6 +88,7 @@ interface MessageListProviderProps {
   onOpenSubagentSession?: (sessionId: string) => void
   onStopSubagentSession?: (sessionId: string) => void | Promise<void>
   onResumeInterrupted?: (recoveryPrompt: string) => void
+  onOpenLibraryDetail?: (detailId: string) => void
   onMcpReconnect: (
     action: ChatToolReconnectAction,
     onProgress: (progress: ChatToolReconnectProgress) => void,
@@ -128,6 +136,7 @@ export function MessageListProvider({
   onOpenSubagentSession,
   onStopSubagentSession,
   onResumeInterrupted,
+  onOpenLibraryDetail,
   onMcpReconnect,
   onMcpReopenAuthorization,
 }: MessageListProviderProps) {
@@ -140,6 +149,7 @@ export function MessageListProvider({
     onOpenSubagentSession,
     onStopSubagentSession,
     onResumeInterrupted,
+    onOpenLibraryDetail,
     onMcpReconnect,
     onMcpReopenAuthorization,
   })
@@ -153,6 +163,7 @@ export function MessageListProvider({
       onOpenSubagentSession,
       onStopSubagentSession,
       onResumeInterrupted,
+      onOpenLibraryDetail,
       onMcpReconnect,
       onMcpReopenAuthorization,
     }
@@ -165,6 +176,7 @@ export function MessageListProvider({
     onOpenSubagentSession,
     onStopSubagentSession,
     onResumeInterrupted,
+    onOpenLibraryDetail,
     onMcpReconnect,
     onMcpReopenAuthorization,
   ])
@@ -177,6 +189,7 @@ export function MessageListProvider({
     onOpenSubagentSession: (sessionId: string) => handlersRef.current.onOpenSubagentSession?.(sessionId),
     onStopSubagentSession: (sessionId: string) => handlersRef.current.onStopSubagentSession?.(sessionId),
     onResumeInterrupted: (recoveryPrompt: string) => handlersRef.current.onResumeInterrupted?.(recoveryPrompt),
+    onOpenLibraryDetail: (detailId: string) => handlersRef.current.onOpenLibraryDetail?.(detailId),
     onMcpReconnect: (
       action: ChatToolReconnectAction,
       onProgress: (progress: ChatToolReconnectProgress) => void,
@@ -189,6 +202,7 @@ export function MessageListProvider({
   const canOpenSubagentSession = Boolean(onOpenSubagentSession)
   const canStopSubagentSession = Boolean(onStopSubagentSession)
   const canResumeInterrupted = Boolean(onResumeInterrupted)
+  const canOpenLibraryDetail = Boolean(onOpenLibraryDetail)
   const mcpAppOrigin = React.useMemo<McpAppOrigin | null>(
     () => client ? { client, workspaceId, sessionId, readOnly, ...(mcpAppEngine ? { engine: mcpAppEngine } : {}) } : null,
     [client, workspaceId, sessionId, readOnly, mcpAppEngine],
@@ -198,6 +212,16 @@ export function MessageListProvider({
   const resolveReplyModelTitle = React.useCallback<ReplyModelTitleResolver>(
     model => {
       const option = replyModelOptions?.find(option => option.providerID === model.providerID && option.modelID === model.modelID);
+      return option ? publicModelTitle(option) : undefined;
+    },
+    [replyModelOptions],
+  )
+  const autoRoutes = useSessionAutoRoutes(sessionId)
+  // The gateway names the routed model; older gateways send only its id,
+  // which the member's catalog may know by name.
+  const resolveAutoRouteName = React.useCallback<AutoRouteNameResolver>(
+    modelID => {
+      const option = replyModelOptions?.find(option => option.modelID === modelID || option.modelID.endsWith(`/${modelID}`));
       return option ? publicModelTitle(option) : undefined;
     },
     [replyModelOptions],
@@ -219,6 +243,8 @@ export function MessageListProvider({
       displaySuggestions,
       providerConnectedCount,
       resolveReplyModelTitle,
+      autoRoutes,
+      resolveAutoRouteName,
       connectorIdentities,
       syncDegraded,
       ...stableHandlers,
@@ -230,6 +256,9 @@ export function MessageListProvider({
         : undefined,
       onResumeInterrupted: canResumeInterrupted
         ? stableHandlers.onResumeInterrupted
+        : undefined,
+      onOpenLibraryDetail: canOpenLibraryDetail
+        ? stableHandlers.onOpenLibraryDetail
         : undefined,
     }),
     [
@@ -248,12 +277,15 @@ export function MessageListProvider({
       displaySuggestions,
       providerConnectedCount,
       resolveReplyModelTitle,
+      autoRoutes,
+      resolveAutoRouteName,
       connectorIdentities,
       syncDegraded,
       stableHandlers,
       canOpenSubagentSession,
       canStopSubagentSession,
       canResumeInterrupted,
+      canOpenLibraryDetail,
     ],
   )
 

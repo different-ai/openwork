@@ -351,7 +351,7 @@ variable "database" {
     tier                = optional(string, "db-g1-small")
     edition             = optional(string, "ENTERPRISE")
     database_version    = optional(string, "MYSQL_8_4")
-    disk_size_gb        = optional(number, 10)
+    disk_size_gb        = optional(number, 20)
     availability_type   = optional(string, "ZONAL")
     backup_enabled      = optional(bool, true)
     deletion_protection = optional(bool) # Deprecated alias; null uses deletion_protection.

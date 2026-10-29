@@ -72,6 +72,8 @@ export interface ApprovalConfig {
 export type LocalManagedMcpVaultKeyProvider = () => Promise<Uint8Array>;
 
 export type DriveFileApprovalRequest = {
+  /** Where the file lives, so the confirmation names the right service. */
+  provider: "google-workspace" | "microsoft-365";
   action: "push" | "overwrite" | "pull";
   path: string;
   fileId: string;
@@ -94,11 +96,21 @@ export interface ServerConfig {
   hostToken: string;
   configPath?: string;
   opencodeBaseUrl?: string;
+  /**
+   * Bootstrap snapshot of supplied global/workspace engine URLs, before managed URL hydration.
+   * External engines do not share this host's history database; never auto-select local v2 for them.
+   */
+  externalOpencode?: boolean;
   opencodeDirectory?: string;
   opencodeUsername?: string;
   opencodePassword?: string;
   approval: ApprovalConfig;
   corsOrigins: string[];
+  /**
+   * Host names the server answers to besides loopback names, IP addresses and
+   * its bind host ("*" for any). Unset skips the check; `web` always sets it.
+   */
+  allowedHosts?: string[];
   workspaces: WorkspaceInfo[];
   authorizedRoots: string[];
   readOnly: boolean;
@@ -120,9 +132,9 @@ export interface ServerConfig {
    * engine choice is already saved or OpenCode v1 history exists.
    */
   freshInstallEngine?: "v2";
-  /** Hosted bootstrap's resolved org rollout. Never downgrades an existing v2 engine. */
+  /** Automatic v1-to-v2 migration is on by default; false is an explicit local opt-out. */
   engineAutoUpgrade?: boolean;
-  /** An org policy was resolved; explicit false reverts only force-upgraded instances. */
+  /** @deprecated Legacy rollout marker, ignored. Never reverts a migrated instance. */
   engineForcePolicy?: boolean;
 }
 

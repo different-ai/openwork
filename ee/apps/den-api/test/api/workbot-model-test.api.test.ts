@@ -3,17 +3,33 @@ import { after, test } from "node:test"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { modelProbeFixture } from "../../../headless-runner/scripts/model-probe-fixture.js"
-import { bootDen, field, summary } from "./harness.js"
+import { bootDen, field, summary, type Member } from "./harness.js"
+import { grantGatewayModels, memberGatewayKey, stubPublicModelCatalog } from "./gateway-fixture.js"
 
-const runner = await modelProbeFixture()
-const den = await bootDen({ env: { DEN_HEADLESS_RUNNER_URL: runner.url, DEN_HEADLESS_RUNNER_TOKEN: "r".repeat(32) } })
-after(async () => { await den.close(); await runner.close() })
+// The real Node runner probes the owner's own AI Gateway route: the synthetic provider stands in for the Gateway
+// and accepts only that member's Gateway key. Only the public model catalog and the upstream provider are synthetic.
+const runner = await modelProbeFixture({ protocol: "openai-responses" })
+const restoreFetch = stubPublicModelCatalog()
+const den = await bootDen({ env: {
+  DEN_HEADLESS_RUNNER_URL: runner.url, DEN_HEADLESS_RUNNER_TOKEN: "r".repeat(32),
+  GATEWAY_ENABLED: "true", GATEWAY_PROXY_BASE_URL: runner.providerUrl, GATEWAY_PUBLIC_BASE_URL: runner.providerUrl,
+} })
+after(async () => { restoreFetch(); await den.close(); await runner.close() })
 const path = "/v1/org/workbot-settings/test-default-model"
+
+/** The owner's Gateway grant for Luna and another model; the synthetic upstream accepts their Gateway key. */
+async function gatewayAccess(owner: Member, orgId: string) {
+  const aliases = await grantGatewayModels(den, owner, orgId, [owner], ["gpt-6-luna", "gpt-fixture-other"])
+  const key = await memberGatewayKey(orgId, owner)
+  runner.acceptModelKey(key)
+  return { luna: aliases["gpt-6-luna"], other: aliases["gpt-fixture-other"], key }
+}
 
 test("only a recent real admin session can pay for a server-selected synthetic check, not catalog-derived success", async () => {
   const workspace = await den.createOrg(await den.signUp("Diagnostic Owner"), "Diagnostic workspace")
   const outsider = await den.createOrg(await den.signUp("Other Diagnostic Owner"), "Other diagnostic workspace")
   const member = await den.newMember(workspace.owner, workspace.orgId, "Diagnostic Member")
+  const access = await gatewayAccess(workspace.owner, workspace.orgId)
   const call = den.as(workspace.owner, workspace.orgId)
   assert.equal((await den.as(member, workspace.orgId)("POST", path, {})).status, 403)
   assert.equal((await den.as(outsider.owner, workspace.orgId)("POST", path, {})).status, 404)
@@ -28,7 +44,7 @@ test("only a recent real admin session can pay for a server-selected synthetic c
 
   const answer = await call("POST", path, {})
   assert.equal(answer.status, 200, summary(answer))
-  assert.deepEqual(answer.body, { status: "answered", errorCode: null, requestedModel: "gateway/luna", reportedModel: "gpt-6-luna-fixture-snapshot" })
+  assert.deepEqual(answer.body, { status: "answered", errorCode: null, requestedModel: access.luna, reportedModel: "gpt-6-luna-fixture-snapshot" })
   runner.setMode("unauthorized")
   const denied = await call("POST", path, {})
   assert.equal(denied.status, 200, summary(denied))
@@ -48,7 +64,7 @@ test("only a recent real admin session can pay for a server-selected synthetic c
   assert.ok(throttled.headers.get("retry-after"))
   assert.equal(runner.calls().length, attempts)
   for (const response of [answer, denied, payment]) {
-    for (const secret of ["fixture-model-key", "fixture-private", "fixture-answer", "READY", "member content"]) assert.equal(response.text.includes(secret), false)
+    for (const secret of ["fixture-model-key", access.key, "fixture-private", "fixture-answer", "READY", "member content"]) assert.equal(response.text.includes(secret), false)
   }
   assert.equal(runner.sessionCount(), 0)
 })
@@ -57,10 +73,11 @@ test("a saved org override is server-derived and an aged real session is require
   runner.setMode("answered")
   const workspace = await den.createOrg(await den.signUp("Override Diagnostic Owner"), "Override diagnostic workspace")
   const call = den.as(workspace.owner, workspace.orgId)
-  assert.equal((await call("PUT", "/v1/org/workbot-settings", { model: "gateway/other" })).status, 200)
+  const access = await gatewayAccess(workspace.owner, workspace.orgId)
+  assert.equal((await call("PUT", "/v1/org/workbot-settings", { model: access.other })).status, 200)
   const answer = await call("POST", path, {})
   assert.equal(answer.status, 200, summary(answer))
-  assert.equal(field(answer.body, "requestedModel"), "gateway/other")
+  assert.equal(field(answer.body, "requestedModel"), access.other)
   const { db } = await import("../../src/db.js")
   await db.update(AuthSessionTable).set({ createdAt: new Date(Date.now() - 3 * 60 * 60_000) }).where(eq(AuthSessionTable.userId, workspace.owner.userId))
   const attempts = runner.calls().length

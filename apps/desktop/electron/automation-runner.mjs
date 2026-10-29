@@ -1208,13 +1208,33 @@ export function createDesktopAutomationRunner(options) {
       state.credentialValidated = true
       if (isCurrent(state)) {
         const policy = desktopEngineForcePolicy(payload)
-        if (policy) await options.onEnginePolicy?.(policy)
+        if (policy) applyEnginePolicyInBackground(policy)
       }
       return payload
     } catch (error) {
       if ([401, 403].includes(error?.status)) rejectCredential(state, error.status)
       throw error
     }
+  }
+
+  // The engine policy rides on work responses but must never fail them: while
+  // the local server starts (or if it rejects the write) the runner still has
+  // to find Automations. Every poll re-sends it, because a restarted local
+  // server forgets the last instruction; one write runs at a time, and each
+  // distinct failure is logged once.
+  let enginePolicyInFlight = false
+  let lastEnginePolicyError = null
+  const applyEnginePolicyInBackground = (policy) => {
+    if (enginePolicyInFlight || typeof options.onEnginePolicy !== "function") return
+    enginePolicyInFlight = true
+    Promise.resolve()
+      .then(() => options.onEnginePolicy(policy))
+      .then(() => { lastEnginePolicyError = null }, (error) => {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message !== lastEnginePolicyError) console.warn(`[automation-runner] engine policy not applied yet: ${message}`)
+        lastEnginePolicyError = message
+      })
+      .finally(() => { enginePolicyInFlight = false })
   }
 
   const getSessionRunner = (state) => {

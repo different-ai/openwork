@@ -21,8 +21,8 @@ import {
   type SlackCall,
 } from "./protocol.js"
 import {
-  createSlackRunner,
   openSlackRunnerEvents,
+  slackRunnerForActor,
   slackRunnerAvailable,
   slackTurnModel,
   type SlackRunner,
@@ -31,7 +31,6 @@ import {
 import { createLiveFeeds, type LiveFeedSource } from "./live.js"
 import { createSlackEventLoop } from "./queue.js"
 import {
-  slackAssistantEnabledForInstallation,
   admitSlackRun,
   latestSlackContext,
   removeSlackIdentities,
@@ -62,7 +61,8 @@ type WorkerDeps = {
 
 const defaultWorkerDeps: WorkerDeps = {
   slack: slackClient,
-  runner: (actor) => createSlackRunner(actor),
+  // Turns always run step by step.
+  runner: (actor) => slackRunnerForActor(actor),
   live: createLiveFeeds({ open: (sessionId, signal) => openSlackRunnerEvents(sessionId, signal) }),
 }
 
@@ -224,11 +224,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
   if (!actor && event.status !== "running" && installation.enabled && (await linkConnectedSlackMembers(installation, deps.slack)) > 0)
     actor = await resolveSlackActor(installation, event.slackUserId)
   if (!actor) {
-    if (
-      event.status === "running" ||
-      !installation.enabled ||
-      !(await slackAssistantEnabledForInstallation(installation))
-    ) {
+    if (event.status === "running" || !installation.enabled) {
       if (cp.channel) {
         try {
           await stopSlackStream(slack, { ...cp, finalStatus: "suspended" })
@@ -403,13 +399,12 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
 
 /**
  * A message whose background tasks still run: their reports are posted in the thread as they arrive. Stops quietly
- * (the reports stay in the conversation, and the model mentions them next time) when the feature, the assistant, the
- * runner or the member's access is gone.
+ * (the reports stay in the conversation, and the model mentions them next time) when the assistant, the runner or the
+ * member's access is gone.
  */
 async function watchSlackEvent(event: EventRow, installation: InstallationRow, slack: SlackCall, deps: WorkerDeps, cp: Checkpoint) {
   const stop = () => checkpointEvent(event, { status: "done" })
   if (event.cancelled || !installation.enabled || !slackRunnerAvailable()) return stop()
-  if (!(await slackAssistantEnabledForInstallation(installation))) return stop()
   const actor = await resolveSlackActor(installation, event.slackUserId)
   if (!actor) return stop()
   const result = await advanceSlackWatch({

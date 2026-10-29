@@ -18,10 +18,12 @@ import { getOrganizationFeatures } from "./features.js"
 import { publicRoute } from "./middleware/index.js"
 import { registerAdminMcpRoutes } from "./mcp/admin.js"
 import { registerAgentMcpRoutes } from "./mcp/agent.js"
+import { registerConnectionServerRoutes } from "./mcp/connection-server.js"
 import { registerExternalConnectionProxyRoutes } from "./mcp/external-connection-proxy.js"
 import { registerMcpRoutes } from "./mcp/index.js"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "./middleware/index.js"
 import { buildOperationId, htmlResponse, jsonResponse } from "./openapi.js"
+import { publicOpenApiDocument } from "./openapi-public.js"
 import { appLogger } from "./observability/logger.js"
 import { isWebOriginApprovedByAnyOrganization } from "./organization-web-origins.js"
 import { createRequestAccessLogMiddleware, createTelemetryErrorSanitizerMiddleware, registerAppErrorHandler, registerObservabilityMiddleware } from "./observability/hono.js"
@@ -60,7 +62,8 @@ import { preclaimScopeMiddleware } from "./middleware/preclaim-scope.js"
 import { auditRequestMiddleware } from "./audit/request-capture.js"
 import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
 import { sanitizePublicResponseHeaders } from "./public-response-headers.js"
-import { AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER } from "@openwork/types/automations"
+import { isDraining } from "./drain-state.js"
+import { AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER, AUTOMATION_SCHEDULE_KINDS_HEADER } from "@openwork/types/automations"
 
 type AppVariables = RequestIdVariables & AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> & Partial<MemberTeamsContext>
 
@@ -76,6 +79,7 @@ const readinessResponseSchema = z.object({
   checks: z.object({
     database: z.enum(["ok", "error"]),
   }),
+  draining: z.boolean().optional().meta({ description: "True while this instance shuts down and finishes its in-flight requests." }),
 }).meta({ ref: "DenApiReadinessResponse" })
 
 const openApiDocumentSchema = z.object({
@@ -195,7 +199,7 @@ if (!env.corsHandledByEdge) {
       credentials: true,
       // Browser clients (app-web) send the Automation model-attention capability header on create/update/run;
       // without it here the preflight fails and the request never reaches Den ("Failed to fetch").
-      allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id", "X-OpenWork-Audit-Correlation", AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER],
+      allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id", "X-OpenWork-Audit-Correlation", AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER, AUTOMATION_SCHEDULE_KINDS_HEADER],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       exposeHeaders: ["Content-Length", "Content-Disposition", "X-Audit-Next-Cursor", "X-Audit-Snapshot-Sequence", "X-Audit-Resource-Scope"],
       maxAge: 600,
@@ -261,7 +265,7 @@ app.get(
     tags: ["System"],
     security: [],
     summary: "Check den-api readiness",
-    description: "Verifies den-api can reach its database dependency.",
+    description: "Verifies den-api can reach its database dependency and is not shutting down.",
     responses: {
       200: jsonResponse("den-api is ready to serve traffic.", readinessResponseSchema),
       503: jsonResponse("den-api is not ready to serve traffic.", readinessResponseSchema),
@@ -269,13 +273,18 @@ app.get(
   }),
   publicRoute,
   async (c) => {
+    let database: "ok" | "error" = "ok"
     try {
       await db.execute(sql`select 1`)
-      return c.json({ ok: true, service: "den-api", checks: { database: "ok" } })
     } catch (error) {
       appLogger.error("readiness database check failed", { component: "readiness", error })
-      return c.json({ ok: false, service: "den-api", checks: { database: "error" } }, 503)
+      database = "error"
     }
+    // A draining instance still finishes in-flight work but must not look
+    // ready for new traffic.
+    if (isDraining()) return c.json({ ok: false, service: "den-api", checks: { database }, draining: true }, 503)
+    if (database === "error") return c.json({ ok: false, service: "den-api", checks: { database } }, 503)
+    return c.json({ ok: true, service: "den-api", checks: { database } })
   },
 )
 
@@ -306,6 +315,7 @@ registerMcpTokenRoutes(app)
 registerMcpRoutes(app)
 registerAgentMcpRoutes(app)
 registerExternalConnectionProxyRoutes(app)
+registerConnectionServerRoutes(app)
 registerAdminMcpRoutes(app)
 registerTelemetryRoutes(app)
 
@@ -322,7 +332,7 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
   )).limit(1)
   const userId = members[0]?.userId
   if (!userId) return { ok: false, message: "The Automation owner is no longer active.", retryable: false }
-  const organizationFeatures = await getOrganizationFeatures(normalizedOrganizationId)
+  const organizationFeatures = await getOrganizationFeatures(normalizedOrganizationId, { userId })
   const member = await resolveMcpMemberIdentity({ userId, organizationId })
   if (!member) return { ok: false, message: "The Automation owner is no longer active.", retryable: false }
   const catalog = await getCatalog(app as unknown as Hono, undefined)
@@ -371,6 +381,7 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
 })
 
 let openApiDocument: OpenApiDocument | undefined
+let publishedOpenApiDocument: Record<string, unknown> | undefined
 const openApiOptions: Parameters<typeof generateSpecs>[1] = {
   documentation: {
     openapi: "3.1.0",
@@ -416,6 +427,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Users", description: "Current user and membership routes." },
       { name: "Organizations", description: "Organization creation, context, brand assets, and install links." },
       { name: "Invitations", description: "Invitation preview, acceptance, creation, and cancellation routes." },
+      { name: "Sandbox organizations", description: "Preview and join a sandbox organization with its shareable join link." },
       { name: "Members", description: "Organization member management routes." },
       { name: "Teams", description: "Organization team management routes." },
       { name: "Permissions", description: "Organization permissions: the permission catalog, Member, Admin and team permission sets, their history, and each member's effective permissions." },
@@ -516,7 +528,7 @@ app.get(
     tags: ["System"],
     security: [],
     summary: "Get OpenAPI document",
-    description: "Returns the machine-readable OpenAPI 3.1 document for the Den API so humans and tools can inspect the API surface.",
+    description: "Returns the machine-readable OpenAPI 3.1 document for the Den API. Use ?public=1 for the normalized public documentation contract.",
     responses: {
       200: jsonResponse("OpenAPI document returned successfully.", openApiDocumentSchema),
     },
@@ -524,6 +536,10 @@ app.get(
   publicRoute,
   async (c) => {
     openApiDocument ??= withExplicitOperationSecurity(await generateSpecs(app, openApiOptions, c))
+    if (c.req.query("public") === "1") {
+      publishedOpenApiDocument ??= publicOpenApiDocument(openApiDocument).document
+      return c.json(publishedOpenApiDocument)
+    }
     return c.json(openApiDocument)
   },
 )

@@ -8,9 +8,8 @@ import { underlineTabClassName } from "../../../_components/ui/tabs";
 import { DenPageHeader } from "../../../_components/ui/page-header";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { ItemPanel, ItemRowsSkeleton } from "../../_components/item-list";
-import { getAnalyticsRoute, getModelsAnalyticsRoute, getLibraryUsageRoute, getWorkflowRunsRoute, orgFeatureEnabled } from "../../../_lib/den-org";
+import { getAnalyticsRoute, getLibraryUsageRoute, getWorkflowRunsRoute } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
-import { useDenFlow } from "../../../_providers/den-flow-provider";
 import { useLibraryUsageAvailable } from "../library-usage/use-library-usage";
 
 export const analyticsSurfaceClass = "analytics-surface rounded-2xl border border-[#e3e7ee] bg-white";
@@ -25,15 +24,13 @@ export const analyticsPageClass = "mx-auto grid w-full max-w-[860px] gap-6 p-4 s
  * between views.
  */
 export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }: {
-  orgSlug?: string | null; active: "adoption" | "models" | "library" | "workflows";
+  orgSlug?: string | null; active: "adoption" | "library" | "workflows";
   title: string; action?: ReactNode; caption?: ReactNode;
 }) {
-  const { runtimeConfig } = useDenFlow();
   const { orgContext } = useOrgDashboard();
   const libraryUsage = useLibraryUsageAvailable();
   const pages = [
     { id: "adoption", label: "Usage & adoption", href: getAnalyticsRoute(orgSlug), icon: BarChart3 },
-    ...(runtimeConfig.orgMode === "single_org" || !orgFeatureEnabled(orgContext, "modelsAnalyticsUi") ? [] : [{ id: "models", label: "Models & usage", href: getModelsAnalyticsRoute(orgSlug), icon: null }]),
     ...(libraryUsage ? [{ id: "library", label: "Plugins & connectors", href: getLibraryUsageRoute(orgSlug), icon: Blocks }] : []),
     ...(orgContext?.capabilities.workflows && orgContext.entitlements.analytics ? [{ id: "workflows", label: "Workflow Runs", href: getWorkflowRunsRoute(orgSlug), icon: ScrollText }] : []),
   ];
@@ -51,7 +48,7 @@ export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }:
     <nav aria-label="Analytics views" className="flex flex-wrap gap-x-6 border-b border-[#e3e7ee]">
       {pages.map(({ id, label, href, icon: Icon }) => <Link key={id} href={href} aria-current={active === id ? "page" : undefined}
         className={`-mb-px focus-visible:outline-offset-4 ${underlineTabClassName(active === id)}`}>
-        {Icon ? <Icon className="h-4 w-4" aria-hidden="true" /> : <img src="/openwork-mark.svg" alt="" aria-hidden className="size-4" />}{label}
+        <Icon className="h-4 w-4" aria-hidden="true" />{label}
       </Link>)}
     </nav>
   </header>;

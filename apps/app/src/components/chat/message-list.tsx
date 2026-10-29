@@ -38,10 +38,12 @@ import { useOpenTargets } from "@/lib/target-provider"
 import { openTargetFromUrl } from "@/react-app/domains/session/artifacts/open-target"
 import { presentOpencodeSessionError, sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error"
 import { TaskRecovery } from "./task-recovery"
-import { BackgroundTaskNotice, BackgroundTasksLabel, BackgroundTasksMessage, backgroundShellNoticeFromMessage } from "./background-tasks"
+import { BackgroundTaskNotice, BackgroundTasksLabel, BackgroundTasksMessage, SubagentNoticeRow, backgroundShellNoticeFromMessage, subagentNoticeFromMessage } from "./background-tasks"
 import { sessionBackgroundShells, useBackgroundShellStore, type BackgroundShell } from "@/react-app/domains/session/status/background-shell-store"
 import { messageAutoAccessWall } from "@/app/lib/inference-access"
 import { AutoAccessNotice } from "@/react-app/domains/cloud/auto-access-ui"
+import { OpenWorkModelsLimitCard } from "@/react-app/domains/cloud/usage-limit-card"
+import type { OpenWorkModelsLimit } from "@/react-app/domains/cloud/usage-limit-state"
 import { rejectedRecoveryFromMessage } from "@/react-app/domains/session/sync/rejected-turn"
 import { replyModelLabel, replyModelProvider } from "@/react-app/domains/session/sync/reply-model"
 import { ProviderIcon } from "@/react-app/design-system/provider-icon"
@@ -63,6 +65,7 @@ import { TodoWriteTool } from "@/components/tools/todowrite"
 import { WebfetchTool } from "@/components/tools/webfetch"
 import { WebsearchTool } from "@/components/tools/websearch"
 import { useMessageList, useSessionErrorMessage } from "@/components/chat/message-list-provider"
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature"
 import { TaskSuggestions } from "@/components/chat/task-suggestions"
 import { useSessionReferencesMaybe, type SessionReferences } from "@/components/chat/session-reference-context"
 import { SessionReferenceLink } from "@/components/chat/session-reference-link"
@@ -102,6 +105,11 @@ import {
 import { Tool } from "@/components/ui/tool"
 import { CapabilityCallLine } from "@/components/chat/capability-call-line"
 import { CodeModeTool, isSilentCodeModePart } from "@/components/chat/code-mode-tool"
+import { CreatedSkillCard, CreatedSkillsContext, useCreatedSkills, type CreatedSkillsContextValue } from "@/components/chat/created-skill-card"
+import { readCreatedSkillAccess } from "@/components/chat/created-skill-access"
+import { collectCreatedSkills, type ConfirmedSkillAccess, type CreatedSkillsModel } from "@/lib/created-skill"
+import { openWorkNativeFailure } from "@/lib/openwork-native-activity"
+import { LaneChevron, LeadingLane, RailMeta } from "@/components/chat/activity-rail"
 import { ConnectionCard } from "@/components/chat/connection-card"
 import { CredentialPromptCard } from "@/components/chat/credential-prompt-card"
 import { credentialPromptCall } from "@/components/chat/credential-prompt"
@@ -138,7 +146,8 @@ import {
   isWriteToolPart,
 } from "@/lib/build-in-tools"
 import type { ThreadStatus } from "@/lib/messages"
-import { useSessionActivityStore, type SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store"
+import { useShallow } from "zustand/react/shallow"
+import { useSessionActivityStore, type SessionActivityStatus, type WaitInterval } from "@/react-app/domains/session/status/session-activity-store"
 import { activeDelegatedTasks, hasNoNewActivity, lastTaskProgressAt } from "@/react-app/domains/session/status/session-progress"
 import { revalidateWorkspaceSessionSync } from "@/react-app/domains/session/sync/session-sync"
 import { useWorkspaceMaybe } from "@/react-app/shell/workspace-provider"
@@ -149,14 +158,14 @@ import { faviconUrlForHref } from "@/lib/favicon"
 import { useOpenArtifactPath } from "@/lib/artifacts"
 import { cn } from "@/lib/utils"
 import { DevProfiler } from "@/react-app/shell/dev-profiler"
-import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, formatMessageTimestamp, splitTurnAtAnswer, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, getSafeFileRevealPath } from "./utils"
+import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, getRunStartedAt, getWaitedMs, formatMessageTimestamp, splitTurnAtAnswer, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, getSafeFileRevealPath } from "./utils"
 import type { AnyToolPart } from "@/lib/tool-aggregate"
 import { resolveConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
 
-/** Above this many step rows a finished turn folds into one summary line. */
-const COLLAPSED_STEP_RUN_MIN_ROWS = 4
+/** A finished turn with at least this many step rows folds into one summary line (T1). */
+const COLLAPSED_STEP_RUN_MIN_ROWS = 1
 
 const AppCreationPartsContext = React.createContext<ReadonlySet<string>>(new Set())
 /**
@@ -406,6 +415,7 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
       <CapabilityCallLine
         part={part}
         connector={resolveConnectorToolIdentity(part, connectorIdentities)}
+        shimmer={isToolPartInFlight(part)}
         onReconnect={hasPreservedMcpAppResult(part) ? undefined : onMcpReconnect}
         onReopenAuthorization={onMcpReopenAuthorization}
       />
@@ -423,13 +433,44 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
 
 const isEmptyMessage = (message: UIMessage): boolean => message.parts.length === 0
 
+/**
+ * A finished catalog lookup (what OpenWork offers, which Cloud capabilities
+ * exist) did no work the person asked for (T2), the same rule Code Mode
+ * scripts follow. A lookup that reports a connection to set up stays: that
+ * is something the person can act on.
+ */
+function isSilentAppLookup(part: DynamicToolUIPart): boolean {
+  if (part.state !== "output-available") return false
+  if (part.toolName === "openwork_context") return true
+  const catalogSearch = part.toolName === "search" || part.toolName.endsWith("search_capabilities")
+  return catalogSearch && connectionFromChatToolPart(part, { allowDiscovery: true }) === null
+}
+
+/**
+ * A finished turn folds only when nothing in it needs the person: a failed
+ * step stays inline with its fix (T2), and a key, connection or question the
+ * agent is waiting on is never hidden behind "Worked for…".
+ */
+function stepsNeedAttention(items: UIMessageWithIndex[], connectionCards: ReadonlySet<string>): boolean {
+  return items.some(({ message }) => message.role === "assistant" && !isSessionErrorMessage(message) && message.parts.some((part) => {
+    if (!isToolUIPart(part)) return false
+    if (part.state === "output-error") return true
+    if (part.type === "dynamic-tool") {
+      if (connectionCards.has(part.toolCallId) || credentialPromptCall(part)) return true
+      if (openWorkNativeFailure(part)) return true
+      if ((codeModeToolCalls(part) ?? []).some((call) => call.state === "output-error" || openWorkNativeFailure(call))) return true
+    }
+    return isQuestionToolPart(part) && isToolPartInFlight(part)
+  }))
+}
+
 function withoutSilentSteps(messages: UIMessage[], remoteThreads: boolean): UIMessage[] {
   let changed = false
   const next = messages.flatMap((message) => {
     if (message.role !== "assistant") return [message]
     // With tasks on other computers shown live, the agent's own checks on them are plumbing.
     const parts = message.parts.filter((part) => !(part.type === "dynamic-tool"
-      && (isSilentCodeModePart(part) || remoteThreads && isRemoteThreadStatusCheck(part))))
+      && (isSilentCodeModePart(part) || isSilentAppLookup(part) || remoteThreads && isRemoteThreadStatusCheck(part))))
     if (parts.length === message.parts.length) return [message]
     changed = true
     return parts.length > 0 ? [{ ...message, parts }] : []
@@ -1081,7 +1122,7 @@ const MessageComponent = React.memo(
     if (isSessionErrorMessage(message)) {
       const presentation = sessionErrorPresentationFromUIMessage(message)
       if (presentation?.autoAccessWall) return <TranscriptAutoAccessNotice wall={presentation.autoAccessWall} />
-      return (
+      const errorMessage = (
         <ErrorMessage
           error={getMessagesText([message]) || "Session failed"}
           description={presentation?.description}
@@ -1090,14 +1131,19 @@ const MessageComponent = React.memo(
           canRetry={isLastMessage && !isStreaming}
           technicalDetails={presentation?.technicalDetails}
           gatewayConnectUrl={presentation?.kind === "gateway-auth-required" || presentation?.kind === "provider-credentials" ? presentation.connectUrl ?? null : undefined}
+          gatewayProviderAuthError={presentation?.kind === "gateway-provider-authentication-failed" || presentation?.kind === "gateway-provider-permission-denied"}
           gatewaySelectionRequired={presentation?.kind === "gateway-selection-required"}
           changeModel={presentation !== null && ["provider-access-denied", "provider-unavailable", "provider-unreachable", "model-unavailable", "rate-limited", "conversation-too-long", "attachment-unsupported"].includes(presentation.kind)}
         />
       )
+      if (presentation?.openworkModelsLimit) return <TranscriptOpenWorkModelsLimit limit={presentation.openworkModelsLimit} />
+      return errorMessage
     }
 
     const backgroundShellNotice = backgroundShellNoticeFromMessage(message)
     if (backgroundShellNotice) return <BackgroundTaskNotice message={message} notice={backgroundShellNotice} />
+    const subagentNotice = subagentNoticeFromMessage(message)
+    if (subagentNotice) return <SubagentNoticeRow message={message} notice={subagentNotice} />
 
     if (isEmptyMessage(message)) {
       return null
@@ -1124,6 +1170,12 @@ const MessageComponent = React.memo(
   }
 )
 
+/** The organization used its OpenWork Models allowance: one usage-limit card. */
+function TranscriptOpenWorkModelsLimit({ limit }: { limit: OpenWorkModelsLimit }) {
+  const { sessionId } = useMessageList()
+  return <div className="mx-auto w-full max-w-3xl px-2 py-2 md:px-10"><OpenWorkModelsLimitCard limit={limit} sessionId={sessionId} /></div>
+}
+
 function TranscriptAutoAccessNotice({ wall }: { wall: NonNullable<ReturnType<typeof messageAutoAccessWall>> }) {
   const { sessionId, workspaceId } = useMessageList()
   return <div className="mx-auto w-full max-w-3xl px-2 md:px-10"><AutoAccessNotice wall={wall} sessionId={sessionId} workspaceId={workspaceId} /></div>
@@ -1132,6 +1184,7 @@ function TranscriptAutoAccessNotice({ wall }: { wall: NonNullable<ReturnType<typ
 MessageComponent.displayName = "MessageComponent"
 
 const NO_BACKGROUND_SHELLS: BackgroundShell[] = []
+const NO_WAITS: WaitInterval[] = []
 
 const LoadingMessage = React.memo(({ elapsedSeconds, starting, backgroundShells = NO_BACKGROUND_SHELLS, backgroundStale = false }: {
   elapsedSeconds: number
@@ -1226,16 +1279,26 @@ interface ErrorMessageProps {
    * null deep-links to Settings > AI providers instead.
    */
   gatewayConnectUrl?: string | null
+  gatewayProviderAuthError?: boolean
   gatewaySelectionRequired?: boolean
   changeModel?: boolean
 }
 
-function ErrorMessage({ error, description, showDescriptionOnResume, resumePrompt, canRetry = true, technicalDetails, gatewayConnectUrl, gatewaySelectionRequired, changeModel }: ErrorMessageProps) {
+function ErrorMessage({ error, description, showDescriptionOnResume, resumePrompt, canRetry = true, technicalDetails, gatewayConnectUrl, gatewaySelectionRequired, gatewayProviderAuthError, changeModel }: ErrorMessageProps) {
   const { onResumeInterrupted, dispatchAction, sessionId } = useMessageList()
+  const gatewayProviderAuthEnabled = useOrgFeature("gatewayProviderAuthErrors")
+  const useGatewayProviderAuthCopy = gatewayProviderAuthError && gatewayProviderAuthEnabled
   const selection = error?.includes("gateway_selection_required") ? presentOpencodeSessionError(error) : null
-  const displayError = selection?.title ?? error
-  const displayDescription = selection?.description ?? description
+  const displayError = gatewayProviderAuthError && !gatewayProviderAuthEnabled
+    ? "Check your model connection"
+    : selection?.title ?? error
+  const displayDescription = gatewayProviderAuthError && !gatewayProviderAuthEnabled
+    ? "Update your connection in model settings."
+    : selection?.description ?? description
   const displayDetails = selection?.technicalDetails ?? technicalDetails
+  const displayTechnicalDetails = gatewayProviderAuthError && !gatewayProviderAuthEnabled
+    ? displayDetails?.split("\n").filter((line) => !line.startsWith("Request ID:")).join("\n")
+    : displayDetails
   const resumable = Boolean(resumePrompt && onResumeInterrupted)
   return (
     <TaskRecovery title={displayError ?? "Task failed"} state={resumable ? "paused" : "failed"}
@@ -1243,16 +1306,18 @@ function ErrorMessage({ error, description, showDescriptionOnResume, resumePromp
       description={showDescriptionOnResume && displayDescription
         ? <span data-testid="session-error-interruption-warning">{displayDescription}</span>
         : !resumePrompt ? displayDescription : null}
-      technicalDetails={displayDetails}
+      technicalDetails={useGatewayProviderAuthCopy ? displayDetails : displayTechnicalDetails}
       onRetry={canRetry && resumable && resumePrompt ? () => onResumeInterrupted?.(resumePrompt) : undefined}
       retryTestId="session-error-resume"
-      actions={gatewaySelectionRequired || selection || changeModel || gatewayConnectUrl !== undefined ? <>
+      actions={gatewaySelectionRequired || selection || changeModel || gatewayConnectUrl !== undefined || (gatewayProviderAuthError && !gatewayProviderAuthEnabled) ? <>
         {gatewaySelectionRequired || selection ? <Button variant="ghost" size="xs" data-testid="session-error-gateway-selection"
           onClick={() => openAlternativeModelPicker(sessionId)}>
           Choose group and credential set
         </Button> : null}
         {changeModel && !gatewaySelectionRequired && !selection ? <Button variant="ghost" size="xs"
           onClick={() => openAlternativeModelPicker(sessionId)}>Change model</Button> : null}
+        {gatewayProviderAuthError && !gatewayProviderAuthEnabled ? <Button variant="ghost" size="xs" data-testid="session-error-gateway-connect"
+          onClick={() => dispatchAction({ target: "settings", action: "open", section: "providers" })}>Connect</Button> : null}
         {gatewayConnectUrl !== undefined ? <Button variant="ghost" size="xs" data-testid="session-error-gateway-connect"
           onClick={() => dispatchAction({ target: "settings", action: "open", section: "providers" })}>Connect</Button> : null}
       </> : null} />
@@ -1378,29 +1443,25 @@ function LiveSteps({ children, active }: { children: React.ReactNode; active: bo
  * unprompted; once the answer is in, the reasoning is available but out
  * of the way.
  */
-function CompletedStepRun({ label, modelLabel, children }: { label: string; modelLabel?: string | null; children: React.ReactNode }) {
+function CompletedStepRun({ label, count, modelLabel, children }: { label: string; count?: string | null; modelLabel?: string | null; children: React.ReactNode }) {
   const [open, setOpen] = React.useState(false)
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="flex w-full flex-col gap-2">
       <div className="mx-auto flex w-full max-w-3xl px-2 md:px-10">
         <CollapsibleTrigger
-          className="group flex cursor-pointer items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-          aria-label={`${label}${modelLabel ? ` · ${modelLabel}` : ""}. ${open ? "Hide steps" : "Show steps"}`}
+          className="group flex min-h-6 cursor-pointer items-center gap-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          aria-label={`${label}${count ? `, ${count}` : ""}${modelLabel ? ` · ${modelLabel}` : ""}. ${open ? "Hide steps" : "Show steps"}`}
           data-testid="completed-work-rail"
         >
-          <ChevronRight
-            aria-hidden="true"
-            className={cn(
-              "size-3.5 text-muted-foreground/70 transition-transform duration-150",
-              open && "rotate-90"
-            )}
-          />
+          {/* The chevron sits in the rail's 20px leading lane, so step labels line up below it. */}
+          <LaneChevron open={open} />
           <span>{label}</span>
+          {count ? <RailMeta>{count}</RailMeta> : null}
           {modelLabel ? <span data-testid="reply-model"> · {modelLabel}</span> : null}
         </CollapsibleTrigger>
       </div>
-      <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+      <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 motion-reduce:transition-none [&[hidden]:not([hidden='until-found'])]:hidden">
         {children}
       </CollapsibleContent>
     </Collapsible>
@@ -1484,7 +1545,7 @@ function MessageGroup({
   isStreaming,
   newestAppCallIds,
 }: AssistantMessageGroupProps) {
-  const { onForkAtMessage, forkingMessageId, showThinking, readOnly, getConnectionDecision, resolveReplyModelTitle } = useMessageList()
+  const { onForkAtMessage, forkingMessageId, showThinking, readOnly, getConnectionDecision, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName } = useMessageList()
   const connectionCardParts = React.useMemo(() => connectionCardPartIds(items, getConnectionDecision), [items, getConnectionDecision])
   const newestAppCalls = React.useMemo(() => new Set(newestAppCallIds.split("\n")), [newestAppCallIds])
   const lastItem = items[items.length - 1]
@@ -1504,6 +1565,13 @@ function MessageGroup({
   )
   const remoteThreads = useRemoteThreadsEnabled()
   const remoteThreadStarts = React.useMemo(() => remoteThreads ? collectRemoteThreadStarts(items) : [], [items, remoteThreads])
+  // The skill this turn produced stays in view as its result, even when the
+  // steps fold; later updates and shares change this card, not add another.
+  const { cards: createdSkillCards } = useCreatedSkills()
+  const groupSkillCards = React.useMemo(() => {
+    const ids = new Set(items.flatMap((item) => item.message.parts.flatMap((part) => part.type === "dynamic-tool" ? [part.toolCallId] : [])))
+    return createdSkillCards.filter((card) => ids.has(card.anchorToolCallId))
+  }, [items, createdSkillCards])
 
   if (!lastItem || isMessageEmptyGroup(items)) {
     return null;
@@ -1525,8 +1593,9 @@ function MessageGroup({
   }
   // Native turns can end with a metadata-free completion marker. Keep the
   // latest known model within this turn rather than losing the answer's name.
-  const replyModelMessage = items.findLast(item => item.message.role === "assistant" && replyModelLabel(item.message, resolveReplyModelTitle))?.message
-  const resolvedReplyModel = replyModelMessage ? replyModelLabel(replyModelMessage, resolveReplyModelTitle) : null
+  const replyModelMessage = items.findLast(item => item.message.role === "assistant" && replyModelLabel(item.message, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName))?.message
+  const resolvedReplyModel = replyModelMessage ? replyModelLabel(replyModelMessage, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName) : null
+  const replyModelProviderId = replyModelMessage ? replyModelProvider(replyModelMessage, autoRoutes) : undefined
   const mcpAppParts = collectMcpAppParts(items)
 
   // Leading messages without prose (tool/reasoning steps) render inline and
@@ -1598,14 +1667,19 @@ function MessageGroup({
         : `${stepRowCount} steps`
   // A short finished run reads fine as a list, so only long ones fold away.
   const collapseSteps =
-    !isLiveGroup && stepItems.length > 0 && stepRowCount > COLLAPSED_STEP_RUN_MIN_ROWS
+    !isLiveGroup && stepItems.length > 0 && stepRowCount >= COLLAPSED_STEP_RUN_MIN_ROWS
+    && !stepsNeedAttention(stepItems, connectionCardParts)
   // A task on another computer outlives the turn that started it and may still
   // need the person, so its row stays in view below a folded run.
   const pinnedRemoteThreads = collapseSteps ? remoteThreadStarts : []
   const pinnedRemoteIds = pinnedRemoteThreads.length > 0 ? new Set(pinnedRemoteThreads.map(({ part }) => part.toolCallId)) : NO_PINNED_REMOTE_THREADS
   const replyStartedAt = stepsStartedAt ?? (lastRealItem ? getMessageCreated(lastRealItem.message) : null)
-  const replySummaryLabel = replyStartedAt !== null && stepsEndedAt !== null && stepsEndedAt > replyStartedAt
-    ? `Worked for ${formatToolCallDuration(stepsEndedAt - replyStartedAt)}${stepRowCount ? ` · ${stepRowCount} ${stepRowCount === 1 ? "step" : "steps"}` : ""}`
+  const stepCountLabel = stepRowCount ? `${stepRowCount} ${stepRowCount === 1 ? "step" : "steps"}` : null
+  const replyWorkedLabel = replyStartedAt !== null && stepsEndedAt !== null && stepsEndedAt > replyStartedAt
+    ? `Worked for ${formatToolCallDuration(stepsEndedAt - replyStartedAt)}`
+    : null
+  const replySummaryLabel = replyWorkedLabel
+    ? `${replyWorkedLabel}${stepCountLabel ? ` · ${stepCountLabel}` : ""}`
     : stepRowCount ? stepRunLabel : ""
   const foldedReasoning = collapseSteps
     ? proseReasoning.map((reasoning) => (
@@ -1691,12 +1765,23 @@ function MessageGroup({
       {/* The scroll area keeps the same 8px rhythm the parts inside a single
           message use, so a step row is spaced identically whether or not a
           message boundary happens to fall between it and the previous row. */}
-      {!isLiveGroup && resolvedReplyModel && !collapseSteps && replySummaryLabel ? <div data-testid="completed-work-rail" className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-1 px-2 text-sm text-muted-foreground md:px-10">
-        <span>{replySummaryLabel}</span>
+      {/* A finished turn kept open (it needs the person, T2) still says how long it worked,
+          on the same line the fold would use: lane, duration, quiet count (C7). */}
+      {!isLiveGroup && resolvedReplyModel && !collapseSteps && replySummaryLabel ? <div data-testid="completed-work-rail" data-completed-work-rail="open" className="mx-auto flex w-full max-w-3xl px-2 md:px-10">
+        <div className="flex min-h-6 items-center gap-2 text-xs text-muted-foreground">
+          <LeadingLane />
+          <span>{replyWorkedLabel ?? replySummaryLabel}</span>
+          {replyWorkedLabel && stepCountLabel ? <RailMeta>{stepCountLabel}</RailMeta> : null}
+        </div>
       </div> : null}
       {stepItems.length > 0 ? (
         collapseSteps ? (
-          <CompletedStepRun label={resolvedReplyModel ? replySummaryLabel : stepRunLabel} modelLabel={null}>
+          <CompletedStepRun
+            label={(resolvedReplyModel ? replyWorkedLabel : null) ?? stepRunLabel}
+            // "2 steps" is quiet metadata beside the duration, not a middle-dot string (C7).
+            count={((resolvedReplyModel ? replyWorkedLabel : null) ?? stepRunLabel).startsWith("Worked for") ? stepCountLabel : null}
+            modelLabel={null}
+          >
             <div className="flex flex-col gap-2">
               {renderItems(stepItems, 0)}
               {foldedReasoning}
@@ -1718,9 +1803,14 @@ function MessageGroup({
         </Message>
       ))}
       {renderItems(proseItems, stepItems.length, collapseSteps || panelLive)}
+      {groupSkillCards.length > 0 ? (
+        <div data-created-skills="" className="mx-auto mt-1 flex w-full max-w-3xl flex-col gap-2 px-2 md:px-10">
+          {groupSkillCards.map((card) => <CreatedSkillCard key={card.kind === "ready" ? card.skillId : card.key} card={card} />)}
+        </div>
+      ) : null}
       {lastTextMessage && !isStreaming && (
         <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 md:px-8">
-          <div className={cn("flex items-center gap-2 transition-opacity duration-150 ease-out motion-reduce:transition-none group-hover/message-group:opacity-100 group-focus-within/message-group:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100", forkingMessageId && forkingMessageId === lastRealItem?.message.id ? "opacity-100" : "opacity-0")}>
+          <div className={cn("flex items-center gap-2 transition-opacity duration-150 ease-out motion-reduce:transition-none group-hover/message-group:opacity-100 group-focus-within/message-group:opacity-100 pointer-coarse:opacity-100", forkingMessageId && forkingMessageId === lastRealItem?.message.id ? "opacity-100" : "opacity-0")}>
           <MessageActions data-testid="reply-actions" className="flex gap-0">
             <CopyMessageButton messages={renderableItems.map((item) => item.message)} />
             {lastRealItem ? (
@@ -1747,11 +1837,11 @@ function MessageGroup({
               not compounded opacity. Hidden actions retain their layout slot. */}
           {!isLiveGroup && resolvedReplyModel ? <span
             data-testid="reply-model"
-            className={cn("inline-flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground dark:text-foreground/70 transition-opacity duration-150 ease-out motion-reduce:transition-none group-hover/message-group:opacity-100 group-focus-within/message-group:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100", isLastGroup ? "opacity-100" : "opacity-0")}
+            className="inline-flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground dark:text-foreground/70 opacity-0 transition-opacity duration-150 ease-out motion-reduce:transition-none group-hover/message-group:opacity-100 group-focus-within/message-group:opacity-100 pointer-coarse:opacity-100"
           >
             <span className="sr-only">Replied with </span>
             <span aria-hidden="true" className="flex size-3 shrink-0 items-center justify-center">
-              {replyModelMessage && replyModelProvider(replyModelMessage) ? <ProviderIcon providerId={replyModelProvider(replyModelMessage)} size={12} /> : null}
+              {replyModelProviderId ? <ProviderIcon providerId={replyModelProviderId} size={12} /> : null}
             </span>
             <span className="truncate">{resolvedReplyModel}</span>
           </span> : null}
@@ -1816,8 +1906,9 @@ interface MessageListProps {
 /**
  * The turn's "Working 12s" line stays on screen for the whole run, including
  * while a tool row shows its own live step: the row says what is happening
- * now, the line says the turn is still going and how long since the person's
- * last message. Hiding it between steps made the chat look finished.
+ * now, the line says the turn is still going and how long it has been working,
+ * including follow-ups sent mid-run. Hiding it between steps made the chat
+ * look finished.
  */
 export function shouldShowMessageListLoading(status: ThreadStatus, messageCount: number) {
   return status === "streaming" || (status === "submitted" && messageCount > 0)
@@ -1843,6 +1934,13 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     .filter(isToolUIPart).filter(isTaskToolPart).map(taskChildSessionId).filter((id): id is string => Boolean(id)))], [messages])
   const backgroundCount = useSessionActivityStore(state => delegatedIds.filter(id =>
     state.recordsByWorkspaceId[workspaceId]?.[id]?.runActive).length)
+  // The run is paused while it, or a helper it waits on, asks the person for
+  // an approval or answer. Background helpers do not hold up the run.
+  const foregroundHelperIds = React.useMemo(() => [...new Set(messages.flatMap(message => message.parts)
+    .filter(isToolUIPart).filter(isTaskToolPart).filter(part => part.input?.background !== true)
+    .map(taskChildSessionId).filter((id): id is string => Boolean(id)))], [messages])
+  const runWaits = useSessionActivityStore(useShallow(state => [sessionId, ...foregroundHelperIds]
+    .map(id => state.recordsByWorkspaceId[workspaceId]?.[id]?.waits ?? NO_WAITS)))
 
   const [observedAt] = React.useState(() => Date.now())
   const lastProgressAt = useSessionActivityStore((state) => {
@@ -1867,16 +1965,9 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
   const [runElapsedSeconds, setRunElapsedSeconds] = React.useState(0)
   // Anchor the counter to the user message that started the run (server
   // timestamp), so switching sessions and back doesn't reset it to 0 on
-  // remount. Optimistic messages without metadata fall back to first-mount
-  // wall clock.
-  const runStartedAt = React.useMemo(() => {
-    if (!runActive) return null
-    for (let index = messages.length - 1; index >= 0; index--) {
-      const message = messages[index]
-      if (message && message.role === "user") return getMessageCreated(message)
-    }
-    return null
-  }, [messages, runActive])
+  // remount, and a follow-up sent mid-run doesn't restart it. Optimistic
+  // messages without metadata fall back to first-mount wall clock.
+  const runStartedAt = React.useMemo(() => runActive ? getRunStartedAt(messages) : null, [messages, runActive])
   React.useEffect(() => {
     if (!activityActive) {
       runStartedAtRef.current = null
@@ -1890,14 +1981,18 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     // still happening. The anchor is kept, so a confirmed recovery resumes
     // the true task age instead of restarting at zero.
     if (syncDegraded) return
+    const waits = runWaits.flat()
     const updateElapsed = () => {
       const startedAt = runStartedAtRef.current
-      if (startedAt !== null) setRunElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)))
+      if (startedAt === null) return
+      // Time spent waiting for the person's approval or answer is not work.
+      const now = Date.now()
+      setRunElapsedSeconds(Math.max(0, Math.floor((now - startedAt - getWaitedMs(waits, startedAt, now)) / 1000)))
     }
     updateElapsed()
     const interval = window.setInterval(updateElapsed, 1000)
     return () => window.clearInterval(interval)
-  }, [activityActive, runStartedAt, syncDegraded])
+  }, [activityActive, runStartedAt, syncDegraded, runWaits])
   const latestUserMessageId = React.useMemo(() => messages.findLast((message) => message.role === "user")?.id, [messages])
   // Steps that render nothing are removed before layout, so they leave no gap.
   const remoteThreads = useRemoteThreadsEnabled()
@@ -1934,8 +2029,10 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     () => new Set(latestAssistantToolParts.map((part) => part.toolCallId)),
     [latestAssistantToolParts],
   )
+  const createdSkills = useCreatedSkillsModel(messages, appRunActive && !syncDegraded)
 
   return (
+    <CreatedSkillsContext.Provider value={createdSkills}>
     <ParentRunActiveContext.Provider value={appRunActive}>
     <AppPanelLiveContext.Provider value={appPanelLive}>
     <BuiltAppPreviewSync key={sessionId} messages={messages} active={runActive}>
@@ -2014,5 +2111,47 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     </BuiltAppPreviewSync>
     </AppPanelLiveContext.Provider>
     </ParentRunActiveContext.Provider>
+    </CreatedSkillsContext.Provider>
   )
+}
+
+/** Same model, same object: text streaming must not re-render every group's cards. */
+function sameCreatedSkills(left: CreatedSkillsModel, right: CreatedSkillsModel): boolean {
+  return JSON.stringify([left.cards, [...left.shareLabels], [...left.savedNames]])
+    === JSON.stringify([right.cards, [...right.shareLabels], [...right.savedNames]])
+}
+
+/**
+ * Created skills for the whole conversation, plus what the person learned by
+ * checking (read-only) after a share went unconfirmed.
+ */
+function useCreatedSkillsModel(messages: UIMessage[], live: boolean): CreatedSkillsContextValue {
+  const { onOpenLibraryDetail } = useMessageList()
+  const [checked, setChecked] = React.useState<ReadonlyMap<string, ConfirmedSkillAccess>>(() => new Map())
+  const next = React.useMemo(() => {
+    const collected = collectCreatedSkills(messages, { live })
+    return checked.size === 0 ? collected : {
+      ...collected,
+      cards: collected.cards.map((card) => {
+        const access = card.kind === "ready" ? checked.get(card.pluginId) : undefined
+        if (!access || card.kind !== "ready") return card
+        // A check answers an unconfirmed share; anything still running stays as it is.
+        return { ...card, access, pending: card.pending?.state === "unverified" ? null : card.pending }
+      }),
+    }
+  }, [messages, live, checked])
+  // Keep the previous object while nothing changed (derived state, not a ref).
+  const [stable, setStable] = React.useState<CreatedSkillsModel>(next)
+  const unchanged = stable === next || sameCreatedSkills(stable, next)
+  if (!unchanged) setStable(next)
+  const model = unchanged ? stable : next
+  const onCheckSharing = React.useCallback(async (pluginId: string) => {
+    try {
+      const access = await readCreatedSkillAccess(pluginId)
+      setChecked((current) => new Map(current).set(pluginId, access))
+    } catch (cause) {
+      console.warn("[created-skill] checking sharing failed", cause)
+    }
+  }, [])
+  return React.useMemo(() => ({ ...model, onOpenSkill: onOpenLibraryDetail, onCheckSharing }), [model, onOpenLibraryDetail, onCheckSharing])
 }

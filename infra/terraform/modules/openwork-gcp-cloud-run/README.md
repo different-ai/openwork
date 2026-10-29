@@ -89,7 +89,7 @@ Get the setup code directly from Secret Manager, without logging it, using the `
 | `smtp` | Host/user/password empty, port `587`, secure `false`; password stored in Secret Manager |
 | `create_database`, `database_url`, `cloud_sql_connection_name` | `true`, empty, empty; bring an existing database by setting create false and a verified URL |
 | `database.tier`, `database.edition`, `database.database_version` | `db-g1-small` (**1.7 GB**), `ENTERPRISE`, `MYSQL_8_4`; micro reached its memory quota at idle |
-| `database.disk_size_gb`, `database.availability_type`, `database.backup_enabled` | `10`, `ZONAL`, `true` |
+| `database.disk_size_gb`, `database.availability_type`, `database.backup_enabled` | `20`, `ZONAL`, `true` |
 | `database.deletion_protection` | Deprecated nullable alias; when explicitly set it overrides the common input for Cloud SQL only |
 | `den_api` | CPU `1`, memory `2Gi`, min `1`, max `3` |
 | `den_web` | CPU `1`, memory `1Gi`, min `1`, max `3` (Cloud Run request-driven service floor uses one CPU) |
@@ -120,6 +120,29 @@ Existing Cloud SQL: `create_database = false`, `cloud_sql_connection_name = "PRO
 Existing `network`/`subnetwork` enable Direct VPC egress for services and job; `ALL_TRAFFIC` needs Cloud NAT. Existing certificates and a reserved global IP can be reused. Custom domain certificates become active after both hostnames resolve to `load_balancer_ip`; HTTP redirects to HTTPS. `restrict_ingress_to_load_balancer = true` disables direct run.app ingress.
 
 ## Upgrade notes
+
+**Database disk default: 10 → 20 GB.** Existing direct users who omitted
+`database.disk_size_gb` will see an in-place storage increase in their next plan.
+[Cloud SQL documents this increase as online, without downtime](https://docs.cloud.google.com/sql/docs/mysql/instance-settings#storage-capacity):
+it does not require a restart or replacement. This is a storage-only change,
+not an instance-tier change. **The disk cannot shrink afterward.** Review the
+whole plan: unrelated changes can still require maintenance. If automatic
+storage growth has already taken it above 20 GB, preserve the current allocation;
+do not attempt to reduce it to this default.
+
+Estimated zonal MySQL SSD storage in **us-central1**, at the public list price
+of **$0.17/GB-month**, goes from **$1.70 to $3.40/month (+$1.70)**.
+Estimate checked 2026-10-19; excludes database compute, backups, networking,
+taxes and discounts. See [Cloud SQL pricing](https://cloud.google.com/sql/pricing).
+To keep an existing 10 GB disk, set this **before applying the increase**
+(merge it into your current `database` object, preserving other settings):
+
+```hcl
+database = { disk_size_gb = 10 }
+```
+
+Automatic storage growth remains enabled; this override does not cap growth or
+undo an increase already applied. Managed installer sizes remain separately pinned.
 
 1. Back up and inventory **all** processes/manual jobs/other installations sharing this physical schema. Freeze rollout/retries; choose one coordinator.
 2. For legacy per-replica migrators, enter maintenance: scale old API to zero/stop it, disable replacements/autoscale and queued retries, await terminal old task/job/container states, and verify old DB sessions/in-flight DDL are gone. Drain other incompatible DB consumers too. A new lock cannot fence old noncooperating code.
@@ -155,4 +178,4 @@ For an S3 backend outside this GCP example, use native `use_lockfile = true`, no
 
 ## Cost notes
 
-Defaults keep one API (1 vCPU / 2 GiB) and one web (1 vCPU / 1 GiB) instance warm plus a db-g1-small (1.7 GB) with 10 GB disk, backups, secrets and image cache. This is a smoke-test baseline, **not** HA or production load sizing. SQL, warm-instance rates, storage, egress and optional load balancer/IP charges vary; estimate current regional prices before apply. The old micro-based daily estimate is no longer applicable. Min instances zero reduces Cloud Run idle cost but adds sign-in cold starts. Disposable `examples/complete` disables deletion protection and backups; do not copy those choices into production. Direct VPC egress can keep a subnet busy for up to roughly two hours after service deletion: budget teardown time, and never force-delete someone else's resources.
+Defaults keep one API (1 vCPU / 2 GiB) and one web (1 vCPU / 1 GiB) instance warm plus a db-g1-small (1.7 GB) with 20 GB disk, backups, secrets and image cache. This is a smoke-test baseline, **not** HA or production load sizing. SQL, warm-instance rates, storage, egress and optional load balancer/IP charges vary; estimate current regional prices before apply. The old micro-based daily estimate is no longer applicable. Min instances zero reduces Cloud Run idle cost but adds sign-in cold starts. Disposable `examples/complete` disables deletion protection and backups; do not copy those choices into production. Direct VPC egress can keep a subnet busy for up to roughly two hours after service deletion: budget teardown time, and never force-delete someone else's resources.

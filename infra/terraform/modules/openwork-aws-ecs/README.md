@@ -225,6 +225,31 @@ at the `alb_dns_name` output (CNAME) at your DNS provider.
 
 ## Upgrade notes
 
+**Database size default: `db.t4g.micro` → `db.t4g.small`.** New installs get
+2 GiB of database memory instead of 1 GiB; API and web sizes are unchanged.
+Existing direct users who omitted `database.instance_class` will see an
+**in-place instance-class change** in their next plan. Applying it queues the
+change for the next RDS maintenance window by default (`apply_immediately = false`);
+the class change restarts the database and interrupts connections when performed.
+With `apply_immediately = true`, that restart happens during apply instead.
+Review pending modifications and schedule maintenance before applying. See
+[AWS modification behavior](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.DBInstance.Modifying.html).
+
+Estimated Single-AZ MySQL instance cost in **us-east-1** increases from
+**$11.68 to $23.36/month (+$11.68)** at 730 hours ($0.016 → $0.032/hour,
+public on-demand list prices checked 2026-10-19). Storage, CPU credits,
+backups, networking, taxes and discounts are excluded; this is not a total-stack quote.
+See [RDS pricing](https://aws.amazon.com/rds/mysql/pricing/).
+To keep the old size, set this in your module call **before upgrading**
+(merge it into your existing `database` object; keep its other settings):
+
+```hcl
+database = { instance_class = "db.t4g.micro" }
+```
+
+This opts out of the resize, but retains the measured low-memory risk of micro.
+Managed installers explicitly pin their own sizes and are unchanged by this default.
+
 **First upgrade from the old per-task migrator requires maintenance.** Reducing
 replicas to one is not an exclusion barrier. Before applying this module:
 
@@ -355,7 +380,7 @@ concepts use the common names below. AWS uses `tags` rather than GCP `labels`.
 | `alb_subnet_ids`, `database_subnet_ids` | `[]`; supply two AZs for managed ALB/RDS |
 | `create_database`, `database_url` | `true`, empty legacy URL; false brings an existing strict-TLS DB (write-only mode uses `secret_values_wo.database_url`) |
 | `deletion_protection` | `true`; deprecated `database.deletion_protection` overrides if set |
-| `database` | t4g.micro, MySQL 8.4, 20–100 GiB gp3, single AZ, 7-day backups, final snapshot, deferred changes, strict TLS |
+| `database` | t4g.small, MySQL 8.4, 20–100 GiB gp3, single AZ, 7-day backups, final snapshot, deferred changes, strict TLS |
 | `database_ca_bundle` | Empty fetches regional public RDS CA; PEM override for existing DB |
 | `den_api` | 1024 CPU units / 2048 MiB / one task; no migrations in replicas |
 | `den_web` | 512 CPU units / 1024 MiB / one task |
@@ -561,8 +586,23 @@ several deployments can share one Daytona organization.
 
 ## Cost notes
 
-### Rough cost (us-east-1, defaults)
+### Small / trial baseline
 
-About $3/day: den-api 1 vCPU/2 GB and den-web 0.5 vCPU/1 GB on Fargate, a
-db.t4g.micro RDS, and an ALB. ElastiCache adds about $0.40/day. A NAT
-gateway, if your VPC needs one, adds about $1/day.
+| Component | Default per copy |
+| --- | --- |
+| Den API | 1 vCPU / 2 GiB, one task |
+| Den web | 0.5 vCPU / 1 GiB, one task |
+| Database | db.t4g.small (2 GiB), 20 GiB gp3, single AZ, 7-day backups |
+| Migration task | 1 vCPU / 2 GiB, one task per deployment |
+
+This provisional baseline comes from light setup/sign-in measurements, not a
+user-capacity load test. Medium/Large and optional service sizes are not qualified.
+Use two API copies for service redundancy when needed (additional compute cost);
+this does not make the single-AZ database highly available.
+
+The instance-only monthly estimate and old-size opt-out are in
+[Upgrade notes](#upgrade-notes). Budget separately for Fargate, ALB, optional
+NAT/Redis, storage/backups, logs and image-transfer traffic. API/web size changes
+in this revision cost **$0/month extra** because those defaults are unchanged.
+Managed installer sizes are separately pinned; this module-default change does
+not update their small profile.

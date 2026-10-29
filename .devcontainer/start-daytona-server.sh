@@ -50,12 +50,12 @@ export BETTER_AUTH_URL="${BETTER_AUTH_URL:-$DEN_WEB_PUBLIC_URL}"
 export DEN_BETTER_AUTH_URL="$BETTER_AUTH_URL"
 export DEN_API_PUBLIC_URL
 export DEN_MCP_RESOURCE_URL="${DEN_MCP_RESOURCE_URL:-$DEN_API_PUBLIC_URL/mcp}"
-# DEN_API_BASE is the externally reachable Den API origin (see
-# packages/docs/start-here/private-network-deployment.mdx): Den Web publishes
-# it through /api/runtime-config as the desktop's denApiUrl. Desktops run in
-# other sandboxes and can only reach the public preview URL, never this
-# sandbox's loopback.
-export DEN_API_BASE="${DEN_API_BASE:-${DEN_API_PUBLIC_URL:-http://127.0.0.1:$DEN_API_PORT}}"
+# DEN_API_BASE is Den Web's server-side upstream; keep it on loopback so each
+# browser request doesn't leave the sandbox and re-enter through the public
+# preview proxy (~250 ms per call). Desktops still get the public origin:
+# /api/runtime-config publishes DEN_API_PUBLIC_URL as denApiUrl (see
+# packages/docs/start-here/private-network-deployment.mdx).
+export DEN_API_BASE="${DEN_API_BASE:-http://127.0.0.1:$DEN_API_PORT}"
 export DEN_AUTH_ORIGIN="${DEN_AUTH_ORIGIN:-$DEN_WEB_PUBLIC_URL}"
 export DEN_AUTH_FALLBACK_BASE="${DEN_AUTH_FALLBACK_BASE:-http://127.0.0.1:$DEN_API_PORT}"
 export NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL="${NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL:-$DEN_WEB_PUBLIC_URL}"
@@ -112,6 +112,252 @@ run_root() {
   fi
 }
 
+# The snapshot ships Oracle MySQL 8.4 (.devcontainer/Dockerfile.daytona-server).
+# Its Debian package only has a systemd unit and Daytona has no systemd, so run
+# mysqld directly when no SysV service exists (older MariaDB snapshots have one).
+start_mysql_server() {
+  if run_root service mysql start || run_root service mariadb start; then
+    return 0
+  fi
+  run_root install -d -o mysql -g mysql /var/run/mysqld
+  run_root mysqld --daemonize --user=mysql --pid-file=/var/run/mysqld/mysqld.pid
+}
+
+stop_mysql_server() {
+  run_root service mysql stop || run_root service mariadb stop || {
+    if [ -f /var/run/mysqld/mysqld.pid ]; then
+      run_root kill "$(run_root cat /var/run/mysqld/mysqld.pid)"
+      for _ in $(seq 1 30); do
+        pgrep -x mysqld >/dev/null || return 0
+        sleep 1
+      done
+      return 1
+    fi
+  }
+}
+
+# Workshop-only production cohosting. The provisioning wrapper must first
+# confirm provider public:false; never use an alias to evade origin validation.
+if [ "${OPENWORK_WORKSHOP_PRIVATE_COHOST:-0}" = "1" ]; then
+  if [ "${OPENWORK_DAYTONA_PRIVATE_SANDBOX:-0}" != "1" ] || [ "$OPENWORK_DEV_MODE" != "0" ] || [ "$GATEWAY_ENABLED" != "true" ]; then
+    echo "ERROR: workshop cohosting requires a confirmed private sandbox, production mode, and Gateway." >&2
+    exit 1
+  fi
+  COHOST_IP="$(node - "$(hostname -I)" <<'COHOST_IP_JS'
+const { networkInterfaces } = require('node:os');
+const owned = new Set(Object.values(networkInterfaces()).flat().filter(Boolean)
+  .filter((entry) => !entry.internal && entry.family === 'IPv4').map((entry) => entry.address));
+const privateIp = process.argv[2].trim().split(/\s+/).find((ip) => {
+  const parts = ip.split('.').map(Number);
+  return /^\d+\.\d+\.\d+\.\d+$/.test(ip) && parts.every((part) => part >= 0 && part <= 255)
+    && owned.has(ip) && (parts[0] === 10 || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
+      || (parts[0] === 192 && parts[1] === 168));
+});
+if (!privateIp) { console.error('ERROR: no actual private IPv4 interface for workshop cohosting.'); process.exit(1); }
+process.stdout.write(privateIp);
+COHOST_IP_JS
+)"
+  # Bind only the actual container interface, not all interfaces. MySQL's unix
+  # socket remains available for local schema/bootstrap operations below.
+  # MySQL first: the base image also ships mariadb-common's directory, which
+  # Oracle MySQL never reads.
+  if command -v mysqld >/dev/null 2>&1 && mysqld --version | grep -q 'MySQL Community' && [ -d /etc/mysql/mysql.conf.d ]; then
+    cohost_mysql_config=/etc/mysql/mysql.conf.d/99-openwork-workshop.cnf
+  elif [ -d /etc/mysql/mariadb.conf.d ]; then
+    cohost_mysql_config=/etc/mysql/mariadb.conf.d/99-openwork-workshop.cnf
+  elif [ -d /etc/mysql/mysql.conf.d ]; then
+    cohost_mysql_config=/etc/mysql/mysql.conf.d/99-openwork-workshop.cnf
+  else
+    echo "ERROR: unsupported MySQL configuration layout for private cohosting." >&2
+    exit 1
+  fi
+  printf '[mysqld]\nbind-address = %s\n' "$COHOST_IP" | run_root tee "$cohost_mysql_config" >/dev/null
+  # The snapshot may already have MySQL running with its old loopback binding.
+  stop_mysql_server >/dev/null 2>&1 || true
+  # The private interface carries no shared or fixed credential: Den uses a
+  # per-boot random password for an account limited to its own database and to
+  # connections from this backend's own address. Root stays socket/loopback-only.
+  WORKSHOP_DB_PASSWORD="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("hex"))')"
+  export DATABASE_URL="mysql://openwork_den:$WORKSHOP_DB_PASSWORD@$COHOST_IP:3306/openwork_den"
+  export GATEWAY_PROXY_BASE_URL="http://$COHOST_IP:$GATEWAY_PORT"
+
+  # Private workshop mail is deliberately discarded, never delivered or exposed
+  # through an HTTP outbox. Keep this inline: provisioning uploads this script.
+  smtp_script="$(mktemp /tmp/workshop-smtp.XXXXXX)"
+  chmod 600 "$smtp_script"
+  cat > "$smtp_script" <<'WORKSHOP_SMTP_JS'
+import net from 'node:net';
+import { readFile, writeFile, unlink } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+
+const banner = '220 workshop-discard ESMTP';
+export function createDiscardServer() {
+  const sockets = new Set();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    const lifetime = setTimeout(() => socket.destroy(), 120_000);
+    lifetime.unref();
+    socket.on('close', () => { clearTimeout(lifetime); sockets.delete(socket); });
+    socket.on('error', () => {});
+    socket.setTimeout(30_000, () => socket.destroy());
+    let pending = Buffer.alloc(0);
+    let greeted = false;
+    let sender = false;
+    let recipients = false;
+    let data = false;
+    let bytes = 0;
+    const reset = () => { sender = false; recipients = false; data = false; bytes = 0; };
+    const reply = (text) => socket.write(`${text}\r\n`);
+    reply(banner);
+    socket.on('data', (chunk) => {
+      pending = Buffer.concat([pending, chunk]);
+      let end;
+      while ((end = pending.indexOf('\r\n')) !== -1) {
+        const raw = pending.subarray(0, end);
+        pending = pending.subarray(end + 2);
+        if (data) {
+          if (raw.length === 1 && raw[0] === 46) {
+            reset();
+            reply('250 Discarded');
+          } else {
+            bytes += raw.length + 2;
+            if (bytes > 1024 * 1024) {
+              socket.end('552 Message too large\r\n', () => socket.destroy());
+              return;
+            }
+          }
+          continue;
+        }
+        if (raw.length > 4096) { socket.destroy(); return; }
+        const line = raw.toString('utf8');
+        if (/^(EHLO|HELO) \S+$/i.test(line)) {
+          greeted = true;
+          reset();
+          reply('250-workshop-discard');
+          reply('250 SIZE 1048576');
+        } else if (/^QUIT$/i.test(line)) {
+          socket.end('221 Bye\r\n');
+          return;
+        } else if (/^NOOP$/i.test(line)) {
+          reply('250 OK');
+        } else if (/^RSET$/i.test(line)) {
+          reset();
+          reply('250 OK');
+        } else if (/^MAIL FROM:<[^<>\r\n]*>(?: SIZE=\d+)?$/i.test(line)) {
+          reset();
+          if (!greeted) { reply('503 EHLO first'); continue; }
+          sender = true;
+          reply('250 OK');
+        } else if (/^RCPT TO:/i.test(line)) {
+          if (!sender) { reply('503 MAIL first'); continue; }
+          // A deliberately small addr-spec subset; no display names, routing,
+          // quoted local parts, subdomains, whitespace or external recipients.
+          const recipient = /^RCPT TO:<([a-z0-9!#$%&'*+\-/=?^_`{|}~]+(?:\.[a-z0-9!#$%&'*+\-/=?^_`{|}~]+)*)@workshop\.test>$/i.exec(line);
+          if (!recipient || recipient[1].length > 64) {
+            reply('550 Only workshop.test recipients accepted');
+            continue;
+          }
+          recipients = true;
+          reply('250 OK');
+        } else if (/^DATA$/i.test(line)) {
+          if (!recipients) { reply('503 RCPT first'); continue; }
+          data = true;
+          reply('354 End with <CRLF>.<CRLF>');
+        } else {
+          reply('502 Command not supported');
+        }
+      }
+      if (pending.length > (data ? 1024 * 1024 - bytes : 4096)) {
+        socket.end('552 Input too large\r\n', () => socket.destroy());
+      }
+    });
+  });
+  server.maxConnections = 16;
+  server.on('close', () => { for (const socket of sockets) socket.destroy(); });
+  return server;
+}
+
+async function healthy() {
+  return new Promise((resolve) => {
+    const socket = net.connect(2525, '127.0.0.1');
+    let text = '';
+    const done = (ok) => { socket.destroy(); resolve(ok); };
+    socket.setTimeout(2000, () => done(false));
+    socket.on('error', () => done(false));
+    socket.on('close', () => done(false));
+    socket.on('data', (chunk) => {
+      text += chunk.toString();
+      if (text.includes('\r\n')) done(text === `${banner}\r\n`);
+      else if (text.length > 100) done(false);
+    });
+  });
+}
+
+async function start() {
+  const pidFile = '/tmp/workshop-smtp.pid';
+  let previous;
+  try { previous = (await readFile(pidFile, 'utf8')).trim(); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (previous) {
+    if (!/^[1-9]\d*$/.test(previous)) throw new Error('Invalid workshop SMTP ownership');
+    let command;
+    try { command = await readFile(`/proc/${previous}/cmdline`, 'utf8'); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (command) {
+      const args = command.split('\0');
+      if (args[1] !== '/tmp/workshop-smtp.mjs' || args[2] !== '--serve') {
+        throw new Error('Workshop SMTP PID belongs to another process');
+      }
+      if (!await healthy()) throw new Error('Owned workshop SMTP is unhealthy');
+      return;
+    }
+    await unlink(pidFile);
+  }
+  // Never terminate a port occupant. A bind collision fails closed.
+  const child = spawn(process.execPath, ['/tmp/workshop-smtp.mjs', '--serve'], {
+    detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    // Mail discarding needs no model, database or other inherited credentials.
+    env: {},
+  });
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { child.kill(); reject(new Error('Workshop SMTP startup timed out')); }, 5000);
+    child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    child.once('exit', () => { clearTimeout(timer); reject(new Error('Workshop SMTP bind failed')); });
+    child.once('message', async () => {
+      clearTimeout(timer);
+      try {
+        await writeFile(pidFile, `${child.pid}\n`, { mode: 0o600, flag: 'wx' });
+        if (!await healthy()) throw new Error('Workshop SMTP greeting failed');
+        child.disconnect();
+        child.unref();
+        resolve();
+      } catch (error) { child.kill(); reject(error); }
+    });
+  });
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    if (process.argv[2] === '--serve') {
+      const server = createDiscardServer();
+      server.on('error', () => process.exit(1));
+      server.listen(2525, '127.0.0.1', () => process.send('ready'));
+    } else {
+      await start();
+    }
+  } catch {
+    console.error('ERROR: private workshop SMTP could not start safely.');
+    process.exit(1);
+  }
+}
+WORKSHOP_SMTP_JS
+  mv -f "$smtp_script" /tmp/workshop-smtp.mjs
+  node /tmp/workshop-smtp.mjs
+  export SMTP_HOST=127.0.0.1 SMTP_PORT=2525 SMTP_SECURE=false
+  export EMAIL_FROM='Workshop <host@workshop.test>' SMTP_USER= SMTP_PASS=
+fi
+
 MYSQL_ROOT_CMD=(run_root mysql -uroot)
 
 wait_for_http() {
@@ -134,7 +380,7 @@ wait_for_http() {
 }
 
 echo "==> Starting MySQL..."
-run_root service mysql start >/tmp/openwork-mysql-service.log 2>&1 || run_root service mariadb start >/tmp/openwork-mysql-service.log 2>&1
+start_mysql_server >/tmp/openwork-mysql-service.log 2>&1 || true
 
 for _ in $(seq 1 60); do
   if mysql -uroot -ppassword -e "SELECT 1" >/dev/null 2>&1; then
@@ -148,7 +394,21 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 
-"${MYSQL_ROOT_CMD[@]}" <<'SQL'
+if [ "${OPENWORK_WORKSHOP_PRIVATE_COHOST:-0}" = "1" ]; then
+  # MySQL listens on the private interface here, so no network root account and
+  # no fixed password may exist: only the per-boot Den account, from this host.
+  "${MYSQL_ROOT_CMD[@]}" <<SQL
+CREATE DATABASE IF NOT EXISTS openwork_den;
+ALTER USER 'root'@'localhost' IDENTIFIED BY 'password';
+DROP USER IF EXISTS 'root'@'%';
+DROP USER IF EXISTS 'openwork_den'@'%';
+DROP USER IF EXISTS 'openwork_den'@'$COHOST_IP';
+CREATE USER 'openwork_den'@'$COHOST_IP' IDENTIFIED BY '$WORKSHOP_DB_PASSWORD';
+GRANT ALL PRIVILEGES ON openwork_den.* TO 'openwork_den'@'$COHOST_IP';
+FLUSH PRIVILEGES;
+SQL
+else
+  "${MYSQL_ROOT_CMD[@]}" <<'SQL'
 CREATE DATABASE IF NOT EXISTS openwork_den;
 ALTER USER 'root'@'localhost' IDENTIFIED BY 'password';
 CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY 'password';
@@ -156,6 +416,7 @@ GRANT ALL PRIVILEGES ON *.* TO 'root'@'localhost' WITH GRANT OPTION;
 GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
 FLUSH PRIVILEGES;
 SQL
+fi
 
 echo "==> Installing dependencies if needed..."
 mkdir -p "$PNPM_STORE" .openwork-daytona
@@ -233,11 +494,18 @@ wait_for_http "http://127.0.0.1:$DEN_API_PORT/health" "Den API" 180
 
 if [ "$GATEWAY_ENABLED" = "true" ]; then
   echo "==> Starting AI Gateway on :$GATEWAY_PORT..."
+  GATEWAY_CORS_ORIGINS="$CORS_ORIGINS"
+  if [ "${OPENWORK_WORKSHOP_PRIVATE_COHOST:-0}" = "1" ]; then
+    # Gateway validates every browser origin as public HTTPS in production;
+    # Den's ordinary local-development CORS defaults are not suitable here.
+    GATEWAY_CORS_ORIGINS="$DEN_WEB_PUBLIC_URL,$DEN_API_PUBLIC_URL"
+  fi
   pkill -f "tsx src/server.ts" >/dev/null 2>&1 || true
   # GATEWAY_* and DATABASE_URL are already exported above; only the process
   # port and the shared runtime flags need naming here.
   nohup env \
     PORT="$GATEWAY_PORT" \
+    CORS_ORIGINS="$GATEWAY_CORS_ORIGINS" \
     DB_MODE=mysql \
     NODE_ENV=test \
     SENTRY_DSN= \

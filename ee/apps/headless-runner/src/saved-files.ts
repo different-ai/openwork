@@ -194,9 +194,11 @@ export class SavedFiles {
     await Promise.all(Array.from({ length: pages }, (_, index) => this.blobs.delete(previewPageKey(storageKey, index + 1)).catch(() => undefined)))
   }
 
-  /** Deletes the bytes of every file in a session, and their previews; the rows go with the session. */
-  async deleteSession(sessionId: string) {
-    const keys = this.store.savedFileKeys(sessionId)
+  /**
+   * Deletes the bytes of every file in a session, and their previews; the rows go with the session. `keys`: the files'
+   * storage keys, read before the session's rows were deleted.
+   */
+  async deleteSession(sessionId: string, keys: string[] = this.store.savedFileKeys(sessionId)) {
     await Promise.all(keys.map(async (key) => {
       await this.blobs.delete(key).catch(() => undefined)
       await this.deletePreview(key)

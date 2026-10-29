@@ -23,4 +23,4 @@ runs:
         pnpm --filter @openwork/email build
     - name: Start MySQL
       shell: bash
-      run: pnpm dev:den:mysql
+      run: pnpm ci:den:mysql

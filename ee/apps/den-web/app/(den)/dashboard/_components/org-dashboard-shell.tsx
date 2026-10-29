@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
+  LockKeyhole,
   LogOut,
   Menu,
   MessageSquare,
@@ -49,8 +50,11 @@ import {
   getWorkflowRunsRoute,
   getWebRoute,
   getPermissionsRoute,
+  getLibraryMyAgentRoute,
 } from "../../_lib/den-org";
+import { myAgentAvailable } from "./my-agent-availability";
 import { useOrgListWindow } from "../../_lib/use-org-list-window";
+import { countLabel, organizationPlanLabel } from "../../_lib/plan-display";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { buildDenFeedbackUrl } from "../../_lib/feedback";
 import { OrgSelectionScreen } from "../_features/org-selection/org-selection-screen";
@@ -68,6 +72,7 @@ import { useLibraryNeedsSignInCount } from "./library-data";
 import { useLibraryModels } from "./library-models-data";
 import { UserProfileDialog } from "./user-profile-dialog";
 import { DownloadOpenWorkButton } from "./download-openwork-button";
+import { useWorkbotEntry } from "./workbot-entry-dialog";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
 
@@ -259,6 +264,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getAutomationsRoute(orgSlug))) {
     return "My Automations";
   }
+  if (pathname.startsWith(getLibraryMyAgentRoute(orgSlug))) {
+    return "My bot";
+  }
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
     return "Bring your Own Keys";
   }
@@ -397,6 +405,18 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const libraryModels = useLibraryModels(sidebarQueriesEnabled);
   const libraryNeedsSignIn = useLibraryNeedsSignInCount(sidebarQueriesEnabled)
     + (libraryModels.data ?? []).filter((provider) => provider.state === "needs_signin").length;
+  const access = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.currentMember.permissions,
+  );
+  const workbot = useWorkbotEntry({
+    orgId: orgContext?.organization.id ?? null,
+    orgSlug: activeOrg?.slug ?? null,
+    orgContext,
+    access,
+    enabled: sidebarQueriesEnabled,
+  });
 
   // The picker replaces the whole shell until a workspace is chosen.
   if (orgSelectionOpen) {
@@ -420,12 +440,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       </>
     );
   }
-
-  const access = getOrgAccessFlags(
-    orgContext?.currentMember.role ?? "member",
-    orgContext?.currentMember.isOwner ?? false,
-    orgContext?.currentMember.permissions,
-  );
 
   const basePageTitle = getDashboardPageTitle(pathname, activeOrg?.slug ?? null);
   // the permission pages are role pages.
@@ -456,8 +470,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     runtimeConfigLoaded,
 
     managedDeployments: orgFeatureEnabled(orgContext, "managedDeployments"),
+    canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
 
     desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),
+    workbotEntry: workbot.entry,
+    myBot: myAgentAvailable(orgContext),
   });
 
   const orgSwitcher = isSingleOrgMode ? (
@@ -571,7 +588,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                         <div className="min-w-0">
                           <span className="block truncate text-[13px] font-medium tracking-[-0.1px]">{org.name}</span>
                           <span className="block truncate text-[12px] text-gray-500">
-                            {org.role === "owner" ? "Creator plan" : "Free plan"} • {org.memberCount} {org.memberCount === 1 ? "member" : "members"}
+                            {[organizationPlanLabel(org), countLabel(org.memberCount, "member")].filter(Boolean).join(" • ")}
                           </span>
                         </div>
                       </div>
@@ -691,7 +708,10 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                       <Link
                         href={item.href}
                         data-testid={item.testId}
-                        onClick={() => setSidebarOpen(false)}
+                        onClick={(event) => {
+                          setSidebarOpen(false);
+                          if (workbot.interceptNavigation(item.href)) event.preventDefault();
+                        }}
                         onPointerEnter={() => prefetch(item.href)}
                         onFocus={() => prefetch(item.href)}
                         className={`flex min-w-0 items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-[13px] tracking-[-0.1px] transition-colors ${
@@ -705,6 +725,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                           <span className="min-w-0 truncate">{item.label}</span>
                         </span>
                         <span className="flex shrink-0 items-center gap-1.5">
+                          {item.locked ? (
+                            <span className="flex shrink-0 text-gray-500" role="img" aria-label={item.locked} title={item.locked} data-testid="nav-locked">
+                              <LockKeyhole className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden />
+                            </span>
+                          ) : null}
                           {item.attention ? (
                             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" role="img" aria-label={item.attention} title={item.attention} data-testid="nav-attention" />
                           ) : null}
@@ -847,7 +872,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       <DenCommandPalette
         open={commandPaletteOpen}
         onOpenChange={handleCommandPaletteOpenChange}
+        interceptNavigation={workbot.interceptNavigation}
       />
+      {workbot.dialog}
 
       {shouldShowProfilePrompt && user ? (
         <UserProfileDialog

@@ -21,6 +21,115 @@ Workbot ── + owner header ────┘   (src/worker/index.ts)  └─ ce
 `Store` and `Runner` are the Node runner's code; only `src/worker/` knows about cells. Saved files must use
 `HEADLESS_FILES=s3` (or `off`): their bytes stay in the blob bucket, separate from celld's database bucket.
 
+## Session cells: each Workbot chat in its own cell
+
+Workbot connected to a current Den gives each new chat an id `hs_c_<32 hex>` and `memoryScope: "owner"`, and asks
+the runner once per person to split their owner cell (`POST /v1/owner/split`). The owner cell keeps only the chat list,
+the shared memory and forwarding rows, so each cell stays small however many chats a person has.
+
+```text
+                      ┌─ "owner:wb:<person>"  directory of chats in session cells, shared memory (owner_memory),
+Workbot + owner ─ router                      legacy chats not yet split, forwarding rows for split ones
+                      ├─ "session:hs_c_…"     one chat: its turns, tasks, files, live events; owner stored at creation
+                      └─ "session:hs_wb_…"    a legacy chat after the split (same id), reached through the owner cell
+```
+
+- **Placement** (`src/worker/index.ts`): with the owner header, an id matching `^hs_c_[a-f0-9]{32}$` goes to
+  `session:<id>`; any other id and every owner-level route (`GET /v1/sessions?owner=`, `POST /v1/owner/split`) go to
+  the owner cell as before. Without an owner, an `hs_c_` id or `/v1/owner/*` answers `400 owner_required`.
+- **A session cell checks its owner.** The request that creates the chat (`PUT`) stores the router-supplied owner in
+  the cell (`cells_meta`); every later request must carry the same owner header, else `404 unknown_session` (another
+  owner) or `400 owner_required` (none). The owner stays after a delete, so nobody else can take the id over. A moved
+  legacy chat's cell has its owner stored by the split, and answers owner-less requests `404`.
+- **Directory.** A session cell keeps its line in the owner cell (`title, ref, created_at, updated_at, has_turns,
+  deleted`, versioned) with a call to the owner cell's `/internal/owner-directory`: synchronously when the chat is
+  created or deleted, otherwise from a durable outbox (`directory_outbox`, background job `owner-directory`: retried
+  immediately, then 30 s, 2 min, 10 min, hourly; reported after 5 failures in a row). A newer version always wins;
+  a deleted chat leaves a tombstone. `GET /v1/sessions?owner=` merges legacy chats and directory rows, newest first,
+  in the same shape as before; like legacy chats, only chats with a message are listed.
+- **Shared memory.** `memoryScope: "owner"` (strict enum; needs an owner) puts the chat's `memory/` in the owner's
+  memory (`owner_memory`), shared by all their chats. A session cell reads it from the owner cell
+  (`/internal/memory`) once per turn (once per step in step mode), when it builds the system prompt, and writes through
+  on each file tool call; the files API shows it too. If the owner cell doesn't answer (3 tries), the turn fails
+  `memory_unavailable` (resend it) or, in step mode, the step runs again in 15 s; a file tool returns an error. The first
+  time an owner's memory is used, the memory their legacy chats share becomes it (the chat most others name in
+  `memoryOf`, Workbot's main chat, else the oldest chat with memory files): its files move to `owner_memory` and the
+  chats sharing it switch to `memoryScope: "owner"`, in one transaction. A later `memoryOf` naming such a chat (Workbot
+  with the flag off) means the owner's memory. `memoryOf` is unchanged for everything else, and on the Node host
+  `memoryScope: "owner"` uses the same tables locally. The owner cell answers memory calls only from a session cell
+  of a chat in its directory (not deleted) or moved out of it (a forwarding row); any other cell gets `404`. A chat
+  whose directory entry is still in its outbox sends it on that `404` and asks once more.
+- **Exports carry the owner's memory.** `GET /v1/sessions/:id/export` of a chat on the owner's memory includes
+  `owner_memory` (each file with its `updated_at`); a Node import merges it into that owner's memory there, where
+  Node's own memory access reads it: a file is written unless the owner already has a version at least as new, and
+  nothing is deleted, so importing several of one person's chats keeps the newest of each file. Exports of other chats
+  are unchanged.
+- **Per chat, inside its cell:** live events (SSE and the hibernatable WebSocket), Stop, background tasks and reports,
+  step mode, self-resume and sealing all run in the session cell, from its own alarm.
+- **Delete** removes everything the session cell holds (the storage interface's delete) and its directory line.
+- **Cell-to-cell calls** (`/internal/*`) carry the calling cell's name and an HMAC of both names keyed by the service
+  token, and are answered only when both check out. The router answers every `/internal/*` path `404` and strips the
+  call headers from public requests, so no caller reaches them.
+
+### Splitting an owner cell
+
+`POST /v1/owner/split` (owner header; idempotent) answers `{ split: "started" | "running" | "done" | "not_needed" }`
+and starts the `owner-split` background job in the owner cell, which moves one legacy chat per alarm, most recently
+used first:
+
+1. Moves the shared memory to the owner's memory (above), if not done yet.
+2. Skips a busy chat (a turn queued or running, a step scheduled, or a turn waiting to self-resume) and tries it again
+   a minute later.
+3. Copies every row of the chat to `session:<same id>` through `/internal/import/*`, in batches of about 2 MiB:
+   `sessions` (with its Den index capability, index version and hot byte count) and every table keyed by
+   `session_id` (turns with their resume grants, messages, files, saved files, step state, the segment manifest, the
+   large-body map, `seal_state`), all but the pending Den index update (`index_outbox`, see 5). Then it commits there:
+   the session cell checks a SHA-256 over the conversation's content and state equals the owner cell's, or throws the
+   copy away. The fingerprint leaves out the storage engine's bookkeeping, which background work changes without
+   changing the conversation: `sessions.hot_bytes`, `index_version`, `index_capability`, `seal_state`, the index outbox,
+   pending object deletions and the directory outbox. Objects in the bucket (kept files, segments, large bodies) keep
+   their keys (`sessions/<id>/…`) and are not copied: the session cell reads them where they are.
+4. Then, synchronously, only if the chat is still not busy and its fingerprint unchanged: in one transaction, a
+   forwarding row, its directory line and a handoff record go in, and the chat's rows (its `index_outbox` row too) and
+   its pending object deletions (`storage_deletions` under `sessions/<id>/`) leave the owner cell (rows only, never
+   objects). Otherwise the copy is thrown away and the chat is tried again. Live readers of the chat on the owner cell
+   are ended (sockets close with 1012, SSE streams end) so they reconnect through the forward.
+5. The handoff (`/internal/import/handoff`, retried with backoff until taken; the split is not `done` before): the
+   owner cell's bookkeeping as it was at the move, read in that same transaction. The session cell raises the chat's
+   index version to at least the owner cell's, keeps the newest capability, queues the pending object deletions
+   (evaluated against its own references, so referenced objects stay), counts the hot bytes again and queues a fresh
+   Den index snapshot numbered above everything the owner cell sent. From the commit until the handoff the session
+   cell sends nothing to the Den index (`index_hold`), so no update from it is ever numbered below one the owner cell
+   already sent. The chat keeps reporting under the same session id.
+6. A crash at any point resumes from the alarm: either the chat is still in the owner cell (copied again, or finished
+   from a copy the session cell confirmed with the same fingerprint) or it is forwarded. A session cell never
+   overwrites a chat that lives there (`409 session_exists`; the owner cell reports `owner_split_blocked` and waits a
+   day).
+
+Forwarding keeps legacy ids working: the owner cell sends every request for a moved chat to its cell, WebSocket upgrades
+included (the session cell's socket answer is passed back through the owner cell), and Workbot's usual `PUT` with
+`memoryOf` keeps the chat on the owner's memory. An older router that sends an `hs_c_` id to the owner cell is forwarded
+the same way. The public import route stays `405`; on the Node host `POST /v1/owner/split` answers
+`{ split: "not_needed" }` and `hs_c_` ids are ordinary ids.
+
+Verified on celld v0.6.2 and wrangler (`owner-cells-e2e.ts`): a cell calling another cell's `fetch` from a request
+and from its alarm (the split), the called cell calling back into the first while it waits (directory sync during
+creation; celld lets an awaiting event overlap another), and returning another cell's WebSocket upgrade response from a
+cell (the forwarded socket opens, gets `ready` and live events). celld refuses `PRAGMA table_info` on its own tables
+(`_cf_…`, `_litestream_…`), so the split only describes the runner's tables. A forwarded socket stays open through
+a celld version switch (`POST /reload`) and keeps receiving events. Not verified locally: a forwarded socket when the
+owner cell moves to another node (celld closes WebSockets of a cell that moves; the client reconnects, as after any
+close).
+
+Session cells are generally available. Deploy a runner supporting session cells before GA Den. New chats use
+`hs_c_` ids; existing chats retain their ids and move only through the lossless split with forwarding.
+Workbot connected to older Dens still honors their optional `sessionCells` field (missing means false).
+
+**Rollback rule: never roll back to a runner from before session cells.** It can't serve `hs_c_` chats or moved legacy
+chats (an older owner cell has no forwarding rows and ignores owner memory), and it pages only the hot part of sealed
+chats. If something goes wrong, roll forward with a fix. `HEADLESS_SEGMENTS=off` can prevent new seals and large bodies;
+it is storage configuration, not a session-cell rollout switch. Already moved or sealed data stays readable.
+
 ## Deploy (replaces the Node runner)
 
 1. Run celld ≥ 0.6.2 on at least two nodes sharing one bucket, behind one private address (see celld's docs for the
@@ -80,6 +189,22 @@ Names and defaults are from [celld's docs](https://celld.dev/docs) (v0.6.2):
   dated snapshots in a second bucket ([Backups and restore](#backups-and-restore)).
 - `HEADLESS_COMPUTER=off` until the computer is verified on celld (see [Check it](#check-it)).
 
+## Step mode: turns that outlast a deploy
+
+A turn sent with `execution: "steps"` ([README](./README.md#step-mode); current Den and Workbot send it for all new
+turns) doesn't hold its cell busy. Admitting it writes its first step to the cell's
+`step_schedule` table and sets the cell's alarm; it is not run under `waitUntil`. The cell keeps one alarm, at the
+earliest of its due steps and the self-resume sweep. `alarm()` runs every due step to completion (one per lane, lanes
+in parallel; a failure stays with its turn), then sets the alarm again. Between two alarms the cell is idle, which is
+the safe point where celld moves it to a new deployment: nothing is cancelled. The new code's constructor finds the
+turn in `step_schedule` (startup recovery leaves it running) and its next alarm runs the next step, with a fresh MCP
+token from the turn's resume grant (memory doesn't survive the switch).
+
+A step that is cut off anyway (a node dies, or a step outlasts `CELLD_DEPLOY_MAX_AGE_S`) runs again from the alarm,
+continuing its streamed text where the provider allows and never re-running a tool call; one that keeps dying fails
+its turn with `step_crash_loop` after 5 starts. Turns sent without `execution` keep running under `waitUntil` as
+before.
+
 ## Backups and restore
 
 `.github/workflows/celld-backup.yml` copies the whole bucket (celld cells under `fleet/`, kept files under
@@ -98,18 +223,65 @@ A snapshot is copied from a running fleet, so it is consistent per object, not a
 
 Rehearse a restore into a throwaway bucket prefix before relying on it.
 
+## Long conversations on celld
+
+Sealed segments and large bodies (README "Sealed history and large outputs") live under `sessions/<id>/segments/` and
+`sessions/<id>/bodies/` in the same bucket as kept files, so the daily backup covers them. Turning it on is a runner
+setting with no org context: deploy first, then set `HEADLESS_SEGMENTS=on` (it needs `HEADLESS_FILES=s3`, which cells
+require anyway). In production these are plain variables of the `celld-production` environment (`HEADLESS_SEGMENTS`,
+and optionally `HEADLESS_HOT_LIMIT_BYTES`, `HEADLESS_SEGMENT_TARGET_BYTES`, `HEADLESS_LARGE_BODY_BYTES`), which the
+deploy workflow merges over `CELLD_RUNNER_VARS`; change one, then run the workflow (a settings change is a new bundle,
+so cells switch to it). Its log says `sealing: enabled` or `disabled`. Defaults keep a cell's hot SQLite under 32 MiB (`HEADLESS_HOT_LIMIT_BYTES`), well under the 80 MiB
+past which a graceful handoff has no final snapshot and the 256 MiB past which a cell waking elsewhere pages its
+restore. The sealer and orphan cleanup run from the cell's alarm, between steps; the newest 30 turns and whatever the
+model's context reaches stay hot, so a turn never waits on the bucket for its context. Reads of sealed history fetch
+one segment (cached in the cell briefly). `HEADLESS_SEGMENTS=off` stops new seals at once; reading what was sealed
+keeps working. A rollback to a runner from before sealing opens the migrated database (migrations are additive) but
+pages only the hot part: sealed turns reappear once the newer runner is back.
+
+## Deleting a conversation on celld
+
+Verified against celld v0.6.2 (`crates/celld/storage.rs` `authorize_sql`, `allowed_sql_pragma`; `docs/guarantees.md`
+"Epoch GC"):
+
+- **What the runner does**: overwrites the conversation's content in place with zero bytes (same length, so SQLite
+  rewrites the same cells, overflow pages included), deletes its rows, and deletes its segments, large bodies and
+  kept files from the bucket (immediate and verifiable; retried by `segment-orphans` if a delete fails).
+- **What celld refuses**: `VACUUM` and `VACUUM INTO` (they need an internal `ATTACH`, which the authorizer denies),
+  `PRAGMA secure_delete`, `wal_checkpoint`, `page_count` and every pragma but `table_info`/`table_list`-style reads and
+  a few booleans. There is no API to start a fresh snapshot epoch: every activation (a wake on any node, or a takeover)
+  starts one by itself. `deleteAll()` drops every table of the cell, so it suits deleting a whole session cell, not one
+  chat in an owner cell.
+- **What remains, and for how long**:
+  - In the cell's local SQLite file: zeroed cells; copies of a row's earlier versions left in a page's free space by
+    rewrites made before the delete (status updates, attachments stripped) until SQLite reuses that space. Keeping
+    each chat in its own small session cell bounds this to that chat's cell.
+  - In the celld bucket: LTX change files written before the scrub, in the cell's epoch prefixes
+    (`cells/<cell>/ltx/e<epoch>/`). With `CELLD_LTX_RETENTION_SECS` set (3 days in production), epoch GC deletes a
+    prefix once it is below the restore base, keeping the cell's current epoch, the one before it, and any epoch
+    younger than the retention. So the old pages are gone once the cell has been activated at least twice since the
+    delete (a new epoch each time) and 3 days have passed; a cell that stays resident keeps its current epoch, and
+    with it those pages, until it next moves or wakes. Without `CELLD_LTX_RETENTION_SECS`, celld never deletes them.
+  - In backups: the daily snapshot copies, deleted after 15 days by the backup bucket's lifecycle rule. Bucket object
+    versioning, if on, keeps deleted objects until its own expiry rule.
+- **Deleting everything of a person** deletes their session cells and owner cell; the same bounds apply per cell.
+
 ## Deploying the runner
 
 `.github/workflows/celld-runner-deploy.yml` runs on every `dev` push that changes the runner or a package bundled
 into it, and on demand (Actions → "Deploy runner to celld" → Run workflow). Each run:
 
-1. **Checks the live runner and the new one can serve each other** (`scripts/compat-check.ts`, below).
-2. Deploys to a throwaway bucket prefix and runs a real turn there.
-3. Deploys to the fleet and waits until every Render instance logs `deployment_adopted` for the new version. The
+1. **Builds the computer snapshot when the desktop changed.** The runner accepts only computers whose desktop matches
+   its own, so when the configured Freestyle snapshot was built for another desktop, the run builds
+   `workbot-desktop-freestyle-<desktop>` with the runner's `FREESTYLE_API_KEY` and bundles the runner with it. A
+   snapshot that already exists is reused. A failed build stops the run before the fleet changes.
+2. **Checks the live runner and the new one can serve each other** (`scripts/compat-check.ts`, below).
+3. Deploys to a throwaway bucket prefix and runs a real turn there.
+4. Deploys to the fleet and waits until every Render instance logs `deployment_adopted` for the new version. The
    version is a content hash, so an unchanged bundle is reported as `unchanged` and nothing switches.
-4. Records which commit produced the live version in `s3://openwork-celld/ci/fleet-deployed.json` (outside the
+5. Records which commit produced the live version in `s3://openwork-celld/ci/fleet-deployed.json` (outside the
    fleet prefix; celld never reads it), for the next run's check.
-5. Posts the outcome to Slack, when `CELLD_DEPLOY_SLACK_WEBHOOK_URL` is set: deployed / unchanged / failed, the
+6. Posts the outcome to Slack, when `CELLD_DEPLOY_SLACK_WEBHOOK_URL` is set: deployed / unchanged / failed, the
    version and the one before it, the commit and run, and how many nodes adopted it. Cells switched and cells
    force-cancelled are not counted yet: celld 0.6.2 logs no line for a forced switch.
 
@@ -121,6 +293,10 @@ into it, and on demand (Actions → "Deploy runner to celld" → Run workflow). 
   repository secrets), so nothing reaches them without that approval.
 - **`CELLD_DEPLOY_SLACK_WEBHOOK_URL`** (optional): an environment secret holding a Slack incoming-webhook URL for the
   channel that should hear about deploys. Without it the run posts nothing.
+- **`HEADLESS_COMPUTER_SNAPSHOT`** (optional): a plain environment variable holding a Freestyle desktop snapshot
+  slug. It overrides this field in `CELLD_RUNNER_VARS`; when unset, the JSON value remains in effect. Either way, a
+  slug named by the builder for another desktop is replaced by the one the run builds, so routine desktop changes
+  need neither.
 
 **Keep the default model authorized.** `CELLD_RUNNER_VARS` carries a provider route, key, model alias and protocol as
 one configuration. Before replacing a retired alias, list `/models` on the intended route with that same key and
@@ -130,7 +306,8 @@ only a recognized terminal error code and whether the answer matched, never prov
 Repair the environment configuration; never bypass the real turn or compatibility check to deploy it.
 
 **Batch runner deploys.** Every switch cancels the turns of busy cells after `CELLD_DEPLOY_MAX_AGE_S` (60 s), so
-fewer deploys means fewer interrupted people. Keep the `dev` push trigger (the runner must not fall behind Workbot
+fewer deploys means fewer interrupted people. Turns in [step mode](#step-mode-turns-that-outlast-a-deploy) are not
+cancelled: their cell switches between two steps. Keep the `dev` push trigger (the runner must not fall behind Workbot
 and den-api), and batch through the approval instead:
 
 - Don't approve each run as it arrives. A run bundles the whole runner at its commit, so approving the newest one
@@ -186,6 +363,21 @@ isolation between people; side chats sharing memory and listing; owner-less conv
 (`headlessRemoteCall`: create, send, read to the answer, stop, unknown session); idempotent re-sends; and killing
 the runtime mid-turn, then interrupted-turn recovery and resume with nothing lost, and a turn sent with a resume grant
 completing after the kill with no caller re-send (its alarm, a fake Den exchange, and the runner's own resume).
+
+Session cells: `hs_c_` placement and owner checks (another owner `404`, none `400`, `/internal/*` not public), memory
+shared through the owner cell, listing merged with the directory, a step-mode turn, live events and Stop in a session
+cell, delete, and an owner split killed mid-copy that resumes from the alarm, moves every legacy chat byte for byte
+(their exports compared) and keeps their ids working, a forwarded WebSocket included (`scripts/session-cells.test.ts`
+covers every crash point, busy chats and chats changed mid-copy).
+
+It also sends a step-mode turn of six slow model calls and switches the runtime to new code during it. On celld,
+`POST /reload` on the internal listener (printed with `celld dev --logs`) rebuilds the deployment and adopts it as a
+new generation in place, the same switch a `celld deploy` makes; the check reads `GET /state` until every resident
+cell runs the new generation. It must switch well inside the 60 s a forced switch waits, before the turn's last step,
+and every step's model call must have been made exactly once (a forced switch would cancel a step, which then calls
+the model again). On wrangler, rewriting the bundle makes `wrangler dev` reload, which cancels what runs, as a Cloudflare
+deploy does; the turn still completes, with at most the cut-off step run again. Both check every step's file and the
+answer.
 
 Not covered locally: celld's multi-node failover and bucket durability (celld's own guarantees; check them on the
 real fleet before pointing production at it), and the Freestyle/Daytona computer inside celld, which bundles but

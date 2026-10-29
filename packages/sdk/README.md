@@ -37,31 +37,29 @@ arrives. Pass `{ throwOnError: true }` to reject on request and HTTP errors.
 
 ## Generation
 
-From the repository root, after `pnpm install`, use a local development MySQL
-database with the current Den schema (`DATABASE_URL` selects it). The SDK CI job
-creates its own empty database and applies the schema before generation.
+OpenAPI and `src/gen` are ignored build outputs. Den's route metadata and Zod
+schemas are the source of truth; no generated files are committed or merged.
+
+After installing the workspace, start local MySQL (`pnpm dev:den:mysql`):
 
 ```sh
-pnpm sdk:generate  # export live Den OpenAPI and regenerate src/gen
-pnpm sdk:check     # regenerate in a temporary directory, compare, typecheck
-pnpm sdk:build     # compile JavaScript and declarations into dist
-pnpm --dir evals install
-pnpm evals:pr specs/den-sdk.test.ts
+pnpm sdk:build     # generate when source/output changes, then compile dist
+pnpm sdk:check     # force generation from source and typecheck
+pnpm sdk:generate  # force generation without compiling
 ```
 
-This follows [OpenCode's SDK build](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/script/build.ts):
-export the server's OpenAPI document, run pinned `@hey-api/openapi-ts` 0.97.3
-with TypeScript, instance SDK, flat parameters, and Fetch client plugins, format
-with pinned Prettier, then compile. A small handwritten factory wraps the generated client.
+Generation builds Den's workspace prerequisites, exports its public OpenAPI
+once, then runs pinned `@hey-api/openapi-ts` and Prettier. It creates, prepares
+and removes its own disposable local database, including after failures. It
+ignores `DATABASE_URL`; use `OPENWORK_CONTRACT_MYSQL_URL` only for alternate
+localhost credentials/ports. CI generates from its checkout and validates the
+result rather than comparing with committed files.
 
-The source of truth is Den's route metadata and Zod schemas, exported by
-`ee/apps/den-api/scripts/generate-openapi-snapshot.ts`. Generation builds the MCP
-app assets required by Den's module imports. It does not start an HTTP server,
-but loading the app initializes OAuth's resource registry, which requires the
-development database. The temporary OpenAPI file is removed afterward; the docs
-snapshot is left untouched. `src/gen` is committed and must never be edited by
-hand. CI rejects drift after schema changes. Add or improve the route's OpenAPI
-metadata before regenerating to change SDK methods or types.
+Repeated builds reuse artifacts only when both the source digest and generated
+file contents match. A new route, changed dependency, missing output or edited
+output triggers generation again. Update route metadata to change methods or
+types; never hand-edit the generated client. A small handwritten factory wraps
+that client.
 
 Method names follow Den's existing operation IDs (for example `getV1MeOrgs`).
 Types are only as precise as the server schema: routes with opaque or missing

@@ -85,9 +85,34 @@ is available on `dev` in **beta**.
 
 Follow the shared [module contract](https://github.com/different-ai/openwork/blob/dev/infra/terraform/MODULE_CONTRACT.md) and pin to a reviewed commit. Requires Terraform or OpenTofu `>= 1.11, < 2.0`. The module's bounded providers are Google `~> 8.7` and Random `~> 3.9`. Workbot, the runner, Slack and OpenWork Web/gateway are outside this change. A dedicated job orders one deployment; it does not implement a database mutex, dirty marker or coordination across independent deployments.
 
-Defaults: API **1 vCPU / 2 GiB**, web **1 vCPU / 1 GiB**, one warm instance per service, maximum three; Cloud SQL **db-g1-small (1.7 GB)** with 10 GB disk and backups. The old micro tier exhausted its reported memory quota at idle. Database, services and job have deletion protection by default; explicitly turn it off only for disposable stacks. The deprecated nested `database.deletion_protection` override retains precedence.
+Defaults: API **1 vCPU / 2 GiB**, web **1 vCPU / 1 GiB**, one warm instance per service, maximum three; Cloud SQL **db-g1-small (1.7 GB)** with 20 GB disk and backups. The old micro tier exhausted its reported memory quota at idle. Database, services and job have deletion protection by default; explicitly turn it off only for disposable stacks. The deprecated nested `database.deletion_protection` override retains precedence.
 
 ### Upgrade notes
+
+**Database disk default: 10 → 20 GB.** Existing direct users who omitted
+`database.disk_size_gb` will see an in-place increase in their next plan.
+[Cloud SQL storage increases are online, without downtime](https://docs.cloud.google.com/sql/docs/mysql/instance-settings#storage-capacity):
+this storage-only change does not restart or replace the instance, but **cannot
+be reversed by shrinking the disk**. Review the entire plan for unrelated changes.
+If automatic growth has already taken the disk above 20 GB, preserve its current
+allocation rather than attempting a reduction.
+
+Estimated zonal MySQL SSD cost in **us-central1** rises from **$1.70 to
+$3.40/month (+$1.70)** at the public list price of $0.17/GB-month, checked
+2026-10-19. Database compute, backups, networking, taxes and discounts are
+excluded; see [Cloud SQL pricing](https://cloud.google.com/sql/pricing/).
+To keep an existing 10 GB disk, set this **before applying the increase**,
+merging it into your existing `database` object without dropping other settings:
+
+```hcl
+database = { disk_size_gb = 10 }
+```
+
+Automatic growth remains on; this does not cap growth or undo an already applied
+increase. Instance tier and API/web defaults are unchanged. Managed installer
+sizes are separately pinned and untouched. See the
+[Small / trial table](/self-host/deploy-to-your-cloud/overview#small--trial-sizing)
+for the baseline and its trial-only shared-core database exception.
 
 Back up and inventory every schema-changing owner, including other installations and manual jobs sharing the database. Freeze retries/rollouts and select one coordinator. When upgrading from per-replica migration definitions, enter maintenance: scale old Den API to zero or stop it, disable autoscale/replacement/retry sources, wait for old containers/jobs and DB sessions/in-flight DDL to terminate, and fence old migration credentials. Drain other incompatible consumers too. If that barrier cannot be established, do not migrate.
 

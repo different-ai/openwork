@@ -385,16 +385,19 @@ function PastRun({ run, zone }: { run: AutomationRun; zone: string }) {
 const WEEKDAYS = [["Mon", 1], ["Tue", 2], ["Wed", 3], ["Thu", 4], ["Fri", 5], ["Sat", 6], ["Sun", 0]] as const;
 
 function ScheduleFields({ draft, setDraft }: { draft: AutomationSchedule; setDraft: (schedule: AutomationSchedule) => void }) {
-  const time = draft.kind === "once" ? null : `${String(draft.hour).padStart(2, "0")}:${String(draft.minute).padStart(2, "0")}`;
+  const clock = draft.kind === "daily" || draft.kind === "weekly" ? draft : null;
+  const time = clock ? `${String(clock.hour).padStart(2, "0")}:${String(clock.minute).padStart(2, "0")}` : null;
   const setKind = (kind: "daily" | "weekly") => {
-    const hour = draft.kind === "once" ? 9 : draft.hour;
-    const minute = draft.kind === "once" ? 0 : draft.minute;
-    setDraft(kind === "daily" ? { kind, timezone: draft.timezone, hour, minute } : { kind, timezone: draft.timezone, hour, minute, daysOfWeek: draft.kind === "weekly" ? draft.daysOfWeek : [1, 2, 3, 4, 5] });
+    const hour = clock ? clock.hour : draft.kind === "interval" ? draft.startHour : 9;
+    const minute = clock ? clock.minute : 0;
+    setDraft(kind === "daily" ? { kind, timezone: draft.timezone, hour, minute } : { kind, timezone: draft.timezone, hour, minute, daysOfWeek: draft.kind === "weekly" || draft.kind === "interval" ? draft.daysOfWeek : [1, 2, 3, 4, 5] });
   };
   return (
     <>
       {draft.kind === "once" ? (
         <p className="text-[13px] text-[#687076]">This runs once, {formatInstant(draft.at, draft.timezone)}. Change it to repeat:</p>
+      ) : draft.kind === "interval" || draft.kind === "calendar" ? (
+        <p className="text-[13px] text-[#687076]">This runs {describeSchedule(draft, draft.timezone, "en-US").toLowerCase()}. Change it to run at one time:</p>
       ) : null}
       <div className="flex rounded-lg bg-[#F1F3F5] p-0.5" role="radiogroup" aria-label="Repeats">
         {(["daily", "weekly"] as const).map((kind) => (
@@ -421,7 +424,7 @@ function ScheduleFields({ draft, setDraft }: { draft: AutomationSchedule; setDra
           <span className="text-[12px] text-[#687076]">Time</span>
           <input type="time" value={time ?? "09:00"} onChange={(event) => {
             const [hour, minute] = event.currentTarget.value.split(":").map(Number);
-            if (Number.isInteger(hour) && Number.isInteger(minute)) setDraft(draft.kind === "once" ? { kind: "daily", timezone: draft.timezone, hour, minute } : { ...draft, hour, minute });
+            if (Number.isInteger(hour) && Number.isInteger(minute)) setDraft(clock ? { ...clock, hour, minute } : { kind: "daily", timezone: draft.timezone, hour, minute });
           }} className="h-8 min-w-0 w-full rounded-md px-2 text-[13px] shadow-[0_0_0_1px_var(--wb-ring)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" />
         </label>
         <label className="flex min-w-0 flex-[1.4] flex-col gap-1">

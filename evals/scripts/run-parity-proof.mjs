@@ -6,19 +6,24 @@ import { prepareParityBinaries } from "./engine-parity-binaries.mjs";
 
 // Keyed by basename: a journey can live in evals/specs, evals/core or evals/proofs.
 const specs = new Set([
+  "session-debug.proof.test.ts",
   "v2-chat-recovery.proof.test.ts",
   "live-provider-sync.proof.test.ts",
   "agent-connection-journey.e2e.test.ts",
   "secure-keys-in-chat.e2e.test.ts",
   "agent-permissions.e2e.test.ts",
+  "opencode-v2-drive-upload.proof.test.ts",
 ]);
 
 const v2Only = new Set([
+  "session-debug.proof.test.ts",
   "v2-chat-recovery.proof.test.ts",
   // Cold profiles share only verified executable provisioning, never inventory.
   "live-provider-sync.proof.test.ts",
   // Agent permissions are enforced by OpenCode v2 only.
   "agent-permissions.e2e.test.ts",
+  // The native Drive upload tool exists only on OpenCode v2.
+  "opencode-v2-drive-upload.proof.test.ts",
 ]);
 
 /** Basename of a supported parity spec given its basename or a path in any journey folder; undefined when unsupported. */

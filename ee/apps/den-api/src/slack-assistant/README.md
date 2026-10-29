@@ -11,26 +11,31 @@ mentions get a private note instead of a reply.
 ## Installation
 
 1. Apply Den migration `0115_slack_assistant` before starting the updated API.
-2. In `/admin`, find the organization and enable **Capabilities → Slack Assistant**.
-   This platform capability defaults off and
-   takes effect without a redeploy. The old `DEN_SLACK_ASSISTANT_ENABLED` variable
-   is no longer used. Connector opt-in remains required.
-3. Configure an eligible Slack MCP connector in **Individual accounts** mode,
+   The Slack assistant is generally available; there is no platform switch, and
+   the old `DEN_SLACK_ASSISTANT_ENABLED` variable is no longer used. Connector
+   opt-in remains required.
+2. Configure an eligible Slack MCP connector in **Individual accounts** mode,
    including the existing Slack app's OAuth client ID and secret. Grant access
    using the connector's existing workspace, team, or member controls.
-4. In its **OpenWork in Slack** section, merge the generated manifest into that
+3. In its **OpenWork in Slack** section, merge the generated manifest into that
    same Slack app. Preserve its existing user OAuth redirects, scopes, and MCP
    settings. The agent surface requires Slack's agent APIs to be available.
-5. Save the app signing secret, use **Add to Slack**, and enable the assistant.
+4. Save the app signing secret, use **Add to Slack**, and enable the assistant.
    Bot installation uses a single-use, ten-minute OAuth state. A Slack workspace
    can belong to only one connector installation.
-6. Start with private rollout replies and a small channel allowlist. Members
-   complete their own existing Slack OAuth flow. Already connected members must
-   reconnect once to establish the assistant identity binding.
+5. Start with private rollout replies and a small channel allowlist. Members
+   complete their own existing Slack OAuth flow. Members who connected before
+   the bot install don't reconnect: when an unlinked Slack user messages the
+   assistant, `linkConnectedSlackMembers` links existing connections from their
+   stored tokens (see below). Only a token for another workspace or a revoked
+   one still needs a reconnect.
 
 The connect card links to Your Connections. Successful member OAuth verifies
 `auth.test` using that member's token, binds its user/team identity, and replays
-pending invocations received within fifteen minutes. Email is never an identity
+pending invocations received within fifteen minutes. The same binding runs
+server-side for members connected before the bot install (`linkConnectedSlackMembers`,
+at most once per installation every ten minutes per process, up to 200 accounts);
+tokens never leave Den. Email is never an identity
 source. Membership, connector grants, credential freshness, and the
 platform capability are rechecked while processing each turn.
 
@@ -171,8 +176,7 @@ Before production rollout, verify with a real Slack sandbox and Daytona runtime:
 The setup screen shows completed, active, unlinked, and failed requests. The setup
 API also returns sampled latency medians and feedback totals for the latest 1,000
 24-hour events. Logs contain event IDs/timing/error codes, never tokens or content.
-Turn off **Slack Assistant** for the organization in `/admin` to stop new routing.
-The connector also has an independent assistant toggle. Active runs stop
+Turn off the connector's assistant toggle to stop new routing. Active runs stop
 publishing on the next access check; already running external tool calls cannot
 be recalled. Socket Mode, approval buttons, Work Objects, and a separate fast lane
 are outside this implementation.

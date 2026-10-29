@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lte, or } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, inArray, isNull, lte, ne, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectorAccountTable,
   ConnectorInstanceTable,
@@ -25,6 +25,13 @@ export { isTransientGithubSyncError } from "./github-sync-retry.js"
 const logger = appLogger.child({ component: "github_sync_worker" })
 const MAX_BACKOFF_MS = 15 * 60_000
 const ACTIVE_GITHUB_SYNC_EVENT_STATUSES = ["queued", "running"] as const
+// Every replica polls every few seconds, so one poll reads a small page, not the queue.
+export const GITHUB_SYNC_POLL_LIMIT = 25
+// A claimed event holds its target this long. A replica that stops mid-sync
+// (deploy, crash) never finishes it, so the event is put back afterwards.
+export const GITHUB_SYNC_RUNNING_LEASE_MS = 30 * 60_000
+// Events claimed before leases existed have none; one running this long was abandoned.
+const UNLEASED_RUNNING_STALE_MS = 24 * 60 * 60_000
 // This bounds one process; multi-replica dedup/leadership is deliberately deferred to #3568.
 const githubReconcileLastProbedAtMs = new Map<string, number>()
 
@@ -65,14 +72,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function changedRows(result: unknown): boolean {
+function affectedRowCount(result: unknown): number {
   if (Array.isArray(result)) {
-    return result.some((entry) => changedRows(entry))
+    return result.reduce((total: number, entry) => total + affectedRowCount(entry), 0)
   }
-  if (!isRecord(result)) return false
-  if (typeof result.rowsAffected === "number") return result.rowsAffected > 0
-  if (typeof result.affectedRows === "number") return result.affectedRows > 0
-  return false
+  if (!isRecord(result)) return 0
+  if (typeof result.rowsAffected === "number") return result.rowsAffected
+  if (typeof result.affectedRows === "number") return result.affectedRows
+  return 0
+}
+
+function changedRows(result: unknown): boolean {
+  return affectedRowCount(result) > 0
 }
 
 async function connectorTargetIdsWithStatuses(
@@ -101,9 +112,58 @@ export function computeGithubSyncBackoffMs(
   return Math.min(MAX_BACKOFF_MS, Math.round(jitteredMs))
 }
 
+/**
+ * Puts back running events whose replica stopped before finishing them: their
+ * lease expired, or they predate leases and have run for a day. Each one counts
+ * as an attempt, and one out of attempts fails. Without this, an abandoned event
+ * holds its target forever and every queued event behind it waits forever.
+ */
+export async function reclaimStaleGithubSyncEvents(now = new Date()) {
+  const staleWhere = and(
+    eq(ConnectorSyncEventTable.status, "running"),
+    or(
+      lte(ConnectorSyncEventTable.nextAttemptAt, now),
+      and(
+        isNull(ConnectorSyncEventTable.nextAttemptAt),
+        lte(ConnectorSyncEventTable.startedAt, new Date(now.getTime() - UNLEASED_RUNNING_STALE_MS)),
+      ),
+    ),
+  )
+  const stale = await db
+    .select({ id: ConnectorSyncEventTable.id, attemptCount: ConnectorSyncEventTable.attemptCount })
+    .from(ConnectorSyncEventTable)
+    .where(staleWhere)
+    .limit(GITHUB_SYNC_POLL_LIMIT)
+
+  let requeued = 0
+  let failed = 0
+  for (const event of stale) {
+    const attemptCount = event.attemptCount + 1
+    const retry = attemptCount < env.githubSync.maxAttempts
+    const result: unknown = await db.update(ConnectorSyncEventTable).set(retry
+      ? { attemptCount, nextAttemptAt: null, status: "queued" }
+      : { attemptCount, completedAt: now, nextAttemptAt: null, status: "failed" },
+    ).where(and(eq(ConnectorSyncEventTable.id, event.id), staleWhere))
+    if (!changedRows(result)) continue
+    if (retry) requeued += 1
+    else failed += 1
+    logger.warn("github connector sync reclaimed", { connector_sync_event_id: event.id, attempt_count: attemptCount, retrying: retry })
+    if (!retry) await recordConnectorSyncCompleted(event.id)
+  }
+  return { requeued, failed }
+}
+
 export async function processDueGithubSyncEvents(now = new Date()) {
+  await reclaimStaleGithubSyncEvents(now)
+
+  // A page of due events whose target is not already syncing. Blocked events
+  // stay in the database instead of being read and skipped on every poll.
   const events = await db
-    .select()
+    .select({
+      attemptCount: ConnectorSyncEventTable.attemptCount,
+      connectorTargetId: ConnectorSyncEventTable.connectorTargetId,
+      id: ConnectorSyncEventTable.id,
+    })
     .from(ConnectorSyncEventTable)
     .where(and(
       eq(ConnectorSyncEventTable.status, "queued"),
@@ -111,26 +171,31 @@ export async function processDueGithubSyncEvents(now = new Date()) {
         isNull(ConnectorSyncEventTable.nextAttemptAt),
         lte(ConnectorSyncEventTable.nextAttemptAt, now),
       ),
+      sql`not exists (select 1 from connector_sync_event as running_event where running_event.connector_target_id = ${ConnectorSyncEventTable.connectorTargetId} and running_event.status = 'running')`,
     ))
     .orderBy(asc(ConnectorSyncEventTable.startedAt), asc(ConnectorSyncEventTable.id))
+    .limit(GITHUB_SYNC_POLL_LIMIT)
 
-  const eventTargetIds = [...new Set(events.flatMap((event) => event.connectorTargetId ? [event.connectorTargetId] : []))]
-  const runningTargetIds = await connectorTargetIdsWithStatuses(eventTargetIds, ["running"])
-
+  const runningTargetIds = new Set<string>()
   let claimed = 0
+  let superseded = 0
   for (const event of events) {
     if (event.connectorTargetId && runningTargetIds.has(event.connectorTargetId)) continue
 
+    const claimedAt = new Date()
     const claimResult: unknown = await db
       .update(ConnectorSyncEventTable)
-      .set({ status: "running" })
+      .set({ nextAttemptAt: new Date(claimedAt.getTime() + GITHUB_SYNC_RUNNING_LEASE_MS), status: "running" })
       .where(and(
         eq(ConnectorSyncEventTable.id, event.id),
         eq(ConnectorSyncEventTable.status, "queued"),
       ))
     if (!changedRows(claimResult)) continue
     claimed += 1
-    if (event.connectorTargetId) runningTargetIds.add(event.connectorTargetId)
+    if (event.connectorTargetId) {
+      runningTargetIds.add(event.connectorTargetId)
+      superseded += await supersedeQueuedGithubSyncEvents(event.connectorTargetId, event.id, claimedAt)
+    }
 
     try {
       await executeGithubConnectorSyncEvent({ connectorSyncEventId: event.id })
@@ -139,8 +204,13 @@ export async function processDueGithubSyncEvents(now = new Date()) {
       const message = error instanceof Error ? error.message : String(error)
       const attemptCount = event.attemptCount + 1
       const shouldRetry = isTransientGithubSyncError(error) && attemptCount < env.githubSync.maxAttempts
+      const [current] = await db
+        .select({ summaryJson: ConnectorSyncEventTable.summaryJson })
+        .from(ConnectorSyncEventTable)
+        .where(eq(ConnectorSyncEventTable.id, event.id))
+        .limit(1)
       const summaryJson = {
-        ...(event.summaryJson ?? {}),
+        ...(current?.summaryJson ?? {}),
         lastError: message,
         ...(shouldRetry ? {} : { error: message, outcome: "failed" }),
       }
@@ -181,7 +251,41 @@ export async function processDueGithubSyncEvents(now = new Date()) {
     await recordConnectorSyncCompleted(event.id)
   }
 
-  return { checked: events.length, claimed }
+  return { checked: events.length, claimed, superseded }
+}
+
+/**
+ * A sync imports the target's branch as it is when the sync runs, whatever
+ * event queued it, so it covers every event queued for that target before it
+ * was claimed. Those are closed as ignored instead of each importing again.
+ */
+async function supersedeQueuedGithubSyncEvents(
+  connectorTargetId: NonNullable<(typeof ConnectorSyncEventTable.$inferSelect)["connectorTargetId"]>,
+  claimedEventId: (typeof ConnectorSyncEventTable.$inferSelect)["id"],
+  claimedAt: Date,
+): Promise<number> {
+  const covered = await db
+    .select({ id: ConnectorSyncEventTable.id })
+    .from(ConnectorSyncEventTable)
+    .where(and(
+      eq(ConnectorSyncEventTable.connectorTargetId, connectorTargetId),
+      eq(ConnectorSyncEventTable.status, "queued"),
+      ne(ConnectorSyncEventTable.id, claimedEventId),
+      lte(ConnectorSyncEventTable.startedAt, claimedAt),
+    ))
+  if (covered.length === 0) return 0
+  const coveredIds = covered.map((row) => row.id)
+  const result: unknown = await db.update(ConnectorSyncEventTable).set({
+    completedAt: claimedAt,
+    nextAttemptAt: null,
+    status: "ignored",
+    summaryJson: sql`json_set(coalesce(${ConnectorSyncEventTable.summaryJson}, json_object()), '$.outcome', 'superseded', '$.supersededBy', ${claimedEventId})`,
+  }).where(and(
+    inArray(ConnectorSyncEventTable.id, coveredIds),
+    eq(ConnectorSyncEventTable.status, "queued"),
+  ))
+  for (const id of coveredIds) await recordConnectorSyncCompleted(id)
+  return affectedRowCount(result)
 }
 
 const GITHUB_SYNC_ACTOR_ID = "den-api.github-sync"

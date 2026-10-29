@@ -48,6 +48,8 @@ export interface ElectronSurfaceOptions {
 
 export interface ChromeSurfaceOptions {
   profile?: "fresh" | "shared";
+  /** Exact caller-owned Chrome user-data directory on the target host. Hosts preserve it on disposal. */
+  profileDir?: string;
   startUrl?: string;
   headless?: boolean;
   /**
