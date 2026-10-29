@@ -46,6 +46,7 @@ import {
   validateOrganizationMemberRoleChange,
   type MemberLifecycleValidation,
 } from "./organization-member-guards.js"
+import { ORGANIZATION_DELETION_METADATA_KEY } from "./organization-metadata.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js"
 import { getScimManagedTeamIds } from "./scim-groups.js"
@@ -413,14 +414,15 @@ function serializeMetadataRecord(metadata: Record<string, unknown>) {
  * Organization metadata as members see it. Feature overrides are platform
  * administration data (still mirrored into metadata.capabilities for one
  * release, for rollback) and are never sent; clients read the effective
- * `features` from GET /v1/org instead.
+ * `features` from GET /v1/org instead. An unfinished deletion's progress is
+ * platform-only too.
  */
 export function serializeMemberFacingOrganizationMetadata(input: OrganizationMetadataInput) {
   const metadata = parseMetadataRecord(input)
-  if (!("capabilities" in metadata)) {
+  if (!("capabilities" in metadata) && !(ORGANIZATION_DELETION_METADATA_KEY in metadata)) {
     return serializeOrganizationMetadata(input)
   }
-  const { capabilities: _platformOnly, ...memberFacing } = metadata
+  const { capabilities: _platformOnly, [ORGANIZATION_DELETION_METADATA_KEY]: _deletionProgress, ...memberFacing } = metadata
   return serializeMetadataRecord(memberFacing)
 }
 
