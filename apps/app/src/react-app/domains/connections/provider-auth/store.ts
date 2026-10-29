@@ -1089,9 +1089,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       throw new Error(t("providers.provider_id_required"));
     }
 
-    const nextFrom = (currentDisabled: string[]) => disabled
-      ? [...currentDisabled.filter((entry) => entry !== resolvedProviderId), resolvedProviderId]
-      : currentDisabled.filter((entry) => entry !== resolvedProviderId);
+    // Already in the requested state: keep the list as is (order included), so
+    // a merged read in another order never looks like a change.
+    const nextFrom = (currentDisabled: string[]) => currentDisabled.includes(resolvedProviderId) === disabled
+      ? currentDisabled
+      : disabled
+        ? [...currentDisabled, resolvedProviderId]
+        : currentDisabled.filter((entry) => entry !== resolvedProviderId);
     const unchanged = (currentDisabled: string[], nextDisabled: string[]) =>
       nextDisabled.length === currentDisabled.length &&
       nextDisabled.every((entry, index) => entry === currentDisabled[index]);

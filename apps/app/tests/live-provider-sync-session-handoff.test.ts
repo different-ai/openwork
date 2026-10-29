@@ -116,6 +116,10 @@ test("ENG-994: disabling OpenCode Zen on mount keeps a provider another route di
     // A later mount finds Zen already disabled and writes nothing.
     expect(await chat.ensureProjectProviderDisabledState("opencode", true)).toBe(false);
     expect(writes).toEqual([["remote", "opencode"]]);
+    // Nor when the list holds Zen in another position.
+    runtime = ["opencode", "remote"];
+    expect(await chat.ensureProjectProviderDisabledState("opencode", true)).toBe(false);
+    expect(writes).toEqual([["remote", "opencode"]]);
   } finally {
     chat.dispose();
     fetch.mockRestore();
