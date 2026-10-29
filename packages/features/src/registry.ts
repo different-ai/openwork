@@ -463,7 +463,7 @@ export const FEATURES = defineFeatures({
   },
   connectStandardTools: {
     label: "Connect: standard tools",
-    description: "Supported clients, including OpenWork Desktop, OpenCode and Claude Code, discover connected actions, Workflows and Apps as individual tools. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas.",
+    description: "Claude Code and standalone OpenCode discover connected actions, Workflows and Apps as individual tools; OpenWork Desktop, Web and automation runs keep capability search. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas.",
     category: "connect",
     added: "2026-10-21",
     since: "2026-10",

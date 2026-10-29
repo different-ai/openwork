@@ -63,6 +63,19 @@ test("one rollout gates every supported client and preserves the existing client
   }
 })
 
+test("OpenWork's own engine keeps capability search, while its token in another client follows that client", () => {
+  const openwork = { enabled: true, firstPartyToken: true }
+  assert.equal(connectToolView({ name: "opencode", version: "2.0.26" }, openwork), "search")
+  assert.equal(connectToolView({ name: " OpenCode " }, openwork), "search")
+  // Standalone OpenCode signs in with its own OAuth token.
+  assert.equal(connectToolView({ name: "opencode" }, { enabled: true, firstPartyToken: false }), "full")
+  assert.equal(connectToolView(CLAUDE_CODE, openwork), "full")
+  assert.equal(connectToolView({ name: "cursor" }, openwork), "search")
+  // The explicit override still decides, so OpenWork can opt in deliberately; the flag still gates it.
+  assert.equal(connectToolView({ name: "opencode" }, { ...openwork, override: "full" }), "full")
+  assert.equal(connectToolView({ name: "opencode" }, { ...openwork, enabled: false, override: "full" }), "search")
+})
+
 test("clientInfo comes only from the request's own _meta", () => {
   assert.deepEqual(requestClientInfo({ _meta: { [CLIENT_INFO_META_KEY]: CLAUDE_CODE } }), CLAUDE_CODE)
   assert.deepEqual(requestClientInfo({ _meta: { [CLIENT_INFO_META_KEY]: { name: "claude-code" } } }), { name: "claude-code" })

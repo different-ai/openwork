@@ -247,7 +247,7 @@ describe("archiving a working session: the warning goes back through the request
       const archive = useSessionArchive({
         workspaces: [workspace],
         sessionsByWorkspaceId: { ws: sessions },
-        endpointForWorkspace: () => endpoint,
+        endpointForSessionWorkspace: () => endpoint,
         selectedWorkspaceId: "ws",
         selectedSessionId: null,
         draftScope: null,

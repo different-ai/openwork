@@ -56,6 +56,8 @@ export type ExternalMcpDiagnostic = {
   payloadBytes?: number
   jsonRpcCode?: number
   connectUrl?: string
+  /** A validated link to the provider page where the named setting is changed. */
+  providerSettingsUrl?: string
   providerErrorMessage?: string
   providerErrorData?: string
   providerResponseExcerpt?: string
@@ -260,6 +262,19 @@ function structuredProviderResponseExcerpt(text: string): string | undefined {
       if (typeof parsed.error.message === "string") {
         allowed.error_message = redactSensitiveString(parsed.error.message)
       }
+    }
+    // Some MCP servers (Slack) answer a refusal with top-level error_code and
+    // error_message instead of a JSON-RPC error object.
+    if (
+      allowed.error_code === undefined
+      && typeof parsed.error_code === "number"
+      && Number.isSafeInteger(parsed.error_code)
+      && String(parsed.error_code).length <= 16
+    ) {
+      allowed.error_code = parsed.error_code
+    }
+    if (allowed.error_message === undefined && typeof parsed.error_message === "string") {
+      allowed.error_message = redactSensitiveString(parsed.error_message)
     }
     for (const field of PROVIDER_RESPONSE_STRING_FIELDS) {
       const value = parsed[field]
@@ -477,6 +492,89 @@ function providerDeclaredErrorFromJson(
     return null
   }
   return providerDeclaredErrorFromEnvelope(value, phase)
+}
+
+/**
+ * Reads the error a server states in the body of an HTTP refusal. Accepts a
+ * JSON-RPC error object, with or without the jsonrpc marker, and the
+ * top-level error_code/error_message shape Slack's MCP server uses. Only
+ * negative (JSON-RPC style) codes count; the message is sanitized and capped
+ * because it is untrusted provider text.
+ */
+function providerDeclaredErrorFromRefusalBody(
+  text: string,
+  phase: ExternalMcpDiagnosticPhase,
+): ProviderDeclaredErrorEvidence | null {
+  const parsed = parsedTextRecord(text)
+  if (!parsed) return null
+  const envelope = isRecord(parsed.error) ? parsed.error : null
+  const code = envelope ? envelope.code : parsed.error_code
+  if (typeof code !== "number" || !Number.isSafeInteger(code) || code >= 0) return null
+  const message = sanitizedProviderTextExcerpt(
+    (envelope ? stringProperty(envelope, "message") : stringProperty(parsed, "error_message")) ?? "",
+  )
+  return { phase, jsonRpcCode: code, ...(message ? { message } : {}) }
+}
+
+const SLACK_MCP_HOSTNAME = "mcp.slack.com"
+const SLACK_APP_SETTINGS_HOSTNAME = "api.slack.com"
+const SLACK_MCP_ACCESS_DISABLED_TEXT = /\bApp is not enabled for Slack MCP server access\b/i
+const SLACK_APP_SETTINGS_LINK = /https:\/\/api\.slack\.com\/apps\/[^\s"'<>]+/i
+const SLACK_APP_SETTINGS_PATH = /^\/apps\/([A-Za-z0-9]{1,32})(?:\/([a-z0-9-]{1,64}))?\/?$/
+export const EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE = "MCP_SLACK_APP_MCP_DISABLED"
+
+/**
+ * Rebuilds the Slack app settings link named in a provider message. Only an
+ * https link on api.slack.com to an app page survives; query, fragment,
+ * credentials and ports are dropped or rejected.
+ */
+export function slackAppSettingsUrl(message: string | undefined): string | undefined {
+  const match = message ? SLACK_APP_SETTINGS_LINK.exec(message) : null
+  if (!match) return undefined
+  let url: URL
+  try {
+    url = new URL(match[0].replace(/[.,;:!?)\]]+$/, ""))
+  } catch {
+    return undefined
+  }
+  if (
+    url.protocol !== "https:"
+    || url.hostname !== SLACK_APP_SETTINGS_HOSTNAME
+    || url.port !== ""
+    || url.username !== ""
+    || url.password !== ""
+  ) return undefined
+  const path = SLACK_APP_SETTINGS_PATH.exec(url.pathname)
+  const appId = path?.[1]
+  if (!appId) return undefined
+  const page = path?.[2]
+  return `https://${SLACK_APP_SETTINGS_HOSTNAME}/apps/${appId}${page ? `/${page}` : ""}`
+}
+
+/** The link a failure page offers so the person can change the named provider setting. */
+export function externalMcpProviderSettingsLink(diagnostic: ExternalMcpDiagnostic): { label: string; href: string } | undefined {
+  if (diagnostic.code !== EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE) return undefined
+  const href = slackAppSettingsUrl(diagnostic.providerSettingsUrl)
+  return href ? { label: "Open Slack app settings", href } : undefined
+}
+
+function slackMcpAccessDisabledClassification(
+  endpoint: URL,
+  phase: ExternalMcpDiagnosticPhase,
+  evidence: ProviderDeclaredErrorEvidence | null,
+): Classification | null {
+  if (endpoint.hostname !== SLACK_MCP_HOSTNAME || !evidence?.message) return null
+  if (!SLACK_MCP_ACCESS_DISABLED_TEXT.test(evidence.message)) return null
+  const providerSettingsUrl = slackAppSettingsUrl(evidence.message)
+  return {
+    phase,
+    category: "provider_app_setup",
+    code: EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE,
+    retryable: false,
+    actionOwner: "organization_admin",
+    operatorAction: "In the Slack app's settings, open Agents and turn on MCP, then connect again.",
+    ...(providerSettingsUrl ? { providerSettingsUrl } : {}),
+  }
 }
 
 function providerAuthorizationClassification(connectUrl: string): Classification {
@@ -810,7 +908,10 @@ function safeMessageFor(input: {
   const baseMessage = safeBaseMessageFor(input)
   const message = input.providerDetail
     ? `${baseMessage} Provider detail (untrusted): "${input.providerDetail}".`
-    : baseMessage
+    : input.category === "http_failure" && input.phase.startsWith("MCP_") && input.providerErrorMessage
+      // The server said why it refused; without it a refusal is a bare status.
+      ? `${baseMessage} Provider-declared message (untrusted): "${input.providerErrorMessage}".`
+      : baseMessage
   const details = [
     ...(input.providerStatus === undefined ? [] : [`provider status ${input.providerStatus}`]),
     ...(input.providerCode ? [`code ${input.providerCode}`] : []),
@@ -834,6 +935,9 @@ function safeBaseMessageFor(input: {
   }
   if (input.code === "MCP_REQUEST_TIMEOUT") {
     return "The MCP server did not answer the current protocol request within its bounded timeout."
+  }
+  if (input.code === EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE) {
+    return "The Slack app for this connection doesn't have MCP access turned on. In the Slack app's settings, open Agents and turn on MCP, then connect again."
   }
   if (input.code === "MCP_PROVIDER_AUTH_REQUIRED") {
     const message = "The provider answered but requires this user to authorize the downstream account before the tool can run."
@@ -2041,10 +2145,12 @@ async function responseTextExcerptWithinLimit(response: Response, limit: number)
 
 const SESSION_LIMIT_TEXT = /\b(?:too many|max(?:imum)?|limit(?:ed)?|capacity|exhausted|exceeded)\b[^.]{0,40}\bsessions?\b|\bsessions?\b[^.]{0,40}\b(?:limit|capacity|exhausted|exceeded|maximum)\b/i
 
-async function providerResponseExcerpts(response: Response): Promise<{
+async function providerResponseExcerpts(response: Response, phase: ExternalMcpDiagnosticPhase): Promise<{
   memberExcerpt?: string
   /** Read from the body for classification only; the body itself is never kept. */
   sessionLimit: boolean
+  /** The error the server stated in the body, sanitized and capped. */
+  declaredError: ProviderDeclaredErrorEvidence | null
   log: ProviderResponseLog
 } | null> {
   try {
@@ -2057,6 +2163,7 @@ async function providerResponseExcerpts(response: Response): Promise<{
     return {
       ...(memberExcerpt ? { memberExcerpt } : {}),
       sessionLimit: SESSION_LIMIT_TEXT.test(text),
+      declaredError: providerDeclaredErrorFromRefusalBody(text, phase),
       log: {
         contentType: providerResponseContentType(
           (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim().toLowerCase() ?? "",
@@ -2212,9 +2319,23 @@ export function createExternalMcpDiagnosticFetch(input: {
       input.tracker.recordProviderRequestId(response.headers)
       let providerResponseExcerpt: string | undefined
       let sessionLimit = false
+      let providerRefusal: ProviderDeclaredErrorEvidence | null = null
       if (!response.ok || (response.ok && isOAuthTokenPhase(phase) && contentType === "application/json")) {
-        const excerpts = await providerResponseExcerpts(response)
+        const excerpts = await providerResponseExcerpts(response, phase)
         sessionLimit = excerpts?.sessionLimit === true
+        // A refusal's own reason is kept for MCP requests only. Credential
+        // rejections stay excluded: their text can repeat a submitted key.
+        if (
+          !response.ok
+          && phase.startsWith("MCP_")
+          && response.status !== 401
+          && response.status !== 403
+          && response.status !== 407
+          && excerpts?.declaredError
+        ) {
+          providerRefusal = excerpts.declaredError
+          input.tracker.recordProviderDeclaredError(providerRefusal)
+        }
         if (excerpts && (!response.ok || (excerpts.memberExcerpt && isProviderTokenErrorExcerpt(excerpts.memberExcerpt)))) {
           providerResponseExcerpt = excerpts.memberExcerpt
           input.tracker.recordProviderResponseExcerpt({
@@ -2231,7 +2352,7 @@ export function createExternalMcpDiagnosticFetch(input: {
         && /\bbearer\b/i.test(challenge)
       const classification = unauthenticatedChallenge
         ? null
-        : httpClassification({
+        : slackMcpAccessDisabledClassification(endpoint, phase, providerRefusal) ?? httpClassification({
             phase,
             status: response.status,
             hasAuthorization,

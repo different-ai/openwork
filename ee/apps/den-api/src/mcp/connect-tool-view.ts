@@ -8,11 +8,12 @@ import { CLIENT_INFO_META_KEY } from "@modelcontextprotocol/server"
  * standard MCP tool, for clients that search large tool lists themselves and
  * load definitions on demand.
  *
- * The choice depends only on the request: its `?tools=` override and the
- * `io.modelcontextprotocol/clientInfo` it carries in `_meta`, never on
- * connection state, so every request from the same client gets the same view.
- * Requests without per-request clientInfo (2025-era clients) keep `search`
- * unless the override asks for `full`.
+ * The choice depends only on the request: its `?tools=` override, the
+ * `io.modelcontextprotocol/clientInfo` it carries in `_meta`, and whether its
+ * token is one Den minted for OpenWork, never on connection state, so every
+ * request from the same client gets the same view. Requests without
+ * per-request clientInfo (2025-era clients) keep `search` unless the override
+ * asks for `full`.
  *
  * clientInfo is self-reported and the spec says not to change behaviour on it,
  * so it is only a hint for presentation: both views list and run exactly the
@@ -31,13 +32,22 @@ export const CONNECT_TOOL_VIEW_PARAMETER = "tools"
  * - claude-code: Claude Code defers MCP tool definitions by default and loads
  *   them through its ToolSearch tool
  *   (https://code.claude.com/docs/en/mcp#scale-with-mcp-tool-search).
- * - opencode: OpenCode v2 (including OpenWork Desktop) searches MCP definitions
- *   on demand through Code Mode:
+ * - opencode: standalone OpenCode v2 searches MCP definitions on demand
+ *   through Code Mode:
  *   https://github.com/anomalyco/opencode/blob/v2.0.26/packages/core/src/tool/mcp.ts
- *   Its identity is shared by Desktop and standalone OpenCode, not an
- *   authorization boundary.
+ *   OpenWork's own engine reports the same name; see OPENWORK_ENGINE_CLIENT.
  */
 export const CONNECT_FULL_TOOL_CLIENTS: ReadonlySet<string> = new Set(["claude-code", "opencode"])
+
+/**
+ * OpenWork Desktop, Web and headless runs drive the same engine as standalone
+ * OpenCode and report its name, so a request is OpenWork's own when it also
+ * holds a token Den minted for OpenWork. OpenWork keeps the search view: its
+ * instructions pin search_capabilities and execute_capability, and Den's
+ * search ranks capabilities better than the engine's own. A first-party token
+ * copied into another client, as test harnesses do, follows that client.
+ */
+const OPENWORK_ENGINE_CLIENT = "opencode"
 
 /** The `?tools=full|search` override; anything else is no override. */
 export function connectToolViewOverride(url: string): ConnectToolView | null {
@@ -57,10 +67,11 @@ export function requestClientInfo(params: unknown): ConnectClientInfo | null {
 
 export function connectToolView(
   clientInfo: ConnectClientInfo | null,
-  flags: { enabled: boolean; override?: ConnectToolView | null },
+  flags: { enabled: boolean; override?: ConnectToolView | null; firstPartyToken?: boolean },
 ): ConnectToolView {
   if (!flags.enabled) return "search"
   if (flags.override) return flags.override
   const clientName = clientInfo?.name.trim().toLowerCase()
+  if (flags.firstPartyToken && clientName === OPENWORK_ENGINE_CLIENT) return "search"
   return clientName && CONNECT_FULL_TOOL_CLIENTS.has(clientName) ? "full" : "search"
 }

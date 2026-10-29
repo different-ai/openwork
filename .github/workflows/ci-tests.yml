@@ -122,8 +122,14 @@ jobs:
           pnpm --filter @openwork/app exec bun --conditions=development test --isolate ./tests/native-dictation.test.tsx ./tests/browser-dictation.test.ts ./tests/composer-caret-refocus.test.tsx
       - name: Test follow-ups sent while a chat is starting
         run: pnpm --filter @openwork/app exec bun test --isolate ./tests/starting-thread-follow-ups.test.ts
+      - name: Test settling finished sessions
+        run: pnpm --filter @openwork/app exec bun test --isolate ./tests/session-settle.test.ts
+      - name: Test the OpenCode v2 session lifecycle mapping
+        run: pnpm --filter @openwork/app exec bun test --isolate ./tests/opencode-v2-session-lifecycle.test.ts
       - name: Test the chat Working line and run time across follow-ups
         run: pnpm --filter @openwork/app exec bun --conditions=development test --isolate ./tests/message-list-working-line.test.tsx ./tests/run-working-time.test.ts
+      - name: Test where a new task goes (workspace and group list)
+        run: pnpm --filter @openwork/app exec bun test --isolate ./tests/new-task-destination-options.test.ts
       - name: Check desktop links open real Den pages
         run: pnpm --filter @openwork/app test:den-links
       - name: Test sub-agent completion notices live and after reload
@@ -140,7 +146,7 @@ jobs:
         run: |
           pnpm --filter @openwork/computer-use build
           node --test ee/packages/headless-computer/src/viewer-tickets.test.mjs
-          node --test apps/desktop/electron/computer-control.test.mjs apps/desktop/electron/computer-remote.test.mjs apps/desktop/electron/computer-windows.test.mjs packages/computer-use/cloud.test.mjs packages/computer-use/browser-task-privacy.test.mjs packages/computer-use/browser-task-viewport.test.mjs packages/computer-use/browser-task-attach.test.mjs packages/browser-tabs/index.test.mjs packages/computer-use/chromium.test.mjs apps/desktop/electron/computer-program.test.mjs apps/desktop/electron/floating-view-window.test.mjs apps/desktop/electron/window-state.test.mjs
+          node --test apps/desktop/electron/computer-control.test.mjs apps/desktop/electron/computer-remote.test.mjs apps/desktop/electron/computer-windows.test.mjs packages/computer-use/cloud.test.mjs packages/computer-use/browser-task-privacy.test.mjs packages/computer-use/browser-task-viewport.test.mjs packages/computer-use/browser-task-attach.test.mjs packages/browser-tabs/index.test.mjs packages/computer-use/chromium.test.mjs apps/desktop/electron/computer-program.test.mjs apps/desktop/electron/floating-view-window.test.mjs apps/desktop/electron/window-state.test.mjs apps/desktop/electron/keep-awake.test.mjs
           python3 ee/packages/headless-computer/scripts/desktop-bridge.test.py
           python3 ee/packages/headless-computer/scripts/app-scripting.test.py
           python3 ee/packages/headless-computer/scripts/configure-desktop-files.test.py
@@ -164,6 +170,8 @@ jobs:
         run: bun test apps/server/test/engine-v2-provider-mapping.test.ts apps/server/test/opencode-v2-local-auth.test.ts
       - name: Test OpenCode v2 starting again after it fails or exits
         run: bun test apps/server/test/engine-v2-restart.test.ts
+      - name: Test v2 chat lists survive unreadable and migrated chats
+        run: bun --conditions=development test apps/server/test/opencode-v2-session-list.test.ts
       - name: Test the self-hosted web UI stays on its own origin
         run: bun --conditions=development test apps/server/test/web-ui-origin.test.ts
       - name: Test OneDrive and SharePoint pulls and saves

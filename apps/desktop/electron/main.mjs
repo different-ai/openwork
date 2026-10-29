@@ -95,6 +95,7 @@ import {
   runDetachedTask,
 } from "./process-resilience.mjs";
 import { createQuitSequencer } from "./quit-sequence.mjs";
+import { createKeepAwake } from "./keep-awake.mjs";
 import { attachFloatingViewWindow, floatingViewWindowOptions } from "./floating-view-window.mjs";
 import { createStartupLog, startupPhase, withStartupPhase } from "./startup-log.mjs";
 import { createWindowStateStore } from "./window-state.mjs";
@@ -136,6 +137,7 @@ const {
   nativeTheme,
   net: electronNet,
   powerMonitor,
+  powerSaveBlocker,
   Notification: ElectronNotification,
   screen,
   session,
@@ -1564,8 +1566,13 @@ async function disposeRuntimeBeforeQuit() {
   }
 }
 
+const keepAwake = createKeepAwake({ powerSaveBlocker });
+/** Windows already watched so their keep-awake request ends when they close. */
+const keepAwakeSenders = new Set();
+
 const quitSequencer = createQuitSequencer({
   stop: async () => {
+    keepAwake.releaseAll();
     showShutdownScreen();
     desktopAutomationRunner.stop();
     await Promise.all([
@@ -1996,6 +2003,17 @@ const desktopCommandHandlers = {
   },
   "desktopSentryClearSession": async (event, ...args) => {
       return { enabled: clearOpenworkSentrySession() };
+  },
+  "desktopSetKeepAwake": async (event, ...args) => {
+      const sender = event.sender;
+      if (args[0] === true && !keepAwakeSenders.has(sender.id)) {
+        keepAwakeSenders.add(sender.id);
+        sender.once("destroyed", () => {
+          keepAwakeSenders.delete(sender.id);
+          keepAwake.forget(sender.id);
+        });
+      }
+      return keepAwake.set(sender.id, args[0] === true);
   },
   "desktopIntegrationStatus": async (event, ...args) => {
       return linuxDesktopIntegration.getStatus();

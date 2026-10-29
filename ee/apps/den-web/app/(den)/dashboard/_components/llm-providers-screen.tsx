@@ -266,7 +266,8 @@ export function LlmProvidersScreen() {
             <DenOptionCard
               type="checkbox"
               testId="models-access-zen"
-              title="Allow OpenCode Zen models"
+              title="Free starter model (Auto)"
+              description="Members can fall back to OpenWork's free model. Rate-limited."
               checked={zenAllowed}
               disabled={accessFormDisabled}
               onChange={(checked) => {

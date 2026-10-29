@@ -26,12 +26,14 @@ import { downloadTextAsFile } from "@/app/lib/download";
 import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
 import { createClient, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { sendWithModelUnavailableRetry } from "@/react-app/domains/session/sync/model-unavailable-retry";
-import { createClientV2, isOpencodeV2BaseUrl, v2AcknowledgementText, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
+import { createClientV2, isOpencodeV2BaseUrl, v2AcknowledgementText } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe, forkSession, listCommands, revertSession, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
 import { composeNativeSessionHistory } from "@/app/lib/opencode-session-native";
 import { prefetchOpeningSessionHistory, sessionHistoryIdentity, sessionHistoryRuntimeOwner, useSessionHistoryRuntimeOwners } from "@/react-app/domains/session/surface/session-history";
 import { sendSessionCommand, sessionWorkHeld } from "@/app/lib/opencode-interruption";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
+import { settleWorkspaceIds, useSessionSettleState } from "@/react-app/domains/session/sidebar/session-settle";
+import { getDisplaySessionTitle } from "@/app/lib/session-title";
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
 import { buildOpenworkWorkspaceBaseUrl } from "@/app/lib/openwork-server";
 import {
@@ -630,7 +632,6 @@ export function SessionRoute() {
     locationKey: location.key,
     navigationGeneration: routeNavigationRef.current.generation,
   };
-  const archiveDisabledReason = isOpencodeV2BaseUrl(opencodeBaseUrl) ? V2_SESSION_ARCHIVE_UNAVAILABLE : undefined;
   const canPrefetchSelectedWorkspace = Boolean(opencodeClient && selectedWorkspaceEndpoint && !selectedWorkspaceError);
   const prefetchRuntimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId;
   const cancelOpeningPrefetchRef = useRef<(() => void) | undefined>(undefined);
@@ -937,6 +938,23 @@ export function SessionRoute() {
     return { statusById, labelById, sourceById };
   }, [attentionLocale, remoteAttentionKey, selectWorkspaceAttention, sessionActivityByWorkspaceId, sessionWaitingByWorkspaceId, sessionChildIdsByWorkspaceId, workspaceSessionGroups]);
   const sidebarSessionStatusById = sidebarSessionAttention.statusById;
+  // Settling ships for OpenCode v2 only; v1 workspaces keep today's sidebar.
+  const settleWorkspaceIdSet = useMemo(
+    () => settleWorkspaceIds(workspaces, (workspace) => endpointForSessionWorkspace(workspace)?.opencodeBaseUrl),
+    [endpointForSessionWorkspace, workspaces],
+  );
+  const selectedSidebarSession = useMemo(() => {
+    if (!selectedWorkspaceId || !selectedSessionId) return null;
+    return workspaceSessionGroups.find((group) => group.workspace.id === selectedWorkspaceId)
+      ?.sessions.find((session) => session?.id === selectedSessionId) ?? null;
+  }, [selectedSessionId, selectedWorkspaceId, workspaceSessionGroups]);
+  // Sidebar row, palette, header button and Cmd/Ctrl+Shift+E all run this one toggle.
+  const currentSessionSettle = useSessionSettleState(
+    selectedSidebarSession,
+    selectedSessionId ? sidebarSessionStatusById[selectedSessionId] : undefined,
+    getDisplaySessionTitle(selectedSidebarSession?.title),
+    settleWorkspaceIdSet.has(selectedWorkspaceId),
+  );
 
   const sidebarActiveWorkspaceId = useMemo(() => {
     const sessionId = selectedSessionId?.trim() ?? "";
@@ -2984,6 +3002,7 @@ export function SessionRoute() {
     onCycleFavoriteModel: cycleFavoriteModel,
     onCycleModelSource: () => { cycleFavoriteModel(true); },
     onToggleFastMode: toggleFastMode,
+    onToggleSettleSession: currentSessionSettle.toggle,
   });
   useReactRenderWatchdog("SessionRoute", {
     selectedSessionId,
@@ -3016,7 +3035,7 @@ export function SessionRoute() {
   const { archiveSession, archiveDialog } = useSessionArchive({
     workspaces,
     sessionsByWorkspaceId,
-    endpointForWorkspace,
+    endpointForSessionWorkspace,
     selectedWorkspaceId,
     selectedSessionId,
     navigateToWorkspaceSession,
@@ -3045,7 +3064,6 @@ export function SessionRoute() {
     canCreateTask,
     openworkClient: client,
     opencodeClient,
-    archiveDisabledReason,
     endpointForWorkspace,
     navigateToSession: navigateToSessionForControl,
     navigateToSessionRoot: navigateToSessionRootForControl,
@@ -3352,6 +3370,22 @@ export function SessionRoute() {
         sessionManagementStore.getState().togglePin(selectedSessionId);
       },
     }];
+    if (currentSessionSettle.settled || currentSessionSettle.canSettle) {
+      items.push({
+        id: "session.settle.toggle",
+        title: currentSessionSettle.settled
+          ? t("session_management.unsettle_session")
+          : t("session_management.settle_session"),
+        detail: currentSessionForGroupMove.title,
+        meta: "Session",
+        keywords: ["settle", "un-settle", "unsettle", "done", "finished", "clear", "tidy", "sidebar"],
+        group: "actions",
+        action: () => {
+          setCommandPaletteOpen(false);
+          currentSessionSettle.toggle();
+        },
+      });
+    }
     if (opencodeClient) {
       items.push({
         id: "session.rename",
@@ -3367,7 +3401,7 @@ export function SessionRoute() {
       });
     }
     return items;
-  }, [currentSessionForGroupMove, currentSessionPinned, opencodeClient, selectedSessionId, selectedWorkspaceId]);
+  }, [currentSessionForGroupMove, currentSessionPinned, currentSessionSettle, opencodeClient, selectedSessionId, selectedWorkspaceId]);
 
   // An empty composer has a group too: the one its new task will be created in.
   // The focused unsent side chat wins over the main empty composer.
@@ -3858,6 +3892,7 @@ export function SessionRoute() {
       />
     ) : null}
     <SessionPage
+      currentSessionSettle={currentSessionSettle}
       sessionReferenceInventories={sessionReferenceInventories}
       createWorkspaceSessionMetadataCallbacks={createWorkspaceSessionMetadataCallbacks}
       isSessionReferenceCurrent={isSessionReferenceCurrent}
@@ -4004,6 +4039,7 @@ export function SessionRoute() {
         selectedSessionId,
         developerMode: false,
         sessionStatusById: sidebarSessionStatusById,
+        settleWorkspaceIds: settleWorkspaceIdSet,
         sessionAttentionLabelById: sidebarSessionAttention.labelById,
         sessionAttentionSourceById: sidebarSessionAttention.sourceById,
         connectingWorkspaceId: null,
@@ -4154,7 +4190,6 @@ export function SessionRoute() {
           : undefined
       }
       onArchiveSession={opencodeClient ? handleArchiveSession : undefined}
-      archiveDisabledReason={archiveDisabledReason}
       statusBar={{
         // No per-session loading state here: the account row renders only
         // app-scoped facts. Session loading lives in the pane; an unresolved

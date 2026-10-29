@@ -34,7 +34,7 @@
     "test:session-cells": "tsx --test scripts/session-cells.test.ts"
   },
   "dependencies": {
-    "@hono/node-server": "2.0.12",
+    "@hono/node-server": "2.1.5",
     "@modelcontextprotocol/client": "^2.3.1",
     "@openwork-ee/headless-computer": "workspace:*",
     "@openwork-ee/headless-protocol": "workspace:*",

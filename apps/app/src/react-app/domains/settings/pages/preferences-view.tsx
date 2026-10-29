@@ -30,6 +30,10 @@ import {
   LayoutStack,
 } from "../settings-layout";
 import { DesktopIntegrationSection } from "../desktop-integration-section";
+import {
+  AUTO_SETTLE_DAY_OPTIONS,
+  useSessionManagementStore,
+} from "@/react-app/domains/session/sidebar/session-management-store";
 
 export type PreferencesViewProps = {
   busy: boolean;
@@ -40,6 +44,8 @@ export type PreferencesViewProps = {
   onToggleAutoCompactContext: () => void;
   analyticsEnabled: boolean;
   onToggleAnalytics: () => void;
+  keepAwake: boolean;
+  onToggleKeepAwake: () => void;
   desktopNotifications: DesktopNotificationPreference;
   onDesktopNotificationsChange: (value: DesktopNotificationPreference) => void;
   linkOpenDestination: LinkOpenDestination;
@@ -55,6 +61,51 @@ function desktopNotificationPreferenceLabel(value: DesktopNotificationPreference
     case "off":
       return t("settings.desktop_notifications.off");
   }
+}
+
+function autoSettleLabel(days: number) {
+  return days === 0 ? t("settings.auto_settle.never") : t("settings.auto_settle.days", { count: days });
+}
+
+/** Idle sessions move to their workspace's Settled row after this long. */
+function AutoSettleSection() {
+  const autoSettleDays = useSessionManagementStore((state) => state.autoSettleDays);
+  const setAutoSettleDays = useSessionManagementStore((state) => state.setAutoSettleDays);
+  const items = AUTO_SETTLE_DAY_OPTIONS.map((days) => ({ value: String(days), label: autoSettleLabel(days) }));
+
+  return (
+    <LayoutSection>
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>{t("settings.sessions_title")}</LayoutSectionTitle>
+      </LayoutSectionHeader>
+
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader className="min-h-10 items-center">
+          <LayoutSectionItemTitle>{t("settings.auto_settle.title")}</LayoutSectionItemTitle>
+          <LayoutSectionItemHeaderActions className="self-center">
+            <Select
+              value={String(autoSettleDays)}
+              items={items}
+              onValueChange={(value) => {
+                if (typeof value === "string") setAutoSettleDays(Number(value));
+              }}
+            >
+              <SelectTrigger className="w-44" aria-label={t("settings.auto_settle.title")} data-auto-settle-select>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {items.map(({ value, label }) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
+      </LayoutSectionItem>
+    </LayoutSection>
+  );
 }
 
 export function PreferencesView(props: PreferencesViewProps) {
@@ -108,6 +159,8 @@ export function PreferencesView(props: PreferencesViewProps) {
         </LayoutSectionItem>
       </LayoutSection>
 
+      <AutoSettleSection />
+
       <LayoutSection>
         <LayoutSectionHeader>
           <LayoutSectionTitle>{t("settings.desktop_notifications.title")}</LayoutSectionTitle>
@@ -148,6 +201,29 @@ export function PreferencesView(props: PreferencesViewProps) {
           </LayoutSectionItemHeader>
         </LayoutSectionItem>
       </LayoutSection>
+
+      {isElectronRuntime() ? (
+        <LayoutSection>
+          <LayoutSectionHeader>
+            <LayoutSectionTitle>{t("settings.power_title")}</LayoutSectionTitle>
+          </LayoutSectionHeader>
+
+          <LayoutSectionItem>
+            <LayoutSectionItemHeader>
+              <LayoutSectionItemTitle>{t("settings.keep_awake")}</LayoutSectionItemTitle>
+              <LayoutSectionItemDescription>{t("settings.keep_awake_desc")}</LayoutSectionItemDescription>
+              <LayoutSectionItemHeaderActions>
+                <Switch
+                  aria-label={t("settings.keep_awake")}
+                  checked={props.keepAwake}
+                  disabled={props.busy}
+                  onCheckedChange={props.onToggleKeepAwake}
+                />
+              </LayoutSectionItemHeaderActions>
+            </LayoutSectionItemHeader>
+          </LayoutSectionItem>
+        </LayoutSection>
+      ) : null}
 
       <DesktopIntegrationSection />
 

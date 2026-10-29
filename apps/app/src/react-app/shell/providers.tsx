@@ -16,6 +16,7 @@ import { BrandThemeProvider } from "@/react-app/domains/cloud/brand-theme";
 import { DesktopConfigProvider } from "@/react-app/domains/cloud/desktop-config-provider";
 import { RestrictionNoticeProvider } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { LocalProvider } from "@/react-app/kernel/local-provider";
+import { KeepAwakeBridge } from "@/react-app/domains/session/status/keep-awake-bridge";
 import { MermaidZoomFeatureProvider } from "@/react-app/domains/session/status/mermaid-zoom-feature";
 import { ServerProvider } from "@/react-app/kernel/server-provider";
 import { ArchitectureMismatchGate } from "./architecture-mismatch-gate";
@@ -73,6 +74,7 @@ export function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
                 <GlobalQueueDrainerBridge />
                 <AutoRejectedTurnRecoveryBridge />
                 <FreeAutoAnalyticsBridge />
+                <KeepAwakeBridge />
                 <MermaidZoomFeatureProvider>
                   <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
                 </MermaidZoomFeatureProvider>

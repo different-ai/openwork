@@ -132,9 +132,11 @@ import {
 } from "../../capability-sources/external-mcp-auth-policy.js"
 import {
   EXTERNAL_MCP_DIAGNOSTIC_PHASES,
+  EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE,
   externalMcpDiagnosticForLog,
   externalMcpDiagnosticForResponse,
   externalMcpOAuthCallbackError,
+  externalMcpProviderSettingsLink,
   safeExternalMcpEndpointForLog,
 } from "../../capability-sources/external-mcp-diagnostics.js"
 import {
@@ -838,6 +840,7 @@ const externalMcpDiagnosticSchema = z.object({
   payloadBytes: z.number().int().optional(),
   jsonRpcCode: z.number().int().optional(),
   connectUrl: z.string().url().optional(),
+  providerSettingsUrl: z.string().url().optional(),
 }).meta({ ref: "ExternalMcpDiagnostic" })
 
 const connectionToolListFailedSchema = z.object({
@@ -971,7 +974,11 @@ async function checkConnectionReadiness(connection: ExternalMcpConnectionRow, me
         : diagnostic.category === "request_timeout" || diagnostic.category === "lifecycle_deadline" ? "timed_out"
         : diagnostic.httpStatus === 401 || diagnostic.httpStatus === 403 ? "sign_in_rejected"
         : "tools_unreadable"
-      reason = READINESS_FAILURE_REASONS[failure]
+      // A known provider setup step gets its own server-written direction;
+      // every other failure keeps a fixed reason.
+      reason = diagnostic.code === EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE
+        ? diagnostic.message
+        : READINESS_FAILURE_REASONS[failure]
       // Provider text can repeat a just-entered key as plain prose; heuristic
       // redaction is not a boundary, so keep only server-owned identifiers.
       logger.warn("external_mcp_readiness_check_failed", {
@@ -1772,11 +1779,13 @@ async function handleExternalMcpOAuthCallback(input: {
       organization_id: statePayload.organizationId,
       ...externalMcpDiagnosticForLog(error, input.requestId, "AUTH_TOKEN_ACQUISITION"),
     })
+    const fixLink = externalMcpProviderSettingsLink(diagnostic)
     return mcpOAuthCallbackHtml(completionPage({
       ok: false,
       name: connection.name,
       message: diagnostic.message,
       referenceId: diagnostic.referenceId,
+      ...(fixLink ? { fixLink } : {}),
     }), 400)
   }
   // Re-grants invalidate earlier checks. Ordinary SDK refresh writes never

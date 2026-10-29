@@ -16,6 +16,7 @@ import {
   ArchiveRestore,
   Blocks,
   CalendarDays,
+  CheckCheck,
   Clock3,
   ChevronRight,
   Columns2,
@@ -31,6 +32,7 @@ import {
   FolderOpen,
   SquarePen,
   Tag,
+  Undo2,
   X,
 } from "lucide-react";
 import { LazyMotion, MotionContext, Reorder, domMax, m, useDragControls } from "motion/react";
@@ -137,6 +139,7 @@ import {
   useWorkspaceGroups,
   type SessionGroupDefinition,
 } from "./session-management-store";
+import { filterSettledSessions, useSessionSettleState, useSettleNow, type SessionSettleState } from "./session-settle";
 import { cn } from "@/lib/utils";
 import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "../status/session-activity-store";
 import { SessionDotMatrixLoader } from "./session-dot-matrix-loader";
@@ -375,6 +378,7 @@ type SessionMenuActionsOptions = {
   workspaceTitle?: string;
   isPinned: boolean;
   isArchived: boolean;
+  settle?: SessionSettleState;
 };
 
 function useSessionMenuActions({
@@ -384,6 +388,7 @@ function useSessionMenuActions({
   workspaceTitle,
   isPinned,
   isArchived,
+  settle,
 }: SessionMenuActionsOptions): MenuAction[] {
   const ctx = useSidebarContext();
   const { groups, assignments } = useWorkspaceGroups(workspaceId);
@@ -419,6 +424,15 @@ function useSessionMenuActions({
     icon: isPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />,
     onSelect: () => store.getState().togglePin(sessionId),
   }];
+  if (settle && !isArchived) actions.push({
+    type: "item", id: "settle",
+    label: settle.settled ? t("session_management.unsettle_session") : t("session_management.settle_session"),
+    icon: settle.settled ? <Undo2 className="size-4" /> : <CheckCheck className="size-4" />,
+    disabled: !settle.settled && !settle.canSettle,
+    disabledReason: !settle.settled && !settle.canSettle ? t("session_management.settle_after_finish") : undefined,
+    dataAttributes: { "data-session-menu-settle": true },
+    onSelect: settle.toggle,
+  });
   if (canOpenInSplit) actions.push({
     type: "item", id: "open-split", label: t("session_management.open_in_split_view"),
     icon: <Columns2 className="size-4" />, dataAttributes: { "data-session-menu-open-split": true }, onSelect: openInSplitView,
@@ -497,15 +511,17 @@ type SessionHoverQuickActionsProps = {
   isPinned: boolean;
   isArchived: boolean;
   relativeTime: string | null;
+  settle: SessionSettleState;
 };
 
-/** Pin → Archive → relative time — same trailing slot as status dots (Paper hover). */
+/** Pin → Settle → Archive → relative time — same trailing slot as status dots (Paper hover). */
 function SessionHoverQuickActions({
   className,
   sessionId,
   isPinned,
   isArchived,
   relativeTime,
+  settle,
 }: SessionHoverQuickActionsProps) {
   const ctx = useSidebarContext();
   const store = useSessionManagementStore;
@@ -530,6 +546,22 @@ function SessionHoverQuickActions({
       >
         {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
       </Button>
+      {settle.settled || settle.canSettle ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-5 text-muted-foreground hover:bg-transparent hover:text-foreground"
+          aria-label={settle.settled ? t("session_management.unsettle_session") : t("session_management.settle_session")}
+          title={settle.settled ? t("session_management.unsettle_session") : t("session_management.settle_session")}
+          data-testid={`session-settle-${sessionId}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            settle.toggle();
+          }}
+        >
+          {settle.settled ? <Undo2 className="size-3.5" /> : <CheckCheck className="size-3.5" />}
+        </Button>
+      ) : null}
       {ctx.onArchiveSession && !ctx.archiveDisabledReason ? (
         <Button
           variant="ghost"
@@ -562,6 +594,7 @@ type SessionContextMenuProps = {
   workspaceTitle?: string;
   isPinned: boolean;
   isArchived: boolean;
+  settle: SessionSettleState;
 };
 
 function SessionContextMenu({
@@ -572,8 +605,9 @@ function SessionContextMenu({
   workspaceTitle,
   isPinned,
   isArchived,
+  settle,
 }: SessionContextMenuProps) {
-  const actions = useSessionMenuActions({ sessionId, workspaceId, sessionTitle, workspaceTitle, isPinned, isArchived });
+  const actions = useSessionMenuActions({ sessionId, workspaceId, sessionTitle, workspaceTitle, isPinned, isArchived, settle });
   if (!useCanManageSession()) return children;
 
   return (
@@ -645,6 +679,7 @@ export type AppSidebarProps = {
   selectedSessionId: string | null;
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
+  settleWorkspaceIds?: ReadonlySet<string>;
   sessionAttentionLabelById?: Record<string, string>;
   sessionAttentionSourceById?: Record<string, "child" | "descendant">;
   connectingWorkspaceId: string | null;
@@ -757,6 +792,7 @@ export function AppSidebar(props: AppSidebarProps) {
     developerMode: props.developerMode,
     showSessionActions: props.showSessionActions,
     sessionStatusById: props.sessionStatusById,
+    settleWorkspaceIds: props.settleWorkspaceIds,
     sessionAttentionLabelById: props.sessionAttentionLabelById,
     sessionAttentionSourceById: props.sessionAttentionSourceById,
     newTaskDisabled: props.newTaskDisabled,
@@ -1200,6 +1236,11 @@ function WorkspaceSidebarGroup({
 
   const pinnedIdList = useSessionManagementStore((state) => state.pinnedIds);
   const pinnedIds = React.useMemo(() => new Set(pinnedIdList), [pinnedIdList]);
+  const unreadIdList = useSessionManagementStore((state) => state.unreadIds);
+  const unreadIds = React.useMemo(() => new Set(unreadIdList), [unreadIdList]);
+  const settledById = useSessionManagementStore((state) => state.settledById);
+  const autoSettleDays = useSessionManagementStore((state) => state.autoSettleDays);
+  const settleNow = useSettleNow();
   const orderIds = useSessionOrder(workspace.id);
   const fullOrderIds = React.useMemo(() => getSessionOrder(getRootSessions(group.sessions), orderIds), [group.sessions, orderIds]);
   const { groups: wsGroups, assignments } = useWorkspaceGroups(workspace.id);
@@ -1212,20 +1253,35 @@ function WorkspaceSidebarGroup({
     () => partitionArchivedSessions(group.sessions),
     [group.sessions],
   );
+  const settleEnabled = ctx.settleWorkspaceIds?.has(workspace.id) ?? false;
+  const settledSessions = React.useMemo(() => settleEnabled ? filterSettledSessions(getRootSessions(activeSessions), {
+    settledById,
+    statusById: ctx.sessionStatusById,
+    pinnedIds,
+    unreadIds,
+    autoSettleDays,
+    now: settleNow,
+  }) : [], [activeSessions, autoSettleDays, ctx.sessionStatusById, pinnedIds, settleEnabled, settleNow, settledById, unreadIds]);
+  // Pinned sessions live in the global Pinned section and settled ones at the
+  // end of the workspace, so neither appears in the group lists.
+  const hiddenRootIds = React.useMemo(
+    () => new Set([...pinnedIds, ...settledSessions.map((session) => session.id)]),
+    [pinnedIds, settledSessions],
+  );
   const sessionRows = React.useMemo(() => flattenSessionRows(
     group.sessions,
     wsGroups.length > 0 ? Number.MAX_SAFE_INTEGER : previewCount,
     EMPTY_PINNED_IDS,
     orderIds,
-    { exclude: pinnedIds },
-  ), [group.sessions, orderIds, pinnedIds, previewCount, wsGroups.length]);
+    { exclude: hiddenRootIds },
+  ), [group.sessions, hiddenRootIds, orderIds, previewCount, wsGroups.length]);
   const visibleRootIds = React.useMemo(
     () => sessionRows.map((row) => row.session.id),
     [sessionRows],
   );
   const activeRootCount = React.useMemo(
-    () => getRootSessions(activeSessions).filter((session) => !pinnedIds.has(session.id)).length,
-    [activeSessions, pinnedIds],
+    () => getRootSessions(activeSessions).filter((session) => !hiddenRootIds.has(session.id)).length,
+    [activeSessions, hiddenRootIds],
   );
   const remainingRootSessions = Math.max(0, activeRootCount - previewCount);
   const showMoreLabel = remainingRootSessions > 0
@@ -1360,6 +1416,9 @@ function WorkspaceSidebarGroup({
                     workspaceId={workspace.id}
                     store={store}
                   /> : <NewSessionDraftRow workspaceId={workspace.id} />
+                ) : null}
+                {group.status !== "error" ? (
+                  <WorkspaceSettledSessions workspaceId={workspace.id} sessions={settledSessions} />
                 ) : null}
               </SidebarMenuSub>
             </CollapsibleContent>
@@ -1827,6 +1886,28 @@ export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds
   );
 }
 
+/** Settled sessions collapse into one row at the end of their workspace. */
+function WorkspaceSettledSessions({ workspaceId, sessions }: { workspaceId: string; sessions: SessionListItem[] }) {
+  const [expanded, setExpanded] = React.useState(false);
+  if (sessions.length === 0) return null;
+
+  return (
+    <Collapsible open={expanded} onOpenChange={setExpanded} data-workspace-settled-sessions={workspaceId}>
+      <SessionGroupSeparator
+        label={t("session_management.settled_label")}
+        count={sessions.length}
+        expanded={expanded}
+        onToggle={() => setExpanded((value) => !value)}
+      />
+      <CollapsibleContent className="flex flex-col gap-0.5">
+        {sessions.map((session) => (
+          <SessionMenuItem key={session.id} session={session} workspaceId={workspaceId} />
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function SessionGroupSection({ group, rows, expanded, workspaceId, store, renderRow, previewCount, onShowMore, orderIds, onReorder }: {
   group: SessionGroupDefinition;
   rows: FlattenedSessionRow[];
@@ -1955,6 +2036,12 @@ export function SessionMenuItem({
   const isStarting = useSessionStarting(workspaceId, session.id, sessionActivityStatus);
   const isUnread = unreadIds.has(session.id) && !isSelected;
   const isArchived = isSessionArchived(session);
+  const settle = useSessionSettleState(
+    session,
+    sessionActivityStatus,
+    displayTitle,
+    ctx.settleWorkspaceIds?.has(workspaceId) ?? false,
+  );
   const relativeTime = formatSessionRelativeTime(session.time?.updated ?? session.time?.created);
   const shortcutDigit = ctx.sessionNumberShortcutByTarget.get(
     sessionNumberShortcutTargetKey(workspaceId, session.id),
@@ -2002,7 +2089,9 @@ export function SessionMenuItem({
     // Reserve quick-action space only while visible. The side-chat control
     // occupies its own flex slot, so idle titles need only the normal end inset.
     SESSION_ROW_BUTTON_CLASS,
-    "group-hover/menu-sub-item:pe-18 group-has-data-popup-open/menu-sub-item:pe-18 max-lg:pe-18 pointer-coarse:pe-18",
+    settle.settled || settle.canSettle
+      ? "group-hover/menu-sub-item:pe-24 group-has-data-popup-open/menu-sub-item:pe-24 max-lg:pe-24 pointer-coarse:pe-24"
+      : "group-hover/menu-sub-item:pe-18 group-has-data-popup-open/menu-sub-item:pe-18 max-lg:pe-18 pointer-coarse:pe-18",
   );
   const rowButtonStyle = {
     paddingInlineStart: sidebarRowPaddingInlineStart(0),
@@ -2028,6 +2117,7 @@ export function SessionMenuItem({
         isPinned={isPinned}
         isArchived={isArchived}
         relativeTime={relativeTime}
+        settle={settle}
       />
     </>
   );
@@ -2051,6 +2141,7 @@ export function SessionMenuItem({
         workspaceTitle={workspaceName}
         isPinned={isPinned}
         isArchived={isArchived}
+        settle={settle}
       >
         <div className="relative min-w-0 flex-1">
           <SidebarMenuSubButton

@@ -56,6 +56,18 @@ test("updated desktops cannot create Automations on retired Zen models", async (
   assert.match(String(field(refused.body, "message")), /OpenCode Zen model is no longer available/)
 })
 
+test("updated desktops create Automations on models connected only on the desktop (#6482)", async () => {
+  const capable = { [AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER]: AUTOMATION_MODEL_ATTENTION_CAPABILITY }
+  for (const model of [desktopAutomation.model, { providerId: "ipr_01k0000000000000000000000a", modelId: "gateway-model" }]) {
+    const created = await asMember("POST", "/v1/automations", { ...desktopAutomation, model }, capable)
+    assert.equal(created.status, 201, summary(created))
+    const automationId = String(field(field(created.body, "automation"), "id"))
+    const listed = await asMember("GET", `/v1/automations/${automationId}`, undefined, capable)
+    assert.equal(field(field(listed.body, "automation"), "needsAttentionReason"), null, summary(listed))
+    assert.equal((await asMember("DELETE", `/v1/automations/${automationId}`, undefined, capable)).status < 300, true)
+  }
+})
+
 test("turning Desktop Automations off stops desktops from running them and members from creating them", async () => {
   const off = await asOwner("PUT", "/v1/org/automation-settings", { desktop: false })
   assert.equal(off.status, 200, summary(off))

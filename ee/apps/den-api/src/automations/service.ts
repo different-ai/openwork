@@ -354,13 +354,15 @@ export class AutomationService {
     const page = { ...listed, items: listed.items.filter((item) => readableBy(scope, item.revision.schedule)) }
     const modelAccessBySelection = new Map<string, ReturnType<typeof resolveAutomationModelAccess>>()
     const resolveModelAccess = (item: AutomationListItem) => {
-      const key = JSON.stringify([item.revision.model.providerId, item.revision.model.modelId])
+      const executionTarget = item.revision.executionTarget ?? "desktop"
+      const key = JSON.stringify([item.revision.model.providerId, item.revision.model.modelId, executionTarget])
       const existing = modelAccessBySelection.get(key)
       if (existing) return existing
       const access = resolveAutomationModelAccess({
         organizationId: item.automation.organizationId,
         ownerMemberId: item.automation.ownerMemberId,
         ...item.revision.model,
+        executionTarget,
       })
       modelAccessBySelection.set(key, access)
       return access
@@ -501,7 +503,7 @@ export class AutomationService {
     if (current.revision.action?.kind === "saved_script") {
       if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
     } else if (!blocked) {
-      const access = await resolveAutomationModelAccess({ ...scope, ...current.revision.model })
+      const access = await resolveAutomationModelAccess({ ...scope, ...current.revision.model, executionTarget: target })
       if (!access.ok && shouldApplyAutomationModelAccessFailure({
         model: current.revision.model,
         failure: access,
@@ -511,7 +513,8 @@ export class AutomationService {
     }
     if (blocked) {
       const now = Date.now()
-      await automationRepository.markNeedsAttention({
+      // A desktop-only model blocks one run in the cloud, not the Automation's own schedule.
+      if (ownPlacement(current.revision, target)) await automationRepository.markNeedsAttention({
         automationId: current.automation.id,
         expectedRevisionId: current.revision.id,
         reason: { ...blocked, occurredAt: now },
@@ -618,6 +621,7 @@ export class AutomationService {
           organizationId: item.automation.organizationId,
           ownerMemberId: item.automation.ownerMemberId,
           ...item.revision.model,
+          executionTarget: item.revision.executionTarget ?? "desktop",
         })
     let claim: AutomationClaimResult
     try {
@@ -754,6 +758,7 @@ export class AutomationService {
       organizationId: scope.organizationId,
       ownerMemberId: scope.ownerMemberId,
       ...claimed.revision.model,
+      executionTarget: "desktop",
     })
     if (!access.ok && shouldApplyAutomationModelAccessFailure({
       model: claimed.revision.model,
@@ -869,7 +874,7 @@ export class AutomationService {
       error.name = "model_access_lost"
       throw error
     }
-    const result = await resolveAutomationModelAccess({ ...scope, ...model })
+    const result = await resolveAutomationModelAccess({ ...scope, ...model, executionTarget: target })
     if (!result.ok && shouldApplyAutomationModelAccessFailure({
       model,
       failure: result,
@@ -889,6 +894,7 @@ export class AutomationService {
       organizationId: item.automation.organizationId,
       ownerMemberId: item.automation.ownerMemberId,
       ...item.revision.model,
+      executionTarget: item.revision.executionTarget ?? "desktop",
     }),
   ): Promise<AutomationListItem> {
     if (item.automation.state !== "active" || item.revision.action?.kind === "saved_script") return item

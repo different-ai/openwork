@@ -43,7 +43,7 @@ import {
 import type { EnvService } from "./env-file.js";
 import { selectPrimaryCredentialEnvName } from "./managed-provider-auth.js";
 import type { ServerConfig } from "./types.js";
-import { approvedProviderEnvironmentNames, machineOwnedProviderIds, MACHINE_PROVIDER_TEMPLATE_OWNERSHIP, resolveProviderConfigTemplates } from "./provider-config-templates.js";
+import { approvedProviderEnvironmentNames, machineOwnedProviderIds, MACHINE_PROVIDER_TEMPLATE_OWNERSHIP, resolveProviderConfigTemplates, type ProviderConfigTemplateError } from "./provider-config-templates.js";
 import { readOpenworkWorkspaceConfig } from "./openwork-workspace-config-store.js";
 
 /**
@@ -58,8 +58,18 @@ export function engineInstanceId(env: NodeJS.ProcessEnv = process.env): string |
 }
 import { findManagedEngineWorkspace, hasExternalOpencode } from "./workspaces.js";
 import { globalSkillDirectories } from "./skills.js";
-import { localProviderDefinitions, readLocalProviderAuth, type EngineV2SkippedProvider, type EngineV2SkippedProviderReason } from "./opencode-v2-local-auth.js";
-import { organizationProviderGate } from "./organization-provider-gate.js";
+import {
+  environmentProviderKey,
+  localProviderDefinitions,
+  parseEngineV2NativeProviders,
+  readLocalProviderAuth,
+  readUserConfigProviders,
+  type EngineV2NativeProvider,
+  type EngineV2NativeProviders,
+  type EngineV2SkippedProvider,
+  type EngineV2SkippedProviderReason,
+} from "./opencode-v2-local-auth.js";
+import { ORGANIZATION_PROVIDER_ID, organizationProviderGate } from "./organization-provider-gate.js";
 
 export type { EngineV2SkippedProvider, EngineV2SkippedProviderReason } from "./opencode-v2-local-auth.js";
 
@@ -498,6 +508,72 @@ export function mergeSkippedProviders(...groups: ReadonlyArray<readonly EngineV2
   const merged = new Map<string, EngineV2SkippedProvider>();
   for (const provider of groups.flat()) if (!merged.has(provider.id)) merged.set(provider.id, provider);
   return [...merged.values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+
+/** A catalog provider of the engine: only its key goes into the config. */
+export function nativeProviderSpec(provider: { id: string; name: string; apiKey: string }): OpencodeV2ProviderSpec {
+  return { id: provider.id, name: provider.name, apiKey: provider.apiKey, models: [], native: true };
+}
+
+/** The engine's catalog providers; none when it cannot answer, so the mirror falls back to full definitions. */
+export async function readEngineV2NativeProviders(
+  active: Pick<ManagedOpencodeV2Server, "fetchJson">,
+): Promise<Map<string, EngineV2NativeProvider>> {
+  const response = await active.fetchJson("/api/integration", { timeoutMs: 10_000 }).catch(() => undefined);
+  return response?.status === 200 ? parseEngineV2NativeProviders(response.json) : new Map();
+}
+
+/**
+ * Providers from this computer's own OpenCode config file (see
+ * readUserConfigProviders). Settings definitions win for the same id. An
+ * entry that only adds a key to a catalog provider (no package or endpoint of
+ * its own) becomes a native provider; anything else is a full definition.
+ */
+export async function userConfigProviders(
+  configured: Record<string, unknown>,
+  allows: ((providerId: string) => boolean) | null,
+  native: EngineV2NativeProviders,
+  localKeys: ReadonlyMap<string, string>,
+  credentials: ReadonlyMap<string, string>,
+  read: () => Promise<{ directory: string; providers: Record<string, Record<string, unknown>> }> = readUserConfigProviders,
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<{
+  /** Every id the file defines, so the auth.json path leaves them alone. */
+  claimed: Record<string, unknown>;
+  definitions: Record<string, unknown>;
+  native: Array<{ id: string; name: string; apiKey: string }>;
+  skipped: EngineV2SkippedProvider[];
+  errors: ProviderConfigTemplateError[];
+}> {
+  const file = await read();
+  const claimed = Object.fromEntries(Object.entries(file.providers)
+    .filter(([id]) => !(id in configured) && !ORGANIZATION_PROVIDER_ID.test(id)));
+  const skipped: EngineV2SkippedProvider[] = [];
+  const allowed: Record<string, unknown> = {};
+  for (const [id, provider] of Object.entries(claimed)) {
+    if (allows && !allows(id)) skipped.push({ id, reason: "policy" });
+    else allowed[id] = provider;
+  }
+  // Same rules as v1 for this file: its environment and files beside it.
+  const templates = await resolveProviderConfigTemplates(allowed, {
+    directory: file.directory, environment: credentials, localProviderIds: new Set(Object.keys(allowed)),
+    remoteEnvironmentNames: new Map(), inheritedEnvironment: environment,
+  });
+  const definitions: Record<string, unknown> = {};
+  const nativeProviders: Array<{ id: string; name: string; apiKey: string }> = [];
+  for (const [id, value] of Object.entries(templates.providers)) {
+    const catalog = native.get(id);
+    const settings = isRecord(value) && isRecord(value.options) ? value.options : {};
+    if (!catalog || !isRecord(value) || value.npm !== undefined || value.api !== undefined || settings.baseURL !== undefined) {
+      definitions[id] = value;
+      continue;
+    }
+    const written = typeof settings.apiKey === "string" && settings.apiKey.trim() ? settings.apiKey : undefined;
+    const apiKey = written ?? localKeys.get(id) ?? environmentProviderKey(id, catalog, environment);
+    if (apiKey) nativeProviders.push({ id, name: typeof value.name === "string" && value.name.trim() ? value.name : catalog.name, apiKey });
+    else skipped.push({ id, reason: "credentials" });
+  }
+  return { claimed, definitions, native: nativeProviders, skipped, errors: templates.errors };
 }
 
 export function shouldSyncLiveProviderOwnerTransition(previous: boolean, next: boolean, rollout: boolean): boolean {
@@ -959,7 +1035,15 @@ export function createEngineV2Preview(options: {
     const localKeys = allowsProvider
       ? new Map([...localAuth.apiKeys].filter(([id]) => allowsProvider(id)))
       : localAuth.apiKeys;
-    const local = await localProviderDefinitions(config, localAuth, configured, { allows: allowsProvider });
+    const credentials = new Map((await options.env?.list() ?? []).map((entry) => [entry.key, entry.value]));
+    // Providers the engine's own catalog knows need only a key from us.
+    const native = await readEngineV2NativeProviders(active);
+    // v1 reads catalog keys from its environment: the server's, plus Settings › Environment.
+    const environment: NodeJS.ProcessEnv = { ...process.env, ...Object.fromEntries(credentials) };
+    const userFile = await userConfigProviders(configured, allowsProvider, native, localKeys, credentials, undefined, environment);
+    const local = await localProviderDefinitions(config, localAuth, { ...configured, ...userFile.claimed }, {
+      allows: allowsProvider, native, environment,
+    });
     const blockedConfigured = Object.keys(configured).filter(id => allowsProvider && !allowsProvider(id));
     const combinedProviders = { ...local.providers, ...Object.fromEntries(Object.entries(configured)
       .filter(([id]) => !allowsProvider || allowsProvider(id))) };
@@ -967,7 +1051,6 @@ export function createEngineV2Preview(options: {
     // use the old mirror, including their normal readiness/catalog checks.
     const providerMap = Object.fromEntries(Object.entries(combinedProviders)
       .filter(([id]) => !ownsGateway() || !/^ipr_/i.test(id)));
-    const credentials = new Map((await options.env?.list() ?? []).map((entry) => [entry.key, entry.value]));
     // Persisted cloud ownership is written before managed runtime rows. Do not
     // treat a Den-pushed definition as local merely because it is in that map.
     const ownership = await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__");
@@ -981,12 +1064,16 @@ export function createEngineV2Preview(options: {
       directory: runtimeStorageDir(config), environment: credentials, localProviderIds,
       remoteEnvironmentNames: approvedProviderEnvironmentNames(ownership.providerEnvHashes, credentials),
     });
-    const mapped = mapRuntimeProvidersToV2Specs(templates.providers, credentials, localKeys, new Set(Object.keys(configured)));
-    const specs = mapped.specs.filter((spec) => !disabled.has(spec.id));
+    // Hand-written definitions are trusted like Settings ones: the person wrote their endpoints.
+    const mapped = mapRuntimeProvidersToV2Specs({ ...templates.providers, ...userFile.definitions }, credentials, localKeys,
+      new Set([...Object.keys(configured), ...Object.keys(userFile.definitions)]));
+    const specs = [...mapped.specs, ...[...local.native, ...userFile.native].map(nativeProviderSpec)]
+      .filter((spec) => !disabled.has(spec.id))
+      .sort((left, right) => left.id.localeCompare(right.id));
     if (ownsGateway()) mirroredSpecs = specs;
     discovered();
     const nextMirroredProviderIds = specs.map((spec) => spec.id);
-    const providerFilters = Object.fromEntries(Object.entries(combinedProviders).flatMap(([id, value]) => {
+    const providerFilters = Object.fromEntries(Object.entries({ ...userFile.definitions, ...combinedProviders }).flatMap(([id, value]) => {
       if (!isRecord(value)) return [];
       const whitelist = Array.isArray(value.whitelist) ? value.whitelist.filter((id): id is string => typeof id === "string") : undefined;
       const blacklist = Array.isArray(value.blacklist) ? value.blacklist.filter((id): id is string => typeof id === "string") : undefined;
@@ -999,7 +1086,8 @@ export function createEngineV2Preview(options: {
     const skipped = mergeSkippedProviders(
       local.skipped,
       blockedConfigured.map((id): EngineV2SkippedProvider => ({ id, reason: "policy" })),
-      templates.errors.map((error): EngineV2SkippedProvider => ({ id: error.providerId, reason: "metadata" })),
+      userFile.skipped,
+      [...templates.errors, ...userFile.errors].map((error): EngineV2SkippedProvider => ({ id: error.providerId, reason: "metadata" })),
       mapped.skippedProviders,
     );
     skippedProviderIds = skipped.map(provider => provider.id);
@@ -1010,7 +1098,8 @@ export function createEngineV2Preview(options: {
     for (const directory of mcpLocations.keys()) void ensureWorkspaceReady(directory).catch(() => undefined);
     const catalog = await waitForEngineV2Catalog(active, workspaceDir, specs, CATALOG_MIRROR_TIMEOUT_MS, ownsGateway);
     currentCatalogModelIds = catalog.modelIds;
-    lastError = [...templates.errors.map(error => error.message), ...(catalog.lastError ? [catalog.lastError] : [])].join("\n") || undefined;
+    lastError = [...templates.errors, ...userFile.errors].map(error => error.message)
+      .concat(catalog.lastError ? [catalog.lastError] : []).join("\n") || undefined;
   }
 
   function scheduleMirror(): void {
