@@ -186,6 +186,7 @@
           {
             "group": "Usage and cost",
             "pages": [
+              "ai-gateway/spend-limits",
               "ai-gateway/counting-usage",
               "ai-gateway/token-costs",
               "ai-gateway/limits",
