@@ -206,6 +206,24 @@ export async function hasV1Chat(database: string, id: string): Promise<boolean> 
   }
 }
 
+/** The folder v1 recorded for the top-level chat `id`; null when v1 has no such
+ * chat, it is delegated, or the database is missing or unreadable. */
+export async function v1ChatDirectory(database: string, id: string): Promise<string | null> {
+  try {
+    await access(database);
+    const db = typeof process.versions.bun === "string"
+      ? new (await import("bun:sqlite")).Database(database, { readonly: true })
+      : new (await importNodeSqlite()).DatabaseSync(database, { readOnly: true });
+    try {
+      const row: unknown = db.prepare("SELECT directory, parent_id FROM session WHERE id = ?").get(id);
+      return isRecord(row) && row.parent_id === null && typeof row.directory === "string" && isAbsolute(row.directory)
+        ? row.directory : null;
+    } finally { db.close(); }
+  } catch {
+    return null;
+  }
+}
+
 export interface MigrationRequest {
   source: string;
   storageDir: string;

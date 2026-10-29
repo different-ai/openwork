@@ -166,6 +166,8 @@ jobs:
         run: bun test apps/server/test/engine-v2-provider-mapping.test.ts apps/server/test/opencode-v2-local-auth.test.ts
       - name: Test OpenCode v2 starting again after it fails or exits
         run: bun test apps/server/test/engine-v2-restart.test.ts
+      - name: Test v2 chat lists survive unreadable and migrated chats
+        run: bun --conditions=development test apps/server/test/opencode-v2-session-list.test.ts
       - name: Test the self-hosted web UI stays on its own origin
         run: bun --conditions=development test apps/server/test/web-ui-origin.test.ts
       - name: Test OneDrive and SharePoint pulls and saves
