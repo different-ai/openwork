@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { DynamicToolUIPart } from "ai";
+import { LoaderCircle } from "lucide-react";
 import { CapabilityCallLine, DetailsToggle, TechnicalDetailsPanel } from "./capability-call-line";
 import { LaneChevron, LeadingLane, RAIL_LINE, RAIL_ROW, RailDuration, RailMeta } from "./activity-rail";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -124,7 +125,7 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
     return (
       <div data-code-mode-call={part.toolCallId} className={RAIL_ROW}>
         <div className={RAIL_LINE}>
-          <LeadingLane>{running ? <span className="size-1 rounded-full bg-muted-foreground" /> : null}</LeadingLane>
+          <LeadingLane>{running ? <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" /> : null}</LeadingLane>
           <span className={cn("shrink-0", failed && "text-destructive", running && "ow-text-shimmer motion-reduce:animate-none")}>{label}</span>
           {failed && reason ? <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{reason}</span> : null}
           <RailDuration value={duration} />

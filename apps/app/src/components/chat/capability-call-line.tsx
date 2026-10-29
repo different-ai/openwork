@@ -365,8 +365,7 @@ export function CapabilityCallLine({
           {mark ? (
             <ConnectorMark connector={mark} />
           ) : inFlight ? (
-            shimmer ? <span className="size-1 rounded-full bg-muted-foreground" />
-              : <LoaderCircle className="size-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" />
+            <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" />
           ) : null}
         </LeadingLane>
         <span className={cn("min-w-0 flex-1 truncate", shimmer && inFlight && "ow-text-shimmer motion-reduce:animate-none")}>{line}</span>

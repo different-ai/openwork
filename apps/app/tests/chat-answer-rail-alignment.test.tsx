@@ -2,7 +2,7 @@ import { afterAll, afterEach, expect, test } from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import type { UIMessage } from "ai"
+import type { DynamicToolUIPart, UIMessage } from "ai"
 import type { ModelOption } from "../src/app/types"
 
 GlobalRegistrator.register({ url: "https://web.example/" })
@@ -40,7 +40,7 @@ function answer(id: string): UIMessage {
   }
 }
 
-async function render(messages: UIMessage[], streaming = false, modelOptions?: readonly ModelOption[]) {
+async function render(messages: UIMessage[], streaming = false, modelOptions?: readonly ModelOption[], activityStatus?: string) {
   if (modelOptions) useModelPickerCatalogStore.getState().publish("session_fixture", Symbol(), modelOptions)
   const container = document.createElement("div")
   document.body.append(container)
@@ -54,7 +54,11 @@ async function render(messages: UIMessage[], streaming = false, modelOptions?: r
       dispatchAction: () => {}, setPrompt: () => {}, onRevertToUserMessage: () => {},
       onForkAtMessage: () => {}, onEditUserMessage: () => {},
       onMcpReconnect: async () => {}, onMcpReopenAuthorization: async () => {},
-      children: createElement(MessageList, { messages, status: streaming ? "streaming" : "ready" }),
+      children: createElement(MessageList, {
+        messages,
+        status: streaming ? "streaming" : "ready",
+        activityStatus: (activityStatus ?? (streaming ? "responding" : "idle")) as never,
+      }),
     }),
   })))
   return container
@@ -102,4 +106,69 @@ test("the answer keeps the lane while it streams, so it does not jump left when 
   expect(answerLane(container)).not.toBeNull()
   // No completed rail while streaming; the lane is the answer's own, not the rail's.
   expect(container.querySelector('[data-testid="completed-work-rail"]')).toBeNull()
+})
+
+/** A script that started but has no visible calls yet — its lane must be a spinner, not a generic dot. */
+function runningScript(toolCallId: string): UIMessage {
+  const scriptPart: DynamicToolUIPart = {
+    type: "dynamic-tool",
+    toolName: "tools",
+    toolCallId,
+    state: "input-streaming",
+    input: { prompt: "Summarize the changes and post them" },
+    callProviderMetadata: { openwork: { codeMode: { calls: [] } } },
+  }
+  return {
+    id: "reply_script",
+    role: "assistant",
+    parts: [scriptPart],
+    metadata: { opencode: { created: 1000 } },
+  }
+}
+
+test("a running script with no visible calls shows a spinner in the lane, not a generic dot", async () => {
+  const container = await render(
+    [{ id: "user_script", role: "user", parts: [{ type: "text", text: "Run a script." }], metadata: { opencode: { created: 900 } } }, runningScript("call_script")],
+    true,
+    undefined,
+    "responding",
+  )
+  // The empty-group row's label is the script summary ("Running a script").
+  expect(container.textContent).toContain("Running a script")
+  // The lane holds a spinner (LoaderCircle svg with animate-spin), never the
+  // generic solid-dot fallback (size-1 rounded-full bg-muted-foreground) that
+  // read as a bullet beside the run (DESIGN.md T1).
+  expect(container.querySelector('[data-code-mode-call] .animate-spin')).not.toBeNull()
+  expect(container.querySelector('[data-code-mode-call] .size-1.rounded-full.bg-muted-foreground')).toBeNull()
+})
+
+/** A capability call in flight with no connector mark — its lane must be a spinner, not a generic dot. */
+function runningGenericCall(toolCallId: string): UIMessage {
+  const callPart: DynamicToolUIPart = {
+    type: "dynamic-tool",
+    toolName: "acme-api_get_data",
+    toolCallId,
+    state: "input-streaming",
+    input: { path: "/data" },
+  }
+  return {
+    id: "reply_call",
+    role: "assistant",
+    parts: [callPart],
+    metadata: { opencode: { created: 1000 } },
+  }
+}
+
+test("an in-flight capability call with no connector shows a spinner in the lane, not a generic dot", async () => {
+  const container = await render(
+    [{ id: "user_call", role: "user", parts: [{ type: "text", text: "Fetch the data." }], metadata: { opencode: { created: 900 } } }, runningGenericCall("call_data")],
+    true,
+    undefined,
+    "responding",
+  )
+  // The lane holds a spinner (LoaderCircle svg with animate-spin), never the
+  // generic solid-dot fallback (size-1 rounded-full bg-muted-foreground) that
+  // read as a bullet, whether the text shimmers or not (DESIGN.md T1).
+  expect(container.querySelector('[data-capability-call] .animate-spin')).not.toBeNull()
+  expect(container.querySelector('[data-capability-call] .size-1.rounded-full.bg-muted-foreground')).toBeNull()
 })
