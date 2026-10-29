@@ -387,6 +387,14 @@
       "development": "./src/connect-link.ts",
       "default": "./src/connect-link.ts"
     },
+    "./opencode-config-error": {
+      "types": {
+        "openwork-build": "./dist/types/src/opencode-config-error.d.ts",
+        "default": "./src/opencode-config-error.ts"
+      },
+      "development": "./src/opencode-config-error.ts",
+      "default": "./src/opencode-config-error.ts"
+    },
     "./url": {
       "types": {
         "openwork-build": "./dist/types/src/url.d.ts",

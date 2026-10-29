@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import { focusPaneComposerSoon } from "./workbench-pane-focus";
+import { isOpencodeConfigErrorMessage } from "@openwork/types/opencode-config-error";
 import { childOrigin, prepareChildReturn } from "@/lib/child-navigation";
 import { newSessionDraftOwnerKey } from "./new-session-destination";
 import { usePendingConversationStore } from "./pending-conversation-store";
@@ -1084,7 +1085,10 @@ export function SessionPage(props: SessionPageProps) {
     selectedWorkspaceGroupError ||
     "";
   const showSelectedWorkspaceError = Boolean(selectedWorkspaceErrorMessage);
-  const selectedWorkspaceErrorTitle = "OpenCode unavailable";
+  // A config error already names the file, the field and the fix (C6).
+  const selectedWorkspaceErrorTitle = isOpencodeConfigErrorMessage(selectedWorkspaceErrorMessage)
+    ? selectedWorkspaceErrorMessage
+    : "OpenCode unavailable";
 
   const reactSessionBaseUrl = props.opencodeBaseUrl?.trim() ?? "";
   const reactSessionToken =
