@@ -1,13 +1,18 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useId, useState } from "react"
 import { AlertTriangle, CalendarClock, Check } from "lucide-react"
 import type { DynamicToolUIPart } from "ai"
 import { useNavigate } from "react-router"
 import { toast } from "sonner"
 import { useQuery } from "@tanstack/react-query"
 
-import { automationProposalSchema, type AutomationProposal } from "@openwork/types/automations"
+import {
+  AUTOMATION_FREE_MODEL,
+  automationProposalSchema,
+  type AutomationModel,
+  type AutomationProposal,
+} from "@openwork/types/automations"
 
 import { createDenClient, readDenSettings } from "@/app/lib/den"
 import { Button } from "@/components/ui/button"
@@ -15,12 +20,15 @@ import { Tool } from "@/components/ui/tool"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { automationCreationPlacement, useAutomationDeploymentEnabled } from "@/react-app/domains/automations/automation-availability"
 import { formatAutomationSchedule } from "@/react-app/domains/automations/automation-format"
+import { AutomationModelButton } from "@/react-app/domains/automations/automation-model-button"
 import {
   automationModelOptions,
+  automationPickerOptions,
   automationProviderCatalog,
-  describeAutomationModel,
   resolveProposalModel,
 } from "@/react-app/domains/automations/automation-model-options"
+import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal"
+import { openAutoProviderSettings } from "@/react-app/domains/cloud/auto-access-ui"
 import { automationsRoute } from "@/react-app/shell/workspace-routes"
 import { useWorkspaceMaybe } from "@/react-app/shell/workspace-provider"
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider"
@@ -68,8 +76,21 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
   const workspaceContext = useWorkspaceMaybe()
   const [created, setCreated] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [selectedModelState, setSelectedModelState] = useState<{ proposalKey: string; model: AutomationModel } | null>(null)
+  const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const [modelQuery, setModelQuery] = useState("")
+  const modelPickerId = useId()
 
   const proposal = part.state === "output-available" ? parseAutomationProposal(part.output) : null
+  const proposalKey = proposal ? `${part.toolCallId ?? part.toolName}:${JSON.stringify(proposal)}` : null
+  const selectedModel = proposalKey && selectedModelState?.proposalKey === proposalKey ? selectedModelState.model : null
+  const setSelectedModel = (model: AutomationModel) => {
+    if (proposalKey) setSelectedModelState({ proposalKey, model })
+  }
+  useEffect(() => {
+    setModelPickerOpen(false)
+    setModelQuery("")
+  }, [proposalKey])
   const settings = readDenSettings()
   const token = settings.authToken?.trim() ?? ""
   const organizationId = settings.activeOrgId?.trim() ?? ""
@@ -96,12 +117,25 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
   const modelLookupFailed = providersQuery.isError || (placement === "desktop" && runtimeProviders.isError)
   const modelLookupPending = providersQuery.data === undefined
     || (placement === "desktop" && runtimeProviders.data === undefined)
+  const modelOptions = automationModelOptions(providers, availability)
+  // Keep "no model proposed" undefined through resolution: Cloud and restricted
+  // Desktop placements must choose from models the member can actually run.
+  const modelForSelection = selectedModel ?? proposal?.model
   const resolved = modelLookupFailed || modelLookupPending || !proposal
     ? null
-    : resolveProposalModel(proposal.model, providers, availability)
-  const modelLabel = resolved
-    ? describeAutomationModel(resolved.model, automationModelOptions(providers, availability))
-    : null
+    : resolveProposalModel(modelForSelection, providers, availability)
+  const pickerCurrentModel = resolved?.model ?? modelForSelection ?? {
+    providerId: AUTOMATION_FREE_MODEL.providerId,
+    modelId: AUTOMATION_FREE_MODEL.modelId,
+    variant: null,
+  }
+  const pickerOptions = automationPickerOptions({
+    options: modelOptions,
+    catalog: availability.catalog ?? {},
+    selected: pickerCurrentModel,
+  })
+  const modelPickerDisabled = modelLookupFailed || modelLookupPending || !signedIn
+    || !automationsEnabled || busy || Boolean(created) || modelOptions.length === 0
 
   if (!proposal) {
     return <Tool toolPart={part} title="Proposed an Automation" />
@@ -189,10 +223,55 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
         <div>
           <p className="truncate text-sm font-medium text-dls-primary" title={proposal.name}>{proposal.name}</p>
           <p className="text-xs text-dls-secondary">{formatAutomationSchedule(proposal.schedule)}</p>
-          {modelLabel ? <p className="text-xs text-dls-secondary">Runs with {modelLabel}</p> : null}
+          <div className="mt-2 space-y-1" data-automation-model-selection>
+            <label htmlFor={modelPickerId} className="text-xs text-dls-secondary">Model</label>
+            <AutomationModelButton
+              id={modelPickerId}
+              model={pickerCurrentModel}
+              options={modelOptions}
+              size="sm"
+              disabled={modelPickerDisabled}
+              onClick={() => setModelPickerOpen(true)}
+            />
+          </div>
           {pinnedWorkspaceId && placement === "desktop" ? <p className="text-xs text-dls-secondary" data-automation-pinned-workspace={pinnedWorkspaceId}>Runs in this workspace</p> : null}
         </div>
         <p className="whitespace-pre-wrap text-sm text-dls-secondary">{proposal.instructions}</p>
+        <ModelPickerModal
+          open={modelPickerOpen && !created}
+          options={pickerOptions}
+          query={modelQuery}
+          setQuery={setModelQuery}
+          subtitle={placement === "cloud"
+            ? "Your cloud Automation uses this model and reasoning level."
+            : "Your desktop Automation uses this model and reasoning level."}
+          target="default"
+          current={{ providerID: pickerCurrentModel.providerId, modelID: pickerCurrentModel.modelId }}
+          onSelect={(model) => {
+            setSelectedModel({
+              providerId: model.providerID,
+              modelId: model.modelID,
+              variant: pickerCurrentModel.providerId === model.providerID && pickerCurrentModel.modelId === model.modelID
+                ? pickerCurrentModel.variant
+                : null,
+            })
+            setModelPickerOpen(false)
+          }}
+          onBehaviorChange={(model, variant) => setSelectedModel({
+            providerId: model.providerID,
+            modelId: model.modelID,
+            variant,
+          })}
+          onOpenSettings={() => {
+            setModelPickerOpen(false)
+            openAutoProviderSettings()
+          }}
+          onOpenProviderSettings={() => {
+            setModelPickerOpen(false)
+            openAutoProviderSettings()
+          }}
+          onClose={() => setModelPickerOpen(false)}
+        />
       </div>
 
       <div className="flex items-center justify-between gap-3 border-t border-dls-border px-4 py-3">
@@ -234,7 +313,7 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
         <div className="flex items-center gap-2 border-t border-dls-border px-4 py-2 text-xs text-amber-11">
           <AlertTriangle className="size-3.5 shrink-0" />
           <span className="min-w-0 flex-1">
-            The proposed model isn't available for Automations. Choose a supported model in a new proposal or in Automations before creating. No replacement model was selected.
+            The proposed model isn't available for Automations. Select an available model above before creating. No replacement model was selected automatically.
           </span>
         </div>
       ) : null}
