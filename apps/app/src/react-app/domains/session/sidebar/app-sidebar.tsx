@@ -995,7 +995,7 @@ export function AppSidebar(props: AppSidebarProps) {
                   {t("workspace_list.title")}
                 </span>
               )}
-              {canCreateWorkspaces() && !feedView ? (
+              {canCreateWorkspaces() ? (
                 <button
                   type="button"
                   className="ml-auto flex size-5 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-foreground"
@@ -1084,7 +1084,7 @@ function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[]
   );
 }
 
-const SIDEBAR_VIEWS: SidebarView[] = ["workspaces", "feed"];
+const SIDEBAR_VIEWS: SidebarView[] = ["feed", "workspaces"];
 
 /** Replaces the Workspaces label: the tree, or every workspace's sessions in one feed. */
 function SidebarViewSwitch({ view, onChange }: { view: SidebarView; onChange: (view: SidebarView) => void }) {
@@ -2458,11 +2458,13 @@ export function SessionMenuItem({
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="flex min-w-0 items-center gap-2">
                   <SessionTitle intent={titleIntent} title={displayTitle} tooltip={itemTitle} />
-                  {relativeTime ? (
-                    <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground group-hover/menu-sub-item:invisible group-has-data-popup-open/menu-sub-item:invisible">
+                  {/* Hidden, not invisible, on hover so the title can scroll across the whole line. */}
+                  {relativeTime && shortcutDigit === undefined ? (
+                    <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground group-hover/menu-sub-item:hidden group-has-data-popup-open/menu-sub-item:hidden">
                       {isStarting || resolvedActiveWork ? t("workspace_list.feed_now") : relativeTime}
                     </span>
                   ) : null}
+                  <SessionNumberShortcutSlot digit={shortcutDigit} />
                 </span>
                 <span className="flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-muted-foreground" data-session-feed-subtitle>
                   <span className="min-w-0 truncate">{subtitle}</span>
@@ -2470,7 +2472,7 @@ export function SessionMenuItem({
                 </span>
               </span>
             ) : <SessionTitle intent={titleIntent} title={displayTitle} tooltip={itemTitle} />}
-            <SessionNumberShortcutSlot digit={shortcutDigit} />
+            {subtitle ? null : <SessionNumberShortcutSlot digit={shortcutDigit} />}
           </SidebarMenuSubButton>
           {trailing}
         </div>
