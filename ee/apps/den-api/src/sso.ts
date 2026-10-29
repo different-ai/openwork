@@ -64,10 +64,6 @@ export function getOrganizationSsoSignInPath(organizationSlug: string) {
   return `/sso/${encodeURIComponent(organizationSlug)}`
 }
 
-function authCallbackBaseUrl() {
-  return env.apiPublicUrl ?? env.betterAuthUrl
-}
-
 // Better Auth builds the SAML SP metadata and AuthnRequest ACS location from
 // its own baseURL (the web origin), not from samlConfig.callbackUrl. The URLs
 // we display and store must match what the SP actually advertises to the IdP,
@@ -81,7 +77,8 @@ export function getSsoMetadataUrl(providerId: string) {
 }
 
 export function getSsoOidcRedirectUrl(providerId: string) {
-  return `${authCallbackBaseUrl()}/api/auth/sso/callback/${encodeURIComponent(providerId)}`
+  // Match Better Auth's baseURL for both authorization and token exchange.
+  return `${env.betterAuthUrl}/api/auth/sso/callback/${encodeURIComponent(providerId)}`
 }
 
 function isDevLoopbackIssuer(issuer: string) {
