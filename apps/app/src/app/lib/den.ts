@@ -2143,7 +2143,7 @@ function getDenOrgGatewayProviders(payload: unknown): DenOrgGatewayProvider[] {
   });
 }
 
-const CONNECTION_READINESS_FAILURES = ["sign_in_required", "sign_in_rejected", "setup_required", "unavailable", "timed_out", "settings_changed", "tools_unreadable"] as const;
+const CONNECTION_READINESS_FAILURES = ["sign_in_required", "sign_in_rejected", "setup_required", "provider_setup_required", "unavailable", "timed_out", "settings_changed", "tools_unreadable"] as const;
 export type DenConnectionReadinessFailure = (typeof CONNECTION_READINESS_FAILURES)[number];
 
 function parseConnectionReadinessFailure(value: unknown): DenConnectionReadinessFailure | null {

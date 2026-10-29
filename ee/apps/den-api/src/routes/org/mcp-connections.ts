@@ -24,6 +24,7 @@ import {
   PluginConfigObjectTable,
   PluginTable,
   type ExternalMcpOAuthConfiguration,
+  type ExternalMcpReadinessCheck,
   type ExternalMcpReadinessFailure,
   type ExternalMcpToolPolicy,
 } from "@openwork-ee/den-db/schema"
@@ -132,12 +133,12 @@ import {
 } from "../../capability-sources/external-mcp-auth-policy.js"
 import {
   EXTERNAL_MCP_DIAGNOSTIC_PHASES,
-  EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE,
   externalMcpDiagnosticForLog,
   externalMcpDiagnosticForResponse,
   externalMcpOAuthCallbackError,
   externalMcpProviderSettingsLink,
   safeExternalMcpEndpointForLog,
+  type ExternalMcpDiagnostic,
 } from "../../capability-sources/external-mcp-diagnostics.js"
 import {
   diagnoseExternalMcpToolCall,
@@ -158,7 +159,19 @@ import {
 import type { OrgRouteVariables } from "./shared.js"
 import { beginNativeProviderConnect } from "./oauth-providers.js"
 import { createExternalMcpLifecycleDeadline } from "../../capability-sources/external-mcp-client.js"
-import { promoteMemberReadiness, readinessFingerprint, rotateReadinessCredentialBinding, saveReadinessCheck, storedOrganizationReadiness, visibleReadiness } from "../../capability-sources/external-mcp-readiness.js"
+import {
+  READINESS_FAILURE_REASONS,
+  failedReadinessFields,
+  promoteMemberReadiness,
+  readinessFailureForDiagnostic,
+  readinessFingerprint,
+  recordFailedConnectAttempt,
+  rotateReadinessCredentialBinding,
+  saveReadinessCheck,
+  storedOrganizationReadiness,
+  visibleReadiness,
+} from "../../capability-sources/external-mcp-readiness.js"
+import type { VisibleReadiness } from "../../capability-sources/external-mcp-readiness-identity.js"
 
 const connectionParamsSchema = idParamSchema("connectionId", "externalMcpConnection")
 const logger = appLogger.child({ component: "mcp_connections" })
@@ -467,8 +480,12 @@ const connectionReadinessSchema = z.object({
   checkedAt: z.string().datetime(),
   lastSuccessfulAt: z.string().datetime().nullable(),
   reason: z.string().nullable(),
-  failure: z.enum(["sign_in_required", "sign_in_rejected", "setup_required", "unavailable", "timed_out", "settings_changed", "tools_unreadable"]).nullable().optional()
-    .describe("Why the check did not pass. sign_in_* means a person must sign in again; the others are not sign-in problems. Null when Ready or for checks recorded before this field existed."),
+  failure: z.enum(["sign_in_required", "sign_in_rejected", "setup_required", "provider_setup_required", "unavailable", "timed_out", "settings_changed", "tools_unreadable"]).nullable().optional()
+    .describe("Why the check did not pass. sign_in_* means a person must sign in again; provider_setup_required means a setting in the service's own app must change first; the others are not sign-in problems. Null when Ready or for checks recorded before this field existed. Also set when the caller's last sign-in came back to Den but did not connect."),
+  referenceId: z.string().optional()
+    .describe("Diagnostic reference of the failed check or sign-in, for support."),
+  providerSettingsUrl: z.string().url().optional()
+    .describe("A validated link to the service's settings page where the named setting is changed. Only with provider_setup_required."),
 }).meta({ ref: "ExternalMcpConnectionReadiness" })
 
 const READINESS_CHECK_BATCH_LIMIT = 50
@@ -958,10 +975,11 @@ async function checkConnectionReadiness(connection: ExternalMcpConnectionRow, me
   let status: "ready" | "could_not_verify" = "could_not_verify"
   let reason: string | null = null
   let failure: ExternalMcpReadinessFailure | null = null
+  let failedFields: ReturnType<typeof failedReadinessFields> | null = null
   const credential = await resolveExternalMcpToolCredential(connection, memberId)
   if (!credential.ok) {
-    reason = connection.credentialMode === "per_member" ? "Sign in to check this connection." : "Finish setting up this connection."
     failure = connection.credentialMode === "per_member" ? "sign_in_required" : "setup_required"
+    reason = READINESS_FAILURE_REASONS[failure]
   } else {
     try {
       // A complete initialize + tools/list, using the normal guarded transport and
@@ -970,15 +988,11 @@ async function checkConnectionReadiness(connection: ExternalMcpConnectionRow, me
       status = "ready"
     } catch (error) {
       const diagnostic = externalMcpDiagnosticForResponse(error, requestId, "MCP_TOOL_DISCOVERY")
-      failure = diagnostic.category === "provider_unavailable" ? "unavailable"
-        : diagnostic.category === "request_timeout" || diagnostic.category === "lifecycle_deadline" ? "timed_out"
-        : diagnostic.httpStatus === 401 || diagnostic.httpStatus === 403 ? "sign_in_rejected"
-        : "tools_unreadable"
+      failure = readinessFailureForDiagnostic(diagnostic)
       // A known provider setup step gets its own server-written direction;
       // every other failure keeps a fixed reason.
-      reason = diagnostic.code === EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE
-        ? diagnostic.message
-        : READINESS_FAILURE_REASONS[failure]
+      failedFields = failedReadinessFields(diagnostic, failure)
+      reason = failedFields.reason
       // Provider text can repeat a just-entered key as plain prose; heuristic
       // redaction is not a boundary, so keep only server-owned identifiers.
       logger.warn("external_mcp_readiness_check_failed", {
@@ -999,24 +1013,16 @@ async function checkConnectionReadiness(connection: ExternalMcpConnectionRow, me
     status = "could_not_verify"
     failure = "settings_changed"
     reason = READINESS_FAILURE_REASONS[failure]
+    failedFields = null
   }
   const checkedAt = new Date().toISOString()
   const previous = visibleReadiness(connection.credentialMode === "per_member" ? account?.readinessCheck ?? null : connection.readinessCheck, fingerprint)
   const lastSuccessfulAt = status === "ready" ? checkedAt : previous?.lastSuccessfulAt ?? null
-  const check = { status, checkedAt, lastSuccessfulAt, reason, failure, fingerprint }
+  // failedFields carries the same failure and reason, plus the diagnostic reference.
+  const check: ExternalMcpReadinessCheck = { status, checkedAt, lastSuccessfulAt, reason, failure, ...failedFields, fingerprint }
   await saveReadinessCheck(connection, memberId, check)
-  return { status, checkedAt, lastSuccessfulAt, reason, failure }
+  return visibleReadiness(check, fingerprint) ?? { status, checkedAt, lastSuccessfulAt, reason, failure }
 }
-
-const READINESS_FAILURE_REASONS = {
-  sign_in_required: "Sign in to check this connection.",
-  setup_required: "Finish setting up this connection.",
-  unavailable: "The service didn't respond. Try again later.",
-  timed_out: "The check timed out. Try again.",
-  sign_in_rejected: "The service rejected the sign-in. Sign in again.",
-  settings_changed: "Connection settings changed during the check. Check again.",
-  tools_unreadable: "The service answered but its tools couldn't be read. Check the connection address and settings.",
-} satisfies Record<ExternalMcpReadinessFailure, string>
 
 const READINESS_CHECK_CONCURRENCY = 4
 
@@ -1506,6 +1512,8 @@ export type MemberUsableConnectionFacts = {
   setupRequired?: boolean
   issuerReviewRequired?: boolean
   reconnectActionOwner?: string | null
+  /** The caller's own last check, or why their last sign-in did not connect. External MCP rows only. */
+  readiness?: VisibleReadiness | null
 }
 
 /** Callers holding the same request context share one read (the library's loaders call it concurrently). */
@@ -1621,6 +1629,19 @@ async function handleExternalMcpOAuthCallback(input: {
   }
   const auditBlocked = await input.attribute?.({ organizationId: statePayload.organizationId, memberId: members[0].id, userId: members[0].userId })
   if (auditBlocked) return auditBlocked
+  // The completion page never tells the opener why; the apps read this instead.
+  const recordConnectFailure = async (diagnostic: ExternalMcpDiagnostic) => {
+    try {
+      const current = await getExternalMcpConnection({ organizationId: connection.organizationId, connectionId: connection.id })
+      if (current) await recordFailedConnectAttempt({ connection: current, memberId: statePayload.orgMembershipId, diagnostic })
+    } catch {
+      logger.error("external_mcp_connect_callback_failure_record_failed", {
+        connection_id: connection.id,
+        organization_id: statePayload.organizationId,
+        reference_id: diagnostic.referenceId,
+      })
+    }
+  }
   const configuredIssuer = connection.oauthConfiguration?.authorizationServerIssuer ?? null
   const discovery = connection.oauthConfiguration?.discovery
   const currentResponseIssuerRequired = authorizationResponseIssuerRequired(connection)
@@ -1702,6 +1723,7 @@ async function handleExternalMcpOAuthCallback(input: {
         })
       }
       const diagnostic = externalMcpDiagnosticForResponse(error, input.requestId, "AUTH_ISSUER_DISCOVERY")
+      await recordConnectFailure(diagnostic)
       logger.error("external_mcp_connect_callback_issuer_validation_failed", {
         connection_id: connection.id,
         organization_id: statePayload.organizationId,
@@ -1727,6 +1749,7 @@ async function handleExternalMcpOAuthCallback(input: {
         ...externalMcpDiagnosticForLog(error, input.requestId, "AUTH_USER_OR_WORKLOAD"),
       })
     }
+    await recordConnectFailure(callbackError.diagnostic)
     logger.error("external_mcp_connect_callback_authorization_denied", {
       connection_id: connection.id,
       organization_id: statePayload.organizationId,
@@ -1774,6 +1797,7 @@ async function handleExternalMcpOAuthCallback(input: {
       })
     }
     const diagnostic = externalMcpDiagnosticForResponse(error, input.requestId, "AUTH_TOKEN_ACQUISITION")
+    await recordConnectFailure(diagnostic)
     logger.error("external_mcp_connect_callback_token_exchange_failed", {
       connection_id: connection.id,
       organization_id: statePayload.organizationId,
