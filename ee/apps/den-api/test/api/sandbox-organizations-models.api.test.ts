@@ -14,6 +14,7 @@ const MINTED_KEY = "sk-or-v1-sandbox-fixture-key"
 type KeyCall = { method: string; path: string; body: Record<string, unknown> | null; auth: string | null }
 const keyCalls: KeyCall[] = []
 let remainingUsd = 21.5
+let failNextDisable = false
 
 const realFetch = globalThis.fetch
 globalThis.fetch = async (input, init) => {
@@ -33,6 +34,10 @@ globalThis.fetch = async (input, init) => {
     keyCalls.push({ method, path: new URL(url).pathname, body: raw ? JSON.parse(raw) : null, auth: headers.get("authorization") })
     if (method === "POST") return Response.json({ key: MINTED_KEY, data: { hash: `hash_${keyCalls.length}` } }, { status: 201 })
     if (method === "GET") return Response.json({ data: { limit: 25, limit_remaining: remainingUsd, disabled: false } })
+    if (method === "PATCH" && raw && field(JSON.parse(raw), "disabled") === true && failNextDisable) {
+      failNextDisable = false
+      return Response.json({ error: { message: "Temporary upstream outage" } }, { status: 503 })
+    }
     return Response.json({ data: {} })
   }
   return realFetch(input, init)
@@ -139,6 +144,20 @@ test("a sandbox whose time ran out loses Enterprise and its key without anyone c
   await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${convertedId}/close`)
   assert.equal(await enterpriseUnlocked(convertedOrg), true, "an Enterprise plan an admin set by hand survives closing the sandbox")
   assert.equal(field(await storedPlan(convertedOrg), "seats"), 40)
+})
+
+test("expiry reconciliation retries key revocation after a transient failure even when the sandbox is already closed", async () => {
+  const sandbox = field((await create({})).body, "sandbox")
+  const id = text(field(sandbox, "id"), "sandbox id")
+  const hash = lastHash()
+  failNextDisable = true
+  const closed = await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/close`)
+  assert.equal(field(closed.body, "sandbox", "state"), "closed", summary(closed))
+  const disables = () => callsFor(hash).filter(call => call.method === "PATCH" && field(call.body, "disabled") === true)
+  assert.equal(disables().length, 1, "the first disable failed upstream")
+  const { closeExpiredSandboxes } = await import("../../src/sandbox-organizations.js")
+  await closeExpiredSandboxes()
+  assert.equal(disables().length, 2, "closed rows are retried without waiting for their original expiry")
 })
 
 test("deleting a sandbox's organization deletes its key at OpenRouter", async () => {

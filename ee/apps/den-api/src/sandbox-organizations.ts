@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, count, desc, eq, inArray, isNotNull, isNull, lte, or } from "@openwork-ee/den-db/drizzle"
 import {
   ExternalMcpConnectionTable,
   GatewayProviderTable,
@@ -195,14 +195,17 @@ async function serialize(rows: SandboxRow[], now = new Date()): Promise<Sandbox[
  * Records sandboxes whose time ran out as closed and ends their Enterprise grant and model key. Free Auto already
  * stops at expiry without this (Den API and the Gateway check the sandbox row: sandboxFreeAutoStopped). Membership,
  * connectors and data stay; extending the sandbox reopens it. Runs hourly (startSandboxExpiryLoop) and whenever
- * sandboxes are listed or joined; only the run that marks a row closed ends its access.
+ * sandboxes are listed or joined. Closed rows are reconciled too: a transient plan or OpenRouter failure must not
+ * turn revocation into a one-shot attempt. Both revocations are idempotent; reopening removes the row from this set.
  */
 export async function closeExpiredSandboxes(now = new Date()) {
-  const rows = await db.select().from(SandboxOrganizationTable).where(isNull(SandboxOrganizationTable.closedAt))
+  const rows = await db.select().from(SandboxOrganizationTable).where(or(isNotNull(SandboxOrganizationTable.closedAt), lte(SandboxOrganizationTable.expiresAt, now)))
   for (const row of rows) {
-    if (row.expiresAt > now) continue
-    const result = await db.update(SandboxOrganizationTable).set({ closedAt: now }).where(and(eq(SandboxOrganizationTable.id, row.id), isNull(SandboxOrganizationTable.closedAt)))
-    if (affectedRows(result) > 0) await endSandboxAccess(row)
+    if (!row.closedAt) {
+      const result = await db.update(SandboxOrganizationTable).set({ closedAt: now }).where(and(eq(SandboxOrganizationTable.id, row.id), isNull(SandboxOrganizationTable.closedAt), lte(SandboxOrganizationTable.expiresAt, now)))
+      if (affectedRows(result) === 0) continue
+    }
+    await endSandboxAccess(row)
   }
 }
 
