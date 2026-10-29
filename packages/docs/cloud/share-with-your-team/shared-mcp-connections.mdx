@@ -173,6 +173,10 @@ Publishing a connector never removes or changes anyone's own local MCP setup.
 
 ## Slack
 
+<Tip>
+**In OpenWork Cloud, follow [Connect Slack](/slack/connect-slack).** **Add Slack** walks you through creating the Slack app from a manifest, so you don't need the manual steps below. Use them for an existing Slack app, or when your OpenWork has no guided setup (for example, self-hosted).
+</Tip>
+
 Want to mention `@openwork` or DM an assistant inside Slack? See [OpenWork in Slack](/slack/overview) (private alpha). The assistant adds a bot installation to this existing user connection; it is available only to approved organizations.
 
 Slack's MCP server doesn't let apps register themselves. Someone with permission
@@ -204,8 +208,8 @@ sign-in does not replace this step. Without it, connecting can fail with
 8. Members open **Your Connections**, or **Settings › Library** in the desktop
    app, and connect their own Slack account.
 
-If your organization has guided Slack setup, **Add Slack** walks you through
-these steps as one checklist instead. First choose what OpenWork can do in
+In OpenWork Cloud, **Add Slack** walks you through these steps as one checklist
+instead (see [Connect Slack](/slack/connect-slack)). On self-hosted OpenWork, the checklist appears once your operator turns on guided Slack setup. First choose what OpenWork can do in
 Slack: **Read and act** (every user scope Slack's MCP server offers) or **Read
 only** (no write scopes). Nothing is chosen for you, and OpenWork asks Slack
 for exactly those scopes. **Create app in Slack** then opens Slack's **Create
@@ -239,7 +243,7 @@ Add write scopes only if you want the AI to take action in Slack:
 chat:write reactions:write channels:write groups:write im:write mpim:write canvases:read canvases:write
 ```
 
-With guided Slack setup, **Read and act** asks for every user scope Slack's MCP
+With the **Add Slack** checklist, **Read and act** asks for every user scope Slack's MCP
 server offers:
 
 ```text
