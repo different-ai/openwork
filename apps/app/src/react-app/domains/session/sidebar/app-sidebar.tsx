@@ -154,7 +154,7 @@ import {
   type SidebarView,
 } from "./session-management-store";
 import { filterSettledSessions, useSessionSettleState, useSettleNow, type SessionSettleState } from "./session-settle";
-import { buildSessionFeed, type FeedEntry, type FeedSection } from "./session-feed";
+import { buildSessionFeed, type FeedEntry, type FeedSection, type SessionFeed } from "./session-feed";
 import { cn } from "@/lib/utils";
 import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "../status/session-activity-store";
 import { SessionDotMatrixLoader } from "./session-dot-matrix-loader";
@@ -803,7 +803,7 @@ export function AppSidebar(props: AppSidebarProps) {
     [props.sessionNumberShortcuts.targets],
   );
 
-  // Green unread dots: agent finished while the user was on another session.
+  // Green unread dots: agent finished while the user was on another session. Work starting also un-settles.
   React.useEffect(() => {
     const statuses = props.sessionStatusById ?? {};
     const previous = previousSessionStatusRef.current;
@@ -811,11 +811,13 @@ export function AppSidebar(props: AppSidebarProps) {
     const store = useSessionManagementStore.getState();
 
     for (const [sessionId, status] of Object.entries(statuses)) {
+      const prior = previous[sessionId];
+      // Includes the open session: chatting in a settled one brings it back.
+      if (isActiveWorkSessionStatus(status) && !isActiveWorkSessionStatus(prior)) store.noteActivity(sessionId);
       if (sessionId === selectedId) {
         store.clearUnread(sessionId);
         continue;
       }
-      const prior = previous[sessionId];
       if (isActiveWorkSessionStatus(prior) && status === "idle") {
         store.markUnread(sessionId);
       }
@@ -888,7 +890,12 @@ export function AppSidebar(props: AppSidebarProps) {
     [props.workspaceSessionGroups],
   );
   const sidebarView = useSessionManagementStore((state) => state.sidebarView);
-  const feedView = props.feedEnabled === true && sidebarView === "feed";
+  const feed = useSessionFeed(props.workspaceSessionGroups, {
+    enabled: props.feedEnabled === true && sidebarView === "feed",
+    statusById: props.sessionStatusById,
+    settleWorkspaceIds: props.settleWorkspaceIds,
+  });
+  const feedView = feed !== null;
 
   return (
     <SidebarContext.Provider value={contextValue}>
@@ -1034,7 +1041,7 @@ export function AppSidebar(props: AppSidebarProps) {
                 </button>
               ) : null}
             </div>
-            {feedView ? <SessionFeedList groups={props.workspaceSessionGroups} /> : <Reorder.Group
+            {feed ? <SessionFeedList feed={feed} /> : <Reorder.Group
               as="div"
               axis="y"
               values={props.workspaceSessionGroups.map((group) => group.workspace.id)}
@@ -1051,10 +1058,11 @@ export function AppSidebar(props: AppSidebarProps) {
                 />
               ))}
             </Reorder.Group>}
-            {archivedSessions.length > 0 ? (
+            {!feed && archivedSessions.length > 0 ? (
               <GlobalArchivedSessions entries={archivedSessions} />
             ) : null}
           </m.div>
+          {feed ? <FeedShelfDock feed={feed} archived={archivedSessions} groups={props.workspaceSessionGroups} /> : null}
         </SidebarReorderScope>
 
         <SidebarFooter className="border-t border-sidebar-border/60 p-1.5 pe-0">
@@ -1234,9 +1242,12 @@ function FeedOrderMenu() {
   );
 }
 
-/** Every workspace's sessions in one list: Needs you, then the chosen sections, then the shelves at the bottom. */
-function SessionFeedList({ groups }: { groups: WorkspaceSessionGroup[] }) {
-  const ctx = useSidebarContext();
+/** Every workspace's sessions in one Feed, or null outside the Feed view. */
+function useSessionFeed(groups: WorkspaceSessionGroup[], { enabled, statusById, settleWorkspaceIds }: {
+  enabled: boolean;
+  statusById: Record<string, string> | undefined;
+  settleWorkspaceIds: ReadonlySet<string> | undefined;
+}): SessionFeed | null {
   const pinnedIdList = useSessionManagementStore((state) => state.pinnedIds);
   const unreadIdList = useSessionManagementStore((state) => state.unreadIds);
   const settledById = useSessionManagementStore((state) => state.settledById);
@@ -1246,7 +1257,7 @@ function SessionFeedList({ groups }: { groups: WorkspaceSessionGroup[] }) {
   const groupBy = useSessionManagementStore((state) => state.feedGroupBy);
   const sortBy = useSessionManagementStore((state) => state.feedSortBy);
   const now = useSettleNow();
-  const feed = React.useMemo(() => buildSessionFeed(groups, {
+  return React.useMemo(() => !enabled ? null : buildSessionFeed(groups, {
     feedFolders,
     groupsByWorkspace,
     groupBy,
@@ -1254,21 +1265,28 @@ function SessionFeedList({ groups }: { groups: WorkspaceSessionGroup[] }) {
     pinnedIds: new Set(pinnedIdList),
     unreadIds: new Set(unreadIdList),
     settledById,
-    statusById: ctx.sessionStatusById,
-    settleWorkspaceIds: ctx.settleWorkspaceIds,
+    statusById,
+    settleWorkspaceIds,
     autoSettleDays,
     now,
-  }), [autoSettleDays, ctx.sessionStatusById, ctx.settleWorkspaceIds, feedFolders, groupBy, groups, groupsByWorkspace, now, pinnedIdList, settledById, sortBy, unreadIdList]);
-  const workspaceNames = new Map(groups.map((group) => [group.workspace.id, workspaceLabel(group.workspace)]));
+  }), [autoSettleDays, enabled, feedFolders, groupBy, groups, groupsByWorkspace, now, pinnedIdList, settleWorkspaceIds, settledById, sortBy, statusById, unreadIdList]);
+}
 
-  // The workspace, and the group when it has one, stands in for the project on each row.
-  const subtitleFor = ({ group, session }: FeedEntry) => {
+/** The workspace, and the group when it has one, stands in for the project on each Feed row. */
+function useFeedSubtitle() {
+  const groupsByWorkspace = useSessionManagementStore((state) => state.groupsByWorkspace);
+  return React.useCallback(({ group, session }: FeedEntry) => {
     const workspace = workspaceLabel(group.workspace);
     const state = groupsByWorkspace[group.workspace.id];
     const groupId = state?.assignments[session.id];
     const groupLabel = groupId ? state?.groups.find((candidate) => candidate.id === groupId)?.label : undefined;
     return groupLabel ? `${workspace} · ${groupLabel}` : workspace;
-  };
+  }, [groupsByWorkspace]);
+}
+
+/** The scrolling part of the Feed: Needs you, then the chosen sections. */
+function SessionFeedList({ feed }: { feed: SessionFeed }) {
+  const subtitleFor = useFeedSubtitle();
   const section = (key: string, label: string | null, entries: FeedEntry[], attention = false) => entries.length === 0 ? null : (
     <SidebarGroup key={key} data-sidebar-feed-section={key} className="pb-0 pt-2">
       <SidebarGroupContent>
@@ -1298,58 +1316,85 @@ function SessionFeedList({ groups }: { groups: WorkspaceSessionGroup[] }) {
   );
 
   return (
-    <div data-sidebar-feed className="flex shrink-0 grow flex-col">
+    <div data-sidebar-feed className="flex flex-col pb-2">
       {section("needs-you", t("workspace_list.needs_you"), feed.needsYou, true)}
       {feed.sections.map(({ section: key, entries }) => section(key, key === "all" ? null : FEED_SECTION_LABEL[key](), entries))}
       {feed.needsYou.length === 0 && feed.sections.length === 0 ? (
         <p className="px-5 py-3 text-xs text-muted-foreground">{t("workspace_list.feed_empty")}</p>
       ) : null}
-      {/* The Feed fills the sidebar's height, so the shelves sit at its bottom, apart from live work. */}
-      {feed.folders.length > 0 || feed.settled.length > 0 ? (
-        <div data-feed-shelves className="mt-auto flex flex-col pb-2 pt-4">
-          {feed.folders.map((folder) => (
-            <FeedShelf
-              key={`${folder.workspaceId}:${folder.groupId}`}
-              shelf={`folder:${folder.workspaceId}:${folder.groupId}`}
-              icon={<Folder className="size-3.5 text-muted-foreground" />}
-              label={folder.label}
-              detail={workspaceNames.get(folder.workspaceId)}
-              attention={folder.attention}
-              entries={folder.entries}
-              subtitleFor={subtitleFor}
-              action={(
-                <button
-                  type="button"
-                  className="hidden size-5 items-center justify-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground group-hover/separator:flex"
-                  aria-label={t("session_management.unpin_from_feed")}
-                  title={t("session_management.unpin_from_feed")}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    useSessionManagementStore.getState().toggleFeedFolder(folder.workspaceId, folder.groupId);
-                  }}
-                >
-                  <PinOff className="size-3.5" />
-                </button>
-              )}
-            />
-          ))}
-          {feed.settled.length > 0 ? (
-            <FeedShelf
-              shelf="settled"
-              icon={<CheckCheck className="size-3.5 text-muted-foreground" />}
-              label={t("session_management.settled_label")}
-              entries={feed.settled}
-              subtitleFor={subtitleFor}
-            />
-          ) : null}
-        </div>
+    </div>
+  );
+}
+
+/**
+ * Pinned folders, Settled and Archived, fixed below the scrolling Feed so they stay apart from live work. One shelf
+ * opens at a time and scrolls on its own.
+ */
+function FeedShelfDock({ feed, archived, groups }: {
+  feed: SessionFeed;
+  archived: GlobalArchivedSessionEntry[];
+  groups: WorkspaceSessionGroup[];
+}) {
+  const subtitleFor = useFeedSubtitle();
+  const [openShelf, setOpenShelf] = React.useState<string | null>(null);
+  if (feed.folders.length === 0 && feed.settled.length === 0 && archived.length === 0) return null;
+  const workspaceNames = new Map(groups.map((group) => [group.workspace.id, workspaceLabel(group.workspace)]));
+  const shelfProps = (shelf: string) => ({
+    shelf,
+    subtitleFor,
+    expanded: openShelf === shelf,
+    onExpandedChange: (open: boolean) => setOpenShelf(open ? shelf : null),
+  });
+
+  return (
+    <div data-feed-shelves className="flex shrink-0 flex-col gap-1 border-t border-sidebar-border/60 py-2">
+      {feed.folders.map((folder) => (
+        <FeedShelf
+          key={`${folder.workspaceId}:${folder.groupId}`}
+          {...shelfProps(`folder:${folder.workspaceId}:${folder.groupId}`)}
+          icon={<Folder className="size-3.5 text-muted-foreground" />}
+          label={folder.label}
+          detail={workspaceNames.get(folder.workspaceId)}
+          attention={folder.attention}
+          entries={folder.entries}
+          action={(
+            <button
+              type="button"
+              className="hidden size-5 items-center justify-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground group-hover/separator:flex"
+              aria-label={t("session_management.unpin_from_feed")}
+              title={t("session_management.unpin_from_feed")}
+              onClick={(event) => {
+                event.stopPropagation();
+                useSessionManagementStore.getState().toggleFeedFolder(folder.workspaceId, folder.groupId);
+              }}
+            >
+              <PinOff className="size-3.5" />
+            </button>
+          )}
+        />
+      ))}
+      {feed.settled.length > 0 ? (
+        <FeedShelf
+          {...shelfProps("settled")}
+          icon={<CheckCheck className="size-3.5 text-muted-foreground" />}
+          label={t("session_management.settled_label")}
+          entries={feed.settled}
+        />
+      ) : null}
+      {archived.length > 0 ? (
+        <FeedShelf
+          {...shelfProps("archived")}
+          icon={<Archive className="size-3.5 text-muted-foreground" />}
+          label={t("session_management.archived_label")}
+          entries={archived}
+        />
       ) : null}
     </div>
   );
 }
 
-/** A collapsed shelf at the bottom of the Feed: a pinned folder, or Settled. */
-function FeedShelf({ shelf, icon, label, detail, attention = null, action, entries, subtitleFor }: {
+/** A collapsed shelf below the Feed: a pinned folder, Settled or Archived. Open, it shows about three rows. */
+function FeedShelf({ shelf, icon, label, detail, attention = null, action, entries, subtitleFor, expanded, onExpandedChange }: {
   shelf: string;
   icon: React.ReactNode;
   label: string;
@@ -1358,13 +1403,13 @@ function FeedShelf({ shelf, icon, label, detail, attention = null, action, entri
   action?: React.ReactNode;
   entries: FeedEntry[];
   subtitleFor: (entry: FeedEntry) => string;
+  expanded: boolean;
+  onExpandedChange: (open: boolean) => void;
 }) {
-  const [expanded, setExpanded] = React.useState(false);
-
   return (
-    <SidebarGroup data-feed-shelf={shelf} className="mt-2 pb-0 pt-0 first:mt-0">
+    <SidebarGroup data-feed-shelf={shelf} className="py-0">
       <SidebarGroupContent>
-        <Collapsible open={expanded} onOpenChange={setExpanded} className="group/settled">
+        <Collapsible open={expanded} onOpenChange={onExpandedChange} className="group/settled">
           <CollapsibleTrigger
             render={
               <button
@@ -1390,21 +1435,24 @@ function FeedShelf({ shelf, icon, label, detail, attention = null, action, entri
             }
           />
           <CollapsibleContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuSub>
-                  {entries.map((entry) => (
-                    <SessionMenuItem
-                      key={`${entry.group.workspace.id}:${entry.session.id}`}
-                      session={entry.session}
-                      workspaceId={entry.group.workspace.id}
-                      workspaceName={workspaceLabel(entry.group.workspace)}
-                      subtitle={subtitleFor(entry)}
-                    />
-                  ))}
-                </SidebarMenuSub>
-              </SidebarMenuItem>
-            </SidebarMenu>
+            {/* Three two-line rows (48px each, 2px apart); the rest scroll inside the shelf. */}
+            <div data-feed-shelf-rows className="no-scrollbar max-h-37 overflow-x-hidden overflow-y-auto overscroll-contain">
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuSub>
+                    {entries.map((entry) => (
+                      <SessionMenuItem
+                        key={`${entry.group.workspace.id}:${entry.session.id}`}
+                        session={entry.session}
+                        workspaceId={entry.group.workspace.id}
+                        workspaceName={workspaceLabel(entry.group.workspace)}
+                        subtitle={subtitleFor(entry)}
+                      />
+                    ))}
+                  </SidebarMenuSub>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </div>
           </CollapsibleContent>
         </Collapsible>
       </SidebarGroupContent>

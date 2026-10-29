@@ -62,7 +62,7 @@ type SessionGroupSyncStatus = {
 export type SessionSettleEntry = {
   /** The session's own last-activity time when it was settled, so a remote clock never un-settles it. */
   settledThrough?: number;
-  /** Local time of an Un-settle; idle time for auto-settle counts from here. */
+  /** Local time of an Un-settle, or of work starting on this device; idle time for auto-settle counts from here. */
   unsettledAt?: number;
 };
 
@@ -114,6 +114,11 @@ type SessionManagementActions = {
   /** Settle through `activityAt`; also unpins the session and clears its unread dot. */
   settle: (sessionId: string, activityAt: number) => SessionSettleSnapshot;
   unsettle: (sessionId: string) => SessionSettleSnapshot;
+  /**
+   * Work started in the session (a reply, a run, an approval answered). It leaves Settled even when the engine's
+   * session time has not moved, which OpenCode v2 does not do per message.
+   */
+  noteActivity: (sessionId: string) => void;
   restoreSettle: (sessionId: string, snapshot: SessionSettleSnapshot) => void;
   setAutoSettleDays: (days: number) => void;
   setSidebarView: (view: SidebarView) => void;
@@ -322,6 +327,9 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
         }));
         return snapshot;
       },
+
+      noteActivity: (sessionId) =>
+        set((state) => ({ settledById: { ...state.settledById, [sessionId]: { unsettledAt: Date.now() } } })),
 
       restoreSettle: (sessionId, snapshot) =>
         set((state) => {

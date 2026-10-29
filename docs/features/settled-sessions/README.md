@@ -21,9 +21,10 @@ Automation, an approval request) brings it back.
   workspace's sessions in one stream: **Needs you** first, then Today,
   Yesterday and Earlier by last activity. Each row has a second line with its
   workspace and group, and what it is doing or how long ago it was active.
-  Settled sessions from every workspace sit in a collapsed **Settled** shelf
-  above Archived, pushed to the bottom of the sidebar apart from live work.
-  The choice is remembered on the device.
+  Settled sessions from every workspace sit in a collapsed **Settled** shelf.
+  Pinned folders, Settled and Archived stay fixed below the scrolling Feed,
+  apart from live work; one opens at a time, showing about three rows that
+  scroll. The choice of view is remembered on the device.
 - In Feed, the header's **+** starts a new session, and the group-and-sort
   menu next to it groups by day, by activity (**Active**: working or with an
   unread result; **Inactive**: the rest) or not at all, and sorts by last
@@ -40,7 +41,9 @@ Automation, an approval request) brings it back.
 Settled is derived from each session's activity time, not stored as a flag
 (`apps/app/src/react-app/domains/session/sidebar/session-settle.ts`, tested in
 `apps/app/tests/session-settle.test.ts`). Manual settles live on the device in
-the session-management store, like pins. `session-route.tsx` resolves the
+the session-management store, like pins. OpenCode v2 does not move a
+session's time when a message is sent, so the sidebar also counts work starting
+on this device as activity (`noteActivity`). `session-route.tsx` resolves the
 feature once; when it is off, no workspace can settle.
 
 ## Turning it off

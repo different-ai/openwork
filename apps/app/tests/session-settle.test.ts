@@ -133,6 +133,24 @@ describe("settle actions", () => {
     expect(useSessionManagementStore.getState().settledById.d).toBeUndefined();
   });
 
+  test("work starting brings a settled session back even when its activity time does not move", () => {
+    // OpenCode v2 keeps the session's time when a message is sent, so activity seen here has to count.
+    const activityAt = NOW - 10 * DAY;
+    const isSettled = (id: string) => settled({
+      activityAt,
+      entry: useSessionManagementStore.getState().settledById[id],
+      now: Date.now(),
+    });
+    useSessionManagementStore.getState().settle("manual", activityAt);
+    expect(isSettled("manual")).toBe(true);
+    expect(isSettled("auto")).toBe(true);
+
+    useSessionManagementStore.getState().noteActivity("manual");
+    useSessionManagementStore.getState().noteActivity("auto");
+    expect(isSettled("manual")).toBe(false);
+    expect(isSettled("auto")).toBe(false);
+  });
+
   test("only the offered auto-settle choices are kept", () => {
     const store = useSessionManagementStore.getState();
     store.setAutoSettleDays(7);
