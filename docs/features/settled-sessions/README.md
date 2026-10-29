@@ -22,7 +22,13 @@ Automation, an approval request) brings it back.
   Yesterday and Earlier by last activity. Each row has a second line with its
   workspace and group, and what it is doing or how long ago it was active.
   Settled sessions from every workspace sit in a collapsed **Settled** shelf
-  above Archived. The choice is remembered on the device.
+  above Archived, pushed to the bottom of the sidebar apart from live work.
+  The choice is remembered on the device.
+- In Feed, the header's **+** starts a new session, and the group-and-sort
+  menu next to it groups by day, by activity (**Active**: working or with an
+  unread result; **Inactive**: the rest) or not at all, and sorts by last
+  activity or creation time. Needs you stays on top either way; the choice is
+  remembered on the device. Workspaces view keeps its Add workspace **+**.
 - Any workspace group can be pinned to the bottom of the Feed (the pin in the
   group's hover actions in Workspaces view). Sessions filed in a pinned group
   stay there, even with new activity; the folder shows a dot when something
