@@ -382,7 +382,8 @@ const connectionsSchema = z.object({
   connections: z.array(z.object({
     id: z.string(),
     name: z.string(),
-    app: z.enum(["gmail", "googleCalendar", "slack", "microsoft"]),
+    // Any app Den doesn't name is shown by its own name, so a newer Den never empties the list.
+    app: z.enum(["gmail", "googleCalendar", "slack", "microsoft", "other"]).catch("other"),
     ready: z.boolean(),
     connectUrl: z.string().nullable(),
     nativeProviderKey: z.string().nullable().optional(),
@@ -392,7 +393,7 @@ const connectionsSchema = z.object({
 export type WorkbotConnection = z.infer<typeof connectionsSchema>["connections"][number];
 
 /**
- * The Gmail, Slack and Microsoft 365 connections the person's admins set up, for the welcome screen. While the
+ * The connections the person's admins set up (Gmail, Slack and Microsoft 365 first, then any other app), for the welcome screen. While the
  * person is connecting one in another tab it is re-read every two seconds, until it is ready.
  */
 export function useWorkbotConnections(input: { enabled: boolean; waiting: boolean }) {

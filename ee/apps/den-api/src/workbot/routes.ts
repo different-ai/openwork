@@ -167,7 +167,7 @@ const workbotConnectionsSchema = z.object({
   connections: z.array(z.object({
     id: z.string(),
     name: z.string(),
-    app: z.enum(["gmail", "googleCalendar", "slack", "microsoft"]),
+    app: z.enum(["gmail", "googleCalendar", "slack", "microsoft", "other"]),
     ready: z.boolean(),
     connectUrl: z.string().nullable(),
     nativeProviderKey: z.string().nullable().optional(),
@@ -175,15 +175,18 @@ const workbotConnectionsSchema = z.object({
   })),
 })
 
-/** Which everyday app a connection is, for Workbot's welcome: Gmail (or Google Workspace), Slack, or Microsoft 365. */
-function everydayApp(fact: { name: string; url: string; nativeProviderKey: string | null }): "gmail" | "googleCalendar" | "slack" | "microsoft" | null {
+/**
+ * Which everyday app a connection is, for Workbot's welcome: Gmail (or Google Workspace), Slack, Microsoft 365, or
+ * any other app the admins set up ("other", shown by its own name).
+ */
+function everydayApp(fact: { name: string; url: string; nativeProviderKey: string | null }): "gmail" | "googleCalendar" | "slack" | "microsoft" | "other" {
   const key = fact.nativeProviderKey?.toLowerCase() ?? ""
   const text = `${fact.name} ${fact.url}`.toLowerCase()
   if (/google[ -]calendar|\bgcal\b/.test(text)) return "googleCalendar"
   if (key.includes("google") || /gmail|google workspace/.test(text)) return "gmail"
   if (key.includes("microsoft") || /microsoft|outlook|office ?365|m365/.test(text)) return "microsoft"
   if (/slack/.test(text)) return "slack"
-  return null
+  return "other"
 }
 
 /** The person behind a Workbot access token: a live Den grant, an active member of the token's organization. */
@@ -475,9 +478,9 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       tags: ["Workbot"],
       operationId: "listWorkbotConnections",
       "x-mcp": false,
-      summary: "The everyday apps the person can connect for Workbot",
+      summary: "The apps the person can connect for Workbot",
       description:
-        "For the Workbot app only. The Gmail or Google Workspace, Slack and Microsoft 365 connections the organization's admins set up and this member may use, with whether each is ready for them, and where in Den they connect their own account.",
+        "For the Workbot app only. Every connection the organization's admins set up and this member may use (Gmail or Google Workspace, Slack and Microsoft 365 are named; any other app is `other`), with whether each is ready for them, and where in Den they connect their own account. Everyday apps come first.",
       responses: {
         200: jsonResponse("The connections.", workbotConnectionsSchema),
         401: jsonResponse("The token is missing, expired or revoked, or the membership ended.", unauthorizedSchema),
@@ -495,13 +498,12 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       const inline = Boolean(workbotOrigin())
       const connections = facts.flatMap((fact) => {
         const app = everydayApp(fact)
-        if (!app) return []
         // Set up by an admin but not finished there: not something the member can do anything about yet.
         if (fact.setupRequired === true && !inline) return []
         const ready = fact.connectedForMe && !fact.needsReconnect
         const connectMode: "admin" | "inline" | "external" = fact.setupRequired === true ? "admin" : inline ? "inline" : "external"
         return [{ id: fact.id, name: fact.name, app, ready, connectUrl: ready ? null : openworkYourConnectionsUrl(fact.id), nativeProviderKey: fact.nativeProviderKey, connectMode }]
-      })
+      }).sort((a, b) => Number(a.app === "other") - Number(b.app === "other"))
       return c.json({ connections })
     },
   )
