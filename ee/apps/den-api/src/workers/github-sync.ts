@@ -1,9 +1,10 @@
-import { and, asc, desc, eq, inArray, isNull, lte, ne, or, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectorAccountTable,
   ConnectorInstanceTable,
   ConnectorSyncEventTable,
   ConnectorTargetTable,
+  MemberTable,
 } from "@openwork-ee/den-db/schema"
 import type { AuditActor, AuditEventInput } from "@openwork-ee/den-db/audit-log"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
@@ -18,6 +19,17 @@ import {
   getGithubRepositoryHeadSha,
 } from "../routes/org/plugin-system/github-app.js"
 import { executeGithubConnectorSyncEvent } from "../routes/org/plugin-system/store.js"
+import {
+  claimGithubReconcileState,
+  GITHUB_RECONCILE_STATE_KEY,
+  githubReconcileDueAtMs,
+  githubReconcileRevision,
+  GithubReconcilePermanentError,
+  nextGithubReconcileState,
+  readGithubReconcileState,
+  selectGithubReconcileCandidates,
+  type GithubReconcileState,
+} from "./github-reconcile-state.js"
 import { isTransientGithubSyncError } from "./github-sync-retry.js"
 
 export { isTransientGithubSyncError } from "./github-sync-retry.js"
@@ -32,42 +44,6 @@ export const GITHUB_SYNC_POLL_LIMIT = 25
 export const GITHUB_SYNC_RUNNING_LEASE_MS = 30 * 60_000
 // Events claimed before leases existed have none; one running this long was abandoned.
 const UNLEASED_RUNNING_STALE_MS = 24 * 60 * 60_000
-// This bounds one process; multi-replica dedup/leadership is deliberately deferred to #3568.
-const githubReconcileLastProbedAtMs = new Map<string, number>()
-
-export function resetGithubReconcileProbeStateForTests() {
-  githubReconcileLastProbedAtMs.clear()
-}
-
-export function selectGithubReconcileCandidates(input: {
-  batchSize: number
-  minAgeMs: number
-  now: Date
-  targets: Array<{ targetId: string; createdAtMs: number }>
-  lastProbedAtMs: ReadonlyMap<string, number>
-}): string[] {
-  const nowMs = input.now.getTime()
-  return [...input.targets]
-    .filter((target) => {
-      const lastProbedAtMs = input.lastProbedAtMs.get(target.targetId)
-      return lastProbedAtMs === undefined || nowMs - lastProbedAtMs >= input.minAgeMs
-    })
-    .sort((left, right) => {
-      const leftLastProbedAtMs = input.lastProbedAtMs.get(left.targetId)
-      const rightLastProbedAtMs = input.lastProbedAtMs.get(right.targetId)
-      if (leftLastProbedAtMs === undefined && rightLastProbedAtMs !== undefined) return -1
-      if (leftLastProbedAtMs !== undefined && rightLastProbedAtMs === undefined) return 1
-      if (leftLastProbedAtMs !== undefined && rightLastProbedAtMs !== undefined) {
-        const probedAtOrder = leftLastProbedAtMs - rightLastProbedAtMs
-        if (probedAtOrder !== 0) return probedAtOrder
-      }
-      const createdAtOrder = left.createdAtMs - right.createdAtMs
-      return createdAtOrder || left.targetId.localeCompare(right.targetId)
-    })
-    .slice(0, Math.max(0, Math.floor(input.batchSize)))
-    .map((target) => target.targetId)
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -363,7 +339,143 @@ function githubInstallationId(
     : Number(account.remoteId)
 }
 
-export async function reconcileGithubConnectorTargets() {
+type GithubReconcileRow = {
+  account: typeof ConnectorAccountTable.$inferSelect
+  instance: typeof ConnectorInstanceTable.$inferSelect
+  target: typeof ConnectorTargetTable.$inferSelect
+}
+
+/** Connector creators who are still joined members of the connector's organization. */
+async function activeConnectorCreatorKeys(instances: Array<typeof ConnectorInstanceTable.$inferSelect>) {
+  if (instances.length === 0) return new Set<string>()
+  const rows = await db
+    .select({ id: MemberTable.id, organizationId: MemberTable.organizationId })
+    .from(MemberTable)
+    .where(and(
+      inArray(MemberTable.id, instances.map((instance) => instance.createdByOrgMembershipId)),
+      isNull(MemberTable.removedAt),
+      isNotNull(MemberTable.userId),
+    ))
+  return new Set(rows.map((row) => `${row.organizationId}:${row.id}`))
+}
+
+/**
+ * Stores a target's reconcile state without moving updated_at, which keeps
+ * marking a person's edit. With expectedLastProbedAt the write lands only if no
+ * other replica has probed the target since this one read it.
+ */
+async function writeGithubReconcileState(input: {
+  expectedLastProbedAt?: string | null
+  state: GithubReconcileState
+  targetId: (typeof ConnectorTargetTable.$inferSelect)["id"]
+}) {
+  const storedLastProbedAt = sql`json_unquote(json_extract(${ConnectorTargetTable.targetConfigJson}, ${sql.raw(`'$.${GITHUB_RECONCILE_STATE_KEY}.lastProbedAt'`)}))`
+  const result: unknown = await db.update(ConnectorTargetTable).set({
+    targetConfigJson: sql`json_set(${ConnectorTargetTable.targetConfigJson}, ${sql.raw(`'$.${GITHUB_RECONCILE_STATE_KEY}'`)}, cast(${JSON.stringify(input.state)} as json))`,
+    updatedAt: sql`${ConnectorTargetTable.updatedAt}`,
+  }).where(and(
+    eq(ConnectorTargetTable.id, input.targetId),
+    input.expectedLastProbedAt === undefined
+      ? undefined
+      : input.expectedLastProbedAt === null
+        ? sql`${storedLastProbedAt} is null`
+        : sql`${storedLastProbedAt} = ${input.expectedLastProbedAt}`,
+  ))
+  return changedRows(result)
+}
+
+/**
+ * Queues a resync when the branch head moved past the last completed sync.
+ * When the last sync of that head already failed, its error comes back so the
+ * target backs off instead of queueing the same failing sync on every probe.
+ */
+async function probeGithubConnectorTarget(row: GithubReconcileRow, activeCreatorKeys: ReadonlySet<string>) {
+  const targetConfig = githubTargetConfig(row.target)
+  const installationId = githubInstallationId(row.instance, row.account)
+  if (!targetConfig.repositoryFullName || !targetConfig.branch || !Number.isFinite(installationId) || installationId <= 0) {
+    throw new GithubReconcilePermanentError("GitHub connector target is missing repository, branch, or installation metadata.")
+  }
+  // Syncs import as the connector's creator, so without them every sync fails.
+  if (!activeCreatorKeys.has(`${row.instance.organizationId}:${row.instance.createdByOrgMembershipId}`)) {
+    throw new GithubReconcilePermanentError("Connector creator member not found.")
+  }
+
+  const headSha = await getGithubRepositoryHeadSha({
+    branch: targetConfig.branch,
+    config: getGithubConnectorAppConfig(env.githubConnectorApp),
+    installationId,
+    repositoryFullName: targetConfig.repositoryFullName,
+  })
+  const completedEvents = await db
+    .select({ sourceRevisionRef: ConnectorSyncEventTable.sourceRevisionRef })
+    .from(ConnectorSyncEventTable)
+    .where(and(
+      eq(ConnectorSyncEventTable.connectorTargetId, row.target.id),
+      eq(ConnectorSyncEventTable.status, "completed"),
+    ))
+    .orderBy(desc(ConnectorSyncEventTable.startedAt), desc(ConnectorSyncEventTable.id))
+    .limit(1)
+  const previousSourceRevisionRef = completedEvents[0]
+    ? completedEvents[0].sourceRevisionRef
+    : targetConfig.cachedSourceRevisionRef
+  if (headSha === previousSourceRevisionRef) return { enqueued: false, failedSyncError: null }
+
+  const [failedAtHead] = await db
+    .select({ summaryJson: ConnectorSyncEventTable.summaryJson })
+    .from(ConnectorSyncEventTable)
+    .where(and(
+      eq(ConnectorSyncEventTable.connectorTargetId, row.target.id),
+      eq(ConnectorSyncEventTable.status, "failed"),
+      eq(ConnectorSyncEventTable.sourceRevisionRef, headSha),
+    ))
+    .orderBy(desc(ConnectorSyncEventTable.startedAt), desc(ConnectorSyncEventTable.id))
+    .limit(1)
+  await db.insert(ConnectorSyncEventTable).values({
+    connectorInstanceId: row.instance.id,
+    connectorTargetId: row.target.id,
+    connectorType: "github",
+    eventType: "manual_resync",
+    externalEventRef: null,
+    id: createDenTypeId("connectorSyncEvent"),
+    organizationId: row.instance.organizationId,
+    remoteId: row.target.remoteId,
+    sourceRevisionRef: headSha,
+    startedAt: new Date(),
+    status: "queued",
+    summaryJson: { trigger: "reconcile" },
+  })
+  const failedSyncError = failedAtHead
+    ? typeof failedAtHead.summaryJson?.error === "string" ? failedAtHead.summaryJson.error : "The last sync of this commit failed."
+    : null
+  return { enqueued: true, failedSyncError }
+}
+
+/** One log line when a target starts failing, is paused again after an edit, or recovers. */
+function logGithubReconcileChange(
+  connectorTargetId: string,
+  previous: GithubReconcileState | null,
+  next: GithubReconcileState,
+) {
+  const previousStatus = previous?.status ?? "ok"
+  if (next.status === previousStatus && next.pausedRevision === (previous?.pausedRevision ?? null)) return
+  const fields = {
+    connector_target_id: connectorTargetId,
+    error: next.error,
+    failure_count: next.failureCount,
+    next_probe_at: next.status === "paused" ? null : next.nextProbeAt,
+    previous_status: previousStatus,
+    status: next.status,
+  }
+  if (next.status === "ok") logger.info("github connector reconciliation state changed", fields)
+  else logger.warn("github connector reconciliation state changed", fields)
+}
+
+/**
+ * Every replica runs this loop, so the probe state lives on the target (see
+ * github-reconcile-state.ts): a target is probed once per min-age across the
+ * fleet, failures back off, and permanent failures wait for an edit.
+ */
+export async function reconcileGithubConnectorTargets(now = new Date()) {
   const targets = await db
     .select({
       account: ConnectorAccountTable,
@@ -388,76 +500,56 @@ export async function reconcileGithubConnectorTargets() {
     targets.map((row) => row.target.id),
     ACTIVE_GITHUB_SYNC_EVENT_STATUSES,
   )
-  const candidateTargets = targets.filter((row) => !activeTargetIds.has(row.target.id))
+  const candidates = targets
+    .filter((row) => !activeTargetIds.has(row.target.id))
+    .map((row) => ({
+      ...row,
+      revision: githubReconcileRevision({
+        accountUpdatedAt: row.account.updatedAt,
+        instanceUpdatedAt: row.instance.updatedAt,
+        targetUpdatedAt: row.target.updatedAt,
+      }),
+      state: readGithubReconcileState(row.target.targetConfigJson),
+    }))
 
-  const now = new Date()
+  const minAgeMs = env.githubSync.reconcileMinAgeMs
   const selectedTargetIds = selectGithubReconcileCandidates({
     batchSize: env.githubSync.reconcileBatchSize,
-    lastProbedAtMs: githubReconcileLastProbedAtMs,
-    minAgeMs: env.githubSync.reconcileMinAgeMs,
     now,
-    targets: candidateTargets.map((row) => ({
-      createdAtMs: row.target.createdAt.getTime(),
-      targetId: row.target.id,
+    targets: candidates.map((candidate) => ({
+      createdAtMs: candidate.target.createdAt.getTime(),
+      dueAtMs: githubReconcileDueAtMs(candidate.state, candidate.revision),
+      targetId: candidate.target.id,
     })),
   })
+  const selected = selectedTargetIds.flatMap((targetId) => candidates.filter((candidate) => candidate.target.id === targetId))
+  const activeCreatorKeys = await activeConnectorCreatorKeys(selected.map((candidate) => candidate.instance))
 
   let enqueued = 0
-  for (const targetId of selectedTargetIds) {
-    const row = candidateTargets.find((candidate) => candidate.target.id === targetId)
-    if (!row) continue
-    githubReconcileLastProbedAtMs.set(row.target.id, now.getTime())
+  let probed = 0
+  for (const candidate of selected) {
+    const claimed = await writeGithubReconcileState({
+      expectedLastProbedAt: candidate.state?.lastProbedAt ?? null,
+      state: claimGithubReconcileState({ minAgeMs, now, previous: candidate.state }),
+      targetId: candidate.target.id,
+    })
+    if (!claimed) continue
+    probed += 1
+
+    let failure: { error: unknown } | undefined
     try {
-      const targetConfig = githubTargetConfig(row.target)
-      const installationId = githubInstallationId(row.instance, row.account)
-      if (!targetConfig.repositoryFullName || !targetConfig.branch || !Number.isFinite(installationId) || installationId <= 0) {
-        throw new Error("GitHub connector target is missing repository, branch, or installation metadata.")
-      }
-
-      const headSha = await getGithubRepositoryHeadSha({
-        branch: targetConfig.branch,
-        config: getGithubConnectorAppConfig(env.githubConnectorApp),
-        installationId,
-        repositoryFullName: targetConfig.repositoryFullName,
-      })
-      const completedEvents = await db
-        .select({ sourceRevisionRef: ConnectorSyncEventTable.sourceRevisionRef })
-        .from(ConnectorSyncEventTable)
-        .where(and(
-          eq(ConnectorSyncEventTable.connectorTargetId, row.target.id),
-          eq(ConnectorSyncEventTable.status, "completed"),
-        ))
-        .orderBy(desc(ConnectorSyncEventTable.startedAt), desc(ConnectorSyncEventTable.id))
-        .limit(1)
-      const previousSourceRevisionRef = completedEvents[0]
-        ? completedEvents[0].sourceRevisionRef
-        : targetConfig.cachedSourceRevisionRef
-      if (headSha === previousSourceRevisionRef) continue
-
-      await db.insert(ConnectorSyncEventTable).values({
-        connectorInstanceId: row.instance.id,
-        connectorTargetId: row.target.id,
-        connectorType: "github",
-        eventType: "manual_resync",
-        externalEventRef: null,
-        id: createDenTypeId("connectorSyncEvent"),
-        organizationId: row.instance.organizationId,
-        remoteId: row.target.remoteId,
-        sourceRevisionRef: headSha,
-        startedAt: new Date(),
-        status: "queued",
-        summaryJson: { trigger: "reconcile" },
-      })
-      enqueued += 1
+      const probe = await probeGithubConnectorTarget(candidate, activeCreatorKeys)
+      if (probe.enqueued) enqueued += 1
+      if (probe.failedSyncError) failure = { error: new Error(probe.failedSyncError) }
     } catch (error) {
-      logger.error("github connector reconciliation failed", {
-        connector_target_id: row.target.id,
-        error: error instanceof Error ? error.message : String(error),
-      })
+      failure = { error }
     }
+    const next = nextGithubReconcileState({ failure, minAgeMs, now, previous: candidate.state, revision: candidate.revision })
+    await writeGithubReconcileState({ state: next, targetId: candidate.target.id })
+    logGithubReconcileChange(candidate.target.id, candidate.state, next)
   }
 
-  return { checked: selectedTargetIds.length, enqueued }
+  return { checked: selectedTargetIds.length, enqueued, probed }
 }
 
 let workerTickRunning = false
