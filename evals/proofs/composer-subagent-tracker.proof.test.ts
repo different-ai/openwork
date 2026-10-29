@@ -4,7 +4,7 @@ import { composerSubagentTrackerWorld } from "../worlds/composer-subagent-tracke
 
 const test = spec.world(composerSubagentTrackerWorld, {
   timeout: 480_000,
-  resources: { surfaces: ["appWeb"], services: ["den"] },
+  resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
 });
 
 const TRACKER = "[data-subagent-tracker]";
