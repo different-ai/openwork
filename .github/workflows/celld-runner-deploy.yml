@@ -71,7 +71,7 @@ jobs:
     timeout-minutes: 30
 
     env:
-      CELLD_VERSION: v0.6.2
+      CELLD_VERSION: v0.6.3
       AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
       AWS_REGION: auto
@@ -360,7 +360,7 @@ jobs:
 
       # Posts only when CELLD_DEPLOY_SLACK_WEBHOOK_URL (a Slack incoming webhook) is set on the celld-production
       # environment. A failed post is a warning: the deploy has already happened or failed by now.
-      # TODO: add "cells switched" and "cells force-cancelled". celld v0.6.2 logs `generation_swap_out` per switched
+      # TODO: add "cells switched" and "cells force-cancelled". celld v0.6.3 logs `generation_swap_out` per switched
       # cell (with a per-node generation number, not the version) and nothing distinct when CELLD_DEPLOY_MAX_AGE_S
       # forces a busy cell, so Render's logs can't give the forced count yet. Count it here, the way the wait step
       # counts deployment_adopted, once celld logs a forced swap.
