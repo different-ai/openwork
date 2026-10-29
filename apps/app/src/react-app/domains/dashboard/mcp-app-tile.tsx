@@ -279,24 +279,9 @@ function McpAppTileContent({
   const onAutoLaunchDisabledRef = useRef(onAutoLaunchDisabled);
   onAutoLaunchDisabledRef.current = onAutoLaunchDisabled;
   const launchRef = useRef<TileAttempt | null>(null);
-  const resolveLiveActions = useCallback(async (): Promise<LiveTarget> => {
-    const document = stateRef.current.phase === "ready" ? stateRef.current.lifetime : null;
-    for (;;) {
-      const attempt = launchRef.current;
-      // The launch's own handler settles the tile first, so the state read below is its outcome.
-      if (attempt?.promise) await attempt.promise.catch(() => undefined);
-      const current = stateRef.current;
-      // A launch for a different document retires this one; only its replacement may use the new lease.
-      if (!document?.active || current.phase !== "ready" || current.lifetime !== document) {
-        throw new Error("This artifact view has closed or changed.");
-      }
-      const live = liveTargetOf(current);
-      if (live?.app.launchId) return live;
-      if (launchRef.current === attempt) {
-        throw new Error("This artifact's workspace is still unavailable. Refresh the tile to reconnect.");
-      }
-    }
-  }, []);
+  // Wakes callers waiting for a launch they requested, or for their document to close.
+  const launchWaiters = useRef<Array<() => void>>([]);
+  const wakeLaunchWaiters = useCallback(() => { for (const wake of launchWaiters.current.splice(0)) wake(); }, []);
   const lifetime = useRef({ active: true });
   const endpointsRef = useRef(launchEndpoints);
   endpointsRef.current = launchEndpoints;
@@ -320,7 +305,8 @@ function McpAppTileContent({
     }
     removeDashboardTileCache(cacheScopeKey, entry.id);
     updateState(next);
-  }, [cacheScopeKey, entry.id, releaseLaunch, updateState]);
+    wakeLaunchWaiters();
+  }, [cacheScopeKey, entry.id, releaseLaunch, updateState, wakeLaunchWaiters]);
   const requestRefresh = useCallback((userInitiated: boolean) => {
     if (!lifetime.current.active || refreshStateRef.current === "refreshing") return;
     updateRefresh("refreshing");
@@ -330,6 +316,35 @@ function McpAppTileContent({
     setStarted(true);
     setNonce(next);
   }, [updateRefresh]);
+  const resolveLiveActions = useCallback(async (staleLaunchId?: string): Promise<LiveTarget> => {
+    const document = stateRef.current.phase === "ready" ? stateRef.current.lifetime : null;
+    let renewing = false;
+    for (;;) {
+      const attempt = launchRef.current;
+      // The launch's own handler settles the tile first, so the state read below is its outcome.
+      if (attempt?.promise) await attempt.promise.catch(() => undefined);
+      const current = stateRef.current;
+      // A launch for a different document retires this one; only its replacement may use the new lease.
+      if (!document?.active || current.phase !== "ready" || current.lifetime !== document) {
+        throw new Error("This artifact view has closed or changed.");
+      }
+      const live = liveTargetOf(current);
+      const leaseId = live?.app.launchId;
+      const expired = live?.app.refresh ? live.app.refresh.expiresAt <= Date.now() : false;
+      if (live && leaseId && leaseId !== staleLaunchId && !expired) return live;
+      if (launchRef.current !== attempt) continue;
+      // A lease that expired or that the host reported stale is renewed by one
+      // refresh of this tile, never handed out again.
+      if (leaseId && !renewing) {
+        renewing = true;
+        const launched = new Promise<void>((resolve) => { launchWaiters.current.push(resolve); });
+        requestRefresh(false);
+        await launched;
+        continue;
+      }
+      throw new Error("This artifact's workspace is still unavailable. Refresh the tile to reconnect.");
+    }
+  }, [requestRefresh]);
   useLayoutEffect(() => {
     lifetime.current.active = true;
     if (launchRef.current?.controller.signal.aborted && !launchRef.current.admitted) launchRef.current = null;
@@ -340,8 +355,9 @@ function McpAppTileContent({
       launchRef.current?.controller.abort();
       if (stateRef.current.phase === "ready") stateRef.current.lifetime.active = false;
       releaseLaunches();
+      wakeLaunchWaiters();
     };
-  }, [releaseLaunches]);
+  }, [releaseLaunches, wakeLaunchWaiters]);
   useLayoutEffect(() => {
     if (savedCache && (!cached || !cachedEndpoint)) removeDashboardTileCache(cacheScopeKey, entry.id);
     const current = stateRef.current;
@@ -445,10 +461,14 @@ function McpAppTileContent({
             reused = current;
           } catch (cause) {
             assertActive();
-            if (!(cause instanceof OpenworkServerError) || cause.status !== 422 || !["mcp_app_resource_changed", "mcp_app_refresh_denied"].includes(cause.code)) throw cause;
-            fallbackEndpoint = current.endpoint;
-            clearDocument({ phase: "loading" });
-            attempt.document = undefined;
+            if (!(cause instanceof OpenworkServerError) || cause.status !== 422) throw cause;
+            if (["mcp_app_resource_changed", "mcp_app_refresh_denied"].includes(cause.code)) {
+              fallbackEndpoint = current.endpoint;
+              clearDocument({ phase: "loading" });
+              attempt.document = undefined;
+            // Only the lease went stale (expired, or its connection settings changed):
+            // launch again for the same document, as an expired lease does.
+            } else if (!["stale_launch_context", "missing_launch_context"].includes(cause.code)) throw cause;
           }
         }
         if (!target) {
@@ -531,6 +551,7 @@ function McpAppTileContent({
       },
     });
     attempt.promise = promise;
+    wakeLaunchWaiters();
     const markSettled = () => { if (launchRef.current === attempt) attempt.promise = null; };
     void promise.then(markSettled, markSettled);
     void promise.then(next => {
@@ -609,7 +630,7 @@ function McpAppTileContent({
         attempt.controller.signal.addEventListener("abort", stopCredentialRetry, { once: true });
       }
     });
-  }, [cacheScopeKey, entry, launchArguments, argumentsSignature, manualLaunch, nonce, started, geometry.ref, clearDocument, releaseLaunch, releaseLaunches, updateState, updateRefresh, requestRefresh]);
+  }, [cacheScopeKey, entry, launchArguments, argumentsSignature, manualLaunch, nonce, started, geometry.ref, clearDocument, releaseLaunch, releaseLaunches, updateState, updateRefresh, requestRefresh, wakeLaunchWaiters]);
 
   useEffect(() => {
     if (manualLaunch) return;

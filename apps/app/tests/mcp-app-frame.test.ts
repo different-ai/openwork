@@ -19,7 +19,8 @@ import type { McpAppSandboxViewProps } from "../src/components/chat/mcp-app-fram
 import * as mcpAppOrigin from "../src/components/chat/mcp-app-origin"
 import { markCloudCredentialRefreshed } from "../src/react-app/domains/connections/cloud-credential-revision"
 
-GlobalRegistrator.register({ url: "https://web.example/" })
+// happy-dom 21 loads no iframe page by default, so frames would have no window to talk to.
+GlobalRegistrator.register({ url: "https://web.example/", settings: { enableIframePageLoading: true } })
 afterAll(() => GlobalRegistrator.unregister())
 const { MessageListProvider } = await import("../src/components/chat/message-list-provider")
 const { WorkspaceProvider } = await import("../src/react-app/shell/workspace-provider")
@@ -27,7 +28,7 @@ const { useUiStateStore } = await import("../src/react-app/shell/ui-state-store"
 const { usePanelTabStore } = await import("../src/react-app/domains/session/panel/panel-tab-store")
 const { useSessionActivityStore } = await import("../src/react-app/domains/session/status/session-activity-store")
 const { McpAppTile } = await import("../src/react-app/domains/dashboard/mcp-app-tile")
-const { removeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache")
+const { removeDashboardTileCache, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache")
 const { flushDashboardTileCacheStorage } = await import("../src/app/lib/dashboard-cache-storage")
 const {
   buildMcpAppCsp,
@@ -541,6 +542,60 @@ describe("MCP App retry ownership", () => {
       }
     }
     expect([...released].sort()).toEqual(["render-0-1", "render-0-2", "render-1-1"])
+  })
+
+  test("a saved dashboard view relaunches when its lease goes stale and keeps the App on screen", async () => {
+    const host = await startupFixture()
+    const scope = "stale-lease"
+    const launches: string[] = []
+    const calls: Array<Parameters<OpenworkServerClient["callMcpAppTool"]>[1]> = []
+    const resolveSpy = spyOn(host.client, "resolveMcpApp").mockImplementation(async () => {
+      launches.push(`lease-${launches.length + 1}`)
+      return { app: fixture({ toolName: "render-0", launchId: launches.at(-1) }) }
+    })
+    const releaseSpy = spyOn(host.client, "releaseMcpApp").mockResolvedValue({ released: true })
+    const callSpy = spyOn(host.client, "callMcpAppTool").mockImplementation(async (_workspace, request) => {
+      calls.push(request)
+      // The host replaced the first lease, as a credential renewal or server restart does.
+      if (request.launchId === "lease-1" && request.name === "read_detail") {
+        throw new OpenworkServerError(422, "stale_launch_context", "This App launch has expired, closed, or changed.")
+      }
+      return { content: [] }
+    })
+    writeDashboardTileCache(scope, "stale-0", {
+      argumentsSignature: "{}", cachedAt: Date.now(), workspaceId: "fixture",
+      app: fixture({ toolName: "render-0", launchId: undefined }), result: { content: [] },
+    })
+    const actionContext = { requestId: 1, signal: new AbortController().signal,
+      sendNotification: async () => {}, sendRequest: async () => { throw new Error("Unexpected request") } }
+    try {
+      await host.renderElement(createElement(WorkspaceProvider, {
+        client: null, openworkServerClient: host.client, workspaceId: "fixture", selectedWorkspaceRoot: "/fixture",
+      }, createElement(McpAppTile, {
+        entry: { kind: "mcp", id: "stale-0", title: "Stale 0", serverName: "fixture", toolName: "render-0",
+          projectedToolName: "render-0", resourceUri: fixture().resourceUri, autoLaunch: true },
+        cacheScopeKey: scope,
+      })))
+      await host.notify(0, "ui/notifications/sandbox-proxy-ready")
+      await act(async () => { host.bridges[0].oninitialized?.() })
+      expect(launches).toEqual(["lease-1"])
+      const answer = host.bridges[0].oncalltool?.({ name: "read_detail" }, actionContext)
+      // The stale call asks the tile to refresh; let React run that launch.
+      await act(async () => { await new Promise(resolve => setImmediate(resolve)) })
+      await expect(answer).resolves.toEqual({ content: [] })
+      await act(async () => {})
+      expect(launches).toEqual(["lease-1", "lease-2"])
+      expect(calls.filter(call => call.name === "read_detail").map(call => call.launchId)).toEqual(["lease-1", "lease-2"])
+      expect(releaseSpy.mock.calls.map(([, id]) => id)).toEqual(["lease-1"])
+      expect(host.bridges).toHaveLength(1)
+      expect(host.failures).toEqual([])
+    } finally {
+      removeDashboardTileCache(scope, "stale-0")
+      flushDashboardTileCacheStorage()
+      try { await host.dispose() } finally {
+        for (const spy of [resolveSpy, releaseSpy, callSpy]) spy.mockRestore()
+      }
+    }
   })
 })
 

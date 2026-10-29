@@ -324,9 +324,10 @@ export type McpAppSandboxViewProps = {
   /**
    * A cached Dashboard may paint now, but its tools must await a fresh,
    * access-checked lease. Called again for each call, so a host that keeps
-   * this view open across launches can hand it each newer lease.
+   * this view open across launches can hand it each newer lease. Given the
+   * lease a call just found stale, it renews that lease or throws.
    */
-  resolveLiveActions?: () => Promise<{ origin: McpAppOrigin; app: OpenworkMcpAppResource }>
+  resolveLiveActions?: (staleLaunchId?: string) => Promise<{ origin: McpAppOrigin; app: OpenworkMcpAppResource }>
   /**
    * With resolveLiveActions: this saved view goes live in place, so the App
    * may ask for its kept read-only results. Like every call, such a read
@@ -430,9 +431,9 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
     const loads = createMcpAppOpenLoads(openKey === undefined ? undefined : JSON.stringify([openKey, retryAttempt]))
     // The lease the current actions use, once a cached view has one.
     let liveLaunchId: string | undefined
-    const bindLiveActions = async () => {
+    const bindLiveActions = async (staleLaunchId?: string) => {
       if (!resolveLiveActions) return
-      const live = await resolveLiveActions()
+      const live = await resolveLiveActions(staleLaunchId)
       if (disposed || failed) throw new Error("This artifact view has closed or changed.")
       if (live.origin.readOnly || !live.app.launchId || live.app.serverName !== app.serverName
         || live.app.toolName !== app.toolName || live.app.resourceUri !== app.resourceUri) {
@@ -599,9 +600,24 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
           return cached.result
         }
         const userInteraction = _meta?.["openwork/userInteraction"] === true
-        const callNow = async () => connectionController
+        const callOnce = async () => connectionController
           ? await connectionController.callTool(actions, app, name, args, userInteraction)
           : standardMcpToolResult(await actions.callTool(name, args, userInteraction))
+        // A saved Dashboard view outlives each lease: a call that finds its
+        // lease expired or replaced renews it and runs once more. The host
+        // rejects a stale lease before the tool runs, so nothing runs twice.
+        const callNow = async () => {
+          const leaseId = liveLaunchId
+          try {
+            return await callOnce()
+          } catch (cause) {
+            if (!savedLive || !leaseId || !(cause instanceof OpenworkServerError)
+              || !["missing_launch_context", "stale_launch_context"].includes(cause.code)) throw cause
+            await bindLiveActions(leaseId)
+            if (liveLaunchId === leaseId) throw cause
+            return await callOnce()
+          }
+        }
         let toolResult: CallToolResult
         let reused = false
         if (userInteraction) {
