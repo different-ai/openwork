@@ -33,11 +33,16 @@ test("a new person verifies their email, creates a workspace and returns directl
     evidence.recordAssertionEvidence("Verification resumes the original Workbot sign-in", "The new verified account reaches workspace creation on the signed OAuth query", (await probe.url()).includes("client_id=openwork-workbot"));
     await user.screenshot();
   });
-  await step("after: naming a workspace opens Workbot with a ready conversation", async () => {
+  await step("after: naming a workspace offers team tools, then opens Workbot with a ready conversation", async () => {
     await user.type({ role: "textbox", label: "Workspace name" }, world.workspaceName);
     await user.notSee({ text: "Requested access" });
     await user.screenshot();
     await user.click({ role: "button", label: "Create workspace and open Workbot" });
+    await user.see({ role: "heading", label: "What do you work with?" }, { timeoutMs: 30_000 });
+    await user.see({ role: "button", label: "Add Notion" });
+    evidence.recordAssertionEvidence("The new owner can add team tools before Workbot opens", "Den's starter tools are offered on the sign-in page after the workspace is created", await probe.has("What do you work with?"));
+    await user.screenshot();
+    await user.click({ role: "button", label: "Open Workbot" });
     await probe.eventually(() => probe.url(), { within: 60_000, label: "the OAuth callback returns to Workbot", until: url => new URL(url).origin === world.url && new URL(url).pathname === "/" });
     await user.navigate(`${world.url}/v1/workbot/me`);
     const account: unknown = JSON.parse(await probe.text());
