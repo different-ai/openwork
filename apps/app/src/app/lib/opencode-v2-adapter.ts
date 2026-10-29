@@ -2408,6 +2408,10 @@ export function createClientV2(
     const permissions: PermissionRequest[] = [];
     for (const sessionID of sessionIDs) {
       const result = await listSessionPermissions({ sessionID }, options);
+      // A session whose folder was deleted answers 404: the engine cannot open
+      // its location, so it has no request anyone could answer. One such
+      // session must not hide every other session's requests.
+      if (result.data === undefined && result.response.status === 404) continue;
       if (result.data === undefined) {
         return { error: result.error, request: result.request, response: result.response };
       }

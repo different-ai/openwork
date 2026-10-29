@@ -121,4 +121,21 @@ describe("OpenCode v2 session lifecycle", () => {
     expect(translateV2Event({ type: "session.unarchived", durable: { ...durable, seq: 8 }, created: 950, data: { sessionID: "ses_1" } }, state))
       .toEqual([{ type: "session.updated", properties: { info: { id: "ses_1", time: { updated: 950, archived: 0 } } } }]);
   });
+
+  test("a session whose folder was deleted does not hide other sessions' approvals", async () => {
+    serve((request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/api/session")) return Response.json({ data: [{ id: "ses_gone" }, { id: "ses_here" }] });
+      if (path.endsWith("/ses_gone/permission")) {
+        return Response.json({ _tag: "LocationNotFoundError", message: "Location not found: /deleted/worktree" }, { status: 404 });
+      }
+      return Response.json({ data: [{ id: "per_1", sessionID: "ses_here", action: "bash", resources: ["ls"] }] });
+    });
+    const client = createClientV2(base, "/tmp/ws", { token: "t" });
+
+    const result = await client.permission.list({ directory: "/tmp/ws" });
+
+    expect(result.error).toBeUndefined();
+    expect(result.data?.map((permission) => permission.id)).toEqual(["per_1"]);
+  });
 });
