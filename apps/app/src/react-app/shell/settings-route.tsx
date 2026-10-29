@@ -76,9 +76,12 @@ import {
   GATEWAY_CONNECT_TIMEOUT_MESSAGE,
   gatewayConnectProviderKey,
   isGatewaySetConnected,
+  isLiveGatewaySetConnected,
   type GatewayConnectProvider,
   resolveGatewayConnectProviders,
   resolveGatewayProviderIds,
+  resolveLiveGatewayConnectProviders,
+  resolveLiveGatewayImportedProviders,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
 import ProviderAuthModal, { PROVIDER_LABELS } from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
@@ -806,13 +809,26 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const connectionsSnapshot = useConnectionsStoreSnapshot(connectionsStore);
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
   const cloudSession = useCloudSession();
+  // With live provider sync the engine delivers Gateway providers and the
+  // server sync stops reporting them, so Settings lists them from Den instead.
+  const liveGatewayProviders = cloudSession.isSignedIn ? providerAuthSnapshot.liveGatewayProviders : null;
+  const settingsImportedCloudProviders = useMemo(
+    () => liveGatewayProviders === null
+      ? providerAuthSnapshot.importedCloudProviders
+      : { ...resolveLiveGatewayImportedProviders(liveGatewayProviders), ...providerAuthSnapshot.importedCloudProviders },
+    [liveGatewayProviders, providerAuthSnapshot.importedCloudProviders],
+  );
   const gatewayProviderIds = useMemo(
-    () => resolveGatewayProviderIds(providerAuthSnapshot.importedCloudProviders),
-    [providerAuthSnapshot.importedCloudProviders],
+    () => resolveGatewayProviderIds(settingsImportedCloudProviders),
+    [settingsImportedCloudProviders],
   );
   const gatewayConnectProviders = useMemo(
-    () => cloudSession.isSignedIn ? resolveGatewayConnectProviders(providerAuthSnapshot.cloudProviderServerSync?.skippedProviders) : [],
-    [cloudSession.isSignedIn, providerAuthSnapshot.cloudProviderServerSync?.skippedProviders],
+    () => !cloudSession.isSignedIn
+      ? []
+      : liveGatewayProviders !== null
+        ? resolveLiveGatewayConnectProviders(liveGatewayProviders)
+        : resolveGatewayConnectProviders(providerAuthSnapshot.cloudProviderServerSync?.skippedProviders),
+    [cloudSession.isSignedIn, liveGatewayProviders, providerAuthSnapshot.cloudProviderServerSync?.skippedProviders],
   );
   const [connectingGatewayProviderId, setConnectingGatewayProviderId] = useState<string | null>(null);
   const gatewayConnectAbort = useRef<AbortController | null>(null);
@@ -845,11 +861,16 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         resync: async () => {
           synced = false;
           const result = await providerAuthStore.runCloudProviderSync("manual");
-          synced = result?.outcome === "handled_server_side";
+          synced = result?.outcome === "handled_server_side" || result?.outcome === "handled_live";
         },
-        isConnected: () => synced && (request
-          ? providerAuthStore.isGatewayModelAvailable(provider, request.model)
-          : isGatewaySetConnected(provider, providerAuthStore.getSnapshot().importedCloudProviders)),
+        isConnected: () => {
+          if (!synced) return false;
+          if (request) return providerAuthStore.isGatewayModelAvailable(provider, request.model);
+          const snapshot = providerAuthStore.getSnapshot();
+          return snapshot.liveGatewayProviders === null
+            ? isGatewaySetConnected(provider, snapshot.importedCloudProviders)
+            : isLiveGatewaySetConnected(provider, snapshot.liveGatewayProviders);
+        },
       });
       if (!connected && !signal.aborted && !request) {
         toast.error(GATEWAY_CONNECT_TIMEOUT_MESSAGE, { action: { label: "Retry sign-in", onClick: () => {
@@ -1047,9 +1068,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }
   }, [autoClient, autoBusy, providerAuthStore]);
   const organizationProviderIds = useMemo(() => new Set([
-    ...Object.values(providerAuthSnapshot.importedCloudProviders).map((provider) => provider.sourceProviderId),
+    ...Object.values(settingsImportedCloudProviders).map((provider) => provider.sourceProviderId),
     ...providerAuthSnapshot.cloudOrgProviders.map((provider) => provider.providerId),
-  ]), [providerAuthSnapshot.importedCloudProviders, providerAuthSnapshot.cloudOrgProviders]);
+  ]), [settingsImportedCloudProviders, providerAuthSnapshot.cloudOrgProviders]);
 
   const credentialStatusEnabled = useDesktopFeature("providerCredentialStatus");
   const handleOpenProviderAuth = useCallback((preferredProviderId?: string) => {
@@ -2241,7 +2262,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             organizationName={cloudSession.activeOrgName}
             localProviderStates={localProviderStates}
             cloudProviderIds={new Set([
-              ...Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId),
+              ...Object.values(settingsImportedCloudProviders).map((p) => p.providerId),
               ...(openWorkModelsEntitled || openWorkModelsAvailable ? ["openwork"] : []),
             ])}
             gatewayProviderIds={gatewayProviderIds}
@@ -2275,7 +2296,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 checkDesktopAppRestriction={checkDesktopRestriction}
                 cloudOrgProviders={providerAuthSnapshot.cloudOrgProviders}
                 connectCloudProvider={providerAuthStore.connectCloudProvider}
-                importedCloudProviders={providerAuthSnapshot.importedCloudProviders}
+                importedCloudProviders={settingsImportedCloudProviders}
                 importsUnavailable={
                   openworkServerSnapshot.openworkServerCapabilities?.config?.read === false ||
                   openworkServerSnapshot.openworkServerCapabilities?.config?.write === false
@@ -2447,7 +2468,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             checkDesktopAppRestriction={checkDesktopRestriction}
             cloudOrgProviders={providerAuthSnapshot.cloudOrgProviders}
             connectCloudProvider={providerAuthStore.connectCloudProvider}
-            importedCloudProviders={providerAuthSnapshot.importedCloudProviders}
+            importedCloudProviders={settingsImportedCloudProviders}
             importsUnavailable={
               openworkServerSnapshot.openworkServerCapabilities?.config?.read === false ||
               openworkServerSnapshot.openworkServerCapabilities?.config?.write === false
@@ -2723,7 +2744,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         openWorkModelsState={visibleAutoPreferences ? !visibleAutoPreferences.enabled ? "off" : visibleAutoPreferences.available ? "included" : "unavailable" : undefined}
         organizationName={cloudSession.activeOrgName}
         organizationProviderIds={organizationProviderIds}
-        organizationProviderCount={cloudSession.isSignedIn ? new Set([...providerAuthSnapshot.cloudOrgProviders.map((provider) => provider.id), ...Object.keys(providerAuthSnapshot.importedCloudProviders), ...gatewayConnectProviders.map((provider) => provider.cloudProviderId)]).size : undefined}
+        organizationProviderCount={cloudSession.isSignedIn ? new Set([...providerAuthSnapshot.cloudOrgProviders.map((provider) => provider.id), ...Object.keys(settingsImportedCloudProviders), ...gatewayConnectProviders.map((provider) => provider.cloudProviderId)]).size : undefined}
         onOpenDen={cloudSession.isSignedIn ? openProvidersInDen : undefined}
         onClose={() => providerAuthStore.closeProviderAuthModal()}
       />

@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,
   MemberTable,
@@ -6,7 +6,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
-import { requestRead } from "../request-reads.js"
+import { requestRead, requestReadMany } from "../request-reads.js"
 
 /**
  * Generic, provider-agnostic reads/writes for the two credential tables.
@@ -83,9 +83,24 @@ function connectedAccountChanges(input: ConnectedAccountUpsertInput) {
   }
 }
 
+function orgOAuthClientReadKey(organizationId: OrganizationId, providerId: string) {
+  return `org-oauth-client:${organizationId}:${providerId}`
+}
+
 /** Shared within the request. A writer reading back its own row uses readOrgOAuthClient. */
 export function getOrgOAuthClient(organizationId: OrganizationId, providerId: string): Promise<OrgOAuthClientRow | null> {
-  return requestRead(`org-oauth-client:${organizationId}:${providerId}`, () => readOrgOAuthClient(organizationId, providerId))
+  return requestRead(orgOAuthClientReadKey(organizationId, providerId), () => readOrgOAuthClient(organizationId, providerId))
+}
+
+/** getOrgOAuthClient for many providers in one query, shared within the request the same way. */
+export function getOrgOAuthClients(organizationId: OrganizationId, providerIds: readonly string[]): Promise<Map<string, OrgOAuthClientRow | null>> {
+  return requestReadMany(providerIds, (providerId) => orgOAuthClientReadKey(organizationId, providerId), async (missing) => {
+    const rows = await db
+      .select()
+      .from(OrgOAuthClientTable)
+      .where(and(eq(OrgOAuthClientTable.organizationId, organizationId), inArray(OrgOAuthClientTable.providerId, missing)))
+    return new Map(rows.map((row) => [row.providerId, normalizeOrgOAuthClientRow(row)]))
+  }, null)
 }
 
 async function readOrgOAuthClient(organizationId: OrganizationId, providerId: string): Promise<OrgOAuthClientRow | null> {
@@ -144,7 +159,30 @@ export async function upsertOrgOAuthClient(input: {
  * always reads fresh: a refresh that lost a race re-reads without writing.
  */
 export function getConnectedAccountForListing(input: Parameters<typeof getConnectedAccount>[0]): Promise<ConnectedAccountRow | null> {
-  return requestRead(`connected-account:${input.organizationId}:${input.orgMembershipId}:${input.providerId}`, () => getConnectedAccount(input))
+  return requestRead(connectedAccountReadKey(input), () => getConnectedAccount(input))
+}
+
+/** getConnectedAccountForListing for one member's accounts with many providers, in one query. */
+export function getConnectedAccountsForListing(input: {
+  organizationId: OrganizationId
+  orgMembershipId: OrgMembershipId
+  providerIds: readonly string[]
+}): Promise<Map<string, ConnectedAccountRow | null>> {
+  return requestReadMany(input.providerIds, (providerId) => connectedAccountReadKey({ ...input, providerId }), async (missing) => {
+    const rows = await db
+      .select()
+      .from(ConnectedAccountTable)
+      .where(and(
+        eq(ConnectedAccountTable.organizationId, input.organizationId),
+        eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+        inArray(ConnectedAccountTable.providerId, missing),
+      ))
+    return new Map(rows.map((row) => [row.providerId, normalizeConnectedAccountRow(row)]))
+  }, null)
+}
+
+function connectedAccountReadKey(input: { organizationId: OrganizationId; orgMembershipId: OrgMembershipId; providerId: string }) {
+  return `connected-account:${input.organizationId}:${input.orgMembershipId}:${input.providerId}`
 }
 
 export async function getConnectedAccount(input: {

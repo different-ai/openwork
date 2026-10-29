@@ -129,6 +129,25 @@ test("original negative and obsolete Date offsets retain their wall-clock time",
   }
 })
 
+test("authored markdown and attribute escaping coexist with independent plain and CID-only HTML quotes", () => {
+  const body = '**Ready** [Guide](https://example.test/?a=1&b=2)\nThanks,\nExample'
+  for (const html of [undefined, '<div>Original **literal**<img src="https://example.test/tracker.png"><img src="cid:diagram@example.test"></div>']) {
+    const raw = buildGmailDraftRaw({
+      to: "recipient@example.test", subject: "Re: Synthetic conversation", body,
+      quote: buildGmailQuote({ from, date, body: "**Original** <raw>", html, timeZone: "America/New_York" }),
+    })
+    const rendered = mimePart(raw, "text/html")
+    assert.match(rendered, /<strong>Ready<\/strong>/)
+    assert.match(rendered, /href="https:\/\/example.test\/\?a=1&amp;b=2"/)
+    assert.match(rendered, /Thanks,<\/div><div[^>]*>Example<\/div>/)
+    assert.match(rendered, /On Wed, Oct 14, 2026 at 12:50 PM/)
+    assert.match(mimePart(raw, "text/plain"), /> \*\*Original\*\* <raw>/)
+    assert.doesNotMatch(rendered, /<strong>Original|tracker\.png/)
+    if (html) assert.match(rendered, /src="cid:diagram@example.test"/)
+    else assert.match(rendered, /\*\*Original\*\* &lt;raw&gt;/)
+  }
+})
+
 test("quote size limits and caller-provided quoted-history detection remain in place", () => {
   const quote = buildGmailQuote({ from, date, body: "x".repeat(10_001), html: `<div>${"y".repeat(20_000)}</div>` })
   assert.equal(quote.body, `${"x".repeat(10_000)}\n[message trimmed]`)

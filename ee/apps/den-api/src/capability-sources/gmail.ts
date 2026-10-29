@@ -6,8 +6,11 @@
 
 import { randomUUID } from "node:crypto"
 import sanitizeHtml from "sanitize-html"
+import { renderGmailDraftBody, type DraftBody } from "./gmail-draft-body.js"
 
-const HARD_WRAP_MIN_LINE_LENGTH = 50
+const HARD_WRAP_MIN_LINE_LENGTH = 68
+const HARD_WRAP_MAX_LINE_LENGTH = 80
+const HARD_WRAP_MAX_WIDTH_VARIATION = 8
 
 function hasNonAscii(value: string): boolean {
   for (const char of value) {
@@ -86,10 +89,10 @@ function quoteTextHtml(body: string): string {
   return body.split("\n").map((line) => `<div>${line.length === 0 ? "<br>" : escapeHtml(line)}</div>`).join("")
 }
 
-function alternativeMimeParts(boundary: string, body: string, quote?: GmailDraftQuote): string[] {
-  const plain = quote ? `${body}\n\n${quote.attribution}\n${quote.body.split("\n").map((line) => `> ${line}`).join("\n")}` : body
-  // New prose stays separate from the original message's sanitized HTML quote.
-  const html = draftBodyHtml(body) + (quote
+function alternativeMimeParts(boundary: string, body: DraftBody, quote?: GmailDraftQuote): string[] {
+  const plain = quote ? `${body.plain}\n\n${quote.attribution}\n${quote.body.split("\n").map((line) => `> ${line}`).join("\n")}` : body.plain
+  // Authored body markup and sanitized original-message quotes use separate renderers.
+  const html = body.html + (quote
     ? `<div><br></div><div class="gmail_quote gmail_quote_container"><div dir="ltr" class="gmail_attr">${quote.attributionHtml ?? escapeHtml(quote.attribution)}</div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">${quote.html ?? quoteTextHtml(quote.body)}</blockquote></div>`
     : "")
   return [
@@ -118,13 +121,16 @@ function normalizeDraftBody(body: string): string {
     })
     if (hasStructure) return block
 
-    const cleanedLines = lines.map((line) => line
-      .replace(/^#{1,6}\s+/, "")
-      .replace(/\*\*([^*\n]+)\*\*/g, "$1")
-      .replace(/__([^_\n]+)__/g, "$1")
-      .replace(/`([^`\n]+)`/g, "$1"))
-    const looksHardWrapped = lines.slice(0, -1).every((line) => line.trimEnd().length >= HARD_WRAP_MIN_LINE_LENGTH)
-    return lines.length > 1 && looksHardWrapped ? cleanedLines.map((line) => line.trim()).join(" ") : cleanedLines.join("\n")
+    const wrappedLines = lines.slice(0, -1).map((line) => line.trimEnd())
+    // Require repeated, similarly sized mid-sentence wraps. A pair of long
+    // signature/address lines or complete sentences is not evidence of wrapping.
+    const widths = wrappedLines.map((line) => line.length)
+    const looksHardWrapped = wrappedLines.length >= 2
+      && wrappedLines.every((line) => line.length >= HARD_WRAP_MIN_LINE_LENGTH
+        && line.length <= HARD_WRAP_MAX_LINE_LENGTH && !/[.!?,;:][\"')\]]*$/.test(line))
+      && Math.max(...widths) - Math.min(...widths) <= HARD_WRAP_MAX_WIDTH_VARIATION
+      && lines[lines.length - 1].trimEnd().length <= Math.max(...widths)
+    return looksHardWrapped ? lines.map((line) => line.trim()).join(" ") : block
   })
 }
 
@@ -215,7 +221,7 @@ export function buildGmailDraftRaw(input: { to: string; cc?: string; bcc?: strin
     ...(input.headers ?? []).map((header) => mimeHeaderLine(header.name, header.value)),
   ].filter((line) => typeof line === "string")
   const attachments = input.attachments ?? []
-  const body = normalizeDraftBody(input.body)
+  const body = renderGmailDraftBody(input.body, normalizeDraftBody)
   const alternativeBoundary = `openwork-alternative-${randomUUID()}`
   const message = attachments.length === 0 ? [
     ...headers,
