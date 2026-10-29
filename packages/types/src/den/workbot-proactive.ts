@@ -68,19 +68,10 @@ export const AGENT_SOURCE_POLICY_COPY: Record<AgentSourcePolicy, string> = {
 const agentSourceIdSchema = z.string().trim().min(1).max(64)
 const AGENT_SOURCE_CONNECTIONS_MAX = 200
 const AGENT_CORE_CONNECTIONS_MAX = 50
-/** Tools an admin may approve for one connection without a reviewed read list. */
-export const AGENT_READ_TOOLS_MAX = 50
-const agentToolNameSchema = z.string().trim().min(1).max(128)
-
 /** The connections an admin picked for one core source; empty reads nothing (turning it off is its policy). */
 const agentCoreConnectionIdsSchema = z.array(agentSourceIdSchema).max(AGENT_CORE_CONNECTIONS_MAX)
 /** The connections an admin added to Other context. */
 const agentOtherConnectionIdsSchema = z.array(agentSourceIdSchema).max(AGENT_SOURCE_CONNECTIONS_MAX)
-/** The tools an admin approved for one connection, by name: at least one. */
-const agentReadToolNamesSchema = z.array(agentToolNameSchema).min(1).max(AGENT_READ_TOOLS_MAX)
-/** The exact definition each approved tool had when the admin approved it (name → digest). Set by the server only. */
-const agentReadToolPinsSchema = z.record(agentToolNameSchema, z.string().min(1).max(128))
-  .refine((value) => Object.keys(value).length <= AGENT_READ_TOOLS_MAX, { message: "Too many tools." })
 const tooManyConnections = { message: "Too many connections." }
 const withinConnectionLimit = (value: Record<string, unknown>) => Object.keys(value).length <= AGENT_SOURCE_CONNECTIONS_MAX
 
@@ -94,8 +85,8 @@ export const agentSourcesPolicySchema = z.object({
   chat: agentSourcePolicySchema,
   /**
    * Which of the organization's connections serve calendar, email and team chat, by id: Den's own providers for what
-   * they serve, or any MCP connection. A source that isn't listed reads through every connection that can serve it
-   * (Google Workspace, Microsoft 365, Slack); an empty list reads nothing.
+   * they serve, or an MCP connection whose read tools we reviewed. A source that isn't listed reads through every
+   * connection that can serve it (Google Workspace, Microsoft 365, Slack); an empty list reads nothing.
    */
   coreConnections: z.object({
     calendar: agentCoreConnectionIdsSchema.optional(),
@@ -106,17 +97,6 @@ export const agentSourcesPolicySchema = z.object({
   otherConnections: agentOtherConnectionIdsSchema.optional(),
   /** Other connections by id; one that isn't listed is up to members. */
   connections: z.record(agentSourceIdSchema, agentSourcePolicySchema).refine(withinConnectionLimit, tooManyConnections),
-  /**
-   * Tools an admin approved agents to call, per connection without a reviewed read list (by id). Tools whose names
-   * say they write are never callable, approved or not.
-   */
-  readTools: z.record(agentSourceIdSchema, agentReadToolNamesSchema).refine(withinConnectionLimit, tooManyConnections).optional(),
-  /**
-   * The definition each approved tool had when it was approved, per connection, set by the server from the tool's live
-   * listing. A tool the provider has changed since no longer matches, and agents can't call it until it is approved
-   * again. Never part of an admin's change.
-   */
-  readToolPins: z.record(agentSourceIdSchema, agentReadToolPinsSchema).refine(withinConnectionLimit, tooManyConnections).optional(),
 })
 export type AgentSourcesPolicy = z.infer<typeof agentSourcesPolicySchema>
 
@@ -124,8 +104,8 @@ export const DEFAULT_AGENT_SOURCES_POLICY: AgentSourcesPolicy = { calendar: "eve
 
 /**
  * An admin's change: any core source, the connections behind a core source (null goes back to every connection that
- * serves it), the connections in Other context (null goes back to every reviewed one), other connections by id (null
- * goes back to "members choose"), and the tools approved per connection (null removes the approval).
+ * serves it), the connections in Other context (null goes back to every reviewed one), and other connections by id
+ * (null goes back to "members choose").
  */
 export const agentSourcesPolicyInputSchema = z
   .object({
@@ -139,7 +119,6 @@ export const agentSourcesPolicyInputSchema = z
     }).strict().optional(),
     otherConnections: agentOtherConnectionIdsSchema.nullable().optional(),
     connections: z.record(agentSourceIdSchema, agentSourcePolicySchema.nullable()).refine(withinConnectionLimit, tooManyConnections).optional(),
-    readTools: z.record(agentSourceIdSchema, agentReadToolNamesSchema.nullable()).refine(withinConnectionLimit, tooManyConnections).optional(),
   })
   .strict()
 export type AgentSourcesPolicyInput = z.infer<typeof agentSourcesPolicyInputSchema>
@@ -154,11 +133,6 @@ export function agentOtherConnections(policy: AgentSourcesPolicy): readonly stri
   return policy.otherConnections ?? null
 }
 
-/** The tools an admin approved for a connection (empty when none). */
-export function agentApprovedTools(policy: AgentSourcesPolicy, connectionId: string): readonly string[] {
-  return policy.readTools?.[connectionId] ?? []
-}
-
 /** Where a connection can be added: a core source, or Other context. */
 export const AGENT_SOURCE_SLOTS = [...AGENT_CORE_SOURCES, "other"] as const
 export type AgentSourceSlot = (typeof AGENT_SOURCE_SLOTS)[number]
@@ -169,10 +143,8 @@ export type AgentSourceConnection = z.infer<typeof agentSourceConnectionSchema>
 
 /** A connection an admin can add as a source, and where. */
 export const agentSourceOptionSchema = agentSourceConnectionSchema.extend({
-  /** Den's own provider (Google Workspace, Microsoft 365): read through Den, no tools to approve. */
+  /** Den's own provider (Google Workspace, Microsoft 365), read through Den; otherwise an MCP with reviewed read tools. */
   native: z.boolean(),
-  /** Its read tools are reviewed (or it is Den's own): no tools to approve. */
-  reviewed: z.boolean(),
   /** Where it can be added. */
   slots: z.array(z.enum(AGENT_SOURCE_SLOTS)),
 })
@@ -200,14 +172,6 @@ export function mergeAgentSourcesPolicy(current: AgentSourcesPolicy, change: Age
   }
   const requestedOther = change.otherConnections
   const otherConnections = requestedOther === undefined ? current.otherConnections : requestedOther ?? undefined
-  const readTools: Record<string, string[]> = { ...current.readTools }
-  // A connection's pins go with any change to its approvals; the server pins the new ones from the live tool list.
-  const readToolPins: Record<string, Record<string, string>> = { ...current.readToolPins }
-  for (const [id, value] of Object.entries(change.readTools ?? {})) {
-    delete readToolPins[id]
-    if (value === null) delete readTools[id]
-    else readTools[id] = [...new Set(value)]
-  }
   return {
     calendar: change.calendar ?? current.calendar,
     email: change.email ?? current.email,
@@ -215,8 +179,6 @@ export function mergeAgentSourcesPolicy(current: AgentSourcesPolicy, change: Age
     ...(Object.keys(coreConnections).length ? { coreConnections } : {}),
     ...(otherConnections ? { otherConnections: [...new Set(otherConnections)] } : {}),
     connections,
-    ...(Object.keys(readTools).length ? { readTools } : {}),
-    ...(Object.keys(readToolPins).length ? { readToolPins } : {}),
   }
 }
 
@@ -315,7 +277,7 @@ export const workbotProactiveViewSchema = z.object({
     chat: z.array(agentSourceConnectionSchema),
     /** Every other connection agents can read (a service with reviewed read tools), each its own source. */
     other: z.array(agentSourceConnectionSchema),
-    /** Every connection an admin can add as a source, with where it can go and whether it needs approved tools. */
+    /** Every connection an admin can add as a source, with where it can go. */
     all: z.array(agentSourceOptionSchema),
   }).nullable(),
 })
