@@ -374,6 +374,20 @@ function providerListModelEntitlementOptions(
 
 export type ProviderAuthStore = ReturnType<typeof createProviderAuthStore>;
 
+/**
+ * The Den session last delivered to the local server, keyed like
+ * getDenSessionDeliveryKey (sign-in, server and server generation). Shared by
+ * every store: each route builds its own, and re-sending an unchanged sign-in
+ * on every route mount paused provider sync and cut live Gateway replies
+ * (ENG-994). Cleared on sign-out, when the server forgets the session.
+ */
+const deliveredDenSession = { identity: "", sync: "" };
+
+export function forgetDeliveredDenSession() {
+  deliveredDenSession.identity = "";
+  deliveredDenSession.sync = "";
+}
+
 export function createProviderAuthStore(options: CreateProviderAuthStoreOptions) {
   const listeners = new Set<() => void>();
 
@@ -403,8 +417,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   let cloudOrgProvidersInFlight: Promise<DenOrgLlmProvider[]> | null = null;
   let cloudOrgProvidersGeneration = 0;
   let cloudProviderSyncContextKey = "";
-  let lastDenSessionPushKey = "";
-  let lastDenIdentityPushKey = "";
   let denSessionDelivery: { key: string; controller: AbortController } | null = null;
   let denSessionPushInFlight: { mode: "identity" | "sync"; promise: Promise<boolean> } | null = null;
 
@@ -511,8 +523,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     denSessionDelivery?.controller.abort();
     denSessionDelivery = null;
     denSessionPushInFlight = null;
-    lastDenSessionPushKey = "";
-    lastDenIdentityPushKey = "";
     cloudProviderSyncContextKey = "";
   };
 
@@ -536,7 +546,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const delivery = syncDenSessionDelivery();
     const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
     if (!delivery || !openworkClient || disposed) return Promise.resolve(false);
-    if (!force && delivery.key === (mode === "identity" ? lastDenIdentityPushKey : lastDenSessionPushKey)) return Promise.resolve(true);
+    if (!force && delivery.key === deliveredDenSession[mode]) return Promise.resolve(true);
     if (denSessionPushInFlight) {
       if (denSessionPushInFlight.mode === mode) return denSessionPushInFlight.promise;
       // Readiness can recover during early verification, including an older
@@ -545,7 +555,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         isCurrentDenSessionDelivery(delivery) ? pushDenSession(mode, force) : false);
     }
     if (mode === "sync" && !hasCloudProviderSyncPrerequisites()) return Promise.resolve(false);
-    if (mode === "sync") lastDenSessionPushKey = "";
+    if (mode === "sync") deliveredDenSession.sync = "";
     const settings = readDenSettings();
     const apiBaseUrl = settings.apiBaseUrl ?? resolveDenBaseUrls(settings).apiBaseUrl;
     const token = settings.authToken?.trim() ?? "";
@@ -559,8 +569,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           const put = mode === "identity" ? openworkClient.putDenIdentity : openworkClient.putDenSession;
           await put({ baseUrl: apiBaseUrl, token, orgId }, delivery.controller.signal);
           if (!isCurrentDenSessionDelivery(delivery)) return false;
-          lastDenIdentityPushKey = delivery.key;
-          lastDenSessionPushKey = mode === "sync" ? delivery.key : "";
+          deliveredDenSession.identity = delivery.key;
+          if (mode === "sync") deliveredDenSession.sync = delivery.key;
+          else if (deliveredDenSession.sync !== delivery.key) deliveredDenSession.sync = "";
           return true;
         } catch (error) {
           if (!isCurrentDenSessionDelivery(delivery)) return false;
@@ -2810,6 +2821,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           void runCloudProviderSync("sign_in");
         } else {
           invalidateDenSessionDelivery();
+          forgetDeliveredDenSession();
           const connectedProviderIdsBeforeLogout = options.providerConnectedIds();
           const logoutProviderIds = [...new Set([
             ...Object.values(state.importedCloudProviders).map((provider) => provider.providerId),

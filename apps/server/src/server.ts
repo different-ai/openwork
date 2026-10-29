@@ -842,7 +842,7 @@ export async function startServer(
     resolveNativeAffordanceCodeMode: async () => (await managedDesktopPolicy(config).current())?.nativeAffordanceCodeMode === true,
     autoUpgradeIdle: async () => (await describeV1EngineActivity(config)).verdict === "idle",
     autoUpgradeError: (error) => logger.log("warn", "Automatic engine upgrade failed; keeping v1", { error }),
-    providerSession: () => cloudProviderSync.currentSession(),
+    providerSession: () => cloudProviderSync.providerBridgeSession(),
     hostReadRequest: async (path, init) => {
       // Internal dispatch retains the host credential in this process. The
       // native plugin receives only the context bridge's restricted token.
@@ -3396,7 +3396,10 @@ function createRoutes(
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
     if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
     anonymousInference.setMemberSession(session);
-    const suspended = cloudProviderSync.suspend();
+    // Repeated identity delivery for the sign-in already active must not pause
+    // provider sync or revoke the provider bridge: that cuts every live
+    // Gateway reply (ENG-994). A different sign-in still revokes synchronously.
+    const suspended = cloudProviderSync.suspendForSession(session);
     try {
       await managedDesktopPolicy(config).setSession(session);
     } finally {

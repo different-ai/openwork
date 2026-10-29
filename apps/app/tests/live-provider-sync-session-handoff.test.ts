@@ -3,10 +3,11 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { initializeDenBootstrapConfig, setDenBootstrapConfig, writeDenSettings } from "../src/app/lib/den";
 import { createOpenworkServerClient } from "../src/app/lib/openwork-server";
 import { createClientV2 } from "../src/app/lib/opencode-v2-adapter";
-import { createProviderAuthStore } from "../src/react-app/domains/connections/provider-auth/store";
+import { createProviderAuthStore, forgetDeliveredDenSession } from "../src/react-app/domains/connections/provider-auth/store";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
 
 beforeEach(async () => {
+  forgetDeliveredDenSession();
   GlobalRegistrator.register({ url: "http://localhost:5173/" });
   await initializeDenBootstrapConfig();
   await setDenBootstrapConfig({ baseUrl: "https://den.example.test", apiBaseUrl: "https://den.example.test" });
@@ -43,6 +44,38 @@ test("live V2 delivers Den session before skipping legacy sync and provider read
     expect(requests.some((request) => request.includes("/api/model") || request.includes("/api/provider"))).toBe(false);
   } finally {
     store.dispose();
+    fetch.mockRestore();
+  }
+});
+
+test("ENG-994: another route's store does not re-deliver an unchanged Den session", async () => {
+  const requests: string[] = [];
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const path = new URL(request.url).pathname;
+    requests.push(`${request.method} ${path}`);
+    if (path === "/experimental/engine-v2-preview/status") return Response.json({
+      enabled: true, running: true, chatRouting: true, liveProviderSync: true,
+      mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [],
+    });
+    return Response.json({ ok: true });
+  });
+  const settings = createLiveProviderStore();
+  const session = createLiveProviderStore();
+  try {
+    await settings.runCloudProviderSync("sign_in");
+    // Each route mounts its own store; delivering the same sign-in again paused
+    // provider sync on the server and cut live Gateway replies.
+    await session.runCloudProviderSync("app_launch");
+    expect(requests.filter((request) => request.includes("/den-session"))).toEqual(["PUT /den-session"]);
+
+    // After sign-out the server forgot the session, so the same sign-in is delivered again.
+    forgetDeliveredDenSession();
+    await session.runCloudProviderSync("sign_in");
+    expect(requests.filter((request) => request.includes("/den-session"))).toEqual(["PUT /den-session", "PUT /den-session"]);
+  } finally {
+    settings.dispose();
+    session.dispose();
     fetch.mockRestore();
   }
 });

@@ -954,6 +954,8 @@ export class CloudProviderSync {
   private interval: ReturnType<typeof setInterval> | null = null;
   private pendingReloadRetry: ReturnType<typeof setTimeout> | null = null;
   private suspended = false;
+  /** See providerBridgeSession(). */
+  private bridgeSession: CloudProviderDenSession | null = null;
   private providerFetchController = new AbortController();
   private readonly reloadRetryMs: number;
 
@@ -974,15 +976,32 @@ export class CloudProviderSync {
     return this.session ? { ...this.session } : null;
   }
 
+  /**
+   * The sign-in the V2 provider bridge serves. It is not cleared by a
+   * suspension for the same sign-in (a repeated identity delivery), only by a
+   * different sign-in or sign-out, so live Gateway replies are not cut while
+   * provider materialization pauses.
+   */
+  providerBridgeSession(): CloudProviderDenSession | null {
+    return this.bridgeSession ? { ...this.bridgeSession } : null;
+  }
+
   /** Invalidate the credential bridge before asynchronous policy hydration. */
   suspendForSession(session: CloudProviderDenSession): Promise<void> {
-    return this.session && this.sessionContextKey(this.session) === this.sessionContextKey(session)
+    const contextKey = this.sessionContextKey(session);
+    // A different sign-in revokes the old bridge identity synchronously.
+    if (this.bridgeSession && this.sessionContextKey(this.bridgeSession) !== contextKey) this.bridgeSession = null;
+    return this.session && this.sessionContextKey(this.session) === contextKey
       ? Promise.resolve() : this.suspend();
   }
 
   setSession(session: CloudProviderDenSession): Promise<void> {
     const contextKey = this.sessionContextKey(session);
-    if (this.session && this.sessionContextKey(this.session) === contextKey) return Promise.resolve();
+    if (this.bridgeSession && this.sessionContextKey(this.bridgeSession) !== contextKey) this.bridgeSession = null;
+    if (this.session && this.sessionContextKey(this.session) === contextKey) {
+      this.bridgeSession = session;
+      return Promise.resolve();
+    }
     if (this.pendingSession?.contextKey === contextKey) return this.pendingSession.promise;
 
     const hasMaterializedContext = this.session !== null
@@ -994,6 +1013,7 @@ export class CloudProviderSync {
 
     if (!hasMaterializedContext && !this.suspended) {
       this.session = session;
+      this.bridgeSession = session;
       this.startInterval();
       void this.run("den_session_updated");
       return Promise.resolve();
@@ -1019,6 +1039,7 @@ export class CloudProviderSync {
       }
       if (generation !== this.contextGeneration) return;
       this.session = session;
+      this.bridgeSession = session;
       this.suspended = false;
       this.startInterval();
       void this.run("den_session_updated");
@@ -1063,6 +1084,7 @@ export class CloudProviderSync {
     this.contextGeneration += 1;
     this.pendingSession = null;
     this.session = null;
+    this.bridgeSession = null;
     this.stopInterval();
     const trailing = this.trailingRun;
     this.trailingRun = null;
