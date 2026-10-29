@@ -271,6 +271,8 @@ export async function startFakeMcpServer(options: {
  */
 export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolean; protectedResource?: string } = {}) {
   const requests: { method: string; path: string }[] = []
+  /** When set, a signed-in MCP request is refused with this status and JSON body. */
+  let refusal: { status: number; body: Json } | null = null
   const issued = new Set<string>()
   const codes = new Set<string>()
   let counter = 0
@@ -336,6 +338,7 @@ export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolea
         response.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource"` }).end()
         return
       }
+      if (refusal) return json(response, refusal.status, refusal.body)
       const parsed = parseJson(raw)
       const rpcId = field(parsed, "id")
       const method = field(parsed, "method")
@@ -356,6 +359,10 @@ export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolea
     mcpUrl: `${server.url}/mcp`,
     tokenRequests: () => requests.filter((entry) => entry.path === "/token").length,
     requests,
+    /** Refuse every signed-in MCP request with this answer, or answer normally again with null. */
+    refuseMcp(answer: { status: number; body: Json } | null) {
+      refusal = answer
+    },
   }
 }
 

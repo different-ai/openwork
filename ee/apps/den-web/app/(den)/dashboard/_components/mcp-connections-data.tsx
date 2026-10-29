@@ -51,7 +51,7 @@ export type ExternalMcpRequiredBy = {
   name: string;
 };
 
-export type ConnectionReadinessFailure = "sign_in_required" | "sign_in_rejected" | "setup_required" | "unavailable" | "timed_out" | "settings_changed" | "tools_unreadable";
+export type ConnectionReadinessFailure = "sign_in_required" | "sign_in_rejected" | "setup_required" | "provider_setup_required" | "unavailable" | "timed_out" | "settings_changed" | "tools_unreadable";
 
 export type ConnectionReadiness = {
   status: "ready" | "could_not_verify";
