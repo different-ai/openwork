@@ -691,17 +691,23 @@ const AssistantMessage = React.memo(
         <div className="group flex w-full flex-col gap-0 space-y-2">
           {assistantRenderGroups.map((group, index) => {
             if (group.kind === "text") {
+              // The answer lines up with the activity rail: the same leading
+              // 20px lane the step rows and the "Worked for…" summary use, so
+              // the reply's text starts where their labels do instead of 28px
+              // to the rail's left (DESIGN.md T1 — one quiet rail).
               return (
-                <MessageContent
-                  key={`text-${index}`}
-                  className="text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
-                  markdown
-                  sessionReferences
-                  isStreaming={isStreaming}
-                  highlightQuery={highlightQuery}
-                >
-                  {group.text}
-                </MessageContent>
+                <div key={`text-${index}`} className="flex min-w-0 items-start gap-2">
+                  <LeadingLane />
+                  <MessageContent
+                    className="text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
+                    markdown
+                    sessionReferences
+                    isStreaming={isStreaming}
+                    highlightQuery={highlightQuery}
+                  >
+                    {group.text}
+                  </MessageContent>
+                </div>
               )
             }
 
