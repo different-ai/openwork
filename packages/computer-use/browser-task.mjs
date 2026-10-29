@@ -672,7 +672,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     for (const item of tabsFor(owner)) {
       const navigation = navigations.get(item.tabId);
       if (navigation) { navigation.manual = false; navigation.lifetime.abort(); }
-      if (!item.view.webContents.isDestroyed()) item.view.webContents.stop();
+      if (item.view.webContents && !item.view.webContents.isDestroyed()) item.view.webContents.stop();
       const sibling = states.get(item.tabId); sibling?.controller?.abort(); forget(sibling); publish(item.tabId, "paused", reason);
     }
     const state = stateFor(tabId); forget(state);
@@ -865,7 +865,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           const validate = await authorizeNavigation(navigationScope, url.href);
           validate();
           forget(state); dispatched = true;
-          const stop = () => { if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop(); };
+          const stop = () => { if (tab.view.webContents && !tab.view.webContents.isDestroyed()) tab.view.webContents.stop(); };
           requestSignal.addEventListener("abort", stop, { once: true });
           try { await navigate(tab, url.href); requestSignal.throwIfAborted(); }
           finally { requestSignal.removeEventListener("abort", stop); }
