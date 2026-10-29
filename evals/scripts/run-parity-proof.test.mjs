@@ -36,6 +36,12 @@ test("the v2 Drive upload proof runs on the v2 engine with pinned binaries, not 
   ]);
 });
 
+test("the native skill denial proof runs on the v2 engine, not as a legacy proof", () => {
+  assert.deepEqual(parityProofPlan("evals/proofs/opencode-v2-skill-jit.proof.test.ts"), [
+    { engine: "v2", args: ["evals/bin/evals.mjs", "opencode-v2-skill-jit.proof.test.ts", "--local", "--engine", "v2"] },
+  ]);
+});
+
 test("existing connector parity retains both v1 and v2 execution", () => {
   assert.deepEqual(parityProofPlan("evals/core/agent-connection-journey.e2e.test.ts").map(item => item.engine), ["v1", "v2"]);
 });

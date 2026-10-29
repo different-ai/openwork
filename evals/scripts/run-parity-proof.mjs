@@ -13,6 +13,7 @@ const specs = new Set([
   "secure-keys-in-chat.e2e.test.ts",
   "agent-permissions.e2e.test.ts",
   "opencode-v2-drive-upload.proof.test.ts",
+  "opencode-v2-skill-jit.proof.test.ts",
 ]);
 
 const v2Only = new Set([
@@ -24,6 +25,8 @@ const v2Only = new Set([
   "agent-permissions.e2e.test.ts",
   // The native Drive upload tool exists only on OpenCode v2.
   "opencode-v2-drive-upload.proof.test.ts",
+  // Workspace skill permission rules are enforced by OpenCode v2 only.
+  "opencode-v2-skill-jit.proof.test.ts",
 ]);
 
 /** Basename of a supported parity spec given its basename or a path in any journey folder; undefined when unsupported. */
