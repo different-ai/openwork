@@ -1,8 +1,10 @@
 "use client";
 
+import { Lock } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
+import { DenSwitch } from "../../_components/ui/switch";
 import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessPeopleIds, peopleLabel } from "./access-summary";
@@ -19,6 +21,9 @@ import { useSaveConnectionAccess } from "./item-sharing";
 import { DEFAULT_API_KEY_AUTH_SCHEME, type ExternalMcpApiKeyAuthScheme, type ExternalMcpCredentialMode, useUpdateMcpConnection, useCheckMcpConnection } from "./mcp-connections-data";
 import { usesMemberApiKey } from "./member-api-key";
 import { SetupChecks } from "./setup-checks";
+import { SLACK_ASSISTANT_SECTION_ID } from "./slack-assistant-setup";
+import { SlackSetupChecklist, useSlackSetupState } from "./slack-connector-setup-checks";
+import { type SlackScopeChoice, withSlackScopeChoice } from "./slack-connector-setup";
 import { WhoCanUseIt } from "./who-can-use-it";
 
 function SignInChoice({ name, value, onChange, disabled, kind = "oauth", sharedDescription }: {
@@ -75,7 +80,10 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const canShareWithEveryone = orgContext
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canShareWithEveryone
     : false;
-  const { target, loading, missing, failed } = useConnectorTarget(catalogId);
+  const { target: catalogTarget, loading, missing, failed } = useConnectorTarget(catalogId);
+  // Guided Slack setup: the admin's explicit access choice becomes the new connection's scopes.
+  const [slackScopeChoice, setSlackScopeChoice] = useState<SlackScopeChoice | null>(null);
+  const target = useMemo(() => withSlackScopeChoice(catalogTarget, slackScopeChoice), [catalogTarget, slackScopeChoice]);
   const updateConnection = useUpdateMcpConnection();
   const checkConnection = useCheckMcpConnection();
   const saveAccess = useSaveConnectionAccess();
@@ -105,6 +113,9 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
       router.replace(`?${params.toString()}`, { scroll: false });
     },
   });
+
+  const slackSetup = useSlackSetupState(setup, target, slackScopeChoice);
+  const [assistantNext, setAssistantNext] = useState(false);
 
   const name = target?.name ?? "";
   const back = { href: getAddConnectorRoute(orgSlug), label: "Add a connector" };
@@ -145,6 +156,14 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const viewerName = me?.user.name || me?.user.email || "You";
   const switchingToShared = signsIn && chosenMode === "shared" && connection?.credentialMode === "per_member";
   const ready = (setup.allDone || setup.skipped) && Boolean(connection);
+  const stepNumber = slackSetup.slack ? slackSetup.progress.step : setup.stepNumber;
+  const stepTotal = slackSetup.slack ? slackSetup.progress.total : setup.checks.length;
+  // @openwork in Slack needs each person's own Slack sign-in and this OpenWork's assistant runner.
+  const assistantOffered = slackSetup.slack && slackSetup.assistant?.eligible === true && !slackSetup.assistant.installed;
+  const assistantAvailable = assistantOffered && slackSetup.assistant?.runnerAvailable === true && chosenMode === "per_member";
+  const assistantLock = !assistantOffered ? null
+    : slackSetup.assistant?.runnerAvailable !== true ? "Not available on this OpenWork. Whoever runs it can turn on the Slack assistant."
+    : chosenMode !== "per_member" ? "Needs Each person signs in." : null;
 
   const checks = setup.checks.map((check) => {
     if (check.id === "sign-in" && (setup.canSignIn || setup.signInFailed)) {
@@ -222,13 +241,16 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
         ? await checkConnection.mutateAsync(connection.id).catch(() => null)
         : await checkConnection.mutateAsync(connection.id);
       const connectionId = connection.id;
+      const openAssistant = assistantNext && assistantAvailable;
       const unverified = checked?.status === "could_not_verify" || (setup.skipped && checked?.status !== "ready");
       toast({
         title: usesIndividualKeys ? `${name} is set up` : unverified ? `${name} couldn't be verified` : `${name} is ready`,
         description: `${reached > 0 ? `${peopleLabel(reached)} will find it in My Library.` : "Only you have it so far."}`,
         action: { label: "View", onClick: () => router.push(getMcpConnectionRoute(orgSlug, connectionId)) },
       });
-      router.push(getMcpConnectionsRoute(orgSlug));
+      router.push(openAssistant
+        ? `${getMcpConnectionRoute(orgSlug, connectionId)}#${SLACK_ASSISTANT_SECTION_ID}`
+        : getMcpConnectionsRoute(orgSlug));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "That did not save.");
     } finally {
@@ -264,9 +286,24 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
           logo={<ConnectorLogo name={name} url={target.url} size="md" />}
           title={`Add ${name}`}
         />
-        <SetupChecks checks={checks} />
+        {slackSetup.slack ? (
+          <SlackSetupChecklist
+            steps={slackSetup.steps}
+            callbackUrl={slackSetup.callbackUrl}
+            scopes={slackSetup.scopes}
+            mcpConfirmed={slackSetup.mcpConfirmed}
+            onConfirmMcp={slackSetup.setMcpConfirmed}
+            oauthAppFields={<OAuthAppFields url={target.url} discovery={setup.discovery} secretRequired={setup.secretRequired} saving={setup.saving} error={setup.saveError} onSave={(input) => void setup.saveOAuthApp(input)} />}
+            onSignIn={() => void setup.startSignIn()}
+            onCheckAgain={slackSetup.checkAgain}
+            checking={slackSetup.checking}
+            leading={checks.filter((check) => check.id === "find" && check.status === "failed")}
+            scopeChoice={slackScopeChoice}
+            onChooseScopes={setSlackScopeChoice}
+          />
+        ) : <SetupChecks checks={checks} />}
         {setup.skipError ? <p className="text-[13px] text-red-600" role="alert">{setup.skipError}</p> : null}
-        <StepFooter note={setup.canSkip ? "You can add it anyway and finish its settings on its page." : `Step ${setup.stepNumber} of ${checks.length}`}>
+        <StepFooter note={setup.canSkip ? "You can add it anyway and finish its settings on its page." : `Step ${stepNumber} of ${stepTotal}`}>
           {isCustom && route && !setup.connectionId && !setup.saving ? (
             <DenButton variant="secondary" disabled={busy || setup.skipping || setup.signingIn} onClick={() => { setPreviousRoute(route); setRoute(null); }} data-testid="connector-setup-change-route">Back</DenButton>
           ) : (
@@ -285,7 +322,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
       <ItemHeader
         back={back}
         logo={<ConnectorLogo name={name} url={target.url} size="md" />}
-        title={usesIndividualKeys ? `${name} is set up` : setup.allDone ? `${name} passed all ${checks.length} checks` : `Add ${name} anyway`}
+        title={usesIndividualKeys ? `${name} is set up` : setup.allDone ? `${name} passed all ${stepTotal} checks` : `Add ${name} anyway`}
         description={setup.allDone ? undefined : `Some checks did not pass. Finish its settings, like its OAuth app, on its page after you add it.`}
       />
       {signsIn || usesKey ? (
@@ -314,6 +351,26 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
           disabled={busy}
         />
       </section>
+      {assistantOffered ? (
+        <div className="flex min-h-12 items-center justify-between gap-4 border-b border-gray-100" data-testid="slack-setup-assistant-next">
+          <div className="min-w-0">
+            <p className="text-[14px] font-medium leading-5 text-gray-900">Set up @openwork in Slack next</p>
+            {assistantLock ? (
+              <p className="flex items-center gap-1.5 text-[13px] leading-[18px] text-gray-500">
+                <Lock className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} aria-hidden />
+                {assistantLock}
+              </p>
+            ) : null}
+          </div>
+          <DenSwitch
+            checked={assistantNext && assistantAvailable}
+            disabled={busy || !assistantAvailable}
+            onChange={setAssistantNext}
+            aria-label="Set up @openwork in Slack next"
+            testId="slack-setup-assistant-next-switch"
+          />
+        </div>
+      ) : null}
       {error ? <p className="text-[13px] text-red-600" role="alert">{error}</p> : null}
       <StepFooter note={switchingToShared
         ? `Next, sign in with the ${name} account everyone will use.`

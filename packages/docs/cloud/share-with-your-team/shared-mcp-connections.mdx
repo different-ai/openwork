@@ -204,6 +204,18 @@ sign-in does not replace this step. Without it, connecting can fail with
 8. Members open **Your Connections**, or **Settings › Library** in the desktop
    app, and connect their own Slack account.
 
+If your organization has guided Slack setup, **Add Slack** walks you through
+these steps as one checklist instead. First choose what OpenWork can do in
+Slack: **Read and act** (every user scope Slack's MCP server offers) or **Read
+only** (no write scopes). Nothing is chosen for you, and OpenWork asks Slack
+for exactly those scopes. **Create app in Slack** then opens Slack's **Create
+an app › From a manifest** with your redirect URL, those scopes and MCP already
+filled in (**Use an existing Slack app** has them to copy). The **Agents › MCP**
+step says *Not checked yet* until you sign in to test, then shows the result:
+if Slack refuses MCP requests, turn MCP on and click **Check again**. When the
+[Slack assistant](/slack/overview) can run on your OpenWork, an optional last
+step leads to its setup.
+
 You don't need Slack bot tokens (`xoxb-...` or `xapp-...`) for this. Keep the
 client secret out of chats and source control.
 
@@ -226,6 +238,17 @@ Add write scopes only if you want the AI to take action in Slack:
 ```text
 chat:write reactions:write channels:write groups:write im:write mpim:write canvases:read canvases:write
 ```
+
+With guided Slack setup, **Read and act** asks for every user scope Slack's MCP
+server offers:
+
+```text
+canvases:read canvases:write channels:history channels:read channels:write chat:write emoji:read files:read files:write groups:history groups:read groups:write im:history im:read im:write lists:read lists:write mpim:history mpim:read mpim:write reactions:read reactions:write search:read.files search:read.im search:read.mpim search:read.private search:read.public search:read.users users:read users:read.email
+```
+
+**Read only** asks for the same list without any `:write` scope. Either way,
+the Slack app created from the setup page allows exactly the scopes OpenWork
+asks for.
 
 | Slack MCP capability | User token scopes |
 | --- | --- |

@@ -11,7 +11,7 @@ keywords: ["slack", "@openwork", "slack bot not showing", "slack autocomplete", 
 | Setup is unavailable | Private-alpha capability, runtime access, and Individual accounts mode. See [step 1](/slack/set-up-the-slack-app#1-check-alpha-access-and-the-existing-connector). |
 | Bot missing from mention autocomplete | Bot installation completed and the bot is invited into that channel with `/invite @openwork`. |
 | Slack events URL unverified | Public HTTPS URL, correct connector ID, saved signing secret, and Slack's **Retry** then **Save Changes**. |
-| `/openwork` gives a connect link | Complete your own Slack OAuth flow; older connections need one reconnect. See [Connect your account](/slack/connect-your-account). |
+| `/openwork` gives a connect link | Complete your own Slack OAuth flow. Connections made before the assistant was installed link automatically on your first message; reconnect only if it still asks. See [Connect your account](/slack/connect-your-account). |
 | Bot starts but never finishes | Check failed/active counts and runtime availability; do not treat an acknowledgement as success. |
 | DMs work but channel mentions do not | Channel allowlist, channel invitation, connector grants, and assistant enablement. |
 
