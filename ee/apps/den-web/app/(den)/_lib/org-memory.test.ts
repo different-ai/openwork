@@ -34,7 +34,7 @@ function browser(origin = "https://den.example", blocked = false) {
 function organization(id: string, isActive = false): DenOrgSummary {
   return {
     id, isActive, name: id, slug: id, logo: null, metadata: null, role: "member",
-    orgMemberId: `member-${id}`, membershipId: `membership-${id}`, memberCount: 2,
+    orgMemberId: `member-${id}`, membershipId: `membership-${id}`, memberCount: 2, planTier: "free", isSandbox: false,
     createdAt: null, updatedAt: null,
   };
 }

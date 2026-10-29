@@ -54,6 +54,7 @@ import {
 } from "../../_lib/den-org";
 import { myAgentAvailable } from "./my-agent-availability";
 import { useOrgListWindow } from "../../_lib/use-org-list-window";
+import { countLabel, organizationPlanLabel } from "../../_lib/plan-display";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { buildDenFeedbackUrl } from "../../_lib/feedback";
 import { OrgSelectionScreen } from "../_features/org-selection/org-selection-screen";
@@ -587,7 +588,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                         <div className="min-w-0">
                           <span className="block truncate text-[13px] font-medium tracking-[-0.1px]">{org.name}</span>
                           <span className="block truncate text-[12px] text-gray-500">
-                            {org.role === "owner" ? "Creator plan" : "Free plan"} • {org.memberCount} {org.memberCount === 1 ? "member" : "members"}
+                            {[organizationPlanLabel(org), countLabel(org.memberCount, "member")].filter(Boolean).join(" • ")}
                           </span>
                         </div>
                       </div>
