@@ -37,7 +37,7 @@ import {
   readAllowlist,
   readableConnections,
   resolveMemberSources,
-  sourceOn,
+  withConnectionState,
   type MemberConnection,
   type ResolvedSource,
 } from "./sources.js"
@@ -61,7 +61,8 @@ export type AgentWakeDeps = {
   settings: (organizationId: DenTypeId<"organization">) => Promise<WorkbotProactiveSettings>
   template: (organizationId: DenTypeId<"organization">) => Promise<AgentTemplateVersion>
   user: (organizationId: DenTypeId<"organization">, memberId: DenTypeId<"member">) => Promise<DenTypeId<"user"> | null>
-  calendar: (input: { organizationId: DenTypeId<"organization">; orgMembershipId: DenTypeId<"member">; timeMin: string; timeMax: string }) => Promise<MemberCalendarRead>
+  /** One read-only calendar GET as the member, through exactly this Google Workspace connection. */
+  calendar: (input: { organizationId: DenTypeId<"organization">; orgMembershipId: DenTypeId<"member">; connectionId: string; timeMin: string; timeMax: string }) => Promise<MemberCalendarRead>
   model: (actor: { userId: DenTypeId<"user">; organizationId: DenTypeId<"organization"> }) => Promise<string | null>
   /** `scopes`: the read allowlist the turn's token carries (agent-read-sources.ts). */
   turn: (input: { actor: { userId: string; organizationId: string }; sessionId: string; instructions: string; model: string; prompt: string; messageId: string; scopes: readonly string[] }) => Promise<AgentTurnResult>
@@ -176,12 +177,22 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
   // member's sources below decide what the agent reads and what they are told to fix.
   const stored = parseStoredPreferences(row.preferences)
   const choices = library ? stored.sources : {}
-  const calendarOn = sourceOn(settings.sources.calendar, choices.calendar, true)
-  const read = calendarOn
-    ? await deps.calendar({ organizationId, orgMembershipId: memberId, timeMin: iso(now - 15 * 60_000), timeMax: iso(now + AGENT_TIMING.horizonMs + 2 * HOUR_MS) })
-    : null
-  const googleRefused = read?.kind === "needs_connection" || read?.kind === "missing_scope"
-  if (read && read.kind !== "ok") appLogger.info("workbot_agent_google_unavailable", { member_id: memberId, reason: read.kind })
+  // The member's sources first: the calendar is read through the connections its source uses (the admin's picks),
+  // never a default another of the member's accounts could stand in for.
+  const listed = await deps.connections({ organizationId, memberId }).catch(() => null)
+  let sources = resolveMemberSources({ connections: listed ?? [], policy: settings.sources, choices, lastLook: state.lastLook })
+  let read: MemberCalendarRead | null = null
+  const calendarSource = sources.find((source) => source.id === "calendar")
+  const calendarConnections = calendarSource ? readableConnections(calendarSource).filter((connection) => connection.native === "google-workspace") : []
+  for (const connection of calendarConnections) {
+    read = await deps.calendar({ organizationId, orgMembershipId: memberId, connectionId: connection.id, timeMin: iso(now - 15 * 60_000), timeMax: iso(now + AGENT_TIMING.horizonMs + 2 * HOUR_MS) })
+    if (read.kind === "ok") break
+    appLogger.info("workbot_agent_google_unavailable", { member_id: memberId, reason: read.kind })
+    // Google refused just now, whatever the stored state says: this connection only. A lost sign-in holds up all it
+    // serves; a missing calendar permission only the calendar.
+    if (read.kind === "needs_connection") sources = withConnectionState(sources, connection.id, "reconnect")
+    if (read.kind === "missing_scope") sources = withConnectionState(sources, connection.id, "reconnect", ["calendar"])
+  }
   const projected = read?.kind === "ok" ? projectGoogleCalendarEvents(read.json) : null
   const timeZone = isValidTimeZone(projected?.timeZone) ? projected.timeZone : storedZone ?? "UTC"
   const calendarResponsibilities = responsibilities.includes("meeting_prep") || responsibilities.includes("calendar_changes")
@@ -219,14 +230,8 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
     return { status: "ran", reasons: reasons.map((reason) => reason.kind), reply, delivered: null }
   }
 
-  // The member's sources: what the admin allows, what they turned on, and whose account is ready to read.
-  const listed = await deps.connections({ organizationId, memberId }).catch(() => null)
+  // The member's sources (listed above): what the admin allows, what they turned on, and whose account is ready to read.
   if (!listed) return retry("unavailable", "sources_unavailable")
-  // Google refused the calendar read just now: whatever the stored state says, Google needs reconnecting.
-  const connections = listed.map((connection) => googleRefused && connection.native === "google-workspace" && connection.state === "connected"
-    ? { ...connection, state: "reconnect" as const }
-    : connection)
-  const sources = resolveMemberSources({ connections, policy: settings.sources, choices, lastLook: state.lastLook })
   const readable = sources.filter((source) => readableConnections(source).length > 0)
 
   // A source that is on but can't be read: one message with the action that fixes it, once until it works again.

@@ -248,7 +248,7 @@ test("an admin navigates organizations and member usage without loading every de
     const layout = await adminProbe.dom("body");
     const navigation = await adminProbe.dom('[data-testid="admin-navigation"] a');
     expect(navigation.elements.map((link) => link.text)).toEqual([
-      "Overview", "Users", "Organizations", "Opportunities", "Sandboxes", "Feature rollouts", "Free Auto usage", "Security", "Services",
+      "Overview", "Users", "Organizations", "Opportunities", "Sandboxes", "Features", "Feature rollouts", "Free Auto usage", "Security", "Services",
     ]);
     const visibleSections = navigation.elements.every((link) => link.rect.left >= 0 && link.rect.left + link.rect.width <= navigation.viewportWidth);
     const ok = location.page === 1 && location.search === "Routing organization 00" && layout.documentWidth <= layout.viewportWidth && visibleSections;

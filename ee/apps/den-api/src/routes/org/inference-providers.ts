@@ -20,7 +20,7 @@ import { gatewayManagementUnavailable, gatewayManagementUnavailableSchema } from
 import { ensureMemberGatewayKey } from "../../gateway-keys.js"
 import { gatewayMemberConnections } from "../../llm/gateway-member-connections.js"
 import { requestGatewayProviderTest } from "../../llm/gateway-provider-test.js"
-import { requireFeature } from "../../features.js"
+import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import { GatewayWriteError, normalizeCredential, reusableAwsCredential, enableGatewayGroupModels, gatewayCatalog, gatewayGrantSummary, gatewaySummary, refreshGatewayCatalog, resolveGatewayCatalog, trustedProviderCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
 import { buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "../../llm/inference-provider-config.js"
@@ -48,6 +48,8 @@ import { registerOrgGatewayUsageRoutes } from "./gateway-usage.js"
 import { registerOrgGatewayUsageLimitRoutes } from "./gateway-usage-limits.js"
 import { registerOrgProviderInventoryRoutes } from "./provider-inventory.js"
 import { credentialPromptSchema } from "@openwork/types/den/credential-prompt"
+import { GatewayProviderUsageLimitsError, GatewayUsageError, lockUsageOrganization, settleGatewayProviderUsageLimits } from "@openwork-ee/den-db/gateway-usage-limits"
+import { GATEWAY_PROVIDER_HAS_USAGE_LIMITS, GATEWAY_PROVIDER_REMOVAL_LIMIT_ACTIONS, gatewayProviderHasUsageLimitsSchema, type GatewayProviderRemovalLimitChoice } from "@openwork/types/den/gateway-usage-limits"
 import { credentialPromptResponseFields, gatewayCredentialShape, gatewayProviderCredentialPrompt, gatewayUpstreamDestination } from "../../credential-prompt.js"
 
 const paramsSchema = idParamSchema("inferenceProviderId", "inferenceProvider")
@@ -116,6 +118,14 @@ const detailsSchema = summarySchema.extend({ litellm: liteLlmStatusSchema.option
 const detailsResponse = z.object({ inferenceProvider: detailsSchema })
 const connectResponse = z.object({ inferenceProvider: summarySchema.extend({ apiKey: z.string(), apiKeys: z.record(z.string(), z.string()) }) })
 const gatewayErrorSchema = z.object({ error: z.string(), message: z.string().optional() })
+const providerHasUsageLimitsSchema = gatewayProviderHasUsageLimitsSchema.meta({ ref: "GatewayProviderHasUsageLimits" })
+const deleteProviderQuery = z.object({
+  usageLimits: z.enum(GATEWAY_PROVIDER_REMOVAL_LIMIT_ACTIONS).optional().describe("What happens to active usage limits scoped to this provider. move: re-scope them to moveUsageLimitsTo. archive: archive them. Required only when such limits exist and gatewayProviderRemovalLimits is on."),
+  moveUsageLimitsTo: denTypeIdSchema("inferenceProvider").optional().describe("With usageLimits=move: another active Gateway provider of this organization."),
+}).superRefine((input, ctx) => {
+  if (input.usageLimits === "move" && !input.moveUsageLimitsTo) ctx.addIssue({ code: "custom", path: ["moveUsageLimitsTo"], message: "Choose the provider the usage limits move to." })
+  if (input.usageLimits !== "move" && input.moveUsageLimitsTo) ctx.addIssue({ code: "custom", path: ["moveUsageLimitsTo"], message: "moveUsageLimitsTo is only used with usageLimits=move." })
+})
 const liteLlmKeySchema = z.string().trim().min(1).max(4096)
 const liteLlmModeSchema = z.enum(["org", "member", "issued"]).describe("org: one organization LiteLLM key for everyone, with OpenWork spend tracking. member: each person connects their own LiteLLM key. issued: OpenWork creates a LiteLLM key for each allowed person, found by their OpenWork email. In member and issued modes apiKey is a LiteLLM admin key and OpenWork spend tracking is off.")
 const liteLlmIssueStrategySchema = z.enum(["per_team", "mirror"]).describe("issued mode. per_team: one key per LiteLLM team the person belongs to, or one key without a team when they are in none. mirror: a copy of their oldest active key (team, models, aliases, tags, expiry; never key-level budgets or rate limits).")
@@ -211,7 +221,7 @@ async function pendingKeyPrompt(provider: GatewayProvider, setId: string | null)
     destination: gatewayUpstreamDestination(provider.provider_id, provider.provider_config, provider.settings),
   }))
 }
-async function providerTransaction<T>(c: { req: { raw: Request; param: (key: string) => string | undefined }; get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }, mutate: (tx: GatewayTx, provider: GatewayProvider) => Promise<T>): Promise<T> {
+async function providerTransaction<T>(c: { req: { raw: Request; param: (key: string) => string | undefined }; get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }, mutate: (tx: GatewayTx, provider: GatewayProvider) => Promise<T>, options: { lockOrganization?: boolean } = {}): Promise<T> {
   const actor = c.get("organizationContext")
   const id = c.req.param("inferenceProviderId")
   if (!actor || !id) throw new GatewayWriteError(403, "forbidden")
@@ -219,6 +229,9 @@ async function providerTransaction<T>(c: { req: { raw: Request; param: (key: str
     const capture = providerAuditRequests.get(c.req.raw)?.capture ?? null
     // Match membership/role mutation order: organization before member/provider.
     if (capture) await recheckAuditEntitlement(tx, actor.organization.id)
+    // Writes that also change usage limits take the organization lock usage-limit writes take
+    // first, before any member row, so the two never wait on each other in opposite order.
+    if (options.lockOrganization) await lockUsageOrganization(tx, actor.organization.id)
     const provider = await getProvider(tx, actor, id, true)
     await requireLiveManage(tx, actor)
     return providerAuditMutation(tx, capture, () => mutate(tx, provider))
@@ -861,9 +874,19 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     })
   }
 
-  app.delete("/v1/inference-providers/:inferenceProviderId", route("Delete inference gateway provider", "Deletes the provider, models, groups, credential sets, grants, credentials and pending sign-ins, and revokes applicable Google tokens. Returns an empty 204; historical request logs and usage rollups are retained. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", undefined, 204), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), async (c) => {
+  app.delete("/v1/inference-providers/:inferenceProviderId", route("Delete inference gateway provider", "Deletes the provider, models, groups, credential sets, grants, credentials and pending sign-ins, and revokes applicable Google tokens. Returns an empty 204; historical request logs and usage rollups are retained. With the gatewayProviderRemovalLimits feature on and active usage limits scoped to the provider, usageLimits must say what happens to them: move (to the active provider in moveUsageLimitsTo, same organization) or archive. Without it the request changes nothing and returns 409 provider_has_usage_limits listing those limits. With the feature off, usageLimits is ignored and those limits are left in place. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", undefined, 204, false, { responses: { 409: jsonResponse("The provider has usage limits that need a choice, or another selection or resource conflict.", z.union([providerHasUsageLimitsSchema, gatewayErrorSchema])) } }), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), queryValidator(deleteProviderQuery), async (c) => {
     try {
+      const actor = c.get("organizationContext")
+      const query = c.req.valid("query")
+      const choice: GatewayProviderRemovalLimitChoice | undefined = query.usageLimits === "archive" ? { action: "archive" }
+        : query.usageLimits === "move" && query.moveUsageLimitsTo ? { action: "move", providerId: query.moveUsageLimitsTo } : undefined
+      // Behind gatewayProviderRemovalLimits. Off: the delete behaves as before the feature and
+      // ignores usageLimits, leaving scoped limits as they are (listed as providerStatus "removed").
+      const settleLimits = await organizationFeatureEnabled(actor.organization.id, "gatewayProviderRemovalLimits", { userId: actor.currentMember.userId })
       const credentials = await providerTransaction(c, async (tx, provider) => {
+        // Usage limits scoped to this provider are moved or archived first, so a missing choice
+        // stops the request before anything is deleted here or in LiteLLM.
+        if (settleLimits) await settleGatewayProviderUsageLimits(tx, { organizationId: actor.organization.id, memberId: actor.currentMember.id }, provider.id, choice)
         // Keys OpenWork created in LiteLLM go first, while the admin key is still stored. This runs
         // inside the transaction, after providerTransaction has locked the caller's member row and
         // re-checked the permission, so a concurrent membership removal or revocation stops the
@@ -882,10 +905,14 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         await tx.delete(GatewayProviderTable).where(eq(GatewayProviderTable.id, provider.id))
         // Request logs and rollups deliberately retain historical resource IDs.
         return credentials.filter((row) => row.status !== "revoked")
-      })
+      }, { lockOrganization: settleLimits })
       await revokeUpstreamCredentials(credentials)
       return c.body(null, 204)
-    } catch (error) { return respond(c, error) }
+    } catch (error) {
+      if (error instanceof GatewayProviderUsageLimitsError) return c.json({ error: GATEWAY_PROVIDER_HAS_USAGE_LIMITS, message: error.message, usageLimits: error.usageLimits }, 409)
+      if (error instanceof GatewayUsageError && error.status !== 503) return c.json({ error: error.code, message: error.message }, error.status)
+      return respond(c, error)
+    }
   })
 
   app.get("/v1/inference-providers/:inferenceProviderId/oauth/start", route("Begin sign-in for a member inference credential", "Starts a member's own Google, Microsoft or AWS sign-in (or LiteLLM key connection) for a granted member credential set. Requires a user session. Returns { authUrl } for Accept: application/json, otherwise redirects to the Den web /gateway/connect bridge. The ten-minute entry handle binds the initiating user, organization, provider, set, client configuration and allowlisted redirectTo. It is not authentication and cannot be used at the Google callback. The bridge must establish a matching signed-in browser session before browser-start creates Google state and PKCE.", z.object({ authUrl: z.string() }), 200, false, { security: [{ bearerAuth: [] }], responses: { 302: emptyResponse("Redirect to the Den browser connection page.") } }), userSessionRoute(), orgMemberRoute(), paramValidator(paramsSchema), queryValidator(oauthQuery), async (c) => {

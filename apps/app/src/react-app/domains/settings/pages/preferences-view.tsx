@@ -30,6 +30,7 @@ import {
   LayoutStack,
 } from "../settings-layout";
 import { DesktopIntegrationSection } from "../desktop-integration-section";
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import {
   AUTO_SETTLE_DAY_OPTIONS,
   useSessionManagementStore,
@@ -68,6 +69,10 @@ function autoSettleLabel(days: number) {
 }
 
 /** Idle sessions move to their workspace's Settled row after this long. */
+function AutoSettleSettings() {
+  return useDesktopFeature("settledSessions") ? <AutoSettleSection /> : null;
+}
+
 function AutoSettleSection() {
   const autoSettleDays = useSessionManagementStore((state) => state.autoSettleDays);
   const setAutoSettleDays = useSessionManagementStore((state) => state.setAutoSettleDays);
@@ -159,7 +164,7 @@ export function PreferencesView(props: PreferencesViewProps) {
         </LayoutSectionItem>
       </LayoutSection>
 
-      <AutoSettleSection />
+      <AutoSettleSettings />
 
       <LayoutSection>
         <LayoutSectionHeader>

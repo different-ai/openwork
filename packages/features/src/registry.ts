@@ -86,6 +86,15 @@ export type FeatureDefinition = {
    * `pnpm features:check` asks for a decision six months after `since`.
    */
   permanent?: boolean
+  /**
+   * The feature works in the background (a schedule, a calendar, an agent's
+   * checks, messages sent by runs), so no request shows whether it ran or
+   * worked. /admin › Features reads its outcomes from the store that already
+   * holds them: den-api registers exactly one reader for each feature that
+   * sets this (ee/apps/den-api/src/feature-outcomes/readers.ts), and its
+   * typecheck fails without one.
+   */
+  outcomes?: true
 }
 
 function defineFeatures<const T extends Record<string, FeatureDefinition>>(features: T): T {
@@ -95,6 +104,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  libraryDetailBreadcrumbs: {
+    label: "Library: detail breadcrumbs",
+    description: "Navigate from a skill or connector to its parent plugin or Library category without losing your place.",
+    category: "experience",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/library-detail-breadcrumbs/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   desktopUpdateDownloadWindow: {
     label: "Desktop: restart to update before the download",
     description: "Restart to update shows in the desktop title bar as soon as an update is found. Clicking it opens a small window that downloads the update with its progress, then restarts, instead of waiting with no sign of the download.",
@@ -161,6 +181,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  settledSessions: {
+    label: "Desktop: settle finished sessions",
+    description: "Finished sessions can be settled into a collapsed Settled row at the end of their workspace, by hand or after a few idle days, and come back on new activity.",
+    category: "experience",
+    added: "2026-10-29",
+    since: "2026-10",
+    author: "reachjalil",
+    docs: "docs/features/settled-sessions/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   mermaidZoom: {
     label: "Desktop: zoom into diagrams",
     description: "Mermaid diagrams in chat and file previews can be zoomed, panned and opened full screen so large diagrams are readable.",
@@ -223,6 +254,7 @@ export const FEATURES = defineFeatures({
     docs: "docs/features/slack-send-as-bot/README.md",
     deployments: everywhere,
     default: false,
+    outcomes: true,
   },
   liveProviderSync: {
     label: "Live provider sync",
@@ -286,6 +318,7 @@ export const FEATURES = defineFeatures({
     docs: "docs/features/workbot-proactive/README.md",
     deployments: everywhere,
     default: false,
+    outcomes: true,
   },
   workbotAgentHealthView: {
     label: "Workbot: Your agent health in Manage › Workbot",
@@ -349,6 +382,7 @@ export const FEATURES = defineFeatures({
     docs: "docs/features/automation-interval-schedules/README.md",
     deployments: everywhere,
     default: false,
+    outcomes: true,
   },
   automationCalendarTriggers: {
     label: "Automations: before or after meetings",
@@ -360,6 +394,7 @@ export const FEATURES = defineFeatures({
     docs: "docs/features/automation-calendar-triggers/README.md",
     deployments: everywhere,
     default: false,
+    outcomes: true,
   },
   computerUse: {
     label: "Computer use",
@@ -437,6 +472,17 @@ export const FEATURES = defineFeatures({
     added: "2026-10-20",
     since: "2026-10",
     author: "reachjalil",
+    deployments: everywhere,
+    default: false,
+  },
+  sandboxGateway: {
+    label: "Workbot: computers through the sandbox gateway",
+    description: "Workbot's cloud computers for this organization run through the runner's sandbox gateway (Differently), which holds the provider keys and picks the provider, instead of the runner's own Freestyle or Daytona account. Needs a runner with SANDBOX_GATEWAY set; without one, or while it is down, new computers use the runner's own provider.",
+    category: "computerUse",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "reachjalil",
+    docs: "docs/computer-use/workbot.md",
     deployments: everywhere,
     default: false,
   },
@@ -567,6 +613,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  customConnectorSetup: {
+    label: "Connect: revised custom connector setup",
+    description: "Revised custom MCP setup: live server checks, reviewed permissions and manual sign-in addresses, copyable callback, persistent app credentials, and a direct connection-to-sharing flow. Tool Tester shows meaningful results before raw metadata. Turning it off restores the existing setup and result display; saved connections keep working.",
+    category: "connect",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/custom-connector-setup/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   expandedMcpPresets: {
     label: "Connect: more MCP server presets",
     description: "Admins see more reviewed official MCP servers (Airtable, Amplitude, Canva, Fireflies, Hugging Face, Lucid, Mural, Vercel, PostHog, monday.com, Honeycomb, Klaviyo, Semgrep, Cal.com, Tavily, Figma) to add with one click in Manage › Connectors. Each uses the same OAuth or API-key flow as the existing presets. Turning it off hides the new suggestions; existing connections stay.",
@@ -589,9 +646,45 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  gatewayProviderRemovalLimits: {
+    label: "AI Gateway: keep spend limits when removing a provider",
+    description: "Removing an AI Gateway provider that has spend limits asks whether to move those limits to another provider or delete them, instead of leaving them pointing at nothing. Limits whose provider was already removed show Provider removed and Not applied, with Choose provider.",
+    category: "models",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/gateway-provider-removal-limits/README.md",
+    deployments: everywhere,
+    default: false,
+  },
+  guidedSlackSetup: {
+    label: "Connect: guided Slack setup",
+    description: "Manage › Connectors › Add Slack walks admins through one checklist: choose Read and act or Read only (nothing preselected; the choice sets the scopes OpenWork asks Slack for), Create app in Slack (prefilled with OpenWork's redirect URL, those scopes and MCP on), turn on Agents › MCP, paste the client ID and secret, sign in to test, and optionally add @openwork. The MCP step shows the real result after the test sign-in. Turning it off brings back the previous setup screen; existing connections stay.",
+    category: "connect",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/guided-slack-setup/README.md",
+    deployments: everywhere,
+    default: false,
+  },
+  libraryConnectorOrgSetup: {
+    label: "Desktop: connectors that need an organization app",
+    description: "In the desktop Library, Slack and GitHub no longer ask for an app's client ID and secret: members see them locked until an admin sets them up, admins open the setup in OpenWork Cloud, connectors the organization already has offer Sign in from Add a connector, and a sign-in that fails says why, with a link to the service's app settings when that is the fix.",
+    category: "connect",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/library-connector-org-setup/README.md",
+    deployments: everywhere,
+    default: false,
+  },
 })
 
 export type FeatureKey = keyof typeof FEATURES
+
+/** Features whose outcomes /admin › Features reads (`outcomes: true`). */
+export type OutcomeFeatureKey = { [K in FeatureKey]: (typeof FEATURES)[K] extends { outcomes: true } ? K : never }[FeatureKey]
 
 export type FeatureMap = Record<FeatureKey, boolean>
 

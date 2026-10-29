@@ -22,6 +22,7 @@ import type {
   UpdateAutomation,
 } from "@openwork/types/automations"
 import { env } from "../env.js"
+import { markFeaturesUsed, type MarkFeaturesUsed } from "../feature-usage.js"
 import { isActiveAutomationOwner, resolveAutomationModelAccess } from "./authority.js"
 import { shouldApplyAutomationModelAccessFailure } from "./model-attention-rollout.js"
 import { automationRepository, runWorkspaceId } from "./repository.js"
@@ -159,6 +160,15 @@ export type AutomationServiceOptions = {
   calendarTriggersEnabled?: CalendarTriggerSourceDeps["enabled"]
   /** Reads an owner's primary Google Calendar around now. */
   readCalendar?: CalendarTriggerSourceDeps["read"]
+  /** Records that the owner used a schedule feature, for /admin › Features. */
+  markFeaturesUsed?: MarkFeaturesUsed
+}
+
+/** The feature a schedule kind needs; the clock's daily, weekly and once schedules need none. */
+function scheduleFeature(schedule: AutomationSchedule): "automationIntervalSchedules" | "automationCalendarTriggers" | null {
+  if (schedule.kind === "interval") return "automationIntervalSchedules"
+  if (schedule.kind === "calendar") return "automationCalendarTriggers"
+  return null
 }
 
 async function readOwnerCalendar(input: Parameters<CalendarTriggerSourceDeps["read"]>[0]) {
@@ -178,6 +188,7 @@ export class AutomationService {
   private readonly cloudRuntime: (organizationId: string) => Promise<CloudAutomationRuntime>
   private readonly intervalSchedulesEnabled: (owner: { organizationId: string; ownerMemberId: string }) => Promise<boolean>
   private readonly calendarTriggers: CalendarTriggerSource
+  private readonly markFeaturesUsed: MarkFeaturesUsed
   private runnerPruneDueAt = 0
 
   constructor(options: AutomationServiceOptions = {}) {
@@ -185,6 +196,7 @@ export class AutomationService {
     this.cloudRuntime = options.cloudRuntime ?? cloudAutomationRuntime
     this.intervalSchedulesEnabled = options.intervalSchedulesEnabled
       ?? ((owner) => ownerScheduleFeatureEnabled(owner, "automationIntervalSchedules"))
+    this.markFeaturesUsed = options.markFeaturesUsed ?? markFeaturesUsed
     this.calendarTriggers = new CalendarTriggerSource({
       list: (limit) => automationRepository.listActiveCalendarTriggers({ limit }),
       enabled: options.calendarTriggersEnabled ?? ((owner) => ownerScheduleFeatureEnabled(owner, "automationCalendarTriggers")),
@@ -650,6 +662,9 @@ export class AutomationService {
       await this.skipRun({ runId: claim.run.id, code: "execution_runtime_unavailable", message: "Every-few-hours schedules are turned off for this organization.", now })
       return null
     }
+    // No request marks background work: an occurrence of a schedule feature, while it is on, is the owner using it.
+    const feature = scheduleFeature(item.revision.schedule)
+    if (feature) this.markFeaturesUsed({ organizationId: item.automation.organizationId, memberId: item.automation.ownerMemberId, keys: [feature] })
     const target = item.revision.executionTarget ?? "desktop"
     if (!await automationTargetAllowed(item.automation.organizationId, target)) {
       // The organization turned this kind off: the occurrence is recorded as skipped and the schedule advances.

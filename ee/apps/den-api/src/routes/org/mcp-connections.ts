@@ -3,6 +3,8 @@ import { observeSignInRegistration } from "../../mcp-registration/sign-in.js"
 import { mcpRegistrationStatusByPreset } from "../../mcp-registration/status.js"
 import type { Context, Hono } from "hono"
 import { bodyLimit } from "hono/body-limit"
+import { streamSSE } from "hono/streaming"
+import { streamMcpDiscovery } from "./mcp-discovery-stream.js"
 import type { RequestIdVariables } from "hono/request-id"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
@@ -24,6 +26,7 @@ import {
   PluginConfigObjectTable,
   PluginTable,
   type ExternalMcpOAuthConfiguration,
+  type ExternalMcpReadinessCheck,
   type ExternalMcpReadinessFailure,
   type ExternalMcpToolPolicy,
 } from "@openwork-ee/den-db/schema"
@@ -38,7 +41,8 @@ import { env } from "../../env.js"
 import { recordWorkbotConnection } from "../../workbot/telemetry.js"
 import { connectionRemovalLink, memberSignInLink } from "../../agent-links.js"
 import { appLogger } from "../../observability/logger.js"
-import { organizationFeatureEnabled } from "../../features.js"
+import { organizationFeatureEnabled, requireFeature } from "../../features.js"
+import { automaticOAuthSetupDenial, oauthScopeSelectionChanged } from "../../capability-sources/external-mcp-oauth-setup-guard.js"
 import {
   jsonValidator,
   orgMemberRoute,
@@ -53,6 +57,14 @@ import type { PermissionKey } from "@openwork/types/den/permissions"
 import { forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, okSchema, unauthorizedSchema } from "../../openapi.js"
 import { createOAuthStateToken, verifyOAuthStateToken } from "../../capability-sources/generic-oauth.js"
 import { matchesLegacyExternalMcpOAuthStateIdentityBinding } from "../../capability-sources/external-mcp-oauth-state-identity.js"
+import {
+  EXTERNAL_MCP_REQUEST_HEADERS_LIMIT,
+  externalMcpRequestHeaderNames,
+  resolveRequestHeaderUpdate,
+  serializeExternalMcpRequestHeaders,
+  validateExternalMcpRequestHeaders,
+  withExternalMcpRequestHeaders,
+} from "../../capability-sources/external-mcp-request-headers.js"
 import {
   abandonLegacyExternalMcpAuth,
   abandonExternalMcpAuth,
@@ -107,9 +119,11 @@ import {
   externalMcpCompatibleCallbackUrl,
   externalMcpClientMetadataUrl,
   externalMcpSharedCallbackUrl,
+  externalMcpSharedCallbackUrlIfConfigured,
 } from "../../capability-sources/external-mcp-oauth-contract.js"
 import type { MemberTeamSummary } from "../../orgs.js"
 import {
+  externalMcpPresetForResponse,
   externalMcpPresetListResponseSchema,
   externalMcpPresetResponseSchema,
   externalMcpPresetsForCatalog,
@@ -132,12 +146,12 @@ import {
 } from "../../capability-sources/external-mcp-auth-policy.js"
 import {
   EXTERNAL_MCP_DIAGNOSTIC_PHASES,
-  EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE,
   externalMcpDiagnosticForLog,
   externalMcpDiagnosticForResponse,
   externalMcpOAuthCallbackError,
   externalMcpProviderSettingsLink,
   safeExternalMcpEndpointForLog,
+  type ExternalMcpDiagnostic,
 } from "../../capability-sources/external-mcp-diagnostics.js"
 import {
   diagnoseExternalMcpToolCall,
@@ -158,7 +172,19 @@ import {
 import type { OrgRouteVariables } from "./shared.js"
 import { beginNativeProviderConnect } from "./oauth-providers.js"
 import { createExternalMcpLifecycleDeadline } from "../../capability-sources/external-mcp-client.js"
-import { promoteMemberReadiness, readinessFingerprint, rotateReadinessCredentialBinding, saveReadinessCheck, storedOrganizationReadiness, visibleReadiness } from "../../capability-sources/external-mcp-readiness.js"
+import {
+  READINESS_FAILURE_REASONS,
+  failedReadinessFields,
+  promoteMemberReadiness,
+  readinessFailureForDiagnostic,
+  readinessFingerprint,
+  recordFailedConnectAttempt,
+  rotateReadinessCredentialBinding,
+  saveReadinessCheck,
+  storedOrganizationReadiness,
+  visibleReadiness,
+} from "../../capability-sources/external-mcp-readiness.js"
+import type { VisibleReadiness } from "../../capability-sources/external-mcp-readiness-identity.js"
 
 const connectionParamsSchema = idParamSchema("connectionId", "externalMcpConnection")
 const logger = appLogger.child({ component: "mcp_connections" })
@@ -265,8 +291,24 @@ const externalMcpUrlSchema = z.string().trim().url().max(2048).superRefine((valu
   }
 })
 
+// Bounds only; validateExternalMcpRequestHeaders enforces the exact rules
+// with plain-English messages that name the header.
+const requestHeaderNameSchema = z.string().trim().min(1).max(256)
+const requestHeaderValueSchema = z.string().min(1).max(8192)
+const requestHeadersInputSchema = z.array(z.object({
+  name: requestHeaderNameSchema,
+  value: requestHeaderValueSchema,
+})).max(EXTERNAL_MCP_REQUEST_HEADERS_LIMIT)
+const requestHeadersUpdateSchema = z.array(z.object({
+  name: requestHeaderNameSchema,
+  /** Omitted keeps the stored value for the header with the same name (case-insensitive). */
+  value: requestHeaderValueSchema.optional(),
+})).max(EXTERNAL_MCP_REQUEST_HEADERS_LIMIT)
+
 const discoverConnectionBodySchema = z.object({
   url: externalMcpUrlSchema,
+  requestHeaders: requestHeadersInputSchema.optional()
+    .describe("Sent only to the MCP server URL itself during discovery, never to sign-in or metadata addresses. Not stored."),
 }).meta({ ref: "ExternalMcpRequirementsDiscoveryInput" })
 
 const requirementsDiscoveryResponseSchema = z.object({
@@ -293,6 +335,7 @@ const requirementsDiscoveryResponseSchema = z.object({
       tokenEndpointAuthMethodsSupported: z.array(z.string()).optional(),
     })),
     requiredScopes: z.array(z.string()),
+    resourceScopesSupported: z.array(z.string()).optional().describe("Protected-resource scope advertisement, separate from the authentication challenge's required scopes."),
     recommendedScopes: z.array(z.string()),
     refreshSupport: z.enum(["supported", "not_advertised", "unknown"]),
     availableRegistrationMethods: z.array(z.enum(["pre_registered", "client_metadata", "dynamic"])),
@@ -367,6 +410,8 @@ const createExternalConnectionBodySchema = z.object({
   exposeDirectly: z.boolean().optional().default(false),
   apiKey: z.string().trim().min(1).max(4096).optional(),
   apiKeyAuthScheme: z.enum(["bearer", "token"]).optional(),
+  requestHeaders: requestHeadersInputSchema.optional()
+    .describe("Sent with every request to the MCP server alongside OpenWork's own sign-in. Values are stored encrypted and never returned. Up to four."),
   oauthClient: z.object({
     clientId: z.string().trim().min(1).max(512),
     clientSecret: z.string().trim().min(1).max(4096).optional(),
@@ -410,6 +455,8 @@ const updateConnectionBodySchema = z.object({
   /** Omitted means preserve only when the connection identity is unchanged. Never returned by any read route. */
   apiKey: z.string().trim().min(1).max(4096).optional(),
   apiKeyAuthScheme: z.enum(["bearer", "token"]).optional(),
+  requestHeaders: requestHeadersUpdateSchema.optional()
+    .describe("Omitted keeps the stored headers. An array replaces them; an entry without value keeps the stored value of the header with that name. An empty array removes them all. Values are never returned."),
   oauthClient: z.object({
     clientId: z.string().trim().min(1).max(512),
     /** Omitted preserves the secret only when both identity and client id are unchanged. */
@@ -467,8 +514,12 @@ const connectionReadinessSchema = z.object({
   checkedAt: z.string().datetime(),
   lastSuccessfulAt: z.string().datetime().nullable(),
   reason: z.string().nullable(),
-  failure: z.enum(["sign_in_required", "sign_in_rejected", "setup_required", "unavailable", "timed_out", "settings_changed", "tools_unreadable"]).nullable().optional()
-    .describe("Why the check did not pass. sign_in_* means a person must sign in again; the others are not sign-in problems. Null when Ready or for checks recorded before this field existed."),
+  failure: z.enum(["sign_in_required", "sign_in_rejected", "setup_required", "provider_setup_required", "unavailable", "timed_out", "settings_changed", "tools_unreadable"]).nullable().optional()
+    .describe("Why the check did not pass. sign_in_* means a person must sign in again; provider_setup_required means a setting in the service's own app must change first; the others are not sign-in problems. Null when Ready or for checks recorded before this field existed. Also set when the caller's last sign-in came back to Den but did not connect."),
+  referenceId: z.string().optional()
+    .describe("Diagnostic reference of the failed check or sign-in, for support."),
+  providerSettingsUrl: z.string().url().optional()
+    .describe("A validated link to the service's settings page where the named setting is changed. Only with provider_setup_required."),
 }).meta({ ref: "ExternalMcpConnectionReadiness" })
 
 const READINESS_CHECK_BATCH_LIMIT = 50
@@ -497,6 +548,8 @@ const connectionResponseSchema = z.object({
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]),
   apiKeyAuthScheme: z.enum(["bearer", "token"]),
+  /** Names of the administrator-configured request headers. Values are never returned. */
+  requestHeaderNames: z.array(z.string()),
   /** True when granted members may use this connection as a standard MCP server with its own tool catalog. */
   exposeDirectly: z.boolean(),
   /** scope=usable with the connectionMcpServers feature on: this connection's own MCP server, listing only its tools. */
@@ -958,10 +1011,11 @@ async function checkConnectionReadiness(connection: ExternalMcpConnectionRow, me
   let status: "ready" | "could_not_verify" = "could_not_verify"
   let reason: string | null = null
   let failure: ExternalMcpReadinessFailure | null = null
+  let failedFields: ReturnType<typeof failedReadinessFields> | null = null
   const credential = await resolveExternalMcpToolCredential(connection, memberId)
   if (!credential.ok) {
-    reason = connection.credentialMode === "per_member" ? "Sign in to check this connection." : "Finish setting up this connection."
     failure = connection.credentialMode === "per_member" ? "sign_in_required" : "setup_required"
+    reason = READINESS_FAILURE_REASONS[failure]
   } else {
     try {
       // A complete initialize + tools/list, using the normal guarded transport and
@@ -970,15 +1024,11 @@ async function checkConnectionReadiness(connection: ExternalMcpConnectionRow, me
       status = "ready"
     } catch (error) {
       const diagnostic = externalMcpDiagnosticForResponse(error, requestId, "MCP_TOOL_DISCOVERY")
-      failure = diagnostic.category === "provider_unavailable" ? "unavailable"
-        : diagnostic.category === "request_timeout" || diagnostic.category === "lifecycle_deadline" ? "timed_out"
-        : diagnostic.httpStatus === 401 || diagnostic.httpStatus === 403 ? "sign_in_rejected"
-        : "tools_unreadable"
+      failure = readinessFailureForDiagnostic(diagnostic)
       // A known provider setup step gets its own server-written direction;
       // every other failure keeps a fixed reason.
-      reason = diagnostic.code === EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE
-        ? diagnostic.message
-        : READINESS_FAILURE_REASONS[failure]
+      failedFields = failedReadinessFields(diagnostic, failure)
+      reason = failedFields.reason
       // Provider text can repeat a just-entered key as plain prose; heuristic
       // redaction is not a boundary, so keep only server-owned identifiers.
       logger.warn("external_mcp_readiness_check_failed", {
@@ -999,24 +1049,16 @@ async function checkConnectionReadiness(connection: ExternalMcpConnectionRow, me
     status = "could_not_verify"
     failure = "settings_changed"
     reason = READINESS_FAILURE_REASONS[failure]
+    failedFields = null
   }
   const checkedAt = new Date().toISOString()
   const previous = visibleReadiness(connection.credentialMode === "per_member" ? account?.readinessCheck ?? null : connection.readinessCheck, fingerprint)
   const lastSuccessfulAt = status === "ready" ? checkedAt : previous?.lastSuccessfulAt ?? null
-  const check = { status, checkedAt, lastSuccessfulAt, reason, failure, fingerprint }
+  // failedFields carries the same failure and reason, plus the diagnostic reference.
+  const check: ExternalMcpReadinessCheck = { status, checkedAt, lastSuccessfulAt, reason, failure, ...failedFields, fingerprint }
   await saveReadinessCheck(connection, memberId, check)
-  return { status, checkedAt, lastSuccessfulAt, reason, failure }
+  return visibleReadiness(check, fingerprint) ?? { status, checkedAt, lastSuccessfulAt, reason, failure }
 }
-
-const READINESS_FAILURE_REASONS = {
-  sign_in_required: "Sign in to check this connection.",
-  setup_required: "Finish setting up this connection.",
-  unavailable: "The service didn't respond. Try again later.",
-  timed_out: "The check timed out. Try again.",
-  sign_in_rejected: "The service rejected the sign-in. Sign in again.",
-  settings_changed: "Connection settings changed during the check. Check again.",
-  tools_unreadable: "The service answered but its tools couldn't be read. Check the connection address and settings.",
-} satisfies Record<ExternalMcpReadinessFailure, string>
 
 const READINESS_CHECK_CONCURRENCY = 4
 
@@ -1431,6 +1473,7 @@ async function toConnectionResponse(
     authType: row.authType,
     credentialMode: row.credentialMode,
     apiKeyAuthScheme: row.apiKeyAuthScheme,
+    requestHeaderNames: row.kind === "external_mcp" ? externalMcpRequestHeaderNames(row.requestHeaders) : [],
     exposeDirectly: row.exposeDirectly,
     // Which service a native connector fronts ("google-workspace"), so a
     // member's card can say what they would be signing in to. Null for
@@ -1506,6 +1549,8 @@ export type MemberUsableConnectionFacts = {
   setupRequired?: boolean
   issuerReviewRequired?: boolean
   reconnectActionOwner?: string | null
+  /** The caller's own last check, or why their last sign-in did not connect. External MCP rows only. */
+  readiness?: VisibleReadiness | null
 }
 
 /** Callers holding the same request context share one read (the library's loaders call it concurrently). */
@@ -1621,6 +1666,19 @@ async function handleExternalMcpOAuthCallback(input: {
   }
   const auditBlocked = await input.attribute?.({ organizationId: statePayload.organizationId, memberId: members[0].id, userId: members[0].userId })
   if (auditBlocked) return auditBlocked
+  // The completion page never tells the opener why; the apps read this instead.
+  const recordConnectFailure = async (diagnostic: ExternalMcpDiagnostic) => {
+    try {
+      const current = await getExternalMcpConnection({ organizationId: connection.organizationId, connectionId: connection.id })
+      if (current) await recordFailedConnectAttempt({ connection: current, memberId: statePayload.orgMembershipId, diagnostic })
+    } catch {
+      logger.error("external_mcp_connect_callback_failure_record_failed", {
+        connection_id: connection.id,
+        organization_id: statePayload.organizationId,
+        reference_id: diagnostic.referenceId,
+      })
+    }
+  }
   const configuredIssuer = connection.oauthConfiguration?.authorizationServerIssuer ?? null
   const discovery = connection.oauthConfiguration?.discovery
   const currentResponseIssuerRequired = authorizationResponseIssuerRequired(connection)
@@ -1702,6 +1760,7 @@ async function handleExternalMcpOAuthCallback(input: {
         })
       }
       const diagnostic = externalMcpDiagnosticForResponse(error, input.requestId, "AUTH_ISSUER_DISCOVERY")
+      await recordConnectFailure(diagnostic)
       logger.error("external_mcp_connect_callback_issuer_validation_failed", {
         connection_id: connection.id,
         organization_id: statePayload.organizationId,
@@ -1727,6 +1786,7 @@ async function handleExternalMcpOAuthCallback(input: {
         ...externalMcpDiagnosticForLog(error, input.requestId, "AUTH_USER_OR_WORKLOAD"),
       })
     }
+    await recordConnectFailure(callbackError.diagnostic)
     logger.error("external_mcp_connect_callback_authorization_denied", {
       connection_id: connection.id,
       organization_id: statePayload.organizationId,
@@ -1774,6 +1834,7 @@ async function handleExternalMcpOAuthCallback(input: {
       })
     }
     const diagnostic = externalMcpDiagnosticForResponse(error, input.requestId, "AUTH_TOKEN_ACQUISITION")
+    await recordConnectFailure(diagnostic)
     logger.error("external_mcp_connect_callback_token_exchange_failed", {
       connection_id: connection.id,
       organization_id: statePayload.organizationId,
@@ -1856,6 +1917,7 @@ function memberConnectionCreateDenial(body: z.infer<typeof createConnectionBodyS
   if (body.kind === "native_provider") return "Only workspace owners and admins can set up this service."
   if (body.externalKey) return "Only workspace owners and admins can add connections with a stable key."
   if (body.authType === "apikey" || body.apiKey !== undefined) return "Only workspace owners and admins can add a connection that uses a key."
+  if ((body.requestHeaders?.length ?? 0) > 0) return "Only workspace owners and admins can add request headers."
   if (body.oauthClient) return "Only workspace owners and admins can add OAuth app credentials."
   if (body.authType === "oauth" && body.credentialMode !== "per_member") return "Connections you add sign each person in with their own account."
   if (body.access.orgWide && !options.canShareOrgWide) return "Only workspace owners and admins can share a connection with everyone."
@@ -1894,6 +1956,11 @@ async function createExternalConnectionResponse(
   if (machineCaller && body.apiKey !== undefined) {
     return c.json({ error: "secure_entry_required", message: "Do not send keys through the agent or an API key. Create the connection without apiKey; the person adds it in a private field in OpenWork." }, 400)
   }
+  if (machineCaller && (body.requestHeaders?.length ?? 0) > 0) {
+    return c.json({ error: "secure_entry_required", message: "Do not send request header values through the agent or an API key. Create the connection without requestHeaders; a person adds them in OpenWork." }, 400)
+  }
+  const requestHeaders = validateExternalMcpRequestHeaders(body.requestHeaders ?? [], body.authType)
+  if (!requestHeaders.ok) return c.json({ error: "invalid_request", message: requestHeaders.message }, 400)
   const awaitingSharedKey = body.authType === "apikey" && body.credentialMode === "shared" && !body.apiKey
   if (body.oauthClient && body.authType !== "oauth") {
     return c.json({ error: "invalid_request", message: "oauthClient is only allowed when authType is oauth." }, 400)
@@ -1937,6 +2004,14 @@ async function createExternalConnectionResponse(
     authorizationServerIssuer: body.authorizationServerIssuer,
     requestedScopes: body.requestedScopes,
   })
+  if (body.authType === "oauth" && !body.manualOAuthEndpoints
+    && await organizationFeatureEnabled(payload.organization.id, "customConnectorSetup", { userId: payload.currentMember.userId })) {
+    const denial = await automaticOAuthSetupDenial({
+      serverUrl: body.url,
+      fetch: withExternalMcpRequestHeaders(externalMcpDiscoveryFetch, body.url, requestHeaders.headers),
+    })
+    if (denial) return c.json({ error: "invalid_request", message: denial }, 400)
+  }
   const created = await createExternalMcpConnection({
     organizationId: payload.organization.id,
     name: body.name,
@@ -1947,6 +2022,7 @@ async function createExternalConnectionResponse(
     exposeDirectly: body.exposeDirectly,
     apiKey: body.apiKey ?? null,
     apiKeyAuthScheme: body.apiKeyAuthScheme ?? "bearer",
+    requestHeaders: requestHeaders.headers,
     oauthConfiguration: body.authType === "oauth" ? {
       version: 1,
       ...oauthConfiguration,
@@ -2128,6 +2204,22 @@ async function replaceExternalConnectionResponse(
   if (body.apiKey !== undefined && body.authType !== "apikey") {
     return c.json({ error: "invalid_request", message: "apiKey is only allowed when authType is apikey." }, 400)
   }
+  const requestHeaderUpdate = resolveRequestHeaderUpdate({
+    stored: connection.requestHeaders,
+    update: body.requestHeaders,
+    authType: body.authType,
+    serverChanged: normalizeExternalMcpIdentityUrl(connection.url) !== normalizeExternalMcpIdentityUrl(body.url),
+  })
+  if (!requestHeaderUpdate.ok) return c.json({ error: "invalid_request", message: requestHeaderUpdate.message }, 400)
+  if (requestHeaderUpdate.changed && sessionId === "mcp_internal" && body.requestHeaders?.some((header) => header.value !== undefined)) {
+    return c.json({
+      error: "invalid_request",
+      message: "Request header values cannot be edited from the agent. Use the OpenWork Cloud dashboard under Connections.",
+    }, 400)
+  }
+  if (requestHeaderUpdate.changed && !(await callerHasPermission(payload, "connections.manage"))) {
+    return c.json({ error: "forbidden", message: "Only workspace owners and admins can change request headers." }, 403)
+  }
   if (body.apiKeyAuthScheme !== undefined && body.authType !== "apikey") {
     return c.json({ error: "invalid_request", message: "apiKeyAuthScheme is only allowed for API-key connections." }, 400)
   }
@@ -2183,10 +2275,30 @@ async function replaceExternalConnectionResponse(
     }
   }
 
+  // Name/access/tool-policy edits must not probe an existing connection. Recheck
+  // only a changed automatic OAuth identity; manual settings were validated above.
+  const oauthClientChanged = body.oauthClient !== undefined && (
+    body.oauthClient.clientId !== existingOAuthClient?.clientId
+    || (body.oauthClient.clientSecret !== undefined && body.oauthClient.clientSecret !== existingOAuthClient?.clientSecret)
+    || (body.oauthClient.tokenEndpointAuthMethod !== undefined && body.oauthClient.tokenEndpointAuthMethod !== tokenEndpointAuthMethod(existingOAuthClient?.extra?.tokenEndpointAuthMethod))
+  )
+  const automaticOAuthIdentityChanged = identityChanged || connection.url !== body.url || requestHeaderUpdate.changed || oauthClientChanged
+    || (body.authorizationServerIssuer !== undefined && body.authorizationServerIssuer !== (connection.oauthConfiguration?.authorizationServerIssuer ?? null))
+    || (body.requestedScopes !== undefined && oauthScopeSelectionChanged(connection.oauthConfiguration?.requestedScopes ?? [], body.requestedScopes))
+    || Boolean(connection.oauthConfiguration?.manualOAuthEndpoints && !manualOAuthEndpoints)
+  if (body.authType === "oauth" && !manualOAuthEndpoints && automaticOAuthIdentityChanged
+    && await organizationFeatureEnabled(payload.organization.id, "customConnectorSetup", { userId: payload.currentMember.userId })) {
+    const denial = await automaticOAuthSetupDenial({
+      serverUrl: body.url,
+      fetch: withExternalMcpRequestHeaders(externalMcpDiscoveryFetch, body.url, requestHeaderUpdate.headers),
+    })
+    if (denial) return c.json({ error: "invalid_request", message: denial }, 400)
+  }
+
   const shouldValidate = body.authType !== "oauth"
     && body.credentialMode === "shared"
     && !awaitingSharedKey
-    && (identityChanged || connection.url !== body.url || body.apiKey !== undefined)
+    && (identityChanged || connection.url !== body.url || body.apiKey !== undefined || requestHeaderUpdate.changed)
   let validatedAt: Date | undefined
   if (shouldValidate) {
     const proposedConnection: ExternalMcpConnectionRow = {
@@ -2198,6 +2310,7 @@ async function replaceExternalConnectionResponse(
       oauthConfiguration: oauthConfiguration ?? connection.oauthConfiguration,
       apiKey,
       apiKeyAuthScheme,
+      requestHeaders: serializeExternalMcpRequestHeaders(requestHeaderUpdate.headers),
       accessToken: identityChanged ? null : connection.accessToken,
       refreshToken: identityChanged ? null : connection.refreshToken,
       tokenType: identityChanged ? null : connection.tokenType,
@@ -2242,6 +2355,7 @@ async function replaceExternalConnectionResponse(
     ...(body.exposeDirectly !== undefined ? { exposeDirectly: body.exposeDirectly } : {}),
     ...(body.apiKey !== undefined ? { apiKey: body.apiKey } : {}),
     apiKeyAuthScheme,
+    ...(requestHeaderUpdate.changed ? { requestHeaders: requestHeaderUpdate.headers } : {}),
     ...(body.oauthClient ? {
       oauthClient: {
         ...body.oauthClient,
@@ -2478,11 +2592,14 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     orgMemberRoute(),
     jsonValidator(discoverConnectionBodySchema),
     async (c) => {
-      const { url } = c.req.valid("json")
+      const { url, requestHeaders } = c.req.valid("json")
+      const discoveryHeaders = validateExternalMcpRequestHeaders(requestHeaders ?? [], "discover")
+      if (!discoveryHeaders.ok) return c.json({ error: "invalid_request" as const, message: discoveryHeaders.message }, 400)
       try {
         const result = await discoverConnectionRequirements({
           serverUrl: url,
-          fetch: externalMcpDiscoveryFetch,
+          // Only requests to the MCP URL itself carry the headers.
+          fetch: withExternalMcpRequestHeaders(externalMcpDiscoveryFetch, url, discoveryHeaders.headers),
         })
         return c.json(requirementsForCaller(result, await hasPermission(c, "connections.view")))
       } catch (error) {
@@ -2491,6 +2608,46 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           message: error instanceof Error ? error.message : "MCP requirements discovery failed.",
         }, 502)
       }
+    },
+  )
+
+  app.post(
+    "/v1/mcp-connections/discover/stream",
+    describeRoute({
+      tags: ["Authentication"],
+      summary: "Stream external MCP connection requirements checks",
+      description: "Side-effect-free discovery with ordered SSE check events (aggregate server, resource and provider phases), followed by a result event containing the same requirements as /discover, or a safe error event. No client registration, credential writes or extra probes. Disconnecting cancels discovery. Requires customConnectorSetup.",
+      ...{ "x-mcp": false },
+      responses: {
+        200: {
+          description: "SSE check events contain JSON {id: server|resource|provider, status: running|passed|failed|skipped, httpStatus?: number, code?: authentication_required|not_required|issuer_mismatch|unavailable|unsupported}. A result event contains McpRequirementsDiscovery; an error event contains {message: 'The server check could not finish. Try again.'}.",
+          content: { "text/event-stream": { schema: { type: "string" } } },
+        },
+        400: jsonResponse("Invalid request.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        404: jsonResponse("Discovery checks are disabled.", z.object({ error: z.literal("feature_disabled"), feature: z.literal("customConnectorSetup") })),
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("customConnectorSetup"),
+    jsonValidator(discoverConnectionBodySchema),
+    async (c) => {
+      const { url, requestHeaders } = c.req.valid("json")
+      const discoveryHeaders = validateExternalMcpRequestHeaders(requestHeaders ?? [], "discover")
+      if (!discoveryHeaders.ok) return c.json({ error: "invalid_request", message: discoveryHeaders.message }, 400)
+      const canViewSettings = await hasPermission(c, "connections.view")
+      const response = streamSSE(c, (stream) => streamMcpDiscovery({
+        stream,
+        signal: c.req.raw.signal,
+        discover: async (signal, onCheck) => requirementsForCaller(await discoverConnectionRequirements({
+          serverUrl: url,
+          fetch: withExternalMcpRequestHeaders(externalMcpDiscoveryFetch, url, discoveryHeaders.headers),
+          signal,
+          onCheck,
+        }), canViewSettings),
+      }))
+      response.headers.set("Cache-Control", "no-store")
+      return response
     },
   )
 
@@ -2610,7 +2767,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Capability Sources"],
       summary: "List predefined External MCP Connection presets",
-      description: "Common third-party MCP servers (Notion, Linear, Stripe, Slack, ...) an admin can add with one click, prefilled with a real name and URL. registrationStatus says what OpenWork last learned about signing in to each provider (for example dynamic_refused: the provider only accepts apps it approved), and is absent until checked.",
+      description: "Common third-party MCP servers (Notion, Linear, Stripe, Slack, ...) an admin can add with one click, prefilled with a real name and URL. Presets that need a pre-registered OAuth app include oauthCallbackUrl, the redirect URL to register in it. registrationStatus says what OpenWork last learned about signing in to each provider (for example dynamic_refused: the provider only accepts apps it approved), and is absent until checked.",
       responses: {
         200: jsonResponse("Presets.", externalMcpPresetListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -2623,11 +2780,12 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         org ? organizationFeatureEnabled(org.organization.id, "expandedMcpPresets", { userId: org.currentMember.userId }) : false,
         mcpRegistrationStatusByPreset(),
       ])
+      const oauthCallbackUrl = externalMcpSharedCallbackUrlIfConfigured()
       return c.json({
-        presets: externalMcpPresetsForCatalog({ expanded }).map((preset) => {
-          const registrationStatus = registration.get(preset.presetId)
-          return registrationStatus && registrationStatus !== "unknown" ? { ...preset, registrationStatus } : preset
-        }),
+        presets: externalMcpPresetsForCatalog({ expanded }).map((preset) => externalMcpPresetForResponse(preset, {
+          registrationStatus: registration.get(preset.presetId),
+          oauthCallbackUrl,
+        })),
       })
     },
   )
@@ -3360,6 +3518,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         exposeDirectly: body.exposeDirectly,
         ...(body.apiKey !== undefined ? { apiKey: body.apiKey } : {}),
         ...(body.apiKeyAuthScheme !== undefined ? { apiKeyAuthScheme: body.apiKeyAuthScheme } : {}),
+        ...(body.requestHeaders !== undefined ? { requestHeaders: body.requestHeaders } : {}),
         ...(body.oauthClient !== undefined ? { oauthClient: body.oauthClient } : {}),
         ...(body.manualOAuthEndpoints !== undefined ? { manualOAuthEndpoints: body.manualOAuthEndpoints } : {}),
         ...(body.authorizationServerIssuer !== undefined ? { authorizationServerIssuer: body.authorizationServerIssuer } : {}),

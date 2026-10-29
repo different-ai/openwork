@@ -65,6 +65,8 @@ export type WorkbotDeps = {
   workspaceAssistant?: (organizationId: string) => Promise<boolean>
   /** With the workspace assistant: Workbot may open a document beside the chat when the person explicitly asks. */
   guidedNavigation?: (organizationId: string) => Promise<boolean>
+  /** Den's `sandboxGateway` flag: the chats' computers run through the runner's sandbox gateway. Unset: unchanged. */
+  sandboxGateway?: boolean
   /**
    * Den's session `stepTurns` compatibility field: turns go to the runner with `execution: "steps"`, so a
    * runner deploy switches between steps instead of cutting one off. Unset: preserve older Den's continuous turns.
@@ -366,6 +368,7 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
     reactions: true,
     tasks: true,
     documentNavigation: guidedNavigation,
+    ...(deps.sandboxGateway !== undefined ? { sandboxGateway: deps.sandboxGateway } : {}),
     owner: workbotOwner(actor.organizationId, actor.memberId),
     timeZone,
   }

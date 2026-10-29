@@ -18,24 +18,33 @@ import { AGENT_CORE_SOURCES, type AgentCoreSource } from "@openwork/types/den/wo
 export const AGENT_READ_SCOPE = "openwork:agent-read"
 const SOURCE_SCOPE_PREFIX = "openwork:agent-source:"
 const CONNECTION_SCOPE_PREFIX = "openwork:agent-connection:"
+/** `openwork:agent-core:<kind>:<connectionId>`: one core source, read through one connection. */
+const CORE_SCOPE_PREFIX = "openwork:agent-core:"
 
 export type AgentReadAllowlist = {
   /** Core sources that are on. */
   kinds: ReadonlySet<AgentCoreSource>
   /** Connections the agent may read through, native and external. */
   connectionIds: ReadonlySet<string>
+  /** `<kind>:<connectionId>`: which core source each native connection may be read for. */
+  pairs: ReadonlySet<string>
 }
 
 function isCoreSource(value: string): value is AgentCoreSource {
   return AGENT_CORE_SOURCES.some((source) => source === value)
 }
 
+function pairKey(kind: AgentCoreSource, connectionId: string) {
+  return `${kind}:${connectionId}`
+}
+
 /** The extra token scopes for an agent turn that may read these sources through these connections. */
-export function agentReadScopes(input: { kinds: readonly AgentCoreSource[]; connectionIds: readonly string[] }): string[] {
+export function agentReadScopes(input: { kinds: readonly AgentCoreSource[]; connectionIds: readonly string[]; pairs?: readonly { kind: AgentCoreSource; connectionId: string }[] }): string[] {
   return [
     AGENT_READ_SCOPE,
     ...[...new Set(input.kinds)].map((kind) => `${SOURCE_SCOPE_PREFIX}${kind}`),
     ...[...new Set(input.connectionIds)].map((id) => `${CONNECTION_SCOPE_PREFIX}${id}`),
+    ...[...new Set((input.pairs ?? []).map((pair) => pairKey(pair.kind, pair.connectionId)))].map((key) => `${CORE_SCOPE_PREFIX}${key}`),
   ]
 }
 
@@ -44,6 +53,7 @@ export function agentReadAllowlist(scopes: ReadonlySet<string>): AgentReadAllowl
   if (!scopes.has(AGENT_READ_SCOPE)) return null
   const kinds = new Set<AgentCoreSource>()
   const connectionIds = new Set<string>()
+  const pairs = new Set<string>()
   for (const scope of scopes) {
     if (scope.startsWith(SOURCE_SCOPE_PREFIX)) {
       const kind = scope.slice(SOURCE_SCOPE_PREFIX.length)
@@ -51,9 +61,15 @@ export function agentReadAllowlist(scopes: ReadonlySet<string>): AgentReadAllowl
     } else if (scope.startsWith(CONNECTION_SCOPE_PREFIX)) {
       const id = scope.slice(CONNECTION_SCOPE_PREFIX.length)
       if (id) connectionIds.add(id)
+    } else if (scope.startsWith(CORE_SCOPE_PREFIX)) {
+      const rest = scope.slice(CORE_SCOPE_PREFIX.length)
+      const split = rest.indexOf(":")
+      const kind = split > 0 ? rest.slice(0, split) : ""
+      const id = split > 0 ? rest.slice(split + 1) : ""
+      if (isCoreSource(kind) && id) pairs.add(pairKey(kind, id))
     }
   }
-  return { kinds, connectionIds }
+  return { kinds, connectionIds, pairs }
 }
 
 /** Which core source a native capability reads, from its route; null for anything else (files, drafts, sites…). */
@@ -65,11 +81,11 @@ export function nativeSourceKind(path: string): AgentCoreSource | null {
   return null
 }
 
-/** A native capability the agent may call: a GET on one of its connections, for a core source that is on. */
+/** A native capability the agent may call: a GET on one of its connections, for a core source read through that connection. */
 export function agentMayUseNative(allowlist: AgentReadAllowlist, connectionId: string, operation: { method: string; path: string }): boolean {
   if (operation.method.toUpperCase() !== "GET" || !allowlist.connectionIds.has(connectionId)) return false
   const kind = nativeSourceKind(operation.path)
-  return kind !== null && allowlist.kinds.has(kind)
+  return kind !== null && allowlist.kinds.has(kind) && allowlist.pairs.has(pairKey(kind, connectionId))
 }
 
 /**

@@ -12,9 +12,36 @@ ENV WORKBOT_VERSION=${WORKBOT_VERSION}
 ENV NODE_ENV=production
 ENV WORKBOT_PORT=3020
 
-COPY . /app
-RUN pnpm install --frozen-lockfile --filter "@openwork-ee/workbot..." \
-  && pnpm --dir ee/apps/workbot run build
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.declarations.json /app/
+COPY patches /app/patches
+# This pruned workspace does not install packages using every root patch.
+RUN node -e "const fs = require('node:fs'); fs.appendFileSync('/app/pnpm-workspace.yaml', '\nallowUnusedPatches: true\n')"
+
+# Manifest/source boundaries mirror the actual transitive workspace graph, not
+# COPY . (which shipped unrelated landing, desktop and service source).
+COPY ee/apps/workbot/package.json /app/ee/apps/workbot/package.json
+COPY ee/packages/headless-protocol/package.json /app/ee/packages/headless-protocol/package.json
+COPY ee/packages/workbot-server/package.json /app/ee/packages/workbot-server/package.json
+COPY ee/packages/workbot-ui/package.json /app/ee/packages/workbot-ui/package.json
+COPY packages/calendar/package.json /app/packages/calendar/package.json
+COPY packages/documents/package.json /app/packages/documents/package.json
+COPY packages/managed-deployments/package.json /app/packages/managed-deployments/package.json
+COPY packages/types/package.json /app/packages/types/package.json
+COPY packages/ui/package.json /app/packages/ui/package.json
+COPY packages/workbook/package.json /app/packages/workbook/package.json
+RUN pnpm install --frozen-lockfile --filter "@openwork-ee/workbot..."
+
+COPY ee/apps/workbot /app/ee/apps/workbot
+COPY ee/packages/headless-protocol /app/ee/packages/headless-protocol
+COPY ee/packages/workbot-server /app/ee/packages/workbot-server
+COPY ee/packages/workbot-ui /app/ee/packages/workbot-ui
+COPY packages/calendar /app/packages/calendar
+COPY packages/documents /app/packages/documents
+COPY packages/managed-deployments /app/packages/managed-deployments
+COPY packages/types /app/packages/types
+COPY packages/ui /app/packages/ui
+COPY packages/workbook /app/packages/workbook
+RUN pnpm --dir ee/apps/workbot run build
 
 EXPOSE 3020
 

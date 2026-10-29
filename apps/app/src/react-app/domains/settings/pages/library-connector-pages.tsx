@@ -6,12 +6,14 @@ import { Button } from "@/components/ui/button";
 import type { SecretFieldHandle } from "@/components/secret-field";
 import type { DenExternalMcpConnection, DenExternalMcpPreset } from "../../../../app/lib/den";
 import { t } from "../../../../i18n";
+import type { ProviderSettingsLink } from "../../connections/connection-sign-in-problem";
 import { canMemberAuthorizeConnection } from "../../connections/native-provider-connections";
 import { isOrgMcpConnectionReady } from "../extension-items";
 import { resolveExtensionIconUrl } from "../../../design-system/extension-icon-src";
 import { IconImage } from "../../../design-system/icon-image";
 import { SecretTextInput } from "../../../design-system/secret-text-input";
-import { librarySecretFieldClass } from "./add-library-item-page";
+import { TextInput } from "../../../design-system/text-input";
+import { libraryFieldClass, librarySecretFieldClass } from "./add-library-item-page";
 import { LibraryPage } from "./library-page";
 
 /** Den's preset copy leads with what it does; the rest is admin detail. */
@@ -22,6 +24,8 @@ export function connectorSummary(preset: Pick<DenExternalMcpPreset, "description
 
 export type LibraryConnectorSetupInput = {
   apiKey?: string;
+  /** Only without libraryConnectorOrgSetup: the codes from the provider's app, typed on this page. */
+  oauthClient?: { clientId: string; clientSecret?: string };
 };
 
 /**
@@ -62,7 +66,13 @@ function ConnectorIcon(props: { preset: DenExternalMcpPreset; size?: "sm" | "md"
 }
 
 /** The organization already has this connector; the member has not signed in to their own account yet. */
-export type LibraryConnectorCatalogSignIn = { onSignIn: () => void; busy: boolean };
+export type LibraryConnectorCatalogSignIn = {
+  onSignIn: () => void;
+  busy: boolean;
+  /** The member's last sign-in came back but a setting in the service's app blocks it. */
+  problem?: { reason: string; settings: ProviderSettingsLink | null };
+  onOpenSettings?: (url: string) => void;
+};
 
 /** Every connector the member can add, plus a way to add any other MCP server. */
 export function LibraryConnectorCatalogPage(props: {
@@ -105,9 +115,25 @@ export function LibraryConnectorCatalogPage(props: {
               <ConnectorIcon preset={preset} />
               <div className="min-w-0 flex-1">
                 <p className="text-[13px] font-medium text-dls-text">{preset.displayName}</p>
-                <p className="truncate text-xs text-dls-secondary">{connectorSummary(preset)}</p>
+                {signIn?.problem ? (
+                  <p role="status" data-testid="library-connector-problem" className="text-xs text-red-11">{signIn.problem.reason}</p>
+                ) : (
+                  <p className="truncate text-xs text-dls-secondary">{connectorSummary(preset)}</p>
+                )}
               </div>
-              {signIn ? (
+              {signIn?.problem?.settings && signIn.onOpenSettings ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const url = signIn.problem?.settings?.url;
+                    if (url) signIn.onOpenSettings?.(url);
+                  }}
+                >
+                  {signIn.problem.settings.label}
+                  <ArrowUpRight size={13} aria-hidden="true" />
+                </Button>
+              ) : signIn ? (
                 <Button
                   size="sm"
                   disabled={signIn.busy}
@@ -157,6 +183,11 @@ export function LibraryConnectorCatalogPage(props: {
  */
 export function LibraryConnectorSetupPage(props: {
   preset: DenExternalMcpPreset;
+  /**
+   * libraryConnectorOrgSetup. Off: a connector that needs the provider's own
+   * app asks for its client ID and secret here, as before.
+   */
+  organizationSetup: boolean;
   /** Owners and admins add the organization's app in OpenWork Cloud. */
   canSetUpOrganizationApp: boolean;
   /** Opens OpenWork Cloud's setup for this connector; absent when no Cloud address is known. */
@@ -167,16 +198,24 @@ export function LibraryConnectorSetupPage(props: {
 }) {
   const { preset } = props;
   const apiKeyField = useRef<SecretFieldHandle>(null);
+  const clientSecretField = useRef<SecretFieldHandle>(null);
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [clientId, setClientId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const needsOrganizationApp = connectorNeedsOrganizationApp(preset);
+  const needsOrganizationApp = props.organizationSetup && connectorNeedsOrganizationApp(preset);
+  const needsCodes = !props.organizationSetup && preset.authType === "oauth" && preset.requiresOAuthClient === true;
   const lockedForMember = needsOrganizationApp && !props.canSetUpOrganizationApp;
   const signsIn = preset.authType === "oauth";
 
   const submit = async () => {
-    // The key is read once here and the field empties.
+    if (needsCodes && !clientId.trim()) {
+      setError(t("extensions.connector_codes_required", { name: preset.displayName }));
+      return;
+    }
+    // Each secret is read once here and the field empties.
     const apiKey = preset.authType === "apikey" ? apiKeyField.current?.take() ?? "" : "";
+    const clientSecret = needsCodes ? clientSecretField.current?.take() ?? "" : "";
     if (preset.authType === "apikey" && !apiKey.trim()) {
       setError(t("extensions.add_mcp_api_key_required"));
       return;
@@ -184,7 +223,10 @@ export function LibraryConnectorSetupPage(props: {
     setBusy(true);
     setError(null);
     try {
-      await props.onSubmit(preset.authType === "apikey" ? { apiKey: apiKey.trim() } : {});
+      await props.onSubmit({
+        ...(preset.authType === "apikey" ? { apiKey: apiKey.trim() } : {}),
+        ...(needsCodes ? { oauthClient: { clientId: clientId.trim(), ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}) } } : {}),
+      });
     } catch (cause) {
       setError(cause instanceof Error && cause.message.trim() ? cause.message : t("common.something_went_wrong"));
       setBusy(false);
@@ -199,7 +241,9 @@ export function LibraryConnectorSetupPage(props: {
         ? props.canSetUpOrganizationApp
           ? t("extensions.connector_note_org_app_admin", { name: preset.displayName })
           : t("extensions.connector_note_org_app_member", { name: preset.displayName })
-        : t("extensions.connector_note_sign_in", { name: preset.displayName });
+        : needsCodes
+          ? t("extensions.connector_note_codes", { name: preset.displayName })
+          : t("extensions.connector_note_sign_in", { name: preset.displayName });
   const lockedReason = t("extensions.connector_org_app_locked_reason", { name: preset.displayName });
 
   const primaryAction = needsOrganizationApp
@@ -285,6 +329,25 @@ export function LibraryConnectorSetupPage(props: {
             onValueChange={setHasApiKey}
             className={librarySecretFieldClass}
           />
+        ) : null}
+        {needsCodes ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <TextInput
+              label={t("extensions.add_mcp_oauth_client_id_label")}
+              autoComplete="off"
+              value={clientId}
+              disabled={busy}
+              className={libraryFieldClass}
+              onChange={(event) => setClientId(event.currentTarget.value)}
+            />
+            <SecretTextInput
+              id="library-connector-client-secret"
+              label={t("extensions.add_mcp_oauth_client_secret_label")}
+              disabled={busy}
+              handleRef={clientSecretField}
+              className={librarySecretFieldClass}
+            />
+          </div>
         ) : null}
       </div>
       {error ? <p role="alert" className="text-[13px] text-red-11">{error}</p> : null}

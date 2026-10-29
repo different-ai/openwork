@@ -71,6 +71,7 @@ import {
 import { deleteSkill, listSkills, renderSkillContentForResponse, upsertSkill } from "./skills.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
+import { opencodeConfigApiError } from "./opencode-config-error.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
@@ -668,6 +669,8 @@ async function assertWorkspaceOwnsProxiedSessionRead(
     if (result.response?.status === 404) {
       throw new ApiError(404, "session_not_found", "Session not found");
     }
+    const configError = opencodeConfigApiError(result.error, `/session/${encodeURIComponent(sessionId)}`);
+    if (configError) throw configError;
     throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
       ...(result.response ? { status: result.response.status } : {}),
       body: result.error,
@@ -1948,6 +1951,8 @@ export function unwrapOpencodeResult<T, E>(result: OpencodeClientResult<T, E>, p
       path,
     });
   }
+  const configError = opencodeConfigApiError(result.error, path);
+  if (configError) throw configError;
   throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
     status: result.response.status,
     body: result.error,

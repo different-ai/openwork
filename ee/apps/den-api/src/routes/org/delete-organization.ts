@@ -97,6 +97,7 @@ import {
   WorkspaceClaimTable,
   HeadlessResumeGrantTable,
   HeadlessResumeRevocationTable,
+  SandboxOrganizationTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { deleteModelsAnalyticsForOrganization } from "@openwork-ee/telemetry"
@@ -117,6 +118,7 @@ import { denTypeIdSchema, forbiddenSchema, jsonResponse, notFoundSchema, unautho
 import { appLogger } from "../../observability/logger.js"
 import { invalidateWebOriginApprovalCache } from "../../organization-web-origins.js"
 import { cancelOrganizationSubscriptions } from "../../stripe-billing.js"
+import { deleteSandboxModelKeyForOrganization } from "../../sandbox-organizations.js"
 import { ensureOwner, orgAccessFailureStatus, type OrgRouteVariables } from "./shared.js"
 
 type OrganizationMemberId = typeof MemberTable.$inferSelect.id
@@ -398,6 +400,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
       })
 
       await cancelOrganizationSubscriptions({ organizationId })
+      await deleteSandboxModelKeyForOrganization(organizationId)
 
       let affectedSessions: Array<{ id: typeof AuthSessionTable.$inferSelect.id; token: typeof AuthSessionTable.$inferSelect.token }> = []
       await db.transaction(async (tx) => {
@@ -577,6 +580,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(InferenceOrgLimitPolicyTable).where(eq(InferenceOrgLimitPolicyTable.organization_id, organizationId))
         await tx.delete(InferenceOrgUsageBucketTable).where(eq(InferenceOrgUsageBucketTable.organization_id, organizationId))
         await tx.delete(InferenceOrgUpstreamProviderKeyTable).where(eq(InferenceOrgUpstreamProviderKeyTable.organization_id, organizationId))
+        await tx.delete(SandboxOrganizationTable).where(eq(SandboxOrganizationTable.organizationId, organizationId))
 
         await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.organizationId, organizationId))
         await deleteOrganizationAgentPermissions(tx, organizationId)

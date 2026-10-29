@@ -11,6 +11,7 @@ import { appLogger } from "./observability/logger.js"
 import { shutdownObservability } from "./observability/runtime.js"
 import { startScimMaintenanceLoop } from "./scim-maintenance.js"
 import { startBillingInvitationExpiryLoop } from "./billing-invitation-expiry.js"
+import { startSandboxExpiryLoop } from "./sandbox-organizations.js"
 import { startLifecycleEmailLoop } from "./lifecycle-emails/index.js"
 import { startCloudIdleStopLoop } from "./workers/cloud-lifecycle.js"
 import { startWorkerProvisioningReconcileLoop } from "./workers/reconciler.js"
@@ -27,6 +28,7 @@ const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()
 const stopWorkbotProactiveWorker = startWorkbotProactiveWorker()
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopBillingInvitationExpiryLoop = startBillingInvitationExpiryLoop()
+const stopSandboxExpiryLoop = startSandboxExpiryLoop()
 const stopLifecycleEmailLoop = startLifecycleEmailLoop()
 const stopCloudIdleStopLoop = startCloudIdleStopLoop()
 const stopWorkerProvisioningReconcileLoop = startWorkerProvisioningReconcileLoop()
@@ -56,6 +58,7 @@ async function stopBackgroundLoops() {
   const results = await Promise.allSettled([
     stopScimMaintenanceLoop(),
     stopBillingInvitationExpiryLoop(),
+    stopSandboxExpiryLoop(),
     stopLifecycleEmailLoop(),
     stopSlackAssistantWorker(),
     stopSlackDesktopHandoffWorker(),

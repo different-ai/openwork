@@ -137,6 +137,15 @@ it on, who used it in the last 7 and 30 days, and when each person last used it.
   desktop `apps/app/src/app/lib/den.ts`) at the action that actually exercises
   the feature, never on render of shared chrome.
 - Den records only keys that are on for the member, one row per member and feature (ids and days, no content).
+- Background work (a schedule, a calendar, an agent's checks, messages a run sends) has no request: call
+  `markFeaturesUsed` once at the chokepoint where that work happens for a member, as automation dispatch,
+  the Your agent wake and `slack_send_as_bot` do.
+
+`/admin` › Features (`/admin/feature-usage`) shows the same per feature across organizations, and whether it
+works. A background feature sets `outcomes: true` in the registry and registers one reader in
+`ee/apps/den-api/src/feature-outcomes/readers.ts` that counts outcomes from the table it already writes (runs,
+succeeded, failed, skipped by reason, delivered, per day and organization). The typecheck and
+`test/feature-outcomes.test.ts` fail until the reader exists. Never add a usage table for this.
 
 ## 4. Roll it out
 

@@ -3,7 +3,7 @@ import { describe, mock, test } from "node:test"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { Hono } from "hono"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { WorkbotChannelPostDeps, WorkbotChannelPostResult } from "../src/slack-assistant/bot-post.js"
 import type { WorkbotDirectMessageResult, WorkbotDirectMessageTarget, WorkbotSlackMember } from "../src/slack-assistant/direct-message.js"
 import type { SlackSendAsBotDeps, SlackSendAsBotLimitStore, SlackSendAsBotToolResult } from "../src/mcp/slack-send-as-bot.js"
@@ -39,6 +39,7 @@ const { buildExternalCapabilityName } = await import("../src/mcp/external-capabi
 const { loadConnectFullTools } = await import("../src/mcp/connect-full-tool-sources.js")
 const { createAgentMcpServer } = await import("../src/mcp/agent-server.js")
 const { SlackApiError } = await import("../src/slack-assistant/protocol.js")
+const { createFeatureUsageMarker } = await import("../src/feature-usage.js")
 const { postWorkbotChannelMessage, workbotAttributionLine } = await import("../src/slack-assistant/bot-post.js")
 const {
   executeSlackSendAsBot,
@@ -59,6 +60,7 @@ mock.method(db, "delete", noDatabase)
 
 const organizationId = createDenTypeId("organization")
 const userId = createDenTypeId("user")
+const memberId = createDenTypeId("member")
 const connectionId = createDenTypeId("externalMcpConnection")
 const member: WorkbotSlackMember = { ok: true, connectionId, slackUserId: "U0MEMBER" }
 const NOW = Date.parse("2026-10-26T15:00:00Z")
@@ -105,6 +107,7 @@ function harness(options: {
   let clock = NOW
   let ts = 0
   const sent: SentMessage[] = []
+  const used: string[] = []
   const limits = memoryLimits()
   const deps: SlackSendAsBotDeps = {
     resolveMember: async () => options.member ?? member,
@@ -118,12 +121,13 @@ function harness(options: {
     },
     limits: limits.store,
     now: () => clock,
+    markUsed: (input) => { used.push(...input.keys.map((key) => `${input.memberId}:${key}`)) },
   }
-  return { deps, sent, limits, advance: (ms: number) => { clock += ms } }
+  return { deps, sent, limits, used, advance: (ms: number) => { clock += ms } }
 }
 
-function send(body: unknown, deps: SlackSendAsBotDeps, access: { member?: boolean; hasWriteScope?: boolean } = {}) {
-  return executeSlackSendAsBot({ organizationId, userId, member: true, hasWriteScope: true, ...access, body }, deps)
+function send(body: unknown, deps: SlackSendAsBotDeps, access: { memberId?: DenTypeId<"member"> | null; hasWriteScope?: boolean } = {}) {
+  return executeSlackSendAsBot({ organizationId, userId, memberId, hasWriteScope: true, ...access, body }, deps)
 }
 
 function payload(result: SlackSendAsBotToolResult) {
@@ -263,7 +267,7 @@ describe("slack_send_as_bot limits", () => {
     const run = harness()
     for (let index = 1; index <= 5; index += 1) await send({ target: "me", text: `Step ${index}` }, run.deps)
     const otherUser = createDenTypeId("user")
-    const result = await executeSlackSendAsBot({ organizationId, userId: otherUser, member: true, hasWriteScope: true, body: { target: "me", text: "Step 1" } }, run.deps)
+    const result = await executeSlackSendAsBot({ organizationId, userId: otherUser, memberId: createDenTypeId("member"), hasWriteScope: true, body: { target: "me", text: "Step 1" } }, run.deps)
     assert.equal(payload(result).sent, true)
   })
 
@@ -274,6 +278,26 @@ describe("slack_send_as_bot limits", () => {
     }
     assert.equal(run.limits.rows.size, 0)
     refused(await send({ target: "me", text: "hi" }, harness({ member: { ok: false, reason: "slack_app_not_installed" } }).deps), "slack_app_not_installed", /OpenWork app isn't set up in Slack/)
+  })
+})
+
+describe("slack_send_as_bot use, for /admin › Features", () => {
+  test("a message the member asks for marks their use once per day; a call without a membership or a valid target does not", async () => {
+    const run = harness()
+    const writes: string[] = []
+    let now = new Date(NOW)
+    run.deps.markUsed = createFeatureUsageMarker(async (input) => {
+      writes.push(...input.keys.map((key) => `${input.at.toISOString().slice(0, 10)} ${input.memberId} ${key}`))
+    }, () => now)
+    refused(await send({ target: "me", text: "Done" }, run.deps, { memberId: null }), "membership_required")
+    refused(await send({ target: "U0OTHER", text: "Done" }, run.deps), "invalid_target")
+    assert.equal(payload(await send({ target: "me", text: "Export finished" }, run.deps)).sent, true)
+    assert.equal(payload(await send({ target: "me", text: "Report ready" }, run.deps)).sent, true)
+    now = new Date(NOW + DAY)
+    run.advance(DAY)
+    assert.equal(payload(await send({ target: "me", text: "Export finished" }, run.deps)).sent, true)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(writes, [`2026-10-26 ${memberId} slackSendAsBot`, `2026-10-27 ${memberId} slackSendAsBot`])
   })
 })
 

@@ -815,7 +815,7 @@ const slackSendAsBotSource: CapabilitySource = {
     const run = () => executeSlackSendAsBot({
       organizationId: ctx.organizationId,
       userId: ctx.principal.userId,
-      member: ctx.member !== null,
+      memberId: ctx.member?.orgMembershipId ?? null,
       hasWriteScope: ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE),
       body: input.body,
     })

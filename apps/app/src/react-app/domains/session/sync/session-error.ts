@@ -3,10 +3,11 @@ import { autoAccessWallFromError, autoAccessWallSchema, autoWallCopy, type AutoA
 import { parseGatewayUsageError, gatewayUsageErrorEvidenceSchema, type GatewayUsageErrorEvidence } from "../../cloud/gateway-usage-state";
 import { openWorkModelsLimitSchema, parseOpenWorkModelsLimitError, type OpenWorkModelsLimit } from "../../cloud/usage-limit-state";
 
+import { describeOpencodeConfigError } from "@openwork/types/opencode-config-error";
 import { safeStringify } from "../../../../app/utils";
 import { normalizeErrorText } from "../../../../lib/error-text";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "provider-unavailable" | "provider-access-denied" | "provider-credentials" | "rate-limited" | "conversation-too-long" | "output-invalid" | "output-limit" | "attachment-unsupported" | "network-unavailable" | "provider-unreachable" | "provider-connection-dropped" | "model-unavailable" | "workspace-unavailable" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "gateway-provider-authentication-failed" | "gateway-provider-permission-denied" | "gateway-selection-required" | "session-group-assignment" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "provider-unavailable" | "provider-access-denied" | "provider-credentials" | "rate-limited" | "conversation-too-long" | "output-invalid" | "output-limit" | "attachment-unsupported" | "network-unavailable" | "provider-unreachable" | "provider-connection-dropped" | "model-unavailable" | "workspace-unavailable" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "gateway-provider-authentication-failed" | "gateway-provider-permission-denied" | "gateway-selection-required" | "session-group-assignment" | "config-invalid" | "generic";
 
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
@@ -79,6 +80,7 @@ function sessionErrorKind(
   status: number | null,
 ): OpencodeSessionErrorKind {
   if (name === "SessionGroupAssignmentError") return "session-group-assignment";
+  if (name === "ConfigInvalidError" || name === "ConfigJsonError" || code === "opencode_config_invalid") return "config-invalid";
   const searchable = [name, message, code, responseBody].filter(Boolean).join(" ");
   if (searchable.includes("gateway_selection_required")) return "gateway-selection-required";
   if (searchable.includes("openwork:desktop") && /\bECONNREFUSED\b/.test(searchable)
@@ -145,6 +147,7 @@ function sessionErrorKind(
 
 function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
   if (kind === "session-group-assignment") return "Couldn’t assign this conversation to its group";
+  if (kind === "config-invalid") return "OpenCode can’t use a config file";
   if (kind === "disk-full") return "Storage error reported";
   if (kind === "database-error") return "OpenWork couldn’t access its saved data";
   if (kind === "aborted") return "Task interrupted";
@@ -444,7 +447,9 @@ export function presentOpencodeSessionError(error: unknown, fallback = "Session 
   return {
     kind,
     title: openworkModelsLimit ? "Your workspace used its OpenWork Models allowance" : credentialCopy?.title ?? errorTitle(kind, fallbackTitle),
-    description: gatewayProviderAuth?.message ?? credentialCopy?.description ?? errorDescription(kind, gatewayAuth),
+    description: gatewayProviderAuth?.message ?? credentialCopy?.description
+      ?? (kind === "config-invalid" ? describeOpencodeConfigError(error) ?? fields.message : null)
+      ?? errorDescription(kind, gatewayAuth),
     technicalDetails: kind === "gateway-selection-required" ? "Error code: gateway_selection_required\nStatus: 409" : gatewayAuth ? "Error code: openwork_auth_required\nStatus: 401" : technicalErrorDetails(error, fallback, fields),
     recoveryPrompt: errorRecoveryPrompt(kind),
     ...(gatewayAuth ? { connectUrl: gatewayAuth.connectUrl } : {}),

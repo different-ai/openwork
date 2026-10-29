@@ -158,28 +158,42 @@ function source(html: string, id: string) {
 test("uses: a switch per source with when it was last read; the admin's decisions are locked with the reason", () => {
   const html = page();
   const calendar = source(html, "calendar");
-  assert.match(text(calendar), /Calendar Last read at 11:20 AM/);
+  assert.match(text(calendar), /Calendar Google Calendar Last read at 11:20 AM/, "the account it reads through, under the source");
   assert.match(switchFor(calendar, "Calendar") ?? "", /aria-checked="true"[\s\S]*disabled=""|disabled=""[\s\S]*aria-checked="true"/);
-  assert.match(text(calendar), /On for everyone\. Set by your admin in Manage › Workbot\./);
+  assert.match(calendar, /aria-label="On for everyone, set by your admin"/);
+  assert.doesNotMatch(text(calendar), /Set by your admin/, "the reason is said once, under the list, not on every row");
+  assert.match(text(/data-testid="my-agent-sources-locked"[\s\S]*?<\/p>/.exec(html)?.[0] ?? ""), /Locked sources are set by your admin in Manage › Workbot\./);
   const chat = source(html, "chat");
   assert.doesNotMatch(switchFor(chat, "Team chat") ?? "", /disabled=""/, "members choose: their switch");
   const wiki = source(html, "emc_wiki");
-  assert.match(text(wiki), /Wiki Off .*Not allowed by your admin in Manage › Workbot\./);
+  assert.match(text(wiki), /Wiki Not allowed/);
+  assert.match(wiki, /aria-label="Not allowed by your admin"/);
   assert.match(switchFor(wiki, "Wiki") ?? "", /disabled=""/);
-  assert.doesNotMatch(text(wiki), /Add an instruction/, "nothing to steer on a source it may not read");
+  assert.doesNotMatch(wiki, /instruction for Wiki/, "nothing to steer on a source it may not read");
 });
 
 test("uses: the member's instruction in their own words, where it was saved and Edit; a Connect action when their account isn't ready", () => {
   const html = page();
   const notes = source(html, "emc_notes");
   assert.match(text(notes), /Meeting notes Not read yet/);
-  assert.match(text(notes), /“Use my meeting notes for context and action items\.” Saved from chat at 10:42 AM\. Edit/);
+  assert.match(text(notes), /“Use my meeting notes for context and action items\.” Saved from chat at 10:42 AM\./);
+  assert.match(notes, /aria-label="Edit the instruction for Meeting notes"/);
   const tracker = source(html, "emc_tracker");
   assert.match(text(tracker), /Issue tracker Connect Issue tracker/);
   assert.match(tracker, /href="\/dashboard\/library\/connectors\/emc_tracker\?from=my-agent"/);
-  assert.match(text(source(html, "chat")), /Add an instruction for Team chat/);
+  assert.match(source(html, "chat"), /aria-label="Add an instruction for Team chat"/);
   const reconnect = page({ ...base, sources: [{ ...emailSource, connections: [{ id: "google-workspace", name: "Gmail", url: "https://google.com", state: "reconnect" }] }] });
   assert.match(text(source(reconnect, "email")), /Email Reconnect Gmail/);
+});
+
+test("uses: with two accounts, the row names the one it reads through and asks for nothing more", () => {
+  const two = page({ ...base, sources: [{ ...emailSource, connections: [
+    { id: "gws_work", name: "Acme Google", url: "https://google.com", state: "connected" },
+    { id: "gws_personal", name: "Personal Google", url: "https://google.com", state: "needs_connection" },
+  ] }] });
+  const email = source(two, "email");
+  assert.match(text(email), /Email Acme Google/);
+  assert.doesNotMatch(text(email), /Connect|Personal Google/, "one ready account is enough");
 });
 
 test("limits: their hours inside the admin's, the only-urgent window, and the cap locked by the admin", () => {

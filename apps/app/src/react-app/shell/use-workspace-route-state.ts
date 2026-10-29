@@ -526,6 +526,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
                 return;
               }
               invalidateSessionInventory(workspace.id);
+              // OpenCode refuses this folder until its config is fixed; show
+              // the file and field rather than an empty chat list.
+              if (error instanceof Error && "code" in error && error.code === "opencode_config_invalid") {
+                setErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: error.message }));
+              }
               setRetryingWorkspaceIds((current) =>
                 current.includes(workspace.id) ? current.filter((id) => id !== workspace.id) : current,
               );

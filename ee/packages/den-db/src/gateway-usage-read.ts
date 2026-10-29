@@ -93,10 +93,21 @@ export async function usagePolicies(
     .select()
     .from(A)
     .where(and(eq(A.organizationId, organizationId), inArray(A.policyId, ids)))
+  // A provider limit whose provider was deleted applies to no requests; say so.
+  const existingProviders = await usageProviderNames(
+    tx,
+    organizationId,
+    rows.flatMap((row) => (row.inferenceProviderId ? [row.inferenceProviderId] : [])),
+  )
   return rows.map(
     ({ inferenceProviderId, ...row }): GatewayUsageLimitPolicy => ({
       ...row,
       providerId: inferenceProviderId ?? null,
+      providerStatus: inferenceProviderId
+        ? existingProviders.has(inferenceProviderId)
+          ? "available"
+          : "removed"
+        : null,
       archivedAt: row.archivedAt?.toISOString() ?? null,
       limits: limits
         .filter((entry) => entry.policyId === row.id)

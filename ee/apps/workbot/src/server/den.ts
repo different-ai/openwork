@@ -35,6 +35,8 @@ export const denSessionSchema = z.object({
   browser: z.boolean().default(false),
   browserDemonstrations: z.boolean().default(false),
   browserLiveView: z.boolean().default(false),
+  /** Workbot's computers run through the runner's sandbox gateway. Older Dens omit it: the runner's own provider. */
+  sandboxGateway: z.boolean().default(false),
   /** Workbot's Calendar tab is on (while Workbot is on). Older Dens omit it: off. */
   calendar: z.boolean().optional(),
   documents: z.boolean().default(false),

@@ -1,6 +1,7 @@
 import {
   AGENT_CORE_SOURCES,
   AGENT_CORE_SOURCE_COPY,
+  agentCoreConnections,
   agentSourcePolicy,
   type AgentCoreSource,
   type AgentSourceConnection,
@@ -10,8 +11,9 @@ import {
 import { agentReadableConnection, serviceLinkDomains } from "../mcp/agent-read-sources.js"
 
 /**
- * Sources, not categories: what a member's agent reads. Calendar, email and team chat come from whichever of the
- * member's connections serve them (Google Workspace, Microsoft 365, Slack); every other connection the member can use
+ * Sources, not categories: what a member's agent reads. Calendar, email and team chat come from the connections the
+ * admin picked for each (every Google Workspace, Microsoft 365 or Slack connection that serves it until they pick
+ * some), so a second account a member also connected never stands in for the one that counts; every other connection the member can use
  * whose service has reviewed read tools (Linear, Notion, GitHub, Granola) is a source of its own. The admin decides per source (on for everyone, members choose, not allowed); the member
  * turns the ones they may choose on or off and steers each with an instruction in their own words.
  *
@@ -75,14 +77,17 @@ function readableOther(connection: { url: string; native: string | null }) {
   return connection.native === null && coreSourcesOf(connection).length === 0 && agentReadableConnection(connection.url)
 }
 
-/** The organization's connections behind each source, for the admin's "What agents read". */
+/**
+ * The organization's connections behind each source, for the admin's "What agents read" and its picker: each under
+ * its own name, so two Google Workspace connections ("Acme", "Personal") can be told apart.
+ */
 export function groupSourceConnections(connections: readonly (AgentSourceConnection & { native: string | null })[]) {
   const groups: Record<AgentCoreSource | "other", AgentSourceConnection[]> = { calendar: [], email: [], chat: [], other: [] }
   for (const connection of connections) {
     const core = coreSourcesOf(connection)
     const entry = { id: connection.id, name: connection.name, url: connection.url }
     if (readableOther(connection)) groups.other.push(entry)
-    for (const kind of core) groups[kind].push({ ...entry, name: connectionSourceName(connection, kind) })
+    for (const kind of core) groups[kind].push(entry)
   }
   return groups
 }
@@ -118,13 +123,14 @@ export function resolveMemberSources(input: {
   const core = AGENT_CORE_SOURCES.map((kind): ResolvedSource => {
     const policy = input.policy[kind]
     const choice = input.choices[kind]
+    const picked = agentCoreConnections(input.policy, kind)
+    const behind = input.connections.filter((connection) => coreSourcesOf(connection).includes(kind) && (picked === null || picked.includes(connection.id)))
     return {
       id: kind,
       kind,
       name: AGENT_CORE_SOURCE_COPY[kind].label,
-      connections: input.connections
-        .filter((connection) => coreSourcesOf(connection).includes(kind))
-        .map((connection) => ({ ...connection, name: connectionSourceName(connection, kind) })),
+      // "Gmail" for one account; each connection's own name when several serve it, so a message says which one.
+      connections: behind.map((connection) => ({ ...connection, name: behind.length > 1 ? connection.name : connectionSourceName(connection, kind) })),
       policy,
       on: sourceOn(policy, choice, true),
       instruction: choice?.instruction ?? "",
@@ -155,17 +161,31 @@ export function readableConnections(source: ResolvedSource): MemberConnection[] 
   return source.on ? source.connections.filter((connection) => connection.state === "connected") : []
 }
 
-/** What the turn's token may read: the core sources that are readable and the connections behind them. */
-export function readAllowlist(sources: readonly ResolvedSource[]): { kinds: AgentCoreSource[]; connectionIds: string[] } {
+/**
+ * What the turn's token may read: the core sources that are readable, the connections behind every readable source,
+ * and which core source each connection may be read for (email through one account, calendar through another).
+ */
+export function readAllowlist(sources: readonly ResolvedSource[]): { kinds: AgentCoreSource[]; connectionIds: string[]; pairs: { kind: AgentCoreSource; connectionId: string }[] } {
   const kinds: AgentCoreSource[] = []
   const connectionIds = new Set<string>()
+  const pairs: { kind: AgentCoreSource; connectionId: string }[] = []
   for (const source of sources) {
     const ready = readableConnections(source)
     if (!ready.length) continue
     if (source.kind !== "other") kinds.push(source.kind)
-    for (const connection of ready) connectionIds.add(connection.id)
+    for (const connection of ready) {
+      connectionIds.add(connection.id)
+      if (source.kind !== "other") pairs.push({ kind: source.kind, connectionId: connection.id })
+    }
   }
-  return { kinds, connectionIds: [...connectionIds] }
+  return { kinds, connectionIds: [...connectionIds], pairs }
+}
+
+/** The same sources with one connection's state changed, in only the sources named (all of them by default). */
+export function withConnectionState(sources: readonly ResolvedSource[], connectionId: string, state: MemberConnection["state"], only?: readonly string[]): ResolvedSource[] {
+  return sources.map((source) => only && !only.includes(source.id)
+    ? source
+    : { ...source, connections: source.connections.map((connection) => connection.id === connectionId ? { ...connection, state } : connection) })
 }
 
 /**

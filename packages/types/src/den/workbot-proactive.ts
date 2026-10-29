@@ -67,6 +67,10 @@ export const AGENT_SOURCE_POLICY_COPY: Record<AgentSourcePolicy, string> = {
 /** A core source (`calendar`, `email`, `chat`) or another connection's id. */
 const agentSourceIdSchema = z.string().trim().min(1).max(64)
 const AGENT_SOURCE_CONNECTIONS_MAX = 200
+const AGENT_CORE_CONNECTIONS_MAX = 50
+
+/** The connections an admin picked for one core source: at least one (turning the source off is its policy). */
+const agentCoreConnectionIdsSchema = z.array(agentSourceIdSchema).min(1).max(AGENT_CORE_CONNECTIONS_MAX)
 
 /**
  * The organization's policy per source. Calendar, email and team chat are on for everyone by default; every other
@@ -76,6 +80,15 @@ export const agentSourcesPolicySchema = z.object({
   calendar: agentSourcePolicySchema,
   email: agentSourcePolicySchema,
   chat: agentSourcePolicySchema,
+  /**
+   * Which of the organization's connections serve calendar, email and team chat, by id. A source that isn't listed
+   * reads through every connection that can serve it (Google Workspace, Microsoft 365, Slack).
+   */
+  coreConnections: z.object({
+    calendar: agentCoreConnectionIdsSchema.optional(),
+    email: agentCoreConnectionIdsSchema.optional(),
+    chat: agentCoreConnectionIdsSchema.optional(),
+  }).optional(),
   /** Other connections by id; one that isn't listed is up to members. */
   connections: z.record(agentSourceIdSchema, agentSourcePolicySchema)
     .refine((value) => Object.keys(value).length <= AGENT_SOURCE_CONNECTIONS_MAX, { message: "Too many connections." }),
@@ -84,18 +97,31 @@ export type AgentSourcesPolicy = z.infer<typeof agentSourcesPolicySchema>
 
 export const DEFAULT_AGENT_SOURCES_POLICY: AgentSourcesPolicy = { calendar: "everyone", email: "everyone", chat: "everyone", connections: {} }
 
-/** An admin's change: any core source, and connections by id (null goes back to "members choose"). */
+/**
+ * An admin's change: any core source, the connections behind a core source (null goes back to every connection that
+ * serves it), and other connections by id (null goes back to "members choose").
+ */
 export const agentSourcesPolicyInputSchema = z
   .object({
     calendar: agentSourcePolicySchema.optional(),
     email: agentSourcePolicySchema.optional(),
     chat: agentSourcePolicySchema.optional(),
+    coreConnections: z.object({
+      calendar: agentCoreConnectionIdsSchema.nullable().optional(),
+      email: agentCoreConnectionIdsSchema.nullable().optional(),
+      chat: agentCoreConnectionIdsSchema.nullable().optional(),
+    }).strict().optional(),
     connections: z.record(agentSourceIdSchema, agentSourcePolicySchema.nullable())
       .refine((value) => Object.keys(value).length <= AGENT_SOURCE_CONNECTIONS_MAX, { message: "Too many connections." })
       .optional(),
   })
   .strict()
 export type AgentSourcesPolicyInput = z.infer<typeof agentSourcesPolicyInputSchema>
+
+/** The connections an admin picked for a core source, or null for every connection that serves it. */
+export function agentCoreConnections(policy: AgentSourcesPolicy, kind: AgentCoreSource): readonly string[] | null {
+  return policy.coreConnections?.[kind] ?? null
+}
 
 /** One of the organization's connections, as a source. */
 export const agentSourceConnectionSchema = z.object({ id: z.string(), name: z.string(), url: z.string() })
@@ -115,10 +141,17 @@ export function mergeAgentSourcesPolicy(current: AgentSourcesPolicy, change: Age
     if (value === null || value === "members") delete connections[id]
     else connections[id] = value
   }
+  const coreConnections: NonNullable<AgentSourcesPolicy["coreConnections"]> = {}
+  for (const kind of AGENT_CORE_SOURCES) {
+    const requested = change.coreConnections?.[kind]
+    const picked = requested === undefined ? current.coreConnections?.[kind] : requested
+    if (picked) coreConnections[kind] = [...new Set(picked)]
+  }
   return {
     calendar: change.calendar ?? current.calendar,
     email: change.email ?? current.email,
     chat: change.chat ?? current.chat,
+    ...(Object.keys(coreConnections).length ? { coreConnections } : {}),
     connections,
   }
 }
