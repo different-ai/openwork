@@ -5,7 +5,7 @@ import { createExternalMcpLifecycleDeadline, type ExternalMcpLifecycleDeadline }
 import type { NativeProviderConnectionEntry } from "../capability-sources/native-provider-connections.js"
 import type { McpAppEntry } from "../mcp-apps.js"
 import { CAPABILITY_SOURCES, slackSendAsBotAvailable, type CapabilityLeaf, type CapabilityRegistryContext, type CapabilitySourceKind, type ExecuteCapabilityToolResult } from "./capability-registry.js"
-import { buildCodemodeConnectionNamespaceMaps } from "./codemode-namespaces.js"
+import { buildCodemodeConnectionNamespaceMaps, type CodemodeConnectionNamespaceContext } from "./codemode-namespaces.js"
 import { mapConcurrent } from "./codemode-tools.js"
 import {
   APP_TOOL_NAMESPACE,
@@ -26,6 +26,7 @@ import { buildExternalCapabilityName, CONNECTION_KEY_REQUEST_CAPABILITY, EXTERNA
 import { getExternalToolsSearchCache, setExternalToolsSearchCache } from "./external-tools-search-cache.js"
 import { listAccessibleWorkflows } from "./marketplace-capabilities.js"
 import { buildMarketplaceCapabilityName } from "./marketplace-capability-name.js"
+import type { ConnectService } from "./engine-tool-view.js"
 import { connectionStatusMatch } from "./native-capabilities.js"
 import { listRemoteSessionCapabilities } from "./remote-session-capabilities.js"
 import { SLACK_SEND_AS_BOT_ARGUMENTS_SCHEMA, SLACK_SEND_AS_BOT_CAPABILITY, SLACK_SEND_AS_BOT_SUMMARY } from "./slack-send-as-bot.js"
@@ -108,6 +109,53 @@ async function connectionTools(
     if (cacheKey) setExternalToolsSearchCache(cacheKey, { outcome: "failure", error })
     return null
   }
+}
+
+/** Connections the member may use but cannot call yet, under the namespace connection_status takes for each. */
+function pendingConnections(
+  namespaceContext: CodemodeConnectionNamespaceContext,
+  external: readonly ExternalMcpConnectionRow[],
+  readyIds: ReadonlySet<string>,
+) {
+  const pendingSources = new Map<string, PendingSource>()
+  for (const entry of namespaceContext.nativeProviderEntries) {
+    if (!entry.connectedForMe) pendingSources.set(entry.id, { kind: "native", entry })
+  }
+  for (const connection of external) {
+    if (!readyIds.has(connection.id)) pendingSources.set(connection.id, { kind: "externalMcp", connection })
+  }
+  const pendingNamespaces = buildCodemodeConnectionNamespaceMaps({
+    native: [...pendingSources.values()].flatMap((source) => source.kind === "native" ? [source.entry] : []),
+    externalMcp: [...pendingSources.values()].flatMap((source) => source.kind === "externalMcp" ? [source.connection] : []),
+  })
+  const pending = [...pendingSources.entries()].flatMap(([id, source]) => {
+    const namespace = pendingNamespaces.native.get(id) ?? pendingNamespaces.externalMcp.get(id)
+    const name = source.kind === "native" ? source.entry.name : source.connection.name
+    return namespace ? [{ id, namespace, name }] : []
+  })
+  return { pendingSources, pending }
+}
+
+/**
+ * The services the member may use, for the engine's directory
+ * (engine-tool-view.ts): each ready connection under the namespace of its
+ * tools, and each pending one under the namespace connection_status takes.
+ * Readiness is checked without listing any provider's tools.
+ */
+export async function loadConnectServices(ctx: CapabilityRegistryContext): Promise<ConnectService[]> {
+  const member = ctx.member
+  if (!member) return []
+  const namespaceContext = await ctx.resolveNamespaceContext()
+  const external = namespaceContext.externalMcpConnections.filter((connection) => !connection.toolPolicy?.allDisabled)
+  const readyIds = new Set((await readyExternalMcpConnectionsForMember(external, member.orgMembershipId)).map((connection) => connection.id))
+  const ready = [
+    ...namespaceContext.codemodeNativeProviderEntries.map((entry) => ({ namespace: namespaceContext.namespaces.native.get(entry.id), name: entry.name })),
+    ...namespaceContext.codemodeExternalMcpConnections
+      .filter((connection) => readyIds.has(connection.id))
+      .map((connection) => ({ namespace: namespaceContext.namespaces.externalMcp.get(connection.id), name: connection.name })),
+  ].flatMap(({ namespace, name }) => namespace ? [{ namespace, name, ready: true }] : [])
+  const { pending } = pendingConnections(namespaceContext, external, readyIds)
+  return [...ready, ...pending.map(({ namespace, name }) => ({ namespace, name, ready: false }))]
 }
 
 /**
@@ -223,25 +271,9 @@ export async function loadConnectFullTools(input: {
     })
   }
 
-  // Connections the member may use but cannot call yet: connection_status shows their card.
-  const pendingSources = new Map<string, PendingSource>()
-  if (readyIds) {
-    for (const entry of namespaceContext.nativeProviderEntries) {
-      if (!entry.connectedForMe) pendingSources.set(entry.id, { kind: "native", entry })
-    }
-    for (const connection of external) {
-      if (!readyIds.has(connection.id)) pendingSources.set(connection.id, { kind: "externalMcp", connection })
-    }
-  }
-  const pendingNamespaces = buildCodemodeConnectionNamespaceMaps({
-    native: [...pendingSources.values()].flatMap((source) => source.kind === "native" ? [source.entry] : []),
-    externalMcp: [...pendingSources.values()].flatMap((source) => source.kind === "externalMcp" ? [source.connection] : []),
-  })
-  const pending = [...pendingSources.entries()].flatMap(([id, source]) => {
-    const namespace = pendingNamespaces.native.get(id) ?? pendingNamespaces.externalMcp.get(id)
-    const name = source.kind === "native" ? source.entry.name : source.connection.name
-    return namespace ? [{ id, namespace, name }] : []
-  })
+  const { pendingSources, pending } = readyIds
+    ? pendingConnections(namespaceContext, external, readyIds)
+    : { pendingSources: new Map<string, PendingSource>(), pending: [] }
 
   return {
     tools: buildConnectFullTools(candidates),

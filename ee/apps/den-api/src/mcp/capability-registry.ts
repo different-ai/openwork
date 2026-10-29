@@ -90,6 +90,7 @@ import {
   type CapabilityMatch,
   type SearchCapabilityType,
 } from "./search.js"
+import { ENGINE_LISTED_SOURCE_KINDS, unlistedCapabilityMatches } from "./engine-tool-view.js"
 import { externalToolContent } from "./tool-content.js"
 import { capabilityCallInput, capabilityToolMatch, type CapabilityToolMatch } from "./capability-tool.js"
 
@@ -886,7 +887,13 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
   return {
     search: async (
       ctx: CapabilityRegistryContext,
-      input: { query: string; limit: number; type?: SearchCapabilityType },
+      input: {
+        query: string
+        limit: number
+        type?: SearchCapabilityType
+        /** Only what has no tool of its own in the full view (engine-tool-view.ts). */
+        unlistedOnly?: boolean
+      },
     ): Promise<{ matches: CapabilityMatch[]; externalCoverageHint?: string }> => {
       let externalCoverageHint: string | undefined
       const sourceFilter = searchCapabilitySourceFilter(input.type)
@@ -898,10 +905,13 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
           externalCoverageHint = hint
         },
       }
-      const sourceMatches = await Promise.all(CAPABILITY_SOURCE_KINDS.map((kind) => (
+      const kinds = input.unlistedOnly
+        ? CAPABILITY_SOURCE_KINDS.filter((kind) => !ENGINE_LISTED_SOURCE_KINDS.has(kind))
+        : CAPABILITY_SOURCE_KINDS
+      const sourceMatches = (await Promise.all(kinds.map((kind) => (
         sources[kind].search(searchContext, input.query, input.limit)
-      )))
-      const matches = sourceMatches.flat()
+      )))).flat()
+      const matches = (input.unlistedOnly ? unlistedCapabilityMatches(sourceMatches) : sourceMatches)
         .sort(compareCapabilityMatches)
         .slice(0, input.limit)
       return {
