@@ -895,10 +895,11 @@ function SideChatStart(props: { name: string; organizationName: string; children
   );
 }
 
-type Row = { key: string; at: number; turn: WorkbotTurn | null; pending: Pending | null };
+/** `pending`: a message the conversation doesn't have yet; `turn` is then that message as the turn it becomes. */
+type Row = { key: string; at: number; turn: WorkbotTurn; pending: Pending | null };
 
 /** A new timestamp shows when the day changes or after a quiet hour, like a messaging app. */
-function showsTimestamp(previous: Row | undefined, row: Row) {
+function showsTimestamp(previous: { at: number } | undefined, row: { at: number }) {
   if (!row.at) return false;
   if (!previous?.at) return true;
   return new Date(previous.at).toDateString() !== new Date(row.at).toDateString() || row.at - previous.at > 60 * 60_000;
@@ -932,10 +933,11 @@ function Conversation(props: {
   const content = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const known = new Set(props.turns.map((turn) => turn.id));
-  // A pending message and its turn share a key, so the bubble never re-mounts when the turn arrives.
+  // A pending message and its turn share a key and both show as a TurnView, so neither the bubble nor the dots under it
+  // re-mount when the turn arrives.
   const rows: Row[] = [
     ...props.turns.map((turn) => ({ key: turn.id, at: turn.sentAt ?? 0, turn, pending: null })),
-    ...props.pending.filter((entry) => !known.has(entry.id)).map((entry) => ({ key: entry.id, at: entry.sentAt, turn: null, pending: entry })),
+    ...props.pending.filter((entry) => !known.has(entry.id)).map((entry) => ({ key: entry.id, at: entry.sentAt, turn: pendingTurn(entry), pending: entry })),
   ];
   const lastTurnId = props.turns.at(-1)?.id;
   // One indicator, at the end of the thread, says a reply is on its way and none of it shows yet. Background tasks
@@ -1011,32 +1013,26 @@ function Conversation(props: {
           <ol className="flex flex-col" aria-label="Conversation">
             {rows.map((row, index) => {
               // The greeting has its own time; the first message only gets one after a quiet hour or a new day.
-              const previous = rows[index - 1] ?? (props.intro?.at ? { key: "intro", at: props.intro.at, turn: null, pending: null } : undefined);
+              const previous = rows[index - 1] ?? (props.intro?.at ? { at: props.intro.at } : undefined);
               const stamp = showsTimestamp(previous, row);
               return (
                 <li key={row.key} className={`flex flex-col gap-1 ${index > 0 ? (stamp ? "pt-9" : "pt-8") : stamp && props.intro ? "pt-1" : ""}`}>
                   {stamp ? <Timestamp at={row.at} /> : null}
-                  {row.turn ? (
-                    <TurnView
-                      canChange={props.canChange}
-                      onEdit={props.onEdit}
-                      editError={props.editErrors[row.turn.id] ?? null}
-                      turn={row.turn}
-                      live={props.live[row.turn.id] ?? null}
-                      latest={row.turn.id === lastTurnId && props.pending.every((entry) => known.has(entry.id))}
-                      newestText={row.turn.id === newestText}
-                      previews={previews.current}
-                      onRetry={() => row.turn && props.onRetryTurn(row.turn)}
-                      onSuggestion={props.onSuggestion}
-                      onSwitch={props.onSwitch}
-                    />
-                  ) : row.pending ? (
-                    <PendingView
-                      entry={row.pending}
-                      onRetry={() => row.pending && props.onRetry(row.pending)}
-                      waiting={row.pending.id === lastPending}
-                    />
-                  ) : null}
+                  <TurnView
+                    canChange={props.canChange}
+                    onEdit={props.onEdit}
+                    editError={row.pending ? null : (props.editErrors[row.turn.id] ?? null)}
+                    turn={row.turn}
+                    pending={row.pending}
+                    live={row.pending ? null : (props.live[row.turn.id] ?? null)}
+                    // A message still sending is answered next when it is the newest one waiting.
+                    latest={row.pending ? row.pending.id === lastPending : row.turn.id === lastTurnId && props.pending.every((entry) => known.has(entry.id))}
+                    newestText={row.turn.id === newestText}
+                    previews={previews.current}
+                    onRetry={() => (row.pending ? props.onRetry(row.pending) : props.onRetryTurn(row.turn))}
+                    onSuggestion={props.onSuggestion}
+                    onSwitch={props.onSwitch}
+                  />
                 </li>
               );
             })}
@@ -1133,6 +1129,8 @@ function OwnMessage(props: {
   onEdit: (turn: WorkbotTurn, text: string) => void;
   /** Why the last edit of this message didn't go through. */
   error: string | null;
+  /** A message that didn't send: dimmed, without Edit (Send again sits under it). */
+  failed?: boolean;
 }) {
   const { turn, error } = props;
   const originalText = readWorkbotCorrectionPrompt(turn.text).text;
@@ -1213,7 +1211,7 @@ function OwnMessage(props: {
   return (
     <div className="flex flex-col items-end gap-1">
       <SentContext context={turn.context} />
-      <UserBubble text={turn.text} reaction={turn.reaction} action={<EditButton disabled={!props.canChange} onClick={() => setMode("editing")} />} />
+      <UserBubble text={turn.text} reaction={turn.reaction} muted={props.failed} action={props.failed ? undefined : <EditButton disabled={!props.canChange} onClick={() => setMode("editing")} />} />
       {error ? <ErrorLine align="end">{error}</ErrorLine> : null}
     </div>
   );
@@ -1319,35 +1317,30 @@ function pendingAttachments(entry: Pending): { attachments: WorkbotAttachment[];
   return { attachments: [...entry.attachments, ...attachments], urls };
 }
 
-/** `waiting`: this message's answer comes next, so it shows the waiting dots its turn will show. */
-function PendingView({ entry, onRetry, waiting }: { entry: Pending; onRetry: () => void; waiting: boolean }) {
-  const { attachments, urls } = pendingAttachments(entry);
-  const uploading = entry.uploads.some((upload) => upload.status === "uploading");
-  return (
-    <>
-      <SentAttachments attachments={attachments} localUrls={urls} />
-      {/* Holds Edit's place while sending, so the bubble doesn't move when its turn arrives. */}
-      <SentContext context={entry.context} />
-      <UserBubble text={entry.correctionReference ? workbotCorrectionPrompt(readBrowserSkillRunPrompt(entry.text), entry.correctionReference) : readBrowserSkillRunPrompt(entry.text)} muted={Boolean(entry.failed)} action={entry.failed ? undefined : <EditButton disabled />} />
-      {entry.failed ? (
-        entry.accessIssue ? <AccessRecovery reason={entry.accessIssue} onRetry={onRetry} /> : <ErrorLine align="end" action={{ label: "Send again", onClick: onRetry }}>{entry.failed}</ErrorLine>
-      ) : uploading || waiting ? (
-        // The rows its turn will show, so nothing moves when the turn arrives.
-        <>
-          <Gap />
-          <div className="flex flex-col">
-            {uploading ? (
-              <QuietLine label="Uploading your files" />
-            ) : (
-              <WaitingSlot>
-                <TypingDots />
-              </WaitingSlot>
-            )}
-          </div>
-        </>
-      ) : null}
-    </>
-  );
+/**
+ * A message not in the conversation yet, as the turn it becomes: queued, with nothing answered. TurnView shows both,
+ * so the bubble, Edit's place and the waiting dots stay the same elements when the turn arrives.
+ */
+function pendingTurn(entry: Pending): WorkbotTurn {
+  return {
+    id: entry.id,
+    text: entry.correctionReference ? workbotCorrectionPrompt(readBrowserSkillRunPrompt(entry.text), entry.correctionReference) : readBrowserSkillRunPrompt(entry.text),
+    context: entry.context,
+    navigation: [],
+    sentAt: entry.sentAt,
+    finishedAt: null,
+    status: "queued",
+    attachments: pendingAttachments(entry).attachments,
+    outputs: [],
+    reaction: null,
+    parts: [],
+    modelSteps: 0,
+    error: null,
+    retryable: true,
+    tasks: [],
+    greeting: false,
+    suggestions: [],
+  };
 }
 
 /** Ticks once a second while mounted. */
@@ -1648,8 +1641,9 @@ function replyProgress(turn: WorkbotTurn, live: LiveText | null) {
   const working = turn.status === "working" || turn.status === "queued";
   // The model call in progress (not stored yet): its text so far, and whether it has started a step.
   const current = working && live && live.step >= turn.modelSteps ? live : null;
-  // Live text is trimmed like the stored text, so a finished bubble carries on instead of starting over.
-  const liveText = withoutNextLine((current?.text ?? "").trimStart());
+  // Live text is trimmed like the stored text (both ends), so a finished bubble carries on instead of starting over:
+  // a shown "Done.\n" that the stored "Done." doesn't start with would type the bubble out again.
+  const liveText = withoutNextLine((current?.text ?? "").trim());
   const last = turn.parts.at(-1);
   // Its computer starting before the step is stored: its card shows right away, after what it just said.
   const starting = working && !turn.greeting && current?.working?.on === "computer" ? current.working : null;
@@ -1681,6 +1675,8 @@ function TurnView(props: {
   onEdit: (turn: WorkbotTurn, text: string) => void;
   editError: Error | string | null;
   turn: WorkbotTurn;
+  /** The message as sent from this page, until the conversation has it (`turn` is then pendingTurn's). */
+  pending?: Pending | null;
   live: LiveText | null;
   latest: boolean;
   /** This turn holds the newest of Workbot's words in the conversation: the only ones still revealing. */
@@ -1690,8 +1686,10 @@ function TurnView(props: {
   onSuggestion: (text: string) => void;
   onSwitch: (text: string) => void;
 }) {
-  const { turn } = props;
+  const { turn, pending = null } = props;
   const { working, liveText, starting, lastIsLive } = replyProgress(turn, props.live);
+  // A message still sending waits on its files first, in the place the dots take next.
+  const uploading = pending !== null && !pending.failed && pending.uploads.some((upload) => upload.status === "uploading");
   // An answer watched while it was written keeps revealing at its pace once it's stored; answers already done when the
   // page opened show at once.
   const watched = useRef(working);
@@ -1732,7 +1730,7 @@ function TurnView(props: {
   });
   if (working && props.live) {
     for (const entry of props.live.earlier ?? []) {
-      const text = withoutNextLine(entry.text.trimStart());
+      const text = withoutNextLine(entry.text.trim());
       if (entry.step >= turn.modelSteps && text) items.push({ kind: "text", key: `text-${entry.step}`, text });
     }
   }
@@ -1755,7 +1753,7 @@ function TurnView(props: {
     if (dots || running) setHeld(true);
     else if (!answering || liveText) setHeld(false);
   }, [dots, running, answering, liveText]);
-  const slot = answering && !liveText && (dots || held || running);
+  const slot = uploading || (answering && !liveText && (dots || held || running));
   const copyText = parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])).join("\n\n");
   const offers = useMemo(() => (turn.status === "done" ? documentLinks(copyText) : []), [turn.status, copyText]);
   // One computer, so only the newest reply that used its screen offers to open it, already while it works. Commands run
@@ -1764,12 +1762,15 @@ function TurnView(props: {
   const usedComputer = props.latest && ((starting !== null && !starting.background) || parts.some((part) => part.kind === "steps" && part.steps.some(onScreen)));
   return (
     <>
-      <SentAttachments attachments={turn.attachments} localUrls={props.previews} />
-      {turn.text && !turn.greeting ? (
-        <OwnMessage turn={turn} canChange={props.canChange && turn.status !== "queued"} onEdit={props.onEdit} error={props.editError instanceof WorkbotSendError && props.editError.accessReason ? null : props.editError instanceof Error ? props.editError.message : props.editError} />
+      <SentAttachments attachments={turn.attachments} localUrls={pending ? { ...props.previews, ...pendingAttachments(pending).urls } : props.previews} />
+      {pending || (turn.text && !turn.greeting) ? (
+        <OwnMessage turn={turn} failed={Boolean(pending?.failed)} canChange={props.canChange && turn.status !== "queued"} onEdit={props.onEdit} error={props.editError instanceof WorkbotSendError && props.editError.accessReason ? null : props.editError instanceof Error ? props.editError.message : props.editError} />
       ) : (
         <UserBubble text={turn.text} reaction={turn.reaction} />
       )}
+      {pending?.failed ? (
+        pending.accessIssue ? <AccessRecovery reason={pending.accessIssue} onRetry={props.onRetry} /> : <ErrorLine align="end" action={{ label: "Send again", onClick: props.onRetry }}>{pending.failed}</ErrorLine>
+      ) : null}
       {items.length > 0 || slot ? <Gap /> : null}
       {/* What it said and what it did, in the order it happened: "On it." · the computer card · the answer. */}
       <div className="group/answer flex flex-col">
@@ -1787,7 +1788,7 @@ function TurnView(props: {
             <StepsSegment key={item.key} steps={item.steps} live={item.live} />
           ),
         )}
-        {slot ? <WaitingSlot>{runningApps ? <StepsSegment steps={runningApps.steps} live /> : dots ? <TypingDots /> : null}</WaitingSlot> : null}
+        {slot ? <WaitingSlot>{uploading ? <QuietLine label="Uploading your files" /> : runningApps ? <StepsSegment steps={runningApps.steps} live /> : dots ? <TypingDots /> : null}</WaitingSlot> : null}
       </div>
       <DocumentOffers links={offers} />
       <DocumentNavigationStatus receipts={turn.navigation} />

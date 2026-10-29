@@ -158,7 +158,7 @@ const gmailDraftSchema = z.object({
 }).strict();
 const addresses = z.array(z.string().min(1)).max(50).optional();
 const outlookDraftSchema = z.object({
-  to: addresses, cc: addresses, bcc: addresses, subject: z.string().min(1).optional(), body: z.string(),
+  to: addresses, cc: addresses, bcc: addresses, subject: z.string().min(1).optional(), body: z.string(), bodyContentType: z.enum(["text", "html"]).optional(),
   replyToMessageId: z.string().min(1).optional(), connectionId: z.string().optional(),
   paths: z.array(z.string().min(1)).min(1).max(10),
 }).strict();

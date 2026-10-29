@@ -80,7 +80,8 @@ export const OPENWORK_CLOUD_UPLOAD_ACTIONS = [
         cc: { type: "array", items: { type: "string" }, maxItems: 50, description: "Optional Cc email addresses for a new draft." },
         bcc: { type: "array", items: { type: "string" }, maxItems: 50, description: "Optional Bcc email addresses for a new draft." },
         subject: { type: "string", description: "Subject of a new draft; omit for a reply." },
-        body: { type: "string", description: "Plain-text draft body, or the reply text when replyToMessageId is set." },
+        body: { type: "string", description: "Draft body, or the reply text when replyToMessageId is set. Plain text unless bodyContentType is html." },
+        bodyContentType: { type: "string", enum: ["text", "html"], description: "text (default) or html. Use html for links, line breaks, tables, or an HTML signature; markup sent as text shows as literal tags." },
         replyToMessageId: { type: "string", description: "Outlook message id to reply to; the reply keeps that message's recipients and subject." },
         connectionId: { type: "string", pattern: "^(microsoft-365|emc_[A-Za-z0-9]+)$", description: "Optional selected Microsoft 365 connection." },
         paths: {
@@ -381,6 +382,10 @@ async function createOutlookDraftWithAttachments(
   const cc = readAddresses(args.cc, "cc");
   const bcc = readAddresses(args.bcc, "bcc");
   const subject = readString(args, "subject");
+  const bodyContentType = args.bodyContentType;
+  if (bodyContentType !== undefined && bodyContentType !== "text" && bodyContentType !== "html") {
+    throw new ApiError(400, "invalid_payload", "bodyContentType must be text or html.");
+  }
   if (replyToMessageId && (to || cc || bcc || subject)) {
     throw new ApiError(400, "invalid_payload", "A reply keeps the original recipients and subject; pass only body and paths with replyToMessageId.");
   }
@@ -390,8 +395,8 @@ async function createOutlookDraftWithAttachments(
   const form = new FormData();
   await appendWorkspaceFiles(form, config, context, paths, dependencies.signal, OUTLOOK_ATTACHMENT_MAX_BYTES);
   form.append("payload", JSON.stringify(replyToMessageId
-    ? { replyToMessageId, comment: body, connectionId: args.connectionId }
-    : { to, cc, bcc, subject, body, connectionId: args.connectionId }));
+    ? { replyToMessageId, comment: body, bodyContentType, connectionId: args.connectionId }
+    : { to, cc, bcc, subject, body, bodyContentType, connectionId: args.connectionId }));
   try {
     return await postDirectUpload(config, "/v1/direct-uploads/microsoft-365/mail-drafts", form, dependencies, dependencies.signal);
   } catch (error) {

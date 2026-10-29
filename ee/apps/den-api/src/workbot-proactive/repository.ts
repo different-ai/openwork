@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { and, asc, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, count, countDistinct, desc, eq, gte, inArray, isNull, lt, lte, max, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AgentCheckTable as Check,
   AgentDeliveryTable as Delivery,
@@ -265,7 +265,60 @@ export async function readLastMemberCheck(memberId: DenTypeId<"member">): Promis
   return row ?? null
 }
 
+/** How long check records are kept: members read about this week's checks, and two weeks covers "Earlier this week" on any day. */
+export const MEMBER_CHECK_RETENTION_MS = 14 * 24 * 3_600_000
+
 /** Check records are for "what did it do this week": keep about two weeks. */
 export async function pruneMemberChecks(before: Date) {
   await db.delete(MemberCheck).where(lt(MemberCheck.checkedAt, before))
+}
+
+// ---- Every organization, for /admin › Features (counts only) ---------------------------------------------------
+
+/**
+ * Checks members' agents ran and messages they sent, per organization and UTC day in [fromDay, toDay], from the
+ * daily counters (every member's agent). Indexed: the organizations that have agents (agent_instance_org), then a
+ * range on the counters' primary key (organization, day) for each.
+ */
+export async function readAgentCheckTotalsByDay(fromDay: string, toDay: string) {
+  const organizations = await db.selectDistinct({ organizationId: Instance.organizationId }).from(Instance)
+  if (!organizations.length) return []
+  const rows = await db
+    .select({
+      organizationId: Check.organizationId,
+      day: Check.day,
+      checks: sql<string>`sum(${Check.checks})`,
+      sent: sql<string>`sum(${Check.sent})`,
+      lastAt: max(Check.updatedAt),
+    })
+    .from(Check)
+    .where(and(inArray(Check.organizationId, organizations.map((row) => row.organizationId)), gte(Check.day, fromDay), lte(Check.day, toDay)))
+    .groupBy(Check.organizationId, Check.day)
+  return rows.map((row) => ({ organizationId: row.organizationId, day: row.day, checks: Number(row.checks ?? 0), sent: Number(row.sent ?? 0), lastAt: row.lastAt }))
+}
+
+/**
+ * Checks that failed (why, as a reason code) per organization and UTC day in [since, until), from the members'
+ * check records: only members with My agent have them, kept MEMBER_CHECK_RETENTION_MS. Indexed: a range on
+ * agent_member_check_time. Never reads the sentence, sources or message reference.
+ */
+export async function readAgentCheckFailuresByDay(since: Date, until: Date) {
+  // Drizzle writes timestamps as UTC wall-clock time, so formatting in the session's zone gives the UTC day.
+  const day = sql<string>`date_format(${MemberCheck.checkedAt}, '%Y-%m-%d')`
+  const rows = await db
+    .select({ organizationId: MemberCheck.organizationId, day, reason: MemberCheck.reason, checks: count(), lastAt: max(MemberCheck.checkedAt) })
+    .from(MemberCheck)
+    .where(and(gte(MemberCheck.checkedAt, since), lt(MemberCheck.checkedAt, until), eq(MemberCheck.outcome, "failed")))
+    .groupBy(MemberCheck.organizationId, day, MemberCheck.reason)
+  return rows.map((row) => ({ organizationId: row.organizationId, day: String(row.day), reason: row.reason, checks: Number(row.checks), lastAt: row.lastAt }))
+}
+
+/** Members whose agent held a message at their daily limit in [since, until), per organization (check records, as above). */
+export async function readAgentDailyLimitMembers(since: Date, until: Date): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ organizationId: MemberCheck.organizationId, members: countDistinct(MemberCheck.memberId) })
+    .from(MemberCheck)
+    .where(and(gte(MemberCheck.checkedAt, since), lt(MemberCheck.checkedAt, until), eq(MemberCheck.reason, "daily_limit")))
+    .groupBy(MemberCheck.organizationId)
+  return new Map(rows.map((row) => [row.organizationId, Number(row.members)]))
 }

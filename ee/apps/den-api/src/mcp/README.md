@@ -48,11 +48,24 @@ not invalidate calls from cached search-tool lists.
 With `connectStandardTools` on, clients that search large tool lists themselves
 get every connection action, Workflow, App and remote session the member may use
 as its own tool instead of `search_capabilities` and `execute_capability`
-(`connect-tool-view.ts`). The existing supported-client allowlist recognizes
-Claude Code and OpenCode v2 (including OpenWork Desktop) by the request's
-`io.modelcontextprotocol/clientInfo`; `?tools=full` or `?tools=search` overrides
-that guess only while the flag is on. Unknown, missing and 2025-era clients keep
-the search view unless explicitly opted in. Off always restores the search view.
+(`connect-tool-view.ts`). The supported-client allowlist recognizes Claude Code
+and standalone OpenCode v2 by the request's `io.modelcontextprotocol/clientInfo`.
+OpenWork Desktop, Web and headless runs report OpenCode's name but hold a token
+Den minted for OpenWork (`/v1/mcp/token` or a run token), so they keep
+`search_capabilities` and `execute_capability`, whose search ranks better than
+the engine's own. `?tools=full` or `?tools=search` overrides the choice only
+while the flag is on. Unknown, missing and 2025-era clients keep the search
+view unless explicitly opted in. Off always restores the search view.
+
+OpenWork's own engine has its own rollout, `connectEngineTools`
+(`engine-tool-view.ts`, docs/features/connect-engine-tools). With it on, the
+engine gets the full view whatever `connectStandardTools` says, plus
+`search_capabilities` and `execute_capability` for OpenWork's own operations and
+skills, which have no tool of their own (search leaves out every source the
+full view lists, except for an explicit connect request). Its instructions list
+the member's connected services by tool-name prefix, and its tool descriptions
+carry related words from Den's synonym table, because the engine's own search
+ranks plain keywords.
 
 Tools are named like their Code Mode calls (`linear.list_issues`), at most 64
 characters, and run through the executor `execute_capability` uses. Only

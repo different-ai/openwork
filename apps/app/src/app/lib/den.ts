@@ -384,7 +384,17 @@ export type DenOrgLlmProvider = {
 };
 
 export type DenExternalMcpConnection = {
-  readiness?: { status: "ready" | "could_not_verify"; checkedAt: string; lastSuccessfulAt: string | null; reason: string | null; failure?: DenConnectionReadinessFailure | null } | null;
+  readiness?: {
+    status: "ready" | "could_not_verify";
+    checkedAt: string;
+    lastSuccessfulAt: string | null;
+    reason: string | null;
+    failure?: DenConnectionReadinessFailure | null;
+    /** Support reference for a failed sign-in; newer Den only. */
+    referenceId?: string;
+    /** Den-validated link to the service's settings page, only with provider_setup_required; newer Den only. */
+    providerSettingsUrl?: string;
+  } | null;
   setupRequired?: boolean;
   credentialHealth?: "unknown" | "ready" | "reconnect_required";
   id: string;
@@ -417,6 +427,8 @@ export type DenExternalMcpPreset = {
   authType: "oauth" | "apikey" | "none";
   /** The provider needs its own OAuth app (two codes from its settings) before anyone can sign in. */
   requiresOAuthClient?: boolean;
+  /** OpenWork's own registered app for this provider; when set, people sign in without an organization app. */
+  defaultOAuthClientId?: string;
 };
 
 export type DenMcpConnectionConnectStart = {
@@ -2143,18 +2155,26 @@ function getDenOrgGatewayProviders(payload: unknown): DenOrgGatewayProvider[] {
   });
 }
 
-const CONNECTION_READINESS_FAILURES = ["sign_in_required", "sign_in_rejected", "setup_required", "unavailable", "timed_out", "settings_changed", "tools_unreadable"] as const;
+const CONNECTION_READINESS_FAILURES = ["sign_in_required", "sign_in_rejected", "setup_required", "provider_setup_required", "unavailable", "timed_out", "settings_changed", "tools_unreadable"] as const;
 export type DenConnectionReadinessFailure = (typeof CONNECTION_READINESS_FAILURES)[number];
 
 function parseConnectionReadinessFailure(value: unknown): DenConnectionReadinessFailure | null {
   return CONNECTION_READINESS_FAILURES.find((failure) => failure === value) ?? null;
 }
 
-function parseConnectionReadiness(value: unknown): DenExternalMcpConnection["readiness"] {
+export function parseConnectionReadiness(value: unknown): DenExternalMcpConnection["readiness"] {
   if (value === undefined) return undefined;
   if (!isRecord(value) || (value.status !== "ready" && value.status !== "could_not_verify")
     || typeof value.checkedAt !== "string" || !Number.isFinite(Date.parse(value.checkedAt))) return null;
-  return { status: value.status, checkedAt: value.checkedAt, lastSuccessfulAt: typeof value.lastSuccessfulAt === "string" ? value.lastSuccessfulAt : null, reason: typeof value.reason === "string" ? value.reason : null, failure: parseConnectionReadinessFailure(value.failure) };
+  return {
+    status: value.status,
+    checkedAt: value.checkedAt,
+    lastSuccessfulAt: typeof value.lastSuccessfulAt === "string" ? value.lastSuccessfulAt : null,
+    reason: typeof value.reason === "string" ? value.reason : null,
+    failure: parseConnectionReadinessFailure(value.failure),
+    ...(typeof value.referenceId === "string" && value.referenceId.trim() ? { referenceId: value.referenceId } : {}),
+    ...(typeof value.providerSettingsUrl === "string" && value.providerSettingsUrl.trim() ? { providerSettingsUrl: value.providerSettingsUrl } : {}),
+  };
 }
 
 function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection | null {
@@ -2226,6 +2246,9 @@ function parseDenExternalMcpPreset(value: unknown): DenExternalMcpPreset | null 
     url: value.url,
     authType: value.authType,
     ...(value.requiresOAuthClient === true ? { requiresOAuthClient: true } : {}),
+    ...(typeof value.defaultOAuthClientId === "string" && value.defaultOAuthClientId.trim()
+      ? { defaultOAuthClientId: value.defaultOAuthClientId }
+      : {}),
   };
 }
 

@@ -56,6 +56,7 @@ const sessionOptions = z.object({
   reactions: z.boolean().optional(),
   tasks: z.boolean().optional(),
   documentNavigation: z.boolean().optional(),
+  sandboxGateway: z.boolean().optional(),
   timeZone: z.string().optional(),
   autoTitle: z.boolean().optional(),
   memoryOf: z.string().optional(),
@@ -108,6 +109,8 @@ export type Session = {
   tasks: boolean
   /** Whether the host opens a document beside this chat when the person explicitly asks (the `open_document` tool). */
   documentNavigation: boolean
+  /** Whether this conversation's computer runs through the runner's sandbox gateway (SANDBOX_GATEWAY) instead of its own provider. */
+  sandboxGateway: boolean
   /**
    * Who the conversation belongs to, in the caller's own terms (for example one person in one organization), and
    * the caller's id for it. A caller with several conversations per person lists them by owner (GET /v1/sessions).
@@ -137,6 +140,7 @@ export type SessionInput = {
   reactions?: boolean
   tasks?: boolean
   documentNavigation?: boolean
+  sandboxGateway?: boolean
   owner?: string
   ref?: string
   timeZone?: string
@@ -155,6 +159,7 @@ function optionsOf(input: {
   reactions?: boolean
   tasks?: boolean
   documentNavigation?: boolean
+  sandboxGateway?: boolean
   timeZone?: string | null
   autoTitle?: boolean
   memoryOf?: string | null
@@ -169,6 +174,7 @@ function optionsOf(input: {
     ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
     ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
     ...(input.documentNavigation !== undefined ? { documentNavigation: input.documentNavigation } : {}),
+    ...(input.sandboxGateway !== undefined ? { sandboxGateway: input.sandboxGateway } : {}),
     ...(input.timeZone ? { timeZone: input.timeZone } : {}),
     ...(input.autoTitle !== undefined ? { autoTitle: input.autoTitle } : {}),
     ...(input.memoryOf ? { memoryOf: input.memoryOf } : {}),
@@ -191,6 +197,7 @@ function serializeOptions(options: SessionOptions) {
     ...(options.reactions ? { reactions: true } : {}),
     ...(options.tasks ? { tasks: true } : {}),
     ...(options.documentNavigation ? { documentNavigation: true } : {}),
+    ...(options.sandboxGateway ? { sandboxGateway: true } : {}),
     ...(options.timeZone ? { timeZone: options.timeZone } : {}),
     ...(options.autoTitle ? { autoTitle: true } : {}),
     // Owner-scoped memory replaces another conversation's: never both.
@@ -199,6 +206,9 @@ function serializeOptions(options: SessionOptions) {
   }
   return Object.keys(ordered).length ? JSON.stringify(ordered) : null
 }
+
+/** The sandbox gateway (SANDBOX_GATEWAY) or the runner's own provider (HEADLESS_COMPUTER). */
+export type ComputerSide = "gateway" | "direct"
 
 export type Turn = {
   sessionId: string
@@ -357,6 +367,14 @@ export class Store {
           due_at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS computer_pauses_by_due ON computer_pauses (due_at);
+      `) },
+      // Which side made each gateway conversation's computer: the sandbox gateway or the runner's own provider.
+      { version: 5, name: "computer-sides", up: (db) => db.exec(`
+        CREATE TABLE IF NOT EXISTS computer_sides (
+          session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+          side TEXT NOT NULL,
+          placed_at INTEGER NOT NULL
+        );
       `) },
     ])
   }
@@ -563,6 +581,7 @@ export class Store {
       reactions: options.reactions ?? false,
       tasks: options.tasks ?? false,
       documentNavigation: options.documentNavigation ?? false,
+      sandboxGateway: options.sandboxGateway ?? false,
       owner: value.owner ?? null,
       ref: value.ref ?? null,
       timeZone: options.timeZone ?? null,
@@ -1065,6 +1084,23 @@ export class Store {
     this.db
       .prepare("INSERT INTO computer_pauses (session_id, due_at) SELECT id, ? FROM sessions WHERE id = ? ON CONFLICT (session_id) DO UPDATE SET due_at = excluded.due_at")
       .run(dueAt, sessionId)
+  }
+
+  /** Where the conversation's computer was made (computer-route.ts), or null before one was placed. */
+  computerSide(sessionId: string): ComputerSide | null {
+    const row = this.db.prepare("SELECT side FROM computer_sides WHERE session_id = ?").get(sessionId)
+    const parsed = z.object({ side: z.enum(["gateway", "direct"]) }).safeParse(row)
+    return parsed.success ? parsed.data.side : null
+  }
+
+  setComputerSide(sessionId: string, side: ComputerSide) {
+    this.db
+      .prepare("INSERT INTO computer_sides (session_id, side, placed_at) SELECT id, ?, ? FROM sessions WHERE id = ? ON CONFLICT (session_id) DO UPDATE SET side = excluded.side, placed_at = excluded.placed_at")
+      .run(side, this.now(), sessionId)
+  }
+
+  clearComputerSide(sessionId: string) {
+    this.db.prepare("DELETE FROM computer_sides WHERE session_id = ?").run(sessionId)
   }
 
   clearComputerPause(sessionId: string) {

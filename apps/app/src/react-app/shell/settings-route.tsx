@@ -119,7 +119,7 @@ import { CloudProvidersView } from "@/react-app/domains/settings/pages/cloud-pro
 import { GatewayUsageSettingsView } from "@/react-app/domains/cloud/gateway-usage-panel";
 import { DebugView } from "@/react-app/domains/settings/pages/debug-view";
 import { EnvironmentView } from "@/react-app/domains/settings/pages/environment-view";
-import { ExtensionsView, type ExtensionsSection } from "@/react-app/domains/settings/pages/extensions-view";
+import { ExtensionsView, sectionForFilter, type ExtensionsSection } from "@/react-app/domains/settings/pages/extensions-view";
 import { McpView } from "@/react-app/domains/settings/pages/mcp-view";
 import { RecoveryView } from "@/react-app/domains/settings/pages/recovery-view";
 import { UpdatesView } from "@/react-app/domains/settings/pages/updates-view";
@@ -2319,6 +2319,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onToggleAnalytics={() => {
               local.setPrefs((previous) => ({ ...previous, analyticsEnabled: !previous.analyticsEnabled }));
             }}
+            keepAwake={local.prefs.keepAwake}
+            onToggleKeepAwake={() => {
+              local.setPrefs((previous) => ({ ...previous, keepAwake: !previous.keepAwake }));
+            }}
             desktopNotifications={local.prefs.desktopNotifications}
             onDesktopNotificationsChange={(desktopNotifications) => {
               local.setPrefs((previous) => ({ ...previous, desktopNotifications }));
@@ -2338,8 +2342,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             extensions={extensionsStore}
             initialSection={route.extensionsSection}
             detailId={route.extensionDetailId ?? null}
-            onDetailIdChange={(id) => {
-              navigateSettingsPath(id ? `extensions/${encodeURIComponent(id)}` : "extensions");
+            onDetailIdChange={(id, filter) => {
+              const section = filter ? sectionForFilter(filter) : "all";
+              navigateSettingsPath(id ? `extensions/${encodeURIComponent(id)}` : section === "all" ? "extensions" : `extensions/${section}`);
             }}
             setSectionRoute={(section) => {
               const path = section === "all" ? "extensions" : `extensions/${section}`;
@@ -2407,8 +2412,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 removeCloudPlugin={(pluginId) => { void extensionsStore.removeCloudOrgPlugin(pluginId); }}
                 hasLocalPluginCopy={(pluginId) => Boolean(extensionsSnapshot.importedCloudPlugins[pluginId])}
                 orgMcpConnectingId={orgMcpConnections.connectingId}
-                connectOrgMcp={(connectionId) => { void orgMcpConnections.connect(connectionId); }}
-                reconnectOrgMcp={(connectionId) => { void orgMcpConnections.connect(connectionId, { forceFreshAuthorization: true }); }}
+                connectOrgMcp={(connectionId, options) => { void orgMcpConnections.connect(connectionId, options); }}
+                reconnectOrgMcp={(connectionId, options) => { void orgMcpConnections.connect(connectionId, { ...options, forceFreshAuthorization: true }); }}
                 orgMcpDisconnectingId={orgMcpConnections.disconnectingId}
                 disconnectOrgMcp={(connectionId) => { void orgMcpConnections.disconnect(connectionId); }}
                 readSkill={readLibrarySkill}

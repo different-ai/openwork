@@ -859,7 +859,7 @@ export class Runner {
     // Files and the computer only for conversations that asked for them (see Session.files / .computer).
     const files = session?.files && kind !== "report" ? this.options.files : undefined
     const readOnly = credentials.readOnly === true || kind === "report"
-    const computer = session?.computer && !readOnly ? this.options.computer : undefined
+    const computer = session?.computer && !readOnly && this.options.computer?.available?.(sessionId) !== false ? this.options.computer : undefined
     // Reactions and task tools are for the person's own messages, not for tasks or their reports.
     const reactions = session?.reactions === true && kind === "message" && !readOnly
     const taskTools = session?.tasks === true && kind === "message" && !readOnly

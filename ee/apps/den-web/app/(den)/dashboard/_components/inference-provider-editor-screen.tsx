@@ -31,6 +31,7 @@ import { LiteLlmProviderScreen } from "./litellm-provider-screen";
 import { formatProviderTimestamp, getProviderDocUrl, getProviderEnvNames, getProviderIconSlug, getProviderNpmPackage, requestLlmProviderCatalogDetail, type DenModelsDevProviderDetail } from "./llm-provider-data";
 import { normalizeAzureResourceNameInput } from "./llm-provider-guided";
 import { pickTestModel, sortModelsNewestFirst } from "./gateway-provider-models";
+import { ProviderRemovalUsageLimits, useProviderRemovalUsageLimits } from "./provider-removal-usage-limits";
 import type { ProviderAccessValue } from "./llm-provider-pickers";
 
 const CARD = "rounded-[12px] border border-gray-100 bg-white p-4";
@@ -93,6 +94,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const [providerTest, setProviderTest] = useState<{ state: "running" } | { state: "done"; result: GatewayProviderTestResult } | null>(null);
   const testedConfig = useRef<string | null>(null);
   const cancelDeleteRef = useRef<HTMLButtonElement | null>(null);
+  const removalLimits = useProviderRemovalUsageLimits({ orgId, providerId: provider?.id ?? "", open: confirmDelete && Boolean(provider), providers: inferenceProviders, featureOn: orgFeatureEnabled(orgContext, "gatewayProviderRemovalLimits") });
   const initializedProviderId = useRef<string | null>(null);
   const initializedNewProviderId = useRef<string | null>(null);
 
@@ -325,12 +327,13 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     const auditContext = createAuditOperationContext();
     try {
       await runReauthableAction("delete-inference-provider", async () => {
-        await deleteInferenceProvider(provider.id, auditContext);
+        await deleteInferenceProvider(provider.id, auditContext, removalLimits.requestChoice());
         setConfirmDelete(false);
         router.push(getAiGatewayProvidersRoute(orgSlug));
         router.refresh();
       });
     } catch (cause) {
+      if (removalLimits.handleRemoveError(cause)) return;
       setSaveError(cause instanceof Error ? cause.message : "Could not remove the provider.");
     } finally { setSaving(false); }
   }
@@ -570,13 +573,14 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
 
       <DenStickyActionBar summary={<span>{allowAllModels ? `All ${displayName} models` : `${modelIds.length} models`} · {access.allMembers ? "everyone" : `${access.teamIds.length + access.memberIds.length} teams or people`}{provider?.updatedAt ? ` · saved ${formatProviderTimestamp(provider.updatedAt)}` : ""}</span>}>
         {provider ? (
-          <AlertDialog.Root open={confirmDelete && !reauthDialogOpen} onOpenChange={(open) => { if (saving) return; setConfirmDelete(open); if (open) setSaveError(null); }}>
+          <AlertDialog.Root open={confirmDelete && !reauthDialogOpen} onOpenChange={(open) => { if (saving) return; setConfirmDelete(open); if (open) setSaveError(null); else removalLimits.reset(); }}>
             <AlertDialog.Trigger disabled={saving} className={buttonVariants({ variant: "secondary" })} data-testid="gateway-provider-remove">Remove</AlertDialog.Trigger>
             <AlertDialog.Portal>
               <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-gray-950/45" />
               <AlertDialog.Popup initialFocus={cancelDeleteRef} aria-busy={saving} className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-gray-200 bg-white p-5 outline-none">
                 <AlertDialog.Title className="text-[15px] font-medium text-gray-950">Remove {provider.name}?</AlertDialog.Title>
                 <AlertDialog.Description className="mt-2 text-[13px] leading-5 text-gray-600">People lose these models the next time they open OpenWork. This cannot be undone.</AlertDialog.Description>
+                <ProviderRemovalUsageLimits providerName={provider.name} usageLimits={removalLimits.usageLimits} targets={removalLimits.targets} choice={removalLimits.choice} onChange={removalLimits.setChoice} disabled={saving} />
                 {saveError ? <DenNotice className="mt-4" tone="error" message={saveError} /> : null}
                 <div className="mt-5 flex justify-end gap-2">
                   <AlertDialog.Close ref={cancelDeleteRef} disabled={saving} className={buttonVariants({ variant: "secondary" })}>Cancel</AlertDialog.Close>

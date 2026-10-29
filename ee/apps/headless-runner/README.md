@@ -286,7 +286,7 @@ Den and Workbot at the new URL. Every celld deploy proves this with its smoke co
 
 - **Same token, model and MCP settings** on the Node runner.
 - **Same bucket** (`HEADLESS_FILES=s3`): kept files' bytes stay there; the export carries only their keys.
-- **Same computer settings** (`HEADLESS_COMPUTER`, its key, snapshot, `HEADLESS_COMPUTER_SCOPE`): a conversation's computer
+- **Same computer settings** (`HEADLESS_COMPUTER`, its key, snapshot, `HEADLESS_COMPUTER_SCOPE`, and any `SANDBOX_GATEWAY_*`): a conversation's computer
   is found by a hash of its id, so it keeps its `/workspace`.
 
 Pause Slack, Automations and Workbot first (export refuses a conversation while a turn runs). Den knows every
@@ -332,9 +332,12 @@ Nothing on celld changes, so pointing the URLs back is the rollback.
 | `HEADLESS_S3_REGION` | `auto` | `auto` for R2; the bucket's region for AWS |
 | `HEADLESS_S3_BUCKET`, `HEADLESS_S3_ACCESS_KEY_ID`, `HEADLESS_S3_SECRET_ACCESS_KEY` | | For `s3` |
 | `HEADLESS_S3_FORCE_PATH_STYLE` | `false` | `true` for MinIO and most self-hosted stores |
-| `HEADLESS_COMPUTER` | `off` | `freestyle` makes a computer available to sessions created with `computer: true` |
+| `HEADLESS_COMPUTER` | `off` | `freestyle` or `daytona` makes a computer available to sessions created with `computer: true` |
 | `FREESTYLE_API_KEY` | | For `freestyle`. Use a Freestyle account for this runner alone; the key never enters a VM |
 | `HEADLESS_COMPUTER_SNAPSHOT` | built from the package | Snapshot id or slug new computers boot from |
+| `SANDBOX_GATEWAY` | `off` | `differently` adds a [sandbox gateway](#sandbox-gateway) for sessions created with `sandboxGateway: true`; every other session keeps `HEADLESS_COMPUTER` |
+| `SANDBOX_GATEWAY_URL`, `SANDBOX_GATEWAY_API_KEY` | | For the gateway: its HTTPS API and a project-scoped key. The gateway holds the provider credentials |
+| `SANDBOX_GATEWAY_TEMPLATE` | | For the gateway: its template for the computer image, which it maps to each provider's own image |
 | `HEADLESS_COMPUTER_PAUSE_SECONDS` | `300` | Pause a computer this long after its last turn, unless a `background` job runs |
 | `HEADLESS_COMPUTER_KEEP_DAYS` | `14` | Freestyle deletes a computer unused this long |
 | `HEADLESS_SENTRY_DSN` | unset | Optional Sentry error reports (both hosts, posted over `fetch`): failed turns by error code, startup recovery errors and 500s. Codes, ids and counts only, never content or credentials. Unset sends nothing |
@@ -416,9 +419,61 @@ from `HEADLESS_COMPUTER_KEEP_DAYS` so paused disks can expire too. Desktop mode
 rejects container snapshots. See [Workbot's Computer tab](../../../docs/computer-use/workbot.md)
 for image preparation, shared applications and the live microVM lifecycle check.
 
+### Sandbox gateway
+
+A sandbox gateway sits in front of several providers and is configured apart
+from `HEADLESS_COMPUTER`. Today that is
+[Differently](https://github.com/different-ai/differently), a self-hostable
+control plane in front of OpenSandbox, Daytona and Freestyle. Set
+`SANDBOX_GATEWAY=differently`, `SANDBOX_GATEWAY_URL`, `SANDBOX_GATEWAY_API_KEY`
+(a project-scoped key) and `SANDBOX_GATEWAY_TEMPLATE`. The gateway holds the
+provider keys and decides by its own policies which provider runs each computer.
+
+Only sessions created or updated with `sandboxGateway: true` use it. Workbot
+sends that for organizations with the `sandboxGateway` feature flag on, so one
+organization can try the gateway while the rest stay on the runner's own
+provider. Sessions without the setting never touch the gateway, even when the
+runner's own provider is down.
+
+A session's computer is placed when one is first needed, and the runner records
+which side made it (the `computer_sides` table):
+
+- **Gateway healthy:** the computer is started through the gateway and stays
+  there. Health is infrastructure only: Differently answers
+  `GET /v1/capabilities` and an enabled pool is healthy. The answer is kept for
+  30 seconds, and each change is logged once.
+- **Gateway unhealthy, or it can't start the computer** (unreachable, a timeout,
+  a 5xx, or a sandbox that failed to start): the computer is made on
+  `HEADLESS_COMPUTER` instead. A failed start marks the gateway unhealthy, so
+  later sessions skip it until the next check.
+- **The gateway refuses** (a quota, no eligible pool, a permission or an
+  unsupported request): the call fails. That is the gateway's policy, and the
+  runner never routes around it.
+- **A computer stays where it was made.** One on the gateway errors while the
+  gateway is down. One made on the runner's own provider is kept until it is
+  gone; the session's next computer goes through the gateway again.
+- **The flag is on but the runner has no gateway:** the session keeps
+  `HEADLESS_COMPUTER`, and the runner logs it once per session.
+- **The flag is switched:** the session's next computer comes from the other
+  side. The one it had pauses and expires where it was, and deleting the session
+  removes both.
+
+Gateway computers share the runner's scope, pause, keep-days, persistence and
+desktop settings, and ask for Daytona's size (2 CPUs, 4 GiB, 8 GiB disk). They
+are paused when idle only where every enabled gateway pool can pause or stop
+(pools that can only stop are stopped, keeping the disk), which the adapter
+reads from Differently as it creates them. Elsewhere (for
+example OpenSandbox on Kubernetes without a snapshot registry) an idle computer
+runs until Differently's TTL removes it. With only a gateway configured,
+sessions without the setting get no computer. The desktop viewer needs a gateway pool that publishes port
+URLs (Freestyle or Daytona). Differently's
+[OpenWork guide](https://github.com/different-ai/differently/blob/pre-release/docs/guides/openwork.md)
+covers the server side.
+
 Opt-in verification, creating and cleaning one real computer:
 
 ```sh
 HEADLESS_COMPUTER=daytona DAYTONA_API_KEY=… HEADLESS_COMPUTER_SNAPSHOT=… pnpm --filter @openwork-ee/headless-computer proof:live
 HEADLESS_COMPUTER=freestyle FREESTYLE_API_KEY=… pnpm --filter @openwork-ee/headless-computer proof:live
+SANDBOX_GATEWAY=differently SANDBOX_GATEWAY_URL=… SANDBOX_GATEWAY_API_KEY=… SANDBOX_GATEWAY_TEMPLATE=… pnpm --filter @openwork-ee/headless-computer proof:live
 ```

@@ -168,7 +168,7 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
                           orgSlug={orgSlug}
                           teams={orgContext.teams}
                           members={orgContext.members}
-
+                          showRemovedProviders={orgFeatureEnabled(orgContext, "gatewayProviderRemovalLimits")}
                         />
                       </>
                     ) : null}

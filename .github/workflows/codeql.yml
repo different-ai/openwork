@@ -51,14 +51,29 @@ jobs:
               core.setOutput("swift", "true");
               return;
             }
-            // Keep in sync with swiftPaths in scripts/ci/check-codeql-results.mjs.
-            const swiftPaths = ["packages/computer-use/native/", ".github/workflows/codeql.yml"];
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
-              per_page: 100,
-            });
+            // The direct SwiftPM build reads this package. Analyzer configuration
+            // changes also need a real scan, even when Swift sources are unchanged.
+            const swiftPaths = ["packages/computer-use/native/", ".github/codeql/", ".github/workflows/codeql.yml"];
+            let files;
+            try {
+              files = await github.paginate(github.rest.pulls.listFiles, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.pull_request.number,
+                per_page: 100,
+              });
+            } catch (error) {
+              core.warning(`Could not compare Swift inputs; running the real scan: ${error.message}`);
+              core.setOutput("swift", "true");
+              return;
+            }
+            // GitHub caps this endpoint at 3,000 files. An incomplete/unknown
+            // comparison must never select an empty result over a real scan.
+            if (!Array.isArray(files) || files.length >= 3000) {
+              core.warning("PR file list may be incomplete; running the real Swift scan.");
+              core.setOutput("swift", "true");
+              return;
+            }
             const changed = files.some((file) => [file.filename, file.previous_filename]
               .some((name) => name && swiftPaths.some((path) => name.startsWith(path))));
             core.info(changed ? "Swift sources changed; Swift will be analyzed." : "No Swift changes; skipping Swift analysis.");
@@ -100,7 +115,7 @@ jobs:
       # the code_scanning merge rule is satisfied without the macOS build.
       # Swift is analyzed for real on dev pushes and the weekly schedule.
       - name: Write empty Swift result
-        if: env.RUN_ANALYSIS != 'true'
+        if: github.event_name == 'pull_request' && env.RUN_ANALYSIS != 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/codeql-swift-skipped"
           cat > "$RUNNER_TEMP/codeql-swift-skipped/swift.sarif" <<'SARIF'
@@ -117,7 +132,7 @@ jobs:
           SARIF
 
       - name: Upload empty Swift result
-        if: env.RUN_ANALYSIS != 'true'
+        if: github.event_name == 'pull_request' && env.RUN_ANALYSIS != 'true'
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: ${{ runner.temp }}/codeql-swift-skipped/swift.sarif

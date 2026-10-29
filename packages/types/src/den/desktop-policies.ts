@@ -90,11 +90,13 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowZenModel",
-    teamLabel: "Use OpenCode models",
+    // Historical key name. OpenCode Zen is retired in every OpenWork app
+    // regardless of this value; it now only controls the free Auto model.
+    teamLabel: "Use the free starter model",
     group: "ai",
-    name: "Enable OpenCode Zen Models",
-    description: "Allow users to use the built in models provided by OpenCode.",
-    userNotice: "Your administrator has disabled access to OpenCode Models.",
+    name: "Free starter model (Auto)",
+    description: "Allow users to use OpenWork's free, rate-limited Auto model. OpenCode Zen models are retired and never offered.",
+    userNotice: "Your administrator has turned off the free starter model.",
     defaultValue: true,
     restrictedValue: false,
   },

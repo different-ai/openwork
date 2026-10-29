@@ -453,15 +453,17 @@ export type MemberCalendarRead =
 /**
  * Reads a member's primary Google Calendar for their agent's event source (calendar changes that wake it early),
  * outside any request: one read-only `GET`, expanded recurring events and cancelled ones (`showDeleted`), so a
- * cancellation can be told from a move. Uses the member's default Google Workspace connection, like the calendar list route.
+ * cancellation can be told from a move. With `connectionId` (members' agents) it reads through exactly that Google
+ * Workspace connection, never one of the member's other Google accounts; without it, the member's default connection.
  */
 export async function readMemberGoogleCalendar(input: {
   organizationId: DenTypeId<"organization">
   orgMembershipId: DenTypeId<"member">
+  connectionId?: string | null
   timeMin: string
   timeMax: string
 }): Promise<MemberCalendarRead> {
-  const token = await googleWorkspaceToken({ organizationId: input.organizationId, orgMembershipId: input.orgMembershipId, connectionId: null })
+  const token = await googleWorkspaceToken({ organizationId: input.organizationId, orgMembershipId: input.orgMembershipId, connectionId: input.connectionId ?? null })
   if (token.kind !== "ok") return { kind: token.kind }
   if (missingScope(token.account, [CALENDAR_READ_SCOPE, CALENDAR_EVENTS_SCOPE])) return { kind: "missing_scope" }
   const url = new URL(`${calendarApiBase()}/calendar/v3/calendars/primary/events`)

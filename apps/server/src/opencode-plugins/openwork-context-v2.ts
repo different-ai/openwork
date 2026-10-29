@@ -128,10 +128,10 @@ export default {
       });
       addProviderSafeTool(editor, {
         name: "openwork_outlook_draft",
-        description: "Create an Outlook draft, or a reply draft to one Outlook message, with workspace files attached through OpenWork Cloud, outside model context. Use this when the user asks to email or reply with local files from Outlook. A new draft needs to and subject; a reply takes replyToMessageId and body only, keeping the message's recipients and subject. Up to ten files, each under 3 MB and 4 MiB in all; paths are workspace-relative or absolute under an authorized workspace root. connectionId (microsoft-365 or emc_...) selects a Microsoft account. The person approves each draft in the chat first, and it is never sent. Never retry an unconfirmed draft automatically.",
+        description: "Create an Outlook draft, or a reply draft to one Outlook message, with workspace files attached through OpenWork Cloud, outside model context. Use this when the user asks to email or reply with local files from Outlook. A new draft needs to and subject; a reply takes replyToMessageId and body only, keeping the message's recipients and subject. body is plain text unless bodyContentType is html; use html for links, line breaks, tables or a signature. Up to ten files, each under 3 MB and 4 MiB in all; paths are workspace-relative or absolute under an authorized workspace root. connectionId (microsoft-365 or emc_...) selects a Microsoft account. The person approves each draft in the chat first, and it is never sent. Never retry an unconfirmed draft automatically.",
         input: { type: "object", properties: {
           to: { type: "array", items: { type: "string" } }, cc: { type: "array", items: { type: "string" } }, bcc: { type: "array", items: { type: "string" } },
-          subject: { type: "string" }, body: { type: "string" }, replyToMessageId: { type: "string" },
+          subject: { type: "string" }, body: { type: "string" }, bodyContentType: { type: "string", enum: ["text", "html"] }, replyToMessageId: { type: "string" },
           connectionId: { type: "string", pattern: "^(microsoft-365|emc_[A-Za-z0-9]+)$" },
           paths: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 10 },
         }, required: ["body", "paths"], additionalProperties: false },
