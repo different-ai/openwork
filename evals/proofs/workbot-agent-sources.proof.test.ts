@@ -61,11 +61,11 @@ test("an admin chooses what agents read; a member turns sources on and steers th
     await owner.screenshot();
   });
 
-  await step("a member's Uses: a switch per source, the wiki locked with the reason, Google waiting for them to connect", async () => {
+  await step("a member's What it reads: a switch per source, the wiki locked with the reason, Google waiting for them to connect", async () => {
     await member.reload();
     await member.see({ testId: "my-agent-uses" }, { timeoutMs: 90_000 });
-    await member.see({ text: "Not allowed by your admin in Manage › Workbot." });
-    await member.see({ text: "On for everyone. Set by your admin in Manage › Workbot." });
+    await member.see({ text: "Not allowed" });
+    await member.see({ text: "Locked sources are set by your admin in Manage › Workbot." });
     await member.see({ role: "link", label: "Connect Google Calendar" });
     await member.click({ role: "switch", label: "Linear" });
     const linear = await memberProbe.eventually(() => sourceOf(tracker.id), { within: 30_000, label: "Linear is on", until: (value) => value?.on === true });
@@ -98,7 +98,7 @@ test("an admin chooses what agents read; a member turns sources on and steers th
     evidence.recordAssertionEvidence("Refused on the server, with who can change it", `putMeAgent Notion on → refused=${!refused.ok} ${message.slice(0, 160)}; Notion on=${notion?.on}`, !refused.ok && notion?.on === false);
     expect(refused.ok).toBe(false);
     expect(message).toContain("isn't allowed for agents in your organization. An admin can change it in Manage › Workbot.");
-    await member.see({ text: "Not allowed by your admin in Manage › Workbot." });
+    await member.see({ text: "Locked sources are set by your admin in Manage › Workbot." });
     await member.screenshot();
   });
 });

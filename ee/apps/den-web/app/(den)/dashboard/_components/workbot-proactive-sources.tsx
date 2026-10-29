@@ -125,7 +125,7 @@ function toolCount(count: number) {
  * be, and an approval stops working when the provider changes the tool, until it is approved again.
  */
 export function toolState(tool: WorkbotSourceTool): string {
-  if (tool.blocked) return tool.readOnlyHint === true ? "Can change things" : "Not marked read-only by the provider";
+  if (tool.blocked) return tool.readOnlyHint === undefined ? "Not marked read-only by the provider" : "Can change things";
   if (tool.changed) return "Changed by the provider. Approve again";
   return "Marked read-only by the provider";
 }
