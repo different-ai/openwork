@@ -4,6 +4,7 @@ import {
   EXTERNAL_MCP_PRESETS,
   EXTERNAL_MCP_PRESETS_EXPANDED,
   ALL_EXTERNAL_MCP_PRESETS,
+  externalMcpPresetForResponse,
   externalMcpPresetsForCatalog,
 } from "../src/capability-sources/external-mcp-presets.js"
 import { matchExternalMcpPresetForUrl } from "../src/capability-sources/external-mcp-auth-policy.js"
@@ -79,4 +80,17 @@ test("the connectors catalog states each new server's setup: Tavily needs an API
   for (const id of EXPANDED_IDS.filter((presetId) => presetId !== "tavily")) {
     assert.equal(setup.get(id), "oauth", id)
   }
+})
+test("presets that need an OAuth app carry the redirect URL to register; others never do", () => {
+  const callback = "https://api.den.example/v1/mcp-connections/oauth/callback"
+  const slack = EXTERNAL_MCP_PRESETS.find((preset) => preset.presetId === "slack")
+  const notion = EXTERNAL_MCP_PRESETS.find((preset) => preset.presetId === "notion")
+  assert.ok(slack && notion)
+  assert.equal(externalMcpPresetForResponse(slack, { oauthCallbackUrl: callback }).oauthCallbackUrl, callback)
+  assert.deepEqual(externalMcpPresetForResponse(slack, { oauthCallbackUrl: callback }).defaultOAuthScopes, slack.defaultOAuthScopes)
+  assert.equal(externalMcpPresetForResponse(notion, { oauthCallbackUrl: callback }).oauthCallbackUrl, undefined)
+  // A deployment without a public API URL omits it rather than inventing one.
+  assert.equal(externalMcpPresetForResponse(slack, { oauthCallbackUrl: null }).oauthCallbackUrl, undefined)
+  assert.equal(externalMcpPresetForResponse(slack, { registrationStatus: "unknown" }).registrationStatus, undefined)
+  assert.equal(externalMcpPresetForResponse(slack, { registrationStatus: "requires_client" }).registrationStatus, "requires_client")
 })

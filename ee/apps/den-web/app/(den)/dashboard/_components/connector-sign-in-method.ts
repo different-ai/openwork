@@ -46,11 +46,21 @@ export function oauthClientSecretRequired(discovery: DiscoveryAuthentication | n
   return advertised.every((server) => !(server.tokenEndpointAuthMethodsSupported ?? []).includes("none"));
 }
 
-/** Issuer and scopes to save with an OAuth connection, matching the full editor's defaults. */
-export function oauthRequestFields(discovery: DiscoveryAuthentication | null): { authorizationServerIssuer?: string; requestedScopes: string[] } {
+/**
+ * Issuer and scopes to save with an OAuth connection, matching the full editor's defaults.
+ * A curated preset's scopes win over everything the server advertises: an admin's
+ * provider app (Slack's, for one) is set up with exactly those, and a scope the app
+ * doesn't allow fails sign-in.
+ */
+export function oauthRequestFields(
+  discovery: DiscoveryAuthentication | null,
+  preset?: Pick<ExternalMcpPreset, "defaultOAuthScopes"> | null,
+): { authorizationServerIssuer?: string; requestedScopes: string[] } {
   const authentication = discovery?.authentication;
   const servers = authentication?.authorizationServers ?? [];
-  const requestedScopes = [...new Set([...(authentication?.requiredScopes ?? []), ...(authentication?.recommendedScopes ?? [])])];
+  const requestedScopes = preset?.defaultOAuthScopes?.length
+    ? [...new Set(preset.defaultOAuthScopes)]
+    : [...new Set([...(authentication?.requiredScopes ?? []), ...(authentication?.recommendedScopes ?? [])])];
   return {
     ...(servers.length === 1 && servers[0] ? { authorizationServerIssuer: servers[0].issuer } : {}),
     requestedScopes,

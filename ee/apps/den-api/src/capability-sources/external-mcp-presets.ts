@@ -22,6 +22,8 @@ export type ExternalMcpPreset = {
   defaultOAuthScopes?: readonly string[]
   /** What OpenWork last learned about signing in to this provider; absent until it has been checked. */
   registrationStatus?: McpRegistrationStatus
+  /** Response only: the redirect URL an admin registers in the provider's OAuth app. */
+  oauthCallbackUrl?: string
 }
 
 export const externalMcpPresetResponseSchema = z.object({
@@ -36,6 +38,7 @@ export const externalMcpPresetResponseSchema = z.object({
   authorizationServerIssuer: z.string().url().optional(),
   defaultOAuthScopes: z.array(z.string()).optional(),
   registrationStatus: mcpRegistrationStatusSchema.optional(),
+  oauthCallbackUrl: z.string().url().optional().describe("For presets that need a pre-registered OAuth app: the exact redirect URL to register in it. Absent when this deployment has no public API URL."),
 }).meta({ ref: "ExternalMcpPresetResponse" })
 
 export const externalMcpPresetListResponseSchema = z.object({
@@ -281,6 +284,22 @@ export const ALL_EXTERNAL_MCP_PRESETS: readonly ExternalMcpPreset[] = [
 ]
 
 /** Presets shown in the connector catalog and the add-connection preset list. */
+/**
+ * One preset as the catalog returns it. Presets that need a pre-registered
+ * OAuth app carry the redirect URL the admin registers in it, so setup can
+ * show it (and prefill a provider app manifest) before any connection exists.
+ */
+export function externalMcpPresetForResponse(
+  preset: ExternalMcpPreset,
+  extra: { registrationStatus?: McpRegistrationStatus; oauthCallbackUrl?: string | null },
+): ExternalMcpPreset {
+  return {
+    ...preset,
+    ...(extra.registrationStatus && extra.registrationStatus !== "unknown" ? { registrationStatus: extra.registrationStatus } : {}),
+    ...(preset.requiresOAuthClient && extra.oauthCallbackUrl ? { oauthCallbackUrl: extra.oauthCallbackUrl } : {}),
+  }
+}
+
 export function externalMcpPresetsForCatalog(options: { expanded?: boolean } = {}): ExternalMcpPreset[] {
   const { expanded = false } = options
   return expanded

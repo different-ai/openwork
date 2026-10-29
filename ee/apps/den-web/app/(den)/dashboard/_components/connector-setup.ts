@@ -36,7 +36,9 @@ export type ConnectorTarget = {
   url: string;
   description: string;
   /** The catalog preset's own sign-in requirement, when the target came from the catalog. */
-  preset?: Pick<ExternalMcpPreset, "authType" | "requiresOAuthClient" | "defaultOAuthClientId"> | null;
+  preset?: Pick<ExternalMcpPreset, "authType" | "requiresOAuthClient" | "defaultOAuthClientId">
+    & Partial<Pick<ExternalMcpPreset, "presetId" | "defaultOAuthScopes" | "oauthCallbackUrl">>
+    | null;
 };
 
 const POLL_INTERVAL_MS = 1500;
@@ -165,7 +167,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       ...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
       ...apiKeyAuthSchemeInput(auth.authType, auth.apiKeyAuthScheme ?? DEFAULT_API_KEY_AUTH_SCHEME),
       ...(auth.oauthClient ? { oauthClient: auth.oauthClient } : {}),
-      ...(auth.authType === "oauth" ? oauthRequestFields(discovery) : {}),
+      ...(auth.authType === "oauth" ? oauthRequestFields(discovery, target.preset) : {}),
       ...(auth.manualOAuthEndpoints ? { manualOAuthEndpoints: auth.manualOAuthEndpoints } : {}),
       ...(requestHeaders.length > 0 ? { requestHeaders } : {}),
       access: { orgWide: false, memberIds: [orgContext.currentMember.id], teamIds: [] },
@@ -457,7 +459,9 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     savePerMemberApiKeys,
     saveOAuthApp,
     canSignIn,
+    signedIn,
     signingIn: signIn.kind === "waiting",
+    signInError: signIn.kind === "failed" ? signIn.message : null,
     /** Sign-in failed for a server people sign in to; an admin can try their own OAuth app instead. */
     signInFailed: signIn.kind === "failed" && (method === "sign_in" || connection?.authType === "oauth"),
     startSignIn,
