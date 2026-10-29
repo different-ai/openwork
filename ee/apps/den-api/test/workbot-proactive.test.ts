@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { describe, test } from "node:test"
+import { describe, mock, test } from "node:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { agentLedgerKey, AGENT_WAKE_MARKER, parseAgentReply, parseAgentState } from "@openwork/automations/proactive"
 import {
@@ -36,7 +36,18 @@ const { createHeadlessRunnerClient } = await import("../src/headless-runner/clie
 const { renderAgentTemplate } = await import("../src/workbot-proactive/template.js")
 const policy = await import("../src/workbot-proactive/policy.js")
 const agentRead = await import("../src/mcp/agent-read-sources.js")
-const { resolveMemberSources } = await import("../src/workbot-proactive/sources.js")
+const { resolveMemberSources, groupSourceConnections, checkSourcesChange, sourceToolOptions } = await import("../src/workbot-proactive/sources.js")
+// The repository's modules load Better Auth, which seeds its resource registry on import: load it first with a
+// synthetic registry row (as test/feature-outcomes.test.ts does), so no database is contacted.
+const { db } = await import("../src/db.js")
+const bootstrapSelect = mock.method(db, "select", () => ({
+  from() { return { async where() { return [{ id: "unit_oauth_resource", identifier: "http://unit.test/mcp/agent", policyVersion: 1 }] } } },
+}))
+const { auth } = await import("../src/auth.js")
+await auth.$context
+bootstrapSelect.mock.restore()
+const { listOrganizationSourceConnections } = await import("../src/workbot-proactive/sources-repository.js")
+const { withApprovedTools } = await import("../src/mcp/agent-approved-tools.js")
 const preferences = await import("../src/workbot-proactive/preferences.js")
 const { checkHeadline, describeAgentCheck, memberAgentCheck } = await import("../src/workbot-proactive/checks.js")
 
@@ -905,5 +916,114 @@ describe("a member's sources, in chat or on the page", () => {
     assert.deepEqual(undone.lines, ["Meeting notes: back to your organization's default"])
     const changes = preferences.memberAgentChanges(saved.stored, admin, new Map([[NOTES.id, "Meeting notes"]]))
     assert.deepEqual(changes.map((entry) => [entry.field, entry.sourceId, entry.summary]), [["source", NOTES.id, "Meeting notes on"]])
+  })
+})
+
+describe("any connection as a source", () => {
+  /** An MCP connection whose service has no reviewed read tools: read only through tools the admin approved. */
+  const CRM: MemberConnection = { id: "emc_01k8z5wq0s0000000000000009", name: "Acme CRM", url: "https://mcp.crm.example/mcp", native: null, state: "connected" }
+  const crmTools = sourceToolOptions([
+    { name: "search_contacts", description: "Find contacts", annotations: { readOnlyHint: true } },
+    { name: "list_deals" },
+    { name: "delete_contact", annotations: { readOnlyHint: true } },
+    { name: "export_report" },
+  ], (name) => name === "export_report")
+  const org = [GOOGLE, { ...GOOGLE, id: "gws_personal", name: "Google Workspace - Personal" }, SLACK, NOTES, CRM]
+  const tokenOf = (scopes: readonly string[]) => {
+    const allowlist = agentRead.agentReadAllowlist(new Set(["mcp:read", ...scopes]))
+    assert.ok(allowlist)
+    return allowlist
+  }
+
+  test("a Google Workspace set up before connections had rows is listed for the admin next to the newer one", async () => {
+    const listed = await listOrganizationSourceConnections(organizationId, {
+      rows: async () => [{ id: "gws_personal", name: "Google Workspace - Personal", url: "https://workspace.google.com", kind: "native_provider", nativeProviderKey: "google-workspace" }],
+      hasLegacyClient: async (_org, providerId) => providerId === "google-workspace",
+    })
+    assert.deepEqual(listed.map((connection) => [connection.id, connection.native]), [["google-workspace", "google-workspace"], ["gws_personal", "google-workspace"]])
+    const groups = groupSourceConnections(listed)
+    assert.deepEqual(groups.calendar.map((connection) => connection.id), ["google-workspace", "gws_personal"], "both read the calendar until the admin picks")
+    assert.deepEqual(groups.all.map((option) => [option.id, option.native, option.reviewed, option.slots.join(",")]), [
+      ["google-workspace", true, true, "calendar,email"],
+      ["gws_personal", true, true, "calendar,email"],
+    ])
+    const crm = groupSourceConnections([CRM]).all[0]
+    assert.deepEqual([crm?.reviewed, crm?.slots], [false, ["calendar", "email", "chat", "other"]], "an MCP can go anywhere, once its tools are approved")
+    const none = await listOrganizationSourceConnections(organizationId, { rows: async () => [], hasLegacyClient: async () => false })
+    assert.deepEqual(none, [])
+  })
+
+  test("an MCP added to Email is read, and only its approved tools; an unapproved or write-named tool is refused", async () => {
+    const sources = { ...settingsOn.sources, coreConnections: { email: [GOOGLE.id, CRM.id], calendar: [GOOGLE.id, CRM.id] }, readTools: { [CRM.id]: ["search_contacts", "delete_contact"] } }
+    const h = harness({ library: true, connections: [GOOGLE, SLACK, CRM], settings: { sources } })
+    await h.run()
+    const scopes = h.state.turns[0]?.scopes ?? []
+    assert.ok(scopes.includes(`openwork:agent-connection:${CRM.id}`) && scopes.includes(`openwork:agent-core:email:${CRM.id}`), "the CRM is on the turn's token")
+    assert.match(h.state.turns[0]?.prompt ?? "", /Acme CRM/)
+    assert.deepEqual(h.state.calendarVia, [GOOGLE.id], "a calendar from an MCP is read on checks; only Google's wakes the agent early")
+
+    const agent = withApprovedTools(tokenOf(scopes), sources)
+    const crm = { id: CRM.id, url: CRM.url }
+    assert.equal(agentRead.agentMayUseExternalTool(agent, crm, { name: "search_contacts" }), true, "approved")
+    assert.equal(agentRead.agentMayUseExternalTool(agent, crm, { name: "list_deals" }), false, "not approved")
+    assert.equal(agentRead.agentMayUseExternalTool(agent, crm, { name: "delete_contact" }), false, "approved, but its name says it writes")
+    assert.equal(agentRead.agentMayUseExternalTool(tokenOf(scopes), crm, { name: "search_contacts" }), false, "the token alone approves nothing")
+    assert.equal(agentRead.agentMayUseExternalTool(withApprovedTools(tokenOf(scopes), { readTools: { [SLACK.id]: ["slack_send_message", "slack_list_everything"] } }), { id: SLACK.id, url: SLACK.url }, { name: "slack_list_everything" }), false, "a reviewed service keeps its own list")
+
+    const unapproved = harness({ library: true, connections: [GOOGLE, SLACK, CRM], settings: { sources: { ...sources, readTools: undefined } } })
+    await unapproved.run()
+    assert.ok(!(unapproved.state.turns[0]?.scopes ?? []).some((scope) => scope.includes(CRM.id)), "without an approved tool it isn't read")
+  })
+
+  test("Other context: any MCP the admin added, with its approved tools; the reviewed defaults no longer apply once picked", async () => {
+    const sources = { ...settingsOn.sources, otherConnections: [CRM.id], connections: { [CRM.id]: "everyone" as const, [NOTES.id]: "everyone" as const }, readTools: { [CRM.id]: ["list_deals"] } }
+    const listed = resolveMemberSources({ connections: org, policy: sources, choices: {}, lastLook: {} })
+    assert.deepEqual(listed.map((source) => source.id), ["calendar", "email", "chat", CRM.id])
+    const h = harness({ library: true, connections: [GOOGLE, SLACK, NOTES, CRM], settings: { sources } })
+    await h.run()
+    const scopes = h.state.turns[0]?.scopes ?? []
+    assert.ok(scopes.includes(`openwork:agent-connection:${CRM.id}`))
+    assert.ok(!scopes.includes(`openwork:agent-connection:${NOTES.id}`), "removed from Other context: not read")
+    assert.equal(agentRead.agentMayUseExternalTool(withApprovedTools(tokenOf(scopes), sources), { id: CRM.id, url: CRM.url }, { name: "list_deals" }), true)
+    const empty = resolveMemberSources({ connections: org, policy: { ...sources, otherConnections: [] }, choices: {}, lastLook: {} })
+    assert.deepEqual(empty.map((source) => source.id), ["calendar", "email", "chat"], "the last one removed: Other context reads nothing")
+    const noEmail = resolveMemberSources({ connections: org, policy: { ...sources, coreConnections: { email: [] } }, choices: {}, lastLook: {} })
+    assert.deepEqual(noEmail.find((source) => source.id === "email")?.connections, [], "a category's last source removed: it reads nothing")
+  })
+
+  test("policies saved before this read and behave exactly as before; null resets the new fields", () => {
+    const old = { calendar: "everyone", email: "members", chat: "off", coreConnections: { email: ["google-workspace"] }, connections: { [NOTES.id]: "everyone" } }
+    const read = readWorkbotProactiveSettings({ workbot: { proactive: { sources: old } } }).sources
+    assert.deepEqual(read, old)
+    assert.deepEqual(resolveMemberSources({ connections: org, policy: read, choices: {}, lastLook: {} }).map((source) => [source.id, source.connections.map((connection) => connection.id).join(",")]), [
+      ["calendar", "google-workspace,gws_personal"], ["email", "google-workspace"], ["chat", SLACK.id], [NOTES.id, NOTES.id],
+    ], "reviewed services only in Other context; the CRM isn't read")
+    const added = mergeWorkbotProactiveSettings({ ...settingsOn, sources: read }, { sources: { otherConnections: [CRM.id, CRM.id], readTools: { [CRM.id]: ["list_deals", "list_deals"] } } })
+    assert.deepEqual([added?.sources.otherConnections, added?.sources.readTools], [[CRM.id], { [CRM.id]: ["list_deals"] }])
+    const reset = added && mergeWorkbotProactiveSettings(added, { sources: { otherConnections: null, readTools: { [CRM.id]: null } } })
+    assert.deepEqual(reset?.sources, read)
+  })
+
+  test("an admin's change is checked: the organization's connections, where they can go, real approved tools that never write", () => {
+    const connections = [...org.map(({ id, name, url, native }) => ({ id, name, url, native }))]
+    const catalogs = new Map([[CRM.id, crmTools]])
+    const check = (change: Parameters<typeof checkSourcesChange>[0]["change"]) => {
+      const merged = mergeWorkbotProactiveSettings(settingsOn, { sources: change })
+      assert.ok(merged)
+      return checkSourcesChange({ change, merged: merged.sources, connections, catalogs })
+    }
+    assert.deepEqual(crmTools.map((tool) => [tool.name, tool.blocked, tool.readOnlyHint ?? null]), [["search_contacts", false, true], ["list_deals", false, null], ["delete_contact", true, true], ["export_report", true, null]])
+    assert.equal(check({ coreConnections: { email: [CRM.id] }, readTools: { [CRM.id]: ["search_contacts"] } }), null)
+    assert.equal(check({ coreConnections: { email: [CRM.id] } }), "Choose at least one tool agents may use in Acme CRM.")
+    assert.equal(check({ otherConnections: [CRM.id] }), "Choose at least one tool agents may use in Acme CRM.")
+    assert.equal(check({ readTools: { [CRM.id]: ["delete_contact"] } }), "Agents can't use delete_contact: it can change things.")
+    assert.equal(check({ readTools: { [CRM.id]: ["export_report"] } }), "Agents can't use export_report: it can change things.", "turned off for the connection")
+    assert.equal(check({ readTools: { [CRM.id]: ["drop_tables"] } }), "Acme CRM has no tool drop_tables.")
+    assert.equal(check({ readTools: { [NOTES.id]: ["list_meetings"] } }), "Meeting notes has its own read tools; there are none to approve.")
+    assert.equal(check({ coreConnections: { chat: [GOOGLE.id] } }), "Google Workspace can't serve team chat.")
+    assert.equal(check({ coreConnections: { chat: [NOTES.id, SLACK.id] } }), null, "a reviewed MCP can serve any category")
+    assert.equal(check({ otherConnections: ["emc_nope"] }), "No connection emc_nope in this organization.")
+    assert.equal(check({ connections: { [CRM.id]: "everyone" } }), "Agents can't read Acme CRM yet: approve at least one of its tools.")
+    assert.equal(check({ connections: { [CRM.id]: null } }), null)
   })
 })

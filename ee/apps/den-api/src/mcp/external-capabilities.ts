@@ -46,6 +46,7 @@ import { compareCapabilityMatches, scoreText, tokenize } from "./search.js"
 import { EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT, scoreExternalTool, selectExternalMcpSearchConnections } from "./external-search-selection.js"
 import type { CapabilityMatch, CapabilityToolAnnotations } from "./search.js"
 import { AGENT_SOURCE_BLOCKED_MESSAGE, agentMayUseExternalTool, agentReadAllowlist, type AgentReadAllowlist } from "./agent-read-sources.js"
+import { withAgentApprovedTools } from "./agent-approved-tools.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import {
   codemodeScriptPath,
@@ -921,7 +922,8 @@ export async function searchExternalCapabilities(input: {
   scopes?: ReadonlySet<string>
 }): Promise<ExternalCapabilityMatch[]> {
   if (!input.member) return []
-  const agent = input.scopes ? agentReadAllowlist(input.scopes) : null
+  const agentScopes = input.scopes ? agentReadAllowlist(input.scopes) : null
+  const agent = agentScopes ? await withAgentApprovedTools(agentScopes, input.organizationId) : null
   const queryTokens = tokenize(input.query)
   if (queryTokens.length === 0) return []
   const requestedLimit = input.limit ?? 5
@@ -1430,6 +1432,9 @@ export async function executeExternalCapability(input: {
   let currentSchemaDigest: string | undefined
   let schemaGuidance: ExternalMcpSchemaGuidance | undefined
   const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
+  // A member's background agent: its token's connections, with the tools its admin approves now.
+  const agentScopes = agentReadAllowlist(input.scopes)
+  const agent = agentScopes && !input.scopes.has(DEN_MCP_WRITE_SCOPE) ? await withAgentApprovedTools(agentScopes, input.organizationId) : null
   try {
     const redirectUri = redirectUriFor(input.redirectUriBase, connection.id)
     type ExternalMcpTool = Awaited<ReturnType<typeof listExternalMcpTools>>[number]
@@ -1449,10 +1454,10 @@ export async function executeExternalCapability(input: {
       }
 
       // Provider-controlled hints cannot prove a tool will not mutate through its credential. The one exception is a
-      // member's background agent, whose token carries its sources: their reviewed read tools only (agent-read-sources.ts).
+      // member's background agent, whose token carries its sources: their reviewed or admin-approved read tools only
+      // (agent-read-sources.ts).
       const requiredScope = DEN_MCP_WRITE_SCOPE
-      const agent = agentReadAllowlist(input.scopes)
-      if (agent && !input.scopes.has(requiredScope)) {
+      if (agent) {
         if (!agentMayUseExternalTool(agent, connection, tool)) {
           return { ok: false, error: "insufficient_mcp_scope", requiredScope, message: `${input.toolName}: ${AGENT_SOURCE_BLOCKED_MESSAGE}` }
         }
