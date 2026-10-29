@@ -1,8 +1,8 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { customConnectorDiscoveryChecks } from "../worlds/custom-connector-discovery-checks.ts";
+import { customConnectorSetup } from "../worlds/custom-connector-discovery-checks.ts";
 
-const test = spec.world(customConnectorDiscoveryChecks, {
+const test = spec.world(customConnectorSetup, {
   timeout: 600_000,
   needs: { commands: ["bun", "pnpm"], placement: "local" },
   resources: { surfaces: ["web"], services: ["den"] },
@@ -50,11 +50,29 @@ test("an admin sees real server and sign-in checks before choosing a custom conn
     const provider = await phase("provider", "done");
     await admin.click({ role: "radio", label: "Use your own OAuth app" });
     await admin.see({ label: "Client ID" });
+    await admin.see({ text: "Callback URL" });
+    await admin.type({ label: "Client ID" }, "synthetic-toggle-client");
+    await admin.type({ label: "Client secret" }, "synthetic-toggle-secret");
+    await admin.click({ role: "radio", label: "Use OpenWork" });
+    await admin.click({ role: "radio", label: "Use your own OAuth app" });
+    await admin.see({ label: "Client ID" }, { value: "synthetic-toggle-client" });
+    await admin.see({ label: "Client secret" }, { value: "synthetic-toggle-secret" });
     const signIns = world.signInRequests();
     evidence.recordAssertionEvidence("Detection did not lock the admin into its recommendation or sign anyone in", `provider verified=${provider}; authorization/registration/token requests=${signIns}`, provider && signIns === 0);
     expect(provider).toBe(true);
     expect(signIns).toBe(0);
     await admin.screenshot();
+  });
+
+  await step("advertised optional permissions are not all requested until the admin chooses access", async () => {
+    await admin.click({ role: "button", label: "Connect" });
+    await admin.see({ text: "Choose the permissions to request before connecting." });
+    const checked = (await observed.dom('[data-testid="connector-permissions"] input:checked')).elements.length;
+    const saved = await world.savedConnections();
+    evidence.recordAssertionEvidence("An empty selection does not silently fall back to all advertised permissions", `selected permissions=${checked}; saved connections=${saved}; authorization requests=${world.signInRequests()}`, checked === 0 && saved === 0 && world.signInRequests() === 0);
+    expect(checked).toBe(0);
+    await admin.screenshot();
+    await admin.click({ role: "checkbox", label: "Request read" });
   });
 
   await step("checking again sends the headers the admin entered without submitting an OAuth app", async () => {
@@ -90,6 +108,31 @@ test("an admin sees real server and sign-in checks before choosing a custom conn
     await admin.screenshot();
   });
 
+  await step("an incomplete manual address pair blocks Connect without saving or starting sign-in", async () => {
+    await admin.click({ testId: "manual-oauth-summary" });
+    await admin.type({ testId: "manual-oauth-authorization-endpoint" }, "https://auth.example.test/authorize");
+    await admin.click({ role: "button", label: "Connect" });
+    await admin.see({ text: /Enter both sign-in addresses/ });
+    await admin.see({ testId: "connector-route" });
+    await admin.see({ label: "Client ID" }, { value: "synthetic-review-client" });
+    const saved = await world.savedConnections();
+    evidence.recordAssertionEvidence("The visible validation error is enforced by the actual submit handler", `saved connections=${saved}; authorization/registration/token requests=${world.signInRequests()}`, saved === 0 && world.signInRequests() === 0);
+    expect(saved).toBe(0);
+    await admin.screenshot();
+  });
+
+  await step("conflicting scope advertisements require review and do not silently drop provider requirements", async () => {
+    await admin.navigate(world.setupUrl("conflict"));
+    await admin.see({ text: "Detection complete" }, { timeoutMs: 30_000 });
+    await admin.click({ role: "button", label: "Connect" });
+    await admin.see({ text: "Review the conflicting permission information before connecting." });
+    const writeKept = (await observed.dom('input[aria-label="Request write"]:checked:disabled')).elements.length === 1;
+    const saved = await world.savedConnections();
+    evidence.recordAssertionEvidence("The conflict is explicit rather than a false read-only promise", `required write scope retained=${writeKept}; saved connections=${saved}; authorization requests=${world.signInRequests()}`, writeKept && saved === 0 && world.signInRequests() === 0);
+    expect(writeKept).toBe(true);
+    await admin.screenshot();
+  });
+
   await step("an HTTP 200 with an inconsistent issuer stays failed and offers another route", async () => {
     await admin.navigate(world.setupUrl("mismatch"));
     await admin.see({ text: "Sign-in information is inconsistent. Review the sign-in addresses below." }, { timeoutMs: 30_000 });
@@ -102,6 +145,21 @@ test("an admin sees real server and sign-in checks before choosing a custom conn
     evidence.recordAssertionEvidence("HTTP success is not mistaken for verified sign-in metadata", `provider failed=${failed}; provider passed=${green}; provider HTTP 200=${providerHttp200}; authorization/registration/token requests=${signIns}`, failed && !green && providerHttp200 && signIns === 0);
     expect(failed && !green).toBe(true);
     expect(signIns).toBe(0);
+    await admin.screenshot();
+  });
+
+  await step("reviewed issuer-mismatch addresses still need explicit confirmation before sign-in", async () => {
+    await admin.type({ label: "Client ID" }, "synthetic-mismatch-client");
+    await admin.type({ label: "Client secret" }, "synthetic-mismatch-secret");
+    await admin.click({ role: "button", label: "Review published addresses" });
+    await admin.see({ testId: "manual-oauth-trust-confirmation" });
+    await admin.click({ role: "button", label: "Connect" });
+    await admin.see({ text: /Confirm the sign-in destinations with the server owner/ });
+    const confirmed = (await observed.dom('[data-testid="manual-oauth-trust-confirmation"] input:checked')).elements.length;
+    const saved = await world.savedConnections();
+    evidence.recordAssertionEvidence("Prefill is not consent and cannot save the inconsistent metadata by itself", `confirmation selected=${confirmed}; saved connections=${saved}; authorization/registration/token requests=${world.signInRequests()}`, confirmed === 0 && saved === 0 && world.signInRequests() === 0);
+    expect(confirmed).toBe(0);
+    expect(saved).toBe(0);
     await admin.screenshot();
   });
 });

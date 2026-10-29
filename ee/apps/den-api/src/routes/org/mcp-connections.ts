@@ -42,6 +42,7 @@ import { recordWorkbotConnection } from "../../workbot/telemetry.js"
 import { connectionRemovalLink, memberSignInLink } from "../../agent-links.js"
 import { appLogger } from "../../observability/logger.js"
 import { organizationFeatureEnabled, requireFeature } from "../../features.js"
+import { automaticOAuthSetupDenial, oauthScopeSelectionChanged } from "../../capability-sources/external-mcp-oauth-setup-guard.js"
 import {
   jsonValidator,
   orgMemberRoute,
@@ -334,6 +335,7 @@ const requirementsDiscoveryResponseSchema = z.object({
       tokenEndpointAuthMethodsSupported: z.array(z.string()).optional(),
     })),
     requiredScopes: z.array(z.string()),
+    resourceScopesSupported: z.array(z.string()).optional().describe("Protected-resource scope advertisement, separate from the authentication challenge's required scopes."),
     recommendedScopes: z.array(z.string()),
     refreshSupport: z.enum(["supported", "not_advertised", "unknown"]),
     availableRegistrationMethods: z.array(z.enum(["pre_registered", "client_metadata", "dynamic"])),
@@ -2002,6 +2004,14 @@ async function createExternalConnectionResponse(
     authorizationServerIssuer: body.authorizationServerIssuer,
     requestedScopes: body.requestedScopes,
   })
+  if (body.authType === "oauth" && !body.manualOAuthEndpoints
+    && await organizationFeatureEnabled(payload.organization.id, "customConnectorSetup", { userId: payload.currentMember.userId })) {
+    const denial = await automaticOAuthSetupDenial({
+      serverUrl: body.url,
+      fetch: withExternalMcpRequestHeaders(externalMcpDiscoveryFetch, body.url, requestHeaders.headers),
+    })
+    if (denial) return c.json({ error: "invalid_request", message: denial }, 400)
+  }
   const created = await createExternalMcpConnection({
     organizationId: payload.organization.id,
     name: body.name,
@@ -2263,6 +2273,26 @@ async function replaceExternalConnectionResponse(
     } catch (error) {
       return c.json({ error: "invalid_request", message: error instanceof Error ? error.message : "URL not allowed." }, 400)
     }
+  }
+
+  // Name/access/tool-policy edits must not probe an existing connection. Recheck
+  // only a changed automatic OAuth identity; manual settings were validated above.
+  const oauthClientChanged = body.oauthClient !== undefined && (
+    body.oauthClient.clientId !== existingOAuthClient?.clientId
+    || (body.oauthClient.clientSecret !== undefined && body.oauthClient.clientSecret !== existingOAuthClient?.clientSecret)
+    || (body.oauthClient.tokenEndpointAuthMethod !== undefined && body.oauthClient.tokenEndpointAuthMethod !== tokenEndpointAuthMethod(existingOAuthClient?.extra?.tokenEndpointAuthMethod))
+  )
+  const automaticOAuthIdentityChanged = identityChanged || connection.url !== body.url || requestHeaderUpdate.changed || oauthClientChanged
+    || (body.authorizationServerIssuer !== undefined && body.authorizationServerIssuer !== (connection.oauthConfiguration?.authorizationServerIssuer ?? null))
+    || (body.requestedScopes !== undefined && oauthScopeSelectionChanged(connection.oauthConfiguration?.requestedScopes ?? [], body.requestedScopes))
+    || Boolean(connection.oauthConfiguration?.manualOAuthEndpoints && !manualOAuthEndpoints)
+  if (body.authType === "oauth" && !manualOAuthEndpoints && automaticOAuthIdentityChanged
+    && await organizationFeatureEnabled(payload.organization.id, "customConnectorSetup", { userId: payload.currentMember.userId })) {
+    const denial = await automaticOAuthSetupDenial({
+      serverUrl: body.url,
+      fetch: withExternalMcpRequestHeaders(externalMcpDiscoveryFetch, body.url, requestHeaderUpdate.headers),
+    })
+    if (denial) return c.json({ error: "invalid_request", message: denial }, 400)
   }
 
   const shouldValidate = body.authType !== "oauth"
@@ -2586,7 +2616,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Stream external MCP connection requirements checks",
-      description: "Side-effect-free discovery with ordered SSE check events (aggregate server, resource and provider phases), followed by a result event containing the same requirements as /discover, or a safe error event. No client registration, credential writes or extra probes. Disconnecting cancels discovery. Requires customConnectorDiscoveryChecks.",
+      description: "Side-effect-free discovery with ordered SSE check events (aggregate server, resource and provider phases), followed by a result event containing the same requirements as /discover, or a safe error event. No client registration, credential writes or extra probes. Disconnecting cancels discovery. Requires customConnectorSetup.",
       ...{ "x-mcp": false },
       responses: {
         200: {
@@ -2595,11 +2625,11 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         },
         400: jsonResponse("Invalid request.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        404: jsonResponse("Discovery checks are disabled.", z.object({ error: z.literal("feature_disabled"), feature: z.literal("customConnectorDiscoveryChecks") })),
+        404: jsonResponse("Discovery checks are disabled.", z.object({ error: z.literal("feature_disabled"), feature: z.literal("customConnectorSetup") })),
       },
     }),
     orgMemberRoute(),
-    requireFeature("customConnectorDiscoveryChecks"),
+    requireFeature("customConnectorSetup"),
     jsonValidator(discoverConnectionBodySchema),
     async (c) => {
       const { url, requestHeaders } = c.req.valid("json")

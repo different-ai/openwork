@@ -126,6 +126,11 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   const [skipError, setSkipError] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoCreated = useRef(false);
+  const authorizationAttempt = useRef(0);
+  const setupSuspended = useRef(false);
+  const authorizationTab = useRef<Window | null>(null);
+  const submittedConfiguration = useRef<{ route: ConnectorRoute; oauthApp: OAuthAppInput | null } | null>(null);
+  const [hasSubmittedConfiguration, setHasSubmittedConfiguration] = useState(false);
 
   const connection: ExternalMcpConnection | null = usable.data?.find((entry) => entry.id === connectionId) ?? null;
   // A chosen route answers what detection could not, so only an unreachable server fails the first check.
@@ -178,10 +183,16 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     if (pollTimer.current) clearInterval(pollTimer.current);
     pollTimer.current = null;
   }, []);
-  useEffect(() => stopPolling, [stopPolling]);
+  useEffect(() => () => {
+    authorizationAttempt.current++;
+    authorizationTab.current?.close();
+    stopPolling();
+  }, [stopPolling]);
 
-  const createForMe = useCallback(async (auth: Pick<CreateMcpConnectionInput, "authType"> & Partial<Pick<CreateMcpConnectionInput, "apiKey" | "apiKeyAuthScheme" | "credentialMode" | "oauthClient" | "manualOAuthEndpoints">>) => {
+  const createForMe = useCallback(async (auth: Pick<CreateMcpConnectionInput, "authType"> & Partial<Pick<CreateMcpConnectionInput, "apiKey" | "apiKeyAuthScheme" | "credentialMode" | "oauthClient" | "manualOAuthEndpoints" | "requestHeaders" | "requestedScopes">>, active?: () => boolean) => {
     if (!target || !orgContext) throw new Error("Your organization is still loading. Try again in a moment.");
+    const generation = authorizationAttempt.current;
+    const current = () => !setupSuspended.current && authorizationAttempt.current === generation && (!active || active());
     const created = await createConnection.mutateAsync({
       name: target.name,
       url: target.url,
@@ -194,10 +205,15 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       ...apiKeyAuthSchemeInput(auth.authType, auth.apiKeyAuthScheme ?? DEFAULT_API_KEY_AUTH_SCHEME),
       ...(auth.oauthClient ? { oauthClient: auth.oauthClient } : {}),
       ...(auth.authType === "oauth" ? oauthRequestFieldsForTarget(discovery, target) : {}),
+      ...(auth.authType === "oauth" && auth.requestedScopes !== undefined ? { requestedScopes: auth.requestedScopes } : {}),
       ...(auth.manualOAuthEndpoints ? { manualOAuthEndpoints: auth.manualOAuthEndpoints } : {}),
-      ...(requestHeaders.length > 0 ? { requestHeaders } : {}),
+      ...((auth.requestHeaders ?? requestHeaders).length > 0 ? { requestHeaders: auth.requestHeaders ?? requestHeaders } : {}),
       access: { orgWide: false, memberIds: [orgContext.currentMember.id], teamIds: [] },
     });
+    if (!current()) {
+      await deleteConnection.mutateAsync(created.id);
+      throw new Error("This unfinished connection was canceled.");
+    }
     setConnectionId(created.id);
     setCreatedHere(true);
     onConnectionCreated?.(created.id);
@@ -206,12 +222,22 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items }),
     ]);
     return created.id;
-  }, [createConnection, discovery, onConnectionCreated, orgContext, queryClient, requestHeaders, target, usable]);
+  }, [createConnection, deleteConnection, discovery, onConnectionCreated, orgContext, queryClient, requestHeaders, target, usable]);
 
   useEffect(() => {
-    if (method !== "none" || connectionId || autoCreated.current) return;
+    if (routeRequired && route === null) {
+      setupSuspended.current = false;
+      autoCreated.current = false;
+    }
+  }, [routeRequired, route]);
+
+  useEffect(() => {
+    if (setupSuspended.current || method !== "none" || connectionId || autoCreated.current) return;
     autoCreated.current = true;
-    createForMe({ authType: "none" }).catch((error: unknown) => setSignIn({ kind: "failed", message: errorMessage(error, "Could not add it.") }));
+    const generation = authorizationAttempt.current;
+    createForMe({ authType: "none" }).catch((error: unknown) => {
+      if (!setupSuspended.current && authorizationAttempt.current === generation) setSignIn({ kind: "failed", message: errorMessage(error, "Could not add it.") });
+    });
   }, [method, connectionId, createForMe]);
 
   /** Step two for a server that takes a key: the admin's key is shared by everyone who gets it. */
@@ -292,16 +318,32 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     }
   }, [connection, createForMe, discovery, orgContext, target?.name, updateConnection, usable]);
 
-  const startSignIn = useCallback(async () => {
+  const startSignIn = useCallback(async (configuration?: { route: ConnectorRoute; oauthApp: OAuthAppInput | null }) => {
     if (!target) return;
+    if (configuration) {
+      submittedConfiguration.current = configuration;
+      setHasSubmittedConfiguration(true);
+    }
+    const reviewed = configuration ?? submittedConfiguration.current;
+    const attempt = ++authorizationAttempt.current;
+    const active = () => authorizationAttempt.current === attempt;
     stopPolling();
+    authorizationTab.current?.close();
     setSignIn({ kind: "waiting" });
     let tab: Window | null = null;
     let id = connectionId;
     try {
       tab = openMcpAuthorizationTab({ connectionId: id ?? "", connectionName: target.name });
-      id = id ?? await createForMe({ authType: "oauth" });
+      authorizationTab.current = tab;
+      const app = reviewed?.oauthApp;
+      id = id ?? await createForMe({
+        authType: "oauth",
+        ...(reviewed ? { requestHeaders: reviewed.route.requestHeaders, requestedScopes: reviewed.route.requestedScopes } : {}),
+        ...(app ? { oauthClient: { clientId: app.clientId.trim(), ...(app.clientSecret.trim() ? { clientSecret: app.clientSecret.trim() } : {}) }, ...(app.manualOAuthEndpoints ? { manualOAuthEndpoints: app.manualOAuthEndpoints } : {}) } : {}),
+      }, active);
+      if (!active()) { tab.close(); return; }
       const result = await startOAuth.mutateAsync(id);
+      if (!active()) { tab.close(); return; }
       if (result.status === "connected") {
         tab.close();
         await usable.refetch();
@@ -314,7 +356,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       const startedAt = Date.now();
       let fetching = false;
       pollTimer.current = setInterval(async () => {
-        if (fetching) return;
+        if (!active() || fetching) return;
         fetching = true;
         const outcome = await pollMcpAuthorization({
           authorizationWindow: openedTab,
@@ -326,7 +368,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
           timeoutMs: POLL_TIMEOUT_MS,
         });
         fetching = false;
-        if (outcome === "pending") return;
+        if (!active() || outcome === "pending") return;
         stopPolling();
         if (outcome === "connected") {
           setSignIn({ kind: "idle" });
@@ -336,6 +378,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
         }
       }, POLL_INTERVAL_MS);
     } catch (error) {
+      if (!active()) { tab?.close(); return; }
       const message = errorMessage(error, "Sign-in did not start.");
       showMcpAuthorizationFailure(tab, {
         connectionId: id ?? "",
@@ -347,8 +390,41 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     }
   }, [connectionId, createForMe, queryClient, startOAuth, stopPolling, target, usable]);
 
+  /** Edit an unpublished setup without leaving an orphan connection or silently losing its draft. */
+  const restartSetup = useCallback(async (): Promise<boolean> => {
+    setupSuspended.current = true;
+    submittedConfiguration.current = null;
+    setHasSubmittedConfiguration(false);
+    authorizationAttempt.current++;
+    authorizationTab.current?.close();
+    stopPolling();
+    setSaving(true);
+    setSaveError(null);
+    try {
+      if (connectionId) {
+        if (!createdHere) throw new Error("This saved connection must be edited from its settings.");
+        await deleteConnection.mutateAsync(connectionId);
+      }
+      setConnectionId(null);
+      setCreatedHere(false);
+      setSignIn({ kind: "idle" });
+      setSkipped(false);
+      await queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items });
+      return true;
+    } catch (error) {
+      setupSuspended.current = false;
+      setSaveError(errorMessage(error, "Could not reopen setup. Try again."));
+      return false;
+    } finally { setSaving(false); }
+  }, [connectionId, createdHere, deleteConnection, queryClient, stopPolling]);
+
   /** Cancel removes a connection this flow created and never finished. */
   const discard = useCallback(async () => {
+    setupSuspended.current = true;
+    submittedConfiguration.current = null;
+    setHasSubmittedConfiguration(false);
+    authorizationAttempt.current++;
+    authorizationTab.current?.close();
     stopPolling();
     if (connectionId && createdHere) {
       await deleteConnection.mutateAsync(connectionId).catch(() => undefined);
@@ -386,7 +462,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   const methodFailed = method === "unsupported";
   const methodDone = method === "none" || method === "sign_in" || adminInputSaved;
   const usesKey = method === "api_key" || apiKeyConfigured;
-  const canSignIn = !signedIn && signIn.kind !== "waiting" && (method === "sign_in" || (method === "oauth_app" && connection !== null));
+  const canSignIn = !signedIn && signIn.kind !== "waiting" && (method === "sign_in" || (method === "oauth_app" && (connection !== null || hasSubmittedConfiguration)));
   const toolList = tools.data?.tools ?? [];
 
   const methodDescription = (() => {
@@ -470,6 +546,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     connection,
     connectionId,
     tools: toolList,
+    retryTools: tools.refetch,
     method,
     /** Step two is waiting on a key or OAuth app from this viewer. */
     needsInput: needsAdminInput && mode === "admin" && !connection,
@@ -497,6 +574,9 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     /** Sign-in failed for a server people sign in to; an admin can try their own OAuth app instead. */
     signInFailed: signIn.kind === "failed" && (method === "sign_in" || connection?.authType === "oauth"),
     startSignIn,
+    restartSetup,
+    canEditSetup: !connectionId || createdHere,
+    connectionProblem: signIn.kind === "failed" ? signIn.message : saveError,
     discard,
     /** A check failed, so an admin may add the connector anyway and finish it from its page. */
     canSkip: mode === "admin" && anyFailed && !skipped,

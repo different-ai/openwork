@@ -182,6 +182,7 @@ export type McpRequirementsDiscovery = {
       tokenEndpointAuthMethodsSupported?: string[];
     }>;
     requiredScopes: string[];
+    resourceScopesSupported?: string[];
     recommendedScopes: string[];
     refreshSupport: "supported" | "not_advertised" | "unknown";
     availableRegistrationMethods: Array<"pre_registered" | "client_metadata" | "dynamic">;

@@ -23,7 +23,7 @@ const resultSchema: z.ZodType<McpRequirementsDiscovery> = z.object({
       clientIdMetadataDocumentSupported: z.boolean(), scopesSupported: z.array(z.string()).optional(), grantTypesSupported: z.array(z.string()).optional(),
       codeChallengeMethodsSupported: z.array(z.string()).optional(), tokenEndpointAuthMethodsSupported: z.array(z.string()).optional(),
     })),
-    requiredScopes: z.array(z.string()), recommendedScopes: z.array(z.string()),
+    requiredScopes: z.array(z.string()), resourceScopesSupported: z.array(z.string()).optional(), recommendedScopes: z.array(z.string()),
     refreshSupport: z.enum(["supported", "not_advertised", "unknown"]),
     availableRegistrationMethods: z.array(z.enum(["pre_registered", "client_metadata", "dynamic"])),
     recommendedRegistrationMethod: z.enum(["client_metadata", "dynamic", "pre_registered"]),

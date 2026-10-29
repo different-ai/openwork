@@ -15,6 +15,8 @@ export type ConnectorRoute = {
   auth: ConnectorRouteAuth;
   client: ConnectorRouteClient;
   requestHeaders: McpRequestHeaderInput[];
+  /** Explicitly chosen OAuth permissions for the revised setup; absent preserves discovery defaults. */
+  requestedScopes?: string[];
 };
 
 export const MAX_REQUEST_HEADERS = 4;

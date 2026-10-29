@@ -3,6 +3,7 @@
 import { Lock } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { DenBadge } from "../../_components/ui/badge";
 import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
 import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../_lib/den-org";
@@ -10,15 +11,17 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessPeopleIds, peopleLabel } from "./access-summary";
 import type { ConnectorRoute } from "./connector-route";
 import { ConnectorRouteStep } from "./connector-route-step";
+import { ConnectorConnectionProgress } from "./connector-connection-progress";
+import { connectorAccountReady } from "./connector-detail";
 import { type OAuthAppInput, useConnectorSetup } from "./connector-setup";
-import { ApiKeyFields, ApiKeySchemeAdvanced, OAuthAppFields } from "./connector-setup-fields";
+import { ApiKeyFields, ApiKeySchemeAdvanced, OAuthAppFields, createOAuthAppDraft } from "./connector-setup-fields";
 import { useConnectorTarget } from "./connector-setup-screen";
 import { useDenToast } from "./den-toast";
 import { ItemHeader, ItemPage, SectionTitle, StepFooter } from "./item-header";
 import { ConfirmDialog } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import { useSaveConnectionAccess } from "./item-sharing";
-import { DEFAULT_API_KEY_AUTH_SCHEME, type ExternalMcpApiKeyAuthScheme, type ExternalMcpCredentialMode, useUpdateMcpConnection, useCheckMcpConnection } from "./mcp-connections-data";
+import { DEFAULT_API_KEY_AUTH_SCHEME, type ExternalMcpApiKeyAuthScheme, type ExternalMcpCredentialMode, useUpdateMcpConnection, useCheckMcpConnection, useMcpConnectionPresets } from "./mcp-connections-data";
 import { usesMemberApiKey } from "./member-api-key";
 import { SetupChecks } from "./setup-checks";
 import { SLACK_ASSISTANT_SECTION_ID } from "./slack-assistant-setup";
@@ -71,8 +74,15 @@ function SignInChoice({ name, value, onChange, disabled, kind = "oauth", sharedD
   );
 }
 
-/** C3 and C4: the checks fill in, then the admin picks how people sign in and who gets it. */
+/** Draft credentials belong to one server and organization, never the next connector visited. */
 export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) {
+  const { orgId } = useOrgDashboard();
+  const params = useSearchParams();
+  return <AdminConnectorSetupFlow key={`${orgId ?? ""}:${catalogId}:${params.get("url") ?? ""}`} catalogId={catalogId} />;
+}
+
+/** C3 and C4: the admin connects the server, then chooses account mode and access. */
+function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const toast = useDenToast();
@@ -97,7 +107,11 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const [showOAuthApp, setShowOAuthApp] = useState(false);
   // A custom connector first shows what OpenWork detected and lets the admin pick another route.
   const isCustom = catalogId === "custom";
-  const liveDiscovery = isCustom && orgFeatureEnabled(orgContext, "customConnectorDiscoveryChecks");
+  const liveDiscovery = isCustom && orgFeatureEnabled(orgContext, "customConnectorSetup");
+  const revisedSetup = liveDiscovery;
+  const presets = useMcpConnectionPresets();
+  const callbackUrl = presets.data?.find((preset) => preset.oauthCallbackUrl)?.oauthCallbackUrl ?? undefined;
+  const [oauthDraft, setOAuthDraft] = useState(createOAuthAppDraft);
   const initialConnectionId = searchParams.get("connection");
   const [route, setRoute] = useState<ConnectorRoute | null>(null);
   const [previousRoute, setPreviousRoute] = useState<ConnectorRoute | null>(null);
@@ -125,10 +139,10 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   // "Use your own OAuth app" saves the app once the route (and its headers) is in place.
   const { saveOAuthApp, discovering, connection: setupConnection } = setup;
   useEffect(() => {
-    if (!route || !pendingOAuthApp || discovering || setupConnection) return;
+    if (revisedSetup || !route || !pendingOAuthApp || discovering || setupConnection) return;
     setPendingOAuthApp(null);
     void saveOAuthApp(pendingOAuthApp);
-  }, [discovering, pendingOAuthApp, route, saveOAuthApp, setupConnection]);
+  }, [discovering, pendingOAuthApp, revisedSetup, route, saveOAuthApp, setupConnection]);
 
   if (missing || failed) {
     return (
@@ -271,14 +285,45 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
         discovering={setup.discovering}
         unreachable={setup.unreachable}
         secretRequired={setup.secretRequired}
+        revisedSetup={revisedSetup}
+        callbackUrl={callbackUrl}
+        oauthDraft={oauthDraft}
+        onOAuthDraftChange={setOAuthDraft}
         liveChecks={liveDiscovery ? { checks: setup.discoveryChecks, failed: setup.discoveryFailed, onRetry: setup.retryDiscovery } : undefined}
         onCancel={() => router.push(getAddConnectorRoute(orgSlug))}
         onContinue={(chosen, oauthApp) => {
           setRoute(chosen);
-          setPendingOAuthApp(oauthApp);
+          if (revisedSetup && chosen.auth === "oauth") void setup.startSignIn({ route: chosen, oauthApp });
+          else setPendingOAuthApp(oauthApp);
         }}
       />
     );
+  }
+
+  async function editSetup() {
+    if (!(await setup.restartSetup())) return;
+    setPreviousRoute(route);
+    setRoute(null);
+    setPendingOAuthApp(null);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("connection");
+    router.replace(`?${params.toString()}`, { scroll: false });
+  }
+
+  if (revisedSetup && (route || initialConnectionId) && !ready) {
+    const needsKey = setup.method === "api_key" && setup.needsInput;
+    const keyFields = needsKey ? checks.find((check) => check.id === "sign-in-method")?.body : undefined;
+    const toolFailure = setup.checks.find((check) => check.id === "tools" && check.status === "failed")?.description ?? null;
+    return <ConnectorConnectionProgress
+      name={name} url={target.url} back={back}
+      waitingForSignIn={setup.signingIn}
+      problem={setup.connectionProblem ?? toolFailure}
+      keyFields={keyFields}
+      busy={busy || setup.saving}
+      onRetry={(setup.connectionProblem || toolFailure) && connection && connectorAccountReady(connection) ? () => void setup.retryTools() : setup.canSignIn ? () => void setup.startSignIn() : undefined}
+      onEdit={setup.canEditSetup ? () => void editSetup() : undefined}
+      onCancel={() => void cancel()}
+    />;
   }
 
   if (!ready) {
@@ -325,8 +370,9 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
       <ItemHeader
         back={back}
         logo={<ConnectorLogo name={name} url={target.url} size="md" />}
-        title={usesIndividualKeys ? `${name} is set up` : setup.allDone ? `${name} passed all ${stepTotal} checks` : `Add ${name} anyway`}
-        description={setup.allDone ? undefined : `Some checks did not pass. Finish its settings, like its OAuth app, on its page after you add it.`}
+        title={revisedSetup ? name : usesIndividualKeys ? `${name} is set up` : setup.allDone ? `${name} passed all ${stepTotal} checks` : `Add ${name} anyway`}
+        actions={revisedSetup ? <DenBadge>{usesIndividualKeys ? "Set up" : "Connected"}</DenBadge> : undefined}
+        description={revisedSetup || setup.allDone ? undefined : `Some checks did not pass. Finish its settings, like its OAuth app, on its page after you add it.`}
       />
       {signsIn || usesKey ? (
         <section className="flex flex-col gap-2.5">

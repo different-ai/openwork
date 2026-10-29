@@ -3,7 +3,7 @@ import type { Seed } from "@openwork/env";
 import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
 /** A real upstream HTTP fixture: strict metadata stays held until the proof releases it. */
-export async function customConnectorDiscoveryChecks(seed: Seed) {
+export async function customConnectorSetup(seed: Seed) {
   let origin = "";
   let providerHeld = true;
   let heldRequests = 0;
@@ -22,7 +22,7 @@ export async function customConnectorDiscoveryChecks(seed: Seed) {
       if (["/authorize", "/token", "/register"].includes(path)) signInRequests++;
       if (path.startsWith("/mcp/")) {
         if (req.headers["x-example-key"] === "synthetic-review-header") headerRequests++;
-        json({ error: "unauthorized" }, 401, { "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource${path}"` });
+        json({ error: "unauthorized" }, 401, { "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource${path}"${path.endsWith("/conflict") ? ', scope="read write"' : ""}` });
         return;
       }
       if (path.startsWith("/.well-known/oauth-protected-resource/mcp/")) {
@@ -37,7 +37,7 @@ export async function customConnectorDiscoveryChecks(seed: Seed) {
           issuer: `${origin}/${name === "mismatch" ? "another-issuer" : name}`,
           authorization_endpoint: `${origin}/authorize`, token_endpoint: `${origin}/token`,
           response_types_supported: ["code"], grant_types_supported: ["authorization_code"],
-          code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"], client_id_metadata_document_supported: name !== "own",
+          scopes_supported: ["read", "write"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"], client_id_metadata_document_supported: name !== "own",
         });
         return;
       }
@@ -58,10 +58,16 @@ export async function customConnectorDiscoveryChecks(seed: Seed) {
       den, web,
       disabledStreamStatus: disabledStream.response.status,
       setupUrl: (name: string) => `${den.ref.webUrl}/dashboard/mcp-connections/new/custom?name=Project+tools&url=${encodeURIComponent(`${origin}/mcp/${name}`)}`,
-      enable: () => enableOrganizationCapabilities(seed, den.admin, { customConnectorDiscoveryChecks: true }),
+      enable: () => enableOrganizationCapabilities(seed, den.admin, { customConnectorSetup: true }),
       heldRequests: () => heldRequests,
       headerRequests: () => headerRequests,
       signInRequests: () => signInRequests,
+      async savedConnections() {
+        const result = await seed.api(den.admin, "/v1/mcp-connections?scope=manageable");
+        const body = result.body;
+        if (typeof body !== "object" || body === null || !("connections" in body) || !Array.isArray(body.connections)) throw new Error("Connection list unavailable");
+        return body.connections.length;
+      },
       release,
       async [Symbol.asyncDispose]() { release(); provider.closeAllConnections(); await new Promise<void>((resolve) => provider.close(() => resolve())); },
     };

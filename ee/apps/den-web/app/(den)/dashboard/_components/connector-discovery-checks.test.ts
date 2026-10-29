@@ -46,3 +46,24 @@ test("a completed anonymous discovery collapses without claiming all three phase
   assert.match(html, /Not needed/);
   assert.match(html, /Detection complete/);
 });
+
+test("missing optional OAuth metadata is neutral for manual-credential servers, not falsely verified", () => {
+  const html = renderToStaticMarkup(createElement(ConnectorDiscoveryChecks, {
+    checks: [{ id: "server", status: "passed", httpStatus: 401 }, { id: "resource", status: "failed", code: "unavailable" }, { id: "provider", status: "skipped", code: "unavailable" }],
+    discovering: false, failed: false, manualCredentials: true, onRetry() {},
+  }));
+  assert.match(html, /data-testid="setup-check-resource" data-status="skipped"/);
+  assert.match(html, /Not published/);
+  assert.doesNotMatch(html, /Needs attention/);
+  assert.doesNotMatch(html, /data-testid="setup-check-resource" data-status="done"/);
+});
+
+test("manual credentials never hide issuer mismatch or failed reachability", () => {
+  const html = renderToStaticMarkup(createElement(ConnectorDiscoveryChecks, {
+    checks: [{ id: "server", status: "failed", code: "unavailable" }, { id: "provider", status: "failed", code: "issuer_mismatch", httpStatus: 200 }],
+    discovering: false, failed: false, manualCredentials: true, onRetry() {},
+  }));
+  assert.match(html, /data-testid="setup-check-server" data-status="failed"/);
+  assert.match(html, /data-testid="setup-check-provider" data-status="failed"/);
+  assert.match(html, /Needs attention/);
+});

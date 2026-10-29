@@ -25,21 +25,26 @@ export function discoveryCheckDescription(check: DiscoveryCheck | undefined, dis
 }
 
 /** The reference's three live checks, inline with the connector rather than another setup page. */
-export function ConnectorDiscoveryChecks({ checks, discovering, failed, onRetry }: {
+export function ConnectorDiscoveryChecks({ checks, discovering, failed, manualCredentials = false, onRetry }: {
   checks: DiscoveryCheck[];
   discovering: boolean;
   failed: boolean;
+  manualCredentials?: boolean;
   onRetry: () => void;
 }) {
-  const needsAttention = failed || checks.some((check) => check.status === "failed");
+  // A server that advertises no usable OAuth metadata may use manual credentials.
+  // Absence is not a verified OAuth success; show it neutrally, never hide an issuer mismatch.
+  const displayed = checks.map((check): DiscoveryCheck => manualCredentials && check.id !== "server" && check.code === "unavailable"
+    ? { ...check, status: "skipped" } : check);
+  const needsAttention = failed || displayed.some((check) => check.status === "failed");
   const summary = discovering ? "Checking the server…" : needsAttention ? "Needs attention" : checks.length ? "Detection complete" : "Live details unavailable";
   const rows: SetupCheck[] = PHASES.map(({ id, title }) => {
-    const check = checks.find((entry) => entry.id === id);
+    const check = displayed.find((entry) => entry.id === id);
     return {
       id,
       title,
       status: check?.status === "passed" ? "done" : check?.status === "skipped" ? "skipped" : check?.status ?? "waiting",
-      description: discoveryCheckDescription(check, discovering),
+      description: manualCredentials && check?.status === "skipped" && check.code === "unavailable" ? "Not published. Use an API key or request headers." : discoveryCheckDescription(check, discovering),
       ...(check?.httpStatus ? { action: <span aria-label={`HTTP status ${check.httpStatus}`}><DenBadge size="sm">{check.httpStatus}</DenBadge></span> } : {}),
     };
   });

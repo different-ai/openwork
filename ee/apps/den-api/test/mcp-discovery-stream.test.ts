@@ -72,7 +72,7 @@ test("stream route keeps JSON request validation, header boundaries, caller filt
   const source = await readFile(new URL("../src/routes/org/mcp-connections.ts", import.meta.url), "utf8")
   const start = source.indexOf('"/v1/mcp-connections/discover/stream"')
   const route = source.slice(start, source.indexOf('"/v1/mcp-connections/:connectionId/oauth/issuer-review"', start))
-  assert.match(route, /orgMemberRoute\(\),\s+requireFeature\("customConnectorDiscoveryChecks"\),\s+jsonValidator\(discoverConnectionBodySchema\)/)
+  assert.match(route, /orgMemberRoute\(\),\s+requireFeature\("customConnectorSetup"\),\s+jsonValidator\(discoverConnectionBodySchema\)/)
   assert.match(route, /validateExternalMcpRequestHeaders\(requestHeaders \?\? \[\], "discover"\)/)
   assert.match(route, /withExternalMcpRequestHeaders\(externalMcpDiscoveryFetch, url, discoveryHeaders.headers\)/)
   assert.match(route, /hasPermission\(c, "connections.view"\)/)

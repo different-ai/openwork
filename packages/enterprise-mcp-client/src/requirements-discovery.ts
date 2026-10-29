@@ -520,6 +520,7 @@ export async function discoverConnectionRequirements(
         protectedResourceMetadataUrl: resourceMetadataUrl?.toString(),
         authorizationServers,
         requiredScopes,
+        ...(resourceMetadata?.scopes_supported !== undefined ? { resourceScopesSupported: [...resourceMetadata.scopes_supported] } : {}),
         recommendedScopes,
         refreshSupport: refreshSupported ? "supported" : authorizationServers.length > 0 ? "not_advertised" : "unknown",
         availableRegistrationMethods,

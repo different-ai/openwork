@@ -613,14 +613,14 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
-  customConnectorDiscoveryChecks: {
-    label: "Connect: live custom connector checks",
-    description: "When an admin adds a custom MCP by address, show live results for connecting to the server, looking up sign-in settings and checking the sign-in provider before they choose how to connect. Turning it off restores the existing detection display; existing connections keep working.",
+  customConnectorSetup: {
+    label: "Connect: revised custom connector setup",
+    description: "Revised custom MCP setup: live server checks, reviewed permissions and manual sign-in addresses, copyable callback, persistent app credentials, and a direct connection-to-sharing flow. Tool Tester shows meaningful results before raw metadata. Turning it off restores the existing setup and result display; saved connections keep working.",
     category: "connect",
     added: "2026-10-28",
     since: "2026-10",
     author: "benjaminshafii",
-    docs: "docs/features/custom-connector-discovery-checks/README.md",
+    docs: "docs/features/custom-connector-setup/README.md",
     deployments: everywhere,
     default: false,
   },
