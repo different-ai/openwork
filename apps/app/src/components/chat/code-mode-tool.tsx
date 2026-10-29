@@ -150,6 +150,7 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
           connector={resolveConnectorToolIdentity(only, connectors)}
           quietFailure
           hideDuration
+          liveDuration={running ? duration : null}
           shimmer={running}
           statusUnknown={isToolPartInFlight(only) && (!running || !inFlight)}
         />
@@ -177,7 +178,8 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
           aria-label={`${label}. ${open ? "Hide steps" : "Show steps"}`}
         >
           <LaneChevron open={open} />
-          <span className={cn("min-w-0 truncate", running && !current && "ow-text-shimmer motion-reduce:animate-none")}>{label}</span>
+          {/* Folded, the label carries the current step, so it carries the running cue too. */}
+          <span className={cn("min-w-0 truncate", running && (!open || !current) && "ow-text-shimmer motion-reduce:animate-none")}>{label}</span>
           {calls.length > 0 ? <RailMeta>{calls.length} {calls.length === 1 ? "step" : "steps"}</RailMeta> : null}
           {waitingOn ? <RailMeta>Waiting on {waitingOn}</RailMeta> : null}
           {failedCalls.length > 0 ? <RailMeta className="text-destructive">{failedCalls.length} failed</RailMeta> : null}

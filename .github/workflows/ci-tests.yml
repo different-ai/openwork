@@ -165,7 +165,7 @@ jobs:
       - name: Test the OpenCode v2 session lifecycle mapping
         run: pnpm --filter @openwork/app exec bun test --isolate ./tests/opencode-v2-session-lifecycle.test.ts
       - name: Test the chat Working line and run time across follow-ups
-        run: pnpm --filter @openwork/app exec bun --conditions=development test --isolate ./tests/message-list-working-line.test.tsx ./tests/run-working-time.test.ts
+        run: pnpm --filter @openwork/app exec bun --conditions=development test --isolate ./tests/message-list-working-line.test.tsx ./tests/run-working-time.test.ts ./tests/live-progress-timing.test.ts
       - name: Test where a new task goes (workspace and group list)
         run: pnpm --filter @openwork/app exec bun test --isolate ./tests/new-task-destination-options.test.ts
       - name: Check desktop links open real Den pages

@@ -89,7 +89,7 @@ export function transcriptProgress(messages: UIMessage[], previousParts: Record<
     for (const [index, part] of message.parts.entries()) {
       const key = `${message.id}:${isToolUIPart(part) ? part.toolCallId : index}`;
       let activity: string;
-      if ((part.type === "text" || part.type === "reasoning") && part.text.trim()) {
+      if ((part.type === "text" || part.type === "reasoning") && (part.text.trim() || (part.type === "reasoning" && typeof part.providerMetadata?.opencode?.startedAt === "number"))) {
         parts[key] = partFingerprint(part, () => [part.type, part.text, part.state]);
         activity = part.type === "text" ? "Response updated" : "Reasoning activity received";
       } else if (isToolUIPart(part)) {
