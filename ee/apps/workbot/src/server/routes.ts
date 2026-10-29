@@ -584,7 +584,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   })
 
   /**
-   * The everyday apps to connect on the welcome screen and workspace recovery actions; with the profile, every app the
+   * The apps to connect on the welcome screen and workspace recovery actions; with the profile, every app the
    * person can use for its Apps list (`apps`, names and status only).
    */
   app.get("/v1/workbot/connections", async (c) => {

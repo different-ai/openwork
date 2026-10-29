@@ -409,8 +409,8 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
       return parsed.data
     },
     /**
-     * The Gmail, Slack and Microsoft 365 connections the person's admins set up, and whether each is ready for them;
-     * with the profile, also every app they can use, connected or not. A Den from before
+     * Every connection the person's admins set up for them (Gmail, Slack and Microsoft 365 first), and whether each is
+     * ready; with the profile, also every app they can use, connected or not. A Den from before
      * `apps` (or with the profile off) leaves it out.
      */
     async connections(accessToken: string) {
@@ -464,7 +464,8 @@ const workbotConnectionsSchema = z.object({
   connections: z.array(z.object({
     id: z.string(),
     name: z.string(),
-    app: z.enum(["gmail", "googleCalendar", "slack", "microsoft"]),
+    // Any app Den doesn't name is shown by its own name, so a newer Den never empties the list.
+    app: z.enum(["gmail", "googleCalendar", "slack", "microsoft", "other"]).catch("other"),
     ready: z.boolean(),
     connectUrl: z.string().nullable(),
     nativeProviderKey: z.string().nullable().optional(),
