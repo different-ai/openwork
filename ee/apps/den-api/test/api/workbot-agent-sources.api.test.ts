@@ -113,3 +113,47 @@ test("Connect never lets an agent's token call a tool its provider merely labels
   const names = list(field(found.structured ?? found.body, "matches")).map((match) => String(match.name))
   assert.ok(!names.some((name) => name.startsWith(`mcp:${space.customId}:`)), `the agent finds none of them: ${names.join(",")}`)
 })
+
+test("an admin adds any MCP as a source by approving its tools; the agent calls only those, never a write-named one", async () => {
+  const space = await workspace("Agent sources approved tools")
+  const tools = await space.owner("GET", `${proactive}/connections/${space.customId}/tools`)
+  assert.equal(tools.status, 200, summary(tools))
+  assert.deepEqual(list(field(tools.body, "tools")).map((tool) => [tool.name, tool.blocked, tool.readOnlyHint ?? null]), [
+    ["list_tickets", false, true], ["close_ticket", true, true], ["get_ticket", false, null],
+  ], "write-named tools are listed but blocked; the provider's hint is shown as given")
+  assert.equal((await space.call("GET", `${proactive}/connections/${space.customId}/tools`)).status, 403, "members can't list them")
+
+  const listed = await space.owner("GET", proactive)
+  const option = list(field(listed.body, "sourceConnections", "all")).find((entry) => entry.id === space.customId)
+  assert.deepEqual([option?.reviewed, option?.native], [false, false])
+
+  const unapproved = await space.owner("PUT", proactive, { sources: { coreConnections: { email: [space.customId] } } })
+  assert.equal(unapproved.status, 400, summary(unapproved))
+  assert.equal((await space.owner("PUT", proactive, { sources: { readTools: { [space.customId]: ["close_ticket"] } } })).status, 400, "never a blocked tool")
+  assert.equal((await space.owner("PUT", proactive, { sources: { readTools: { [space.customId]: ["no_such_tool"] } } })).status, 400, "only its real tools")
+
+  const saved = await space.owner("PUT", proactive, { sources: { coreConnections: { email: [space.customId] }, otherConnections: [space.customId], connections: { [space.customId]: "everyone" }, readTools: { [space.customId]: ["list_tickets"] } } })
+  assert.equal(saved.status, 200, summary(saved))
+  assert.deepEqual(field(saved.body, "settings", "sources", "readTools"), { [space.customId]: ["list_tickets"] })
+  const pins = field(saved.body, "settings", "sources", "readToolPins", space.customId)
+  assert.match(String(field(pins, "list_tickets")), /^sha256:[0-9a-f]{64}$/, "the approval is pinned to the tool as listed now")
+
+  const { mintHeadlessRunMcpToken } = await import("../../src/mcp/headless-run-token-mint.js")
+  const { agentReadScopes } = await import("../../src/mcp/agent-read-sources.js")
+  const agent = (await mintHeadlessRunMcpToken({ userId: space.member.userId, organizationId: space.orgId, readOnly: true, scopes: agentReadScopes({ kinds: ["email"], connectionIds: [space.customId] }) })).token
+  const capability = (tool: string) => `mcp:${space.customId}:${tool}`
+  const read = await den.callMcpTool(agent, "execute_capability", { name: capability("list_tickets") })
+  assert.equal(read.isError, false, read.text)
+  assert.match(read.text, /TICKET-7 is waiting on you/)
+  for (const [tool, why] of [["close_ticket", "its name says it writes"], ["get_ticket", "not approved"]] as const) {
+    const refused = await den.callMcpTool(agent, "execute_capability", { name: capability(tool) })
+    assert.equal(refused.isError, true, `${why}: ${refused.text}`)
+    assert.match(refused.text, /insufficient_mcp_scope/, why)
+  }
+  assert.equal(service.wire.filter((entry) => entry.rpcMethod === "tools/call").length, 1, "only the approved read reached the service")
+
+  // Removing the approval holds from the next call, whatever the token carries.
+  assert.equal((await space.owner("PUT", proactive, { sources: { coreConnections: { email: null }, otherConnections: null, connections: { [space.customId]: null }, readTools: { [space.customId]: null } } })).status, 200)
+  const revoked = await den.callMcpTool(agent, "execute_capability", { name: capability("list_tickets") })
+  assert.equal(revoked.isError, true, revoked.text)
+})

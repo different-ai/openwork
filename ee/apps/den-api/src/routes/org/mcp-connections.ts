@@ -1010,6 +1010,31 @@ async function resolveExternalMcpToolCredential(
     : { ok: false, message: "Connect this MCP before using its tools." }
 }
 
+/**
+ * The live tools/list catalog of an MCP connection, read with the credential the calling member can use (the shared
+ * one, or their own account). No tool is called. For admin pages that pick from a connection's tools.
+ */
+export async function listExternalMcpToolCatalog(
+  connection: ExternalMcpConnectionRow,
+  orgMembershipId: DenTypeId<"member">,
+  requestId: string,
+): Promise<{ ok: true; tools: Awaited<ReturnType<typeof listExternalMcpTools>> } | { ok: false; reason: "not_ready" | "failed"; message: string }> {
+  const credential = await resolveExternalMcpToolCredential(connection, orgMembershipId)
+  if (!credential.ok) return { ok: false, reason: "not_ready", message: credential.message }
+  try {
+    return { ok: true, tools: await listExternalMcpTools(connection, await callbackRedirectUri(connection), credential.member, requestId) }
+  } catch (error) {
+    const diagnostic = externalMcpDiagnosticForResponse(error, requestId, "MCP_TOOL_DISCOVERY")
+    logger.error("external_mcp_tool_catalog_failed", {
+      connection_id: connection.id,
+      organization_id: connection.organizationId,
+      connection_endpoint: safeExternalMcpEndpointForLog(connection.url),
+      ...externalMcpDiagnosticForLog(error, requestId, "MCP_TOOL_DISCOVERY"),
+    })
+    return { ok: false, reason: "failed", message: `Could not inspect "${connection.name}": ${diagnostic.message} Reference: ${diagnostic.referenceId}.` }
+  }
+}
+
 async function checkConnectionReadiness(connection: ExternalMcpConnectionRow, memberId: DenTypeId<"member">, requestId: string) {
   const account = connection.credentialMode === "per_member" ? await getConnectedAccount({
     organizationId: connection.organizationId, orgMembershipId: memberId, providerId: connection.id,

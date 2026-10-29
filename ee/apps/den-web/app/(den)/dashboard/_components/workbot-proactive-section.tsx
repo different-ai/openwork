@@ -279,7 +279,7 @@ export function WorkbotProactiveSection({ orgId, canManage, connectorsHref }: { 
             connectorsHref={connectorsHref}
             onChange={(change) => save.mutate(change)}
           />
-          <WorkbotProactiveSources view={query.data} canManage={canManage} saving={save.isPending} onChange={(change) => save.mutate(change)} />
+          <WorkbotProactiveSources orgId={orgId} view={query.data} canManage={canManage} saving={save.isPending} onChange={(change) => save.mutate(change)} />
         </div>
       ) : (
         <PanelSkeleton />
