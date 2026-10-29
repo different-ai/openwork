@@ -875,6 +875,9 @@ importers:
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      '@openwork/enterprise-mcp-client':
+        specifier: workspace:*
+        version: link:../../../packages/enterprise-mcp-client
       '@openwork/features':
         specifier: workspace:*
         version: link:../../../packages/features

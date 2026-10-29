@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { OAuthAppFields, createOAuthAppDraft } from "./connector-setup-fields";
 import { manualOAuthDraft, reviewPublishedAddresses } from "./manual-oauth-draft";
+import { DenCheckbox } from "../../_components/ui/checkbox";
 
 const callbackUrl = "https://api.example.test/custom/path/callback?runtime=verified";
 const addresses = { authorizationEndpoint: "https://identity.example.test/authorize", tokenEndpoint: "https://tokens.example.test/token" };
@@ -36,6 +37,18 @@ test("revised callback shows only the exact supplied address with a non-submit C
   assert.match(html, /<code[^>]*>https:\/\/api.example.test\/custom\/path\/callback\?runtime=verified<\/code>/);
   assert.match(html, /<button[^>]*type="button"[^>]*aria-label="Copy callback URL"/);
   assert.doesNotMatch(render({ revisedSetup: true, callback: false }), /oauth-app-callback|Copy callback URL/);
+});
+
+test("the shared confirmation checkbox retains accessible and native checked form state", () => {
+  const unchecked = renderToStaticMarkup(<DenCheckbox name="trustConfirmed" aria-label="Approve these addresses" checked={false} />);
+  assert.match(unchecked, /role="checkbox"[^>]*aria-checked="false"/);
+  assert.match(unchecked, /<input(?=[^>]*type="checkbox")(?=[^>]*name="trustConfirmed")[^>]*>/);
+  assert.doesNotMatch(unchecked, /<input(?=[^>]*name="trustConfirmed")(?=[^>]*checked="")[^>]*>/);
+
+  const checked = renderToStaticMarkup(<DenCheckbox name="trustConfirmed" aria-label="Approve these addresses" checked disabled />);
+  assert.match(checked, /role="checkbox"[^>]*aria-checked="true"/);
+  assert.match(checked, /aria-label="Approve these addresses"/);
+  assert.match(checked, /<input(?=[^>]*type="checkbox")(?=[^>]*name="trustConfirmed")(?=[^>]*checked="")(?=[^>]*disabled="")[^>]*>/);
 });
 
 test("both presentations retain password masking, no-capture and password-manager protections", () => {

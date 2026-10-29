@@ -126,7 +126,7 @@ test("an admin sees real server and sign-in checks before choosing a custom conn
     await admin.see({ text: "Detection complete" }, { timeoutMs: 30_000 });
     await admin.click({ role: "button", label: "Connect" });
     await admin.see({ text: "Review the conflicting permission information before connecting." });
-    const writeKept = (await observed.dom('input[aria-label="Request write"]:checked:disabled')).elements.length === 1;
+    const writeKept = (await observed.dom('[role="checkbox"][aria-label="Request write"][aria-checked="true"][data-disabled]')).elements.length === 1;
     const saved = await world.savedConnections();
     evidence.recordAssertionEvidence("The conflict is explicit rather than a false read-only promise", `required write scope retained=${writeKept}; saved connections=${saved}; authorization requests=${world.signInRequests()}`, writeKept && saved === 0 && world.signInRequests() === 0);
     expect(writeKept).toBe(true);

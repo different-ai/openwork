@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { useId, useState } from "react";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenButton } from "../../_components/ui/button";
+import { DenCheckbox } from "../../_components/ui/checkbox";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
@@ -305,7 +306,7 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
               <p className="text-[13px] leading-5 text-gray-600">Review the provider’s consent screen. A read-only tool endpoint does not make the OAuth grant read-only; the provider can require additional permissions or refresh access.</p>
               {access.conflictingScopes.length > 0 ? (
                 <label className="flex items-start gap-2 text-[13px] leading-5 text-gray-700">
-                  <input type="checkbox" checked={scopeReviewed} onChange={(event) => setScopeReviewedKey(event.target.checked ? scopeReviewKey : null)} className="mt-1 accent-gray-900" />
+                  <DenCheckbox checked={scopeReviewed} onCheckedChange={(checked) => setScopeReviewedKey(checked ? scopeReviewKey : null)} className="mt-1" />
                   I reviewed the permission conflict: the sign-in challenge requires {access.conflictingScopes.join(", ")}, but the resource metadata does not list it. Check with the server owner before approving access.
                 </label>
               ) : null}
@@ -313,7 +314,7 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
                 {[...access.requiredScopes, ...access.optionalScopes].map((scope) => {
                   const required = access.requiredScopes.includes(scope);
                   return <label key={scope} className="flex min-h-10 items-center gap-2 text-[13px] text-gray-700">
-                    <input type="checkbox" aria-label={`Request ${scope}`} checked={selectedScopes.includes(scope)} disabled={required} onChange={(event) => { setScopeSelection(event.target.checked ? [...selectedScopes, scope] : selectedScopes.filter((entry) => entry !== scope)); setAccessError(null); }} className="accent-gray-900" />
+                    <DenCheckbox aria-label={`Request ${scope}`} checked={selectedScopes.includes(scope)} disabled={required} onCheckedChange={(checked) => { setScopeSelection(checked ? [...selectedScopes, scope] : selectedScopes.filter((entry) => entry !== scope)); setAccessError(null); }} />
                     <code className="break-all">{scope}</code><span className="ml-auto text-[12px] text-gray-500">{required ? "Required by provider" : "Optional"}</span>
                   </label>;
                 })}

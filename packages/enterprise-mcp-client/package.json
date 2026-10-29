@@ -12,7 +12,8 @@
       },
       "development": "./src/index.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./manual-oauth": "./src/manual-oauth.ts"
   },
   "files": [
     "dist",

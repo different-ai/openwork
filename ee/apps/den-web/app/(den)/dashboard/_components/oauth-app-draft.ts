@@ -1,4 +1,4 @@
-import { manualOAuthEndpointSchema } from "../../../../../../../packages/enterprise-mcp-client/src/manual-oauth";
+import { manualOAuthEndpointSchema } from "@openwork/enterprise-mcp-client/manual-oauth";
 import type { OAuthAppInput } from "./connector-setup";
 import { manualOAuthDestination, manualOAuthDraft, type ManualOAuthDraft } from "./manual-oauth-draft";
 

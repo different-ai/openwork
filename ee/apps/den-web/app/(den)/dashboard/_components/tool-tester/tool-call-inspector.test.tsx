@@ -38,13 +38,13 @@ test("the revised result puts the answer first and preserves the entire raw resu
   assert.match(html, /never stored in OpenWork logs/);
 });
 
-test("flag off and the omitted prop render exactly the original raw-first view", () => {
+test("flag off and the omitted prop retain the readable raw-first view", () => {
   const result = { _meta: { serverInfo: { name: "Test server" } }, structuredContent: { answer: 42 } };
   const current = outcome(result);
   const defaultHtml = renderToStaticMarkup(<McpToolCallInspector outcome={current} />);
   const offHtml = renderToStaticMarkup(<McpToolCallInspector outcome={current} revisedSetup={false} />);
   assert.equal(defaultHtml, offHtml);
-  assert.ok(offHtml.includes(`<pre class="max-h-80 overflow-auto rounded-xl bg-gray-950 p-3 text-[11px] leading-[18px] text-gray-100">${escape(formatJson(result))}</pre>`));
+  assert.ok(offHtml.includes(`<pre class="max-h-80 overflow-auto rounded-xl bg-gray-50 p-3 text-[12px] leading-[18px] text-gray-700">${escape(formatJson(result))}</pre>`));
   assert.doesNotMatch(offHtml, /Technical details|<details/);
 });
 

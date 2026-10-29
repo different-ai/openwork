@@ -26,7 +26,7 @@ export function ConnectorConnectionProgress({ name, url, back, waitingForSignIn,
       <DenNotice tone="error" message={problem} />
     ) : (
       <div className="flex items-start gap-3 border-y border-gray-100 py-4" role="status" aria-live="polite">
-        <Loader2 className="mt-0.5 h-4 w-4 shrink-0 text-gray-400 motion-safe:animate-spin" aria-hidden />
+        <Loader2 className="mt-0.5 h-4 w-4 shrink-0 text-gray-500 motion-safe:animate-spin" aria-hidden />
         <div className="min-w-0 text-[13px] leading-5 text-gray-600">
           {waitingForSignIn ? <><p className="font-medium text-gray-900">Finish signing in to {name}</p><p>In the provider tab, approve OpenWork, sign in and choose the account or workspace to connect. Return here when finished.</p></> : <p>{onRetry ? `Sign in to ${name} to finish connecting.` : "Checking the connection and available tools."}</p>}
         </div>

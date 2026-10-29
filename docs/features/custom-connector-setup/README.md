@@ -66,6 +66,14 @@ Anonymous live discovery probes against Linear and GitHub returned 401 â†’ 200 â
 - **Loading:** the route no longer uses an unconditional null fallback in this rollout; a layout-matching connector skeleton preserves continuity. Latency-specific flashes still merit observation.
 - **Security:** no new credential storage or logging. Abort/stale-event fencing remains; editing/canceling an unfinished OAuth attempt closes its tab and invalidates that attempt before late results can replace the current setup.
 
+### CI regression checks
+
+The Vercel filtered install includes `@openwork/enterprise-mcp-client` as a declared Den web dependency. The browser form imports its narrow `manual-oauth` export, not the server runtime or an undeclared relative source path. A clean filtered install reproduced the original missing-`zod` build failure; the same production build passes with this dependency declared.
+
+Permission and destination confirmations use the shared Base UI checkbox, retaining checked/disabled state and label/keyboard semantics. Both connector browser proofs were rerun after this change. UI guardrails pass without baseline changes (DESIGN.md P5, V1, V2).
+
+![Explicit destination confirmation using the shared checkbox](./issuer-confirmation.png)
+
 ## Watch
 
 Aborted/buffered streams, mismatched metadata, permission conflicts, unexpected broad consent, rejected manual endpoints, callback-origin mistakes and abandoned drafts. A green HTTP badge is never substituted for strict metadata validation or a completed account grant.

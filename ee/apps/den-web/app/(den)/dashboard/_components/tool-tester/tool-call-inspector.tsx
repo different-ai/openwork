@@ -271,9 +271,9 @@ export function McpToolCallInspector({ outcome, revisedSetup = false }: { outcom
         {activeTab === "result" ? (
           <div className="space-y-2">
             {revisedSetup ? <ToolResult result={outcome.result} /> : (
-              <pre className="max-h-80 overflow-auto rounded-xl bg-gray-950 p-3 text-[11px] leading-[18px] text-gray-100">{formatJson(outcome.result)}</pre>
+              <pre className="max-h-80 overflow-auto rounded-xl bg-gray-50 p-3 text-[12px] leading-[18px] text-gray-700">{formatJson(outcome.result)}</pre>
             )}
-            <p className="inline-flex items-center gap-1.5 text-[10px] text-gray-500">
+            <p className="inline-flex items-center gap-1.5 text-[12px] text-gray-500">
               <LockKeyhole className="h-3 w-3" aria-hidden="true" /> Credential headers redacted. Returned only for this run — never stored in OpenWork logs.
             </p>
           </div>

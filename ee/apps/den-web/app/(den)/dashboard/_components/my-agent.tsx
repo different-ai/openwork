@@ -408,12 +408,12 @@ function SourceRow({ view, source, now, saving, links, onChange }: { view: Membe
           ) : null}
           {steerable && !editing ? (
             <button type="button" disabled={saving} onClick={() => setEditing(true)} aria-label={instructionLabel} title={instructionLabel}
-              className={`flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition-[color,background-color,opacity] duration-150 ease-out hover:bg-gray-100 hover:text-gray-900 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none ${source.instruction ? "" : "opacity-0"} focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 disabled:opacity-50`}>
+              className={`flex h-7 w-7 items-center justify-center rounded-lg text-gray-500 transition-[color,background-color,opacity] duration-150 ease-out hover:bg-gray-100 hover:text-gray-900 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none ${source.instruction ? "" : "opacity-0"} focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 disabled:opacity-50`}>
               <PencilLine size={16} strokeWidth={1.5} aria-hidden />
             </button>
           ) : null}
           <span className="flex w-4 justify-center">
-            {locked ? <Lock size={14} strokeWidth={1.5} className="text-gray-400" role="img" aria-label={source.policy === "off" ? "Not allowed by your admin" : "On for everyone, set by your admin"} /> : null}
+            {locked ? <Lock size={14} strokeWidth={1.5} className="text-gray-500" role="img" aria-label={source.policy === "off" ? "Not allowed by your admin" : "On for everyone, set by your admin"} /> : null}
           </span>
           <DenSwitch size="sm" aria-label={source.name} checked={source.on} disabled={locked || saving}
             onChange={(on) => onChange({ sources: [{ source: source.id, on }] })} />

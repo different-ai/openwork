@@ -4,6 +4,7 @@ import { ChevronRight } from "lucide-react";
 import { useId, useState } from "react";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenButton } from "../../_components/ui/button";
+import { DenCheckbox } from "../../_components/ui/checkbox";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { type McpRequirementsDiscovery, useDiscoverMcpConnectionRequirements } from "./mcp-connections-data";
@@ -137,7 +138,7 @@ export function ManualOAuthFields({ url, draft, onChange, saved = EMPTY_OAUTH_AD
         />
       </div> : null}
       {revisedSetup && draft.values.authorizationEndpoint.trim() && draft.values.tokenEndpoint.trim() && (mismatch || pendingReview || destination.differentHost) ? <label className="flex items-start gap-2 text-[12px] leading-5 text-gray-700" data-testid="manual-oauth-trust-confirmation">
-        <input type="checkbox" name="trustConfirmed" checked={trustConfirmed} disabled={disabled || !onTrustConfirmedChange} onChange={(event) => onTrustConfirmedChange?.(event.target.checked)} aria-invalid={validationError?.field === "trustConfirmed" || undefined} aria-describedby={validationError?.field === "trustConfirmed" ? trustErrorId : undefined} className="mt-1 h-4 w-4 shrink-0 accent-neutral-900 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-neutral-900" />
+        <DenCheckbox name="trustConfirmed" checked={trustConfirmed} disabled={disabled || !onTrustConfirmedChange} onCheckedChange={(checked) => onTrustConfirmedChange?.(checked)} aria-invalid={validationError?.field === "trustConfirmed" || undefined} aria-describedby={validationError?.field === "trustConfirmed" ? trustErrorId : undefined} className="mt-1" />
         <span>I checked these addresses with the server owner and approve sending users to <strong>{oauthAddressHost(draft.values.authorizationEndpoint)}</strong> to sign in, and sending their sign-in codes{hasClientSecret ? " and the client secret" : ""} to <strong>{oauthAddressHost(draft.values.tokenEndpoint)}</strong>.</span>
       </label> : null}
       {revisedSetup && validationError?.field === "trustConfirmed" ? <p id={trustErrorId} role="alert" className="text-[12px] text-red-600">{validationError.message}</p> : null}
