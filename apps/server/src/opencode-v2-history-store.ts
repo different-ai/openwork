@@ -212,9 +212,6 @@ export async function restoreHistoryPayloads(db: HistoryDatabase, signal?: Abort
             const token = stringField(item, "token"); replace.run(token, token, id);
           }
           if (marker.get(id)) {
-            for (const item of globalTokens.all(id)) {
-              const token = stringField(item, "token"); replace.run(token, token, id);
-            }
             if (db.prepare(`SELECT 1 FROM session_message m WHERE m.id = ? AND EXISTS
               (SELECT 1 FROM openwork_payload p WHERE instr(m.data, p.token) > 0)`).get(id)) throw new Error("Unresolved history payload");
           }

@@ -101,15 +101,48 @@ for (const unmapped of [false, true]) test(`restore is byte-identical to the old
     db = await openHistoryDatabase(join(root, "new.db"));
     try {
       oldRestore(old);
+      let globalScans = 0;
+      const traced: HistoryDatabase = {
+        exec: sql => db.exec(sql), close: () => db.close(),
+        prepare: sql => {
+          const statement = db.prepare(sql);
+          return {
+            all: (...params) => {
+              if (sql.startsWith("SELECT token FROM openwork_payload WHERE")) globalScans++;
+              return statement.all(...params);
+            },
+            get: (...params) => statement.get(...params), run: (...params) => statement.run(...params),
+          };
+        },
+      };
       const controller = new AbortController();
-      await assert.rejects(restoreHistoryPayloads(db, controller.signal, done => { if (done === 0) controller.abort(); }));
-      await restoreHistoryPayloads(db);
+      await assert.rejects(restoreHistoryPayloads(traced, controller.signal, done => { if (done === 0) controller.abort(); }));
+      await restoreHistoryPayloads(traced);
+      assert.equal(globalScans > 0, unmapped, "mapped messages must never scan global payloads");
       assert.deepEqual(db.prepare("SELECT id, data FROM session_message ORDER BY id").all(), old.prepare("SELECT id, data FROM session_message ORDER BY id").all());
       assert.equal(numberField(db.prepare("SELECT count(*) AS n FROM openwork_restored").get(), "n"), 5);
       await restoreHistoryPayloads(db);
       assert.deepEqual(db.prepare("SELECT id, data FROM session_message ORDER BY id").all(), old.prepare("SELECT id, data FROM session_message ORDER BY id").all());
     } finally { old.close(); }
   } finally { db.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("a token introduced by a payload value still fails the old exact unresolved check", async () => {
+  const db = await openHistoryDatabase(":memory:");
+  const a = `OWPAYLOAD${"a".repeat(48)}END`;
+  const b = `OWPAYLOAD${"b".repeat(48)}END`;
+  try {
+    db.exec(`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT);
+      CREATE TABLE part (id TEXT PRIMARY KEY, session_id TEXT, data TEXT);
+      CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT);
+      CREATE TABLE openwork_payload (token TEXT PRIMARY KEY, value TEXT)`);
+    db.prepare("INSERT INTO openwork_payload VALUES (?, ?), (?, 'must not recursively substitute')").run(a, b, b);
+    db.prepare("INSERT INTO message VALUES ('a', 's', json_object('text', ?)), ('b', 's', json_object('text', ?))").run(a, b);
+    db.exec("INSERT INTO session_message SELECT * FROM message WHERE id = 'a'");
+    await assert.rejects(restoreHistoryPayloads(db), /Unresolved history payload/);
+    assert.equal(stringField(db.prepare("SELECT json_extract(data, '$.text') AS value FROM session_message").get(), "value"), a);
+    assert.equal(numberField(db.prepare("SELECT count(*) AS n FROM openwork_restored").get(), "n"), 0);
+  } finally { db.close(); }
 });
 
 async function copyFixture(): Promise<HistoryDatabase> {
