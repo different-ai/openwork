@@ -313,6 +313,35 @@ final class BoundaryTests: XCTestCase {
         XCTAssertThrowsError(try incomplete.requireCapture())
     }
 
+    func testDisplayOnlyReadFailuresDoNotWithholdTheScreenshot() {
+        // TextEdit and Freeform answer an outline's value or a group's actions
+        // with a generic failure. Those reads list a control; they never mask one.
+        for result in [AXError.failure, .cannotComplete] {
+            XCTAssertEqual(AXChildScan.outcome(result, displayOnly: true), .absent)
+            XCTAssertEqual(AXChildScan.outcome(result, displayOnly: false), .unverified)
+        }
+        XCTAssertEqual(AXChildScan.outcome(.apiDisabled, displayOnly: true), .unverified)
+        XCTAssertEqual(AXChildScan.outcome(.noValue, displayOnly: false), .absent)
+        XCTAssertEqual(AXChildScan.outcome(.success, displayOnly: false), .value)
+    }
+
+    func testInvalidElementsNeverDropTheirMaskFromTheScan() {
+        // A destroyed element can still be drawn, and its protection and children
+        // can no longer be read, so the scan withholds the screenshot.
+        for displayOnly in [false, true] {
+            XCTAssertEqual(AXChildScan.outcome(.invalidUIElement, displayOnly: displayOnly), .unverified)
+        }
+    }
+
+    func testSecureSubroleStaysStrictForTextInputsAndUnknownRoles() {
+        for role in ElementRecord.textRoles.union(["AXUnknown", "", "AXCustomSecureWidget"]) {
+            XCTAssertTrue(AXChildScan.subroleDecidesMask(role: role), role)
+        }
+        for role in ["AXGroup", "AXSplitter", "AXOutline", "AXButton", "AXWindow"] {
+            XCTAssertFalse(AXChildScan.subroleDecidesMask(role: role), role)
+        }
+    }
+
     func testAXChildScanRejectsCountAndIdentityChangesIncludingEqualSizeShifts() {
         let original = Array(0..<130)
         XCTAssertNoThrow(try AXChildScan.requireStable(expectedCount: 130, currentCount: 130, expected: original, current: original))

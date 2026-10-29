@@ -10,7 +10,7 @@ import {
   resolveProviderScopes,
   type NativeOAuthProviderConfig,
 } from "./provider-registry.js"
-import { getConnectedAccountForListing, getOrgOAuthClient } from "./oauth-credentials.js"
+import { getConnectedAccountsForListing, getOrgOAuthClient, getOrgOAuthClients } from "./oauth-credentials.js"
 import { readProviderTenantId } from "./oauth-tenant.js"
 import { listExternalMcpConnections, listUsableNativeProviderConnections } from "./external-mcp-connections.js"
 
@@ -148,22 +148,32 @@ export async function listNativeProviderUsableEntries(input: {
   // Recheck at resolution so retained capability names and Code Mode calls cannot bypass an org disable.
   if (await nativeProviderConnectionPolicyError(input.organizationId)) return []
   const entries: NativeProviderConnectionEntry[] = []
-  const connections = await listUsableNativeProviderConnections({
+  const connections = (await listUsableNativeProviderConnections({
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
     teamIds: input.teamIds ?? [],
+  })).flatMap((connection) => {
+    const provider = connection.nativeProviderKey ? NATIVE_OAUTH_PROVIDERS[connection.nativeProviderKey] : undefined
+    return provider ? [{ connection, provider }] : []
   })
-  for (const connection of connections) {
-    if (!connection.nativeProviderKey) continue
-    const provider = NATIVE_OAUTH_PROVIDERS[connection.nativeProviderKey]
-    if (!provider) continue
-    const client = await getOrgOAuthClient(input.organizationId, connection.id)
+  // Legacy native-provider clients never had connector rows. Keep their
+  // literal registry key visible org-wide without moving either credentials
+  // or connected accounts.
+  const legacyProviders = Object.values(NATIVE_OAUTH_PROVIDERS)
+  const clients = await getOrgOAuthClients(input.organizationId, [
+    ...connections.map(({ connection }) => connection.id),
+    ...legacyProviders.map((provider) => provider.providerId),
+  ])
+  const accounts = await getConnectedAccountsForListing({
+    organizationId: input.organizationId,
+    orgMembershipId: input.orgMembershipId,
+    providerIds: [...clients].flatMap(([providerId, client]) => client ? [providerId] : []),
+  })
+
+  for (const { connection, provider } of connections) {
+    const client = clients.get(connection.id)
     if (!client) continue
-    const account = await getConnectedAccountForListing({
-      organizationId: input.organizationId,
-      orgMembershipId: input.orgMembershipId,
-      providerId: connection.id,
-    })
+    const account = accounts.get(connection.id) ?? null
     const entry = buildNativeProviderEntry(provider, {
       clientConfigured: true,
       connectedForMe: Boolean(account?.accessToken),
@@ -183,17 +193,10 @@ export async function listNativeProviderUsableEntries(input: {
     if (entry) entries.push(entry)
   }
 
-  // Legacy native-provider clients never had connector rows. Keep their
-  // literal registry key visible org-wide without moving either credentials
-  // or connected accounts.
-  for (const provider of Object.values(NATIVE_OAUTH_PROVIDERS)) {
-    const client = await getOrgOAuthClient(input.organizationId, provider.providerId)
+  for (const provider of legacyProviders) {
+    const client = clients.get(provider.providerId)
     if (!client) continue
-    const account = await getConnectedAccountForListing({
-      organizationId: input.organizationId,
-      orgMembershipId: input.orgMembershipId,
-      providerId: provider.providerId,
-    })
+    const account = accounts.get(provider.providerId) ?? null
     const entry = buildNativeProviderEntry(provider, {
       clientConfigured: true,
       connectedForMe: Boolean(account?.accessToken),

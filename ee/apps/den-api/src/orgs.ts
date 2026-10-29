@@ -16,6 +16,7 @@ import {
   MemberTable,
   OrganizationTable,
   PluginAccessGrantTable,
+  SandboxOrganizationTable,
   ScimGroupMemberTable,
   ScimProviderTable,
   ScimUserTombstoneTable,
@@ -35,6 +36,7 @@ import { revokeUpstreamCredentials, revokeInferenceCredentialsForMembers } from 
 import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { parseOrganizationPlan, type PlanTier } from "./entitlements.js"
 import { getOrganizationFeatures, readOrganizationForAuthorization, type FeatureMap } from "./features.js"
 import {
   getRoleValueAfterOwnershipTransfer,
@@ -44,6 +46,7 @@ import {
   validateOrganizationMemberRoleChange,
   type MemberLifecycleValidation,
 } from "./organization-member-guards.js"
+import { ORGANIZATION_DELETION_METADATA_KEY } from "./organization-metadata.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js"
 import { getScimManagedTeamIds } from "./scim-groups.js"
@@ -191,6 +194,8 @@ export type UserOrgSummary = {
   orgMemberId: string
   membershipId: string
   memberCount: number
+  planTier: PlanTier
+  isSandbox: boolean
   createdAt: Date
   updatedAt: Date
 }
@@ -409,14 +414,15 @@ function serializeMetadataRecord(metadata: Record<string, unknown>) {
  * Organization metadata as members see it. Feature overrides are platform
  * administration data (still mirrored into metadata.capabilities for one
  * release, for rollback) and are never sent; clients read the effective
- * `features` from GET /v1/org instead.
+ * `features` from GET /v1/org instead. An unfinished deletion's progress is
+ * platform-only too.
  */
 export function serializeMemberFacingOrganizationMetadata(input: OrganizationMetadataInput) {
   const metadata = parseMetadataRecord(input)
-  if (!("capabilities" in metadata)) {
+  if (!("capabilities" in metadata) && !(ORGANIZATION_DELETION_METADATA_KEY in metadata)) {
     return serializeOrganizationMetadata(input)
   }
-  const { capabilities: _platformOnly, ...memberFacing } = metadata
+  const { capabilities: _platformOnly, [ORGANIZATION_DELETION_METADATA_KEY]: _deletionProgress, ...memberFacing } = metadata
   return serializeMetadataRecord(memberFacing)
 }
 
@@ -1445,6 +1451,7 @@ export async function listUserOrgs(userId: UserId) {
     .select({
       membershipId: MemberTable.id,
       role: MemberTable.role,
+      sandboxOrganizationId: SandboxOrganizationTable.organizationId,
       organization: {
         id: OrganizationTable.id,
         name: OrganizationTable.name,
@@ -1458,6 +1465,7 @@ export async function listUserOrgs(userId: UserId) {
     })
     .from(MemberTable)
     .innerJoin(OrganizationTable, eq(MemberTable.organizationId, OrganizationTable.id))
+    .leftJoin(SandboxOrganizationTable, eq(SandboxOrganizationTable.organizationId, OrganizationTable.id))
     .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
     .orderBy(asc(MemberTable.createdAt))
 
@@ -1492,6 +1500,8 @@ export async function listUserOrgs(userId: UserId) {
       orgMemberId: row.membershipId,
       membershipId: row.membershipId,
       memberCount: memberCounts.get(row.organization.id) ?? 0,
+      planTier: parseOrganizationPlan(row.organization.metadata).tier,
+      isSandbox: row.sandboxOrganizationId !== null,
       createdAt: row.organization.createdAt,
       updatedAt: row.organization.updatedAt,
     } satisfies UserOrgSummary

@@ -16,6 +16,7 @@ import {
 } from "./agent-context-diagnostics-transport";
 import { desktopFetch, desktopFetchViaMain, desktopFetchAgentContextDiagnostics } from "./desktop";
 import { isOpenworkGatewayRuntime } from "./gateway-runtime";
+import { parseGatewayUsableModel } from "./gateway-usable-model";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
 import type { DenResourceSnapshot } from "./den-types";
@@ -82,8 +83,10 @@ export type OpenworkCloudProviderSyncStatus = {
 
 export interface EngineV2MigrationStatus {
   state: "idle" | "running" | "completed" | "error";
-  /** Only `copying` moves the counts; older servers omit it. */
-  phase?: "starting" | "converting" | "copying";
+  /** Restoring counts messages separately from the chat-copy counts. */
+  phase?: "starting" | "converting" | "restoring" | "copying";
+  restored?: number;
+  restoreTotal?: number;
   imported: number;
   skipped: number;
   total: number;
@@ -115,10 +118,12 @@ function parseEngineV2Migration(value: unknown): EngineV2MigrationStatus | undef
   if (!("imported" in value) || typeof value.imported !== "number"
     || !("skipped" in value) || typeof value.skipped !== "number"
     || !("total" in value) || typeof value.total !== "number") return undefined;
-  const phase = "phase" in value && (value.phase === "starting" || value.phase === "converting" || value.phase === "copying")
+  const phase = "phase" in value && (value.phase === "starting" || value.phase === "converting" || value.phase === "restoring" || value.phase === "copying")
     ? value.phase : undefined;
   return { state: value.state, imported: value.imported, skipped: value.skipped, total: value.total,
     ...(phase ? { phase } : {}),
+    ...("restored" in value && typeof value.restored === "number" ? { restored: value.restored } : {}),
+    ...("restoreTotal" in value && typeof value.restoreTotal === "number" ? { restoreTotal: value.restoreTotal } : {}),
     ...("startedAt" in value && typeof value.startedAt === "string" ? { startedAt: value.startedAt } : {}),
     ...("backupPath" in value && typeof value.backupPath === "string" ? { backupPath: value.backupPath } : {}),
     ...("notCopied" in value ? { notCopied: parseChats(value.notCopied) } : {}),
@@ -306,27 +311,6 @@ function parseCloudImportedProvider(value: unknown): CloudImportedProvider | nul
   };
 }
 
-function parsePendingGatewayModel(value: unknown, credentialSetId: unknown): GatewayUsableModel | null {
-  if (!value || typeof value !== "object"
-    || !("id" in value) || typeof value.id !== "string"
-    || !/^gwm_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(value.id)
-    || !("name" in value) || typeof value.name !== "string"
-    || !("config" in value) || !value.config || typeof value.config !== "object" || Array.isArray(value.config)
-    || !("id" in value.config) || value.config.id !== value.id
-    || !("upstreamModelId" in value) || typeof value.upstreamModelId !== "string"
-    || !("modelGroupId" in value) || typeof value.modelGroupId !== "string"
-    || !("modelGroupName" in value) || typeof value.modelGroupName !== "string"
-    || !("credentialSetId" in value) || typeof value.credentialSetId !== "string" || value.credentialSetId !== credentialSetId
-    || value.id.split("_")[2] !== value.credentialSetId.slice(4)
-    || value.id.split("_")[1] !== value.modelGroupId.slice(4)
-    || !("credentialSetName" in value) || typeof value.credentialSetName !== "string") return null;
-  return {
-    id: value.id, name: value.name, config: { ...value.config, id: value.id },
-    upstreamModelId: value.upstreamModelId, modelGroupId: value.modelGroupId, modelGroupName: value.modelGroupName,
-    credentialSetId: value.credentialSetId, credentialSetName: value.credentialSetName,
-  };
-}
-
 function parseCloudProviderSyncStatus(value: unknown): OpenworkCloudProviderSyncStatus {
   if (!value || typeof value !== "object" || !("hasSession" in value) || typeof value.hasSession !== "boolean" || !("providers" in value) || !Array.isArray(value.providers)) {
     throw new Error("Invalid cloud provider sync status response.");
@@ -367,7 +351,7 @@ function parseCloudProviderSyncStatus(value: unknown): OpenworkCloudProviderSync
         ...("authUrl" in raw && typeof raw.authUrl === "string" ? { authUrl: raw.authUrl } : {}),
         ...(raw.reason === "member_auth_required" && "credentialSetId" in raw && "models" in raw && Array.isArray(raw.models)
           ? { models: raw.models.flatMap((value: unknown) => {
-            const model = parsePendingGatewayModel(value, raw.credentialSetId);
+            const model = parseGatewayUsableModel(value, raw.credentialSetId);
             return model ? [model] : [];
           }) } : {}),
       });

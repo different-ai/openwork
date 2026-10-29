@@ -254,10 +254,12 @@ test("an interval Automation's occurrences mark its owner's use of the feature o
   assert.equal(created.status, 201, summary(created))
   const automationId = text(field(created.body, "automation", "id"), "Automation id")
   let clock = Number(field(created.body, "automation", "nextDueAt"))
+  let measuring = false
+  const markFeaturesUsed = createFeatureUsageMarker((input) => recordFeatureUsage(db, input), () => new Date(clock))
   const service = new AutomationService({
     intervalSchedulesEnabled: async () => true,
     calendarTriggersEnabled: async () => false,
-    markFeaturesUsed: createFeatureUsageMarker((input) => recordFeatureUsage(db, input), () => new Date(clock)),
+    markFeaturesUsed: (input) => { if (measuring) markFeaturesUsed(input) },
   })
   const usage = async () => {
     const [row] = await db.select({ daysUsed: FeatureUsageTable.days_used, lastUsedDay: FeatureUsageTable.last_used_day }).from(FeatureUsageTable).where(and(
@@ -277,13 +279,19 @@ test("an interval Automation's occurrences mark its owner's use of the feature o
     const next = await asOwner("GET", `/v1/automations/${automationId}`)
     clock = Number(field(next.body, "automation", "nextDueAt"))
   }
-  const firstDay = new Date(clock).toISOString().slice(0, 10)
+  const day = (at: number) => new Date(at).toISOString().slice(0, 10)
+  // The first occurrence follows the real clock, so after 18:00 UTC it is the day's last (21:00). Run on to the
+  // next day's first occurrence without recording use, so the measured day has several occurrences at any hour.
+  const createdDay = day(clock)
+  while (day(clock) === createdDay) await occurrence()
+  measuring = true
+  const firstDay = day(clock)
   await occurrence()
   const first = await eventually((row) => row !== undefined)
   assert.deepEqual(first, { daysUsed: 1, lastUsedDay: firstDay })
   // Further occurrences that day write nothing more; the first one on the next day counts a second day.
-  while (new Date(clock).toISOString().slice(0, 10) === firstDay) await occurrence()
-  const secondDay = new Date(clock).toISOString().slice(0, 10)
+  while (day(clock) === firstDay) await occurrence()
+  const secondDay = day(clock)
   await occurrence()
   assert.deepEqual(await eventually((row) => row?.daysUsed === 2), { daysUsed: 2, lastUsedDay: secondDay })
   const runs = await asOwner("GET", `/v1/automations/${automationId}/runs`)

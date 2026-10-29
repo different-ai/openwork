@@ -52,18 +52,27 @@ function transaction(db: HistoryDatabase, run: () => void): void {
 
 const yieldTurn = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 
+function payloadSessions(db: HistoryDatabase): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS openwork_payload_session (token TEXT PRIMARY KEY, session_id TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS openwork_payload_session_session ON openwork_payload_session(session_id, token)`);
+}
+
 /** Native conversion reads a whole session into JS. Substitute reversible,
  * unique payload references first; SQLite keeps the full values off that heap.
  * Each session and its payload map commit together, making restart idempotent. */
-export async function externalizeHistory(db: HistoryDatabase, signal?: AbortSignal): Promise<void> {
+export async function externalizeHistory(db: HistoryDatabase, signal?: AbortSignal,
+  progress?: (done: number, total: number) => void): Promise<void> {
   db.exec(`CREATE TABLE IF NOT EXISTS openwork_payload (
     token TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS openwork_externalized (session_id TEXT PRIMARY KEY)`);
+  payloadSessions(db);
+  const mapToken = db.prepare("INSERT INTO openwork_payload_session VALUES (?, ?)");
   const sessions = db.prepare("SELECT id FROM session ORDER BY id").all();
+  let done = 0;
   for (const session of sessions) {
     signal?.throwIfAborted();
     const sessionId = stringField(session, "id");
-    if (db.prepare("SELECT 1 FROM openwork_externalized WHERE session_id = ?").get(sessionId)) continue;
+    if (db.prepare("SELECT 1 FROM openwork_externalized WHERE session_id = ?").get(sessionId)) { progress?.(++done, sessions.length); continue; }
     transaction(db, () => {
       for (const table of ["message", "part"]) {
         const rows = db.prepare(`SELECT id FROM ${table} WHERE session_id = ? ORDER BY id`).all(sessionId);
@@ -83,6 +92,7 @@ export async function externalizeHistory(db: HistoryDatabase, signal?: AbortSign
               const encodedToken = Buffer.from(token).toString("base64");
               db.prepare(`INSERT INTO openwork_payload SELECT ?, substr(json_extract(data, ?), ?) FROM ${table} WHERE id = ?`)
                 .run(encodedToken, path, header.length + 1, id);
+              mapToken.run(encodedToken, sessionId);
               if (!header.endsWith(";base64,")) encodeDataUrl(db, encodedToken);
               const normalizedHeader = header.endsWith(";base64,") ? header : `${header.slice(0, -1)};base64,`;
               db.prepare(`UPDATE ${table} SET data = json_replace(data, ?, ?) WHERE id = ?`).run(path, normalizedHeader + encodedToken, id);
@@ -91,9 +101,11 @@ export async function externalizeHistory(db: HistoryDatabase, signal?: AbortSign
               const uriToken = normalizedHeader + encodedToken;
               db.prepare(`INSERT INTO openwork_payload SELECT ?, json_extract(data, ?) FROM original.${table} WHERE id = ?`)
                 .run(uriToken, path, id);
+              mapToken.run(uriToken, sessionId);
             } else {
               db.prepare(`INSERT INTO openwork_payload SELECT ?, json_extract(data, ?) FROM ${table} WHERE id = ?`)
                 .run(token, path, id);
+              mapToken.run(token, sessionId);
               db.prepare(`UPDATE ${table} SET data = json_replace(data, ?, ?) WHERE id = ?`).run(path, token, id);
             }
           }
@@ -101,6 +113,7 @@ export async function externalizeHistory(db: HistoryDatabase, signal?: AbortSign
       }
       db.prepare("INSERT INTO openwork_externalized VALUES (?)").run(sessionId);
     });
+    progress?.(++done, sessions.length);
     await yieldTurn();
   }
 }
@@ -145,32 +158,69 @@ function encodeDataUrl(db: HistoryDatabase, token: string): void {
   db.prepare("UPDATE openwork_payload SET value = (SELECT group_concat(data, '') FROM (SELECT data FROM temp.payload_chunks ORDER BY n)) WHERE token = ?").run(token);
 }
 
+/** Old staged copies have no mapping. Walk their still-externalized v1 atoms
+ * once, using payload primary-key lookups, never payload-value scans. A data URL
+ * has both a full-URI token and its 80-character base64 token. Unmapped tokens
+ * remain in openwork_payload and are handled by the exact global fallback. */
+function backfillPayloadSessions(db: HistoryDatabase): void {
+  payloadSessions(db);
+  db.exec("CREATE TABLE IF NOT EXISTS openwork_payload_session_backfill (completed INTEGER PRIMARY KEY)");
+  if (db.prepare("SELECT 1 FROM openwork_payload_session_backfill").get()) return;
+  transaction(db, () => {
+    for (const table of ["message", "part"]) {
+      db.exec(`INSERT OR IGNORE INTO openwork_payload_session (token, session_id)
+        SELECT p.token, s.session_id FROM ${table} s, json_tree(s.data) j
+        JOIN openwork_payload p ON p.token = j.atom
+          OR (j.atom LIKE 'data:%' AND p.token = substr(j.atom, -80))
+        WHERE j.type = 'text'`);
+    }
+    db.exec("INSERT INTO openwork_payload_session_backfill VALUES (1)");
+  });
+}
+
 /** Rehydrate native projections within SQLite, never JSON.parse/stringify a
- * full message. */
-export async function restoreHistoryPayloads(db: HistoryDatabase, signal?: AbortSignal): Promise<void> {
+ * full message. Only marker-bearing messages need session-local token lookups. */
+export async function restoreHistoryPayloads(db: HistoryDatabase, signal?: AbortSignal,
+  progress?: (done: number, total: number) => void): Promise<void> {
+  signal?.throwIfAborted();
+  backfillPayloadSessions(db);
   db.exec("CREATE TABLE IF NOT EXISTS openwork_restored (message_id TEXT PRIMARY KEY)");
+  const total = numberField(db.prepare("SELECT count(*) AS n FROM session_message").get(), "n");
+  let done = numberField(db.prepare("SELECT count(*) AS n FROM openwork_restored r JOIN session_message m ON m.id = r.message_id").get(), "n");
+  progress?.(done, total);
+  const marker = db.prepare("SELECT 1 FROM session_message WHERE id = ? AND (instr(data, 'OWPAYLOAD') > 0 OR instr(data, 'T1dQQVlMT0FE') > 0)");
+  const replace = db.prepare(`UPDATE session_message SET data = replace(data, ?,
+    (SELECT substr(json_quote(value), 2, length(json_quote(value)) - 2) FROM openwork_payload WHERE token = ?)) WHERE id = ?`);
+  const unmapped = Boolean(db.prepare(`SELECT 1 FROM openwork_payload p LEFT JOIN openwork_payload_session s ON s.token = p.token
+    WHERE s.token IS NULL LIMIT 1`).get());
+  const globalTokens = db.prepare(`SELECT token FROM openwork_payload WHERE instr((SELECT data FROM session_message WHERE id = ?), token) > 0
+    ORDER BY length(token) DESC`);
   let cursor = "";
   while (true) {
-    const rows = db.prepare("SELECT id FROM session_message WHERE id > ? ORDER BY id LIMIT ?").all(cursor, BATCH_ROWS);
+    const rows = db.prepare("SELECT id, session_id FROM session_message WHERE id > ? ORDER BY id LIMIT ?").all(cursor, BATCH_ROWS);
     if (!rows.length) break;
     for (const row of rows) {
       signal?.throwIfAborted();
       const id = stringField(row, "id"); cursor = id;
       if (db.prepare("SELECT 1 FROM openwork_restored WHERE message_id = ?").get(id)) continue;
       transaction(db, () => {
-        const tokens = db.prepare(`SELECT token FROM openwork_payload WHERE instr((SELECT data FROM session_message WHERE id = ?), token) > 0
-          ORDER BY length(token) DESC`).all(id);
-        for (const item of tokens) {
-          const token = stringField(item, "token");
-          db.prepare(`UPDATE session_message SET data = replace(data, ?,
-            (SELECT substr(json_quote(value), 2, length(json_quote(value)) - 2) FROM openwork_payload WHERE token = ?)) WHERE id = ?`)
-            .run(token, token, id);
+        if (marker.get(id)) {
+          const tokens = unmapped ? globalTokens.all(id) : db.prepare(`SELECT token FROM openwork_payload_session WHERE session_id = ?
+            AND instr((SELECT data FROM session_message WHERE id = ?), token) > 0 ORDER BY length(token) DESC`)
+            .all(stringField(row, "session_id"), id);
+          for (const item of tokens) {
+            const token = stringField(item, "token"); replace.run(token, token, id);
+          }
+          if (marker.get(id)) {
+            if (db.prepare(`SELECT 1 FROM session_message m WHERE m.id = ? AND EXISTS
+              (SELECT 1 FROM openwork_payload p WHERE instr(m.data, p.token) > 0)`).get(id)) throw new Error("Unresolved history payload");
+          }
         }
-        if (db.prepare(`SELECT 1 FROM session_message m WHERE m.id = ? AND EXISTS
-          (SELECT 1 FROM openwork_payload p WHERE instr(m.data, p.token) > 0)`).get(id)) throw new Error("Unresolved history payload");
         db.prepare("INSERT INTO openwork_restored VALUES (?)").run(id);
       });
+      done++;
     }
+    progress?.(done, total);
     await yieldTurn();
   }
 }
@@ -197,6 +247,58 @@ function sameSchema(db: HistoryDatabase, table: string): string[] {
   return target;
 }
 
+/** Reconcile an old, uncheckpointed projection atomically. Archive before every
+ * replacement (including sequence changes). Never overwrite v2-authored turns.
+ * Extra system rows are archived, not retained alongside a converter's new
+ * system row: duplicate tool-availability state is not safe to replay. */
+function refreshExistingSession(db: HistoryDatabase, id: string, sourceKey: string, messageColumns: string): boolean {
+  const missing = db.prepare(`SELECT 1 FROM converted.session_message s LEFT JOIN main.session_message t ON t.id = s.id
+    WHERE s.session_id = ? AND t.id IS NULL LIMIT 1`).get(id);
+  if (!missing) return false;
+  if (db.prepare(`SELECT 1 FROM converted.session_message s JOIN main.session_message t ON t.id = s.id
+    WHERE s.session_id = ? AND t.session_id != s.session_id LIMIT 1`).get(id)) throw new Error("History message identity conflict; existing v2 messages were preserved.");
+  const diverged = db.prepare(`SELECT 1 FROM main.session_message t LEFT JOIN converted.session_message s ON s.id = t.id
+    WHERE t.session_id = ? AND t.type IN ('user', 'assistant') AND s.id IS NULL LIMIT 1`).get(id);
+  db.prepare(`INSERT INTO openwork_v2_replaced_message (source_key, id, session_id, seq, type, data, time_created, time_updated)
+    SELECT ?, id, session_id, seq, type, data, time_created, time_updated FROM session_message WHERE session_id = ?`).run(sourceKey, id);
+  if (!diverged) {
+    db.prepare("DELETE FROM session_message WHERE session_id = ?").run(id);
+    db.prepare(`INSERT INTO session_message (${messageColumns}) SELECT ${messageColumns} FROM converted.session_message WHERE session_id = ?`).run(id);
+  } else {
+    // Keep existing data/ids/timestamps exactly; only seq changes to interleave
+    // earlier missing turns. Negative staging seqs avoid the unique index even
+    // when the old converter numbered from one and the new one from zero.
+    db.exec("CREATE TEMP TABLE IF NOT EXISTS history_order (id TEXT PRIMARY KEY, seq INTEGER NOT NULL); DELETE FROM temp.history_order");
+    db.prepare(`INSERT INTO temp.history_order SELECT id, row_number() OVER (ORDER BY time_created, seq, id) - 1 FROM (
+      SELECT id, time_created, seq FROM main.session_message WHERE session_id = ?1
+      UNION ALL SELECT s.id, s.time_created, s.seq FROM converted.session_message s
+        WHERE s.session_id = ?1 AND NOT EXISTS (SELECT 1 FROM main.session_message t WHERE t.id = s.id))`).run(id);
+    db.prepare("UPDATE session_message SET seq = -(SELECT seq FROM temp.history_order o WHERE o.id = session_message.id) - 1 WHERE session_id = ?").run(id);
+    db.prepare(`INSERT INTO session_message (id, session_id, seq, type, data, time_created, time_updated)
+      SELECT s.id, s.session_id, -o.seq - 1, s.type, s.data, s.time_created, s.time_updated
+      FROM converted.session_message s JOIN temp.history_order o ON o.id = s.id
+      WHERE s.session_id = ? AND NOT EXISTS (SELECT 1 FROM main.session_message t WHERE t.id = s.id)`).run(id);
+    db.prepare("UPDATE session_message SET seq = (SELECT seq FROM temp.history_order o WHERE o.id = session_message.id) WHERE session_id = ?").run(id);
+    db.exec("DELETE FROM temp.history_order");
+  }
+  return true;
+}
+
+function advanceHistorySequence(db: HistoryDatabase, id: string): void {
+  // Preserve the current owner and never rewind an existing event log.
+  db.prepare(`INSERT INTO event_sequence (aggregate_id, seq, owner_id)
+    SELECT ?, max(coalesce((SELECT max(seq) FROM session_message WHERE session_id = ?1), 0),
+      coalesce((SELECT seq FROM converted.event_sequence WHERE aggregate_id = ?1), 0)), NULL
+    ON CONFLICT(aggregate_id) DO UPDATE SET seq = max(event_sequence.seq, excluded.seq)`).run(id);
+}
+
+/** Pre-ownership checkpoints only represented sessions the copy created.
+ * Preserve that meaning when upgrading an already interrupted database. */
+export function ensureHistoryCopyOwnership(db: HistoryDatabase): void {
+  if (db.prepare("SELECT 1 FROM pragma_table_info('openwork_history_copy') WHERE name = 'created_session'").get()) return;
+  db.exec("ALTER TABLE openwork_history_copy ADD COLUMN created_session INTEGER NOT NULL DEFAULT 1");
+}
+
 /** The target engine must be stopped. Rows, their original v1 archive and the
  * checkpoint live in the same SQLite DB. A kill rolls back only the active batch. */
 export async function copyHistoryBatches(options: {
@@ -219,12 +321,15 @@ export async function copyHistoryBatches(options: {
   }
   db.exec(`CREATE TABLE IF NOT EXISTS openwork_history_copy (
       source_key TEXT, session_id TEXT, cursor INTEGER NOT NULL DEFAULT -1, completed INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (source_key, session_id));
+      created_session INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (source_key, session_id));
     CREATE TABLE IF NOT EXISTS openwork_v1_message (source_key TEXT, id TEXT, session_id TEXT,
       time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL, PRIMARY KEY (source_key, id));
     CREATE TABLE IF NOT EXISTS openwork_v1_part (source_key TEXT, id TEXT, message_id TEXT, session_id TEXT,
       time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL, PRIMARY KEY (source_key, id));
-    CREATE TABLE IF NOT EXISTS openwork_v1_session (source_key TEXT, id TEXT, data TEXT NOT NULL, PRIMARY KEY (source_key, id))`);
+    CREATE TABLE IF NOT EXISTS openwork_v1_session (source_key TEXT, id TEXT, data TEXT NOT NULL, PRIMARY KEY (source_key, id));
+    CREATE TABLE IF NOT EXISTS openwork_v2_replaced_message (source_key TEXT, id TEXT, session_id TEXT,
+      seq INTEGER, type TEXT, data TEXT NOT NULL, time_created INTEGER, time_updated INTEGER, PRIMARY KEY (source_key, id))`);
+  ensureHistoryCopyOwnership(db);
   db.exec("PRAGMA foreign_keys = ON");
   transaction(db, () => {
     db.exec(`INSERT OR IGNORE INTO project (${projectColumns}) SELECT ${projectColumns} FROM converted.project`);
@@ -237,17 +342,23 @@ export async function copyHistoryBatches(options: {
     const id = stringField(session, "id");
     const checkpoint = db.prepare("SELECT cursor, completed FROM openwork_history_copy WHERE source_key = ? AND session_id = ?").get(options.sourceKey, id);
     if (numberField(checkpoint, "completed")) { skipped++; options.progress(id, "skipped"); continue; }
-    // An existing v2 chat is independent history. Only a checkpoint created
-    // atomically with a new session grants this run ownership of its messages.
-    if (!checkpoint && db.prepare("SELECT 1 FROM session_v2 WHERE id = ?").get(id)) {
-      skipped++; options.progress(id, "skipped"); continue;
-    }
+    let unchanged = false;
+    let cursor = checkpoint ? numberField(checkpoint, "cursor") : -1;
     transaction(db, () => {
       if (checkpoint) return;
-      db.prepare(`INSERT INTO session_v2 (${sessionColumns}) SELECT ${sessionValues} FROM converted.session_v2 WHERE id = ?`).run(id);
-      db.prepare("INSERT INTO openwork_history_copy (source_key, session_id) VALUES (?, ?)").run(options.sourceKey, id);
+      const existingSession = db.prepare("SELECT 1 FROM session_v2 WHERE id = ?").get(id);
+      if (existingSession) {
+        unchanged = !refreshExistingSession(db, id, options.sourceKey, messageColumns);
+        // Recovery may release this checkpoint before raw archiving finishes.
+        // Make its retained projection safe for the next native writer now.
+        advanceHistorySequence(db, id);
+        cursor = numberField(db.prepare("SELECT coalesce(max(seq), -1) AS seq FROM converted.session_message WHERE session_id = ?").get(id), "seq");
+      } else {
+        db.prepare(`INSERT INTO session_v2 (${sessionColumns}) SELECT ${sessionValues} FROM converted.session_v2 WHERE id = ?`).run(id);
+      }
+      db.prepare("INSERT INTO openwork_history_copy (source_key, session_id, cursor, created_session) VALUES (?, ?, ?, ?)")
+        .run(options.sourceKey, id, cursor, existingSession ? 0 : 1);
     });
-    let cursor = checkpoint ? numberField(checkpoint, "cursor") : -1;
     while (true) {
       options.signal?.throwIfAborted();
       const batch = db.prepare("SELECT id, seq FROM converted.session_message WHERE session_id = ? AND seq > ? ORDER BY seq LIMIT ?").all(id, cursor, BATCH_ROWS);
@@ -299,15 +410,11 @@ export async function copyHistoryBatches(options: {
         if (db.prepare(`SELECT 1 FROM original.${table} s LEFT JOIN openwork_v1_${table} t ON t.id = s.id AND t.source_key = ?
           WHERE s.session_id = ? AND (t.id IS NULL OR t.data != s.data) LIMIT 1`).get(options.sourceKey, id)) throw new Error("Original history verification failed");
       }
-      // Do not reset an existing sequence owner or rewind the event log.
-      db.prepare(`INSERT INTO event_sequence (aggregate_id, seq, owner_id)
-        SELECT ?, max(coalesce((SELECT max(seq) FROM session_message WHERE session_id = ?1), 0),
-          coalesce((SELECT seq FROM converted.event_sequence WHERE aggregate_id = ?1), 0)), NULL
-        ON CONFLICT(aggregate_id) DO UPDATE SET seq = max(event_sequence.seq, excluded.seq)`).run(id);
+      advanceHistorySequence(db, id);
       db.prepare("UPDATE openwork_history_copy SET completed = 1 WHERE source_key = ? AND session_id = ?").run(options.sourceKey, id);
     });
-    imported++;
-    options.progress(id, "imported");
+    if (unchanged) { skipped++; options.progress(id, "skipped"); }
+    else { imported++; options.progress(id, "imported"); }
   }
   return { imported, skipped };
 }

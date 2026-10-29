@@ -55,6 +55,45 @@ export function requestReadFor<T>(owner: object, name: string, load: () => Promi
   return requestRead(`${name}:#${id}`, load)
 }
 
+/**
+ * requestRead for many ids that one query can read together. Ids already read
+ * in this request reuse that read; the rest load in a single call, and each of
+ * them is then shared exactly as if requestRead had loaded it alone, so a
+ * later single read of one id costs nothing. An id `load` leaves out reads as
+ * `absent`.
+ */
+export async function requestReadMany<Id, T>(
+  ids: readonly Id[],
+  keyOf: (id: Id) => string,
+  load: (missing: Id[]) => Promise<ReadonlyMap<Id, T>>,
+  absent: T,
+): Promise<Map<Id, T>> {
+  const reads = requestReads.getStore()?.shared
+  const uniqueIds = [...new Set(ids)]
+  const pending = new Map<Id, Promise<T>>()
+  const missing: Id[] = []
+  for (const id of uniqueIds) {
+    const shared = reads?.get(keyOf(id))
+    if (shared) pending.set(id, shared as Promise<T>)
+    else missing.push(id)
+  }
+  if (missing.length > 0) {
+    const loading = load(missing)
+    for (const id of missing) {
+      const one = loading.then((rows) => rows.has(id) ? rows.get(id) as T : absent)
+      pending.set(id, one)
+      if (!reads) continue
+      const key = keyOf(id)
+      reads.set(key, one)
+      // A failed read is not shared: the next caller tries again.
+      one.catch(() => {
+        if (reads.get(key) === one) reads.delete(key)
+      })
+    }
+  }
+  return new Map(await Promise.all(uniqueIds.map(async (id) => [id, await pending.get(id)!] as const)))
+}
+
 const WRITE_STATEMENT = /^\s*(insert|update|delete|replace)\b/i
 
 /** Drizzle logger hook: a write drops every read shared so far, in this request and the ones around it. */

@@ -179,7 +179,7 @@ test("a complete large-thread copy resumes committed batches and repeated runs p
   }
 });
 
-test("active engines block the copy and existing v2 chats are left untouched", { skip: !bin, timeout: 60_000 }, async () => {
+test("active engines block the copy and diverged chats merge without losing native turns", { skip: !bin, timeout: 60_000 }, async () => {
   if (!bin) return;
   const directory = await mkdtemp(join(tmpdir(), "openwork-history-existing-"));
   const rootDir = join(directory, "v2");
@@ -205,14 +205,15 @@ test("active engines block the copy and existing v2 chats are left untouched", {
     db.close();
     await migrateOpencodeV1History(request);
     assert.equal(status?.state, "completed", status?.error);
-    assert.equal(status?.imported, 0);
-    assert.equal(status?.skipped, 1);
+    assert.equal(status?.imported, 1);
+    assert.equal(status?.skipped, 0);
     db = await openHistoryDatabase(request.targetDatabase);
     try {
       assert.equal(stringField(db.prepare("SELECT title FROM session_v2 WHERE id = ?").get(sessionId), "title"), "An existing v2 chat");
-      assert.equal(numberField(db.prepare("SELECT count(*) AS n FROM session_message").get(), "n"), 1);
+      assert.equal(numberField(db.prepare("SELECT count(*) AS n FROM session_message").get(), "n"), 142);
       assert.equal(stringField(db.prepare("SELECT data FROM session_message WHERE id = ?").get(id("msg", 999)), "data"), existingData);
-      assert.equal(numberField(db.prepare("SELECT seq FROM session_message WHERE id = ?").get(id("msg", 999)), "seq"), 50);
+      assert.equal(stringField(db.prepare("SELECT id FROM session_message ORDER BY seq DESC LIMIT 1").get(), "id"), id("msg", 999));
+      assert.equal(numberField(db.prepare("SELECT seq FROM openwork_v2_replaced_message WHERE id = ?").get(id("msg", 999)), "seq"), 50);
     } finally { db.close(); }
   } finally { await engine?.close(); await rm(directory, { recursive: true, force: true }); }
 });

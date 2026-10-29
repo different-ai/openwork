@@ -82,6 +82,16 @@ export type SidebarView = "workspaces" | "feed";
 /** A workspace group pinned to the bottom of the Feed; sessions filed there stay until moved. */
 export type FeedFolder = { workspaceId: string; groupId: string };
 
+/** Feed sections: by day, active and inactive, or one list. */
+export const FEED_GROUP_BY_OPTIONS = ["day", "activity", "none"] as const;
+export type FeedGroupBy = (typeof FEED_GROUP_BY_OPTIONS)[number];
+export const DEFAULT_FEED_GROUP_BY: FeedGroupBy = "day";
+
+/** The time the Feed orders and groups by: last activity or creation. */
+export const FEED_SORT_BY_OPTIONS = ["activity", "created"] as const;
+export type FeedSortBy = (typeof FEED_SORT_BY_OPTIONS)[number];
+export const DEFAULT_FEED_SORT_BY: FeedSortBy = "activity";
+
 type SessionManagementState = {
   pinnedIds: string[];
   unreadIds: string[];
@@ -90,6 +100,8 @@ type SessionManagementState = {
   /** Sidebar layout: the workspace tree, or every workspace's sessions in one feed. */
   sidebarView: SidebarView;
   feedFolders: FeedFolder[];
+  feedGroupBy: FeedGroupBy;
+  feedSortBy: FeedSortBy;
   orderByWorkspace: Record<string, string[]>;
   groupsByWorkspace: Record<string, WorkspaceGroupState>;
 };
@@ -105,6 +117,8 @@ type SessionManagementActions = {
   restoreSettle: (sessionId: string, snapshot: SessionSettleSnapshot) => void;
   setAutoSettleDays: (days: number) => void;
   setSidebarView: (view: SidebarView) => void;
+  setFeedGroupBy: (groupBy: FeedGroupBy) => void;
+  setFeedSortBy: (sortBy: FeedSortBy) => void;
   toggleFeedFolder: (workspaceId: string, groupId: string) => void;
   reorderSessions: (workspaceId: string, sessionIds: string[]) => void;
   assignGroup: (workspaceId: string, sessionId: string, groupId: string | null) => void;
@@ -257,6 +271,8 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
       autoSettleDays: DEFAULT_AUTO_SETTLE_DAYS,
       sidebarView: "feed",
       feedFolders: [],
+      feedGroupBy: DEFAULT_FEED_GROUP_BY,
+      feedSortBy: DEFAULT_FEED_SORT_BY,
       orderByWorkspace: {},
       groupsByWorkspace: {},
 
@@ -329,6 +345,12 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
         }),
 
       setSidebarView: (view) => set({ sidebarView: view === "workspaces" ? "workspaces" : "feed" }),
+
+      setFeedGroupBy: (groupBy) =>
+        set({ feedGroupBy: FEED_GROUP_BY_OPTIONS.includes(groupBy) ? groupBy : DEFAULT_FEED_GROUP_BY }),
+
+      setFeedSortBy: (sortBy) =>
+        set({ feedSortBy: FEED_SORT_BY_OPTIONS.includes(sortBy) ? sortBy : DEFAULT_FEED_SORT_BY }),
 
       setAutoSettleDays: (days) =>
         set({ autoSettleDays: AUTO_SETTLE_DAY_OPTIONS.some((option) => option === days) ? days : DEFAULT_AUTO_SETTLE_DAYS }),

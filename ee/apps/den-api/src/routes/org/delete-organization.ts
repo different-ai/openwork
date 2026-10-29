@@ -1,4 +1,4 @@
-import { eq, inArray } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { deleteGatewayUsageForOrganization } from "@openwork-ee/den-db/gateway-usage-limits"
 import {
   AuthApiKeyTable,
@@ -101,6 +101,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { deleteModelsAnalyticsForOrganization } from "@openwork-ee/telemetry"
+import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -112,13 +113,15 @@ import { unlessResumeTableMissing } from "../../headless-runner/resume-grant-rev
 import { addAuditRequestResource } from "../../audit/request-capture.js"
 import { cache } from "../../cache.js"
 import { db } from "../../db.js"
-import { completeLinearIssue, createLinearIssue, type LinearIssue } from "../../linear.js"
+import { completeLinearIssue, createLinearIssue } from "../../linear.js"
 import { orgRoleRoute } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
+import { ORGANIZATION_DELETION_METADATA_KEY, updateOrganizationMetadata } from "../../organization-metadata.js"
 import { invalidateWebOriginApprovalCache } from "../../organization-web-origins.js"
 import { cancelOrganizationSubscriptions } from "../../stripe-billing.js"
 import { deleteSandboxModelKeyForOrganization } from "../../sandbox-organizations.js"
+import { purgeOrganizationHistory } from "./delete-organization-purge.js"
 import { ensureOwner, orgAccessFailureStatus, type OrgRouteVariables } from "./shared.js"
 
 type OrganizationMemberId = typeof MemberTable.$inferSelect.id
@@ -134,6 +137,21 @@ type DeletionRequestSnapshot = {
   memberCount: number | null
   organizationCreatedAt: string | null
 }
+
+/**
+ * What a deletion has done so far, kept in the organization's metadata until the final transaction deletes the
+ * organization. A retry after a failure resumes from it: one Linear ticket and one round of external cleanup per
+ * deletion, not per attempt.
+ */
+type DeletionProgress = {
+  requestId: string
+  startedAt: string
+  linearIssueId?: string
+  externalCleanupAt?: string
+}
+
+/** An attempt that claimed the deletion this recently may still be creating its Linear ticket. */
+const DELETION_TICKET_CLAIM_MS = 60_000
 
 const logger = appLogger.child({ component: "delete_organization" })
 
@@ -317,8 +335,38 @@ function buildAccountDeletionIssueDescription(input: {
   ].join("\n")
 }
 
+function readDeletionProgress(metadata: Record<string, unknown>): DeletionProgress | null {
+  const value = metadata[ORGANIZATION_DELETION_METADATA_KEY]
+  if (!isRecord(value) || typeof value.requestId !== "string" || typeof value.startedAt !== "string") {
+    return null
+  }
+  return {
+    requestId: value.requestId,
+    startedAt: value.startedAt,
+    ...(typeof value.linearIssueId === "string" ? { linearIssueId: value.linearIssueId } : {}),
+    ...(typeof value.externalCleanupAt === "string" ? { externalCleanupAt: value.externalCleanupAt } : {}),
+  }
+}
+
+/** Starts the deletion, or resumes the one an earlier attempt started. `claimed` is true for the attempt that started it. */
+async function claimDeletion(organizationId: OrganizationId) {
+  const started: DeletionProgress = { requestId: createDenTypeId("request"), startedAt: new Date().toISOString() }
+  const metadata = await updateOrganizationMetadata(organizationId, (current) =>
+    readDeletionProgress(current) ? current : { ...current, [ORGANIZATION_DELETION_METADATA_KEY]: started })
+  const progress = readDeletionProgress(metadata) ?? started
+  return { progress, claimed: progress.requestId === started.requestId }
+}
+
+async function recordDeletionProgress(organizationId: OrganizationId, update: Pick<DeletionProgress, "linearIssueId"> | Pick<DeletionProgress, "externalCleanupAt">) {
+  await updateOrganizationMetadata(organizationId, (current) => {
+    const progress = readDeletionProgress(current)
+    return progress ? { ...current, [ORGANIZATION_DELETION_METADATA_KEY]: { ...progress, ...update } } : current
+  })
+}
+
 async function createAccountDeletionIssue(input: {
   request: Request
+  progress: DeletionProgress
   orgId: OrganizationId
   orgName: string
   requesterUserId: string | null | undefined
@@ -326,17 +374,15 @@ async function createAccountDeletionIssue(input: {
   requesterName: string | null | undefined
   databaseUserId: string | null | undefined
 }) {
-  const requestId = createDenTypeId("request")
-  const timestamp = new Date().toISOString()
   const [confirmationString, snapshot] = await Promise.all([
     readConfirmationString(input.request),
     readDeletionRequestSnapshot(input.orgId),
   ])
-  const issue = await createLinearIssue({
+  return createLinearIssue({
     title: `[ACCOUNT DELETION]: ${input.orgId}`,
     description: buildAccountDeletionIssueDescription({
-      timestamp,
-      requestId,
+      timestamp: input.progress.startedAt,
+      requestId: input.progress.requestId,
       requesterUserId: input.requesterUserId,
       requesterEmail: input.requesterEmail,
       requesterName: input.requesterName,
@@ -349,15 +395,6 @@ async function createAccountDeletionIssue(input: {
       locationHeaders: collectLocationHeaders(input.request.headers),
     }),
   })
-  return { issue, requestId }
-}
-
-async function completeAccountDeletionIssue(issue: LinearIssue | null) {
-  if (!issue) {
-    return
-  }
-
-  await completeLinearIssue({ issueId: issue.id })
 }
 
 export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
@@ -389,23 +426,39 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
       const organization = payload.organization
       const organizationId = organization.id
       const user = c.get("user")
-      const accountDeletionIssue = await createAccountDeletionIssue({
-        request: c.req.raw,
-        orgId: organizationId,
-        orgName: organization.name,
-        requesterUserId: user?.id,
-        requesterEmail: user?.email,
-        requesterName: user?.name,
-        databaseUserId: user?.id ?? payload.currentMember.userId,
-      })
+      const { progress, claimed } = await claimDeletion(organizationId)
+      let linearIssueId = progress.linearIssueId
+      if (!linearIssueId && (claimed || Date.now() - Date.parse(progress.startedAt) > DELETION_TICKET_CLAIM_MS)) {
+        const issue = await createAccountDeletionIssue({
+          request: c.req.raw,
+          progress,
+          orgId: organizationId,
+          orgName: organization.name,
+          requesterUserId: user?.id,
+          requesterEmail: user?.email,
+          requesterName: user?.name,
+          databaseUserId: user?.id ?? payload.currentMember.userId,
+        })
+        if (issue) {
+          linearIssueId = issue.id
+          await recordDeletionProgress(organizationId, { linearIssueId })
+        }
+      }
 
-      await cancelOrganizationSubscriptions({ organizationId })
-      await deleteSandboxModelKeyForOrganization(organizationId)
+      if (!progress.externalCleanupAt) {
+        await cancelOrganizationSubscriptions({ organizationId })
+        await deleteSandboxModelKeyForOrganization(organizationId)
+        await recordDeletionProgress(organizationId, { externalCleanupAt: new Date().toISOString() })
+      }
+
+      await purgeOrganizationHistory(organizationId)
 
       let affectedSessions: Array<{ id: typeof AuthSessionTable.$inferSelect.id; token: typeof AuthSessionTable.$inferSelect.token }> = []
       await db.transaction(async (tx) => {
-        await tx.select({ id: OrganizationTable.id }).from(OrganizationTable)
+        const [locked] = await tx.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
           .where(eq(OrganizationTable.id, organizationId)).for("update")
+        // A concurrent attempt may have recorded the ticket after this one read the progress.
+        linearIssueId = (locked ? readDeletionProgress(readOrganizationMetadata(locked.metadata))?.linearIssueId : undefined) ?? linearIssueId
         await deleteGatewayUsageForOrganization(tx, organizationId)
         await deleteModelsAnalyticsForOrganization(tx, organizationId)
         const memberRows = await tx
@@ -525,11 +578,16 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           await tx.delete(LlmProviderAccessTable).where(inArray(LlmProviderAccessTable.llmProviderId, llmProviderIds))
         }
 
-        affectedSessions = await tx
-          .select({ id: AuthSessionTable.id, token: AuthSessionTable.token })
-          .from(AuthSessionTable)
-          .where(eq(AuthSessionTable.activeOrganizationId, organizationId))
-        await tx.update(AuthSessionTable).set({ activeOrganizationId: null }).where(eq(AuthSessionTable.activeOrganizationId, organizationId))
+        // session.active_organization_id has no index; members' sessions are reached through their users.
+        if (memberUserIds.length > 0) {
+          affectedSessions = await tx
+            .select({ id: AuthSessionTable.id, token: AuthSessionTable.token })
+            .from(AuthSessionTable)
+            .where(and(inArray(AuthSessionTable.userId, memberUserIds), eq(AuthSessionTable.activeOrganizationId, organizationId)))
+        }
+        if (affectedSessions.length > 0) {
+          await tx.update(AuthSessionTable).set({ activeOrganizationId: null }).where(inArray(AuthSessionTable.id, affectedSessions.map((session) => session.id)))
+        }
 
         await tx.delete(OrganizationBrandAssetTable).where(eq(OrganizationBrandAssetTable.organizationId, organizationId))
         await tx.delete(WorkspaceClaimTable).where(eq(WorkspaceClaimTable.organizationId, organizationId))
@@ -637,13 +695,16 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         organization_name: organization.name,
         actor_org_membership_id: payload.currentMember.id,
         actor_user_id: payload.currentMember.userId,
-        account_deletion_request_id: accountDeletionIssue.requestId,
+        account_deletion_request_id: progress.requestId,
         account_deletion_request_type: "self serve request",
-        linear_issue_created: Boolean(accountDeletionIssue.issue),
-        linear_issue_id: accountDeletionIssue.issue?.id,
+        account_deletion_resumed: !claimed,
+        linear_issue_created: Boolean(linearIssueId),
+        linear_issue_id: linearIssueId,
       })
 
-      await completeAccountDeletionIssue(accountDeletionIssue.issue)
+      if (linearIssueId) {
+        await completeLinearIssue({ issueId: linearIssueId })
+      }
 
       return c.json({ ok: true, organization: { id: organizationId, name: organization.name } })
     },
