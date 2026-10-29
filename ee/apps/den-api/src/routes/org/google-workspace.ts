@@ -72,6 +72,10 @@ const draftMetadataSchema = z.object({
   bcc: draftHeaderSchema.min(3).max(1_000).optional().describe("Optional comma-separated Bcc email addresses."),
   subject: draftHeaderSchema.min(1).max(500).describe("Draft subject line. For replies or forwards, include threadId; subjects starting with Re: or Fwd: are rejected without threadId so the draft stays on the existing conversation."),
   body: z.string().min(1).max(50_000).describe("Plain-text draft body. Write plain prose with no markdown syntax, separate paragraphs with blank lines, and do not hard-wrap prose. For threaded drafts, the server appends the quoted conversation automatically; do not include quoted history."),
+  timeZone: z.string().trim().min(1).max(100).refine((value) => {
+    if (/^[+-]/.test(value)) return false
+    try { new Intl.DateTimeFormat("en-US", { timeZone: value }); return true } catch { return false }
+  }, "Use a valid IANA time zone.").optional().describe("User's IANA time zone (for example America/New_York). Pass the user's zone to format reply attribution like Gmail Web, including daylight saving time. When omitted, attribution keeps the original message Date header's offset, not the server's time zone."),
   threadId: z.string().trim().min(1).max(512).optional().describe("Gmail thread id to reply on. Required for replies and forwards; get it from the gmail-messages capability. When set, the draft is attached to that thread as a reply — keep the thread's subject (e.g. 'Re: …')."),
 }).strict()
 
@@ -719,7 +723,7 @@ async function executeGmailDraft(
     } else {
       const quote = extractGmailThreadQuoteInput(thread)
       if (quote) {
-        draftQuote = buildGmailQuote(quote)
+        draftQuote = buildGmailQuote({ ...quote, timeZone: input.timeZone })
         quotedHistoryIncluded = true
       }
     }

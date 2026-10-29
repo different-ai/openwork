@@ -5,6 +5,7 @@
  */
 
 import { randomUUID } from "node:crypto"
+import sanitizeHtml from "sanitize-html"
 
 const HARD_WRAP_MIN_LINE_LENGTH = 50
 
@@ -23,7 +24,43 @@ export type GmailDraftAttachment = {
 
 export type GmailDraftQuote = {
   attribution: string
+  attributionHtml?: string
   body: string
+  html?: string
+}
+
+/** Keep email layout, not active content. No URLs are fetched by the server.
+ * Remote images remain references, subject to the receiving mail client's image policy.
+ */
+export function sanitizeGmailQuoteHtml(html: string): string {
+  const safeStyle = /^(?!.*(?:url|expression|behavior|binding))[-#(),.%\w\s]+$/i
+  return sanitizeHtml(html, {
+    allowedTags: [...sanitizeHtml.defaults.allowedTags, "img", "font"],
+    allowedAttributes: {
+      "*": ["class", "dir", "lang", "title", "style"],
+      a: ["href", "name"],
+      img: ["src", "alt", "width", "height"],
+      font: ["color", "face", "size"],
+      table: ["width", "height", "border", "cellpadding", "cellspacing", "align"],
+      td: ["colspan", "rowspan", "width", "height", "align", "valign"],
+      th: ["colspan", "rowspan", "width", "height", "align", "valign"],
+    },
+    allowedStyles: {
+      "*": Object.fromEntries([
+        "color", "background-color", "font", "font-family", "font-size", "font-weight", "font-style",
+        "text-align", "text-decoration", "white-space", "line-height", "vertical-align",
+        "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
+        "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+        "border", "border-top", "border-right", "border-bottom", "border-left", "border-collapse",
+        "width", "height", "max-width", "min-width", "table-layout",
+      ].map((property) => [property, [safeStyle]])),
+    },
+    allowedSchemes: ["http", "https", "mailto"],
+    allowedSchemesByTag: { img: ["http", "https", "cid"] },
+    allowProtocolRelative: false,
+    nonTextTags: ["script", "style", "head", "title", "textarea", "option", "iframe", "object", "template", "svg", "math"],
+    nestingLimit: 50,
+  })
 }
 
 function encodeMimeParameter(value: string): string {
@@ -42,11 +79,15 @@ function draftBodyHtml(body: string): string {
   return body.split("\n").map((line) => `<div>${line.length === 0 ? "<br>" : escapeHtml(line)}</div>`).join("")
 }
 
+function quoteTextHtml(body: string): string {
+  return body.split("\n").map((line) => `<div>${line.length === 0 ? "<br>" : escapeHtml(line)}</div>`).join("")
+}
+
 function alternativeMimeParts(boundary: string, body: string, quote?: GmailDraftQuote): string[] {
   const plain = quote ? `${body}\n\n${quote.attribution}\n${quote.body.split("\n").map((line) => `> ${line}`).join("\n")}` : body
-  // Only generated markup is HTML; both new prose and quoted history remain escaped text.
+  // New prose stays separate from the original message's sanitized HTML quote.
   const html = draftBodyHtml(body) + (quote
-    ? `<div><br></div><div class="gmail_quote"><div dir="ltr" class="gmail_attr">${escapeHtml(quote.attribution)}</div><blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">${draftBodyHtml(quote.body)}</blockquote></div>`
+    ? `<div><br></div><div class="gmail_quote gmail_quote_container"><div dir="ltr" class="gmail_attr">${quote.attributionHtml ?? escapeHtml(quote.attribution)}</div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">${quote.html ?? quoteTextHtml(quote.body)}</blockquote></div>`
     : "")
   return [
     `--${boundary}`,

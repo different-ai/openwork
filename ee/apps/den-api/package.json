@@ -96,6 +96,7 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "recharts": "3.10.1",
+    "sanitize-html": "^2.18.1",
     "sharp": "0.35.5",
     "stripe": "^22.1.1",
     "three": "0.186.1",
@@ -110,6 +111,7 @@
     "@types/node": "^20.11.30",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "@types/sanitize-html": "^2.16.2",
     "tsx": "^4.23.1"
   }
 }
