@@ -1,4 +1,4 @@
-import type { ComputerProviderConfig } from "@openwork-ee/headless-computer"
+import type { ComputerProviderConfig, SandboxGatewayConfig } from "@openwork-ee/headless-computer"
 import { dirname, join } from "node:path"
 import { z } from "zod"
 import { parseDsn, type ErrorReportingConfig } from "./error-reporting.js"
@@ -93,11 +93,8 @@ const configSchema = z.object({
   HEADLESS_S3_ACCESS_KEY_ID: z.string().min(1).optional(),
   HEADLESS_S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
   HEADLESS_S3_FORCE_PATH_STYLE: z.enum(["true", "false"]).default("false"),
-  /** A Linux computer per conversation (bash and look tools): off, or a Freestyle, Daytona or Differently sandbox. */
-  HEADLESS_COMPUTER: z.enum(["off", "freestyle", "daytona", "differently"]).default("off"),
-  /** Differently: its API and a project-scoped key. Differently holds the provider credentials and routes by its policies. */
-  DIFFERENTLY_URL: safeUrl.optional(),
-  DIFFERENTLY_API_KEY: z.string().min(1).optional(),
+  /** A Linux computer per conversation (bash and look tools): off, or a Freestyle VM. */
+  HEADLESS_COMPUTER: z.enum(["off", "freestyle", "daytona"]).default("off"),
   DAYTONA_API_KEY: z.string().min(1).optional(),
   DAYTONA_API_URL: safeUrl.default("https://app.daytona.io/api"),
   DAYTONA_TARGET: z.string().min(1).optional(),
@@ -110,6 +107,16 @@ const configSchema = z.object({
     .transform((value) => value || undefined),
   /** Snapshot id or slug to boot from; defaults to the one built from @openwork-ee/headless-computer's image. */
   HEADLESS_COMPUTER_SNAPSHOT: z.string().min(1).optional(),
+  /**
+   * A sandbox gateway in front of several providers (Differently), separate from HEADLESS_COMPUTER's direct provider.
+   * Only conversations whose `sandboxGateway` setting is on (Den's per-organization flag) run their computer through it;
+   * every other conversation keeps the direct provider. Off by default.
+   */
+  SANDBOX_GATEWAY: z.enum(["off", "differently"]).default("off"),
+  SANDBOX_GATEWAY_URL: safeUrl.optional(),
+  SANDBOX_GATEWAY_API_KEY: z.string().min(1).optional(),
+  /** The gateway's template for Workbot's computer image (Differently maps it to each provider's own image). */
+  SANDBOX_GATEWAY_TEMPLATE: z.string().min(1).optional(),
   HEADLESS_COMPUTER_PAUSE_SECONDS: z.coerce.number().int().min(10).default(300),
   HEADLESS_COMPUTER_KEEP_DAYS: z.coerce.number().int().min(1).max(365).default(14),
   /** true keeps each conversation's computer (paused, memory intact) until removed, instead of deleting it after KEEP_DAYS unused. */
@@ -163,7 +170,9 @@ export type Config = {
   fileLimits: { maxFileBytes: number; maxSessionBytes: number }
   /** Sealing and large bodies (storage/); `segments` false is the default and the kill switch. */
   storage: { segments: boolean; hotLimitBytes: number; segmentTargetBytes: number; largeBodyBytes: number }
-  computer?: ComputerProviderConfig & { scope?: string; idlePauseMs: number; keepDays: number }
+  computer?: ComputerProviderConfig & ComputerSettings
+  /** The sandbox gateway, for conversations with `sandboxGateway` on; the same computer settings, its own provider. */
+  computerGateway?: SandboxGatewayConfig & ComputerSettings
   /** Where error reports go; unset (no DSN) sends none. */
   errorReporting?: ErrorReportingConfig
   /** Turns with a resume grant keep going on their own (see self-resume.ts); unset, callers resume them. */
@@ -208,6 +217,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     fileLimits: { maxFileBytes: value.HEADLESS_FILES_MAX_BYTES, maxSessionBytes: value.HEADLESS_FILES_MAX_SESSION_BYTES },
     storage: storageConfig(value),
     computer: computerConfig(value),
+    computerGateway: gatewayConfig(value),
     errorReporting: errorReportingConfig(value),
     selfResume: selfResumeConfig(value),
   }
@@ -249,18 +259,15 @@ function errorReportingConfig(value: z.infer<typeof configSchema>): Config["erro
 
 function computerConfig(value: z.infer<typeof configSchema>): Config["computer"] {
   if (value.HEADLESS_COMPUTER === "off") return undefined
-  const keyName = ({ daytona: "DAYTONA_API_KEY", differently: "DIFFERENTLY_API_KEY", freestyle: "FREESTYLE_API_KEY" } as const)[value.HEADLESS_COMPUTER]
-  const apiKey = value[keyName]
-  if (!apiKey) throw new Error(`Invalid headless-runner configuration: HEADLESS_COMPUTER=${value.HEADLESS_COMPUTER} needs ${keyName}`)
-  if (value.HEADLESS_COMPUTER === "differently" && !value.DIFFERENTLY_URL) throw new Error("Invalid headless-runner configuration: HEADLESS_COMPUTER=differently needs DIFFERENTLY_URL")
-  if (value.HEADLESS_COMPUTER === "differently" && !value.HEADLESS_COMPUTER_SNAPSHOT) throw new Error("Differently computers need HEADLESS_COMPUTER_SNAPSHOT: a Differently template that maps to each pool's computer image")
+  const apiKey = value.HEADLESS_COMPUTER === "daytona" ? value.DAYTONA_API_KEY : value.FREESTYLE_API_KEY
+  if (!apiKey) throw new Error(`Invalid headless-runner configuration: HEADLESS_COMPUTER=${value.HEADLESS_COMPUTER} needs ${value.HEADLESS_COMPUTER === "daytona" ? "DAYTONA_API_KEY" : "FREESTYLE_API_KEY"}`)
   if (value.HEADLESS_COMPUTER === "daytona" && !value.HEADLESS_COMPUTER_SNAPSHOT) throw new Error("Daytona computers need HEADLESS_COMPUTER_SNAPSHOT (snapshot:build:daytona)")
   if (value.HEADLESS_COMPUTER === "daytona" && value.HEADLESS_COMPUTER_DESKTOP === "true" && value.HEADLESS_COMPUTER_CLASS !== "linux-vm") throw new Error("Daytona desktop computers require HEADLESS_COMPUTER_CLASS=linux-vm for memory-preserving pause and snapshots")
   if (value.HEADLESS_COMPUTER === "freestyle" && value.HEADLESS_COMPUTER_DESKTOP === "true" && !value.HEADLESS_COMPUTER_SNAPSHOT) throw new Error("Freestyle desktop computers need HEADLESS_COMPUTER_SNAPSHOT (snapshot:build:freestyle-desktop)")
   return {
     kind: value.HEADLESS_COMPUTER,
     apiKey,
-    apiUrl: value.HEADLESS_COMPUTER === "differently" ? value.DIFFERENTLY_URL : value.DAYTONA_API_URL,
+    apiUrl: value.DAYTONA_API_URL,
     target: value.DAYTONA_TARGET,
     sandboxClass: value.HEADLESS_COMPUTER_CLASS,
     desktop: value.HEADLESS_COMPUTER_DESKTOP === "true",
@@ -270,6 +277,26 @@ function computerConfig(value: z.infer<typeof configSchema>): Config["computer"]
     keepDays: value.HEADLESS_COMPUTER_KEEP_DAYS,
     persistent: value.HEADLESS_COMPUTER_PERSISTENT === "true",
     ...(value.HEADLESS_COMPUTER_DOMAIN ? { endpointDomain: value.HEADLESS_COMPUTER_DOMAIN } : {}),
+  }
+}
+
+/** How Workbot's computers behave, whichever provider or gateway runs them. */
+type ComputerSettings = { scope?: string; idlePauseMs: number; keepDays: number; persistent?: boolean; desktop?: boolean }
+
+function gatewayConfig(value: z.infer<typeof configSchema>): Config["computerGateway"] {
+  if (value.SANDBOX_GATEWAY === "off") return undefined
+  const missing = [!value.SANDBOX_GATEWAY_URL && "SANDBOX_GATEWAY_URL", !value.SANDBOX_GATEWAY_API_KEY && "SANDBOX_GATEWAY_API_KEY", !value.SANDBOX_GATEWAY_TEMPLATE && "SANDBOX_GATEWAY_TEMPLATE"].filter(Boolean)
+  if (missing.length) throw new Error(`Invalid headless-runner configuration: SANDBOX_GATEWAY=${value.SANDBOX_GATEWAY} needs ${missing.join(", ")}`)
+  return {
+    kind: value.SANDBOX_GATEWAY,
+    url: value.SANDBOX_GATEWAY_URL!,
+    apiKey: value.SANDBOX_GATEWAY_API_KEY!,
+    template: value.SANDBOX_GATEWAY_TEMPLATE!,
+    scope: value.HEADLESS_COMPUTER_SCOPE,
+    desktop: value.HEADLESS_COMPUTER_DESKTOP === "true",
+    idlePauseMs: value.HEADLESS_COMPUTER_PAUSE_SECONDS * 1000,
+    keepDays: value.HEADLESS_COMPUTER_KEEP_DAYS,
+    persistent: value.HEADLESS_COMPUTER_PERSISTENT === "true",
   }
 }
 

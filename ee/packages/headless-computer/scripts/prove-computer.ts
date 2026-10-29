@@ -2,15 +2,25 @@
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { Computers } from "../src/computer.js"
-import { createComputerProvider } from "../src/providers.js"
+import { createComputerProvider, createGatewayProvider } from "../src/providers.js"
 import type { ComputerFile, ComputerFiles } from "../src/types.js"
 
-const kind = process.env.HEADLESS_COMPUTER
-if (kind !== "daytona" && kind !== "freestyle" && kind !== "differently") throw new Error("HEADLESS_COMPUTER must be daytona, freestyle or differently")
-const apiKey = { daytona: process.env.DAYTONA_API_KEY, freestyle: process.env.FREESTYLE_API_KEY, differently: process.env.DIFFERENTLY_API_KEY }[kind]
-if (!apiKey) throw new Error(`Missing ${kind} API key`)
-const apiUrl = kind === "differently" ? process.env.DIFFERENTLY_URL : process.env.DAYTONA_API_URL
-const provider = await createComputerProvider({ kind, apiKey, snapshot: process.env.HEADLESS_COMPUTER_SNAPSHOT, apiUrl, target: process.env.DAYTONA_TARGET })
+// SANDBOX_GATEWAY=differently proves the computer through the sandbox gateway instead of a direct provider.
+const provider = process.env.SANDBOX_GATEWAY === "differently" ? await gatewayProvider() : await directProvider()
+
+async function gatewayProvider() {
+  const { SANDBOX_GATEWAY_URL: url, SANDBOX_GATEWAY_API_KEY: apiKey, SANDBOX_GATEWAY_TEMPLATE: template } = process.env
+  if (!url || !apiKey || !template) throw new Error("SANDBOX_GATEWAY=differently needs SANDBOX_GATEWAY_URL, SANDBOX_GATEWAY_API_KEY and SANDBOX_GATEWAY_TEMPLATE")
+  return createGatewayProvider({ kind: "differently", url, apiKey, template })
+}
+
+async function directProvider() {
+  const kind = process.env.HEADLESS_COMPUTER
+  if (kind !== "daytona" && kind !== "freestyle") throw new Error("HEADLESS_COMPUTER must be daytona or freestyle, or set SANDBOX_GATEWAY=differently")
+  const apiKey = kind === "daytona" ? process.env.DAYTONA_API_KEY : process.env.FREESTYLE_API_KEY
+  if (!apiKey) throw new Error(`Missing ${kind} API key`)
+  return createComputerProvider({ kind, apiKey, snapshot: process.env.HEADLESS_COMPUTER_SNAPSHOT, apiUrl: process.env.DAYTONA_API_URL, target: process.env.DAYTONA_TARGET })
+}
 const kept = new Map<string, { file: ComputerFile; bytes: Uint8Array<ArrayBuffer> }>()
 const files: ComputerFiles = {
   maxFileBytes: 1024 * 1024,
@@ -44,5 +54,5 @@ try {
   const resumed = await computers.bash(session, "cat /workspace/out/proof.txt", 30)
   assert.equal(resumed.isError, false, resumed.output)
   assert.match(resumed.output, /hello from shared computer/)
-  console.log(`${kind}: command, Python tools, kept file, look and resume passed`)
+  console.log(`${process.env.SANDBOX_GATEWAY === "differently" ? "sandbox gateway" : process.env.HEADLESS_COMPUTER}: command, Python tools, kept file, look and resume passed`)
 } finally { await computers.delete(session) }

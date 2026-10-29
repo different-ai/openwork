@@ -12,7 +12,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke": "tsx scripts/smoke.ts",
-    "test:computer-config": "tsx --test scripts/computer-config.test.ts scripts/worker-http.test.ts scripts/desktop-views.test.ts",
+    "test:computer-config": "tsx --test scripts/computer-config.test.ts scripts/computer-route.test.ts scripts/worker-http.test.ts scripts/desktop-views.test.ts",
     "test:service-health": "tsx --conditions=development --test scripts/service-health.test.ts",
     "test:sql-store": "tsx --test scripts/sql-store.test.ts",
     "test:error-reporting": "tsx --test scripts/error-reporting.test.ts",

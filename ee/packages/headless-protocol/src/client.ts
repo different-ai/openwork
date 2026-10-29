@@ -257,6 +257,8 @@ export type RunnerCapabilities = {
   reactions?: boolean
   tasks?: boolean
   documentNavigation?: boolean
+  /** The computer runs through the runner's sandbox gateway (its SANDBOX_GATEWAY) instead of the runner's own provider. */
+  sandboxGateway?: boolean
 }
 export const RUNNER_DESKTOP_VIEWS = ["browser", "computer"] as const
 export type RunnerDesktopView = (typeof RUNNER_DESKTOP_VIEWS)[number]
@@ -277,6 +279,7 @@ const capabilityFields = (input: RunnerCapabilities & RunnerSessionSettings) => 
   ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
   ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
   ...(input.documentNavigation !== undefined ? { documentNavigation: input.documentNavigation } : {}),
+  ...(input.sandboxGateway !== undefined ? { sandboxGateway: input.sandboxGateway } : {}),
   ...(input.owner ? { owner: input.owner } : {}),
   ...(input.ref ? { ref: input.ref } : {}),
   ...(input.timeZone ? { timeZone: input.timeZone } : {}),
@@ -367,9 +370,15 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       const extras = { ...(input.repeats ? { repeats: input.repeats } : {}), ...capabilityFields(input) }
       let { status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...extras })
       let compatible: Record<string, unknown> = extras
-      // The newest setting first. An older runner can't limit the desktop to some views, so a conversation allowed fewer
-      // than all of them gets no desktop there rather than every view; it keeps its other settings. Such a conversation
-      // is never saved without turning its desktop off: if the runner won't take that either, the update fails.
+      // The newest setting first. An older runner has no sandbox gateway: the computer stays on the runner's own provider.
+      if (unknownSetting(status, payload) && input.sandboxGateway !== undefined) {
+        const { sandboxGateway: _gateway, ...rest } = compatible
+        compatible = rest
+        ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
+      }
+      // An older runner can't limit the desktop to some views, so a conversation allowed fewer than all of them gets no
+      // desktop there rather than every view; it keeps its other settings. Such a conversation is never saved without
+      // turning its desktop off: if the runner won't take that either, the update fails.
       let limited = false
       if (unknownSetting(status, payload) && input.desktopViews !== undefined) {
         const { desktopViews: _views, ...rest } = compatible

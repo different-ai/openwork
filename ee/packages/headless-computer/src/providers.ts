@@ -2,7 +2,7 @@ import type { SandboxProvider } from "@openwork/sandbox"
 import { computerSnapshotSlug } from "./image.js"
 
 export type ComputerProviderConfig = {
-  kind: "freestyle" | "daytona" | "differently"
+  kind: "freestyle" | "daytona"
   apiKey: string
   snapshot?: string
   apiUrl?: string
@@ -16,6 +16,24 @@ export type ComputerProviderConfig = {
   endpointDomain?: string
 }
 
+/**
+ * A sandbox gateway in front of several providers (Differently): the runner holds one key for it, and the gateway
+ * holds the provider keys and decides by its own policies which provider runs each computer.
+ */
+export type SandboxGatewayConfig = {
+  kind: "differently"
+  url: string
+  apiKey: string
+  /** The gateway's template for the computer image; the gateway maps it to each provider's own image. */
+  template: string
+}
+
+/** The gateway's adapter loads only when the runner opts into a gateway. */
+export async function createGatewayProvider(config: SandboxGatewayConfig): Promise<SandboxProvider> {
+  const { createDifferentlyProvider } = await import("@openwork/sandbox-differently")
+  return createDifferentlyProvider({ url: config.url, apiKey: config.apiKey, template: config.template, platform: { os: "linux", isolation: "unknown" } })
+}
+
 /** Provider SDKs load only when the runner opts into that provider. */
 export async function createComputerProvider(config: ComputerProviderConfig): Promise<SandboxProvider> {
   if (config.kind === "freestyle") {
@@ -27,13 +45,6 @@ export async function createComputerProvider(config: ComputerProviderConfig): Pr
       // The viewer port is reached through Freestyle's TLS edge; tickets inside the guest still gate every connection.
       ...(config.desktop ? { endpointDomain: config.endpointDomain ?? "style.dev" } : {}),
     })
-  }
-  if (config.kind === "differently") {
-    // One project-scoped key: Differently holds the provider credentials and places each computer by its policies.
-    if (!config.apiUrl) throw new Error("Differently computers require DIFFERENTLY_URL")
-    if (!config.snapshot) throw new Error("Differently computers require HEADLESS_COMPUTER_SNAPSHOT naming a Differently template with the computer image")
-    const { createDifferentlyProvider } = await import("@openwork/sandbox-differently")
-    return createDifferentlyProvider({ url: config.apiUrl, apiKey: config.apiKey, template: config.snapshot, platform: { os: "linux", isolation: "unknown" } })
   }
   if (!config.snapshot) throw new Error("Daytona computers require HEADLESS_COMPUTER_SNAPSHOT built with snapshot:build:daytona")
   if (config.desktop && config.sandboxClass !== "linux-vm") throw new Error("Daytona desktop access requires a Linux VM snapshot")
