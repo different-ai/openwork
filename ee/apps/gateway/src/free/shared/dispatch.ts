@@ -15,7 +15,7 @@ const log = gatewayLog.child({ component: "free-auto" })
 const UPSTREAM_ERROR_BODY_BYTES = 16 * 1024
 const UPSTREAM_ERROR_BODY_TIMEOUT_MS = 2_000
 
-/** Reads a bounded slice of OpenAI's error body for its type, code and message, then aborts the request. */
+/** Reads a bounded slice of OpenAI's error body for its type and code, then aborts the request. */
 async function readUpstreamError(response: Response, controller: AbortController): Promise<UpstreamErrorDetails> {
   const timeout = setTimeout(() => controller.abort(), UPSTREAM_ERROR_BODY_TIMEOUT_MS)
   const reader = response.body?.getReader()
@@ -78,7 +78,7 @@ export async function dispatchFreeCompletion(input: {
   )
   const usageLog = input.startUsageLog?.(requestId, prepared.stream) ?? null
   const startedAt = Date.now()
-  // One line per failure, with what is needed to find it at OpenAI. Never the prompt, output, or keys.
+  // One line per failure, with what is needed to find it at OpenAI. Never the prompt, output, keys, or OpenAI's message text.
   const logFailure = (level: "info" | "error", message: string, fields: Record<string, string | number | undefined>) => log[level](message, {
     request_id: requestId, route: principal.kind === "member" ? "openwork_free" : "anonymous_free",
     organization_id: principal.kind === "member" ? principal.organizationId : undefined,
@@ -86,7 +86,7 @@ export async function dispatchFreeCompletion(input: {
     duration_ms: Date.now() - startedAt, ...fields,
   })
   const upstreamFields = (details: UpstreamErrorDetails) => ({
-    upstream_error_type: details.type, upstream_error_code: details.code, upstream_error_message: details.message,
+    upstream_error_type: details.type, upstream_error_code: details.code,
   })
   // Like every Gateway route: no durable accounting record, no upstream call.
   if (usageLog && await usageLog.whenStarted?.() === false) {

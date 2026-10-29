@@ -18,28 +18,22 @@ export type FreeAutoFailureReason =
   | "upstream_ended"
   | "invalid_response"
   | "response_too_large"
-/** OpenAI's error, safe to log: no prompt or output text, no keys. */
-export type UpstreamErrorDetails = { type?: string; code?: string; message?: string }
+/**
+ * OpenAI's error type and code, safe to log. The message is left out: OpenAI's validation
+ * messages can quote values the caller sent, and no redaction can rule that out.
+ */
+export type UpstreamErrorDetails = { type?: string; code?: string }
 export class FreeAutoFailure extends Error {
   constructor(message: string, readonly reason: FreeAutoFailureReason, readonly upstream: UpstreamErrorDetails = {}) { super(message) }
 }
 const invalid = (message: string) => new FreeAutoFailure(message, "invalid_response")
 
 function errorLabel(value: unknown) { return typeof value === "string" && /^[\w.:-]{1,80}$/.test(value) ? value : undefined }
-/** OpenAI messages name parameters, limits and item ids; long quoted values and opaque blobs can echo the request. */
-export function sanitizeUpstreamMessage(message: string) {
-  return message
-    .replace(/\b(?:sk|rk|pk)-[\w-]{8,}/g, "[redacted-key]")
-    .replace(/\bBearer\s+\S+/gi, "Bearer [redacted]")
-    .replace(/(["'`])[^"'`]{40,}\1/g, "$1[redacted]$1")
-    .replace(/[\w+/=-]{64,}/g, "[redacted]")
-    .replace(/\s+/g, " ").trim().slice(0, 300)
-}
-/** Reads `{ error: { type, code, message } }`, a bare error object, or a Responses `error` event. */
+/** Reads `{ error: { type, code } }`, a bare error object, or a Responses `error` event. */
 export function upstreamErrorDetails(value: unknown): UpstreamErrorDetails {
   const error = record(value) && record(value.error) ? value.error : value
   if (!record(error)) return {}
-  return { type: errorLabel(error.type), code: errorLabel(error.code), message: typeof error.message === "string" ? sanitizeUpstreamMessage(error.message) : undefined }
+  return { type: errorLabel(error.type), code: errorLabel(error.code) }
 }
 function parseErrorEvent(text: string) {
   try { return upstreamErrorDetails(JSON.parse(text)) } catch { return {} }
@@ -229,7 +223,7 @@ export function meterFreeResponse(body: ReadableStream<Uint8Array>, input: {
             const line = pending.slice(0, newline).replace(/\r$/, "")
             pending = pending.slice(newline + 1)
             if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""))
-            // Read the error event's data before failing: it carries OpenAI's error code and message.
+            // Read the error event's data before failing: it carries OpenAI's error type and code.
             else if (line.startsWith("event:")) errorEvent = line.slice(6).trim() === "error"
             else if (!line && errorEvent) throw errorEventFailure()
             else if (!line && data.length) {
