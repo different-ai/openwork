@@ -27,6 +27,12 @@ test("a missing projection or healthy services leave the Workbot settings surfac
   assert.equal(workbotDeploymentNotice(capabilities()), null);
 });
 
+test("not checked yet or an older passing check is normal and shows no notice", () => {
+  const unchecked: Partial<OrganizationServiceReadiness["services"][number]> = { configured: true, state: "unknown", reason: "not_checked", checkedAt: null, lastSuccessAt: null, stale: true };
+  assert.equal(workbotDeploymentNotice(capabilities([{ ...projectedService("headlessRunner"), ...unchecked }, { ...projectedService("workbot"), ...unchecked }])), null);
+  assert.equal(workbotDeploymentNotice(capabilities([{ ...projectedService("headlessRunner"), stale: true }, { ...projectedService("workbot"), stale: true }])), null);
+});
+
 test("missing Workbot web service does not revoke models used by Slack or Automations", () => {
   const notice = workbotDeploymentNotice(capabilities([{ ...projectedService("workbot"), configured: false, state: "not_configured", reason: "not_configured" }]));
   assert.match(notice?.message ?? "", /deployment administrator/);
@@ -46,8 +52,8 @@ test("runner setup and transient failures have recovery copy, timestamps and no 
     assert.equal(notice?.checkedAt, checkedAt);
     assert.equal(notice?.stale, true);
   }
-  const stale = workbotDeploymentNotice(capabilities([{ ...projectedService("workbot"), stale: true }]));
-  assert.match(stale?.message ?? "", /Couldn't verify Workbot/);
+  const failedWorkbot = workbotDeploymentNotice(capabilities([{ ...projectedService("workbot"), state: "unreachable", reason: "request_failed" }]));
+  assert.match(failedWorkbot?.message ?? "", /Couldn't verify Workbot/);
   const misconfigured = workbotDeploymentNotice(capabilities([{ ...projectedService("headlessRunner"), state: "misconfigured", reason: "resume_misconfigured" }]));
   assert.match(misconfigured?.message ?? "", /needs a configuration change/);
 });
