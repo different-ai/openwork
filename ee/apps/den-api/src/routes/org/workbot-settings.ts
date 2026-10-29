@@ -7,6 +7,8 @@ import {
   workbotProactiveSettingsInputSchema,
   workbotProactiveHealthSchema,
   workbotProactiveViewSchema,
+  AGENT_CORE_SOURCES,
+  AGENT_CORE_SOURCE_COPY,
   AGENT_RESPONSIBILITIES,
   type WorkbotProactiveHealth,
   type WorkbotProactiveSettings,
@@ -90,7 +92,7 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       tags: ["Organizations"],
       summary: "Get the settings for members' agents",
       description:
-        "Returns how members' agents work in this organization (Manage › Workbot): whether they are on, working hours, the daily limit per member, whether members start opted in, the default place messages go (a DM from the Workbot Slack app), what agents may read (`settings.sources`: calendar, email and team chat, and each other connection by id: `everyone` = on for everyone, `members` = members choose, `off` = not allowed; agents only ever read) with the organization's connections behind each (`sourceConnections`, null without View connections), and the current \"Your agent\" template version (preset responsibilities and organization instructions). Also says whether the Workbot Slack app is installed to send those DMs and whether the headless runner the agents run on is configured. Requires the workbotProactive feature, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
+        "Returns how members' agents work in this organization (Manage › Workbot): whether they are on, working hours, the daily limit per member, whether members start opted in, the default place messages go (a DM from the Workbot Slack app), what agents may read (`settings.sources`: calendar, email and team chat, and each other connection by id: `everyone` = on for everyone, `members` = members choose, `off` = not allowed; agents only ever read; `coreConnections` = the connections an admin picked for calendar, email or chat, absent for every connection that serves it) with the organization's connections behind each (`sourceConnections`, null without View connections), and the current \"Your agent\" template version (preset responsibilities and organization instructions). Also says whether the Workbot Slack app is installed to send those DMs and whether the headless runner the agents run on is configured. Requires the workbotProactive feature, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
       responses: {
         200: jsonResponse("Agent settings returned.", workbotProactiveViewDocumentSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -153,7 +155,7 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       tags: ["Organizations"],
       summary: "Change the settings for members' agents",
       description:
-        "Changes any subset of how members' agents work. Policy fields (on/off, working hours, daily limit, members' starting choice, default destination: a Workbot DM or nowhere, never a channel) apply from the next pass; members' own choices (muted, snoozed, turned off, their own destination) are kept. `sources` sets what agents may read: `calendar`, `email`, `chat` and `connections` by connection id, each `everyone` (on for everyone), `members` (members choose; null also means this) or `off` (not allowed). Members can never read a source the admin didn't allow or turn off one that is on for everyone. A change to responsibilities or instructions saves a new version of the organization's \"Your agent\" template. Agents only read and never send, edit or delete anything for members. Requires the workbotProactive feature, Workbot on this deployment and Manage OpenWork Models.",
+        "Changes any subset of how members' agents work. Policy fields (on/off, working hours, daily limit, members' starting choice, default destination: a Workbot DM or nowhere, never a channel) apply from the next pass; members' own choices (muted, snoozed, turned off, their own destination) are kept. `sources` sets what agents may read: `calendar`, `email`, `chat` and `connections` by connection id, each `everyone` (on for everyone), `members` (members choose; null also means this) or `off` (not allowed). `sources.coreConnections.{calendar,email,chat}` picks which of the organization's connections serve that source (ids from `sourceConnections`; null goes back to every connection that serves it), so a member's other accounts on the same service are never read or asked for. Members can never read a source the admin didn't allow or turn off one that is on for everyone. A change to responsibilities or instructions saves a new version of the organization's \"Your agent\" template. Agents only read and never send, edit or delete anything for members. Requires the workbotProactive feature, Workbot on this deployment and Manage OpenWork Models.",
       responses: {
         200: jsonResponse("Agent settings saved.", workbotProactiveViewDocumentSchema),
         400: jsonResponse("The request was invalid, or the workday would end before it starts.", z.union([invalidHoursSchema, invalidRequestSchema])),
@@ -171,10 +173,18 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       c.header("Cache-Control", "no-store")
       const { organization, currentMember } = c.get("organizationContext")
       const requested = c.req.valid("json")
-      // A per-connection policy only for the organization's own connections (calendar, email and chat have their own).
-      const others = new Set(groupSourceConnections(await listOrganizationSourceConnections(organization.id)).other.map((connection) => connection.id))
+      // A per-connection policy only for the organization's own connections (calendar, email and chat have their own),
+      // and calendar, email and chat only through connections that can serve them.
+      const groups = groupSourceConnections(await listOrganizationSourceConnections(organization.id))
+      const others = new Set(groups.other.map((connection) => connection.id))
       const unknown = Object.keys(requested.sources?.connections ?? {}).filter((id) => !others.has(id))
       if (unknown.length) return c.json({ error: "invalid_request" as const, message: `No connection ${unknown[0]} in this organization.` }, 400)
+      for (const kind of AGENT_CORE_SOURCES) {
+        const picked = requested.sources?.coreConnections?.[kind] ?? []
+        const serving = new Set(groups[kind].map((connection) => connection.id))
+        const wrong = picked.find((id) => !serving.has(id))
+        if (wrong) return c.json({ error: "invalid_request" as const, message: `Connection ${wrong} can't serve ${AGENT_CORE_SOURCE_COPY[kind].label.toLowerCase()}.` }, 400)
+      }
       const change = requested
       const result: { settings: WorkbotProactiveSettings | null } = { settings: null }
       await updateOrganizationMetadata(organization.id, (current) => {

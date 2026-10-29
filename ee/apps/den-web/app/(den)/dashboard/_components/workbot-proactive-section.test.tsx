@@ -5,7 +5,7 @@ import { DEFAULT_AGENT_TEMPLATE, DEFAULT_WORKBOT_PROACTIVE_SETTINGS, type AgentR
 import { WorkbotProactivePanel } from "./workbot-proactive-section";
 import { previewTime } from "./workbot-proactive-preview";
 import { WorkbotProactiveHealthTable } from "./workbot-proactive-health";
-import { WorkbotProactiveSources } from "./workbot-proactive-sources";
+import { corePickChange, WorkbotProactiveSources } from "./workbot-proactive-sources";
 
 const ready: WorkbotProactiveView = {
   settings: { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS, enabled: true },
@@ -138,4 +138,23 @@ test("what agents read: each row shows the admin's choice, and is locked for peo
   assert.match(hidden, /Calendar Google Calendar or Outlook On for everyone/, "without View connections: what each source reads through, not the organization's connections");
   assert.match(hidden, /Other connections: Needs the “.+” permission\./);
   assert.doesNotMatch(hidden, /Meeting notes|Issue tracker|mcp\./);
+})
+
+test("what agents read: with two Google connections, the admin picks which one each source reads through", () => {
+  const work = { id: "gws_work", name: "Acme Google", url: "https://google.com" };
+  const personal = { id: "gws_personal", name: "Personal Google", url: "https://google.com" };
+  const two: WorkbotProactiveView = { ...ready, sourceConnections: { calendar: [work, personal], email: [work, personal], chat: [{ id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp" }], other: [] } };
+  const all = sources(two);
+  assert.match(row(all, "workbot-source-email"), /Email Acme Google and Personal Google On for everyone/);
+  assert.match(switchFor(all, "Email through Personal Google") ?? "", /aria-checked="true"/);
+  assert.equal(switchFor(all, "Team chat through Slack"), null, "one connection: nothing to pick");
+
+  const picked = sources({ ...two, settings: { ...two.settings, sources: { ...two.settings.sources, coreConnections: { email: [work.id] } } } });
+  assert.match(row(picked, "workbot-source-email"), /Email Acme Google On for everyone/);
+  assert.match(switchFor(picked, "Email through Personal Google") ?? "", /aria-checked="false"/);
+  assert.match(switchFor(picked, "Email through Acme Google") ?? "", /disabled=""/, "the last one stays on; Not allowed turns the source off");
+  assert.match(switchFor(picked, "Calendar through Personal Google") ?? "", /aria-checked="true"/, "each source is picked on its own");
+
+  assert.deepEqual(corePickChange("email", [work, personal], null, personal.id, false), { coreConnections: { email: [work.id] } });
+  assert.deepEqual(corePickChange("email", [work, personal], [work.id], personal.id, true), { coreConnections: { email: null } }, "all picked: back to every connection");
 })

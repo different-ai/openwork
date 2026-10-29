@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronRight, Lock } from "lucide-react";
+import { ChevronRight, Lock, PencilLine } from "lucide-react";
 import { useEffect, useId, useState, type ReactNode } from "react";
 import {
   AGENT_PREFERENCE_COPY,
@@ -44,6 +44,18 @@ import {
  */
 
 const ADMIN_LOCK = "Set by your admin in Manage › Workbot.";
+
+/** A field as tall as what's written in it: CSS where the browser sizes fields itself, a line estimate elsewhere. */
+const GROW = "resize-none [field-sizing:content]";
+function growRows(text: string) {
+  const lines = text.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 72)), 0);
+  return Math.min(6, Math.max(1, lines));
+}
+
+function joinNames(names: readonly string[]) {
+  const unique = [...new Set(names)];
+  return unique.length <= 1 ? unique[0] ?? "" : `${unique.slice(0, -1).join(", ")} and ${unique.at(-1)}`;
+}
 
 export function AgentLogo({ size = "sm" }: { size?: "sm" | "lg" }) {
   return <ConnectorLogo name="My bot" iconUrl="/openwork-mark.svg" size={size} />;
@@ -185,8 +197,8 @@ function WordsField({ view, field, now, saving, onChange }: { view: MemberAgentV
     <div className="grid gap-1.5 py-2.5 sm:grid-cols-[180px_minmax(0,1fr)] sm:items-start sm:gap-x-4" data-testid={`my-agent-words-${field}`}>
       <label htmlFor={id} className="text-[13px] font-medium text-gray-900 sm:pt-2.5">{AGENT_PREFERENCE_COPY[field].label}</label>
       <div className="flex min-w-0 flex-col gap-1.5">
-        <DenTextarea id={id} rows={1} maxLength={AGENT_PREFERENCE_MAX} value={draft} disabled={saving} placeholder={AGENT_PREFERENCE_COPY[field].placeholder}
-          onChange={(event) => setDraft(event.target.value)} />
+        <DenTextarea id={id} rows={growRows(draft)} maxLength={AGENT_PREFERENCE_MAX} value={draft} disabled={saving} placeholder={AGENT_PREFERENCE_COPY[field].placeholder}
+          className={GROW} onChange={(event) => setDraft(event.target.value)} />
         {change || changed ? (
           <div className="flex flex-wrap items-center justify-between gap-2">
             <ChangeNote view={view} field={field} now={now} saving={saving} onChange={onChange} />
@@ -294,10 +306,13 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
         </div>
       </ItemSection>
 
-      <ItemSection title="Uses" variant="rule" testId="my-agent-uses">
+      <ItemSection title="What it reads" variant="rule" testId="my-agent-uses">
         <div className="flex flex-col divide-y divide-gray-100">
           {(view.sources ?? []).map((source) => <SourceRow key={source.id} view={view} source={source} now={now} saving={saving} links={links} onChange={onChange} />)}
         </div>
+        {(view.sources ?? []).some((source) => source.policy !== "members") ? (
+          <p className="border-t border-gray-100 pt-2.5" data-testid="my-agent-sources-locked"><LockNote>{`Locked sources are ${ADMIN_LOCK.charAt(0).toLowerCase()}${ADMIN_LOCK.slice(1)}`}</LockNote></p>
+        ) : null}
       </ItemSection>
 
       {limits ? (
@@ -345,8 +360,9 @@ function SourceChangeNote({ view, sourceId, field, now }: { view: MemberAgentVie
 }
 
 /**
- * One source in Uses: its switch (locked with the reason when the admin decided), when it was last read, a Connect
- * action when the member's account isn't ready, and their instruction for it in their own words.
+ * One source in What it reads, as one row: the source and the account(s) it reads through, when it was last read,
+ * a Connect action when the member's account isn't ready, a quiet button for their instruction, and its switch (with
+ * a lock when the admin decided; the reason is said once, under the list). The instruction, once written, sits under it.
  */
 function SourceRow({ view, source, now, saving, links, onChange }: { view: MemberAgentView; source: MemberAgentSource; now: number; saving: boolean; links: MyAgentLinks; onChange: Change }) {
   const [editing, setEditing] = useState(false);
@@ -356,65 +372,68 @@ function SourceRow({ view, source, now, saving, links, onChange }: { view: Membe
   const ready = source.connections.find((connection) => connection.state === "connected") ?? null;
   const fix = source.connections.find((connection) => connection.state !== "connected") ?? null;
   const logoFrom = ready ?? source.connections[0] ?? null;
+  const steerable = source.on && source.policy !== "off";
   const save = (instruction: string) => {
     onChange({ sources: [{ source: source.id, instruction }] });
     setEditing(false);
   };
-  const status = !source.on
-    ? "Off"
-    : !source.connections.length
-      ? `No ${source.name.toLowerCase()} connected`
-      : !ready
-        ? null
-        : source.lastReadAt ? `Last read ${whenPhrase(source.lastReadAt, view.timeZone, now)}` : "Not read yet";
+  const status = source.policy === "off"
+    ? "Not allowed"
+    : !source.on
+      ? "Off"
+      : !source.connections.length
+        ? `No ${source.name.toLowerCase()} connected`
+        : !ready
+          ? null
+          : source.lastReadAt ? `Last read ${whenPhrase(source.lastReadAt, view.timeZone, now)}` : "Not read yet";
+  // Which account(s) a calendar, email or chat source reads through: the answer when a member has more than one.
+  const via = source.kind === "other" ? "" : joinNames(source.connections.filter((connection) => connection.state === "connected").map((connection) => connection.name));
+  const instructionLabel = `${source.instruction ? "Edit the" : "Add an"} instruction for ${source.name}`;
   return (
-    <div className="flex flex-col gap-1.5 py-2.5" data-testid={`my-agent-source-${source.id}`} data-on={source.on} data-policy={source.policy}>
-      <div className="flex min-h-[32px] flex-wrap items-center justify-between gap-3">
+    <div className="group flex flex-col gap-1.5 py-2" data-testid={`my-agent-source-${source.id}`} data-on={source.on} data-policy={source.policy}>
+      <div className="flex min-h-[36px] items-center justify-between gap-3">
         <span className="flex min-w-0 items-center gap-3">
           {logoFrom ? <ConnectorLogo name={logoFrom.name} url={logoFrom.url} size="xs" /> : <SourceIcon kind={source.kind} />}
-          <span className="text-[13px] font-medium text-gray-900">{source.name}</span>
+          <span className="flex min-w-0 flex-col">
+            <span className={`truncate text-[13px] font-medium ${source.on ? "text-gray-900" : "text-gray-500"}`}>{source.name}</span>
+            {via && via !== source.name ? <span className="truncate text-[12px] leading-4 text-gray-500" data-testid={`my-agent-via-${source.id}`}>{via}</span> : null}
+          </span>
         </span>
-        <span className="flex min-w-0 flex-wrap items-center justify-end gap-3">
-          {status ? <span className="text-[12px] text-gray-500">{status}</span> : null}
+        <span className="flex shrink-0 items-center gap-2">
+          {status ? <span className="whitespace-nowrap text-[12px] text-gray-500">{status}</span> : null}
           {source.on && !ready ? (
             fix
-              ? <Link href={links.connector(fix.id)} className="text-[12px] font-medium text-gray-900 underline-offset-2 hover:underline">{`${fix.state === "reconnect" ? "Reconnect" : "Connect"} ${fix.name}`}</Link>
-              : <Link href={links.catalog} className="text-[12px] font-medium text-gray-900 underline-offset-2 hover:underline">{`Connect ${source.name.toLowerCase()}`}</Link>
+              ? <Link href={links.connector(fix.id)} className="whitespace-nowrap text-[12px] font-medium text-gray-900 underline-offset-2 hover:underline">{`${fix.state === "reconnect" ? "Reconnect" : "Connect"} ${fix.name}`}</Link>
+              : <Link href={links.catalog} className="whitespace-nowrap text-[12px] font-medium text-gray-900 underline-offset-2 hover:underline">{`Connect ${source.name.toLowerCase()}`}</Link>
           ) : null}
+          {steerable && !editing ? (
+            <button type="button" disabled={saving} onClick={() => setEditing(true)} aria-label={instructionLabel} title={instructionLabel}
+              className={`flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition-[color,background-color,opacity] duration-150 ease-out hover:bg-gray-100 hover:text-gray-900 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none ${source.instruction ? "" : "opacity-0"} focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 disabled:opacity-50`}>
+              <PencilLine size={16} strokeWidth={1.5} aria-hidden />
+            </button>
+          ) : null}
+          <span className="flex w-4 justify-center">
+            {locked ? <Lock size={14} strokeWidth={1.5} className="text-gray-400" role="img" aria-label={source.policy === "off" ? "Not allowed by your admin" : "On for everyone, set by your admin"} /> : null}
+          </span>
           <DenSwitch size="sm" aria-label={source.name} checked={source.on} disabled={locked || saving}
             onChange={(on) => onChange({ sources: [{ source: source.id, on }] })} />
         </span>
       </div>
-      {source.policy === "everyone" ? <LockNote>On for everyone. Set by your admin in Manage › Workbot.</LockNote> : null}
-      {source.policy === "off" ? <LockNote>Not allowed by your admin in Manage › Workbot.</LockNote> : null}
-      {source.policy === "members" && !source.on ? null : source.policy === "off" ? null : editing ? (
+      {steerable && editing ? (
         <div className="flex flex-col gap-1.5 pl-9">
-          <DenTextarea rows={1} maxLength={AGENT_PREFERENCE_MAX} value={draft} disabled={saving} aria-label={`Instruction for ${source.name}`}
+          <DenTextarea rows={growRows(draft)} maxLength={AGENT_PREFERENCE_MAX} value={draft} disabled={saving} aria-label={`Instruction for ${source.name}`} autoFocus className={GROW}
             placeholder="Use my meeting notes for context and action items." onChange={(event) => setDraft(event.target.value)} />
           <span className="flex justify-end gap-2">
             <DenButton variant="secondary" size="xs" onClick={() => { setDraft(source.instruction); setEditing(false); }}>Cancel</DenButton>
             <DenButton size="xs" disabled={saving || draft.trim() === source.instruction.trim()} onClick={() => save(draft.trim())}>Save instruction</DenButton>
           </span>
         </div>
-      ) : source.instruction ? (
-        <div className="flex flex-col gap-1 pl-9" data-testid={`my-agent-source-instruction-${source.id}`}>
-          <p className="text-[13px] leading-[18px] text-gray-900">{`“${source.instruction}”`}</p>
-          <span className="inline-flex flex-wrap items-center gap-1.5 text-[12px] leading-4 text-gray-500">
-            <SourceChangeNote view={view} sourceId={source.id} field="sourceInstruction" now={now} />
-            <button type="button" disabled={saving} onClick={() => setEditing(true)} aria-label={`Edit the instruction for ${source.name}`}
-              className="rounded font-medium text-gray-900 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 disabled:opacity-50">
-              Edit
-            </button>
-          </span>
+      ) : steerable && source.instruction ? (
+        <div className="flex flex-col gap-0.5 pl-9" data-testid={`my-agent-source-instruction-${source.id}`}>
+          <p className="text-[13px] leading-[18px] text-gray-700">{`“${source.instruction}”`}</p>
+          <span className="text-[12px] leading-4 text-gray-500"><SourceChangeNote view={view} sourceId={source.id} field="sourceInstruction" now={now} /></span>
         </div>
-      ) : (
-        <span className="pl-9">
-          <button type="button" disabled={saving} onClick={() => setEditing(true)}
-            className="rounded text-[12px] font-medium text-gray-700 underline-offset-2 hover:text-gray-900 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 disabled:opacity-50">
-            {`Add an instruction for ${source.name}`}
-          </button>
-        </span>
-      )}
+      ) : null}
     </div>
   );
 }
