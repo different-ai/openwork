@@ -16,6 +16,7 @@ import {
   MemberTable,
   OrganizationTable,
   PluginAccessGrantTable,
+  SandboxOrganizationTable,
   ScimGroupMemberTable,
   ScimProviderTable,
   ScimUserTombstoneTable,
@@ -35,6 +36,7 @@ import { revokeUpstreamCredentials, revokeInferenceCredentialsForMembers } from 
 import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { parseOrganizationPlan, type PlanTier } from "./entitlements.js"
 import { getOrganizationFeatures, readOrganizationForAuthorization, type FeatureMap } from "./features.js"
 import {
   getRoleValueAfterOwnershipTransfer,
@@ -191,6 +193,8 @@ export type UserOrgSummary = {
   orgMemberId: string
   membershipId: string
   memberCount: number
+  planTier: PlanTier
+  isSandbox: boolean
   createdAt: Date
   updatedAt: Date
 }
@@ -1445,6 +1449,7 @@ export async function listUserOrgs(userId: UserId) {
     .select({
       membershipId: MemberTable.id,
       role: MemberTable.role,
+      sandboxOrganizationId: SandboxOrganizationTable.organizationId,
       organization: {
         id: OrganizationTable.id,
         name: OrganizationTable.name,
@@ -1458,6 +1463,7 @@ export async function listUserOrgs(userId: UserId) {
     })
     .from(MemberTable)
     .innerJoin(OrganizationTable, eq(MemberTable.organizationId, OrganizationTable.id))
+    .leftJoin(SandboxOrganizationTable, eq(SandboxOrganizationTable.organizationId, OrganizationTable.id))
     .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
     .orderBy(asc(MemberTable.createdAt))
 
@@ -1492,6 +1498,8 @@ export async function listUserOrgs(userId: UserId) {
       orgMemberId: row.membershipId,
       membershipId: row.membershipId,
       memberCount: memberCounts.get(row.organization.id) ?? 0,
+      planTier: parseOrganizationPlan(row.organization.metadata).tier,
+      isSandbox: row.sandboxOrganizationId !== null,
       createdAt: row.organization.createdAt,
       updatedAt: row.organization.updatedAt,
     } satisfies UserOrgSummary

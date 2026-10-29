@@ -7,8 +7,8 @@ const DAY = 24 * 60 * 60 * 1000;
 const NOW = new Date(2026, 9, 29, 15, 0).getTime();
 const MIDNIGHT = new Date(2026, 9, 29).getTime();
 
-function session(id: string, updated: number, extra: Record<string, unknown> = {}) {
-  return { id, title: id, time: { created: updated, updated }, ...extra };
+function session(id: string, updated: number, extra: Record<string, unknown> = {}, created = updated) {
+  return { id, title: id, time: { created, updated }, ...extra };
 }
 
 function group(workspaceId: string, sessions: ReturnType<typeof session>[]): WorkspaceSessionGroup {
@@ -27,11 +27,15 @@ function feed(groups: WorkspaceSessionGroup[], overrides: Partial<SessionFeedCon
     now: NOW,
     feedFolders: [],
     groupsByWorkspace: {},
+    groupBy: "day",
+    sortBy: "activity",
     ...overrides,
   });
 }
 
 const ids = (entries: { session: { id: string } }[]) => entries.map((entry) => entry.session.id);
+const sections = (result: ReturnType<typeof feed>) =>
+  result.sections.map(({ section, entries }) => `${section}:${ids(entries).join(",")}`);
 
 describe("sidebar feed", () => {
   const groups = [
@@ -48,7 +52,7 @@ describe("sidebar feed", () => {
   test("merges every workspace, newest first, by day", () => {
     const result = feed(groups, { statusById: { approval: "waiting" } });
     expect(ids(result.needsYou)).toEqual(["approval"]);
-    expect(result.days.map(({ day, entries }) => `${day}:${ids(entries).join(",")}`)).toEqual([
+    expect(sections(result)).toEqual([
       "today:today-new,today-old",
       "yesterday:yesterday",
       "earlier:earlier",
@@ -58,7 +62,7 @@ describe("sidebar feed", () => {
 
   test("leaves out pinned and sub-agent sessions", () => {
     const result = feed(groups, { pinnedIds: new Set(["today-new"]) });
-    const all = [...result.needsYou, ...result.days.flatMap((day) => day.entries), ...result.settled];
+    const all = [...result.needsYou, ...result.sections.flatMap((section) => section.entries), ...result.settled];
     expect(ids(all)).not.toContain("today-new");
     expect(ids(all)).not.toContain("child");
   });
@@ -66,7 +70,7 @@ describe("sidebar feed", () => {
   test("workspaces that cannot settle keep every session active", () => {
     const result = feed(groups, { settleWorkspaceIds: new Set(["flow"]) });
     expect(result.settled).toEqual([]);
-    expect(ids(result.days.find((day) => day.day === "earlier")?.entries ?? [])).toContain("idle-week");
+    expect(ids(result.sections.find((section) => section.section === "earlier")?.entries ?? [])).toContain("idle-week");
   });
 
   test("pinned folders keep their sessions, even with new activity, and flag what needs you", () => {
@@ -80,8 +84,43 @@ describe("sidebar feed", () => {
     expect(result.folders.map((folder) => `${folder.label}:${ids(folder.entries).join(",")}:${folder.attention}`)).toEqual([
       "Later:today-new,earlier:unread",
     ]);
-    const outside = [...result.needsYou, ...result.days.flatMap((day) => day.entries), ...result.settled];
+    const outside = [...result.needsYou, ...result.sections.flatMap((section) => section.entries), ...result.settled];
     expect(ids(outside)).not.toContain("today-new");
     expect(ids(outside)).not.toContain("earlier");
+  });
+
+  test("groups into active and inactive, keeping Needs you on top", () => {
+    const result = feed(groups, {
+      groupBy: "activity",
+      statusById: { approval: "waiting", yesterday: "running" },
+      unreadIds: new Set(["earlier"]),
+    });
+    expect(ids(result.needsYou)).toEqual(["approval"]);
+    expect(sections(result)).toEqual([
+      "active:yesterday,earlier",
+      "inactive:today-new,today-old",
+    ]);
+  });
+
+  test("lists everything in one section when not grouped", () => {
+    expect(sections(feed(groups, { groupBy: "none" }))).toEqual([
+      "all:today-new,today-old,yesterday,approval,earlier",
+    ]);
+  });
+
+  test("sorts and groups by creation time", () => {
+    const created = [
+      group("lounge", [
+        session("old-but-busy", NOW - 60_000, {}, MIDNIGHT - 2 * DAY),
+        session("new-and-quiet", MIDNIGHT + 60_000, {}, MIDNIGHT + 30_000),
+        session("made-yesterday", MIDNIGHT + 120_000, {}, MIDNIGHT - 60_000),
+      ]),
+    ];
+    expect(sections(feed(created))).toEqual(["today:old-but-busy,made-yesterday,new-and-quiet"]);
+    expect(sections(feed(created, { sortBy: "created" }))).toEqual([
+      "today:new-and-quiet",
+      "yesterday:made-yesterday",
+      "earlier:old-but-busy",
+    ]);
   });
 });
