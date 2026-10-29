@@ -42,7 +42,7 @@
     "@vitest/coverage-v8": "^4.1.12",
     "dependency-cruiser": "18.1.0",
     "typescript": "^5.9.3",
-    "vite": "^6.4.4",
+    "vite": "^6.4.5",
     "vitest": "^4.1.12",
     "xml-crypto": "6.1.2",
     "zod": "^4.6.6"
