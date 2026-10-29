@@ -2301,21 +2301,23 @@ export function createClientV2(
     }
     return result;
   };
-  const checkedAgentSessions = new Set<string>();
+  // The agent each chat is known to be on after this client's last send, so
+  // later sends make no extra request unless the choice changed.
+  const sessionAgents = new Map<string, string | undefined>();
   const resolvePromptAgent = async (
     sessionID: string,
     picked: string | undefined,
     signal?: AbortSignal,
-  ): Promise<{ agent?: string; known: boolean } | { failed: TransportResult }> => {
-    if (!picked && checkedAgentSessions.has(sessionID)) return { known: true };
-    let current: string | undefined;
-    if (!picked) {
+  ): Promise<{ agent?: string; current?: string; known: boolean } | { failed: TransportResult }> => {
+    const remembered = sessionAgents.has(sessionID);
+    let current = sessionAgents.get(sessionID);
+    if (!picked && !remembered) {
       const session = await request("GET", `/api/session/${encodeURIComponent(sessionID)}`, undefined, signal);
       if (!session.response.ok) return { failed: session };
       current = readString(responseData(session.payload), "agent");
     }
     const wanted = picked ?? current;
-    if (!wanted) return { known: true };
+    if (!wanted) return { current, known: true };
     if (!agentCatalog.some((agent) => agent.name === wanted) && !agentsMissingFromCatalog.has(wanted)) {
       const agents = await readAgentCatalog(signal);
       if (!agents.response.ok) return { failed: agents };
@@ -2323,10 +2325,13 @@ export function createClientV2(
     }
     // A starting engine can list no agents yet; keep the choice then.
     if (!agentCatalog.length) return { agent: picked, known: false };
-    const agent = agentCatalog.some((candidate) => candidate.name === wanted)
-      ? wanted
-      : agentCatalog.find((candidate) => candidate.mode !== "subagent" && !candidate.hidden)?.name ?? "build";
-    return { agent: agent === current ? undefined : agent, known: true };
+    const defaultAgent = agentCatalog.find((candidate) => candidate.mode !== "subagent" && !candidate.hidden)?.name ?? "build";
+    const entry = agentCatalog.find((candidate) => candidate.name === wanted);
+    // v2 keeps a chat on its last agent, but no pick means the Default agent,
+    // as on v1: leave a primary agent such as Plan. A sub-agent's own chat
+    // keeps its agent.
+    const agent = !entry || (!picked && entry.mode !== "subagent") ? defaultAgent : wanted;
+    return { agent: picked || agent !== current ? agent : undefined, current: agent, known: true };
   };
 
   const listSessionPermissions = async (
@@ -2723,7 +2728,7 @@ export function createClientV2(
         );
         if (!agentResult.response.ok) return failedResult(agentResult);
       }
-      if (agentResolution.known) checkedAgentSessions.add(parameters.sessionID);
+      if (agentResolution.known) sessionAgents.set(parameters.sessionID, agentResolution.current);
       if (parameters.system !== undefined) {
         const instructions = await request("PUT",
           `/api/experimental/session/${encodeURIComponent(parameters.sessionID)}/instructions/entries/openwork-context`,
@@ -2855,6 +2860,9 @@ export function createClientV2(
           { agent: agentResolution.agent }, options?.signal);
         if (!agentResult.response.ok) return failedResult(agentResult);
       }
+      // A command can run on an agent of its own; read the chat's agent again
+      // before the next send.
+      sessionAgents.delete(parameters.sessionID);
       // The engine expands the command's template with `text` as $ARGUMENTS
       // and starts the turn; it answers 404 for a name it does not register.
       const result = await request(
