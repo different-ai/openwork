@@ -22,6 +22,12 @@ export type DifferentlyProviderOptions = {
    * pools behind its server's proxy do not. Defaults to true.
    */
   endpoints?: boolean
+  /** The size of a sandbox whose spec names none; unset, the project's default profile decides. */
+  resources?: { cpu: number; memoryGb: number; diskGb: number }
+  /** What the pools this key reaches can do (`differentlyLifecycle`); unset, pause and stop are assumed. */
+  lifecycle?: { pause: boolean; stop: boolean }
+  /** Read `lifecycle` from Differently alongside each create, at most every five minutes, instead of fixing it. */
+  discoverLifecycle?: boolean
   /** Differently has no TTL-free sandboxes: `autoDeleteMinutes: -1` keeps a computer this long after each resume. */
   persistentTtlMinutes?: number
   pollIntervalMs?: number
@@ -61,19 +67,37 @@ function trimTrailingSlashes(value: string): string {
   return value.slice(0, end)
 }
 
+type PoolView = { enabled?: boolean; health?: string; capabilities?: string[] }
+
+/** The pools this key may be placed on, from `GET /v1/capabilities`. */
+async function readPools(options: Pick<DifferentlyProviderOptions, "url" | "apiKey">, deps: { fetch?: typeof fetch; timeoutMs?: number }): Promise<PoolView[]> {
+  const response = await (deps.fetch ?? fetch)(`${trimTrailingSlashes(options.url)}/v1/capabilities`, { headers: { Authorization: `Bearer ${options.apiKey}` }, signal: AbortSignal.timeout(deps.timeoutMs ?? 3000) })
+  if (!response.ok) throw new Error(`capabilities answered HTTP ${response.status}`)
+  return ((await response.json()) as { items?: PoolView[] }).items ?? []
+}
+
 /**
  * Whether this key can create sandboxes right now: Differently answers and at least one enabled pool it may use is
  * healthy. Infrastructure only; quotas and placement policy are answered when a sandbox is created.
  */
 export async function differentlyHealth(options: Pick<DifferentlyProviderOptions, "url" | "apiKey">, deps: { fetch?: typeof fetch; timeoutMs?: number } = {}): Promise<{ up: boolean; reason: string }> {
   try {
-    const response = await (deps.fetch ?? fetch)(`${trimTrailingSlashes(options.url)}/v1/capabilities`, { headers: { Authorization: `Bearer ${options.apiKey}` }, signal: AbortSignal.timeout(deps.timeoutMs ?? 3000) })
-    if (!response.ok) return { up: false, reason: `capabilities answered HTTP ${response.status}` }
-    const body = await response.json() as { items?: { enabled?: boolean; health?: string }[] }
-    return (body.items ?? []).some(pool => pool.enabled && pool.health === "healthy") ? { up: true, reason: "a pool is healthy" } : { up: false, reason: "no enabled pool is healthy" }
+    const pools = await readPools(options, deps)
+    return pools.some(pool => pool.enabled && pool.health === "healthy") ? { up: true, reason: "a pool is healthy" } : { up: false, reason: "no enabled pool is healthy" }
   } catch (error) {
     return { up: false, reason: error instanceof Error ? error.name === "TimeoutError" ? "capabilities timed out" : error.message : "unreachable" }
   }
+}
+
+/**
+ * Whether every enabled pool can pause (keeping memory) or stop (keeping the disk) a sandbox, so the adapter claims
+ * only what any placement provides. Null when Differently doesn't answer or has no enabled pool.
+ */
+export async function differentlyLifecycle(options: Pick<DifferentlyProviderOptions, "url" | "apiKey">, deps: { fetch?: typeof fetch; timeoutMs?: number } = {}): Promise<{ pause: boolean; stop: boolean } | null> {
+  const pools = (await readPools(options, deps).catch(() => [])).filter(pool => pool.enabled)
+  if (!pools.length) return null
+  const everywhere = (feature: string) => pools.every(pool => pool.capabilities?.includes(feature))
+  return { pause: everywhere("lifecycle.pause-resume"), stop: everywhere("lifecycle.stop-start") }
 }
 
 /** Maps Differently's stable error codes (never its messages) onto OpenWork's taxonomy. */
@@ -92,6 +116,13 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
   const now = deps.now ?? Date.now
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)))
   const poll = options.pollIntervalMs ?? 500
+  let lifecycle = options.lifecycle ?? null
+  let lifecycleAt = -Infinity
+  const discoverLifecycle = async () => {
+    if (!options.discoverLifecycle || now() - lifecycleAt < 300_000) return
+    lifecycleAt = now()
+    lifecycle = await differentlyLifecycle(options, { fetch: send }) ?? lifecycle
+  }
   const unsupported = (feature: string): never => { throw new SandboxError({ providerId: id, code: "invalid_state", retryable: false, message: `Differently adapter does not provide ${feature}` }) }
   const identity = (ref: SandboxRef) => {
     if (ref.providerId !== id || !ref.ref.sandboxId) unsupported("this sandbox reference")
@@ -173,7 +204,7 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
 
   const provider: SandboxProvider = {
     id,
-    describe: () => ({ stopResume: true, persistentStorage: false, memorySnapshotRestore: false, warmPool: false, endpointKind: "stable", exec: true, regions: [], createEnvironment: true, detachedExec: false, endpoints: options.endpoints ?? true, platform: options.platform ?? { os: "linux", isolation: "unknown" } }),
+    describe: () => ({ stopResume: lifecycle ? lifecycle.pause || lifecycle.stop : true, persistentStorage: false, memorySnapshotRestore: false, warmPool: false, endpointKind: "stable", exec: true, regions: [], createEnvironment: true, detachedExec: false, endpoints: options.endpoints ?? true, platform: options.platform ?? { os: "linux", isolation: "unknown" } }),
     currentImage: () => options.template ? { id: options.template, version: options.template } : null,
     async create(spec, opts) {
       if (spec.storage.length) unsupported("storage attachments")
@@ -181,12 +212,15 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
       // autoStopMinutes is a cost backstop Differently does not provide: jobs that need idle stops pause themselves.
       const image = spec.image ?? (options.template ? { id: options.template, version: options.template } : null)
       const minutes = ttlMinutes(spec)
+      const resources = spec.resources ?? options.resources
+      // Alongside the create, never in its way: what the pools can do decides how hosts idle the sandbox later.
+      const discovering = discoverLifecycle()
       const deadline = now() + opts.timeoutMs
       const response = await call("POST", "/v1/sandboxes", {
         headers: { "Idempotency-Key": spec.idempotencyKey },
         body: {
           ...(image ? image.id.startsWith("snp_") ? { fromSnapshot: image.id } : { template: image.id } : {}),
-          ...(spec.resources ? { resources: { cpu: spec.resources.cpu, memoryMiB: Math.round(spec.resources.memoryGb * 1024), diskGiB: spec.resources.diskGb } } : {}),
+          ...(resources ? { resources: { cpu: resources.cpu, memoryMiB: Math.round(resources.memoryGb * 1024), diskGiB: resources.diskGb } } : {}),
           ...(options.placement ? { placement: options.placement } : {}),
           ...(options.classification ? { classification: options.classification } : {}),
           ...(minutes ? { ttlSeconds: minutes * 60 } : {}),
@@ -198,7 +232,9 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
       // 200 replays the live sandbox this key already names; the contract reports that as a conflict.
       if (response.status === 200) throw new SandboxError({ providerId: id, code: "conflict", message: `Idempotency key ${spec.idempotencyKey} already names a live sandbox` })
       const created = await response.json() as Sandbox
-      return handle(await running(created, Math.max(1, deadline - now())))
+      const box = handle(await running(created, Math.max(1, deadline - now())))
+      await discovering
+      return box
     },
     async list(query) {
       const result: SandboxHandle[] = []
@@ -233,6 +269,8 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
       const s = await live(identity(h.ref))
       if (s.status === "stopped" || s.status === "paused") return
       const sandboxId = s.id
+      if (lifecycle && !lifecycle.stop && !lifecycle.pause) unsupported("stopping or pausing on these pools")
+      if (lifecycle && !lifecycle.stop) return void await call("POST", path(sandboxId, "/pause"), { timeoutMs: opts.timeoutMs })
       try { await call("POST", path(sandboxId, "/stop"), { timeoutMs: opts.timeoutMs }) }
       catch (error) {
         // OpenSandbox has no stop; pausing keeps memory as well as the disk.
@@ -285,11 +323,15 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
           }
         },
       },
-      pause: async (h, opts) => {
-        const sandboxId = identity(h.ref)
-        await call("POST", path(sandboxId, "/pause"), { timeoutMs: opts.timeoutMs })
-        await settle(sandboxId, ["paused"], opts.timeoutMs)
-      },
+      // Only where every pool can pause: hosts check for this block before pausing.
+      ...(options.lifecycle?.pause === false ? {} : {
+        pause: async (h: SandboxHandle, opts: { timeoutMs: number }) => {
+          const sandboxId = identity(h.ref)
+          if (lifecycle && !lifecycle.pause) unsupported("pausing on these pools")
+          await call("POST", path(sandboxId, "/pause"), { timeoutMs: opts.timeoutMs })
+          await settle(sandboxId, ["paused"], opts.timeoutMs)
+        },
+      }),
       snapshots: {
         async create(h, name, opts): Promise<ImageRef> {
           const snap = await json<{ id: string }>("POST", path(identity(h.ref), "/snapshots"), { body: { kind: "disk" }, timeoutMs: opts.timeoutMs })

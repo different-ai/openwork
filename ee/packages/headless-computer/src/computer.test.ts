@@ -97,6 +97,19 @@ test("a computer pauses from its stored time after the process that used it is g
   await used.delete("stored")
 })
 
+test("a provider that can neither pause nor stop leaves an idle computer running, with nothing left due", async () => {
+  const fake = createFakeProvider({ onRun: () => ({ exitCode: 0, stdout: "0", stderr: "" }) })
+  const provider: SandboxProvider = { ...fake, describe: () => ({ ...fake.describe(), stopResume: false }) }
+  const due = new Map<string, number>()
+  const pauses = { set: (sessionId: string, at: number) => { due.set(sessionId, at) }, clear: (sessionId: string) => { due.delete(sessionId) } }
+  const computers = new Computers({ provider, idlePauseMs: 60_000, keepDays: 1, pauses }, { readFile: async () => ({ text: "" }) })
+  const box = await computers.vm("idle")
+  await computers.pauseIdle("idle")
+  assert.equal((await provider.inspect(box)).state, "running")
+  assert.equal(due.has("idle"), false)
+  await computers.delete("idle")
+})
+
 test("desktop stays off on existing computers and opening a paused desktop does not wake it", async () => {
   const f = fixture()
   assert.deepEqual(f.computers.desktopTools, [])

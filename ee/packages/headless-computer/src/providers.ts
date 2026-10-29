@@ -1,6 +1,9 @@
 import { isSandboxError, type SandboxProvider } from "@openwork/sandbox"
 import { computerSnapshotSlug } from "./image.js"
 
+/** A Workbot computer's size where the provider takes one per sandbox. */
+const COMPUTER_RESOURCES = { cpu: 2, memoryGb: 4, diskGb: 8 }
+
 export type ComputerProviderConfig = {
   kind: "freestyle" | "daytona"
   apiKey: string
@@ -28,10 +31,16 @@ export type SandboxGatewayConfig = {
   template: string
 }
 
-/** The gateway's adapter loads only when the runner opts into a gateway. */
+/**
+ * The gateway's adapter loads only when the runner opts into a gateway. Computers ask for Daytona's size, and are
+ * idled only as the gateway's pools allow: the adapter reads that as it creates them, never at startup.
+ */
 export async function createGatewayProvider(config: SandboxGatewayConfig): Promise<SandboxProvider> {
   const { createDifferentlyProvider } = await import("@openwork/sandbox-differently")
-  return createDifferentlyProvider({ url: config.url, apiKey: config.apiKey, template: config.template, platform: { os: "linux", isolation: "unknown" } })
+  return createDifferentlyProvider({
+    url: config.url, apiKey: config.apiKey, template: config.template, platform: { os: "linux", isolation: "unknown" },
+    resources: COMPUTER_RESOURCES, discoverLifecycle: true,
+  })
 }
 
 /** Whether the gateway can create computers right now (infrastructure only, never its policies). */
@@ -65,7 +74,7 @@ export async function createComputerProvider(config: ComputerProviderConfig): Pr
   const { createDaytonaProvider } = await import("@openwork/sandbox-daytona")
   return createDaytonaProvider({
     apiKey: config.apiKey, apiUrl: config.apiUrl ?? "https://app.daytona.io/api", target: config.target,
-    snapshot: config.snapshot, image: "ubuntu:24.04", resources: { cpu: 2, memoryGb: 4, diskGb: 8 },
+    snapshot: config.snapshot, image: "ubuntu:24.04", resources: COMPUTER_RESOURCES,
     helperCreateTimeoutMs: 120_000, pollIntervalMs: 100, platform: { os: "linux", isolation: config.sandboxClass === "linux-vm" ? "microvm" : "container" },
     supportsPause: config.sandboxClass === "linux-vm",
     ...(config.sandboxClass === "linux-vm" && config.keepDays && !config.persistent ? { idleRetentionMinutes: config.keepDays * 1440 } : {}),

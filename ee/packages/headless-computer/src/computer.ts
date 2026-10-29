@@ -351,6 +351,8 @@ export class Computers {
       if (await this.runningJobs(vm) > 0) return this.release(sessionId)
       // Nobody is using it: the moment to move a computer built from an older image onto the current one.
       if (!this.working.has(sessionId) && await this.staleImage(sessionId, vm)) vm = await this.replace(sessionId, vm, { required: false }) ?? vm
+      // A provider that can neither pause nor stop keeps the computer running until its own expiry.
+      if (!this.provider.describe().stopResume) return this.options.pauses?.clear(sessionId)
       await (this.provider.blocks?.pause ? this.provider.blocks.pause(vm, { timeoutMs: 30_000 }) : this.provider.stop(vm, { timeoutMs: 30_000 }))
       this.options.pauses?.clear(sessionId)
     } catch {

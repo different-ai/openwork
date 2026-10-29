@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process"
 import { test } from "node:test"
 import { SandboxError, ensureRunning, withBlocks, type SandboxSpec } from "@openwork/sandbox"
 import { sandboxBlockConformanceCases, sandboxProviderConformanceCases } from "@openwork/sandbox/testing"
-import { createDifferentlyProvider, differentlyError, differentlyHealth, KEY_LABEL } from "./index.js"
+import { createDifferentlyProvider, differentlyError, differentlyHealth, differentlyLifecycle, KEY_LABEL } from "./index.js"
 
 type Box = { id: string; status: string; key: string; labels: Record<string, string>; files: Map<string, Uint8Array>; body: Record<string, unknown>; ttl?: number }
 
@@ -198,4 +198,58 @@ test("health is infrastructure only: Differently answers and an enabled pool it 
   assert.deepEqual(await differentlyHealth(options, { fetch: answer(200, { items: [{ enabled: true, health: "unavailable" }, { enabled: false, health: "healthy" }] }) }), { up: false, reason: "no enabled pool is healthy" })
   assert.deepEqual(await differentlyHealth(options, { fetch: answer(503, {}) }), { up: false, reason: "capabilities answered HTTP 503" })
   assert.equal((await differentlyHealth(options, { fetch: async () => { throw new TypeError("fetch failed") } })).up, false)
+})
+
+test("a sandbox whose spec names no size gets the configured one, and a spec's own size wins", async () => {
+  const { fake, p } = provider({}, { resources: { cpu: 2, memoryGb: 4, diskGb: 8 } })
+  await p.create(spec(), { timeoutMs: 5_000 })
+  await p.create(spec({ idempotencyKey: "computer-2", resources: { cpu: 1, memoryGb: 1, diskGb: 2 } }), { timeoutMs: 5_000 })
+  const sizes = fake.requests.filter(r => r.method === "POST" && r.path === "/v1/sandboxes").map(r => (r.body as Record<string, unknown>).resources)
+  assert.deepEqual(sizes, [{ cpu: 2, memoryMiB: 4096, diskGiB: 8 }, { cpu: 1, memoryMiB: 1024, diskGiB: 2 }])
+})
+
+test("pools that can neither pause nor stop are described as such, so hosts don't try", async () => {
+  const { p } = provider({}, { lifecycle: { pause: false, stop: false } })
+  assert.equal(p.describe().stopResume, false)
+  assert.equal(p.blocks?.pause, undefined)
+  const h = await p.create(spec(), { timeoutMs: 5_000 })
+  await assert.rejects(p.stop(h, { timeoutMs: 5_000 }), /stopping or pausing/)
+  const pausing = provider({}, { lifecycle: { pause: true, stop: false } }).p
+  assert.equal(pausing.describe().stopResume, true)
+  assert.ok(pausing.blocks?.pause)
+})
+
+test("lifecycle claims only what every enabled pool can do", async () => {
+  const answer = (items: unknown[]): typeof fetch => async () => Response.json({ items })
+  const options = { url: "https://gateway.example.com", apiKey: "key" }
+  assert.deepEqual(await differentlyLifecycle(options, { fetch: answer([
+    { enabled: true, capabilities: ["exec", "lifecycle.pause-resume", "lifecycle.stop-start"] },
+    { enabled: true, capabilities: ["exec", "lifecycle.pause-resume"] },
+    { enabled: false, capabilities: ["exec"] },
+  ]) }), { pause: true, stop: false })
+  assert.deepEqual(await differentlyLifecycle(options, { fetch: answer([{ enabled: true, capabilities: ["exec", "files"] }]) }), { pause: false, stop: false })
+  assert.equal(await differentlyLifecycle(options, { fetch: answer([]) }), null)
+  assert.equal(await differentlyLifecycle(options, { fetch: async () => { throw new TypeError("fetch failed") } }), null)
+})
+
+test("discovered lifecycle is read alongside a create, at most every five minutes, and decides pausing", async () => {
+  const fake = fakeDifferently()
+  let clock = 0
+  let reads = 0
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    if (String(input).endsWith("/v1/capabilities")) {
+      reads++
+      return Response.json({ items: [{ enabled: true, health: "healthy", capabilities: ["exec", "files"] }] })
+    }
+    return fake.fetch(input, init)
+  }
+  const p = createDifferentlyProvider({ url: "https://differently.test", apiKey: "dly_test", template: "workbot-computer", discoverLifecycle: true }, { fetch, sleep: async () => {}, now: () => clock })
+  assert.equal(p.describe().stopResume, true, "assumed until known")
+  const h = await p.create(spec(), { timeoutMs: 5_000 })
+  assert.equal(p.describe().stopResume, false)
+  await assert.rejects(withBlocks(p, ["pause"]).pause(h, { timeoutMs: 5_000 }), /pausing on these pools/)
+  await p.create(spec({ idempotencyKey: "computer-2" }), { timeoutMs: 5_000 })
+  clock = 300_001
+  await p.create(spec({ idempotencyKey: "computer-3" }), { timeoutMs: 5_000 })
+  assert.equal(reads, 2)
 })
