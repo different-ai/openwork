@@ -30,13 +30,47 @@ test("HTML quotes retain nested history, links and tables while plain MIME retai
   assert.match(result.plain, /> > Earlier reply\n> > > Original question/)
 })
 
-test("unsafe HTML is stripped without losing safe inline layout or images", () => {
-  const original = '<html><head><style>body{display:none}</style><title>Hidden</title></head><body><script>alert(1)</script><div onclick="bad()" style="color:red;position:fixed;background-image:url(https://example.test/track)"><a href="jav&#x61;script:alert(1)">Bad link</a><a href="https://example.test">Safe link</a><img src="https://example.test/image.png" alt="Diagram" onerror="bad()"><iframe src="https://example.test">Frame</iframe><svg onload="bad()"></svg></div></body></html>'
+test("unsafe HTML is stripped without losing safe inline layout or CID images", () => {
+  const original = '<html><head><style>body{display:none}</style><title>Hidden</title></head><body><script>alert(1)</script><div onclick="bad()" style="color:red;position:fixed;background-image:url(https://example.test/track)"><a href="jav&#x61;script:alert(1)">Bad link</a><a href="https://example.test">Safe link</a><img src="cid:diagram@example.test" alt="Diagram" onerror="bad()"><iframe src="https://example.test">Frame</iframe><svg onload="bad()"></svg></div></body></html>'
   const result = render(quoteInput([part("text/html", original)]))
   assert.doesNotMatch(result.html, /<script|<style|<head|<body|<html|<iframe|<svg|onclick|onerror|onload|javascript:|position:|background-image|Hidden|alert\(1\)/i)
   assert.match(result.html, /style="color:red"/)
   assert.match(result.html, /href="https:\/\/example.test"/)
-  assert.match(result.html, /<img src="https:\/\/example.test\/image.png" alt="Diagram"/)
+  assert.match(result.html, /<img src="cid:diagram@example.test" alt="Diagram"/)
+})
+
+test("quoted remote and other non-CID images are dropped without affecting links or text", () => {
+  for (const src of ["https://example.test/tracker.png", "http://example.test/tracker.png", "//example.test/tracker.png", "/tracker.png", "tracker.png", "mailto:tracker@example.test"]) {
+    const result = render(quoteInput([part("text/html", `<div>Keep this text<img src="${src}" alt="Tracking"><a href="https://example.test/notes">Notes</a></div>`)]))
+    assert.doesNotMatch(result.html, /<img|tracker|Tracking/)
+    assert.match(result.html, /Keep this text/)
+    assert.match(result.html, /href="https:\/\/example.test\/notes"/)
+  }
+})
+
+test("quoted attached inline images keep their CID source and safe attributes", () => {
+  const result = render(quoteInput([part("text/html", '<div>Diagram<img src="cid:diagram@example.test" alt="Attached diagram" width="120" height="80"></div>')]))
+  assert.match(result.html, /<img src="cid:diagram@example.test" alt="Attached diagram" width="120" height="80"/)
+})
+
+test("quoted image srcset is removed even when the fallback source is CID", () => {
+  const result = render(quoteInput([part("text/html", '<div>Diagram<img src="cid:diagram@example.test" srcset="https://example.test/tracker.png 1x, https://example.test/tracker2.png 2x"><img srcset="https://example.test/only-srcset.png 1x"></div>')]))
+  assert.match(result.html, /src="cid:diagram@example.test"/)
+  assert.equal(result.html.match(/<img/g)?.length, 1)
+  assert.doesNotMatch(result.html, /srcset|tracker|only-srcset/)
+})
+
+test("quoted data images are removed rather than embedded", () => {
+  const result = render(quoteInput([part("text/html", '<div>Keep this text<img src="data:image/png;base64,aGVsbG8=" alt="Embedded"></div>')]))
+  assert.match(result.html, /Keep this text/)
+  assert.doesNotMatch(result.html, /<img|data:image|aGVsbG8=|Embedded/)
+})
+
+test("quoted CSS and legacy background image URLs cannot survive the layout allowlist", () => {
+  const result = render(quoteInput([part("text/html", '<div style="color:red;background:url(https://example.test/tracker.png);background-image:url(https://example.test/tracker2.png)"><table background="https://example.test/legacy.png"><tr><td>Keep layout</td></tr></table></div>')]))
+  assert.match(result.html, /style="color:red"/)
+  assert.match(result.html, /<table><tr><td>Keep layout/)
+  assert.doesNotMatch(result.html, /background|url\(|tracker|legacy/)
 })
 
 test("plain-only originals use escaped text in HTML and keep line breaks", () => {

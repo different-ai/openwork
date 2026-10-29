@@ -29,8 +29,8 @@ export type GmailDraftQuote = {
   html?: string
 }
 
-/** Keep email layout, not active content. No URLs are fetched by the server.
- * Remote images remain references, subject to the receiving mail client's image policy.
+/** Keep email layout, not active content or remotely loaded tracking images.
+ * Only attached/inline CID image references survive; linked pictures are dropped.
  */
 export function sanitizeGmailQuoteHtml(html: string): string {
   const safeStyle = /^(?!.*(?:url|expression|behavior|binding))[-#(),.%\w\s]+$/i
@@ -56,7 +56,10 @@ export function sanitizeGmailQuoteHtml(html: string): string {
       ].map((property) => [property, [safeStyle]])),
     },
     allowedSchemes: ["http", "https", "mailto"],
-    allowedSchemesByTag: { img: ["http", "https", "cid"] },
+    allowedSchemesByTag: { img: ["cid"] },
+    // Scheme filtering also permits relative URLs; explicitly require a CID.
+    // Drop the whole image rather than leave a broken image or alt placeholder.
+    exclusiveFilter: (frame) => frame.tag === "img" && !/^cid:[^\s]+$/i.test(frame.attribs.src ?? ""),
     allowProtocolRelative: false,
     nonTextTags: ["script", "style", "head", "title", "textarea", "option", "iframe", "object", "template", "svg", "math"],
     nestingLimit: 50,
