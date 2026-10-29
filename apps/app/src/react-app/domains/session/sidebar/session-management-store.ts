@@ -79,6 +79,9 @@ export const DEFAULT_AUTO_SETTLE_DAYS = 3;
 
 export type SidebarView = "workspaces" | "feed";
 
+/** A workspace group pinned to the bottom of the Feed; sessions filed there stay until moved. */
+export type FeedFolder = { workspaceId: string; groupId: string };
+
 type SessionManagementState = {
   pinnedIds: string[];
   unreadIds: string[];
@@ -86,6 +89,7 @@ type SessionManagementState = {
   autoSettleDays: number;
   /** Sidebar layout: the workspace tree, or every workspace's sessions in one feed. */
   sidebarView: SidebarView;
+  feedFolders: FeedFolder[];
   orderByWorkspace: Record<string, string[]>;
   groupsByWorkspace: Record<string, WorkspaceGroupState>;
 };
@@ -101,6 +105,7 @@ type SessionManagementActions = {
   restoreSettle: (sessionId: string, snapshot: SessionSettleSnapshot) => void;
   setAutoSettleDays: (days: number) => void;
   setSidebarView: (view: SidebarView) => void;
+  toggleFeedFolder: (workspaceId: string, groupId: string) => void;
   reorderSessions: (workspaceId: string, sessionIds: string[]) => void;
   assignGroup: (workspaceId: string, sessionId: string, groupId: string | null) => void;
   createGroup: (workspaceId: string, label: string) => void;
@@ -251,6 +256,7 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
       settledById: {},
       autoSettleDays: DEFAULT_AUTO_SETTLE_DAYS,
       sidebarView: "workspaces",
+      feedFolders: [],
       orderByWorkspace: {},
       groupsByWorkspace: {},
 
@@ -310,6 +316,16 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
           const unreadIds = state.unreadIds.filter((id) => id !== sessionId);
           if (snapshot.unread) unreadIds.push(sessionId);
           return { settledById, pinnedIds, unreadIds };
+        }),
+
+      toggleFeedFolder: (workspaceId, groupId) =>
+        set((state) => {
+          const pinned = state.feedFolders.some((folder) => folder.workspaceId === workspaceId && folder.groupId === groupId);
+          return {
+            feedFolders: pinned
+              ? state.feedFolders.filter((folder) => folder.workspaceId !== workspaceId || folder.groupId !== groupId)
+              : [...state.feedFolders, { workspaceId, groupId }],
+          };
         }),
 
       setSidebarView: (view) => set({ sidebarView: view === "feed" ? "feed" : "workspaces" }),

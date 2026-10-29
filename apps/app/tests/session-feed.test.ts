@@ -25,6 +25,8 @@ function feed(groups: WorkspaceSessionGroup[], overrides: Partial<SessionFeedCon
     settleWorkspaceIds: new Set(["lounge", "flow"]),
     autoSettleDays: 3,
     now: NOW,
+    feedFolders: [],
+    groupsByWorkspace: {},
     ...overrides,
   });
 }
@@ -65,5 +67,21 @@ describe("sidebar feed", () => {
     const result = feed(groups, { settleWorkspaceIds: new Set(["flow"]) });
     expect(result.settled).toEqual([]);
     expect(ids(result.days.find((day) => day.day === "earlier")?.entries ?? [])).toContain("idle-week");
+  });
+
+  test("pinned folders keep their sessions, even with new activity, and flag what needs you", () => {
+    const result = feed(groups, {
+      feedFolders: [{ workspaceId: "flow", groupId: "later" }, { workspaceId: "lounge", groupId: "removed" }],
+      groupsByWorkspace: {
+        flow: { groups: [{ id: "later", label: "Later" }], assignments: { "today-new": "later", earlier: "later" } },
+      },
+      unreadIds: new Set(["today-new"]),
+    });
+    expect(result.folders.map((folder) => `${folder.label}:${ids(folder.entries).join(",")}:${folder.attention}`)).toEqual([
+      "Later:today-new,earlier:unread",
+    ]);
+    const outside = [...result.needsYou, ...result.days.flatMap((day) => day.entries), ...result.settled];
+    expect(ids(outside)).not.toContain("today-new");
+    expect(ids(outside)).not.toContain("earlier");
   });
 });

@@ -23,6 +23,11 @@ Automation, an approval request) brings it back.
   workspace and group, and what it is doing or how long ago it was active.
   Settled sessions from every workspace sit in a collapsed **Settled** shelf
   above Archived. The choice is remembered on the device.
+- Any workspace group can be pinned to the bottom of the Feed (the pin in the
+  group's hover actions in Workspaces view). Sessions filed in a pinned group
+  stay there, even with new activity; the folder shows a dot when something
+  inside is unread or needs you. When a session's workspace has pinned groups,
+  its ✓ button offers Settle or Move to each of them.
 
 ## How it works
 
