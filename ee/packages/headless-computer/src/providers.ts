@@ -1,4 +1,4 @@
-import type { SandboxProvider } from "@openwork/sandbox"
+import { isSandboxError, type SandboxProvider } from "@openwork/sandbox"
 import { computerSnapshotSlug } from "./image.js"
 
 export type ComputerProviderConfig = {
@@ -32,6 +32,20 @@ export type SandboxGatewayConfig = {
 export async function createGatewayProvider(config: SandboxGatewayConfig): Promise<SandboxProvider> {
   const { createDifferentlyProvider } = await import("@openwork/sandbox-differently")
   return createDifferentlyProvider({ url: config.url, apiKey: config.apiKey, template: config.template, platform: { os: "linux", isolation: "unknown" } })
+}
+
+/** Whether the gateway can create computers right now (infrastructure only, never its policies). */
+export async function createGatewayHealth(config: SandboxGatewayConfig): Promise<() => Promise<{ up: boolean; reason: string }>> {
+  const { differentlyHealth } = await import("@openwork/sandbox-differently")
+  return () => differentlyHealth({ url: config.url, apiKey: config.apiKey })
+}
+
+/**
+ * A provider or gateway that could not be reached or could not start the computer. Refusals (quotas, placement
+ * policy, permissions, unsupported requests) are not: they answer the request and must not be routed around.
+ */
+export function isInfrastructureError(error: unknown) {
+  return isSandboxError(error) && (error.code === "transient" || error.code === "timeout")
 }
 
 /** Provider SDKs load only when the runner opts into that provider. */

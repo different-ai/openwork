@@ -432,14 +432,30 @@ provider keys and decides by its own policies which provider runs each computer.
 Only sessions created or updated with `sandboxGateway: true` use it. Workbot
 sends that for organizations with the `sandboxGateway` feature flag on, so one
 organization can try the gateway while the rest stay on the runner's own
-provider. The route is read on every call:
+provider. Sessions without the setting never touch the gateway, even when the
+runner's own provider is down.
 
-- The flag is on but the runner has no gateway: the session keeps
+A session's computer is placed when one is first needed, and the runner records
+which side made it (the `computer_sides` table):
+
+- **Gateway healthy:** the computer is started through the gateway and stays
+  there. Health is infrastructure only: Differently answers
+  `GET /v1/capabilities` and an enabled pool is healthy. The answer is kept for
+  30 seconds, and each change is logged once.
+- **Gateway unhealthy, or it can't start the computer** (unreachable, a timeout,
+  a 5xx, or a sandbox that failed to start): the computer is made on
+  `HEADLESS_COMPUTER` instead. A failed start marks the gateway unhealthy, so
+  later sessions skip it until the next check.
+- **The gateway refuses** (a quota, no eligible pool, a permission or an
+  unsupported request): the call fails. That is the gateway's policy, and the
+  runner never routes around it.
+- **A computer stays where it was made.** One on the gateway errors while the
+  gateway is down. One made on the runner's own provider is kept until it is
+  gone; the session's next computer goes through the gateway again.
+- **The flag is on but the runner has no gateway:** the session keeps
   `HEADLESS_COMPUTER`, and the runner logs it once per session.
-- The gateway is configured but fails: the session's computer fails. It never
-  falls back to the runner's own provider.
-- The flag is switched: the session's next computer comes from the other side.
-  The one it had pauses and expires where it was, and deleting the session
+- **The flag is switched:** the session's next computer comes from the other
+  side. The one it had pauses and expires where it was, and deleting the session
   removes both.
 
 Gateway computers share the runner's scope, pause, keep-days, persistence and

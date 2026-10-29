@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process"
 import { test } from "node:test"
 import { SandboxError, ensureRunning, withBlocks, type SandboxSpec } from "@openwork/sandbox"
 import { sandboxBlockConformanceCases, sandboxProviderConformanceCases } from "@openwork/sandbox/testing"
-import { createDifferentlyProvider, differentlyError, KEY_LABEL } from "./index.js"
+import { createDifferentlyProvider, differentlyError, differentlyHealth, KEY_LABEL } from "./index.js"
 
 type Box = { id: string; status: string; key: string; labels: Record<string, string>; files: Map<string, Uint8Array>; body: Record<string, unknown>; ttl?: number }
 
@@ -185,4 +185,17 @@ test("a wrong key surfaces as an auth error", async () => {
   const fake = fakeDifferently()
   const p = createDifferentlyProvider({ url: "https://differently.test", apiKey: "dly_wrong" }, { ...quick, fetch: fake.fetch })
   await assert.rejects(p.find({ idempotencyKey: "x" }), (error: unknown) => error instanceof SandboxError && error.code === "auth")
+})
+
+test("health is infrastructure only: Differently answers and an enabled pool it may use is healthy", async () => {
+  const answer = (status: number, body: unknown): typeof fetch => async (url, init) => {
+    assert.equal(String(url), "https://gateway.example.com/v1/capabilities")
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer key")
+    return Response.json(body, { status })
+  }
+  const options = { url: "https://gateway.example.com/", apiKey: "key" }
+  assert.equal((await differentlyHealth(options, { fetch: answer(200, { items: [{ enabled: false, health: "healthy" }, { enabled: true, health: "healthy" }] }) })).up, true)
+  assert.deepEqual(await differentlyHealth(options, { fetch: answer(200, { items: [{ enabled: true, health: "unavailable" }, { enabled: false, health: "healthy" }] }) }), { up: false, reason: "no enabled pool is healthy" })
+  assert.deepEqual(await differentlyHealth(options, { fetch: answer(503, {}) }), { up: false, reason: "capabilities answered HTTP 503" })
+  assert.equal((await differentlyHealth(options, { fetch: async () => { throw new TypeError("fetch failed") } })).up, false)
 })

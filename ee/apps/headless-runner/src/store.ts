@@ -207,6 +207,9 @@ function serializeOptions(options: SessionOptions) {
   return Object.keys(ordered).length ? JSON.stringify(ordered) : null
 }
 
+/** The sandbox gateway (SANDBOX_GATEWAY) or the runner's own provider (HEADLESS_COMPUTER). */
+export type ComputerSide = "gateway" | "direct"
+
 export type Turn = {
   sessionId: string
   messageId: string
@@ -364,6 +367,14 @@ export class Store {
           due_at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS computer_pauses_by_due ON computer_pauses (due_at);
+      `) },
+      // Which side made each gateway conversation's computer: the sandbox gateway or the runner's own provider.
+      { version: 5, name: "computer-sides", up: (db) => db.exec(`
+        CREATE TABLE IF NOT EXISTS computer_sides (
+          session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+          side TEXT NOT NULL,
+          placed_at INTEGER NOT NULL
+        );
       `) },
     ])
   }
@@ -1073,6 +1084,23 @@ export class Store {
     this.db
       .prepare("INSERT INTO computer_pauses (session_id, due_at) SELECT id, ? FROM sessions WHERE id = ? ON CONFLICT (session_id) DO UPDATE SET due_at = excluded.due_at")
       .run(dueAt, sessionId)
+  }
+
+  /** Where the conversation's computer was made (computer-route.ts), or null before one was placed. */
+  computerSide(sessionId: string): ComputerSide | null {
+    const row = this.db.prepare("SELECT side FROM computer_sides WHERE session_id = ?").get(sessionId)
+    const parsed = z.object({ side: z.enum(["gateway", "direct"]) }).safeParse(row)
+    return parsed.success ? parsed.data.side : null
+  }
+
+  setComputerSide(sessionId: string, side: ComputerSide) {
+    this.db
+      .prepare("INSERT INTO computer_sides (session_id, side, placed_at) SELECT id, ?, ? FROM sessions WHERE id = ? ON CONFLICT (session_id) DO UPDATE SET side = excluded.side, placed_at = excluded.placed_at")
+      .run(side, this.now(), sessionId)
+  }
+
+  clearComputerSide(sessionId: string) {
+    this.db.prepare("DELETE FROM computer_sides WHERE session_id = ?").run(sessionId)
   }
 
   clearComputerPause(sessionId: string) {

@@ -61,6 +61,21 @@ function trimTrailingSlashes(value: string): string {
   return value.slice(0, end)
 }
 
+/**
+ * Whether this key can create sandboxes right now: Differently answers and at least one enabled pool it may use is
+ * healthy. Infrastructure only; quotas and placement policy are answered when a sandbox is created.
+ */
+export async function differentlyHealth(options: Pick<DifferentlyProviderOptions, "url" | "apiKey">, deps: { fetch?: typeof fetch; timeoutMs?: number } = {}): Promise<{ up: boolean; reason: string }> {
+  try {
+    const response = await (deps.fetch ?? fetch)(`${trimTrailingSlashes(options.url)}/v1/capabilities`, { headers: { Authorization: `Bearer ${options.apiKey}` }, signal: AbortSignal.timeout(deps.timeoutMs ?? 3000) })
+    if (!response.ok) return { up: false, reason: `capabilities answered HTTP ${response.status}` }
+    const body = await response.json() as { items?: { enabled?: boolean; health?: string }[] }
+    return (body.items ?? []).some(pool => pool.enabled && pool.health === "healthy") ? { up: true, reason: "a pool is healthy" } : { up: false, reason: "no enabled pool is healthy" }
+  } catch (error) {
+    return { up: false, reason: error instanceof Error ? error.name === "TimeoutError" ? "capabilities timed out" : error.message : "unreachable" }
+  }
+}
+
 /** Maps Differently's stable error codes (never its messages) onto OpenWork's taxonomy. */
 export function differentlyError(status: number, body: ErrorBody | null): SandboxError {
   const code = codes[body?.error?.code ?? ""] ?? (status === 404 ? "not_found" : status === 409 ? "conflict" : status === 401 || status === 403 ? "auth" : status === 429 ? "rate_limited" : status >= 500 ? "transient" : "unknown")
@@ -134,7 +149,8 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
   }
   async function running(s: Sandbox, timeoutMs: number): Promise<Sandbox> {
     const out = s.status === "running" ? s : await settle(s.id, ["running"], timeoutMs)
-    if (!out || out.status !== "running") throw new SandboxError({ providerId: id, code: out?.status === "failed" ? "capacity" : "invalid_state", message: `Sandbox ${s.id} is ${out?.status ?? "gone"}${out?.statusReason ? `: ${out.statusReason}` : ""}` })
+    // A sandbox that failed to start is the pool's failure, not a policy refusal: hosts may place the next one elsewhere.
+    if (!out || out.status !== "running") throw new SandboxError({ providerId: id, code: out?.status === "failed" ? "transient" : "invalid_state", ...(out?.status === "failed" ? { retryable: false } : {}), message: `Sandbox ${s.id} is ${out?.status ?? "gone"}${out?.statusReason ? `: ${out.statusReason}` : ""}` })
     return out
   }
   function ttlMinutes(spec: SandboxSpec): number | undefined {

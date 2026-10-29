@@ -223,9 +223,11 @@ SANDBOX_GATEWAY_API_KEY=<project-scoped key>
 SANDBOX_GATEWAY_TEMPLATE=<template mapped to the desktop image>
 ```
 
-With the flag on and no gateway on the runner, Workbot keeps the runner's own
-provider and the runner logs it. With a gateway that fails, the computer fails
-instead of falling back. See the runner's
+With the flag on and the gateway down or unable to start a computer, new
+computers are made on the runner's own provider, and the runner logs the change.
+A computer already on the gateway stays there, and the gateway's own refusals
+(quotas, placement policy) are errors, never a reason to go around it.
+Organizations without the flag never use the gateway. See the runner's
 [sandbox gateway notes](../../ee/apps/headless-runner/README.md#sandbox-gateway).
 
 ## Transport and rollout

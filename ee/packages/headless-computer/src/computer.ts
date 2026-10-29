@@ -232,6 +232,17 @@ export class Computers {
     return this.vms.has(sessionId)
   }
 
+  /** Starts (or wakes) the conversation's VM and waits for it, for a host that chooses where a computer is made. */
+  async start(sessionId: string) {
+    await this.vm(sessionId)
+    this.release(sessionId)
+  }
+
+  /** Whether the conversation has a computer here, running or paused, without starting it. */
+  async has(sessionId: string) {
+    return this.vms.has(sessionId) || Boolean(await this.provider.find({ idempotencyKey: this.slug(sessionId), labels: this.spec(sessionId).labels }))
+  }
+
   /** Starts (or wakes) the conversation's VM in the background, so the first command doesn't wait for it. */
   prewarm(sessionId: string) {
     void this.vm(sessionId)

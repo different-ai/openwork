@@ -24,7 +24,7 @@ import { SessionStorage } from "./storage/index.js"
 import { readToolFile } from "./tool-files.js"
 import type { SessionComputer } from "./types.js"
 import type { ComputerOptions } from "@openwork-ee/headless-computer"
-import { routeComputers } from "./computer-route.js"
+import { GatewayHealth, routeComputers } from "./computer-route.js"
 import type { CellsStore } from "./cells-store.js"
 import type { MemoryResolver } from "./memory.js"
 
@@ -85,7 +85,7 @@ export async function createRuntime(config: Config, store: Store, stepHost?: Ste
   // Provider SDKs load only when configured, including on the Worker host.
   let computer: SessionComputer | undefined
   if (config.computer || config.computerGateway) {
-    const { Computers, createComputerProvider, createGatewayProvider } = await import("@openwork-ee/headless-computer")
+    const { Computers, createComputerProvider, createGatewayHealth, createGatewayProvider, isInfrastructureError } = await import("@openwork-ee/headless-computer")
     const computers = (settings: NonNullable<Config["computer"] | Config["computerGateway"]>, provider: ComputerOptions["provider"]) => new Computers({
       ...settings, provider,
       pauses: { set: (sessionId, dueAt) => store.setComputerPause(sessionId, dueAt), clear: (sessionId) => store.clearComputerPause(sessionId) },
@@ -96,20 +96,26 @@ export async function createRuntime(config: Config, store: Store, stepHost?: Ste
     const direct = config.computer && computers(config.computer, await createComputerProvider(config.computer))
     // The sandbox gateway serves only conversations with `sandboxGateway` on (Den's per-organization flag).
     const gateway = config.computerGateway && computers(config.computerGateway, await createGatewayProvider(config.computerGateway))
-    const viaGateway = (sessionId: string) => store.getSession(sessionId)?.sandboxGateway === true
+    const routed = routeComputers({
+      direct,
+      gateway,
+      health: config.computerGateway ? new GatewayHealth(await createGatewayHealth(config.computerGateway)) : undefined,
+      viaGateway: (sessionId) => store.getSession(sessionId)?.sandboxGateway === true,
+      sides: { get: (sessionId) => store.computerSide(sessionId), set: (sessionId, side) => store.setComputerSide(sessionId, side), clear: (sessionId) => store.clearComputerSide(sessionId) },
+      infrastructure: isInfrastructureError,
+    })
     // Idle computers pause from the stored time, so a restart or a recycled cell isolate can't leave one running.
     background.register({
       name: "computer-pause",
       nextAt: () => store.nextComputerPauseAt(),
       run: async () => {
         for (const sessionId of store.dueComputerPauses(Date.now())) {
-          const side = viaGateway(sessionId) && gateway ? gateway : direct
-          if (side) await side.pauseIdle(sessionId)
+          if (routed?.available?.(sessionId)) await routed.pauseIdle(sessionId)
           else store.clearComputerPause(sessionId)
         }
       },
     })
-    computer = routeComputers({ direct, gateway, viaGateway })
+    computer = routed
   }
   store.onChange = (sessionId, messageId, status) => events.emit(sessionId, { type: "changed", messageId, ...(status ? { status } : {}) })
   // A native Workers fetch needs its global receiver; model adapters invoke their injected fetch as a method.
