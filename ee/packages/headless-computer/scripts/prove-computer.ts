@@ -49,10 +49,12 @@ try {
   assert.equal(looked.isError, false)
   assert.match(looked.output, /hello from shared computer/)
   const box = await computers.vm(session)
-  if (provider.blocks?.pause) await provider.blocks.pause(box, { timeoutMs: 30000 })
-  else await provider.stop(box, { timeoutMs: 30000 })
+  // Pools that can neither pause nor stop keep idle computers running, so there is no resume to prove.
+  const idles = provider.describe().stopResume
+  if (idles && provider.blocks?.pause) await provider.blocks.pause(box, { timeoutMs: 30000 })
+  else if (idles) await provider.stop(box, { timeoutMs: 30000 })
   const resumed = await computers.bash(session, "cat /workspace/out/proof.txt", 30)
   assert.equal(resumed.isError, false, resumed.output)
   assert.match(resumed.output, /hello from shared computer/)
-  console.log(`${process.env.SANDBOX_GATEWAY === "differently" ? "sandbox gateway" : process.env.HEADLESS_COMPUTER}: command, Python tools, kept file, look and resume passed`)
+  console.log(`${process.env.SANDBOX_GATEWAY === "differently" ? "sandbox gateway" : process.env.HEADLESS_COMPUTER}: command, Python tools, kept file, look and ${idles ? "resume" : "a second command (these pools can't pause or stop)"} passed`)
 } finally { await computers.delete(session) }
