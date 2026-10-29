@@ -541,6 +541,16 @@
               ],
               "description": "Analytics: daily trends: Usage & adoption shows active users, sessions and tasks per day for the last 30 days, with a Daily / Weekly switch next to the project filter. Turning it off returns to the 12-week weekly charts. Renders DEN_FEATURE_ANALYTICS_DAILY_TRENDS."
             },
+            "libraryConnectorOrgSetup": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: connectors that need an organization app: In the desktop Library, Slack and GitHub no longer ask for an app's client ID and secret: members see them locked until an admin sets them up, admins open the setup in OpenWork Cloud, connectors the organization already has offer Sign in from Add a connector, and a sign-in that fails says why, with a link to the service's app settings when that is the fix. Renders DEN_FEATURE_LIBRARY_CONNECTOR_ORG_SETUP."
+            },
             "gatewayDashboard": {
               "enum": [
                 "",

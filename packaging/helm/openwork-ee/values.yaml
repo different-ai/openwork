@@ -74,6 +74,7 @@ config:
     lastUsedSignIn: ""              # default off · People who last signed in with a password, Google or GitHub skip the email step next time: Den web lists the sign-in methods with a Last used badge, and Single sign-on returns to the email step. Signing in with SSO forgets the method.
     expandedMcpPresets: ""          # default off · Admins see more reviewed official MCP servers (Airtable, Amplitude, Canva, Fireflies, Hugging Face, Lucid, Mural, Vercel, PostHog, monday.com, Honeycomb, Klaviyo, Semgrep, Cal.com, Tavily, Figma) to add with one click in Manage › Connectors. Each uses the same OAuth or API-key flow as the existing presets. Turning it off hides the new suggestions; existing connections stay.
     analyticsDailyTrends: ""        # default off · Usage & adoption shows active users, sessions and tasks per day for the last 30 days, with a Daily / Weekly switch next to the project filter. Turning it off returns to the 12-week weekly charts.
+    libraryConnectorOrgSetup: ""    # default off · In the desktop Library, Slack and GitHub no longer ask for an app's client ID and secret: members see them locked until an admin sets them up, admins open the setup in OpenWork Cloud, connectors the organization already has offer Sign in from Add a connector, and a sign-in that fails says why, with a link to the service's app settings when that is the fix.
   # END GENERATED features
   administratorRecovery:
     # Processed only with config.features.administratorRecovery on. Flag off is a

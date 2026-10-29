@@ -384,7 +384,17 @@ export type DenOrgLlmProvider = {
 };
 
 export type DenExternalMcpConnection = {
-  readiness?: { status: "ready" | "could_not_verify"; checkedAt: string; lastSuccessfulAt: string | null; reason: string | null; failure?: DenConnectionReadinessFailure | null } | null;
+  readiness?: {
+    status: "ready" | "could_not_verify";
+    checkedAt: string;
+    lastSuccessfulAt: string | null;
+    reason: string | null;
+    failure?: DenConnectionReadinessFailure | null;
+    /** Support reference for a failed sign-in; newer Den only. */
+    referenceId?: string;
+    /** Den-validated link to the service's settings page, only with provider_setup_required; newer Den only. */
+    providerSettingsUrl?: string;
+  } | null;
   setupRequired?: boolean;
   credentialHealth?: "unknown" | "ready" | "reconnect_required";
   id: string;
@@ -2152,11 +2162,19 @@ function parseConnectionReadinessFailure(value: unknown): DenConnectionReadiness
   return CONNECTION_READINESS_FAILURES.find((failure) => failure === value) ?? null;
 }
 
-function parseConnectionReadiness(value: unknown): DenExternalMcpConnection["readiness"] {
+export function parseConnectionReadiness(value: unknown): DenExternalMcpConnection["readiness"] {
   if (value === undefined) return undefined;
   if (!isRecord(value) || (value.status !== "ready" && value.status !== "could_not_verify")
     || typeof value.checkedAt !== "string" || !Number.isFinite(Date.parse(value.checkedAt))) return null;
-  return { status: value.status, checkedAt: value.checkedAt, lastSuccessfulAt: typeof value.lastSuccessfulAt === "string" ? value.lastSuccessfulAt : null, reason: typeof value.reason === "string" ? value.reason : null, failure: parseConnectionReadinessFailure(value.failure) };
+  return {
+    status: value.status,
+    checkedAt: value.checkedAt,
+    lastSuccessfulAt: typeof value.lastSuccessfulAt === "string" ? value.lastSuccessfulAt : null,
+    reason: typeof value.reason === "string" ? value.reason : null,
+    failure: parseConnectionReadinessFailure(value.failure),
+    ...(typeof value.referenceId === "string" && value.referenceId.trim() ? { referenceId: value.referenceId } : {}),
+    ...(typeof value.providerSettingsUrl === "string" && value.providerSettingsUrl.trim() ? { providerSettingsUrl: value.providerSettingsUrl } : {}),
+  };
 }
 
 function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection | null {
