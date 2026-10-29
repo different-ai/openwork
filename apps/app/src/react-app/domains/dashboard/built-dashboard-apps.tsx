@@ -11,6 +11,7 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
+  CommandPanel,
 } from "@/components/ui/command";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/sonner";
@@ -147,31 +148,34 @@ export function BuiltAppPicker({
       />
       <p className="px-4 pt-3 text-xs text-muted-foreground">{search.trim() ? "Matches" : "Artifacts available to you"} <span className="ml-1 tabular-nums">{matching.length}</span></p>
       <CommandEmpty>No artifacts match your search.</CommandEmpty>
-      <CommandList>
-        {(app: BuiltMcpAppCatalogEntry) => (
-          <CommandItem
-            key={app.connectionId}
-            value={app}
-            aria-label={`Add ${app.title}`}
-            disabled={built.ids.includes(app.connectionId)}
-            onClick={() => {
-              built.setAdded(app.connectionId, true);
-              toast(`Added ${app.title}`, { id: "personal-dashboard-placement", action: { label: "Undo", onClick: () => built.setAdded(app.connectionId, false) } });
-              onAdded();
-            }}
-          >
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background"><Blocks className="size-4 text-muted-foreground" /></span>
-            <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{app.title}</span><span className="block truncate text-xs text-muted-foreground">{app.pluginName}</span></span>
-            <span className="text-xs text-muted-foreground">
-              {built.ids.includes(app.connectionId) ? (
-                <Check className="size-4" aria-label="Added" />
-              ) : (
-                "Add"
-              )}
-            </span>
-          </CommandItem>
-        )}
-      </CommandList>
+      {/* Long catalogs scroll here so the search field and footer stay in the dialog. */}
+      <CommandPanel className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain [scrollbar-width:thin] [&>[data-slot=scroll-area]]:h-auto">
+        <CommandList>
+          {(app: BuiltMcpAppCatalogEntry) => (
+            <CommandItem
+              key={app.connectionId}
+              value={app}
+              aria-label={`Add ${app.title}`}
+              disabled={built.ids.includes(app.connectionId)}
+              onClick={() => {
+                built.setAdded(app.connectionId, true);
+                toast(`Added ${app.title}`, { id: "personal-dashboard-placement", action: { label: "Undo", onClick: () => built.setAdded(app.connectionId, false) } });
+                onAdded();
+              }}
+            >
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background"><Blocks className="size-4 text-muted-foreground" /></span>
+              <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{app.title}</span><span className="block truncate text-xs text-muted-foreground">{app.pluginName}</span></span>
+              <span className="text-xs text-muted-foreground">
+                {built.ids.includes(app.connectionId) ? (
+                  <Check className="size-4" aria-label="Added" />
+                ) : (
+                  "Add"
+                )}
+              </span>
+            </CommandItem>
+          )}
+        </CommandList>
+      </CommandPanel>
       <div className="flex justify-between gap-3 border-t px-4 py-3 text-xs text-muted-foreground"><span>Only artifacts you can open show here.</span><span aria-hidden="true">↑↓ to move · ↵ to add</span></div>
     </Command>
   );
