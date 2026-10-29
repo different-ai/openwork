@@ -95,6 +95,7 @@ jobs:
           node --test
           .github/scripts/build-inputs.test.mjs
           .github/scripts/classify-ci-changes.test.mjs
+          .github/scripts/docs-validation.test.mjs
           .github/scripts/ee-image-inputs.test.mjs
           .github/scripts/render-build-filters.test.mjs
           .github/scripts/runtime-scope.test.mjs
@@ -580,6 +581,9 @@ jobs:
     needs: classify-changes
     if: needs.classify-changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
+    env:
+      # Uses native fetch instead of the old is-online/got cancellation probe.
+      MINT_VERSION: "4.2.1126"
     defaults:
       run:
         working-directory: packages/docs
@@ -590,10 +594,14 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24.22.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
       - name: Validate the docs build
-        run: npx -y mint@4.2.868 validate
+        run: pnpm dlx "mint@$MINT_VERSION" validate
       - name: Check for broken links and images
-        run: npx -y mint@4.2.868 broken-links
+        run: pnpm dlx "mint@$MINT_VERSION" broken-links
 
   # Pull requests that change Den API routes or schemas generate and validate
   # OpenAPI and SDK artifacts directly from their source. Pushes to dev keep the dedicated

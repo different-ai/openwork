@@ -55,7 +55,9 @@ export function classifyCiChanges({ eventName, files, expectedCount }, isAffecte
       // Preserve full PR coverage (and the snapshot/docs fast lanes), rather
       // than using dev-push scoping to weaken the required merge gate.
       if (docsOnly) return { lane: "docs", core: false, desktop_smoke: affected("desktop-smoke"), snapshot: false, docs: true, den_contract: false };
-      return { lane: "full", core: true, desktop_smoke: true, snapshot: false, docs: false, den_contract: affected("den-contract") };
+      // A docs-affecting workflow/helper or mixed product/docs PR must exercise
+      // the same validator before merge, not first discover failures on dev.
+      return { lane: "full", core: true, desktop_smoke: true, snapshot: false, docs: affected("docs"), den_contract: affected("den-contract") };
     }
     const selected = {
       core: affected("core"),

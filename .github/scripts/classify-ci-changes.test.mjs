@@ -66,12 +66,12 @@ test("the generated snapshot fast lane survives on push and PR, not mixed change
 test("normal PRs retain full unit and packaged-smoke coverage even for landing", () => {
   expectFlags(pr([modified(landing)]), { core: true, desktop_smoke: true });
   expectFlags(pr([modified(backend)]), { core: true, desktop_smoke: true, den_contract: true });
-  expectFlags(pr([modified(".github/workflows/ci-tests.yml")]), { core: true, desktop_smoke: true, den_contract: true });
+  expectFlags(pr([modified(".github/workflows/ci-tests.yml")]), { core: true, desktop_smoke: true, docs: true, den_contract: true });
 });
 
 test("renames retain both ends for contract selection and the docs exception", () => {
   expectFlags(pr([{ filename: landing, previous_filename: backend, status: "renamed" }]), { core: true, desktop_smoke: true, den_contract: true });
-  expectFlags(pr([{ filename: "packages/docs/old-code.mdx", previous_filename: electron, status: "renamed" }]), { core: true, desktop_smoke: true });
+  expectFlags(pr([{ filename: "packages/docs/old-code.mdx", previous_filename: electron, status: "renamed" }]), { core: true, desktop_smoke: true, docs: true });
   expectFlags(pr([{ filename: "packages/docs/images/guide.png", previous_filename: "packages/docs/guide.mdx", status: "renamed" }]), { desktop_smoke: true, docs: true });
   expectFlags(push(["packages/docs/guide.mdx", "packages/docs/images/guide.png"]), { desktop_smoke: true, docs: true });
   expectFlags(push(["packages/docs/deleted.md"]), { desktop_smoke: true, docs: true });
