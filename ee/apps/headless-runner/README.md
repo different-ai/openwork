@@ -460,15 +460,46 @@ which side made it (the `computer_sides` table):
 
 Gateway computers share the runner's scope, pause, keep-days, persistence and
 desktop settings, and ask for Daytona's size (2 CPUs, 4 GiB, 8 GiB disk). They
-are paused when idle only where every enabled gateway pool can pause or stop
-(pools that can only stop are stopped, keeping the disk), which the adapter
-reads from Differently as it creates them. Elsewhere (for
+are paused when idle only where every pool the gateway lets the runner's key
+use can pause or stop (pools that can only stop are stopped, keeping the disk),
+which the adapter reads from Differently as it creates them. Elsewhere (for
 example OpenSandbox on Kubernetes without a snapshot registry) an idle computer
 runs until Differently's TTL removes it. With only a gateway configured,
 sessions without the setting get no computer. The desktop viewer needs a gateway pool that publishes port
-URLs (Freestyle or Daytona). Differently's
+URLs: Freestyle, Daytona, or OpenSandbox behind its ingress gateway, Fast
+Sandbox microVMs included. Differently's
 [OpenWork guide](https://github.com/different-ai/differently/blob/pre-release/docs/guides/openwork.md)
 covers the server side.
+
+#### Fast Sandbox microVMs
+
+OpenSandbox's Fast Sandbox runs each computer as a Firecracker microVM restored
+from a template's memory snapshot. The template is built from
+`Dockerfile.desktop-fast-sandbox`, a layer on the desktop image:
+
+```sh
+docker build -f ee/packages/headless-computer/Dockerfile.desktop -t <registry>/workbot-desktop:<tag> .
+docker build -f ee/packages/headless-computer/Dockerfile.desktop-fast-sandbox \
+  --build-arg DESKTOP_IMAGE=<registry>/workbot-desktop:<tag> -t <registry>/workbot-desktop-fast-sandbox:<tag> ee/packages/headless-computer
+```
+
+Create the template (OpenSandbox `POST /v1/templates`) with 2 CPUs, `4Gi` memory
+and `8Gi` disk, `entrypoint: ["/usr/local/sbin/fast-sandbox-guest-init", "tail",
+"-f", "/dev/null"]`, and a readiness probe that waits for the desktop:
+`cmd://printf '{}' | /usr/local/sbin/openwork-desktop-bridge call /health`. The
+entrypoint starts the desktop as the runner does, so the snapshot captures it
+running, as the Freestyle snapshot does; it also fixes `/run`'s mode and keeps
+the clock with chrony. Point the Differently template's image for that pool at the
+template's id.
+
+The guest kernel must have nftables' `inet` family, `reject` and the owner match
+built in, or the desktop's egress guard cannot load and the desktop refuses to
+start; OpenSandbox 1.2.0's stock kernel has none of them (Differently's
+OpenSandbox pools guide lists the options). Measured on Azure
+(`Standard_D16s_v6`, nested KVM): a computer is running in about 2 s once the
+template is on the node; pause, which writes a full checkpoint of disk and
+memory, takes about three minutes and resume about a second, with processes and
+open windows kept.
 
 Opt-in verification, creating and cleaning one real computer:
 

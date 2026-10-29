@@ -1,7 +1,7 @@
 /** Opt-in real computer proof. One disposable conversation, commands + Files + look + wake, cleanup in finally. */
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
-import { Computers } from "../src/computer.js"
+import { Computers, PAUSE_TIMEOUT_MS } from "../src/computer.js"
 import { createComputerProvider, createGatewayProvider } from "../src/providers.js"
 import type { ComputerFile, ComputerFiles } from "../src/types.js"
 
@@ -51,8 +51,8 @@ try {
   const box = await computers.vm(session)
   // Pools that can neither pause nor stop keep idle computers running, so there is no resume to prove.
   const idles = provider.describe().stopResume
-  if (idles && provider.blocks?.pause) await provider.blocks.pause(box, { timeoutMs: 30000 })
-  else if (idles) await provider.stop(box, { timeoutMs: 30000 })
+  if (idles && provider.blocks?.pause) await provider.blocks.pause(box, { timeoutMs: PAUSE_TIMEOUT_MS })
+  else if (idles) await provider.stop(box, { timeoutMs: PAUSE_TIMEOUT_MS })
   const resumed = await computers.bash(session, "cat /workspace/out/proof.txt", 30)
   assert.equal(resumed.isError, false, resumed.output)
   assert.match(resumed.output, /hello from shared computer/)

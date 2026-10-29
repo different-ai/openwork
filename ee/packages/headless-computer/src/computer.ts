@@ -40,6 +40,8 @@ function computerBlocks(provider: SandboxProvider) { return withBlocks(provider,
 const GUEST_PATH = "/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 /** The longest a single command may run; Freestyle's exec limit. Longer work goes through `background`. */
 const MAX_COMMAND_SECONDS = 300
+/** A microVM pause writes a full checkpoint of disk and memory: about three minutes for a desktop on Fast Sandbox. */
+export const PAUSE_TIMEOUT_MS = 5 * 60_000
 const DEFAULT_COMMAND_SECONDS = 120
 /** Each of stdout and stderr is cut to its last this-many characters: errors and results are at the end. */
 const OUTPUT_TAIL_CHARS = 30_000
@@ -204,7 +206,7 @@ export class Computers {
     const box = existing ?? await this.vm(sessionId)
     if (action === "pause") {
       if (!this.provider.blocks?.pause) throw new Error("This computer does not support pause.")
-      await this.provider.blocks.pause(box, { timeoutMs: 30_000 })
+      await this.provider.blocks.pause(box, { timeoutMs: PAUSE_TIMEOUT_MS })
     } else if (action === "continue") {
       await this.desktop.call(box, "/continue", {})
     } else await this.startDesktop(sessionId, box)
@@ -353,7 +355,7 @@ export class Computers {
       if (!this.working.has(sessionId) && await this.staleImage(sessionId, vm)) vm = await this.replace(sessionId, vm, { required: false }) ?? vm
       // A provider that can neither pause nor stop keeps the computer running until its own expiry.
       if (!this.provider.describe().stopResume) return this.options.pauses?.clear(sessionId)
-      await (this.provider.blocks?.pause ? this.provider.blocks.pause(vm, { timeoutMs: 30_000 }) : this.provider.stop(vm, { timeoutMs: 30_000 }))
+      await (this.provider.blocks?.pause ? this.provider.blocks.pause(vm, { timeoutMs: PAUSE_TIMEOUT_MS }) : this.provider.stop(vm, { timeoutMs: PAUSE_TIMEOUT_MS }))
       this.options.pauses?.clear(sessionId)
     } catch {
       // Not fatal: tried again after another idle period, and Freestyle's own idle timeout pauses it later.
