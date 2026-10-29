@@ -673,6 +673,7 @@ export default {
   "engine_migration.not_copied_other": "{left} chats couldn't be copied and stay in OpenCode v1.",
   "engine_migration.not_now": "Not now",
   "engine_migration.progress_copied": "{done} of {total} chats copied",
+  "engine_migration.progress_restored": "Restoring messages: {done} of {total}",
   "engine_migration.progress_note": "OpenCode v2 chats are paused while history is copied. You can restart and resume without losing progress. Your v1 chats aren't changed.",
   "engine_migration.progress_title": "Migrating chats to OpenCode v2",
   "engine_migration.progress_total_one": "1 chat to copy",

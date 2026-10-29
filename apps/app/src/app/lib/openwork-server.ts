@@ -82,8 +82,10 @@ export type OpenworkCloudProviderSyncStatus = {
 
 export interface EngineV2MigrationStatus {
   state: "idle" | "running" | "completed" | "error";
-  /** Only `copying` moves the counts; older servers omit it. */
-  phase?: "starting" | "converting" | "copying";
+  /** Restoring counts messages separately from the chat-copy counts. */
+  phase?: "starting" | "converting" | "restoring" | "copying";
+  restored?: number;
+  restoreTotal?: number;
   imported: number;
   skipped: number;
   total: number;
@@ -115,10 +117,12 @@ function parseEngineV2Migration(value: unknown): EngineV2MigrationStatus | undef
   if (!("imported" in value) || typeof value.imported !== "number"
     || !("skipped" in value) || typeof value.skipped !== "number"
     || !("total" in value) || typeof value.total !== "number") return undefined;
-  const phase = "phase" in value && (value.phase === "starting" || value.phase === "converting" || value.phase === "copying")
+  const phase = "phase" in value && (value.phase === "starting" || value.phase === "converting" || value.phase === "restoring" || value.phase === "copying")
     ? value.phase : undefined;
   return { state: value.state, imported: value.imported, skipped: value.skipped, total: value.total,
     ...(phase ? { phase } : {}),
+    ...("restored" in value && typeof value.restored === "number" ? { restored: value.restored } : {}),
+    ...("restoreTotal" in value && typeof value.restoreTotal === "number" ? { restoreTotal: value.restoreTotal } : {}),
     ...("startedAt" in value && typeof value.startedAt === "string" ? { startedAt: value.startedAt } : {}),
     ...("backupPath" in value && typeof value.backupPath === "string" ? { backupPath: value.backupPath } : {}),
     ...("notCopied" in value ? { notCopied: parseChats(value.notCopied) } : {}),
