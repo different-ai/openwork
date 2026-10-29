@@ -4,7 +4,7 @@ import { test } from "node:test"
 import { CLIENT_CAPABILITIES_META_KEY, CLIENT_INFO_META_KEY, PROTOCOL_VERSION_META_KEY } from "@modelcontextprotocol/server"
 import { z } from "zod"
 import { createAgentMcpHttpHandler } from "../src/mcp/agent-http.js"
-import { createAgentMcpServer } from "../src/mcp/agent-server.js"
+import { AGENT_MCP_INSTRUCTIONS_MAX_CHARS, createAgentMcpServer } from "../src/mcp/agent-server.js"
 import type { RemoteSkillDescriptor } from "../src/mcp/marketplace-capabilities.js"
 import { registerSkillsExtension, resolveSkills, skillIndexInstructions, SKILLS_EXTENSION_ID } from "../src/mcp/skills-extension.js"
 
@@ -32,7 +32,7 @@ function resolved() {
   ]))
 }
 
-function fixture(options: { skillIndex?: string } = {}) {
+function fixture(options: Parameters<typeof createAgentMcpServer>[0] = {}) {
   const handler = createAgentMcpHttpHandler(() => {
     const server = createAgentMcpServer({ skillsExtension: true, ...options })
     registerSkillsExtension(server, async () => resolved())
@@ -79,7 +79,7 @@ test("skills/list and skills/get follow SEP-2640 and list only skills the member
 })
 
 test("the server advertises the skills extension and appends the skill index to its instructions", async () => {
-  const call = fixture({ skillIndex: skillIndexInstructions([refunds]) })
+  const call = fixture({ skills: [refunds] })
   const discovered = z.object({ result: z.looseObject({
     capabilities: z.looseObject({ extensions: z.record(z.string(), z.unknown()) }),
     instructions: z.string(),
@@ -88,10 +88,28 @@ test("the server advertises the skills extension and appends the skill index to 
   assert.match(discovered.result.instructions, /- refunds-ab12cd34: Process customer refund requests/)
 })
 
-test("the skill index is bounded and points at list_skills for the rest", () => {
-  const many = Array.from({ length: 200 }, (_, index) => ({ ...refunds, name: `skill-${index}`, description: "x".repeat(400) }))
-  const index = skillIndexInstructions(many)
-  assert.ok(index.length < 6_200)
-  assert.match(index, /…and \d+ more; call list_skills/)
-  assert.equal(skillIndexInstructions([]), "")
+const manySkills = Array.from({ length: 200 }, (_, index) => ({ ...refunds, name: `skill-${index}`, description: "x".repeat(400) }))
+
+test("the skill index fits the budget it is given and points at list_skills for the rest", () => {
+  for (const budget of [400, 2_000, 6_000]) {
+    const index = skillIndexInstructions(manySkills, budget)
+    assert.ok(index.length <= budget, `${index.length} > ${budget}`)
+    const listed = index.split("\n").filter((line) => line.startsWith("- skill-")).length
+    assert.ok(listed > 0)
+    assert.match(index, new RegExp(`\\n- …and ${manySkills.length - listed} more; call list_skills to see them all\\.$`))
+  }
+  assert.equal(skillIndexInstructions([refunds, crm], 10_000).includes("list_skills"), false)
+  assert.equal(skillIndexInstructions(manySkills, 120), "")
+  assert.equal(skillIndexInstructions([], 6_000), "")
+})
+
+test("the instructions stay within the characters clients keep, with as much of the skill index as fits", async () => {
+  for (const toolView of ["search", "full"] as const) {
+    const call = fixture({ skills: manySkills, toolView, toolShapes: true, remoteSessionStatus: true, slackSendAsBot: true, myAgent: true })
+    const { instructions } = z.object({ result: z.looseObject({ instructions: z.string() }) }).parse(await call("server/discover", {})).result
+    assert.ok(instructions.length <= AGENT_MCP_INSTRUCTIONS_MAX_CHARS, `${toolView}: ${instructions.length}`)
+    assert.match(instructions, /^Read openwork:\/\/agent\/guidance\.md/)
+    assert.match(instructions, /\n- skill-0: x/)
+    assert.match(instructions, /…and \d+ more; call list_skills to see them all\.$/)
+  }
 })

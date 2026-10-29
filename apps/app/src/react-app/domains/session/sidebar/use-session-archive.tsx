@@ -5,7 +5,7 @@ import { Archive, ArchiveRestore } from "lucide-react";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { hasTerminalSessionReply, holdSessionWork, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop } from "@/app/lib/opencode-interruption";
 import { setSessionArchived } from "@/app/lib/opencode-session";
-import { isOpencodeV2BaseUrl, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
+import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import { readSessionTree } from "@/app/lib/session-ownership";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -48,10 +48,18 @@ export type ArchiveSessionOptions = {
   refuseWorking?: boolean;
 };
 
+/** Archive through the engine that owns the session; v1 keeps the desktop main-process transport. */
+function archiveClient(endpoint: ResolvedWorkspaceEndpoint, directory: string) {
+  return isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)
+    ? createClientV2(endpoint.opencodeBaseUrl, directory, { token: endpoint.token })
+    : createClient(endpoint.opencodeBaseUrl, directory, { token: endpoint.token, mode: "openwork" }, { desktopTransport: "main" });
+}
+
 export function useSessionArchive(input: {
   workspaces: RouteWorkspace[];
   sessionsByWorkspaceId: Record<string, RouteSession[]>;
-  endpointForWorkspace: (workspace: RouteWorkspace) => ResolvedWorkspaceEndpoint | null;
+  /** The engine that owns the workspace's sessions: v2 (`/opencode2`) when its server routes chat there. */
+  endpointForSessionWorkspace: (workspace: RouteWorkspace) => ResolvedWorkspaceEndpoint | null;
   selectedWorkspaceId: string;
   selectedSessionId: string | null;
   draftScope: string | null;
@@ -103,7 +111,7 @@ export function useSessionArchive(input: {
   async function restore(target: ArchiveTarget, announce: boolean, undo?: typeof undoNavigation.current) {
     const { workspace, endpoint, sessionId } = target;
     try {
-      await setSessionArchived(createClient(endpoint.opencodeBaseUrl, workspace.path, { token: endpoint.token, mode: "openwork" }, { desktopTransport: "main" }), sessionId, false, workspace.path);
+      await setSessionArchived(archiveClient(endpoint, workspace.path), sessionId, false, workspace.path);
       await Promise.all([...new Set([workspace.id, endpoint.workspaceId])].map(id => applySessionArchived(id, sessionId, false)));
       const now = current.current;
       if (mounted.current) now.input.onArchivedChange(workspace.id, sessionId, false);
@@ -154,7 +162,7 @@ export function useSessionArchive(input: {
     const baseUrl = endpoint.opencodeBaseUrl;
     // Finite archive verification must not queue behind retained renderer SSEs.
     // Keep the same safety checks; only the desktop HTTP transport changes.
-    const client = createClient(baseUrl, workspace.path, { token: endpoint.token, mode: "openwork" }, { desktopTransport: "main" });
+    const client = archiveClient(endpoint, workspace.path);
     const releases = new Map<string, () => void>();
     const controller = new AbortController();
     activeController.current = controller;
@@ -206,7 +214,6 @@ export function useSessionArchive(input: {
     let patchDispatched = false;
     try {
       checkDeadline();
-      if (isOpencodeV2BaseUrl(baseUrl)) throw new Error(V2_SESSION_ARCHIVE_UNAVAILABLE);
       const readTree = () => readSessionTree(client, sessionId, workspace.path, options);
       // Native Stop reaches the root immediately, concurrent with discovery.
       // Archive also accounts for older/background subtasks that would be hidden.
@@ -339,9 +346,8 @@ export function useSessionArchive(input: {
   function resolveTarget(sessionId: string, options?: ArchiveSessionOptions): ArchiveTarget | { error: string } {
     const workspace = input.workspaces.find(workspace => input.sessionsByWorkspaceId[workspace.id]?.some(session => session.id === sessionId));
     if (!workspace) return { error: "Session was not found in the current session list" };
-    const endpoint = input.endpointForWorkspace(workspace);
+    const endpoint = input.endpointForSessionWorkspace(workspace);
     if (!endpoint) return { error: "The session's workspace is not connected." };
-    if (isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)) return { error: V2_SESSION_ARCHIVE_UNAVAILABLE };
     const title = sessionTitle(sessionId) ?? t("session.default_title");
     const requester = options?.requester?.sessionId.trim();
     const requestedBy = requester ? { sessionId: requester, title: sessionTitle(requester) } : null;

@@ -26,7 +26,7 @@ import {
   pluginMcpRequiresPreRegisteredOAuthClient,
   type PluginMcpAuthType,
 } from "../capability-sources/external-mcp-auth-policy.js"
-import { EXTERNAL_MCP_PRESETS } from "../capability-sources/external-mcp-presets.js"
+import { ALL_EXTERNAL_MCP_PRESETS } from "../capability-sources/external-mcp-presets.js"
 import { getConnectedAccount, getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { db } from "../db.js"
 import { latestConfigObjectVersions } from "../config-object-versions.js"
@@ -1346,7 +1346,7 @@ async function resolveMcpReadinessConnections(input: {
     })
     // Keep the published desktop readiness URL comparison, including query parameters.
     // Execution and new setup use the stricter preset policy independently.
-    const preset = EXTERNAL_MCP_PRESETS.find((candidate) => comparablePluginMcpRequirementUrl(candidate.url) === comparablePluginMcpRequirementUrl(matched.url))
+    const preset = ALL_EXTERNAL_MCP_PRESETS.find((candidate) => comparablePluginMcpRequirementUrl(candidate.url) === comparablePluginMcpRequirementUrl(matched.url))
     const oauthClientRequired = dependency.requiredAuthType === "oauth" && preset?.requiresOAuthClient === true
     if (dependency.requiredAuthType === "oauth" || matched.authType === "oauth") {
       oauthClientConfigured = oauthClientConfiguredCache.get(matched.id)

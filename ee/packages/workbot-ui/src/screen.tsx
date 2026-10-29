@@ -1,8 +1,8 @@
 "use client";
 
 import { ArrowUp, Check, CircleAlert, Copy, FileText, Globe, Lock, Monitor, Pencil } from "lucide-react";
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
-import { setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
+import { computerViews, setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
 import { ChatsButton, ChatsDrawer, chatTitle, RemoveChatButton, SideChatTitle, useChatLocation } from "./chats";
 import {
@@ -13,6 +13,7 @@ import {
   useStopWorkbot,
   useStopWorkbotTask,
   useWorkbotChats,
+  useWorkbotConnections,
   useWorkbotLive,
   useWorkbotThread,
   WorkbotChatProvider,
@@ -29,6 +30,7 @@ import {
 } from "./data";
 import { AppMark, AttachButton, FileBadge, FilesButton, FilesPanel, ImageThumb, isImage, kindLabel, SentAttachments, UploadTray, useFileDrop, type Upload } from "./files";
 import { createComposerState, type ComposerState, type Pending } from "./composer-state";
+import { computerWork, type ComputerSurface } from "./computer-work";
 import { initials } from "./format";
 import { documentLinks, WorkbotMarkdown } from "./markdown";
 import { OpenFileContext } from "./open-file";
@@ -128,6 +130,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
   useEffect(() => { if (host.workspaceAssistant || host.browserDemonstrations) setWorkspaceShell(true); }, [host.workspaceAssistant, host.browserDemonstrations]);
   const [documentContext, setDocumentContext] = useState<WorkbotViewContext | null>(null);
   const [calendarContext, setCalendarContext] = useState<WorkbotViewContext | null>(null);
+  const [browserContext, setBrowserContext] = useState<WorkbotViewContext | null>(null);
   const [includeContext, setIncludeContext] = useState(true);
   const [openDocument, setOpenDocument] = useState<DocumentOpenRequest>();
   const [documentsDirty, setDocumentsDirty] = useState(false);
@@ -139,13 +142,20 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
     return true;
   }, workspaceShell);
   const [computerVisited, setComputerVisited] = useState(tab === "computer");
+  // Which view the Computer page shows (Browser or Computer); the chat beside it leaves that live screen out.
+  const [computerView, setComputerView] = useState<"browser" | "computer" | null>(null);
   useEffect(() => { if (tab === "computer") setComputerVisited(true); }, [tab]);
   const [documentsVisited, setDocumentsVisited] = useState(tab === "documents");
   const [calendarVisited, setCalendarVisited] = useState(tab === "calendar");
   useEffect(() => { if (tab === "documents") setDocumentsVisited(true); if (tab === "calendar") setCalendarVisited(true); }, [tab]);
-  const currentContext = tab === "documents" ? documentContext : tab === "calendar" ? calendarContext : null;
+  const currentContext = tab === "documents" ? documentContext : tab === "calendar" ? calendarContext : tab === "computer" ? browserContext : null;
+  // The views a message may name, as Den allows them: the browser tab with browser use, documents and the calendar with
+  // the workspace assistant.
+  const shares = (context: WorkbotViewContext | undefined): context is WorkbotViewContext => context !== undefined
+    && (context.kind === "browser" ? host.browser === true : host.workspaceAssistant === true && (context.kind === "calendar" || host.documents === true));
   // Excluding a view applies to that view only: whatever the person looks at next is shared again.
-  const viewKey = !currentContext ? null : currentContext.kind === "document" ? `document:${currentContext.fileId}`
+  const viewKey = !currentContext ? null : currentContext.kind === "browser" ? `browser:${currentContext.tabId}`
+    : currentContext.kind === "document" ? `document:${currentContext.fileId}`
     : currentContext.kind === "documents" ? `documents:${currentContext.view}:${currentContext.folderId}`
     : `calendar:${currentContext.view}:${currentContext.start}:${currentContext.selected?.id ?? ""}`;
   useEffect(() => { if (viewKey) setIncludeContext(true); }, [viewKey]);
@@ -194,7 +204,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
   const sentFrom = useRef(new Map<string, string>());
   const followed = useRef(new Set<string>());
   // The same move for Workbot's computer: open it and keep the conversation beside it. Null while it is on screen.
-  const navigateComputerFromChat = guided && host.computer === true && tab !== "computer"
+  const navigateComputerFromChat = guided && computerViews(host).length > 0 && tab !== "computer"
     ? () => { setTab("computer"); setRevealChat(count => count + 1); }
     : null;
   const [preview, setPreview] = useState<WorkbotAttachment | null>(null);
@@ -206,6 +216,8 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
   const start = useStartWorkbot();
   const stream = useWorkbotLive(true);
   const thread = useWorkbotThread({ turns: turnWindow, awaiting: greetingAwaited || pending.some((entry) => !entry.failed), live: stream.connected });
+  // The welcome lists the person's connections: read them alongside the conversation, not once it has loaded.
+  useWorkbotConnections({ enabled: welcome === "pending" && !side, waiting: false });
   const send = useSendWorkbotMessage();
   const retry = useRetryWorkbotMessage();
   const stop = useStopWorkbot();
@@ -298,8 +310,9 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
     if (retry) { sendPending(retry.id, true); return; }
     const trimmed = text.trim();
     if (!trimmed && (plain || draft.uploads.length === 0)) return;
-    const parsed = workbotViewContextSchema.safeParse(includeContext && !plain ? currentContext : undefined);
-    const context = host.workspaceAssistant && parsed.success && (parsed.data.kind === "calendar" || host.documents) ? parsed.data : undefined;
+    // A teaching note or skill run carries its own browser snapshot.
+    const parsed = workbotViewContextSchema.safeParse(includeContext && !plain && !runSkill && !teaching ? currentContext : undefined);
+    const context = parsed.success && shares(parsed.data) ? parsed.data : undefined;
     const id = composerState.enqueue({ id: newMessageId(), text: trimmed, context, keepDraft: plain, ...(!runSkill && !plain && teaching ? { teachingId: teaching.id, teachingStepId: teaching.stepId } : {}) });
     const delivery = sendPending(id);
     if (runSkill) return delivery.then(() => {
@@ -315,7 +328,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
   const editTurn = (turn: WorkbotTurn, text: string) => {
     const trimmed = text.trim();
     if (!trimmed && turn.attachments.length === 0) return;
-    const context = host.workspaceAssistant && (turn.context?.kind === "calendar" || host.documents) ? turn.context : undefined;
+    const context = shares(turn.context) ? turn.context : undefined;
     const correctionReference = { messageId: `wb_${turn.id}`, quote: readWorkbotCorrectionPrompt(turn.text).text.slice(0, 1000), sentAt: turn.sentAt };
     const id = composerState.enqueue({ id: newMessageId(), text: trimmed, context, correctionOf: turn.id, correctionReference, attachments: turn.attachments });
     sendPending(id);
@@ -355,6 +368,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
       <OpenDocumentContext.Provider value={tab === "documents" && documentContext?.kind === "document" ? documentContext.fileId : null}>
       <WorkspaceNavigationContext.Provider value={host.workspaceAssistant && host.documents ? navigateFromChat : null}>
       <ComputerNavigationContext.Provider value={navigateComputerFromChat}>
+      <ComputerOnScreenContext.Provider value={tab === "computer" ? computerView : null}>
       <DocumentNavigationContext.Provider value={guided && host.documents ? { status: navigationStatus, open: followNavigation } : null}>
         <div className="workbot flex h-dvh flex-col bg-[var(--wb-bg)] antialiased" data-workbot-workspace>
           <WorkbotHeader name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} search={palette}
@@ -374,7 +388,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
             {host.calendar && (calendarVisited || tab === "calendar") && <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={name} onContextChange={setCalendarContext} />}
           </div>
           <div className="flex min-h-0 min-w-0 flex-1" style={{ display: tab === "computer" ? undefined : "none" }} hidden={tab !== "computer"}>
-            {computerVisited && host.computer && <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} />}
+            {computerVisited && computerViews(host).length > 0 && <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} onViewChange={setComputerView} onContextChange={setBrowserContext} />}
           </div>
           </div>
           {previewFile && <PreviewPanel file={previewFile} onClose={() => setPreview(null)} />}
@@ -385,12 +399,13 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
           {filesEnabled && <FilesPanel open={filesOpen} onClose={() => setFilesOpen(false)} assistantName={name} onOpenFile={file => { setFilesOpen(false); setPreview(file); }} />}
         </div>
       </DocumentNavigationContext.Provider>
+      </ComputerOnScreenContext.Provider>
       </ComputerNavigationContext.Provider>
       </WorkspaceNavigationContext.Provider>
       </OpenDocumentContext.Provider>
     </OpenFileContext.Provider>;
   }
-  if ((tab === "calendar" && host.calendar) || tab === "documents" || (tab === "computer" && host.computer)) {
+  if ((tab === "calendar" && host.calendar) || tab === "documents" || (tab === "computer" && computerViews(host).length > 0)) {
     return (
       <div className="workbot flex h-dvh flex-col bg-[var(--wb-bg)] antialiased">
         <WorkbotHeader
@@ -642,7 +657,7 @@ type WorkbotTab = WorkbotPaletteTab;
 
 /** The pages this person has, in the header's order. */
 function paletteTabs(host: WorkbotHost): WorkbotTab[] {
-  return ["home", ...(host.calendar ? ["calendar" as const] : []), ...(host.documents ? ["documents" as const] : []), ...(host.computer ? ["computer" as const] : [])];
+  return ["home", ...(host.calendar ? ["calendar" as const] : []), ...(host.documents ? ["documents" as const] : []), ...(computerViews(host).length ? ["computer" as const] : [])];
 }
 
 /** Puts the caret in the message box on screen (the Home composer, or the workspace chat's). */
@@ -671,7 +686,7 @@ function useWorkbotTab(beforeLeave?: (next: WorkbotTab) => boolean, preserveSear
   const beforeLeaveRef = useRef(beforeLeave);
   beforeLeaveRef.current = beforeLeave;
   const [tab, setTabState] = useState<WorkbotTab>(tabFromLocation);
-  const computerEnabled = workbotHost().computer === true;
+  const computerEnabled = computerViews(workbotHost()).length > 0;
   useEffect(() => {
     if (!computerEnabled && tab === "computer") { window.history.replaceState(null, "", `/${preserveSearch ? window.location.search : ""}`); setTabState("home"); }
   }, [computerEnabled, tab, preserveSearch]);
@@ -698,7 +713,7 @@ function useWorkbotTab(beforeLeave?: (next: WorkbotTab) => boolean, preserveSear
 function WorkbotNav({ tab, onTab }: { tab: WorkbotTab; onTab: (tab: WorkbotTab) => void }) {
   return (
     <nav className="ml-4 flex items-center gap-0.5" aria-label="Workbot">
-      {(["home", ...(workbotHost().calendar ? ["calendar" as const] : []), ...(workbotHost().documents ? ["documents" as const] : []), ...(workbotHost().computer ? ["computer" as const] : [])] as const).map((entry) => (
+      {(["home", ...(workbotHost().calendar ? ["calendar" as const] : []), ...(workbotHost().documents ? ["documents" as const] : []), ...(computerViews(workbotHost()).length ? ["computer" as const] : [])] as const).map((entry) => (
         <button
           key={entry}
           type="button"
@@ -880,10 +895,11 @@ function SideChatStart(props: { name: string; organizationName: string; children
   );
 }
 
-type Row = { key: string; at: number; turn: WorkbotTurn | null; pending: Pending | null };
+/** `pending`: a message the conversation doesn't have yet; `turn` is then that message as the turn it becomes. */
+type Row = { key: string; at: number; turn: WorkbotTurn; pending: Pending | null };
 
 /** A new timestamp shows when the day changes or after a quiet hour, like a messaging app. */
-function showsTimestamp(previous: Row | undefined, row: Row) {
+function showsTimestamp(previous: { at: number } | undefined, row: { at: number }) {
   if (!row.at) return false;
   if (!previous?.at) return true;
   return new Date(previous.at).toDateString() !== new Date(row.at).toDateString() || row.at - previous.at > 60 * 60_000;
@@ -917,10 +933,11 @@ function Conversation(props: {
   const content = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const known = new Set(props.turns.map((turn) => turn.id));
-  // A pending message and its turn share a key, so the bubble never re-mounts when the turn arrives.
+  // A pending message and its turn share a key and both show as a TurnView, so neither the bubble nor the dots under it
+  // re-mount when the turn arrives.
   const rows: Row[] = [
     ...props.turns.map((turn) => ({ key: turn.id, at: turn.sentAt ?? 0, turn, pending: null })),
-    ...props.pending.filter((entry) => !known.has(entry.id)).map((entry) => ({ key: entry.id, at: entry.sentAt, turn: null, pending: entry })),
+    ...props.pending.filter((entry) => !known.has(entry.id)).map((entry) => ({ key: entry.id, at: entry.sentAt, turn: pendingTurn(entry), pending: entry })),
   ];
   const lastTurnId = props.turns.at(-1)?.id;
   // One indicator, at the end of the thread, says a reply is on its way and none of it shows yet. Background tasks
@@ -996,32 +1013,26 @@ function Conversation(props: {
           <ol className="flex flex-col" aria-label="Conversation">
             {rows.map((row, index) => {
               // The greeting has its own time; the first message only gets one after a quiet hour or a new day.
-              const previous = rows[index - 1] ?? (props.intro?.at ? { key: "intro", at: props.intro.at, turn: null, pending: null } : undefined);
+              const previous = rows[index - 1] ?? (props.intro?.at ? { at: props.intro.at } : undefined);
               const stamp = showsTimestamp(previous, row);
               return (
                 <li key={row.key} className={`flex flex-col gap-1 ${index > 0 ? (stamp ? "pt-9" : "pt-8") : stamp && props.intro ? "pt-1" : ""}`}>
                   {stamp ? <Timestamp at={row.at} /> : null}
-                  {row.turn ? (
-                    <TurnView
-                      canChange={props.canChange}
-                      onEdit={props.onEdit}
-                      editError={props.editErrors[row.turn.id] ?? null}
-                      turn={row.turn}
-                      live={props.live[row.turn.id] ?? null}
-                      latest={row.turn.id === lastTurnId && props.pending.every((entry) => known.has(entry.id))}
-                      newestText={row.turn.id === newestText}
-                      previews={previews.current}
-                      onRetry={() => row.turn && props.onRetryTurn(row.turn)}
-                      onSuggestion={props.onSuggestion}
-                      onSwitch={props.onSwitch}
-                    />
-                  ) : row.pending ? (
-                    <PendingView
-                      entry={row.pending}
-                      onRetry={() => row.pending && props.onRetry(row.pending)}
-                      waiting={row.pending.id === lastPending}
-                    />
-                  ) : null}
+                  <TurnView
+                    canChange={props.canChange}
+                    onEdit={props.onEdit}
+                    editError={row.pending ? null : (props.editErrors[row.turn.id] ?? null)}
+                    turn={row.turn}
+                    pending={row.pending}
+                    live={row.pending ? null : (props.live[row.turn.id] ?? null)}
+                    // A message still sending is answered next when it is the newest one waiting.
+                    latest={row.pending ? row.pending.id === lastPending : row.turn.id === lastTurnId && props.pending.every((entry) => known.has(entry.id))}
+                    newestText={row.turn.id === newestText}
+                    previews={previews.current}
+                    onRetry={() => (row.pending ? props.onRetry(row.pending) : props.onRetryTurn(row.turn))}
+                    onSuggestion={props.onSuggestion}
+                    onSwitch={props.onSwitch}
+                  />
                 </li>
               );
             })}
@@ -1118,6 +1129,8 @@ function OwnMessage(props: {
   onEdit: (turn: WorkbotTurn, text: string) => void;
   /** Why the last edit of this message didn't go through. */
   error: string | null;
+  /** A message that didn't send: dimmed, without Edit (Send again sits under it). */
+  failed?: boolean;
 }) {
   const { turn, error } = props;
   const originalText = readWorkbotCorrectionPrompt(turn.text).text;
@@ -1198,7 +1211,7 @@ function OwnMessage(props: {
   return (
     <div className="flex flex-col items-end gap-1">
       <SentContext context={turn.context} />
-      <UserBubble text={turn.text} reaction={turn.reaction} action={<EditButton disabled={!props.canChange} onClick={() => setMode("editing")} />} />
+      <UserBubble text={turn.text} reaction={turn.reaction} muted={props.failed} action={props.failed ? undefined : <EditButton disabled={!props.canChange} onClick={() => setMode("editing")} />} />
       {error ? <ErrorLine align="end">{error}</ErrorLine> : null}
     </div>
   );
@@ -1304,35 +1317,30 @@ function pendingAttachments(entry: Pending): { attachments: WorkbotAttachment[];
   return { attachments: [...entry.attachments, ...attachments], urls };
 }
 
-/** `waiting`: this message's answer comes next, so it shows the waiting dots its turn will show. */
-function PendingView({ entry, onRetry, waiting }: { entry: Pending; onRetry: () => void; waiting: boolean }) {
-  const { attachments, urls } = pendingAttachments(entry);
-  const uploading = entry.uploads.some((upload) => upload.status === "uploading");
-  return (
-    <>
-      <SentAttachments attachments={attachments} localUrls={urls} />
-      {/* Holds Edit's place while sending, so the bubble doesn't move when its turn arrives. */}
-      <SentContext context={entry.context} />
-      <UserBubble text={entry.correctionReference ? workbotCorrectionPrompt(readBrowserSkillRunPrompt(entry.text), entry.correctionReference) : readBrowserSkillRunPrompt(entry.text)} muted={Boolean(entry.failed)} action={entry.failed ? undefined : <EditButton disabled />} />
-      {entry.failed ? (
-        entry.accessIssue ? <AccessRecovery reason={entry.accessIssue} onRetry={onRetry} /> : <ErrorLine align="end" action={{ label: "Send again", onClick: onRetry }}>{entry.failed}</ErrorLine>
-      ) : uploading || waiting ? (
-        // The rows its turn will show, so nothing moves when the turn arrives.
-        <>
-          <Gap />
-          <div className="flex flex-col">
-            {uploading ? (
-              <QuietLine label="Uploading your files" />
-            ) : (
-              <WaitingSlot>
-                <TypingDots />
-              </WaitingSlot>
-            )}
-          </div>
-        </>
-      ) : null}
-    </>
-  );
+/**
+ * A message not in the conversation yet, as the turn it becomes: queued, with nothing answered. TurnView shows both,
+ * so the bubble, Edit's place and the waiting dots stay the same elements when the turn arrives.
+ */
+function pendingTurn(entry: Pending): WorkbotTurn {
+  return {
+    id: entry.id,
+    text: entry.correctionReference ? workbotCorrectionPrompt(readBrowserSkillRunPrompt(entry.text), entry.correctionReference) : readBrowserSkillRunPrompt(entry.text),
+    context: entry.context,
+    navigation: [],
+    sentAt: entry.sentAt,
+    finishedAt: null,
+    status: "queued",
+    attachments: pendingAttachments(entry).attachments,
+    outputs: [],
+    reaction: null,
+    parts: [],
+    modelSteps: 0,
+    error: null,
+    retryable: true,
+    tasks: [],
+    greeting: false,
+    suggestions: [],
+  };
 }
 
 /** Ticks once a second while mounted. */
@@ -1514,58 +1522,11 @@ function StepsSegment({ steps, live }: { steps: WorkbotStep[]; live: boolean }) 
   );
 }
 
-/** Where on its computer Workbot works: its browser, its screen, or commands in the background with nothing to watch. */
-type ComputerSurface = "browser" | "computer" | "background";
-
-function surfaceOf(step: WorkbotStep): ComputerSurface {
-  return step.surface === "browser" ? "browser" : step.background ? "background" : "computer";
-}
-
 /** The other way of working, offered on a live card: one tap sends it as a follow-up. */
 type SwitchTo = { label: string; text: string; send(text: string): void };
 
-/**
- * Workbot's computer work in one reply, as one card per kind of work (its browser, its screen, its background
- * commands), however often it stops to say what it is doing. While it works, the cards it is using go below its latest
- * words: the one it is on now, and the screen it was last on, whose live view stays up for the rest of the reply.
- * The others stay where that work last happened.
- */
-function computerWork(parts: WorkbotPart[], { working, starting, lastIsLive }: { working: boolean; starting: LiveText["working"] | null; lastIsLive: boolean }) {
-  const cards = new Map<ComputerSurface, { steps: WorkbotStep[]; last: number }>();
-  let screen: ComputerSurface | null = null;
-  let current: ComputerSurface | null = null;
-  for (const [index, part] of parts.entries()) {
-    if (part.kind !== "steps") continue;
-    for (const step of part.steps) {
-      if (step.icon !== "computer") continue;
-      const surface = surfaceOf(step);
-      const card = cards.get(surface) ?? { steps: [], last: index };
-      card.steps.push(step);
-      card.last = index;
-      cards.set(surface, card);
-      if (surface !== "background") screen = surface;
-      if (lastIsLive && index === parts.length - 1) current = surface;
-    }
-  }
-  if (working && starting) {
-    // A step starting before it is stored: commands in the background, or the screen it was last on.
-    const surface: ComputerSurface = starting.background ? "background" : screen ?? "computer";
-    if (!cards.has(surface)) {
-      cards.set(surface, { steps: [{ label: "Using my computer", icon: "computer", status: "running", app: null, startedAt: null, finishedAt: null, updates: [], ...(starting.background ? { background: true as const } : {}) }], last: parts.length });
-    }
-    current = surface;
-    if (surface !== "background") screen = surface;
-  }
-  const watch = working ? screen : null;
-  const live = new Set<ComputerSurface>();
-  if (working && current) live.add(current);
-  if (watch) live.add(watch);
-  const placed = new Map<number, ComputerSurface[]>();
-  for (const [surface, card] of cards) if (!live.has(surface)) placed.set(card.last, [...(placed.get(card.last) ?? []), surface]);
-  // Below its latest words: background work first, then the screen it is watched on.
-  const trailing = [...live].sort((a, b) => Number(a === watch) - Number(b === watch));
-  return { cards, live, watch, placed, trailing };
-}
+/** The view of Workbot's computer open on the page beside the chat, whose live screen the chat then leaves out. */
+const ComputerOnScreenContext = createContext<Exclude<ComputerSurface, "background"> | null>(null);
 
 /** Opens the full view of Workbot's browser or computer, without reloading Workbot. */
 function openSurface(surface: Exclude<ComputerSurface, "background">) {
@@ -1574,18 +1535,23 @@ function openSurface(surface: Exclude<ComputerSurface, "background">) {
 }
 
 /**
- * Work in Workbot's browser or on the rest of its computer, as one card: what it is doing now in its own words, and
- * while it works on a screen a small live view of it (when the computer is on for the person). Commands in the
- * background (running Blender from the command line) have no screen to watch, so their card never connects one. The
- * browser card links the pages it opened.
+ * Work in Workbot's browser or on the rest of its computer, as one card: what it is doing now in its own words, and a
+ * live view of its screen only while Workbot is showing it to the person (when the computer is on for them) and that
+ * view isn't already open beside the chat. Other work, on the screen or in the background, is its progress notes
+ * alone. The browser card links the pages it opened. `starting` is what a step not yet stored says it is doing.
  */
-function SurfaceCard({ surface, steps, live, others, switchTo = null }: { surface: ComputerSurface; steps: WorkbotStep[]; live: boolean; others: UsedApp[]; switchTo?: SwitchTo | null }) {
-  const [asked, setAsked] = useState(false);
+function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, starting: startingUpdate = null }: { surface: ComputerSurface; steps: WorkbotStep[]; live: boolean; showing: boolean; others: UsedApp[]; switchTo?: SwitchTo | null; starting?: string | null }) {
+  // The switch just tapped, until Workbot takes it up and the card offers the other one.
+  const [asked, setAsked] = useState<string | null>(null);
   const updates = steps.flatMap((step) => step.updates);
-  const latest = updates.at(-1) ?? null;
+  const latest = (live ? startingUpdate : null) ?? updates.at(-1) ?? null;
+  const onScreen = useContext(ComputerOnScreenContext) === surface;
   const update = useHeld(latest, latest ?? "", UPDATE_HOLD_MS);
   const pages = steps.flatMap((step) => step.pages ?? []).filter((page, index, all) => all.findIndex((entry) => entry.id === page.id) === index);
-  const watchable = workbotHost().computer === true;
+  const views = computerViews(workbotHost());
+  // Each view is its own rollout: a card shows a screen only for a view this person has. Work in the background has
+  // no screen of its own, so asking to see it needs at least one.
+  const watchable = surface === "background" ? views.length > 0 : views.includes(surface);
   const title = surface === "browser" ? `${live ? "Using" : "Used"} the browser`
     : surface === "background" ? `${live ? "Working" : "Worked"} on my computer`
     : `${live ? "Using" : "Used"} my computer`;
@@ -1602,20 +1568,20 @@ function SurfaceCard({ surface, steps, live, others, switchTo = null }: { surfac
       action={<AppLogos apps={others} />}
       footer={
         <>
-          {live && watchable && surface !== "background" ? <div className="px-2.5"><LiveGlimpse view={surface} onOpen={() => openSurface(surface)} /></div> : null}
-          {live && watchable && switchTo && !asked ? (
+          {showing && watchable && surface !== "background" && !onScreen ? <div className="px-2.5"><LiveGlimpse view={surface} onOpen={() => openSurface(surface)} /></div> : null}
+          {live && watchable && switchTo && asked !== switchTo.label ? (
             <div className="flex px-2.5 pb-2.5 pt-2" data-workbot-computer-switch>
               <button
                 type="button"
-                onClick={() => { setAsked(true); switchTo.send(switchTo.text); }}
+                onClick={() => { setAsked(switchTo.label); switchTo.send(switchTo.text); }}
                 className="inline-flex h-7 items-center gap-1.5 rounded-full bg-[var(--wb-surface)] px-2.5 text-[12px] text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] transition-shadow duration-150 hover:shadow-[0_0_0_1px_var(--wb-disabled)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
               >
-                {surface === "background" ? <Monitor size={12} aria-hidden className="shrink-0 text-[var(--wb-muted)]" /> : null}
+                {showing ? null : <Monitor size={12} aria-hidden className="shrink-0 text-[var(--wb-muted)]" />}
                 {switchTo.label}
               </button>
             </div>
           ) : null}
-          {watchable && pages.length > 0 ? <BrowserPageLinks pages={pages} /> : null}
+          {views.includes("browser") && pages.length > 0 ? <BrowserPageLinks pages={pages} /> : null}
         </>
       }
     />
@@ -1675,8 +1641,9 @@ function replyProgress(turn: WorkbotTurn, live: LiveText | null) {
   const working = turn.status === "working" || turn.status === "queued";
   // The model call in progress (not stored yet): its text so far, and whether it has started a step.
   const current = working && live && live.step >= turn.modelSteps ? live : null;
-  // Live text is trimmed like the stored text, so a finished bubble carries on instead of starting over.
-  const liveText = withoutNextLine((current?.text ?? "").trimStart());
+  // Live text is trimmed like the stored text (both ends), so a finished bubble carries on instead of starting over:
+  // a shown "Done.\n" that the stored "Done." doesn't start with would type the bubble out again.
+  const liveText = withoutNextLine((current?.text ?? "").trim());
   const last = turn.parts.at(-1);
   // Its computer starting before the step is stored: its card shows right away, after what it just said.
   const starting = working && !turn.greeting && current?.working?.on === "computer" ? current.working : null;
@@ -1701,13 +1668,15 @@ function useSettled(flag: boolean, ms: number) {
 
 /** One thing a turn shows: a model call's words (one bubble each), work in apps between them, or a computer card. */
 type TurnItem = { kind: "text"; key: string; text: string } | { kind: "steps"; key: string; steps: WorkbotStep[]; live: boolean }
-  | { kind: "card"; key: string; surface: ComputerSurface; steps: WorkbotStep[]; live: boolean; others: UsedApp[]; switchTo: SwitchTo | null };
+  | { kind: "card"; key: string; surface: ComputerSurface; steps: WorkbotStep[]; live: boolean; showing: boolean; others: UsedApp[]; switchTo: SwitchTo | null; update: string | null };
 
 function TurnView(props: {
   canChange: boolean;
   onEdit: (turn: WorkbotTurn, text: string) => void;
   editError: Error | string | null;
   turn: WorkbotTurn;
+  /** The message as sent from this page, until the conversation has it (`turn` is then pendingTurn's). */
+  pending?: Pending | null;
   live: LiveText | null;
   latest: boolean;
   /** This turn holds the newest of Workbot's words in the conversation: the only ones still revealing. */
@@ -1717,8 +1686,10 @@ function TurnView(props: {
   onSuggestion: (text: string) => void;
   onSwitch: (text: string) => void;
 }) {
-  const { turn } = props;
+  const { turn, pending = null } = props;
   const { working, liveText, starting, lastIsLive } = replyProgress(turn, props.live);
+  // A message still sending waits on its files first, in the place the dots take next.
+  const uploading = pending !== null && !pending.failed && pending.uploads.some((upload) => upload.status === "uploading");
   // An answer watched while it was written keeps revealing at its pace once it's stored; answers already done when the
   // page opened show at once.
   const watched = useRef(working);
@@ -1737,11 +1708,13 @@ function TurnView(props: {
   const work = computerWork(parts, { working, starting, lastIsLive });
   const card = (surface: ComputerSurface, others: UsedApp[] = []): TurnItem => {
     const isLive = work.live.has(surface);
+    const showing = surface === work.shown;
+    // The live card offers the other way: Carry on without me while Workbot shows its screen, Show me otherwise.
     const switchTo = !isLive || !switchMode ? null
-      : surface === work.watch ? { label: "Carry on without me", text: "Carry on without me in the background; no need to show me.", send: switchMode }
-      : surface === "background" && work.watch === null ? { label: "Show me", text: "Show me what you're doing on screen.", send: switchMode }
-      : null;
-    return { kind: "card", key: `card-${surface}`, surface, steps: work.cards.get(surface)?.steps ?? [], live: isLive, others, switchTo };
+      : showing ? { label: "Carry on without me", text: "Carry on without me in the background; no need to show me.", send: switchMode }
+      : { label: "Show me", text: "Show me what you're doing on screen.", send: switchMode };
+    const update = isLive && surface === work.starts ? (starting?.update ?? null) : null;
+    return { kind: "card", key: `card-${surface}`, surface, steps: work.cards.get(surface)?.steps ?? [], live: isLive, showing, others, switchTo, update };
   };
   const items: TurnItem[] = [];
   parts.forEach((part, index) => {
@@ -1757,7 +1730,7 @@ function TurnView(props: {
   });
   if (working && props.live) {
     for (const entry of props.live.earlier ?? []) {
-      const text = withoutNextLine(entry.text.trimStart());
+      const text = withoutNextLine(entry.text.trim());
       if (entry.step >= turn.modelSteps && text) items.push({ kind: "text", key: `text-${entry.step}`, text });
     }
   }
@@ -1780,7 +1753,7 @@ function TurnView(props: {
     if (dots || running) setHeld(true);
     else if (!answering || liveText) setHeld(false);
   }, [dots, running, answering, liveText]);
-  const slot = answering && !liveText && (dots || held || running);
+  const slot = uploading || (answering && !liveText && (dots || held || running));
   const copyText = parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])).join("\n\n");
   const offers = useMemo(() => (turn.status === "done" ? documentLinks(copyText) : []), [turn.status, copyText]);
   // One computer, so only the newest reply that used its screen offers to open it, already while it works. Commands run
@@ -1789,12 +1762,15 @@ function TurnView(props: {
   const usedComputer = props.latest && ((starting !== null && !starting.background) || parts.some((part) => part.kind === "steps" && part.steps.some(onScreen)));
   return (
     <>
-      <SentAttachments attachments={turn.attachments} localUrls={props.previews} />
-      {turn.text && !turn.greeting ? (
-        <OwnMessage turn={turn} canChange={props.canChange && turn.status !== "queued"} onEdit={props.onEdit} error={props.editError instanceof WorkbotSendError && props.editError.accessReason ? null : props.editError instanceof Error ? props.editError.message : props.editError} />
+      <SentAttachments attachments={turn.attachments} localUrls={pending ? { ...props.previews, ...pendingAttachments(pending).urls } : props.previews} />
+      {pending || (turn.text && !turn.greeting) ? (
+        <OwnMessage turn={turn} failed={Boolean(pending?.failed)} canChange={props.canChange && turn.status !== "queued"} onEdit={props.onEdit} error={props.editError instanceof WorkbotSendError && props.editError.accessReason ? null : props.editError instanceof Error ? props.editError.message : props.editError} />
       ) : (
         <UserBubble text={turn.text} reaction={turn.reaction} />
       )}
+      {pending?.failed ? (
+        pending.accessIssue ? <AccessRecovery reason={pending.accessIssue} onRetry={props.onRetry} /> : <ErrorLine align="end" action={{ label: "Send again", onClick: props.onRetry }}>{pending.failed}</ErrorLine>
+      ) : null}
       {items.length > 0 || slot ? <Gap /> : null}
       {/* What it said and what it did, in the order it happened: "On it." · the computer card · the answer. */}
       <div className="group/answer flex flex-col">
@@ -1806,13 +1782,13 @@ function TurnView(props: {
             </AssistantBubble>
           ) : item.kind === "card" ? (
             <div key={item.key} className="py-1 pl-1">
-              <SurfaceCard surface={item.surface} steps={item.steps} live={item.live} others={item.others} switchTo={item.switchTo} />
+              <SurfaceCard surface={item.surface} steps={item.steps} live={item.live} showing={item.showing} others={item.others} switchTo={item.switchTo} starting={item.update} />
             </div>
           ) : (
             <StepsSegment key={item.key} steps={item.steps} live={item.live} />
           ),
         )}
-        {slot ? <WaitingSlot>{runningApps ? <StepsSegment steps={runningApps.steps} live /> : dots ? <TypingDots /> : null}</WaitingSlot> : null}
+        {slot ? <WaitingSlot>{uploading ? <QuietLine label="Uploading your files" /> : runningApps ? <StepsSegment steps={runningApps.steps} live /> : dots ? <TypingDots /> : null}</WaitingSlot> : null}
       </div>
       <DocumentOffers links={offers} />
       <DocumentNavigationStatus receipts={turn.navigation} />

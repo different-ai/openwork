@@ -10,7 +10,7 @@ import { browserFloatingViewWorld } from "../worlds/desktop-chat-features.ts";
 const test = spec.world(browserFloatingViewWorld, {
   resources: {
     surfaces: ["desktop"],
-    services: ["den"],
+    services: ["den", "mock"],
     nativeReason: "Floating, side and full-screen presentation move Electron's native page view, which a browser tab cannot host.",
   },
 });
@@ -139,22 +139,50 @@ test("a person moves the page the agent opened between the side, its own floatin
     await floating.user.screenshot();
   });
 
-  await step("after: the Browser button hides the browser and brings it back where it was", async () => {
+  await step("after: the floating window's close button puts the browser back beside the chat", async () => {
+    const floating = await floatingCard();
+    await floating.user.click({ testId: "browser-floating-close" });
+    await browserMode("side");
+    await floatingClosed();
+    const view = await pageView(true);
+    expect(view).toMatchObject({ tabId });
+    evidence.recordAssertionEvidence(
+      "Closing the window docks the browser",
+      `The close button closed the floating window and the same page is back beside the chat (${view?.bounds.width ?? 0}px wide).`,
+      view?.tabId === tabId,
+    );
+    await user.screenshot();
+    // Pop it out again for the Browser button step.
+    await user.click({ testId: "browser-mode-float" });
+    await browserMode("floating");
+  });
+
+  await step("after: the Browser button only opens and closes the side panel; it never pops the page out", async () => {
+    // From the floating window, the button docks the page back beside the chat.
+    await user.click(toggle);
+    await browserMode("side");
+    await floatingClosed();
+    await pageView(true);
     await user.click(toggle);
     await browserMode("hidden");
-    await floatingClosed();
     expect(await pageView(false)).toMatchObject({ tabId });
+    // The person last floated the page, yet showing it again opens the side panel, not a window.
     await user.click(toggle);
-    await browserMode("floating");
-    await floatingCard();
+    await browserMode("side");
+    const view = await pageView(true);
+    const popped = await world.floatingWindowOpen();
+    expect(popped).toBe(false);
     const tabs = (await probe.browserState()).tabs.filter((tab) => tab.ownerSessionId === sessionId);
     expect(tabs.map((tab) => tab.id)).toEqual([tabId]);
     evidence.recordAssertionEvidence(
-      "Hide and show keep the page and its window",
-      `Hidden, neither the card window nor the page is shown; shown again, the card window returns with the same single tab (${tabs.length} owned by this chat).`,
-      tabs.length === 1 && tabs[0]?.id === tabId,
+      "The Browser button toggles the side panel only",
+      `It docked the floating page beside the chat, hid it, and showed it beside the chat again (${view?.bounds.width ?? 0}px wide) with no floating window and the same single tab (${tabs.length} owned by this chat).`,
+      !popped && tabs.length === 1 && tabs[0]?.id === tabId,
     );
     await user.screenshot();
+    // Popping out stays with the browser's own control.
+    await user.click({ testId: "browser-mode-float" });
+    await browserMode("floating");
   });
   await step("after: a page under the person's control has no floating screenshot", async () => {
     await (await floatingCard()).user.click({ testId: "browser-floating-preview" });

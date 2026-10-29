@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, type ReactNode } from "react";
+import { Fragment, memo, type ReactNode } from "react";
 import { googleDriveFileId } from "@openwork/types/workbot-context";
 import { WorkspaceLink } from "./workspace";
 import { Lexer, type MarkedToken, type Token } from "marked";
@@ -171,7 +171,8 @@ export function documentLinks(text: string): Array<{ fileId: string; label: stri
   return [...found].map(([fileId, label]) => ({ fileId, label }));
 }
 
-export function WorkbotMarkdown({ text }: { text: string }) {
+/** Re-rendered only when its text changes: each streamed word re-reads the bubble it lands in, not every answer above. */
+export const WorkbotMarkdown = memo(function WorkbotMarkdown({ text }: { text: string }) {
   const tokens = Lexer.lex(text, { gfm: true, breaks: true });
   return <div className="flex flex-col gap-3 break-words text-[15px] leading-6 text-[var(--wb-text)]">{tokens.map(block)}</div>;
-}
+});

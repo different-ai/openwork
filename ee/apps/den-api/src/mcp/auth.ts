@@ -200,6 +200,12 @@ function isFirstPartyMcpToken(payload: Record<string, unknown>, source: McpToken
   return clientId !== null && FIRST_PARTY_OPAQUE_CLIENT_IDS.has(clientId)
 }
 
+/** The caller holds a token Den minted for OpenWork itself (its app or a headless run), not an outside client's OAuth token. */
+export function isFirstPartyMcpPrincipal(principal: McpPrincipal): boolean {
+  const clientId = readStringClaim(principal.payload, "client_id")
+  return clientId !== null && FIRST_PARTY_OPAQUE_CLIENT_IDS.has(clientId)
+}
+
 
 function bearerChallenge(input: {
   metadataUrl: string

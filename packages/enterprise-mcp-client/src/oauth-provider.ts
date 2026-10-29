@@ -66,6 +66,17 @@ function tokenExpiration(tokens: StoredOAuthTokens, now: number): number | undef
   return assertFiniteEpoch(now + tokens.expires_in * 1_000, "token expiration")
 }
 
+// Google does not advertise `offline_access` and issues a refresh token only for
+// `access_type=offline` on a fresh consent. Values a configured sign-in address
+// already sets are kept.
+function withGoogleOfflineAccess(authorizationUrl: URL): URL {
+  if (authorizationUrl.hostname !== "accounts.google.com") return authorizationUrl
+  const url = new URL(authorizationUrl)
+  if (!url.searchParams.has("access_type")) url.searchParams.set("access_type", "offline")
+  if (!url.searchParams.has("prompt")) url.searchParams.set("prompt", "consent")
+  return url
+}
+
 export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   private readonly redirectUri: string
   private readonly connectionId: string
@@ -521,7 +532,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   }
 
   redirectToAuthorization(authorizationUrl: URL): void {
-    this.authorizeUrl = authorizationUrl.toString()
+    this.authorizeUrl = withGoogleOfflineAccess(authorizationUrl).toString()
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {

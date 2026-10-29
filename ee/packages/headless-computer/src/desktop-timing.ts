@@ -5,6 +5,8 @@ type Step = { ms: number; count: number }
 /** What one bridge command asked the guest, from its command line; never the command or its payload. */
 function bridgeStep(command: string) {
   if (/openwork-desktop-bridge start /.test(command)) return "desktop_start"
+  const helper = /openwork-desktop-bridge (install|versions|export|import) /.exec(`${command} `)?.[1]
+  if (helper) return `desktop_${helper}`
   const path = /openwork-desktop-bridge call '?\/([a-z/]+)/.exec(command)?.[1]
   return path ? path.replaceAll("/", "_") : "command"
 }

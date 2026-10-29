@@ -345,6 +345,8 @@ export function createLocalComputerAdapter({
     label: platform === "darwin" ? "This Mac" : "This computer",
     placement: /** @type {"local"} */ ("local"),
     protocol: protocolVersion,
+    // The Mac helper locks each window and takes turns at the keyboard and pointer.
+    parallel: platform === "darwin",
     async readiness() {
       const record = companion;
       const state = await inspect();
@@ -385,11 +387,12 @@ export function createLocalComputerAdapter({
      * @param {{
      *   signal?: AbortSignal,
      *   presence?: { name?: string, color?: string },
+     *   background?: boolean,
      *   onUi?: (params: unknown) => void,
      *   onClose?: () => void,
      * }} [options]
      */
-    async connect({ signal, onUi = () => {}, onClose = () => {}, presence } = {}) {
+    async connect({ signal, onUi = () => {}, onClose = () => {}, presence, background = false } = {}) {
       signal?.throwIfAborted();
       await dismissSetup();
       const state = await inspect();
@@ -402,7 +405,9 @@ export function createLocalComputerAdapter({
       const hex = (value) => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
       const shown = typeof presence?.name === "string" && presence.name.trim() && hex(presence.color)
         ? { OPENWORK_COMPUTER_USE_PRESENCE: JSON.stringify({ name: presence.name.trim().slice(0, 32), color: presence.color }) } : {};
-      const transport = new StdioClientTransport({ command: state.binary, args: ["mcp-embedded"], env: { ...env, ...shown }, stderr: "ignore" });
+      // Set only while `computerUseBackground` is on: the helper then works behind other windows.
+      const delivery = background ? { OPENWORK_COMPUTER_USE_DELIVERY: "background" } : {};
+      const transport = new StdioClientTransport({ command: state.binary, args: ["mcp-embedded"], env: { ...env, ...shown, ...delivery }, stderr: "ignore" });
       let closed = false;
       let terminationConfirmed = false;
       let busy = false;

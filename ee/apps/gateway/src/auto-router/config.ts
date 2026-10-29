@@ -14,8 +14,11 @@ export type AutoRouterConfigRoute = {
   providerId: string
   modelId: string
   prompt: string
-  thinkingLevels: AutoRouterThinkingLevel[]
+  /** The one thinking level this route runs at. */
+  thinkingLevel: AutoRouterThinkingLevel
 }
+
+/** Ordered; the first route is the default model. */
 
 export type AutoRouterConfig = { routes: AutoRouterConfigRoute[] }
 
@@ -39,13 +42,14 @@ async function readConfig(organizationId: string): Promise<AutoRouterConfig | nu
   const rows = await db.select().from(AutoRouterRouteTable)
     .where(and(eq(AutoRouterRouteTable.autoRouterId, router.id), eq(AutoRouterRouteTable.organizationId, organizationId)))
     .orderBy(asc(AutoRouterRouteTable.position))
+  // `thinking_levels` is a JSON array; a route runs at its first valid level.
   const routes = rows.map((row) => ({
     id: row.id,
     providerId: row.gatewayProviderId,
     modelId: row.modelId,
     prompt: row.prompt,
-    thinkingLevels: row.thinkingLevels.filter(isThinkingLevel),
-  })).filter((route) => route.thinkingLevels.length > 0)
+    thinkingLevel: row.thinkingLevels.find(isThinkingLevel) ?? "default",
+  }))
   return routes.length > 0 ? { routes } : null
 }
 

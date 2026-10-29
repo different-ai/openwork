@@ -7,7 +7,13 @@ import {
   TeamMemberTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { AUTOMATION_CLOUD_DEFAULT_MODEL, AUTOMATION_FREE_MODEL, automationModelAllowedByProvider } from "@openwork/types/automations"
+import {
+  AUTOMATION_CLOUD_DEFAULT_MODEL,
+  AUTOMATION_FREE_MODEL,
+  automationModelAllowedByProvider,
+  isDenAuthorizedAutomationProvider,
+  type AutomationExecutionTarget,
+} from "@openwork/types/automations"
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 import { db } from "../db.js"
 import { organizationAllowsManagedModels } from "../inference.js"
@@ -37,7 +43,8 @@ export type AutomationModelSelection = {
 }
 
 export type ResolvedAutomationModel = AutomationModelSelection & {
-  accessKind: "free" | "openwork_managed" | "authorized_custom" | "cloud_default"
+  /** `desktop_runtime`: a provider only the executing desktop has; that runtime checks it before each run. */
+  accessKind: "free" | "openwork_managed" | "authorized_custom" | "cloud_default" | "desktop_runtime"
   providerRecordId: string | null
   providerName: string
   modelName: string
@@ -145,8 +152,15 @@ function resolvedProviderModel(input: {
   }
 }
 
+export type AutomationModelAccessInput = {
+  organizationId: string
+  ownerMemberId: string
+  /** Where this check's run executes; a desktop can use providers Den has no record of. */
+  executionTarget: AutomationExecutionTarget
+} & AutomationModelSelection
+
 export async function resolveAutomationModelAccessWithStore(
-  input: { organizationId: string; ownerMemberId: string } & AutomationModelSelection,
+  input: AutomationModelAccessInput,
   store: AutomationModelAuthorityStore,
 ): Promise<AutomationAuthorityResult> {
   const member = await store.findActiveMember(input)
@@ -209,6 +223,27 @@ export async function resolveAutomationModelAccessWithStore(
     }
   }
 
+  if (!isDenAuthorizedAutomationProvider(input.providerId)) {
+    // Desktop Automations run on the owner's desktop with the providers it has
+    // (connected there, or AI Gateway providers synced for the owner). Den holds
+    // no record of them, so the desktop runtime refuses a model it lacks before
+    // the run starts. The cloud has none of them.
+    if (input.executionTarget !== "desktop") {
+      return { ok: false, code: "provider_unavailable", message: "This model is only available on a desktop. Choose a model your organization provides to run this Automation in the cloud." }
+    }
+    return {
+      ok: true,
+      value: {
+        accessKind: "desktop_runtime",
+        providerRecordId: null,
+        providerId: input.providerId,
+        modelId: input.modelId,
+        providerName: input.providerId,
+        modelName: input.modelId,
+      },
+    }
+  }
+
   const provider = await store.findProvider(input)
   if (!provider || provider.source === "openwork") {
     return { ok: false, code: "provider_unavailable", message: "The selected model provider is no longer available." }
@@ -244,12 +279,7 @@ export function isActiveAutomationOwner(
   return isActiveAutomationOwnerWithStore(input, databaseAuthorityStore)
 }
 
-export function resolveAutomationModelAccess(input: {
-  organizationId: string
-  ownerMemberId: string
-  providerId: string
-  modelId: string
-}): Promise<AutomationAuthorityResult> {
+export function resolveAutomationModelAccess(input: AutomationModelAccessInput): Promise<AutomationAuthorityResult> {
   return resolveAutomationModelAccessWithStore(input, databaseAuthorityStore)
 }
 

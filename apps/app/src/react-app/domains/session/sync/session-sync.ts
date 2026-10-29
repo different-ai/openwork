@@ -40,7 +40,7 @@ import {
 import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
 import type { LatestSessionHistory } from "../surface/session-render-state";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
-import { upsertMessageByChronology } from "./message-merge";
+import { messageCreated, upsertMessageByChronology } from "./message-merge";
 import { isOrphanedInteraction, isTerminalToolPart, terminalToolCallIds, terminalTranscriptToolCallIds } from "./orphaned-interactions";
 import {
   useSessionActivityStore,
@@ -998,11 +998,23 @@ function toUIParts(part: Part): UIMessage["parts"] {
   return [mapped];
 }
 
+/**
+ * A message is created once. OpenCode v2 reports the start of each new text,
+ * reasoning or tool stream as the reply's `created`; keeping the first stops a
+ * reply from jumping below a follow-up sent while it was being written, which
+ * is also the order history shows after a reload.
+ */
+function keepFirstCreated<T extends { opencode: object }>(metadata: T, firstCreated: number | null): T {
+  const created: unknown = Reflect.get(metadata.opencode, "created");
+  if (firstCreated === null || typeof created !== "number" || created <= firstCreated) return metadata;
+  return { ...metadata, opencode: { ...metadata.opencode, created: firstCreated } };
+}
+
 function upsertMessage(messages: UIMessage[], next: UIMessage) {
   const index = messages.findIndex((message) => message.id === next.id);
   if (next.metadata !== undefined) {
     const existing = messages[index];
-    const merged = existing ? { ...existing, ...next, metadata: mergeReplyMetadata(existing.metadata, next.metadata), parts: next.parts.length > 0 ? next.parts : existing.parts } : next;
+    const merged = existing ? { ...existing, ...next, metadata: keepFirstCreated(mergeReplyMetadata(existing.metadata, next.metadata), messageCreated(existing)), parts: next.parts.length > 0 ? next.parts : existing.parts } : next;
     return upsertMessageByChronology(messages, merged);
   }
   if (index === -1) return [...messages, next];

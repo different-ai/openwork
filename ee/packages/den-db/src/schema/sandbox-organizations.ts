@@ -4,7 +4,7 @@ import { denTypeIdColumn } from "../columns"
 /**
  * A try-it-out organization created by a platform admin. The organization itself is an ordinary organization;
  * this row only adds the shareable join link, its member limit and when it stops accepting people. Closing or
- * expiring a sandbox never deletes the organization or its members.
+ * expiring a sandbox never deletes the organization or its members; it disables the sandbox's own model key.
  */
 export const SandboxOrganizationTable = mysqlTable("sandbox_organization", {
   id: denTypeIdColumn("sandboxOrganization", "id").notNull().primaryKey(),
@@ -14,6 +14,10 @@ export const SandboxOrganizationTable = mysqlTable("sandbox_organization", {
   /** Base URL of the fictional workplace service the connectors point at, e.g. https://workplace.example/. */
   connectorBaseUrl: varchar("connector_base_url", { length: 2048 }),
   memberLimit: int("member_limit").notNull(),
+  /** The sandbox's own OpenRouter key (its hash, never the key), when the deployment mints one per sandbox. */
+  modelKeyHash: varchar("model_key_hash", { length: 128 }),
+  /** That key's spending cap in US dollars. */
+  modelCreditUsd: int("model_credit_usd"),
   expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
   closedAt: timestamp("closed_at", { fsp: 3 }),
   createdByUserId: denTypeIdColumn("user", "created_by_user_id").notNull(),

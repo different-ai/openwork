@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseDeploymentCapabilities, type DeploymentCapabilities } from "@openwork/types/den/deployment-capabilities";
 import type { OrganizationServiceReadiness, ServiceId } from "@openwork/types/den/service-readiness";
-import { formatServiceTime, workbotDeploymentNotice } from "./service-readiness";
+import { formatServiceTime, serviceCheckLine, workbotDeploymentNotice } from "./service-readiness";
 
 const checkedAt = "2026-10-01T12:00:00.000Z";
 function projectedService(id: ServiceId): OrganizationServiceReadiness["services"][number] {
@@ -37,6 +37,7 @@ test("missing Workbot web service does not revoke models used by Slack or Automa
 test("runner setup and transient failures have recovery copy, timestamps and no authorization semantics", () => {
   const missing = workbotDeploymentNotice(capabilities([{ ...projectedService("headlessRunner"), configured: false, state: "not_configured" }]));
   assert.match(missing?.message ?? "", /Headless runner isn't set up/);
+  assert.doesNotMatch(missing?.message ?? "", /are kept/);
   for (const state of ["unreachable", "unknown"] satisfies OrganizationServiceReadiness["services"][number]["state"][]) {
     const notice = workbotDeploymentNotice(capabilities([{ ...projectedService("headlessRunner"), state, reason: "request_failed", stale: true }]));
     assert.match(notice?.message ?? "", /Couldn't verify/);
@@ -55,4 +56,11 @@ test("timestamps are explicit UTC and never fabricate a successful check", () =>
   assert.equal(formatServiceTime(null), "Not yet");
   assert.equal(formatServiceTime("invalid"), "Not yet");
   assert.match(formatServiceTime(checkedAt), /Oct 1.*12:00 PM UTC/);
+});
+
+test("check history is one line and only reports what happened", () => {
+  assert.equal(serviceCheckLine({ checkedAt: null, lastSuccessAt: null, stale: true }), null);
+  assert.match(serviceCheckLine({ checkedAt, lastSuccessAt: checkedAt, stale: false }) ?? "", /^Last checked Oct 1.*UTC\.$/);
+  assert.match(serviceCheckLine({ checkedAt, lastSuccessAt: null, stale: false }) ?? "", /hasn't passed yet/);
+  assert.match(serviceCheckLine({ checkedAt: "2026-10-02T12:00:00.000Z", lastSuccessAt: checkedAt, stale: true }) ?? "", /^Out of date\. Last checked Oct 2.*Last worked Oct 1/);
 });

@@ -10,6 +10,21 @@ export type CatalogAvailabilityContext = {
   usageSource?: string
 }
 
+/** Outlook attachment reads (mail-attachments and mail-attachment), rolled out with Outlook attachments. */
+export const OUTLOOK_ATTACHMENT_PATH_PREFIX = "/v1/capabilities/microsoft-365/mail-attachment"
+
+/**
+ * Provider operations a rollout hides. Native provider search, enumeration and
+ * execution read the registry's catalog, so these are filtered out of it; the
+ * routes themselves also refuse while the feature is off.
+ */
+export function nativeOperationAvailableToCapabilities(
+  context: { outlookAttachmentsEnabled: boolean },
+  operation: { path: string },
+) {
+  return context.outlookAttachmentsEnabled || !operation.path.startsWith(OUTLOOK_ATTACHMENT_PATH_PREFIX)
+}
+
 /** The agent-facing connection removal operation (POST /v1/mcp-connections/{connectionId}/removal-request). */
 export const AGENT_CONNECTION_REMOVAL_PATH = "/v1/mcp-connections/{connectionId}/removal-request"
 

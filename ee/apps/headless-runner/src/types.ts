@@ -114,6 +114,14 @@ export const turnCredentialsSchema = z
 export type TurnCredentials = z.infer<typeof turnCredentialsSchema>
 
 /**
+ * The two views of a conversation's desktop, which callers may offer separately: `browser` (the web browser) and
+ * `computer` (the desktop's native applications).
+ */
+export const DESKTOP_VIEWS = ["browser", "computer"] as const
+export const desktopViewSchema = z.enum(DESKTOP_VIEWS)
+export type DesktopView = z.infer<typeof desktopViewSchema>
+
+/**
  * An optional Linux computer per conversation (`@openwork-ee/headless-computer`), loaded only when configured.
  * The runner offers its tools and prompt, and tells it when a conversation starts, goes quiet, or is deleted.
  */
@@ -125,11 +133,13 @@ export type SessionComputer = {
   image: string
   desktopTools?: ToolSpec[]
   desktopRun?(sessionId: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult>
-  /** Desktop failures may carry `desktopCode` (`desktop_outdated`, `desktop_unresponsive`), which the runner reports as its error code. */
+  /** Desktop failures may carry `desktopCode` (`desktop_outdated`, `desktop_unresponsive`, `desktop_updating`), which the runner reports as its error code. */
   desktopViewer?(sessionId: string, input: { view: "browser" | "computer"; control: boolean; origin: string }): Promise<{ state: "paused" } | { state: "connected"; url: string; expiresAt: number; paused: boolean }>
   browserDemonstration?(sessionId: string, command: import("@openwork/types/browser-demonstration").DemonstrationCommand): Promise<import("@openwork/types/browser-demonstration").DemonstrationReply>
   desktopAction?(sessionId: string, action: "continue" | "pause" | "resume" | "rebuild"): Promise<{ ok: boolean }>
   run(sessionId: string, name: string, input: Record<string, unknown>): Promise<ToolResult>
+  /** Whether this conversation has a computer here at all (see computer-route.ts); unset means every conversation does. */
+  available?(sessionId: string): boolean
   known(sessionId: string): boolean
   prewarm(sessionId: string): void
   release(sessionId: string): void

@@ -38,8 +38,17 @@ export function workbotDeploymentNotice(capabilities: DeploymentCapabilities | u
   } else {
     message = `Couldn't verify ${service.id === "workbot" ? "Workbot" : "the headless runner"}. Ask the deployment administrator to check service health, then try again.`;
   }
-  message += service.id === "workbot" && !service.configured
-    ? " Model settings for Slack and Automations are still available."
-    : " Existing conversations and model settings are kept.";
+  // Say what still works only where it isn't obvious: a service that was never set up had nothing to keep.
+  if (service.id === "workbot" && !service.configured) message += " Model settings for Slack and Automations are still available.";
+  else if (service.configured && service.state !== "misconfigured" && service.reason !== "not_checked") message += " Existing conversations and model settings are kept.";
   return { message, checkedAt: service.checkedAt, lastSuccessAt: service.lastSuccessAt, stale: service.stale };
+}
+
+/** One quiet line of check history, or nothing when there is no history to report. */
+export function serviceCheckLine(notice: Pick<WorkbotDeploymentNotice, "checkedAt" | "lastSuccessAt" | "stale">): string | null {
+  if (!notice.checkedAt || formatServiceTime(notice.checkedAt) === "Not yet") return null;
+  const checked = `${notice.stale ? "Out of date. " : ""}Last checked ${formatServiceTime(notice.checkedAt)}.`;
+  if (!notice.lastSuccessAt) return `${checked} It hasn't passed yet.`;
+  if (notice.lastSuccessAt === notice.checkedAt) return checked;
+  return `${checked} Last worked ${formatServiceTime(notice.lastSuccessAt)}.`;
 }

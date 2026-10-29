@@ -44,6 +44,14 @@ export type {
   InferenceUsageSource as GatewayUsageSource,
 } from "./inference.js";
 
+/**
+ * Result of sending one test prompt to a provider configuration before it is
+ * saved. `message` is written for the admin and never contains the key.
+ */
+export type GatewayProviderTestResult =
+  | { ok: true; model: string; status: number; code: null; message: null }
+  | { ok: false; model: string; status: number | null; code: string; message: string };
+
 export const GATEWAY_KEY_STATUSES = ["active", "revoked"] as const;
 export type GatewayKeyStatus = (typeof GATEWAY_KEY_STATUSES)[number];
 export type GatewayResourceStatus = InferenceProviderStatus;

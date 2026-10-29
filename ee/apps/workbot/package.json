@@ -24,7 +24,7 @@
     "test:command-palette": "tsx --conditions=development --test scripts/command-palette.test.ts"
   },
   "dependencies": {
-    "@hono/node-server": "2.0.12",
+    "@hono/node-server": "2.1.5",
     "@openwork-ee/headless-protocol": "workspace:*",
     "@openwork-ee/workbot-server": "workspace:*",
     "@openwork-ee/workbot-ui": "workspace:*",

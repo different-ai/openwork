@@ -1,6 +1,16 @@
 import type { DenExternalMcpConnection } from "../../../app/lib/den";
+import { providerSetupProblem } from "../connections/connection-sign-in-problem";
 
-export type RecordedConnectorState = "Set up" | "Sign in" | "Checking…" | "Ready" | "Couldn't verify" | "Not checked";
+export type RecordedConnectorState = "Set up" | "Change setting" | "Sign in" | "Checking…" | "Ready" | "Couldn't verify" | "Not checked";
+
+export type RecordedConnectorView = {
+  checking?: boolean;
+  /**
+   * libraryConnectorOrgSetup: a setting in the service's own app that blocks
+   * sign-in is shown, with Den's reason, before any "Sign in".
+   */
+  providerSetup?: boolean;
+};
 
 type Readiness = NonNullable<DenExternalMcpConnection["readiness"]>;
 
@@ -13,10 +23,12 @@ function signInFailure(readiness: Readiness | null | undefined) {
  * a recorded check that did not pass is "Couldn't verify", and only a
  * rejected or missing sign-in asks someone to sign in.
  */
-export function recordedConnectorState(connection: DenExternalMcpConnection, view: { checking?: boolean } = {}): RecordedConnectorState | null {
+export function recordedConnectorState(connection: DenExternalMcpConnection, view: RecordedConnectorView = {}): RecordedConnectorState | null {
   const readiness = connection.readiness;
   if (readiness === undefined) return null;
   if (connection.setupRequired || connection.issuerReviewRequired || (connection.credentialMode === "shared" && !connection.connected)) return "Set up";
+  // Signing in again cannot work until the setting changes, so this wins over needsReconnect.
+  if (view.providerSetup && providerSetupProblem(connection)) return "Change setting";
   if (connection.needsReconnect) return "Sign in";
   if (view.checking) return "Checking…";
   if (readiness?.status === "ready") return "Ready";
@@ -29,9 +41,10 @@ function formatTime(value: string) {
   return new Date(value).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
 }
 
-export function recordedConnectorNote(connection: DenExternalMcpConnection, view: { checking?: boolean } = {}) {
+export function recordedConnectorNote(connection: DenExternalMcpConnection, view: RecordedConnectorView = {}) {
   const state = recordedConnectorState(connection, view);
   const readiness = connection.readiness;
+  if (state === "Change setting") return providerSetupProblem(connection)?.reason ?? "";
   if (state === "Checking…") return "Checking that it connects and its tools can be read.";
   if (state === "Not checked") return "Not checked yet.";
   if (state === "Ready" && readiness) return `Checked ${formatTime(readiness.checkedAt)}`;

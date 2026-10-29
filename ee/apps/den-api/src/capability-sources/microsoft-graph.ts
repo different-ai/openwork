@@ -1,10 +1,44 @@
 import { decodeFileContent, truncateText } from "./binary-content.js"
 
-const DEFAULT_GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
+export const DEFAULT_GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024
 const DEFAULT_MAX_JSON_RESPONSE_BYTES = 5_000_000
 const DEFAULT_MAX_CONTENT_CHARACTERS = 200_000
+/** Graph attaches a file in one request only below 3 MB; larger files need an attachment upload session. */
+export const MICROSOFT_MAIL_ATTACHMENT_MAX_BYTES = 3_000_000
+
+export type Microsoft365BodyContentType = "text" | "html"
+export type Microsoft365OnlineMeetingProvider = "teamsForBusiness" | "skypeForBusiness" | "skypeForConsumer"
+type OnlineMeetingInput = { isOnlineMeeting?: boolean; onlineMeetingProvider?: Microsoft365OnlineMeetingProvider }
+
+/** Graph's online-meeting fields; Teams unless another provider is named. Omitted entirely when no meeting is asked for. */
+function graphOnlineMeeting(input: OnlineMeetingInput) {
+  if (input.isOnlineMeeting === undefined) return {}
+  return input.isOnlineMeeting
+    ? { isOnlineMeeting: true, onlineMeetingProvider: input.onlineMeetingProvider ?? "teamsForBusiness" }
+    : { isOnlineMeeting: false }
+}
+
+/** Graph's itemBody; plain text unless HTML is asked for, so markup is never stored as literal text by accident of a default. */
+function graphItemBody(content: string, contentType: Microsoft365BodyContentType | undefined) {
+  return { contentType: contentType === "html" ? "HTML" : "Text", content }
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+}
+
+/** The member's HTML reply placed above the quoted original that createReply prepared. */
+export function htmlReplyBody(reply: string, quoted: string, quotedContentType: string): string {
+  const block = `<div>${reply}</div>`
+  if (!quoted) return block
+  if (quotedContentType.toLowerCase() !== "html") return `${block}<br>${escapeHtml(quoted).replace(/\r?\n/g, "<br>")}`
+  const bodyTag = /<body\b[^>]*>/i.exec(quoted)
+  if (!bodyTag) return `${block}${quoted}`
+  const at = bodyTag.index + bodyTag[0].length
+  return `${quoted.slice(0, at)}${block}${quoted.slice(at)}`
+}
 
 export type Microsoft365EmailAddress = {
   name: string
@@ -82,6 +116,21 @@ export type Microsoft365Drive = {
   name: string
   webUrl: string
   driveType: string
+}
+
+export type Microsoft365MailAttachment = {
+  id: string
+  name: string
+  contentType: string
+  size: number | null
+  isInline: boolean
+  /** Only file attachments have bytes; item and reference attachments are an Outlook item or a cloud link. */
+  kind: "file" | "item" | "reference" | "unknown"
+}
+
+export type Microsoft365MailAttachmentWithContent = Microsoft365MailAttachment & {
+  contentBase64: string | null
+  contentUnavailableReason: "not_a_file" | "file_too_large" | null
 }
 
 export type Microsoft365UploadSession = {
@@ -257,6 +306,32 @@ export function extractMicrosoftMailMessages(json: unknown): Microsoft365MailMes
 
 export function extractMicrosoftMailMessage(json: unknown): Microsoft365MailMessage {
   return extractMailMessage(json)
+}
+
+const CALENDAR_EVENT_SELECT = "id,subject,bodyPreview,start,end,isAllDay,location,organizer,attendees,webLink,onlineMeeting,onlineMeetingUrl"
+const MAIL_ATTACHMENT_SELECT = "id,name,contentType,size,isInline"
+
+function mailAttachmentKind(type: string): Microsoft365MailAttachment["kind"] {
+  if (type === "#microsoft.graph.fileAttachment") return "file"
+  if (type === "#microsoft.graph.itemAttachment") return "item"
+  if (type === "#microsoft.graph.referenceAttachment") return "reference"
+  return "unknown"
+}
+
+function extractMailAttachment(value: unknown): Microsoft365MailAttachment {
+  const attachment = isRecord(value) ? value : {}
+  return {
+    id: readString(attachment, "id"),
+    name: readString(attachment, "name"),
+    contentType: readString(attachment, "contentType"),
+    size: readNumber(attachment, "size"),
+    isInline: readBoolean(attachment, "isInline"),
+    kind: mailAttachmentKind(readString(attachment, "@odata.type")),
+  }
+}
+
+export function extractMicrosoftMailAttachments(json: unknown): Microsoft365MailAttachment[] {
+  return isRecord(json) ? readArray(json, "value").map(extractMailAttachment).filter((attachment) => attachment.id) : []
 }
 
 function readEventTime(event: Record<string, unknown>, key: string): { dateTime: string; timeZone: string } {
@@ -636,11 +711,12 @@ export class MicrosoftGraphClient {
     bcc?: string[]
     subject: string
     body: string
+    bodyContentType?: Microsoft365BodyContentType
   }): Promise<Microsoft365MailMessage> {
     const recipient = (address: string) => ({ emailAddress: { address } })
     return extractMicrosoftMailMessage(await this.requestMutation("Microsoft 365 mail draft create", "me/messages", "POST", 201, {
       subject: input.subject,
-      body: { contentType: "Text", content: input.body },
+      body: graphItemBody(input.body, input.bodyContentType),
       toRecipients: input.to.map(recipient),
       ccRecipients: (input.cc ?? []).map(recipient),
       bccRecipients: (input.bcc ?? []).map(recipient),
@@ -653,7 +729,7 @@ export class MicrosoftGraphClient {
     url.searchParams.set("endDateTime", input.end)
     url.searchParams.set("$top", String(input.maxResults))
     url.searchParams.set("$orderby", "start/dateTime")
-    url.searchParams.set("$select", "id,subject,bodyPreview,start,end,isAllDay,location,organizer,attendees,webLink,onlineMeeting,onlineMeetingUrl")
+    url.searchParams.set("$select", CALENDAR_EVENT_SELECT)
     return extractMicrosoftCalendarEvents(await this.requestJson("Microsoft 365 calendar list", url))
   }
 
@@ -662,12 +738,66 @@ export class MicrosoftGraphClient {
     return { draftId: messageId, status: "accepted" }
   }
 
-  async createMailReplyDraft(messageId: string, comment: string): Promise<Microsoft365MailMessage> {
-    const draft = extractMicrosoftMailMessage(await this.requestMutation(
-      "Microsoft 365 mail reply draft create", `me/messages/${encodeURIComponent(messageId)}/createReply`, "POST", 201, { comment },
-    ))
+  async createMailReplyDraft(messageId: string, comment: string, bodyContentType: Microsoft365BodyContentType = "text"): Promise<Microsoft365MailMessage> {
+    const path = `me/messages/${encodeURIComponent(messageId)}/createReply`
+    if (bodyContentType === "text") {
+      const draft = extractMicrosoftMailMessage(await this.requestMutation("Microsoft 365 mail reply draft create", path, "POST", 201, { comment }))
+      if (!draft.isDraft) throw new MicrosoftGraphMutationOutcomeUnknownError("Microsoft 365 mail reply draft create")
+      return draft
+    }
+    // createReply's comment is always plain text. For HTML, create the reply
+    // without one, then write the comment above the quoted original in one
+    // body update, so the reply context Outlook built is kept.
+    const created = await this.requestMutation("Microsoft 365 mail reply draft create", path, "POST", 201, {})
+    const draft = extractMicrosoftMailMessage(created)
     if (!draft.isDraft) throw new MicrosoftGraphMutationOutcomeUnknownError("Microsoft 365 mail reply draft create")
-    return draft
+    try {
+      const quoted = (isRecord(created) ? readRecord(created, "body") : null) ?? {}
+      return extractMicrosoftMailMessage(await this.requestMutation(
+        "Microsoft 365 mail reply draft body update", `me/messages/${encodeURIComponent(draft.id)}`, "PATCH", 200,
+        { body: { contentType: "HTML", content: htmlReplyBody(comment, readString(quoted, "content"), readString(quoted, "contentType")) } },
+      ))
+    } catch (error) {
+      // Never leave a reply draft without the member's words in their Drafts folder.
+      await this.deleteMailDraft(draft.id).catch(() => undefined)
+      throw error
+    }
+  }
+
+  async listMailAttachments(messageId: string): Promise<Microsoft365MailAttachment[]> {
+    const url = this.url(`me/messages/${encodeURIComponent(messageId)}/attachments`)
+    url.searchParams.set("$select", MAIL_ATTACHMENT_SELECT)
+    return extractMicrosoftMailAttachments(await this.requestJson("Microsoft 365 mail attachment list", url))
+  }
+
+  /** A file attachment's bytes as base64, up to the download cap; checks the size Outlook reports before downloading. */
+  async getMailAttachment(messageId: string, attachmentId: string): Promise<Microsoft365MailAttachmentWithContent> {
+    const path = `me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`
+    const url = this.url(path)
+    url.searchParams.set("$select", MAIL_ATTACHMENT_SELECT)
+    const attachment = extractMailAttachment(await this.requestJson("Microsoft 365 mail attachment read", url))
+    if (attachment.kind !== "file") return { ...attachment, contentBase64: null, contentUnavailableReason: "not_a_file" }
+    if (attachment.size !== null && attachment.size > this.maxDownloadBytes) return { ...attachment, contentBase64: null, contentUnavailableReason: "file_too_large" }
+    const downloaded = await readBytesWithByteLimit(await this.request("Microsoft 365 mail attachment download", this.url(`${path}/$value`)), this.maxDownloadBytes)
+    if (downloaded.limitExceeded) return { ...attachment, contentBase64: null, contentUnavailableReason: "file_too_large" }
+    return { ...attachment, contentBase64: Buffer.from(downloaded.bytes).toString("base64"), contentUnavailableReason: null }
+  }
+
+  /** Attaches one file of up to MICROSOFT_MAIL_ATTACHMENT_MAX_BYTES, Graph's limit for a single request. */
+  async addMailAttachment(messageId: string, file: { name: string; contentType: string; content: Uint8Array }): Promise<Microsoft365MailAttachment> {
+    return extractMailAttachment(await this.requestMutation(
+      "Microsoft 365 mail attachment add", `me/messages/${encodeURIComponent(messageId)}/attachments`, "POST", 201, {
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        name: file.name,
+        contentType: file.contentType,
+        contentBytes: Buffer.from(file.content).toString("base64"),
+      },
+    ))
+  }
+
+  /** Moves a draft to Deleted Items, as Outlook does; never a permanent delete. */
+  async deleteMailDraft(messageId: string): Promise<void> {
+    await this.requestMutation("Microsoft 365 mail draft delete", `me/messages/${encodeURIComponent(messageId)}`, "DELETE", 204)
   }
 
   async updateMailMessage(messageId: string, input: { isRead?: boolean; categories?: string[] }): Promise<Microsoft365MailMessage> {
@@ -686,19 +816,38 @@ export class MicrosoftGraphClient {
   async updateCalendarEvent(eventId: string, input: {
     subject?: string
     body?: string
+    bodyContentType?: Microsoft365BodyContentType
     start?: string
     end?: string
     location?: string
-  }): Promise<Microsoft365CalendarEvent> {
-    return extractMicrosoftCalendarEvent(await this.requestMutation(
+  } & OnlineMeetingInput): Promise<Microsoft365CalendarEvent> {
+    return this.withJoinUrl(input, extractMicrosoftCalendarEvent(await this.requestMutation(
       "Microsoft 365 calendar event update", `me/events/${encodeURIComponent(eventId)}`, "PATCH", 200, {
         subject: input.subject,
-        body: input.body === undefined ? undefined : { contentType: "Text", content: input.body },
+        body: input.body === undefined ? undefined : graphItemBody(input.body, input.bodyContentType),
         start: input.start === undefined ? undefined : { dateTime: input.start, timeZone: "UTC" },
         end: input.end === undefined ? undefined : { dateTime: input.end, timeZone: "UTC" },
         location: input.location === undefined ? undefined : { displayName: input.location },
+        ...graphOnlineMeeting(input),
       },
-    ))
+    )))
+  }
+
+  /**
+   * Microsoft can attach the Teams meeting a moment after the event write, so
+   * an event that asked for one and came back without a join link is read once
+   * more. It never writes again: the event and any invitations already exist.
+   */
+  private async withJoinUrl(input: OnlineMeetingInput, event: Microsoft365CalendarEvent): Promise<Microsoft365CalendarEvent> {
+    if (input.isOnlineMeeting !== true || event.onlineMeetingUrl || !event.id) return event
+    try {
+      const url = this.url(`me/events/${encodeURIComponent(event.id)}`)
+      url.searchParams.set("$select", CALENDAR_EVENT_SELECT)
+      const reread = extractMicrosoftCalendarEvent(await this.requestJson("Microsoft 365 calendar event read", url))
+      return reread.id === event.id ? reread : event
+    } catch {
+      return event
+    }
   }
 
   async cancelCalendarEvent(eventId: string, comment?: string): Promise<{ eventId: string; status: "accepted" }> {
@@ -714,15 +863,16 @@ export class MicrosoftGraphClient {
   async createCalendarEvent(input: {
     subject: string
     body?: string
+    bodyContentType?: Microsoft365BodyContentType
     start: string
     end: string
     timeZone: string
     location?: string
     attendees?: string[]
-  }): Promise<Microsoft365CalendarEvent> {
-    return extractMicrosoftCalendarEvent(await this.requestMutation("Microsoft 365 calendar event create", "me/events", "POST", 201, {
+  } & OnlineMeetingInput): Promise<Microsoft365CalendarEvent> {
+    return this.withJoinUrl(input, extractMicrosoftCalendarEvent(await this.requestMutation("Microsoft 365 calendar event create", "me/events", "POST", 201, {
       subject: input.subject,
-      body: { contentType: "Text", content: input.body ?? "" },
+      body: graphItemBody(input.body ?? "", input.bodyContentType),
       start: { dateTime: input.start, timeZone: input.timeZone },
       end: { dateTime: input.end, timeZone: input.timeZone },
       location: { displayName: input.location ?? "" },
@@ -730,7 +880,8 @@ export class MicrosoftGraphClient {
         emailAddress: { address },
         type: "required",
       })),
-    }))
+      ...graphOnlineMeeting(input),
+    })))
   }
 
   /** Refuses another drive on a connection limited to the member's own OneDrive. */

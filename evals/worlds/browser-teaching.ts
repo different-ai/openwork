@@ -148,7 +148,7 @@ export async function browserTeaching(seed: Seed, { place }: { place: Place }) {
     browser = createCloudBrowser({ statePath: join(directory, "browser-tabs.json"), endpoint: registry.handle.cdpUrl, privateBrowsing: true, verifyEgress: async () => {}, assertActive() {}, enabled: () => true, beforeInput: async () => {} });
     resources.defer(() => browser?.close());
     const den = await seed.den({ web: false, org: { name: "Example workspace", admin: { name: "Member Example" } }, env: { DEN_WORKBOT_URL: url, DEN_PLAN_GATING_ENABLED: "false", RESEND_API_KEY: "", SMTP_HOST: "", LOOPS_API_KEY: "", STRIPE_SECRET_KEY: "" } });
-    const orgId = await enableOrganizationCapabilities(seed, den.admin, { computerUse: true, remoteComputers: true, browserDemonstrations: true });
+    const orgId = await enableOrganizationCapabilities(seed, den.admin, { computerUse: true, browserUse: true, remoteComputers: true, browserDemonstrations: true });
     const issued = await seed.api(den.admin, "/v1/mcp/token", { method: "POST", headers: { "x-openwork-org-id": orgId }, body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }) });
     token = tokenSchema.parse(issued.body).token; denUrl = den.ref.apiUrl;
     app = await teachingServer({ denUrl, publicUrl: url, runnerUrl, token });

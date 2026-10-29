@@ -4,7 +4,11 @@ type Connection = typeof ExternalMcpConnectionTable.$inferSelect
 type Account = typeof ConnectedAccountTable.$inferSelect
 export type ReadinessIdentity = Pick<Connection, "url" | "authType" | "credentialMode" | "apiKeyAuthScheme" | "oauthConfiguration" | "oauthIssuerReviewRequiredAt" | "accessToken" | "apiKey" | "readinessCredentialBinding">
 export type ReadinessAccountIdentity = Pick<Account, "accessToken" | "externalAccountId" | "readinessCredentialBinding">
-export type VisibleReadiness = Pick<ExternalMcpReadinessCheck, "status" | "checkedAt" | "lastSuccessfulAt" | "reason"> & { failure: ExternalMcpReadinessCheck["failure"] }
+export type VisibleReadiness = Pick<ExternalMcpReadinessCheck, "status" | "checkedAt" | "lastSuccessfulAt" | "reason"> & {
+  failure: ExternalMcpReadinessCheck["failure"]
+  referenceId?: string
+  providerSettingsUrl?: string
+}
 
 function configurationIdentity(connection: ReadinessIdentity) {
   return [
@@ -38,7 +42,15 @@ export function fingerprintOrganizationReadinessIdentity(connection: ReadinessId
 
 export function visibleReadiness(check: ExternalMcpReadinessCheck | null, fingerprint: string): VisibleReadiness | null {
   if (!check || check.fingerprint !== fingerprint) return null
-  return { status: check.status, checkedAt: check.checkedAt, lastSuccessfulAt: check.lastSuccessfulAt, reason: check.reason, failure: check.failure ?? null }
+  return {
+    status: check.status,
+    checkedAt: check.checkedAt,
+    lastSuccessfulAt: check.lastSuccessfulAt,
+    reason: check.reason,
+    failure: check.failure ?? null,
+    ...(check.referenceId ? { referenceId: check.referenceId } : {}),
+    ...(check.providerSettingsUrl ? { providerSettingsUrl: check.providerSettingsUrl } : {}),
+  }
 }
 
 /** The most recent Ready check among members' own checks that still match their current sign-in. */

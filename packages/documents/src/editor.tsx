@@ -16,7 +16,8 @@ import type { DocumentTabControlsChange } from "./document-tabs"
 export function DocumentEditorTab(props: Parameters<typeof BasicDocumentEditorTab>[0]) {
   const [editing, setEditing] = useState(false)
   const [officeReady, setOfficeReady] = useState(false)
-  const office = officeMimeTypes.has(props.item.mimeType) ? props.editor.office : undefined
+  // A combined editor names which providers have the full Office editor; OneDrive files edit inline.
+  const office = officeMimeTypes.has(props.item.mimeType) && (props.editor.hasOffice?.(props.item.id) ?? true) ? props.editor.office : undefined
   const fullEditor = editing && office
   return <div className="ow-document-mode" hidden={!props.active}>
     <div className="ow-document-preview-owner" hidden={!!fullEditor && officeReady} inert={!!fullEditor}>
@@ -27,6 +28,8 @@ export function DocumentEditorTab(props: Parameters<typeof BasicDocumentEditorTa
 }
 
 function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEnabled = false, editing = false, onEdit, showActions = true, active, scope, connectionsHref, renderConnect, onDirtyChange, onSavingChange, onControlsChange, onClose }: { toolbarHost?: HTMLElement | null; item: DocumentItem; editor: DocumentsEditor; enabled: boolean; editingEnabled?: boolean; editing?: boolean; onEdit?(): void; showActions?: boolean; active: boolean; scope: readonly string[]; connectionsHref?: string | null; renderConnect?(connectionId?: string, reconnect?: boolean): ReactNode; onDirtyChange?(id: string, dirty: boolean): void; onSavingChange?(id: string, saving: boolean): void; onResourceChange?(tabId: string, resource: DocumentItem): void; onControlsChange?: DocumentTabControlsChange; onClose(): void }) {
+  // Where this file is saved, in the words people see: "Drive" or "OneDrive".
+  const storage = item.source?.storage ?? "Drive"
   const [sheetId, setSheetId] = useState<string>()
   const [startRow, setStartRow] = useState(1)
   // Pin the selected Drive account without changing the query identity after its first response.
@@ -86,22 +89,23 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEna
       setDraft({}); setFormulas(new Set()); setSaved(true)
       if (closing) onClose()
       else await query.refetch()
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "Couldn't confirm the save. Check Drive before trying again."); setNeedsConnection(failure instanceof DocumentsError && failure.code === "needs_connection") }
+    } catch (failure) { setError(failure instanceof Error ? failure.message : `Couldn't confirm the save. Check ${storage} before trying again.`); setNeedsConnection(failure instanceof DocumentsError && failure.code === "needs_connection") }
     finally { setSaving(false) }
   }
   const readonly = !enabled || !editingEnabled || !editing || !data?.canEdit || saving
   const googleApp = googleAppNames[item.mimeType]
+  const reconnectLabel = `Reconnect ${item.source?.label ?? "Google Drive"}`
   const information = editing && editingEnabled ? [data?.notice, data && !data.canEdit && data.kind !== "preview" ? "Editing requires write access to this file and the connector's enabled write permission." : null].filter(Boolean).join(" ") : ""
   return <section className="ow-document-editor" hidden={!active} aria-label={item.name}>
-    <EditorActions active={active && showActions} host={toolbarHost}><span role="status">{saving ? "Saving to Drive…" : dirty ? "Unsaved changes" : saved ? "Saved to Drive" : !editing ? "Preview" : data?.canEdit ? "Saved in Drive" : "Read-only"}</span>{information && <DocumentInformation>{information}</DocumentInformation>}{item.openUrl && (googleApp
+    <EditorActions active={active && showActions} host={toolbarHost}><span role="status">{saving ? `Saving to ${storage}…` : dirty ? "Unsaved changes" : saved ? `Saved to ${storage}` : !editing ? "Preview" : data?.canEdit ? `Saved in ${storage}` : "Read-only"}</span>{information && <DocumentInformation>{information}</DocumentInformation>}{item.openUrl && (googleApp
       ? <a className="ow-editor-open-google" href={item.openUrl} target="_blank" rel="noopener noreferrer"><ExternalLink size={15} aria-hidden />Open in {googleApp}</a>
-      : <a href={item.openUrl} target="_blank" rel="noopener noreferrer" aria-label="Open original in Drive"><ExternalLink size={16} /></a>)}{editingEnabled && !editing && data?.canEdit && <button type="button" disabled={!enabled} onClick={onEdit}>Edit</button>}{editing && <button type="button" disabled={!dirty || readonly} onClick={() => void save()}><Save size={15} aria-hidden />Save to Drive</button>}{!onControlsChange && <button type="button" aria-label={`Close ${item.name}`} disabled={saving} onClick={() => closeAction.current()}><X size={16} /></button>}</EditorActions>
+      : <a href={item.openUrl} target="_blank" rel="noopener noreferrer" aria-label={`Open original in ${storage}`}><ExternalLink size={16} /></a>)}{editingEnabled && !editing && data?.canEdit && <button type="button" disabled={!enabled} onClick={onEdit}>Edit</button>}{editing && <button type="button" disabled={!dirty || readonly} onClick={() => void save()}><Save size={15} aria-hidden />Save to {storage}</button>}{!onControlsChange && <button type="button" aria-label={`Close ${item.name}`} disabled={saving} onClick={() => closeAction.current()}><X size={16} /></button>}</EditorActions>
     {editing && !editingEnabled && <div className="ow-editor-message" role="status">Editing is off for this workspace. Your draft is kept in this tab.</div>}
-    {closing && <UnsavedChangesDialog name={item.name} saveLabel="Save to Drive" saving={saving} canSave={!readonly} error={error} onSave={() => void save()} onDiscard={onClose} onCancel={() => setClosing(false)} />}
+    {closing && <UnsavedChangesDialog name={item.name} saveLabel={`Save to ${storage}`} saving={saving} canSave={!readonly} error={error} onSave={() => void save()} onDiscard={onClose} onCancel={() => setClosing(false)} />}
     {!enabled ? <div className="ow-editor-message">Documents is off for this workspace. Your draft remains in this tab.</div>
-      : query.isError ? <div className="ow-editor-message" role="status">{query.error instanceof Error ? query.error.message : "Couldn't open this document."}{query.error instanceof DocumentsError && query.error.code === "needs_connection" && (renderConnect ? renderConnect(connectionId, true) : connectionsHref && <a href={connectionsHref} target="_blank" rel="noopener noreferrer">Reconnect Google Drive</a>)}<button type="button" onClick={() => void query.refetch()}>Try again</button></div>
+      : query.isError ? <div className="ow-editor-message" role="status">{query.error instanceof Error ? query.error.message : "Couldn't open this document."}{query.error instanceof DocumentsError && query.error.code === "needs_connection" && (renderConnect ? renderConnect(connectionId ?? item.source?.connectionId, true) : connectionsHref && <a href={connectionsHref} target="_blank" rel="noopener noreferrer">{reconnectLabel}</a>)}<button type="button" onClick={() => void query.refetch()}>Try again</button></div>
       : !data ? <div className="ow-documents-skeleton" aria-busy="true" aria-label="Opening document"><div/><div/><div/></div>
-      : <>{error && <div className="ow-editor-message" role="alert">{error}{needsConnection && (renderConnect ? renderConnect(connectionId, true) : connectionsHref && <a href={connectionsHref} target="_blank" rel="noopener noreferrer">Reconnect Google Drive</a>)}<button type="button" disabled={saving} onClick={() => { setDraft({}); setFormulas(new Set()); setError(null); void query.refetch() }}>Reload latest and discard edits</button></div>}
+      : <>{error && <div className="ow-editor-message" role="alert">{error}{needsConnection && (renderConnect ? renderConnect(connectionId ?? item.source?.connectionId, true) : connectionsHref && <a href={connectionsHref} target="_blank" rel="noopener noreferrer">{reconnectLabel}</a>)}<button type="button" disabled={saving} onClick={() => { setDraft({}); setFormulas(new Set()); setError(null); void query.refetch() }}>Reload latest and discard edits</button></div>}
         {data.kind === "spreadsheet" ? <Spreadsheet data={data} draft={draft} formulas={formulas} setFormulas={setFormulas} readonly={readonly} change={change} onSheet={id => { setSheetId(id); setStartRow(1); setSaved(false) }} onPage={row => { setStartRow(row); setSaved(false) }} dirty={dirty} />
           : data.kind === "document" ? <RichDocument data={data} draft={draft} readonly={readonly} change={change} />
           : data.kind === "text" ? <textarea className="ow-editor-plain" aria-label="Document text" value={draft.text ?? data.text} readOnly={readonly} onChange={event => change("text", event.target.value, data.text)} />
@@ -151,14 +155,14 @@ function DocumentPreview({ data, editor, item }: { data: Extract<EditorDocument,
   // Keep one mounted viewer while its protected file bytes load, including Slides' PDF export.
   const pdf = data.mimeType === "application/pdf" || data.mimeType === "application/vnd.google-apps.presentation"
   if (pdf || ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(data.mimeType)) return <BinaryPreview key={url} url={url} item={item} pdf={pdf} />
-  return <div className="ow-documents-state"><p>No inline preview is available.</p>{item.openUrl && <a href={item.openUrl} target="_blank" rel="noopener noreferrer">Open in Drive</a>}</div>
+  return <div className="ow-documents-state"><p>No inline preview is available.</p>{item.openUrl && <a href={item.openUrl} target="_blank" rel="noopener noreferrer">Open in {item.source?.storage ?? "Drive"}</a>}</div>
 }
 
 function BinaryPreview({ url, item, pdf }: { url: string; item: DocumentItem; pdf: boolean }) {
   const [state, setState] = useState<"loading" | "ready" | "error">("loading")
   return <div className="ow-editor-binary" aria-busy={state === "loading"}>
     {state === "loading" && <div className="ow-editor-preview-loading" role="status">Loading {pdf ? "PDF" : "image"} preview…</div>}
-    {state === "error" ? <div className="ow-documents-state"><p>Couldn't load this preview.</p><button type="button" onClick={() => setState("loading")}>Try again</button>{item.openUrl && <a href={item.openUrl} target="_blank" rel="noopener noreferrer">Open in Drive</a>}</div>
+    {state === "error" ? <div className="ow-documents-state"><p>Couldn't load this preview.</p><button type="button" onClick={() => setState("loading")}>Try again</button>{item.openUrl && <a href={item.openUrl} target="_blank" rel="noopener noreferrer">Open in {item.source?.storage ?? "Drive"}</a>}</div>
       : pdf ? <iframe className="ow-editor-preview" src={url} title={item.name} sandbox="allow-same-origin" onLoad={() => setState("ready")} onError={() => setState("error")} />
       : <div className="ow-editor-image"><img src={url} alt={item.name} onLoad={() => setState("ready")} onError={() => setState("error")} /></div>}
   </div>

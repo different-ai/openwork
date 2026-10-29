@@ -55,6 +55,25 @@ test("commands run in the background are their own step, apart from work on the 
   assert.deepEqual(steps[0]?.updates, ["Rendering the scene with Blender", "Checking the frames"])
 })
 
+test("a screen step keeps the last show Workbot gave, and background work has none", () => {
+  const shown = (id: string, show?: boolean) => ({ id, name: "desktop", input: { view: "computer", operation: "computer_observe", args: {}, ...(show === undefined ? {} : { show }) } })
+  const snapshot = {
+    status: "busy", finalAssistantText: "", hasEarlier: false,
+    turns: [{ messageId: "wb_show", status: "running", createdAt: 100, error: null }],
+    messages: [
+      { messageId: "wb_show", role: "user", text: "Show me the scene" },
+      { messageId: "wb_show", role: "assistant", text: "", createdAt: 110, toolCalls: [shown("c1"), shown("c2", true), shown("c3")] },
+      { messageId: "wb_show", role: "tool", callId: "c1", name: "desktop", isError: false, createdAt: 120 },
+      { messageId: "wb_show", role: "tool", callId: "c2", name: "desktop", isError: false, createdAt: 130 },
+      { messageId: "wb_show", role: "tool", callId: "c3", name: "desktop", isError: false, createdAt: 140 },
+      { messageId: "wb_show", role: "assistant", text: "", createdAt: 150, toolCalls: [{ id: "c4", name: "bash", input: { command: "ls", show: true } }, shown("c5", false)] },
+    ],
+  } satisfies RunnerSnapshot
+  const [turn] = buildWorkbotTurns(snapshot)
+  const steps = turn?.parts.flatMap((part) => (part.kind === "steps" ? part.steps : [])) ?? []
+  assert.deepEqual(steps.map((step) => [step.label, step.shown ?? null]), [["Using my computer", true], ["Working on my computer", null], ["Using my computer", false]])
+})
+
 test("the browser and background-then-screen nudges are only given when the computer is on", () => {
   const base = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false }
   assert.equal(workbotInstructions(base).includes("check it in your browser"), false)

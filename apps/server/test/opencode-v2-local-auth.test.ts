@@ -4,13 +4,16 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { mapRuntimeProvidersToV2Specs } from "../src/engine-v2-preview.js";
+import { mapRuntimeProvidersToV2Specs, nativeProviderSpec, userConfigProviders } from "../src/engine-v2-preview.js";
 import { renderOpencodeV2Config } from "../src/managed-opencode-v2.js";
 import { buildOpenworkRuntimeConfigObjectFromSnapshot } from "../src/openwork-runtime-config.js";
 import {
+  environmentProviderKey,
   localProviderDefinitions,
   normalizeLocalProviderDefinition,
+  parseEngineV2NativeProviders,
   readLocalProviderAuth,
+  readUserConfigProviders,
   type LocalProviderAuth,
 } from "../src/opencode-v2-local-auth.js";
 import { organizationProviderGate } from "../src/organization-provider-gate.js";
@@ -21,6 +24,10 @@ import { organizationProviderGate } from "../src/organization-provider-gate.js";
 // OpenRouter key, replaced with a marker that must never be used.
 const fixturePath = new URL("./fixtures/opencode-v1.18.30-provider.json", import.meta.url);
 const CATALOG_KEY = "sk-or-catalog-copy-must-not-be-used";
+// Trimmed GET /api/integration answer from the pinned OpenCode v2.0.26 engine.
+// `custom-endpoint` exists only because a generated config named it.
+const integrationPath = new URL("./fixtures/opencode-v2.0.26-integration.json", import.meta.url);
+const nativeProviders = async () => parseEngineV2NativeProviders(JSON.parse(await readFile(integrationPath, "utf8")));
 const KEY = "sk-or-local-test-key";
 
 let engine: Server;
@@ -163,7 +170,7 @@ test("organization providers and configured providers are never read from the v1
   const reads = providerReads;
   const local = await localProviderDefinitions(connection(), auth({ lpr_team: "managed", openwork: "managed", openrouter: KEY }), { openrouter: {} });
 
-  assert.deepEqual(local, { providers: {}, skipped: [] });
+  assert.deepEqual(local, { providers: {}, native: [], skipped: [] });
   assert.equal(providerReads, reads);
 });
 
@@ -224,6 +231,130 @@ test("auth.json API keys and sign-ins are told apart", async () => {
     assert.deepEqual(await readLocalProviderAuth(join(directory, "missing.json")), { apiKeys: new Map(), signIns: new Set() });
     await writeFile(path, `invalid-json-${KEY}`);
     await assert.rejects(readLocalProviderAuth(path), { message: "Could not read local provider credentials" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("the v2 engine's own catalog is told apart from providers only OpenWork's config named", async () => {
+  const native = await nativeProviders();
+
+  assert.ok(native.has("nvidia") && native.has("opencode-go") && native.has("zai-coding-plan") && native.has("groq"));
+  assert.equal(native.has("custom-endpoint"), false, "a config-only provider has just a key method");
+  assert.deepEqual(native.get("nvidia"), { name: "Nvidia", env: ["NVIDIA_API_KEY"] });
+  assert.deepEqual(parseEngineV2NativeProviders({ message: "not ready" }), new Map());
+});
+
+test("keys for catalog providers reach v2 as keys only, without the v1 catalog's endpoints or adapters", async () => {
+  const native = await nativeProviders();
+  const reads = providerReads;
+  // Nvidia and Z.ai use an openai-compatible endpoint, OpenCode Go mixes
+  // adapters per model, Groq has its own adapter: all were skipped before.
+  const keys = { nvidia: "nv-local", "opencode-go": "go-local", "zai-coding-plan": "zai-local", groq: "gsk-local" };
+  const local = await localProviderDefinitions(connection(), auth(keys, ["openai"]), {}, { native });
+
+  assert.equal(providerReads, reads, "catalog providers are not read from the v1 engine");
+  assert.deepEqual(local.providers, {});
+  assert.deepEqual(local.native, [
+    { id: "groq", name: "Groq", apiKey: "gsk-local" },
+    { id: "nvidia", name: "Nvidia", apiKey: "nv-local" },
+    { id: "opencode-go", name: "OpenCode Go", apiKey: "go-local" },
+    { id: "zai-coding-plan", name: "Z.AI Coding Plan", apiKey: "zai-local" },
+  ]);
+  assert.deepEqual(local.skipped, [{ id: "openai", reason: "oauth" }], "a ChatGPT sign-in still needs the engine's own sign-in");
+
+  const rendered = renderOpencodeV2Config({ providers: local.native.map(nativeProviderSpec), skills: [] });
+  assert.deepEqual(at(rendered, "providers"), {
+    groq: { settings: { apiKey: "gsk-local" } },
+    nvidia: { settings: { apiKey: "nv-local" } },
+    "opencode-go": { settings: { apiKey: "go-local" } },
+    "zai-coding-plan": { settings: { apiKey: "zai-local" } },
+  }, "the engine merges the key onto its own provider, endpoints and models");
+});
+
+test("a provider the v2 catalog does not know still uses the v1 description", async () => {
+  const local = await localProviderDefinitions(connection(), auth({ openrouter: KEY }), {}, { native: new Map() });
+  assert.deepEqual(Object.keys(local.providers), ["openrouter"]);
+  assert.deepEqual(local.native, []);
+});
+
+test("environment keys reach v2 like v1 reads them, only for providers that need nothing but a key", async () => {
+  const native = await nativeProviders();
+  const environment = {
+    NVIDIA_API_KEY: "nv-env",
+    GROQ_API_KEY: "gsk-env",
+    AZURE_API_KEY: "azure-env",
+    AWS_BEARER_TOKEN_BEDROCK: "bedrock-env",
+    GITHUB_TOKEN: "github-env",
+    OPENAI_API_KEY: "sk-env",
+    OPENCODE_API_KEY: "  ",
+  };
+  const local = await localProviderDefinitions(connection(), auth({ groq: "gsk-saved" }, ["openai"]), {}, { native, environment });
+
+  assert.deepEqual(local.native, [
+    { id: "groq", name: "Groq", apiKey: "gsk-saved" },
+    { id: "nvidia", name: "Nvidia", apiKey: "nv-env" },
+  ], "a saved key wins; Azure, Bedrock, Copilot and blank values are left out");
+  assert.deepEqual(local.skipped, [{ id: "openai", reason: "oauth" }], "an environment key never replaces a ChatGPT sign-in");
+
+  const allows = organizationProviderGate({ allowCustomProviders: false });
+  const blocked = await localProviderDefinitions(connection(), auth({}), {}, { native, environment, allows });
+  assert.deepEqual(blocked, { providers: {}, native: [], skipped: [] }, "an environment key the organization refuses is not reported as connected");
+  const configured = await localProviderDefinitions(connection(), auth({}), { nvidia: {} }, { native, environment });
+  assert.deepEqual(configured.native.map(provider => provider.id), ["groq", "openai"], "a Settings definition owns its own credential");
+  const nvidia = native.get("nvidia");
+  assert.ok(nvidia);
+  assert.equal(environmentProviderKey("nvidia", nvidia, {}), undefined);
+});
+
+test("providers written in this computer's OpenCode config file reach v2", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "openwork-user-config-"));
+  try {
+    const path = join(directory, "opencode.jsonc");
+    await writeFile(path, `{
+      // Hand-written, as v1 reads it.
+      "provider": {
+        "nvidia": { "options": { "apiKey": "{env:NV_KEY}" } },
+        "zai-coding-plan": {},
+        "groq": {},
+        "my-endpoint": {
+          "npm": "@ai-sdk/openai-compatible",
+          "name": "My endpoint",
+          "options": { "baseURL": "https://llm.example.test/v1", "apiKey": "{file:key.txt}" },
+          "models": { "model-a": { "name": "Model A" } },
+        },
+        "settings-wins": { "npm": "@ai-sdk/openai-compatible", "options": { "baseURL": "https://file.example.test/v1" } },
+        "lpr_team": { "npm": "@ai-sdk/openai-compatible", "options": { "baseURL": "https://file.example.test/v1" } },
+      },
+    }`);
+    await writeFile(join(directory, "key.txt"), "file-key\n");
+    const read = () => readUserConfigProviders(path);
+    const native = await nativeProviders();
+    const file = await userConfigProviders(
+      { "settings-wins": {} }, null, native, new Map([["zai-coding-plan", "zai-saved"]]), new Map(), read, { NV_KEY: "nv-file" },
+    );
+
+    assert.deepEqual(Object.keys(file.claimed).sort(), ["groq", "my-endpoint", "nvidia", "zai-coding-plan"]);
+    assert.deepEqual(file.native, [
+      { id: "nvidia", name: "Nvidia", apiKey: "nv-file" },
+      { id: "zai-coding-plan", name: "Z.AI Coding Plan", apiKey: "zai-saved" },
+    ]);
+    assert.deepEqual(file.skipped, [{ id: "groq", reason: "credentials" }]);
+    assert.deepEqual(file.errors, []);
+    const mapped = mapRuntimeProvidersToV2Specs(file.definitions, new Map(), new Map(), new Set(Object.keys(file.definitions)));
+    assert.deepEqual(mapped.specs.map(spec => [spec.id, spec.package, spec.baseUrl, spec.apiKey, spec.models.map(model => model.id)]), [
+      ["my-endpoint", "@opencode/ai/providers/openai-compatible", "https://llm.example.test/v1", "file-key", ["model-a"]],
+    ], "a hand-written endpoint is trusted like a Settings definition");
+
+    const allows = organizationProviderGate({ allowCustomProviders: false });
+    const blocked = await userConfigProviders({}, allows, native, new Map(), new Map(), read, { NV_KEY: "nv-file" });
+    assert.deepEqual(blocked.native, []);
+    assert.deepEqual(blocked.definitions, {});
+    assert.deepEqual(blocked.skipped.map(provider => provider.reason), ["policy", "policy", "policy", "policy", "policy"]);
+
+    assert.deepEqual(await readUserConfigProviders(join(directory, "missing.jsonc")), { directory, providers: {} });
+    await writeFile(path, "{ not json");
+    assert.deepEqual((await readUserConfigProviders(path)).providers, {});
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

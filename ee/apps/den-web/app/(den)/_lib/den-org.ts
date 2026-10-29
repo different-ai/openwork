@@ -1,3 +1,4 @@
+import type { BillingPlanTier } from "@openwork/types/den/billing-plans";
 import { parseDeploymentCapabilities, type DeploymentCapabilities } from "@openwork/types/den/deployment-capabilities";
 import { mapFeatures, type FeatureMap } from "@openwork/features";
 import { PERMISSION_KEYS, getPermissionDefinition, isPermissionKey, isPermissionOwnerOnlyByDefault, permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions";
@@ -12,6 +13,9 @@ export type DenOrgSummary = {
   orgMemberId: string;
   membershipId: string;
   memberCount: number;
+  /** Null when an older server does not report the plan; never inferred from the member's role. */
+  planTier: BillingPlanTier | null;
+  isSandbox: boolean;
   createdAt: string | null;
   updatedAt: string | null;
   isActive: boolean;
@@ -815,6 +819,10 @@ export function getAiGatewayProvidersRoute(orgSlug?: string | null): string {
   return `${getAiGatewayRoute(orgSlug)}?tab=ai-providers`;
 }
 
+export function getAiGatewayAutoRouterRoute(orgSlug?: string | null): string {
+  return `${getAiGatewayRoute(orgSlug)}?tab=auto-router`;
+}
+
 export function getNewAiGatewayProviderRoute(orgSlug?: string | null, providerId?: string): string {
   const base = `${getAiGatewayRoute(orgSlug)}/providers/new`;
   return providerId ? `${base}?provider=${encodeURIComponent(providerId)}` : base;
@@ -965,12 +973,22 @@ export function getLibraryPluginRoute(orgSlug: string | null | undefined, plugin
   return `${getLibraryRoute(orgSlug)}/plugins/${encodeURIComponent(pluginId)}`;
 }
 
+/** A skill inside a plugin, viewed from My Library (no admin area needed). */
+export function getLibraryPluginSkillRoute(orgSlug: string | null | undefined, pluginId: string, skillId: string): string {
+  return `${getLibraryPluginRoute(orgSlug, pluginId)}/skills/${encodeURIComponent(skillId)}`;
+}
+
 export function getLibraryPluginShareRoute(orgSlug: string | null | undefined, pluginId: string): string {
   return `${getLibraryPluginRoute(orgSlug, pluginId)}/share`;
 }
 
 export function getLibraryNewPluginRoute(orgSlug?: string | null, start?: "skill"): string {
   return `${getLibraryRoute(orgSlug)}/plugins/new${start ? `?start=${start}` : ""}`;
+}
+
+/** The member's own agent (My bot), in the sidebar's Work section. */
+export function getLibraryMyAgentRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/my-bot`;
 }
 
 export function getLibraryModelsRoute(orgSlug?: string | null): string {
@@ -1041,6 +1059,8 @@ export function parseOrgListPayload(payload: unknown): {
         orgMemberId,
         membershipId,
         memberCount: typeof entry.memberCount === "number" ? entry.memberCount : 0,
+        planTier: entry.planTier === "free" || entry.planTier === "team" || entry.planTier === "enterprise" ? entry.planTier : null,
+        isSandbox: asBoolean(entry.isSandbox),
         createdAt: asIsoString(entry.createdAt),
         updatedAt: asIsoString(entry.updatedAt),
         isActive: asBoolean(entry.isActive),

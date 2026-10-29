@@ -1,7 +1,13 @@
 import { browserScript, connect, debuggerUrlFor, listTargets } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
+import { configureProvider } from "./chat.ts";
 import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+
+// Signed-in desktops no longer offer OpenCode Zen, so the app's built-in
+// default model is unavailable and no chat can start. These journeys never
+// send a turn; a fixture model only has to be selectable.
+const FIXTURE_MODEL = { providerId: "feature-desktop-fixture", modelId: "feature-desktop-model" };
 
 /**
  * The first chat. On CI the desktop can still be settling its workspace when the
@@ -26,14 +32,29 @@ async function firstSession(seed: Seed, app: Awaited<ReturnType<Seed["desktop"]>
 
 /**
  * A signed-in desktop whose organization has one or more desktop chat
- * features switched on before the app starts, with one chat on screen.
+ * features switched on before the app starts, with a fixture model selected
+ * and one chat on screen.
  * Desktop features follow the active organization's features (`GET /v1/org`),
  * so the switch is the same platform-admin capability route other worlds use.
  */
 export async function featureDesktop(seed: Seed, name: string, capabilities: Record<string, true>, title: string) {
-  const den = await seed.den({ org: { name: "Desktop features studio", admin: { name: "Workspace Owner" } } });
+  const den = await seed.den({ org: { name: "Desktop features studio", admin: { name: "Workspace Owner" } }, mocks: { model: seed.mock({}) } });
+  const model = den.mocks.model;
+  if (!model) throw new Error("seed.den() did not boot the fixture model.");
   const organizationId = await enableOrganizationCapabilities(seed, den.admin, capabilities);
-  const app = await seed.desktop({ name, den, as: "admin" });
+  const { providerId, modelId } = FIXTURE_MODEL;
+  const app = await seed.desktop({ name, den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath(name));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Feature desktop fixture",
+        options: { baseURL: `${model.url}/v1`, apiKey: "feature-desktop-fixture-only" },
+        models: { [modelId]: { name: "Feature desktop model" } },
+      },
+    },
+  });
   const session = await firstSession(seed, app, title);
   const platform = await seed.evalIn(app, () => navigator.platform);
   const snapshot = () => seed.evalIn(app, browserScript((sessionId: string) => window.__OPENWORK_ELECTRON__.invokeDesktop("computerSnapshot", sessionId), [session.sessionId]), { awaitPromise: true });

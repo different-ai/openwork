@@ -19,7 +19,7 @@ const demonstration: BrowserDemonstration = { id: "cf8de71f-19e4-434c-ab81-921e4
 const member = (): Member => ({
   session: { id: "session_fixture", userId: "member", organizationId: "org", tokens: { accessToken: "synthetic", refreshToken: null, expiresAt: Date.now() + 60_000 }, createdAt: Date.now() },
   accessToken: "synthetic",
-  den: denSessionSchema.parse({ user: { id: "member", name: "Member", email: "member@example.test" }, organization: { id: "org", name: "Workspace", brandAppName: null }, memberId: "member", enabled: true, canSchedule: false, computer: true, browserDemonstrations: true }),
+  den: denSessionSchema.parse({ user: { id: "member", name: "Member", email: "member@example.test" }, organization: { id: "org", name: "Workspace", brandAppName: null }, memberId: "member", enabled: true, canSchedule: false, browser: true, browserDemonstrations: true }),
 })
 
 test("compilation preserves taught parameters, extraction, verification, and navigation results", () => {

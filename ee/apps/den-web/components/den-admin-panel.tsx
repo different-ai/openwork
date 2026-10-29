@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { DenButton } from "../app/(den)/_components/ui/button";
-import { AdminDashboard } from "./admin/admin-dashboard";
+import { AdminDashboard, QuickFind } from "./admin/admin-dashboard";
+import { AdminControlCenter } from "./admin/control-center/admin-control-center";
 import { Check, Copy, Download, Search, Trash2 } from "lucide-react";
 import { planEndLabel } from "../app/(den)/_lib/plan-display";
 import { mapFeatures } from "@openwork/features";
@@ -1978,7 +1979,12 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
         ) : null}
 
         {section === "overview" ? <>
-        <AdminDashboard refreshKey={payload.generatedAt} totalOrganizations={payload.summary.totalOrganizations} totalUsers={payload.summary.totalUsers} onAccessDenied={handleDashboardAccessDenied} />
+        <QuickFind />
+        <AdminControlCenter onAccessDenied={handleDashboardAccessDenied} />
+        <section aria-labelledby="admin-gateway-usage-title" className="border-t border-slate-200 pt-5">
+          <h2 id="admin-gateway-usage-title" className="text-sm font-semibold text-slate-950">AI gateway usage</h2>
+          <AdminDashboard quickFind={false} refreshKey={payload.generatedAt} totalOrganizations={payload.summary.totalOrganizations} totalUsers={payload.summary.totalUsers} onAccessDenied={handleDashboardAccessDenied} />
+        </section>
         <details className="border-t border-slate-200 py-4">
           <summary className="w-fit cursor-pointer text-sm font-medium text-slate-700 focus-visible:outline-2 focus-visible:outline-slate-500">More analytics</summary>
           <div className="mt-4"><DenButton size="sm" variant="secondary" loading={analyticsLoading} onClick={() => void loadAnalytics()}>{analyticsLoaded ? "Refresh analytics" : "Load analytics"}</DenButton></div>
