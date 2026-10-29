@@ -1,0 +1,25 @@
+---
+title: "Plan OpenWork on Coolify"
+sidebarTitle: "Coolify"
+description: "Plan OpenWork's container services on Docker hosts managed by Coolify, with MySQL, HTTPS, and durable storage."
+---
+
+Coolify manages container applications on your own servers. You can use that deployment model to plan the OpenWork team control plane on existing Docker hosts. This is planning guidance; OpenWork does not ship a tested Coolify template.
+
+## Deployment approach
+
+Use separate image-based applications for Den web and Den API, with MySQL hosted privately. Coolify's [build and deployment model](https://coolify.io/docs/core/build-deployment-model) describes its application lifecycle. Start from OpenWork's [common requirements](/self-host/platforms/overview#common-requirements), rather than exposing the evaluation stack unchanged.
+
+## What you need
+
+- Linux Docker hosts compatible with the pinned OpenWork images.
+- Web/API domains with trusted HTTPS, service ports, and securely stored environment variables.
+- A MySQL 8-compatible database with durable volumes, verified TLS, and backups.
+- A migration task before API traffic, health checks, and an upgrade and restore plan.
+- A separate worker provisioner and durable runtime storage if you want cloud workspaces.
+
+Keep database ports private. Platform-managed redeploys do not replace release-specific migration planning, and Docker application hosting does not automatically provide isolated OpenWork workers.
+
+## Next step
+
+You can [evaluate with Docker Compose](/self-host/evaluate-with-docker-compose) first. Review [licensing](/start-here/pricing-and-licensing), then [ask us about Coolify deployment](mailto:sales@openworklabs.com?subject=OpenWork%20deployment%20on%20Coolify&body=Platform%3A%20Coolify%0ADocs%3A%20https%3A%2F%2Fopenworklabs.com%2Fdocs%2Fself-host%2Fplatforms%2Fcoolify%0ATeam%20size%3A%20%0ADeployment%20constraints%3A%20) if you want help adapting it to your servers.
