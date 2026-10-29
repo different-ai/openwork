@@ -117,6 +117,7 @@ import { AutomationsPage } from "@/react-app/domains/automations/automations-pag
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
 import { CalendarPage } from "@/react-app/domains/calendar/calendar-page";
 import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature";
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { useRemoteSessionSubagentsFeature } from "@/react-app/domains/session/remote-threads/use-remote-session-subagents-feature";
 import { remoteThreadAttentionBySession, useRemoteThreadAttentionKey } from "@/react-app/domains/session/remote-threads/remote-thread-store";
 import { AppsPage } from "@/react-app/domains/apps/apps-page";
@@ -313,6 +314,8 @@ import {
  * so the session surface can detect ProviderModelNotFoundError and offer
  * recovery actions like "Change model".
  */
+const NO_SETTLE_WORKSPACES: ReadonlySet<string> = new Set();
+
 function serializeSDKError(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -938,10 +941,13 @@ export function SessionRoute() {
     return { statusById, labelById, sourceById };
   }, [attentionLocale, remoteAttentionKey, selectWorkspaceAttention, sessionActivityByWorkspaceId, sessionWaitingByWorkspaceId, sessionChildIdsByWorkspaceId, workspaceSessionGroups]);
   const sidebarSessionStatusById = sidebarSessionAttention.statusById;
-  // Settling ships for OpenCode v2 only; v1 workspaces keep today's sidebar.
+  // Settling ships behind `settledSessions` and for OpenCode v2 only; v1 workspaces keep today's sidebar.
+  const settledSessionsEnabled = useDesktopFeature("settledSessions");
   const settleWorkspaceIdSet = useMemo(
-    () => settleWorkspaceIds(workspaces, (workspace) => endpointForSessionWorkspace(workspace)?.opencodeBaseUrl),
-    [endpointForSessionWorkspace, workspaces],
+    () => settledSessionsEnabled
+      ? settleWorkspaceIds(workspaces, (workspace) => endpointForSessionWorkspace(workspace)?.opencodeBaseUrl)
+      : NO_SETTLE_WORKSPACES,
+    [endpointForSessionWorkspace, settledSessionsEnabled, workspaces],
   );
   const selectedSidebarSession = useMemo(() => {
     if (!selectedWorkspaceId || !selectedSessionId) return null;

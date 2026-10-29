@@ -161,6 +161,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  settledSessions: {
+    label: "Desktop: settle finished sessions",
+    description: "Finished sessions can be settled into a collapsed Settled row at the end of their workspace, by hand or after a few idle days, and come back on new activity.",
+    category: "experience",
+    added: "2026-10-29",
+    since: "2026-10",
+    author: "reachjalil",
+    docs: "docs/features/settled-sessions/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   mermaidZoom: {
     label: "Desktop: zoom into diagrams",
     description: "Mermaid diagrams in chat and file previews can be zoomed, panned and opened full screen so large diagrams are readable.",

@@ -121,6 +121,16 @@
               ],
               "description": "AI Gateway: test a provider before adding it: When adding an AI Gateway provider with a shared API key, admins test it first: AI Gateway sends one short prompt with their settings, and the provider can only be added once it answers. Renders DEN_FEATURE_GATEWAY_PROVIDER_TEST."
             },
+            "settledSessions": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: settle finished sessions: Finished sessions can be settled into a collapsed Settled row at the end of their workspace, by hand or after a few idle days, and come back on new activity. Renders DEN_FEATURE_SETTLED_SESSIONS."
+            },
             "mermaidZoom": {
               "enum": [
                 "",

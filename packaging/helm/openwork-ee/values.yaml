@@ -32,6 +32,7 @@ config:
     mcpAppLibraries: ""             # default off · Apps built in OpenWork can use icons, charts, animation, 3D and SVG drawing from pinned libraries bundled into each App, with no remote scripts or network access.
     autoRouter: ""                  # default off (cloud only) · Admins describe when to use each AI Gateway model, and members can pick Auto: each prompt goes to the model and thinking level that fits it best.
     gatewayProviderTest: ""         # default off · When adding an AI Gateway provider with a shared API key, admins test it first: AI Gateway sends one short prompt with their settings, and the provider can only be added once it answers.
+    settledSessions: ""             # default off · Finished sessions can be settled into a collapsed Settled row at the end of their workspace, by hand or after a few idle days, and come back on new activity.
     mermaidZoom: ""                 # default off · Mermaid diagrams in chat and file previews can be zoomed, panned and opened full screen so large diagrams are readable.
     administratorRecovery: ""       # default off · Run a one-time, operator-selected Admin-team permission repair at deployment; disabling stops future repairs, not existing grants.
     nativeDictation: ""             # default off · Dictate editable prompts in OpenWork and Workbot using native desktop dictation or live browser speech recognition.
