@@ -31,6 +31,7 @@ import { useLocationQuery } from "../use-location-query";
 import { FIRST_PARTY_APP_CLIENT_IDS } from "../client-trust-constants";
 import { useMcpClient } from "../use-mcp-client";
 import { isWorkbotSignIn } from "../workbot-sign-in";
+import { TeamToolsStep } from "./team-tools-step";
 
 type Organization = {
   id: string;
@@ -156,6 +157,8 @@ export default function McpSelectOrganizationPage() {
   // signed up lands here with no workspace, and should join their team rather than create a new one.
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [createInstead, setCreateInstead] = useState(false);
+  // The workspace this person just created from Workbot's sign-in: offer team tools before Workbot opens.
+  const [teamToolsFor, setTeamToolsFor] = useState<Organization | null>(null);
   const [selectedOrgId, setSelectedOrgId] = useState("");
   const [flowState, setFlowState] = useState<FlowState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -290,6 +293,11 @@ export default function McpSelectOrganizationPage() {
 
     setOrgs([org]);
     setSelectedOrgId(org.id);
+    if (workbot) {
+      setFlowState("ready");
+      setTeamToolsFor(org);
+      return;
+    }
     await continueFlow(org);
   }
 
@@ -355,6 +363,20 @@ export default function McpSelectOrganizationPage() {
         {workbot ? null : <SetupLine>Sign in to OpenWork, then {appName} can finish connecting.</SetupLine>}
         <a className="den-button-primary w-full" href={`/?${oauthQuery}`}>{workbot ? "Sign in to Workbot" : "Sign in to OpenWork"}</a>
       </SetupPanelBody>,
+    );
+  }
+
+  if (teamToolsFor) {
+    const org = teamToolsFor;
+    return frame(
+      <TeamToolsStep
+        organizationId={org.id}
+        request={requestJson}
+        onContinue={() => {
+          setTeamToolsFor(null);
+          void continueFlow(org).catch(() => setFlowState("error"));
+        }}
+      />,
     );
   }
 
