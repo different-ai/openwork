@@ -61,6 +61,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "desktopUpdateDownloadWindow": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: restart to update before the download: Restart to update shows in the desktop title bar as soon as an update is found. Clicking it opens a small window that downloads the update with its progress, then restarts, instead of waiting with no sign of the download. Renders DEN_FEATURE_DESKTOP_UPDATE_DOWNLOAD_WINDOW."
+            },
             "nativeAffordanceCodeMode": {
               "enum": [
                 "",

@@ -95,6 +95,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  desktopUpdateDownloadWindow: {
+    label: "Desktop: restart to update before the download",
+    description: "Restart to update shows in the desktop title bar as soon as an update is found. Clicking it opens a small window that downloads the update with its progress, then restarts, instead of waiting with no sign of the download.",
+    category: "experience",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "reachjalil",
+    docs: "docs/features/desktop-update-download-window/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   nativeAffordanceCodeMode: {
     label: "OpenWork commands in Code Mode",
     description: "Let assistants compose OpenWork queries and sidebar commands in Code Mode using the same checked app actions.",

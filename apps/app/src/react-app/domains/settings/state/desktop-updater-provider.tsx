@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { RotateCw } from "lucide-react";
 import { Button } from "../../../../components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../../components/ui/tooltip";
@@ -11,6 +11,8 @@ import { useEnterpriseActivationRequired } from "../../cloud/enterprise-activati
 import { useBrandAppName } from "../../cloud/brand-theme";
 import { notifyAlert } from "../../../shell/notifications";
 import { useElectronUpdaterState } from "./electron-updater-state";
+import { UpdateDownloadProgress } from "../pages/updates-view";
+import { useDesktopFeature } from "../../session/status/use-desktop-feature";
 
 function useUpdatePreference(key: string) {
   const [enabled, setEnabled] = useState(() => {
@@ -76,8 +78,52 @@ export function DesktopUpdaterProvider({ children }: { children: ReactNode }) {
 export function DesktopUpdateButton() {
   const updater = useContext(DesktopUpdaterContext);
   const appName = useBrandAppName();
+  const downloadWindow = useDesktopFeature("desktopUpdateDownloadWindow");
   const [confirmRestart, setConfirmRestart] = useState(false);
-  if (updater?.updateStatus?.state !== "ready") return null;
+  const [restarting, setRestarting] = useState(false);
+  const restartingRef = useRef(false);
+  const attemptRef = useRef(0);
+  const stepRef = useRef<"download" | "install" | null>(null);
+  const status = updater?.updateStatus;
+  const state = status?.state;
+
+  const stopRestart = useCallback(() => {
+    restartingRef.current = false;
+    stepRef.current = null;
+    setRestarting(false);
+  }, []);
+
+  // With desktopUpdateDownloadWindow on, a restart asked for before the update
+  // is downloaded downloads it in a small window with its progress, then
+  // installs. The install itself still fetches a newer build first when one
+  // shipped after the staged download, and that download shows here too.
+  useEffect(() => {
+    if (!restarting || !updater) return;
+    if (state === "available") {
+      if (stepRef.current !== "download") {
+        stepRef.current = "download";
+        void updater.downloadUpdate();
+      }
+      return;
+    }
+    if (state === "ready") {
+      if (stepRef.current === "install") return;
+      stepRef.current = "install";
+      const attempt = attemptRef.current;
+      const current = () => restartingRef.current && attemptRef.current === attempt;
+      void updater.installUpdateAndRestart(current).finally(() => {
+        if (current()) stopRestart();
+      });
+      return;
+    }
+    if (state === "downloading" || state === "checking") return;
+    // Failures already raise the updater's own notification.
+    stopRestart();
+  }, [restarting, state, stopRestart, updater]);
+
+  const shown = state === "ready" || (downloadWindow && (state === "available" || state === "downloading"));
+  if (!updater || !shown) return null;
+  const downloading = state === "downloading";
   return (
     <>
       <Tooltip>
@@ -93,7 +139,9 @@ export function DesktopUpdateButton() {
             {t("settings.update_restart_button")}
           </Button>
         } />
-        <TooltipContent side="bottom" align="end">{t("settings.update_on_quit_hint")}</TooltipContent>
+        <TooltipContent side="bottom" align="end">
+          {state === "ready" ? t("settings.update_on_quit_hint") : t("settings.update_downloading")}
+        </TooltipContent>
       </Tooltip>
       <AlertDialog open={confirmRestart} onOpenChange={setConfirmRestart}>
         <AlertDialogContent className="max-w-[340px] gap-0 rounded-[15px] border border-border p-6 ring-0 sm:max-w-[340px]">
@@ -104,8 +152,30 @@ export function DesktopUpdateButton() {
             <AlertDialogCancel variant="ghost" size="sm" className="rounded-[7px] text-[11px] text-muted-foreground">{t("settings.update_keep_working")}</AlertDialogCancel>
             <AlertDialogAction size="sm" className="rounded-[7px] text-[11px]" onClick={() => {
               setConfirmRestart(false);
-              void updater.installUpdateAndRestart();
+              if (!downloadWindow) {
+                void updater.installUpdateAndRestart();
+                return;
+              }
+              attemptRef.current += 1;
+              stepRef.current = null;
+              restartingRef.current = true;
+              setRestarting(true);
             }}>{t("settings.update_restart_confirm_action")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={restarting} onOpenChange={(open) => { if (!open) stopRestart(); }}>
+        <AlertDialogContent data-update-download-window className="max-w-[340px] gap-0 rounded-[15px] border border-border p-6 ring-0 sm:max-w-[340px]">
+          <AlertDialogTitle className="mb-2 text-[15px] leading-tight tracking-tight">
+            {downloading ? t("settings.update_download_window_title") : t("settings.update_download_window_preparing")}
+          </AlertDialogTitle>
+          <AlertDialogDescription className="mb-4 text-xs leading-[1.75]">{t("settings.update_download_window_message", undefined, { appName })}</AlertDialogDescription>
+          <UpdateDownloadProgress
+            downloadedBytes={downloading ? status?.downloadedBytes ?? 0 : null}
+            totalBytes={status?.totalBytes ?? null}
+          />
+          <AlertDialogFooter className="mt-5">
+            <AlertDialogCancel variant="ghost" size="sm" className="rounded-[7px] text-[11px] text-muted-foreground">{t("settings.update_keep_working")}</AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
