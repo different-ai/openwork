@@ -5,6 +5,7 @@ import { access, chmod, mkdir, readdir, readFile, rename, rm, stat, statfs, writ
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isolatedOpencodeV1Database } from "./managed-opencode.js";
 import { importNodeSqlite } from "./runtime-db.js";
 import {
   createManagedOpencodeV2Server, type ManagedOpencodeV2Server,
@@ -107,6 +108,9 @@ export async function backupV2Database(options: { database: string; directory: s
 export function opencodeV1DatabasePath(env: NodeJS.ProcessEnv = process.env): string {
   if (env.OPENCODE_DB === ":memory:") throw new Error("In-memory OpenCode history cannot be migrated.");
   if (env.OPENCODE_DB?.trim()) return resolve(env.OPENCODE_DB);
+  // Engine v1 moved off a shared database a standalone OpenCode v2 owns.
+  const isolated = isolatedOpencodeV1Database();
+  if (isolated) return isolated;
   return join(env.XDG_DATA_HOME || join(env.HOME || homedir(), ".local", "share"), "opencode", "opencode.db");
 }
 
