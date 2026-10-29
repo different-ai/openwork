@@ -1017,10 +1017,19 @@ describe("any connection as a source", () => {
   test("an admin's change is checked: the organization's connections, where they can go, real approved tools that never write", () => {
     const connections = [...org.map(({ id, name, url, native }) => ({ id, name, url, native }))]
     const catalogs = new Map([[CRM.id, crmTools]])
-    const check = (change: Parameters<typeof checkSourcesChange>[0]["change"]) => {
-      const merged = mergeWorkbotProactiveSettings(settingsOn, { sources: change })
+    type Change = NonNullable<Parameters<typeof checkSourcesChange>[0]["change"]>
+    /** As the page sends it: each approved tool with its version as the picker listed it. */
+    const seen = (change: Change): Change => ({
+      ...change,
+      readToolVersions: Object.fromEntries(Object.entries(change.readTools ?? {}).flatMap(([id, names]) => names
+        ? [[id, Object.fromEntries(names.map((name) => [name, crmTools.find((tool) => tool.name === name)?.digest ?? "sha256:none"]))]]
+        : [])),
+    })
+    const check = (change: Change, versions = true) => {
+      const sent = versions ? seen(change) : change
+      const merged = mergeWorkbotProactiveSettings(settingsOn, { sources: sent })
       assert.ok(merged)
-      return checkSourcesChange({ change, merged: merged.sources, connections, catalogs })
+      return checkSourcesChange({ change: sent, merged: merged.sources, connections, catalogs })
     }
     assert.deepEqual(crmTools.map((tool) => [tool.name, tool.blocked, tool.readOnlyHint ?? null]), [["search_contacts", false, true], ["list_deals", false, true], ["lookup_owner", true, null], ["delete_contact", true, true], ["export_report", true, true]])
     assert.equal(check({ coreConnections: { email: [CRM.id] }, readTools: { [CRM.id]: ["search_contacts"] } }), null)
@@ -1031,6 +1040,10 @@ describe("any connection as a source", () => {
     assert.equal(check({ readTools: { [CRM.id]: ["export_report"] } }), blocked("export_report"), "turned off for the connection")
     assert.equal(check({ readTools: { [CRM.id]: ["lookup_owner"] } }), blocked("lookup_owner"), "not marked read-only by its provider")
     assert.equal(check({ readTools: { [CRM.id]: ["drop_tables"] } }), "Acme CRM has no tool drop_tables.")
+    const reviewed = "search_contacts in Acme CRM changed since you opened it. Review its tools again."
+    assert.equal(check({ readTools: { [CRM.id]: ["search_contacts"] } }, false), reviewed, "without the version the admin saw: refused")
+    assert.equal(check({ readTools: { [CRM.id]: ["search_contacts"] }, readToolVersions: { [CRM.id]: { search_contacts: "sha256:what-the-picker-showed" } } }, false), reviewed, "the provider changed it after the picker loaded: refused")
+    assert.equal(mergeWorkbotProactiveSettings(settingsOn, { sources: seen({ readTools: { [CRM.id]: ["search_contacts"] } }) })?.sources.readToolVersions, undefined, "versions are checked, never stored")
     assert.equal(check({ readTools: { [NOTES.id]: ["list_meetings"] } }), "Meeting notes has its own read tools; there are none to approve.")
     assert.equal(check({ coreConnections: { chat: [GOOGLE.id] } }), "Google Workspace can't serve team chat.")
     assert.equal(check({ coreConnections: { chat: [NOTES.id, SLACK.id] } }), null, "a reviewed MCP can serve any category")

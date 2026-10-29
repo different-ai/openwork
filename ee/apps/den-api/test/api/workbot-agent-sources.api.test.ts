@@ -133,7 +133,10 @@ test("an admin adds any MCP as a source by approving its tools; the agent calls 
   assert.equal((await space.owner("PUT", proactive, { sources: { readTools: { [space.customId]: ["get_ticket"] } } })).status, 400, "never a tool its provider doesn't mark read-only")
   assert.equal((await space.owner("PUT", proactive, { sources: { readTools: { [space.customId]: ["no_such_tool"] } } })).status, 400, "only its real tools")
 
-  const saved = await space.owner("PUT", proactive, { sources: { coreConnections: { email: [space.customId] }, otherConnections: [space.customId], connections: { [space.customId]: "everyone" }, readTools: { [space.customId]: ["list_tickets"] } } })
+  const version = String(field(list(field(tools.body, "tools")).find((tool) => tool.name === "list_tickets"), "version"))
+  const stale = await space.owner("PUT", proactive, { sources: { readTools: { [space.customId]: ["list_tickets"] }, readToolVersions: { [space.customId]: { list_tickets: "sha256:not-what-is-live" } } } })
+  assert.equal(stale.status, 400, "a version that isn't the live tool is refused")
+  const saved = await space.owner("PUT", proactive, { sources: { coreConnections: { email: [space.customId] }, otherConnections: [space.customId], connections: { [space.customId]: "everyone" }, readTools: { [space.customId]: ["list_tickets"] }, readToolVersions: { [space.customId]: { list_tickets: version } } } })
   assert.equal(saved.status, 200, summary(saved))
   assert.deepEqual(field(saved.body, "settings", "sources", "readTools"), { [space.customId]: ["list_tickets"] })
   const pins = field(saved.body, "settings", "sources", "readToolPins", space.customId)

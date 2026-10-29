@@ -182,6 +182,8 @@ export function checkSourcesChange(input: {
       const tool = catalog.find((entry) => entry.name === name)
       if (!tool) return `${connection.name} has no tool ${name}.`
       if (tool.blocked) return `Agents can't use ${name}: it can change things, or its provider doesn't mark it read-only.`
+      // Approve exactly what the admin reviewed: the picker's version of each tool must still be the live one.
+      if (change.readToolVersions?.[id]?.[name] !== tool.digest) return `${name} in ${connection.name} changed since you opened it. Review its tools again.`
     }
   }
   for (const [id, value] of Object.entries(change.connections ?? {})) {

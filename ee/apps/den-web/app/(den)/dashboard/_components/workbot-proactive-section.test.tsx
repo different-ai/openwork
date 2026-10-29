@@ -160,7 +160,7 @@ test("what agents read: Add source lists every connection not already there; one
   assert.deepEqual(addableTo(ready, "chat").map((option) => option.id), ["emc_notes", "emc_tracker", "emc_crm"], "Google can't serve team chat");
   assert.deepEqual(addableTo(ready, "other").map((option) => option.id), ["emc_slack", "emc_crm"]);
   assert.deepEqual(addSourceChange(ready, "email", "emc_notes"), { coreConnections: { email: ["google-workspace", "emc_notes"] } });
-  assert.deepEqual(addSourceChange(ready, "other", "emc_crm", ["search_contacts"]), { otherConnections: ["emc_notes", "emc_tracker", "emc_crm"], readTools: { emc_crm: ["search_contacts"] } });
+  assert.deepEqual(addSourceChange(ready, "other", "emc_crm", { tools: ["search_contacts"], versions: { search_contacts: "sha256:seen" } }), { otherConnections: ["emc_notes", "emc_tracker", "emc_crm"], readTools: { emc_crm: ["search_contacts"] }, readToolVersions: { emc_crm: { search_contacts: "sha256:seen" } } }, "approves the tools as the admin saw them");
   assert.deepEqual(removeSourceChange(ready, "other", "emc_notes"), { otherConnections: ["emc_tracker"], connections: { emc_notes: null } });
 });
 
@@ -170,10 +170,10 @@ test("what agents read: an MCP without reviewed reads needs its tools ticked; no
   assert.match(row(adding, "workbot-source-email-adding"), /Acme CRM Not added yet/);
   assert.match(adding, /data-testid="workbot-source-tool-picker"/);
   const tools = [
-    { name: "search_contacts", description: "Find contacts", readOnlyHint: true, blocked: false, changed: false },
-    { name: "list_deals", readOnlyHint: true, blocked: false, changed: true },
-    { name: "lookup_owner", blocked: true, changed: false },
-    { name: "delete_contact", readOnlyHint: true, blocked: true, changed: false },
+    { name: "search_contacts", description: "Find contacts", readOnlyHint: true, blocked: false, changed: false, version: "sha256:a" },
+    { name: "list_deals", readOnlyHint: true, blocked: false, changed: true, version: "sha256:b" },
+    { name: "lookup_owner", blocked: true, changed: false, version: "sha256:c" },
+    { name: "delete_contact", readOnlyHint: true, blocked: true, changed: false, version: "sha256:d" },
   ];
   const picker = renderToStaticMarkup(<SourceToolPicker name="Acme CRM" tools={tools} error={null} initial={[]} saving={false} onSave={() => undefined} onCancel={() => undefined} />);
   assert.match(text(picker), /Tools agents may use in Acme CRM/);

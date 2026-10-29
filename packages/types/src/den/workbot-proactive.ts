@@ -140,6 +140,12 @@ export const agentSourcesPolicyInputSchema = z
     otherConnections: agentOtherConnectionIdsSchema.nullable().optional(),
     connections: z.record(agentSourceIdSchema, agentSourcePolicySchema.nullable()).refine(withinConnectionLimit, tooManyConnections).optional(),
     readTools: z.record(agentSourceIdSchema, agentReadToolNamesSchema.nullable()).refine(withinConnectionLimit, tooManyConnections).optional(),
+    /**
+     * With `readTools`: the `version` of each approved tool exactly as the admin saw it in the picker (from GET
+     * .../proactive/connections/{id}/tools). The save is refused if a tool's live definition differs, so an approval
+     * is never pinned to a definition the admin didn't review.
+     */
+    readToolVersions: z.record(agentSourceIdSchema, agentReadToolPinsSchema).refine(withinConnectionLimit, tooManyConnections).optional(),
   })
   .strict()
 export type AgentSourcesPolicyInput = z.infer<typeof agentSourcesPolicyInputSchema>

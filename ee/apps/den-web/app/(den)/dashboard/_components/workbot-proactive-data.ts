@@ -111,7 +111,7 @@ export function useWorkbotProactiveHealth(orgId: string, enabled: boolean) {
 }
 
 const sourceToolsSchema = z.object({
-  tools: z.array(z.object({ name: z.string(), description: z.string().optional(), readOnlyHint: z.boolean().optional(), blocked: z.boolean(), changed: z.boolean().default(false) })),
+  tools: z.array(z.object({ name: z.string(), description: z.string().optional(), readOnlyHint: z.boolean().optional(), blocked: z.boolean(), changed: z.boolean().default(false), version: z.string() })),
 });
 export type WorkbotSourceTool = z.infer<typeof sourceToolsSchema>["tools"][number];
 

@@ -76,9 +76,16 @@ function withSlot(slot: AgentSourceSlot, ids: string[]): AgentSourcesPolicyInput
   return { coreConnections };
 }
 
+/** The tools approved for a connection, with each one's version as the admin saw it, so the server approves only that. */
+export type ToolApproval = { tools: string[]; versions: Record<string, string> };
+
+export function approveToolsChange(connectionId: string, approval: ToolApproval): AgentSourcesPolicyInput {
+  return { readTools: { [connectionId]: approval.tools }, readToolVersions: { [connectionId]: approval.versions } };
+}
+
 /** Adds a connection to one source, with the tools approved for it when it needs them. */
-export function addSourceChange(view: SourcesView, slot: AgentSourceSlot, connectionId: string, tools?: readonly string[]): AgentSourcesPolicyInput {
-  return { ...withSlot(slot, [...slotIds(view, slot), connectionId]), ...(tools?.length ? { readTools: { [connectionId]: [...tools] } } : {}) };
+export function addSourceChange(view: SourcesView, slot: AgentSourceSlot, connectionId: string, approval?: ToolApproval): AgentSourcesPolicyInput {
+  return { ...withSlot(slot, [...slotIds(view, slot), connectionId]), ...(approval?.tools.length ? approveToolsChange(connectionId, approval) : {}) };
 }
 
 /** Takes a connection out of one source only; its approved tools go once it is in none. */
@@ -141,7 +148,7 @@ export function SourceToolPicker({ name, tools, error, initial, saving, onSave, 
   error: string | null;
   initial: readonly string[];
   saving: boolean;
-  onSave: (tools: string[]) => void;
+  onSave: (approval: ToolApproval) => void;
   onCancel: () => void;
 }) {
   const [ticked, setTicked] = useState<ReadonlySet<string>>(() => new Set(initial));
@@ -176,7 +183,7 @@ export function SourceToolPicker({ name, tools, error, initial, saving, onSave, 
       ) : null}
       <div className="flex items-center justify-end gap-2">
         <DenButton variant="ghost" size="sm" onClick={onCancel}>Cancel</DenButton>
-        <DenButton variant="primary" size="sm" disabled={chosen.length === 0} loading={saving} onClick={() => onSave(chosen)}>
+        <DenButton variant="primary" size="sm" disabled={chosen.length === 0} loading={saving} onClick={() => onSave({ tools: chosen, versions: Object.fromEntries((tools ?? []).filter((tool) => chosen.includes(tool.name)).map((tool) => [tool.name, tool.version])) })}>
           {chosen.length ? `Approve ${chosen.length} ${chosen.length === 1 ? "tool" : "tools"}` : "Approve tools"}
         </DenButton>
       </div>
@@ -189,7 +196,7 @@ function ToolPickerLoader({ orgId, option, initial, saving, onSave, onCancel }: 
   option: AgentSourceOption;
   initial: readonly string[];
   saving: boolean;
-  onSave: (tools: string[]) => void;
+  onSave: (approval: ToolApproval) => void;
   onCancel: () => void;
 }) {
   const query = useWorkbotSourceTools(orgId, option.id);
@@ -254,8 +261,8 @@ export function WorkbotProactiveSources({ orgId = "", view, canManage, saving, o
     orgId ? (
       <ToolPickerLoader orgId={orgId} option={option} initial={agentApprovedTools(sources, option.id)} saving={saving}
         onCancel={() => setPicking(null)}
-        onSave={(tools) => {
-          save(picking.adding ? addSourceChange(view, slot, option.id, tools) : { readTools: { [option.id]: tools } });
+        onSave={(approval) => {
+          save(picking.adding ? addSourceChange(view, slot, option.id, approval) : approveToolsChange(option.id, approval));
           setPicking(null);
         }} />
     ) : <SourceToolPicker name={option.name} tools={null} error={null} initial={[]} saving={saving} onSave={() => undefined} onCancel={() => setPicking(null)} />
