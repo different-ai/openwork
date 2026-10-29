@@ -138,6 +138,8 @@ jobs:
         run: |
           pnpm --filter @openwork-ee/workbot test:auth
           pnpm --filter @openwork-ee/workbot test:activation
+      - name: Test Workbot live events (relay and page reconnects)
+        run: pnpm --filter @openwork-ee/workbot test:events
       - name: Test opt-in error reporting (runner and Workbot)
         run: |
           pnpm --filter @openwork-ee/headless-runner test:error-reporting

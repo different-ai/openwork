@@ -625,11 +625,20 @@ export async function stopWorkbot(actor: WorkbotActor, deps: WorkbotDeps, chat: 
   return { stopped: stopped.stopped }
 }
 
-/** The chat's live event stream from the runner, or null when it can't be opened. */
-export async function openWorkbotEvents(actor: WorkbotActor, signal: AbortSignal, deps: WorkbotDeps, chat: WorkbotChat = null) {
-  const client = clientOf(deps)
+/**
+ * Why the chat's live events couldn't be opened, as a code safe to log: no runner is configured, the chat's session
+ * couldn't be found, the runner answered without a stream, or the runner couldn't be reached.
+ */
+export type WorkbotEventsUnavailable = "runner_not_configured" | "session_unavailable" | "runner_refused" | "runner_unreachable"
+
+/** The chat's live event stream from the runner, or why it can't be opened. */
+export async function openWorkbotEvents(actor: WorkbotActor, signal: AbortSignal, deps: WorkbotDeps, chat: WorkbotChat = null): Promise<{ ok: true; response: Response } | { ok: false; code: WorkbotEventsUnavailable }> {
+  if (!deps.client) return { ok: false, code: "runner_not_configured" }
   const sessionId = await sessionOf(actor, chat, deps).catch(() => null)
-  return sessionId ? client.openEvents(sessionId, signal).catch(() => null) : null
+  if (!sessionId) return { ok: false, code: "session_unavailable" }
+  const response = await deps.client.openEvents(sessionId, signal).catch(() => undefined)
+  if (response === undefined) return { ok: false, code: "runner_unreachable" }
+  return response ? { ok: true, response } : { ok: false, code: "runner_refused" }
 }
 
 export class WorkbotFilesUnavailableError extends Error {

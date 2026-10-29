@@ -17,7 +17,7 @@
     "test:model": "tsx --conditions=development --test scripts/model.test.ts",
     "test:gateway-models": "tsx --conditions=development --test scripts/gateway-models.test.ts",
     "test:context": "tsx --conditions=development --test scripts/context.test.ts",
-    "test:events": "tsx --conditions=development --test scripts/events.test.ts",
+    "test:events": "tsx --conditions=development --test scripts/events.test.ts scripts/live-retry.test.ts",
     "test:steps": "tsx --conditions=development --test scripts/steps.test.ts",
     "test:session-cells": "tsx --conditions=development --test scripts/session-cells.test.ts",
     "test:activation": "tsx --conditions=development --test scripts/activation.test.ts",

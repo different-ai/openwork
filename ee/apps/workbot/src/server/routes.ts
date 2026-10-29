@@ -8,6 +8,7 @@ import {
   WorkbotUnavailableError,
   type WorkbotActor,
   type WorkbotChat,
+  type WorkbotEventsUnavailable,
 } from "@openwork-ee/workbot-server"
 import type { Context, Hono, MiddlewareHandler } from "hono"
 import { bodyLimit } from "hono/body-limit"
@@ -68,6 +69,10 @@ const KEEP_ALIVE_MS = 15_000
 const SOCKET_MIN_MS = 10_000
 const SOCKET_REST_MS = 60_000
 const SOCKET_REST_MAX = 10_000
+/** How long the page waits before reopening live events the runner couldn't open (its own backoff may wait longer). */
+const EVENTS_RETRY_AFTER_S = 5
+/** At most one log line this often for live events the runner couldn't open, counting each reason since the last. */
+const EVENTS_UNAVAILABLE_LOG_MS = 60_000
 /** Matches the runner's per-file limit; a bigger upload is refused before it is read. */
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 /** Plenty for a person typing; stops a runaway script from spending the organization's model budget. */
@@ -692,6 +697,18 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     })
   }
 
+  /** Why live events couldn't open, by reason, since the last log line (no ids: reasons are fixed codes). */
+  const eventsUnavailable = new Map<WorkbotEventsUnavailable, number>()
+  let eventsUnavailableLoggedAt = 0
+  const logEventsUnavailable = (code: WorkbotEventsUnavailable) => {
+    eventsUnavailable.set(code, (eventsUnavailable.get(code) ?? 0) + 1)
+    const now = Date.now()
+    if (now - eventsUnavailableLoggedAt < EVENTS_UNAVAILABLE_LOG_MS) return
+    eventsUnavailableLoggedAt = now
+    console.error("[workbot] live events unavailable", Object.fromEntries(eventsUnavailable))
+    eventsUnavailable.clear()
+  }
+
   app.get("/v1/workbot/events", async (c) => {
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
     const scope = chatOf(c)
@@ -700,9 +717,13 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     const upstream = new AbortController()
     const socket = member.den.stepTurns ? await openLiveSocket(member, scope.chat, upstream.signal) : null
     if (socket) return relayLiveSocket(c, socket, upstream)
-    const opened = await workbotFor(member).openEvents(actorOf(member), upstream.signal, scope.chat).catch(() => null)
-    if (!opened?.body) return c.json({ error: "workbot_runner_unavailable" }, 409)
-    const body = opened.body
+    const opened = await workbotFor(member).openEvents(actorOf(member), upstream.signal, scope.chat)
+    const body = opened.ok ? opened.response.body : null
+    if (!body) {
+      logEventsUnavailable(opened.ok ? "runner_refused" : opened.code)
+      // 409 like every other route the runner can't serve; Retry-After tells the page when to try again.
+      return c.json({ error: "workbot_runner_unavailable" }, 409, { "Retry-After": String(EVENTS_RETRY_AFTER_S) })
+    }
     c.header("Cache-Control", "no-cache, no-transform")
     c.header("X-Accel-Buffering", "no")
     return streamSSE(c, async (stream) => {

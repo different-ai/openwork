@@ -5,6 +5,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { workbotDocumentNavigationSchema, workbotViewContextSchema, WORKBOT_MAX_MESSAGE_CHARS, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import { errorMessage as getErrorMessage, hostFetch, workbotHost } from "./host";
+import { liveRetryDelay, liveStreamOff, retryAfterMs } from "./live-retry";
 import { workbotAccessFailureSchema, type WorkbotAccessReason } from "@openwork/types/den/workbot-settings";
 
 const requestJson = (path: string, init?: RequestInit, timeoutMs?: number) => workbotHost().requestJson(path, init, timeoutMs);
@@ -163,7 +164,8 @@ async function openStream(signal: AbortSignal, chat: string | null) {
 /**
  * Keeps a live stream open while the page is: reply text as it is written, and a re-read of the
  * conversation whenever it changes. Re-reads are coalesced so a burst of changes costs one request.
- * Reconnects with backoff; returns whether it is currently connected.
+ * Reconnects with backoff (see `liveRetryDelay`); a hidden page tries again once it is shown. Returns whether it is
+ * currently connected.
  */
 export function useWorkbotLive(enabled: boolean) {
   const queryClient = useQueryClient();
@@ -171,13 +173,56 @@ export function useWorkbotLive(enabled: boolean) {
   const [connected, setConnected] = useState(false);
   const [live, setLive] = useState<Record<string, LiveText>>({});
   const refetching = useRef<{ running: boolean; again: boolean }>({ running: false, again: false });
+  // Workbot isn't on for the organization: no stream until the page is shown again or a re-read finds it on.
+  const [off, setOff] = useState(false);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!off) return;
+    const resume = () => setOff(false);
+    const shown = () => {
+      if (document.visibilityState === "visible") resume();
+    };
+    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+      if (event.type !== "updated" || event.action.type !== "success") return;
+      const [scope, kind] = event.query.queryKey;
+      const data: unknown = event.query.state.data;
+      if (scope === workbotQueryKey[0] && kind === workbotQueryKey[1] && typeof data === "object" && data !== null && "available" in data && data.available === true) resume();
+    });
+    document.addEventListener("visibilitychange", shown);
+    return () => {
+      unsubscribe();
+      document.removeEventListener("visibilitychange", shown);
+    };
+  }, [off, queryClient]);
+
+  useEffect(() => {
+    if (!enabled || off) return;
     // Another chat: none of the text streaming in the last one belongs here.
     setLive({});
     const controller = new AbortController();
-    let attempt = 0;
+    // Waits that end as soon as the page leaves.
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          controller.signal.removeEventListener("abort", done);
+          resolve();
+        };
+        const timer = setTimeout(done, ms);
+        controller.signal.addEventListener("abort", done);
+      });
+    const untilShown = () =>
+      new Promise<void>((resolve) => {
+        const check = () => {
+          if (document.visibilityState === "hidden" && !controller.signal.aborted) return;
+          document.removeEventListener("visibilitychange", check);
+          controller.signal.removeEventListener("abort", check);
+          resolve();
+        };
+        document.addEventListener("visibilitychange", check);
+        controller.signal.addEventListener("abort", check);
+        check();
+      });
 
     const refresh = async () => {
       const state = refetching.current;
@@ -228,12 +273,25 @@ export function useWorkbotLive(enabled: boolean) {
     };
 
     const run = async () => {
+      // Refused or failed tries in a row; a stream that opens starts the count again.
+      let failures = 0;
       while (!controller.signal.aborted) {
+        let opened = false;
+        let retryAfter: number | null = null;
         try {
           const response = await openStream(controller.signal, chat);
-          if (!response.ok || !response.body) throw new Error(`events_${response.status}`);
+          if (!response.ok || !response.body) {
+            retryAfter = retryAfterMs(response.headers.get("Retry-After"));
+            if (liveStreamOff(response.status, await response.json().catch(() => null))) {
+              // Trying again won't help until Workbot is turned on; the conversation's own reads show that it's off.
+              setOff(true);
+              return;
+            }
+            throw new Error(`events_${response.status}`);
+          }
+          opened = true;
+          failures = 0;
           setConnected(true);
-          attempt = 0;
           // Anything missed while disconnected is picked up by one re-read.
           void refresh();
           const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -257,13 +315,15 @@ export function useWorkbotLive(enabled: boolean) {
         }
         setConnected(false);
         if (controller.signal.aborted) break;
-        attempt += 1;
-        await new Promise((resolve) => setTimeout(resolve, Math.min(10_000, attempt === 1 ? 250 : 1_000 * 2 ** Math.min(attempt - 2, 3))));
+        if (!opened) failures += 1;
+        await sleep(liveRetryDelay(failures, retryAfter));
+        // Nobody sees a hidden page's live text, and the conversation is re-read when the stream opens again.
+        if (failures > 0) await untilShown();
       }
     };
     void run();
     return () => controller.abort();
-  }, [enabled, queryClient, chat]);
+  }, [enabled, off, queryClient, chat]);
 
   return { connected, live };
 }
