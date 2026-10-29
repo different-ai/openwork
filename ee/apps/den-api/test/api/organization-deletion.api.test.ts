@@ -4,7 +4,8 @@
  *   fails in that transaction keeps what it purged;
  * - the retry resumes: one Linear deletion ticket per deletion, completed once the organization is gone;
  * - the progress is not part of the metadata members see;
- * - another organization's rows stay.
+ * - another organization's rows stay;
+ * - an attempt that finds the organization already deleted by a concurrent attempt succeeds instead of failing.
  */
 import assert from "node:assert/strict"
 import { randomBytes } from "node:crypto"
@@ -110,4 +111,22 @@ test("a deletion that fails in its final transaction keeps its purge, and the re
   assert.equal(await count("telemetry_event", "org_id", kept.orgId), 10, "another organization's history stays")
   assert.equal(await count("gateway_usage_consumption_event", "organization_id", kept.orgId), 10)
   assert.equal(await charges(keptCharges), 10)
+})
+
+test("an attempt that finds the organization already deleted by a concurrent attempt finishes successfully", async () => {
+  const raced = await den.createOrg(await den.signUp("Rae Racing"), "Raced deleted org")
+  await seedHistory(raced.orgId, raced.owner.memberId, 3)
+  const linearCallsBefore = linearCalls.length
+
+  // Stand-in for a concurrent attempt: the organization row disappears while this attempt purges history,
+  // after it claimed the deletion and before its final transaction.
+  await sql(`CREATE TRIGGER race_org_delete AFTER DELETE ON telemetry_event FOR EACH ROW
+    BEGIN DELETE FROM organization WHERE id = OLD.org_id AND name = 'Raced deleted org'; END`)
+  const deleted = await den.as(raced.owner, raced.orgId)("DELETE", "/v1/org", { confirmation: "Raced deleted org" })
+    .finally(() => sql("DROP TRIGGER race_org_delete"))
+  assert.equal(deleted.status, 200, summary(deleted))
+  assert.equal(await count("organization", "id", raced.orgId), 0)
+  const calls = linearCalls.slice(linearCallsBefore)
+  assert.equal(calls.filter((call) => call.operation === "create").length, 1, "one Linear ticket for the deletion")
+  assert.equal(calls.filter((call) => call.operation === "complete").length, 1, "the ticket is completed")
 })
