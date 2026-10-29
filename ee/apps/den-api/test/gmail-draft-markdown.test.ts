@@ -44,6 +44,16 @@ for (const url of ["javascript:alert(1)", "data:text/html,payload", "file:///pri
   })
 }
 
+test("draft renders a closing and sender name separated by one real newline as two lines", () => {
+  const body = "Thanks,\nGuillaume"
+  const result = parts(body)
+  assert.equal(result.plain, body)
+  const lines = DomUtils.findAll(element => element.name === "div", parseDocument(result.html).children)
+  assert.equal(lines.length, 2)
+  assert.deepEqual(lines.map(element => DomUtils.textContent(element)), ["Thanks,", "Guillaume"])
+  assert.ok(lines.every(element => element.attribs.dir === "ltr"))
+})
+
 test("draft keeps blank lines, line breaks, indentation, tabs and repeated spaces", () => {
   const body = "Hello\nsecond line\n\n  indented    columns\n\ttabbed\n\n"
   const result = parts(body)
