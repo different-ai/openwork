@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { ArrowUpRight, ShieldAlert, Square } from "lucide-react"
+import { ShieldAlert, Square } from "lucide-react"
 
 import {
   Collapsible,
@@ -132,7 +132,7 @@ export function useElapsedSeconds(active: boolean, startedAt: number | null, syn
  */
 export function SubagentRunLine({ part, className, parentActive = true }: SubagentRunLineProps) {
   const [open, setOpen] = useState(false)
-  const { onOpenSubagentSession, onStopSubagentSession, syncDegraded, workspaceId } = useMessageList()
+  const { onOpenSubagentSession, onStopSubagentSession, composerSubagentToolCallIds, syncDegraded, workspaceId } = useMessageList()
   const [stopping, setStopping] = useState(false)
   const [stopError, setStopError] = useState<string | null>(null)
   const stoppedByPerson = useRef(false)
@@ -176,12 +176,6 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
             className="size-3.5 shrink-0 text-amber-10"
           />
         ) : null}
-        {childSessionId && onOpenSubagentSession ? (
-          <ArrowUpRight
-            aria-hidden="true"
-            className="size-3.5 shrink-0 text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
-          />
-        ) : null}
       </span>
       <span role={stopError ? "alert" : undefined} className={cn("min-w-0 truncate text-xs", permissionPending ? "font-medium text-amber-11" : "text-muted-foreground/70")}>
         {status}
@@ -212,8 +206,9 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
         >
           {lines}
         </button>
-        {/* Stop just this helper; the turn's own Stop stays in the composer. */}
-        {childRunning && onStopSubagentSession ? (
+        {/* Stop just this helper; the turn's own Stop stays in the composer.
+            While the composer's Agents list shows this call, its Stop lives there. */}
+        {childRunning && onStopSubagentSession && !composerSubagentToolCallIds.has(part.toolCallId) ? (
           <button
             type="button"
             data-subagent-stop=""

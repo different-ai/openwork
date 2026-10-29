@@ -2186,10 +2186,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Sub-agents of the current turn, attached to the composer (OpenCode v2 only).
   const subagentTrackerFeature = useOrgFeature("composerSubagentTracker");
   const subagentTrackerParentActive = status === "streaming" || status === "retrying" || status === "submitted";
-  const subagentTrackerShown = useMemo(
-    () => subagentTrackerFeature && snapshotEngine === "v2" && currentTurnSubagentParts(visibleMessages).length > 0,
+  const subagentTrackerToolCallIds = useMemo<ReadonlySet<string>>(
+    () => new Set(subagentTrackerFeature && snapshotEngine === "v2"
+      ? currentTurnSubagentParts(visibleMessages).map((part) => part.toolCallId)
+      : []),
     [subagentTrackerFeature, snapshotEngine, visibleMessages],
   );
+  const subagentTrackerShown = subagentTrackerToolCallIds.size > 0;
 
   useEffect(() => {
     if (!hasFullHistory || admissionOutcome !== "unresolved") {
@@ -3830,6 +3833,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onEditUserMessage={handleEditUserMessage}
                       onOpenSubagentSession={openChild}
                       onStopSubagentSession={archived ? undefined : handleStopSubagentSession}
+                      composerSubagentToolCallIds={subagentTrackerToolCallIds}
                       onResumeInterrupted={archived ? undefined : handleResumeInterrupted}
                       onOpenLibraryDetail={props.onOpenLibraryDetail}
                       onMcpReconnect={handleMcpReconnect}

@@ -25,6 +25,10 @@ stays in view while the sub-agent rows in the chat scroll away.
   at most three agents still busy; several quiet agents start folded. Once the
   turn ends and every agent has settled, the list goes away; the chat rows
   keep the record.
+- While the list shows an agent, that agent's Stop lives only in the list:
+  its chat row drops the small square Stop button and stays a plain link to
+  the agent's chat. Agents the list doesn't show (earlier turns, or the flag
+  off) keep the Stop on their chat row.
 
 The rows use the same state as the chat's sub-agent rows
 (`useSubagentRunState()` / `subagentRunActivity()` in

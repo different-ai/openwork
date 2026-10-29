@@ -53,6 +53,8 @@ interface MessageListContextValue {
   onOpenSubagentSession?: (sessionId: string) => void
   /** Stop one running sub-agent (child) session without stopping the parent turn. */
   onStopSubagentSession?: (sessionId: string) => void | Promise<void>
+  /** Sub-agent calls the composer's Agents list shows; their Stop lives there, not on the chat row. */
+  composerSubagentToolCallIds: ReadonlySet<string>
   /** Re-submit an interrupted run by sending its recovery prompt. */
   onResumeInterrupted?: (recoveryPrompt: string) => void
   /** Open one Library item's detail, by the same id Library rows use. Absent where there is no Library. */
@@ -64,6 +66,8 @@ interface MessageListContextValue {
   ) => Promise<ChatToolReconnectResult>
   onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string, isCurrent?: () => boolean) => Promise<void>
 }
+
+const NO_TOOL_CALL_IDS: ReadonlySet<string> = new Set()
 
 const MessageListContext = React.createContext<MessageListContextValue | null>(null)
 
@@ -87,6 +91,7 @@ interface MessageListProviderProps {
   onEditUserMessage: (messageId: string, text: string) => void
   onOpenSubagentSession?: (sessionId: string) => void
   onStopSubagentSession?: (sessionId: string) => void | Promise<void>
+  composerSubagentToolCallIds?: ReadonlySet<string>
   onResumeInterrupted?: (recoveryPrompt: string) => void
   onOpenLibraryDetail?: (detailId: string) => void
   onMcpReconnect: (
@@ -135,6 +140,7 @@ export function MessageListProvider({
   onEditUserMessage,
   onOpenSubagentSession,
   onStopSubagentSession,
+  composerSubagentToolCallIds = NO_TOOL_CALL_IDS,
   onResumeInterrupted,
   onOpenLibraryDetail,
   onMcpReconnect,
@@ -247,6 +253,7 @@ export function MessageListProvider({
       resolveAutoRouteName,
       connectorIdentities,
       syncDegraded,
+      composerSubagentToolCallIds,
       ...stableHandlers,
       onOpenSubagentSession: canOpenSubagentSession
         ? stableHandlers.onOpenSubagentSession
@@ -281,6 +288,7 @@ export function MessageListProvider({
       resolveAutoRouteName,
       connectorIdentities,
       syncDegraded,
+      composerSubagentToolCallIds,
       stableHandlers,
       canOpenSubagentSession,
       canStopSubagentSession,
