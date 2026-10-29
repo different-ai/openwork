@@ -22,7 +22,7 @@ import { gatewayMemberConnections } from "../../llm/gateway-member-connections.j
 import { requestGatewayProviderTest } from "../../llm/gateway-provider-test.js"
 import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
-import { GatewayWriteError, normalizeCredential, reusableAwsCredential, enableGatewayGroupModels, gatewayCatalog, gatewayGrantSummary, gatewaySummary, refreshGatewayCatalog, resolveGatewayCatalog, trustedProviderCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
+import { GatewayWriteError, normalizeCredential, reusableAwsCredential, enableGatewayGroupModels, gatewayCatalog, effectiveGatewaySummaryGrants, gatewayGrantSummary, gatewaySummary, readGatewaySummaries, refreshGatewayCatalog, resolveGatewayCatalog, trustedProviderCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
 import { buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "../../llm/inference-provider-config.js"
 import { buildGoogleAuthorizeUrl, exchangeGoogleAuthorizationCode, googleOAuthClientBinding, googleOAuthNonce, readGoogleOAuthAttempt, revokeGoogleToken, verifyGoogleIdentity } from "../../llm/inference-provider-google-oauth.js"
 import { buildMicrosoftAuthorizeUrl, exchangeMicrosoftAuthorizationCode, microsoftOAuthNonce, verifyMicrosoftIdentity } from "../../llm/inference-provider-microsoft-oauth.js"
@@ -506,39 +506,21 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     }
     await liveMember(db, actor, false)
     const managerDetails = manage && await hasPermission(c, MANAGE)
-    const providers = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, actor.organization.id)).orderBy(desc(GatewayProviderTable.updated_at))
-    const summaries: Array<GatewayProviderSummary | null> = providers.map(() => null)
-    let next = 0
-    let failure: { error: unknown } | undefined
-    // Each summary keeps its DB reads sequential; two workers bound connection
-    // use while avoiding a serial wait across every provider in the list.
-    await Promise.all(Array.from({ length: Math.min(2, providers.length) }, async () => {
-      while (!failure && next < providers.length) {
-        const index = next++
-        const provider = providers[index]
-        try {
-          if (!manage && provider.status !== "active") continue
-          // An organization set may be unconfigured; keep its granted provider discoverable without leaking models.
-          if (!manage) {
-            const teams = await memberGatewayTeams(db, provider.organization_id, actor.currentMember.id)
-            const grants = await db.select({ grant: GatewayProviderAccessTable }).from(GatewayProviderAccessTable)
-              .innerJoin(GatewayModelGroupTable, and(eq(GatewayModelGroupTable.id, GatewayProviderAccessTable.model_group_id), eq(GatewayModelGroupTable.gateway_provider_id, provider.id), eq(GatewayModelGroupTable.status, "active")))
-              .innerJoin(GatewayCredentialSetTable, and(eq(GatewayCredentialSetTable.id, GatewayProviderAccessTable.credential_set_id), eq(GatewayCredentialSetTable.gateway_provider_id, provider.id), eq(GatewayCredentialSetTable.status, "active")))
-              .where(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id))
-            if (!effectiveGatewayGrants(grants.map((row) => row.grant), actor.currentMember.id, teams.map((team) => team.id)).length) continue
-            // Zero-touch LiteLLM keys: create this person's keys in the background on first use.
-            if (isLiteLlmProviderId(provider.provider_id)) scheduleLiteLlmProvisioning(provider, actor.currentMember.id)
-          }
-          summaries[index] = await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), manage, { managerDetails })
-        } catch (error) {
-          // Drain active workers and stop scheduling before returning a failure.
-          // Catalog mutations must not continue after the failed list response.
-          failure ??= { error }
-        }
+    const providers = (await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, actor.organization.id)).orderBy(desc(GatewayProviderTable.updated_at)))
+      .filter((provider) => manage || provider.status === "active")
+    // One read per table for the whole list, however many providers the organization has.
+    const reads = await readGatewaySummaries({ identities: managerDetails, manage, memberId: actor.currentMember.id, organizationId: actor.organization.id, providers })
+    const summaries: GatewayProviderSummary[] = []
+    for (const provider of providers) {
+      // An organization set may be unconfigured; keep its granted provider discoverable without leaking models.
+      if (!manage) {
+        if (!effectiveGatewaySummaryGrants(provider, actor.currentMember.id, reads).length) continue
+        // Zero-touch LiteLLM keys: create this person's keys in the background on first use.
+        if (isLiteLlmProviderId(provider.provider_id)) scheduleLiteLlmProvisioning(provider, actor.currentMember.id)
       }
-    }))
-    if (failure) throw failure.error
-    return c.json({ inferenceProviders: summaries.filter((summary) => summary !== null) })
+      summaries.push(await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), manage, { managerDetails }, reads))
+    }
+    return c.json({ inferenceProviders: summaries })
     } catch (error) { return respond(c, error) }
   })
 
@@ -555,13 +537,10 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
       if (provider.status !== "active") throw new GatewayWriteError(404, "inference_provider_not_found")
-      const teams = await memberGatewayTeams(db, provider.organization_id, actor.currentMember.id)
-      const grants = await db.select({ grant: GatewayProviderAccessTable }).from(GatewayProviderAccessTable)
-        .innerJoin(GatewayModelGroupTable, and(eq(GatewayModelGroupTable.id, GatewayProviderAccessTable.model_group_id), eq(GatewayModelGroupTable.gateway_provider_id, provider.id), eq(GatewayModelGroupTable.status, "active")))
-        .innerJoin(GatewayCredentialSetTable, and(eq(GatewayCredentialSetTable.id, GatewayProviderAccessTable.credential_set_id), eq(GatewayCredentialSetTable.gateway_provider_id, provider.id), eq(GatewayCredentialSetTable.status, "active")))
-        .where(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id))
-      if (!effectiveGatewayGrants(grants.map((row) => row.grant), actor.currentMember.id, teams.map((team) => team.id)).length) throw new GatewayWriteError(403, "forbidden")
-      const summary = await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), false)
+      // The grant check and the summary share one read of the provider's rows.
+      const reads = await readGatewaySummaries({ identities: false, manage: false, memberId: actor.currentMember.id, organizationId: provider.organization_id, providers: [provider] })
+      if (!effectiveGatewaySummaryGrants(provider, actor.currentMember.id, reads).length) throw new GatewayWriteError(403, "forbidden")
+      const summary = await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), false, {}, reads)
       const apiKey = await ensureMemberGatewayKey({ organizationId: actor.organization.id, memberId: actor.currentMember.id })
       const apiKeys = Object.fromEntries(readProviderEnvNames(summary.providerConfig).map((name) => [name, apiKey]))
       const response: GatewayProviderConnectResponse = { inferenceProvider: { ...summary, apiKey, apiKeys } }
