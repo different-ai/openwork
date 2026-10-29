@@ -541,6 +541,16 @@
               ],
               "description": "Analytics: daily trends: Usage & adoption shows active users, sessions and tasks per day for the last 30 days, with a Daily / Weekly switch next to the project filter. Turning it off returns to the 12-week weekly charts. Renders DEN_FEATURE_ANALYTICS_DAILY_TRENDS."
             },
+            "gatewayProviderRemovalLimits": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "AI Gateway: keep spend limits when removing a provider: Removing an AI Gateway provider that has spend limits asks whether to move those limits to another provider or delete them, instead of leaving them pointing at nothing. Limits whose provider was already removed show Provider removed and Not applied, with Choose provider. Renders DEN_FEATURE_GATEWAY_PROVIDER_REMOVAL_LIMITS."
+            },
             "gatewayDashboard": {
               "enum": [
                 "",

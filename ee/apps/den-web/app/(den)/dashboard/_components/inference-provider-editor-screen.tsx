@@ -94,7 +94,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const [providerTest, setProviderTest] = useState<{ state: "running" } | { state: "done"; result: GatewayProviderTestResult } | null>(null);
   const testedConfig = useRef<string | null>(null);
   const cancelDeleteRef = useRef<HTMLButtonElement | null>(null);
-  const removalLimits = useProviderRemovalUsageLimits({ orgId, providerId: provider?.id ?? "", open: confirmDelete && Boolean(provider), providers: inferenceProviders });
+  const removalLimits = useProviderRemovalUsageLimits({ orgId, providerId: provider?.id ?? "", open: confirmDelete && Boolean(provider), providers: inferenceProviders, featureOn: orgFeatureEnabled(orgContext, "gatewayProviderRemovalLimits") });
   const initializedProviderId = useRef<string | null>(null);
   const initializedNewProviderId = useRef<string | null>(null);
 
@@ -327,7 +327,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     const auditContext = createAuditOperationContext();
     try {
       await runReauthableAction("delete-inference-provider", async () => {
-        await deleteInferenceProvider(provider.id, auditContext, removalLimits.requestChoice);
+        await deleteInferenceProvider(provider.id, auditContext, removalLimits.requestChoice());
         setConfirmDelete(false);
         router.push(getAiGatewayProvidersRoute(orgSlug));
         router.refresh();

@@ -624,6 +624,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  gatewayProviderRemovalLimits: {
+    label: "AI Gateway: keep spend limits when removing a provider",
+    description: "Removing an AI Gateway provider that has spend limits asks whether to move those limits to another provider or delete them, instead of leaving them pointing at nothing. Limits whose provider was already removed show Provider removed and Not applied, with Choose provider.",
+    category: "models",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/gateway-provider-removal-limits/README.md",
+    deployments: everywhere,
+    default: false,
+  },
 })
 
 export type FeatureKey = keyof typeof FEATURES

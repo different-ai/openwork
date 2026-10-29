@@ -16,7 +16,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSegmented } from "../../_components/ui/segmented";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getAiGatewayProviderRoute, getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
+import { getAiGatewayProviderRoute, getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, useOrgInferenceProviders } from "./inference-provider-data";
 import { ProviderRemovalUsageLimits, useProviderRemovalUsageLimits } from "./provider-removal-usage-limits";
@@ -203,7 +203,7 @@ export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean })
 export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { provider: DenInferenceProviderDetails; reload: () => Promise<void>; embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
-  const { orgId, orgSlug, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
+  const { orgId, orgSlug, orgContext, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
   const status = provider.litellm;
   const uiMode: LiteLlmMode = status ? liteLlmStatusMode(status) : "org";
   const [busy, setBusy] = useState<"sync" | "key" | "access" | "issue" | "remove" | null>(null);
@@ -214,7 +214,7 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const cancelDeleteRef = useRef<HTMLButtonElement | null>(null);
   const { inferenceProviders } = useOrgInferenceProviders(orgId);
-  const removalLimits = useProviderRemovalUsageLimits({ orgId, providerId: provider.id, open: confirmDelete, providers: inferenceProviders });
+  const removalLimits = useProviderRemovalUsageLimits({ orgId, providerId: provider.id, open: confirmDelete, providers: inferenceProviders, featureOn: orgFeatureEnabled(orgContext, "gatewayProviderRemovalLimits") });
   const accessGroupId = liteLlmAccessGroupId(provider);
   const set = provider.credentialSets[0] ?? null;
   const grants = provider.accessGrants.filter((grant) => grant.modelGroupId === accessGroupId && grant.credentialSetId === set?.id);
@@ -271,7 +271,7 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
     setError(null);
     try {
       await runReauthableAction("delete-inference-provider", async () => {
-        await deleteInferenceProvider(provider.id, createAuditOperationContext(), removalLimits.requestChoice);
+        await deleteInferenceProvider(provider.id, createAuditOperationContext(), removalLimits.requestChoice());
         setConfirmDelete(false);
         router.push(getAiGatewayProvidersRoute(orgSlug));
         router.refresh();
