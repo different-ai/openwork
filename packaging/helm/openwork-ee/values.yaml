@@ -26,6 +26,7 @@ config:
   #   "false" off for everyone; /admin shows "Set by deployment config"
   # The /admin kill switch still turns a feature off, even when locked on.
   features:
+    libraryDetailBreadcrumbs: ""     # default off · Navigate from a skill or connector to its parent plugin or Library category without losing your place.
     desktopUpdateDownloadWindow: ""  # default off · Restart to update shows in the desktop title bar as soon as an update is found. Clicking it opens a small window that downloads the update with its progress, then restarts, instead of waiting with no sign of the download.
     nativeAffordanceCodeMode: ""     # default off · Let assistants compose OpenWork queries and sidebar commands in Code Mode using the same checked app actions.
     libraryConnectorNavigation: ""   # default off · Open assigned connectors in My Library from Manage and expand skills in plugins and My Library.

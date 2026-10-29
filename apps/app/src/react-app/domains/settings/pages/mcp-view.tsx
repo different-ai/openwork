@@ -31,6 +31,8 @@ import type { EnablementResult } from "../../../../app/extensions";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "../../../../app/cloud/import-state";
 import { ExtensionCard } from "../../../design-system/extension-card";
 import { ExtensionDetailModal } from "../../../design-system/extension-detail-modal";
+import { LibraryBreadcrumbs, type LibraryBreadcrumb } from "../../../design-system/library-breadcrumbs";
+import { useDesktopFeature } from "../../session/status/use-desktop-feature";
 import { resolveExtensionIconUrl } from "../../../design-system/extension-icon-src";
 import {
   isOrgMcpConnectionReady,
@@ -248,7 +250,7 @@ export type McpViewProps = {
   /** Stable extension detail id from `/extensions/:id`. */
   detailId?: string | null;
   /** Navigate when detail opens/closes. When set, detail renders as a page. */
-  onDetailIdChange?: (id: string | null) => void;
+  onDetailIdChange?: (id: string | null, filter?: ExtensionInventoryFilter) => void;
   /** Create a workspace skill, command, or agent from Library. */
   createLibraryItem?: (
     kind: LibraryAuthorableKind,
@@ -418,6 +420,8 @@ export function McpView(props: McpViewProps) {
   const denAuth = useDenAuth();
   const denBaseUrl = readDenSettings().baseUrl;
   const useRoutedDetail = typeof props.onDetailIdChange === "function";
+  const detailBreadcrumbsEnabled = useDesktopFeature("libraryDetailBreadcrumbs");
+  const [detailParent, setDetailParent] = useState<{ childId: string; plugin: CloudImportedPlugin } | null>(null);
   const [detailTarget, setDetailTarget] = useState<ExtensionDetailTarget | null>(null);
   const [mcpConnectFailure, setMcpConnectFailure] = useState<{ id: string; message: string } | null>(null);
   const [pendingPlugin, setPendingPlugin] = useState<CloudImportedPlugin | null>(null);
@@ -848,16 +852,24 @@ export function McpView(props: McpViewProps) {
     }
   };
 
-  const closeDetail = () => {
+  const closeDetailToFilter = (nextFilter: ExtensionInventoryFilter) => {
     setDetailTarget(null);
+    setDetailParent(null);
     setPendingPlugin(null);
     setLandingConnector(null);
     setDetailSkillContent(null);
     setMcpConnectFailure(null);
-    props.onDetailIdChange?.(null);
+    if (detailBreadcrumbsEnabled) {
+      markFeatureUsed("libraryDetailBreadcrumbs");
+      setFilter(nextFilter);
+    }
+    props.onDetailIdChange?.(null, detailBreadcrumbsEnabled ? nextFilter : undefined);
   };
+  const closeDetail = () => closeDetailToFilter(filter);
 
-  const openDetail = (target: ExtensionDetailTarget) => {
+  const openDetail = (target: ExtensionDetailTarget, parent?: CloudImportedPlugin) => {
+    setDetailParent(parent ? { childId: extensionDetailIdForTarget(target), plugin: parent } : null);
+    if (detailBreadcrumbsEnabled) markFeatureUsed("libraryDetailBreadcrumbs");
     setDetailTarget(target);
     setMcpConnectFailure(null);
     if (target.kind === "skill") {
@@ -880,16 +892,18 @@ export function McpView(props: McpViewProps) {
     if (preferred) {
       const resolved = resolveExtensionDetailTarget(preferred, libraryDetailLists);
       if (resolved) {
-        openDetail(resolved);
+        openDetail(resolved, plugin);
         return;
       }
     }
-    openDetail({ kind: "plugin-file", plugin, file });
+    openDetail({ kind: "plugin-file", plugin, file }, plugin);
   };
 
   useEffect(() => {
+    // Detail routes do not carry a category. Keep the category the person opened.
+    if (detailBreadcrumbsEnabled && props.detailId) return;
     setFilter(primaryLibraryFilter(props.initialFilter));
-  }, [props.initialFilter]);
+  }, [props.initialFilter, props.detailId, detailBreadcrumbsEnabled]);
 
   useEffect(() => {
     if (!useRoutedDetail) return;
@@ -1186,6 +1200,31 @@ export function McpView(props: McpViewProps) {
     }
   };
 
+  const matchingParentPlugins = activeTarget && activeTarget.kind !== "plugin"
+    ? installedPlugins.filter((plugin) => plugin.files.some((file) =>
+      libraryPluginFilePreferredDetailId(file) === extensionDetailIdForTarget(activeTarget)))
+    : [];
+  const parentPlugin = activeTarget?.kind === "plugin-file"
+    ? activeTarget.plugin
+    : activeTarget && detailParent?.childId === extensionDetailIdForTarget(activeTarget)
+      ? detailParent.plugin
+      // Direct links/reloads have no click history. Use the structural parent
+      // only when it is unambiguous; never pick between two containing plugins.
+      : matchingParentPlugins.length === 1 ? matchingParentPlugins[0] : null;
+  const detailCategory = filter !== "all" ? filter
+    : detailSkill || detailCommand || detailAgent ? "skill"
+    : detailPlugin ? "plugin"
+    : detailConnectMcp || detailOrgMcpItem || detailServer ? "connection"
+    : "all";
+  const detailBreadcrumbs: LibraryBreadcrumb[] | undefined = detailBreadcrumbsEnabled ? [
+    { label: t("extensions.title"), onClick: () => closeDetailToFilter("all") },
+    ...(parentPlugin
+      ? [{ label: parentPlugin.name, onClick: () => openDetail({ kind: "plugin", plugin: parentPlugin }) }]
+      : detailCategory !== "all"
+        ? [{ label: extensionFilterLabel(detailCategory), onClick: () => closeDetailToFilter(detailCategory) }]
+        : []),
+  ] : undefined;
+
   const detailPanels = (
     <>
       {detailEntry ? (() => {
@@ -1206,6 +1245,7 @@ export function McpView(props: McpViewProps) {
             open={!!detailEntry}
             onClose={closeDetail}
             presentation={detailPresentation}
+            breadcrumbs={detailBreadcrumbs}
             backLabel={t("extensions.title")}
             name={detailEntry.name}
             description={detailEntry.description}
@@ -1264,6 +1304,7 @@ export function McpView(props: McpViewProps) {
             open={!!detailSkill}
             onClose={closeDetail}
             presentation={detailPresentation}
+            breadcrumbs={detailBreadcrumbs}
             backLabel={t("extensions.title")}
             name={detailSkill.name}
             description={detailSkill.description ?? "Installed skill"}
@@ -1301,6 +1342,7 @@ export function McpView(props: McpViewProps) {
           open={true}
           onClose={closeDetail}
           presentation={detailPresentation}
+          breadcrumbs={detailBreadcrumbs}
           backLabel={t("extensions.title")}
           name={`/${detailCommand.name}`}
           description={detailCommand.description ?? t("extensions.detail_source_composer")}
@@ -1324,6 +1366,7 @@ export function McpView(props: McpViewProps) {
           open={true}
           onClose={closeDetail}
           presentation={detailPresentation}
+          breadcrumbs={detailBreadcrumbs}
           backLabel={t("extensions.title")}
           name={detailAgent.name}
           description={detailAgent.description ?? t("extensions.detail_source_composer")}
@@ -1348,6 +1391,7 @@ export function McpView(props: McpViewProps) {
           open={true}
           onClose={closeDetail}
           presentation={detailPresentation}
+          breadcrumbs={detailBreadcrumbs}
           backLabel={t("extensions.title")}
           name={detailConnectMcp.name}
           description={
@@ -1385,6 +1429,7 @@ export function McpView(props: McpViewProps) {
             open={true}
             onClose={closeDetail}
             presentation={detailPresentation}
+            breadcrumbs={detailBreadcrumbs}
             backLabel={t("extensions.title")}
             name={displayName(detailServer.name)}
             description={match?.description ?? localServerTypeLabel(detailServer)}
@@ -1438,6 +1483,7 @@ export function McpView(props: McpViewProps) {
             open={!!detailPlugin}
             onClose={closeDetail}
             presentation={detailPresentation}
+            breadcrumbs={detailBreadcrumbs}
             backLabel={t("extensions.title")}
             name={detailPlugin.name}
             description={detailPlugin.description ?? kindLabel(pluginTaxonomy)}
@@ -1491,6 +1537,7 @@ export function McpView(props: McpViewProps) {
             open={true}
             onClose={() => openDetail({ kind: "plugin", plugin })}
             presentation={detailPresentation}
+            breadcrumbs={detailBreadcrumbs}
             backLabel={plugin.name}
             name={libraryPluginFileDisplayName(file)}
             description={file.connectCapabilityName
@@ -1536,6 +1583,7 @@ export function McpView(props: McpViewProps) {
             open={true}
             onClose={closeDetail}
             presentation={detailPresentation}
+            breadcrumbs={detailBreadcrumbs}
             backLabel={t("extensions.title")}
             name={displayName}
             description={recordedState ? recordedConnectorNote(connection, recordedView) : (!ready && addedByMe ? ownPlugin?.description : null) ?? detailOrgMcpItem.description ?? orgMcpConnectionActionLabel(connection)}
@@ -2009,15 +2057,17 @@ export function McpView(props: McpViewProps) {
     }
     return (
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 animate-in fade-in duration-300">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-2 w-fit gap-1 px-2 text-muted-foreground"
-          onClick={closeDetail}
-        >
-          <ChevronLeft size={16} />
-          {t("extensions.title")}
-        </Button>
+        {detailBreadcrumbs ? <LibraryBreadcrumbs items={detailBreadcrumbs} /> : (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ml-2 w-fit gap-1 px-2 text-muted-foreground"
+            onClick={closeDetail}
+          >
+            <ChevronLeft size={16} />
+            {t("extensions.title")}
+          </Button>
+        )}
         {props.inventoryLoading === true || pendingPlugin ? (
           <p className="flex items-center gap-2 text-sm text-dls-secondary">
             <Loader2 size={14} className="animate-spin" />

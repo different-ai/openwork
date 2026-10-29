@@ -61,6 +61,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "libraryDetailBreadcrumbs": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Library: detail breadcrumbs: Navigate from a skill or connector to its parent plugin or Library category without losing your place. Renders DEN_FEATURE_LIBRARY_DETAIL_BREADCRUMBS."
+            },
             "desktopUpdateDownloadWindow": {
               "enum": [
                 "",

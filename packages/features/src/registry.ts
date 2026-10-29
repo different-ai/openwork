@@ -104,6 +104,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  libraryDetailBreadcrumbs: {
+    label: "Library: detail breadcrumbs",
+    description: "Navigate from a skill or connector to its parent plugin or Library category without losing your place.",
+    category: "experience",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/library-detail-breadcrumbs/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   desktopUpdateDownloadWindow: {
     label: "Desktop: restart to update before the download",
     description: "Restart to update shows in the desktop title bar as soon as an update is found. Clicking it opens a small window that downloads the update with its progress, then restarts, instead of waiting with no sign of the download.",
