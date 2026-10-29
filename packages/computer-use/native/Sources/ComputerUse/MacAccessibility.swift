@@ -124,13 +124,14 @@ enum AXChildScan {
     /// display-only read with a generic failure (an outline's value, a
     /// splitter's actions). Those reads never decide a mask, so the control is
     /// listed without that detail. Reads that decide masks stay strict.
-    enum Outcome: Equatable { case value, absent, elementGone, unverified }
+    enum Outcome: Equatable { case value, absent, unverified }
     static func outcome(_ result: AXError, displayOnly: Bool) -> Outcome {
         switch result {
         case .success: return .value
         case .attributeUnsupported, .noValue: return .absent
-        // The element was destroyed, so nothing of it is on screen to mask.
-        case .invalidUIElement: return .elementGone
+        // An invalid element's pixels can outlive its accessibility object,
+        // and its mask and subtree can no longer be read, so it is unverified.
+        case .invalidUIElement: return .unverified
         case .failure, .cannotComplete: return displayOnly ? .absent : .unverified
         default: return .unverified
         }
@@ -402,7 +403,6 @@ final class MacAccessibility {
             try Task.checkCancellation(); try check()
             guard depth < 24, visited.count < 1500, records.count < 300 else { issue = "tree_limit"; break }
             guard visited.insert(element).inserted else { continue }
-            let recordCount = records.count, maskCount = protectedFrames.count
             do {
                 try budget.check()
                 guard let role = try checkedString(element, kAXRoleAttribute, budget) else {
@@ -434,12 +434,6 @@ final class MacAccessibility {
                     pending += descendants.elements.reversed().map { ($0, depth + 1) }
                 }
             } catch is CancellationError { throw CancellationError() }
-            catch let error as UseError where error.code == Self.elementGone {
-                // Apps keep destroyed elements in child lists while views load.
-                // Nothing of a destroyed element is drawn, so it needs no mask.
-                records.removeSubrange(recordCount...); protectedFrames.removeSubrange(maskCount...)
-                continue
-            }
             catch {
                 issue = (error as? UseError)?.code ?? "accessibility_unavailable"
                 break
@@ -460,7 +454,6 @@ final class MacAccessibility {
                 guard AXUIElementGetPid(target.element, &pid) == .success else { throw UseError("window_unavailable", "The window exited.", next: "observe") }
                 focused = try checkedElement(AXUIElementCreateApplication(pid), kAXFocusedUIElementAttribute, budget)
             } catch is CancellationError { throw CancellationError() }
-            catch let error as UseError where error.code == Self.elementGone { issue = "stale_observation" }
             catch { issue = (error as? UseError)?.code ?? "accessibility_unavailable" }
         }
         try check()
@@ -642,13 +635,11 @@ final class MacAccessibility {
             throw UseError("accessibility_unavailable", "Could not bound this accessibility operation.", next: "observe")
         }
     }
-    static let elementGone = "element_gone"
     private func accepted(_ result: AXError, _ budget: AXReadBudget, displayOnly: Bool = false) throws -> Bool {
         try budget.check()
         switch AXChildScan.outcome(result, displayOnly: displayOnly) {
         case .value: return true
         case .absent: return false
-        case .elementGone: throw UseError(Self.elementGone, "The accessible element was destroyed during the read.", next: "observe")
         case .unverified:
             throw UseError("accessibility_unavailable", "An accessibility read failed; its content or privacy state is unverified.", next: "observe")
         }

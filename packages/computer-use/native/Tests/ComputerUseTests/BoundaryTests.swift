@@ -320,10 +320,17 @@ final class BoundaryTests: XCTestCase {
             XCTAssertEqual(AXChildScan.outcome(result, displayOnly: true), .absent)
             XCTAssertEqual(AXChildScan.outcome(result, displayOnly: false), .unverified)
         }
-        XCTAssertEqual(AXChildScan.outcome(.invalidUIElement, displayOnly: false), .elementGone)
         XCTAssertEqual(AXChildScan.outcome(.apiDisabled, displayOnly: true), .unverified)
         XCTAssertEqual(AXChildScan.outcome(.noValue, displayOnly: false), .absent)
         XCTAssertEqual(AXChildScan.outcome(.success, displayOnly: false), .value)
+    }
+
+    func testInvalidElementsNeverDropTheirMaskFromTheScan() {
+        // A destroyed element can still be drawn, and its protection and children
+        // can no longer be read, so the scan withholds the screenshot.
+        for displayOnly in [false, true] {
+            XCTAssertEqual(AXChildScan.outcome(.invalidUIElement, displayOnly: displayOnly), .unverified)
+        }
     }
 
     func testSecureSubroleStaysStrictForTextInputsAndUnknownRoles() {
