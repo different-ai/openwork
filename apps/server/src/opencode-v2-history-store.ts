@@ -284,6 +284,13 @@ function refreshExistingSession(db: HistoryDatabase, id: string, sourceKey: stri
   return true;
 }
 
+/** Pre-ownership checkpoints only represented sessions the copy created.
+ * Preserve that meaning when upgrading an already interrupted database. */
+export function ensureHistoryCopyOwnership(db: HistoryDatabase): void {
+  if (db.prepare("SELECT 1 FROM pragma_table_info('openwork_history_copy') WHERE name = 'created_session'").get()) return;
+  db.exec("ALTER TABLE openwork_history_copy ADD COLUMN created_session INTEGER NOT NULL DEFAULT 1");
+}
+
 /** The target engine must be stopped. Rows, their original v1 archive and the
  * checkpoint live in the same SQLite DB. A kill rolls back only the active batch. */
 export async function copyHistoryBatches(options: {
@@ -306,7 +313,7 @@ export async function copyHistoryBatches(options: {
   }
   db.exec(`CREATE TABLE IF NOT EXISTS openwork_history_copy (
       source_key TEXT, session_id TEXT, cursor INTEGER NOT NULL DEFAULT -1, completed INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (source_key, session_id));
+      created_session INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (source_key, session_id));
     CREATE TABLE IF NOT EXISTS openwork_v1_message (source_key TEXT, id TEXT, session_id TEXT,
       time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL, PRIMARY KEY (source_key, id));
     CREATE TABLE IF NOT EXISTS openwork_v1_part (source_key TEXT, id TEXT, message_id TEXT, session_id TEXT,
@@ -314,6 +321,7 @@ export async function copyHistoryBatches(options: {
     CREATE TABLE IF NOT EXISTS openwork_v1_session (source_key TEXT, id TEXT, data TEXT NOT NULL, PRIMARY KEY (source_key, id));
     CREATE TABLE IF NOT EXISTS openwork_v2_replaced_message (source_key TEXT, id TEXT, session_id TEXT,
       seq INTEGER, type TEXT, data TEXT NOT NULL, time_created INTEGER, time_updated INTEGER, PRIMARY KEY (source_key, id))`);
+  ensureHistoryCopyOwnership(db);
   db.exec("PRAGMA foreign_keys = ON");
   transaction(db, () => {
     db.exec(`INSERT OR IGNORE INTO project (${projectColumns}) SELECT ${projectColumns} FROM converted.project`);
@@ -330,13 +338,15 @@ export async function copyHistoryBatches(options: {
     let cursor = checkpoint ? numberField(checkpoint, "cursor") : -1;
     transaction(db, () => {
       if (checkpoint) return;
-      if (db.prepare("SELECT 1 FROM session_v2 WHERE id = ?").get(id)) {
+      const existingSession = db.prepare("SELECT 1 FROM session_v2 WHERE id = ?").get(id);
+      if (existingSession) {
         unchanged = !refreshExistingSession(db, id, options.sourceKey, messageColumns);
         cursor = numberField(db.prepare("SELECT coalesce(max(seq), -1) AS seq FROM converted.session_message WHERE session_id = ?").get(id), "seq");
       } else {
         db.prepare(`INSERT INTO session_v2 (${sessionColumns}) SELECT ${sessionValues} FROM converted.session_v2 WHERE id = ?`).run(id);
       }
-      db.prepare("INSERT INTO openwork_history_copy (source_key, session_id, cursor) VALUES (?, ?, ?)").run(options.sourceKey, id, cursor);
+      db.prepare("INSERT INTO openwork_history_copy (source_key, session_id, cursor, created_session) VALUES (?, ?, ?, ?)")
+        .run(options.sourceKey, id, cursor, existingSession ? 0 : 1);
     });
     while (true) {
       options.signal?.throwIfAborted();

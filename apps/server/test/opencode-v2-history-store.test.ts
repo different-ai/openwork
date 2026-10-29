@@ -181,8 +181,10 @@ for (const diverged of [false, true]) test(`stale projection is losslessly recon
     const request = { database: db, sourceKey: "source", progress: () => {} };
     await assert.rejects(copyHistoryBatches({ ...request, batch: async () => { throw new Error("kill boundary"); } }), /kill boundary/);
     assert.equal(numberField(db.prepare("SELECT cursor FROM openwork_history_copy").get(), "cursor"), 2);
+    assert.equal(numberField(db.prepare("SELECT created_session FROM openwork_history_copy").get(), "created_session"), 0);
     await copyHistoryBatches(request);
     assert.equal(numberField(db.prepare("SELECT completed FROM openwork_history_copy").get(), "completed"), 1);
+    assert.equal(numberField(db.prepare("SELECT created_session FROM openwork_history_copy").get(), "created_session"), 0);
     assert.deepEqual(db.prepare("SELECT id, session_id, seq, type, data, time_created, time_updated FROM openwork_v2_replaced_message ORDER BY id").all(), before);
     assert.deepEqual(db.prepare("SELECT id FROM session_message ORDER BY seq").all().map(row => stringField(row, "id")), diverged ? ["a", "b", "extra", "c"] : ["a", "b", "c"]);
     assert.equal(numberField(db.prepare("SELECT seq FROM event_sequence").get(), "seq"), 100);
@@ -194,13 +196,47 @@ for (const diverged of [false, true]) test(`stale projection is losslessly recon
   } finally { db.close(); }
 });
 
+test("new-session ownership survives an interrupted copy and resume", async () => {
+  const db = await copyFixture();
+  try {
+    db.exec("DELETE FROM session_message; DELETE FROM session_v2");
+    const request = { database: db, sourceKey: "source", progress: () => {} };
+    await assert.rejects(copyHistoryBatches({ ...request, batch: async () => { throw new Error("kill boundary"); } }), /kill boundary/);
+    assert.equal(numberField(db.prepare("SELECT created_session FROM openwork_history_copy").get(), "created_session"), 1);
+    await copyHistoryBatches(request);
+    assert.equal(numberField(db.prepare("SELECT created_session FROM openwork_history_copy").get(), "created_session"), 1);
+    assert.equal(numberField(db.prepare("SELECT completed FROM openwork_history_copy").get(), "completed"), 1);
+    assert.equal(numberField(db.prepare("SELECT count(*) AS n FROM session_message").get(), "n"), 3);
+  } finally { db.close(); }
+});
+
+test("legacy checkpoints gain created-session ownership once, preserving existing rows as created", async () => {
+  const db = await copyFixture();
+  try {
+    db.exec(`CREATE TABLE openwork_history_copy (source_key TEXT, session_id TEXT, cursor INTEGER NOT NULL DEFAULT -1,
+      completed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (source_key, session_id));
+      INSERT INTO openwork_history_copy VALUES ('legacy', 'legacy-created', 63, 0)`);
+    const request = { database: db, sourceKey: "source", progress: () => {} };
+    await copyHistoryBatches(request);
+    assert.equal(numberField(db.prepare("SELECT created_session FROM openwork_history_copy WHERE source_key = 'legacy'").get(), "created_session"), 1);
+    assert.equal(numberField(db.prepare("SELECT created_session FROM openwork_history_copy WHERE source_key = 'source'").get(), "created_session"), 0);
+    await copyHistoryBatches(request);
+    assert.equal(numberField(db.prepare("SELECT count(*) AS n FROM pragma_table_info('openwork_history_copy') WHERE name = 'created_session'").get(), "n"), 1);
+    assert.equal(numberField(db.prepare("SELECT cursor FROM openwork_history_copy WHERE source_key = 'legacy'").get(), "cursor"), 63);
+  } finally { db.close(); }
+});
+
 test("equal id sets preserve v2 edits but still archive all raw v1 rows", async () => {
   const db = await copyFixture();
   try {
     db.exec("INSERT INTO session_message SELECT id, session_id, 2, type, data, time_created, time_updated FROM converted.session_message WHERE id = 'b'; UPDATE session_message SET data = '{\"edited\":true}' WHERE id = 'a'");
     const before = db.prepare("SELECT * FROM session_message ORDER BY id").all();
-    const result = await copyHistoryBatches({ database: db, sourceKey: "source", progress: () => {} });
-    assert.equal(result.skipped, 1);
+    const request = { database: db, sourceKey: "source", progress: () => {} };
+    await assert.rejects(copyHistoryBatches({ ...request, batch: async () => { throw new Error("kill boundary"); } }), /kill boundary/);
+    assert.equal(numberField(db.prepare("SELECT created_session FROM openwork_history_copy").get(), "created_session"), 0);
+    const result = await copyHistoryBatches(request);
+    assert.equal(numberField(db.prepare("SELECT created_session FROM openwork_history_copy").get(), "created_session"), 0);
+    assert.equal(result.imported, 1);
     assert.deepEqual(db.prepare("SELECT * FROM session_message ORDER BY id").all(), before);
     assert.equal(numberField(db.prepare("SELECT count(*) AS n FROM openwork_v1_message").get(), "n"), 1);
     assert.equal(numberField(db.prepare("SELECT count(*) AS n FROM openwork_v1_part").get(), "n"), 1);
