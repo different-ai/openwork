@@ -1198,6 +1198,13 @@
       "when": 1793228807541,
       "tag": "0171_external_mcp_request_headers",
       "breakpoints": true
+    },
+    {
+      "idx": 172,
+      "version": "5",
+      "when": 1793240505767,
+      "tag": "0172_sandbox_model_keys",
+      "breakpoints": true
     }
   ]
 }

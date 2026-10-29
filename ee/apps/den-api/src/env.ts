@@ -141,6 +141,9 @@ const EnvSchema = z.object({
   DEN_SANDBOX_GATEWAY_PROVIDER: z.string().optional(),
   DEN_SANDBOX_GATEWAY_MODELS: z.string().optional(),
   DEN_SANDBOX_GATEWAY_API_KEY: z.string().optional(),
+  // With DEN_SANDBOX_GATEWAY_PROVIDER=openrouter and no shared key, each sandbox gets its own OpenRouter key
+  // (minted with OPENROUTER_MANAGEMENT_API_KEY) capped at this many US dollars unless the admin picks another cap.
+  DEN_SANDBOX_CREDIT_USD: z.string().optional(),
   DEN_DASHBOARDS_ENABLED: z.string().optional(),
   // Default-on deployment kill switches.
   DEN_AUDIT_CAPTURE_ENABLED: z.enum(["true", "false"]).default("true"),
@@ -707,6 +710,13 @@ const planetscaleCredentials =
 const sandboxWorkplaceUrl = optionalString(parsed.DEN_SANDBOX_WORKPLACE_URL)
   ?? (featureEnvironment.deployment === "cloud" ? "https://open-workplace-workshop.onrender.com" : null)
 const sandboxGatewayApiKey = optionalString(parsed.DEN_SANDBOX_GATEWAY_API_KEY)
+const sandboxGatewayProvider = optionalString(parsed.DEN_SANDBOX_GATEWAY_PROVIDER) ?? (sandboxGatewayApiKey ? "openai" : "openrouter")
+// One OpenRouter key per sandbox, capped, instead of one shared key: needs a management key and no shared key.
+const sandboxMintsOpenRouterKeys = !sandboxGatewayApiKey && sandboxGatewayProvider === "openrouter" && Boolean(optionalString(parsed.OPENROUTER_MANAGEMENT_API_KEY))
+const sandboxDefaultModels = sandboxGatewayProvider === "openrouter"
+  ? "anthropic/claude-sonnet-5.5,openai/gpt-5.5,google/gemini-3.8-flash"
+  : "gpt-6-luna"
+const sandboxCreditUsd = Number.parseInt(optionalString(parsed.DEN_SANDBOX_CREDIT_USD) ?? "50", 10)
 
 export const env = {
   databaseUrl: parsed.DATABASE_URL,
@@ -925,11 +935,14 @@ export const env = {
   dashboardsEnabled,
   sandbox: {
     workplaceUrl: sandboxWorkplaceUrl,
-    gateway: sandboxGatewayApiKey
+    gateway: sandboxGatewayApiKey || sandboxMintsOpenRouterKeys
       ? {
-          providerId: optionalString(parsed.DEN_SANDBOX_GATEWAY_PROVIDER) ?? "openai",
-          modelIds: (optionalString(parsed.DEN_SANDBOX_GATEWAY_MODELS) ?? "gpt-6-luna").split(",").map(value => value.trim()).filter(Boolean),
-          apiKey: sandboxGatewayApiKey,
+          providerId: sandboxGatewayProvider,
+          modelIds: (optionalString(parsed.DEN_SANDBOX_GATEWAY_MODELS) ?? sandboxDefaultModels).split(",").map(value => value.trim()).filter(Boolean),
+          /** The key every sandbox shares, or null when each sandbox gets its own capped OpenRouter key. */
+          apiKey: sandboxGatewayApiKey ?? null,
+          /** Default cap for a sandbox's own key; null with a shared key. */
+          creditUsd: sandboxMintsOpenRouterKeys ? (Number.isFinite(sandboxCreditUsd) && sandboxCreditUsd > 0 ? sandboxCreditUsd : 50) : null,
         }
       : null,
   },

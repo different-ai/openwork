@@ -7,7 +7,10 @@ import { getDesktopReleaseMetadata } from "../desktop-releases.js"
 import { env } from "../env.js"
 import { adminOrganizationPlanInputSchema, setOrganizationPlanByAdmin } from "../admin-organization-plan.js"
 import { readFeatureRollouts } from "@openwork-ee/den-db/organization-features"
-import { updateFeatureRollout, updateOrganizationFeatureOverrides } from "../features.js"
+import { deploymentFeatureEnabled, updateFeatureRollout, updateOrganizationFeatureOverrides } from "../features.js"
+import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { SANDBOX_MAX_CREDIT_USD, SANDBOX_MAX_DAYS, SANDBOX_MAX_MEMBERS, sandboxCreateInputSchema } from "@openwork/types/den/sandbox-organizations"
+import { closeSandbox, createSandbox, extendSandbox, listSandboxes, sandboxDefaults, setSandboxCredit } from "../sandbox-organizations.js"
 import { FEATURE_KEYS, featureAvailableOn, featureDefinition, featureDocsUrl, featureKeySchema, featureRollout, resolveFeature } from "@openwork/features"
 import { runPlatformAdminPlatformAction, runPlatformAdminServiceAction, type PlatformAdminAuditActor } from "../audit/mcp-service-audit.js"
 import { readWorkbotAdoptionReport, workbotAdoptionInputSchema } from "../workbot/adoption-report.js"
@@ -34,7 +37,7 @@ import { normalizeRows } from "../admin-metrics/sql.js"
  * write tools need the caller's mcp:write scope, like connection writes.
  */
 
-export const DEN_ADMIN_MCP_VERSION = "0.10.0"
+export const DEN_ADMIN_MCP_VERSION = "0.11.0"
 
 const QUERY_TIMEOUT_MS = 15_000
 // Slightly under Den's own timer, so the database stops the statement first.
@@ -811,4 +814,103 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
         }
       }),
   )
+
+  // Sandbox organizations: the same functions as /v1/admin/sandbox-orgs and the /admin Sandbox page. Platform
+  // evidence only, like those routes (creating one makes a new organization).
+  const sandboxesOn = async () => {
+    if (!await deploymentFeatureEnabled("sandboxOrgs")) throw new Error("Sandbox organizations are turned off on this deployment. Turn on sandboxOrgs (den_set_feature_rollout) first.")
+  }
+  const sandboxId = (value: string) => {
+    if (!isDenTypeId("sandboxOrganization", value)) throw new Error("Invalid sandbox id (expected sbx_... from den_sandbox_list).")
+    return normalizeDenTypeId("sandboxOrganization", value)
+  }
+  const found = <T>(sandbox: T | null) => {
+    if (!sandbox) throw new Error("Sandbox not found.")
+    return { ok: true, sandbox }
+  }
+
+  server.registerTool(
+    "den_sandbox_list",
+    {
+      description: "List sandbox organizations (try-it-out Enterprise orgs for prospects): state, end date, seats, join link, connectors, and the model credit left on each sandbox's own OpenRouter key. Also returns what a new sandbox gets on this deployment.",
+      inputSchema: z.object({}),
+    },
+    async () => run(async () => {
+      await sandboxesOn()
+      return { sandboxes: await listSandboxes(), defaults: sandboxDefaults() }
+    }),
+  )
+
+  server.registerTool(
+    "den_sandbox_create",
+    {
+      description: `Admin write tool: create a sandbox organization owned by you, on the Enterprise plan until it ends, with AI Gateway models for everyone (its own OpenRouter key capped at creditUsd when the deployment mints them), the fictional workplace connectors and a join link to send the prospect. Confirm name, seats, days and credit with the person first.`,
+      inputSchema: z.object({
+        name: z.string().trim().min(2).max(120).describe("Organization name, e.g. 'Trial sandbox'. Never include anything the prospect would consider confidential."),
+        days: z.number().int().min(1).max(SANDBOX_MAX_DAYS).describe("How many days the sandbox stays open"),
+        memberLimit: z.number().int().min(1).max(SANDBOX_MAX_MEMBERS).describe("Seats"),
+        creditUsd: z.number().int().min(1).max(SANDBOX_MAX_CREDIT_USD).optional().describe("Model spending cap in US dollars; omitted uses the deployment default"),
+        allowedEmailDomains: z.array(z.string()).max(20).optional().describe("Only people with these email domains can join; omitted means anyone with the link"),
+        joinRole: z.enum(["member", "admin"]).optional().describe("What people who join become; default admin"),
+        withConnectors: z.boolean().optional().describe("Add the fictional workplace connectors (default true)"),
+      }),
+    },
+    async ({ name, days, memberLimit, creditUsd, allowedEmailDomains, joinRole, withConnectors }) =>
+      writeScopeMissing("den_sandbox_create") ?? run(async () => {
+        await sandboxesOn()
+        const input = sandboxCreateInputSchema.safeParse({
+          name, days, memberLimit, allowedEmailDomains: allowedEmailDomains ?? [], joinRole,
+          connectorBaseUrl: withConnectors === false ? null : sandboxDefaults().workplaceUrl,
+          ...(creditUsd === undefined ? {} : { creditUsd }),
+        })
+        if (!input.success) throw new Error(input.error.issues[0]?.message ?? "Invalid sandbox.")
+        const admin = requireAdmin()
+        const sandbox = await runPlatformAdminPlatformAction("sandbox_organization.create", admin, { type: "sandbox_organization", id: null }, () =>
+          createSandbox(normalizeDenTypeId("user", admin.userId), input.data))
+        return { ok: true, sandbox }
+      }),
+  )
+
+  server.registerTool(
+    "den_sandbox_extend",
+    {
+      description: "Admin write tool: add days to a sandbox (from now or its current end, whichever is later). Reopens a closed or ended sandbox: join link, Free Auto and its own model key come back on, and the Enterprise plan's end date moves.",
+      inputSchema: z.object({ sandboxId: z.string().describe("sbx_... from den_sandbox_list"), days: z.number().int().min(1).max(SANDBOX_MAX_DAYS) }),
+    },
+    async ({ sandboxId: id, days }) =>
+      writeScopeMissing("den_sandbox_extend") ?? run(async () => {
+        await sandboxesOn()
+        const target = sandboxId(id)
+        return found(await runPlatformAdminPlatformAction("sandbox_organization.extend", requireAdmin(), { type: "sandbox_organization", id: target }, () => extendSandbox(target, days)))
+      }),
+  )
+
+  server.registerTool(
+    "den_sandbox_set_credit",
+    {
+      description: "Admin write tool: set the model spending cap, in US dollars, on a sandbox's own OpenRouter key. This is the new total, not an increment: to add $25 to a $50 sandbox, set 75.",
+      inputSchema: z.object({ sandboxId: z.string().describe("sbx_... from den_sandbox_list"), creditUsd: z.number().int().min(1).max(SANDBOX_MAX_CREDIT_USD) }),
+    },
+    async ({ sandboxId: id, creditUsd }) =>
+      writeScopeMissing("den_sandbox_set_credit") ?? run(async () => {
+        await sandboxesOn()
+        const target = sandboxId(id)
+        return found(await runPlatformAdminPlatformAction("sandbox_organization.credit.set", requireAdmin(), { type: "sandbox_organization", id: target }, () => setSandboxCredit(target, creditUsd)))
+      }),
+  )
+
+  server.registerTool(
+    "den_sandbox_close",
+    {
+      description: "Admin write tool: close a sandbox now. Stops the join link, Free Auto and its own model key; the organization, members and their work are kept, and den_sandbox_extend reopens it.",
+      inputSchema: z.object({ sandboxId: z.string().describe("sbx_... from den_sandbox_list") }),
+    },
+    async ({ sandboxId: id }) =>
+      writeScopeMissing("den_sandbox_close") ?? run(async () => {
+        await sandboxesOn()
+        const target = sandboxId(id)
+        return found(await runPlatformAdminPlatformAction("sandbox_organization.close", requireAdmin(), { type: "sandbox_organization", id: target }, () => closeSandbox(target)))
+      }),
+  )
+
 }
