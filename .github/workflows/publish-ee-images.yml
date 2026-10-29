@@ -13,15 +13,25 @@ on:
         required: false
         default: ""
         type: string
+  # Recipe/selection changes prove the real images and existing health/migration
+  # assertions before merge. Ordinary source PRs do not fan out into six builds.
+  pull_request:
+    branches:
+      - "dev"
+    paths:
+      - ".github/workflows/publish-ee-images.yml"
+      - ".github/scripts/build-inputs.mjs"
+      - ".github/scripts/ee-image*.mjs"
+      - ".dockerignore"
+      - "packaging/docker/Dockerfile*"
   push:
     branches:
       - "dev"
     tags:
       - "v*"
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/dev' }}
+# Do not cancel an API publication because an unrelated Workbot push arrived.
+# Mutable :dev writes are serialized per target below, not per whole workflow.
 
 permissions:
   contents: read
@@ -65,6 +75,27 @@ jobs:
           echo "chart_version=$chart_version" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
 
+  image-inputs:
+    name: Select unpublished image inputs
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.inputs.outputs.images }}
+      gateway: ${{ steps.inputs.outputs.gateway }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+
+      - name: Compare each image with its successfully published dev inputs
+        id: inputs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node .github/scripts/ee-image-inputs.mjs select
+
   helm-chart:
     name: Validate Helm chart
     runs-on: ubuntu-latest
@@ -72,32 +103,43 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      - name: Set up Helm
-        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.22.1
 
+      - name: Select Helm inputs independently of image builds
+        id: inputs
+        run: node .github/scripts/ee-image-inputs.mjs helm
+
+      - name: Set up Helm
+        if: ${{ steps.inputs.outputs.affected == 'true' }}
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+
       - name: Check Node security baseline and Helm runtime probe
+        if: ${{ steps.inputs.outputs.affected == 'true' }}
         run: node --test scripts/tests/node-runtime-baseline.test.mjs packaging/helm/openwork-ee/tests/node-runtime.mjs
 
       - name: Lint chart
+        if: ${{ steps.inputs.outputs.affected == 'true' }}
         run: helm lint packaging/helm/openwork-ee
 
       - name: Render chart
+        if: ${{ steps.inputs.outputs.affected == 'true' }}
         run: helm template openwork-ee packaging/helm/openwork-ee --set ingress.enabled=true --set inference.enabled=true
 
       - name: Run chart tests
+        if: ${{ steps.inputs.outputs.affected == 'true' }}
         run: |
           for test in packaging/helm/openwork-ee/tests/*.sh; do
             bash "$test"
           done
 
       - name: Package chart
-        if: ${{ needs.artifact-version.outputs.chart_version != '' }}
+        if: ${{ steps.inputs.outputs.affected == 'true' && needs.artifact-version.outputs.chart_version != '' }}
         run: |
           helm package packaging/helm/openwork-ee \
             --version "${{ needs.artifact-version.outputs.chart_version }}" \
@@ -105,89 +147,54 @@ jobs:
             --destination dist/charts
 
       - name: Log in to GHCR for Helm
-        if: ${{ needs.artifact-version.outputs.publish == 'true' && needs.artifact-version.outputs.chart_version != '' }}
+        if: ${{ steps.inputs.outputs.affected == 'true' && needs.artifact-version.outputs.publish == 'true' && needs.artifact-version.outputs.chart_version != '' }}
         run: |
           printf '%s' "${{ secrets.GITHUB_TOKEN }}" | helm registry login "${{ env.REGISTRY }}" \
             --username "${{ github.actor }}" \
             --password-stdin
 
       - name: Publish chart
-        if: ${{ needs.artifact-version.outputs.publish == 'true' && needs.artifact-version.outputs.chart_version != '' }}
+        if: ${{ steps.inputs.outputs.affected == 'true' && needs.artifact-version.outputs.publish == 'true' && needs.artifact-version.outputs.chart_version != '' }}
         run: helm push "dist/charts/openwork-ee-${{ needs.artifact-version.outputs.chart_version }}.tgz" "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"
 
   ee-images:
     name: Build ${{ matrix.image }}
     runs-on: ubuntu-latest
-    needs: artifact-version
+    needs: [artifact-version, image-inputs]
+    if: ${{ needs.image-inputs.outputs.images != '[]' }}
+    concurrency: &image-publish-lock
+      group: ee-publish-${{ matrix.target }}-${{ github.ref }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - image: openwork-den-api
-            dockerfile: packaging/docker/Dockerfile.den
-            port: 8788
-            health_path: /health
-            smoke_env: >-
-              -e DB_MODE=mysql
-              -e DEN_DB_ENCRYPTION_KEY=ci-den-db-encryption-key-value-123456
-              -e BETTER_AUTH_SECRET=ci-better-auth-secret-value-123456
-              -e BETTER_AUTH_URL=http://127.0.0.1:8788
-          - image: openwork-den-web
-            dockerfile: packaging/docker/Dockerfile.den-web
-            port: 3005
-            health_path: /api/health
-            smoke_env: ""
-          - image: openwork-inference
-            # Stable image repository for existing Gateway deployments.
-            dockerfile: packaging/docker/Dockerfile.gateway
-            port: 8791
-            health_path: /health
-            smoke_env: >-
-              -e DB_MODE=mysql
-              -e DATABASE_URL=mysql://smoke:smoke@127.0.0.1:3306/smoke
-              -e DEN_DB_ENCRYPTION_KEY=ci-den-db-encryption-key-value-123456
-          # The gateway's own liveness lives at /__gw/health because /health is
-          # proxied through to the user's instance.
-          - image: openwork-den-gateway
-            dockerfile: packaging/docker/Dockerfile.den-gateway
-            port: 8788
-            health_path: /__gw/health
-            smoke_env: >-
-              -e DEN_API_BASE=http://127.0.0.1:9
-              -e DEN_GATEWAY_KEY=ci-den-gateway-key-value-123456
-          # Self-hosted Slack replies, headless Automations and Workbot.
-          - image: openwork-headless-runner
-            dockerfile: packaging/docker/Dockerfile.headless-runner
-            port: 8795
-            health_path: /health
-            smoke_env: >-
-              -e HEADLESS_API_TOKEN=ci-headless-runner-token-value-1234567890
-              -e HEADLESS_MODEL_PROTOCOL=anthropic
-              -e HEADLESS_MODEL_BASE_URL=https://api.anthropic.com/v1
-              -e HEADLESS_MODEL=ci-model
-          - image: openwork-workbot
-            dockerfile: packaging/docker/Dockerfile.workbot
-            port: 3020
-            health_path: /healthz
-            smoke_env: >-
-              -e WORKBOT_PUBLIC_URL=https://chat.example.com
-              -e WORKBOT_DEN_API_URL=https://api.example.com
-              -e WORKBOT_RUNNER_URL=http://headless-runner:8795
-              -e WORKBOT_RUNNER_TOKEN=ci-headless-runner-token-value-1234567890
-              -e WORKBOT_SESSION_SECRET=ci-workbot-session-secret-value-123456789
+        include: ${{ fromJSON(needs.image-inputs.outputs.images) }}
 
-    steps:
+    steps: &image-build-steps
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+
+      - name: Recheck published inputs under the target lock
+        id: inputs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node .github/scripts/ee-image-inputs.mjs check "${{ matrix.target }}"
+
       - name: Set up QEMU
+        if: ${{ steps.inputs.outputs.build == 'true' }}
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
 
       - name: Set up Docker Buildx
+        if: ${{ steps.inputs.outputs.build == 'true' }}
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Log in to GHCR
-        if: ${{ github.event_name == 'push' || inputs.push == true }}
+        if: ${{ steps.inputs.outputs.build == 'true' && needs.artifact-version.outputs.publish == 'true' }}
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -196,6 +203,7 @@ jobs:
 
       - name: Docker metadata
         id: meta
+        if: ${{ steps.inputs.outputs.build == 'true' }}
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
@@ -203,15 +211,19 @@ jobs:
             type=ref,event=tag
             type=semver,pattern={{version}}
             type=sha,prefix=sha-
+            type=raw,value=build-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
+          # :dev is never a build tag. Promote the successful immutable digest
+          # below only if this target still matches the latest dev inputs.
           labels: |
             org.opencontainers.image.title=${{ matrix.image }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            io.openwork.build-inputs=${{ steps.inputs.outputs.fingerprint }}
+            io.openwork.build-target=${{ matrix.target }}
 
       - name: Resolve Sentry source-map upload
         id: sentry_sourcemaps
-        if: ${{ needs.artifact-version.outputs.publish == 'true' && github.event_name != 'pull_request' }}
+        if: ${{ steps.inputs.outputs.build == 'true' && needs.artifact-version.outputs.publish == 'true' && github.event_name != 'pull_request' }}
         shell: bash
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -244,10 +256,10 @@ jobs:
           echo "den_web_upload=$den_web_upload" >> "$GITHUB_OUTPUT"
 
       - name: Build and optionally push without Sentry source-map upload
-        # Build every image except the ones whose Sentry-enabled step below owns
-        # them. Stated as an exclusion so a newly added matrix entry builds by
-        # default instead of silently skipping and failing the smoke step.
-        if: ${{ !((matrix.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (matrix.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true')) }}
+        id: build
+        # Build every selected image except the Sentry-enabled steps' owners.
+        # The exclusion keeps new matrix entries from silently skipping builds.
+        if: ${{ steps.inputs.outputs.build == 'true' && !((matrix.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (matrix.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true')) }}
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
@@ -266,7 +278,8 @@ jobs:
             ${{ matrix.image == 'openwork-den-web' && 'DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=0' || '' }}
 
       - name: Build and push with Sentry source-map upload
-        if: ${{ (matrix.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (matrix.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true') }}
+        id: build_sentry
+        if: ${{ steps.inputs.outputs.build == 'true' && ((matrix.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (matrix.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true')) }}
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
@@ -293,7 +306,7 @@ jobs:
             sentry_dist=${{ secrets.SENTRY_DIST }}
 
       - name: Assert Den DB migration assets
-        if: ${{ github.event_name == 'pull_request' && matrix.image == 'openwork-den-api' }}
+        if: ${{ steps.inputs.outputs.build == 'true' && github.event_name == 'pull_request' && matrix.image == 'openwork-den-api' }}
         shell: bash
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
@@ -307,7 +320,7 @@ jobs:
           '
 
       - name: Smoke health endpoint
-        if: ${{ github.event_name == 'pull_request' }}
+        if: ${{ steps.inputs.outputs.build == 'true' && github.event_name == 'pull_request' }}
         shell: bash
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
@@ -425,14 +438,38 @@ jobs:
           docker logs "$container_id" || true
           exit 1
 
-  # The gateway is stateless (it serves the SPA and proxies), so dev CD is safe.
-  # den-api and engine-snapshot dev CD are deliberate follow-ups because they
-  # require migration and sandbox recycle handling.
-  redeploy-den-gateway:
-    needs: [artifact-version, ee-images]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+      - name: Promote current dev inputs by immutable digest
+        id: promote
+        if: ${{ steps.inputs.outputs.build == 'true' && needs.artifact-version.outputs.publish == 'true' && github.ref == 'refs/heads/dev' }}
+        env:
+          BUILD_FINGERPRINT: ${{ steps.inputs.outputs.fingerprint }}
+          BUILD_DIGEST: ${{ steps.build.outputs.digest || steps.build_sentry.outputs.digest }}
+        run: node .github/scripts/ee-image-inputs.mjs promote "${{ matrix.target }}" "$BUILD_DIGEST"
+
+  # Reuse exactly the same build/assertion/smoke steps, but give this target its
+  # own completion boundary so the source-deploy hook never waits for a matrix.
+  den-gateway-image:
+    name: Build ${{ matrix.image }}
     runs-on: ubuntu-latest
-    # Render deploy secrets belong to this environment; no deployment is recorded.
+    needs: [artifact-version, image-inputs]
+    if: ${{ needs.image-inputs.outputs.gateway != '[]' }}
+    outputs:
+      published: ${{ steps.promote.outputs.published }}
+    concurrency: *image-publish-lock
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.image-inputs.outputs.gateway) }}
+    steps: *image-build-steps
+
+  # Only this target's actual, current :dev publication can request a source
+  # deploy. Render builds client-web FROM SOURCE, not from this GHCR image.
+  redeploy-den-gateway:
+    needs: den-gateway-image
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && needs.den-gateway-image.outputs.published == 'true' }}
+    runs-on: ubuntu-latest
+    # Preserve the existing hook's environment/authorization boundary. Image
+    # builds (including tag/manual releases) do not need this environment.
     environment:
       name: den-production
       deployment: false
@@ -465,5 +502,5 @@ jobs:
 
           {
             echo
-            echo "Triggered a den-gateway deploy so it pulls the fresh dev image."
+            echo "Requested the existing Render gateway source deploy after publishing its matching dev artifact. Render builds from source, not this GHCR image."
           } >> "$GITHUB_STEP_SUMMARY"

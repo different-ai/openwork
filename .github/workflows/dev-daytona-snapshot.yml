@@ -1,6 +1,8 @@
 # web.openworklabs.com runtime channel:
-# Every push builds a snapshot from dev HEAD. The snapshot is not production until
-# the scheduled/manual promotion updates the production pin and redeploys Den API.
+# Runtime-affecting pushes build a snapshot at the pushed dev SHA. The nightly
+# and manual backstops still build HEAD, even after unrelated changes. A snapshot
+# is not production until the scheduled/manual promotion updates the production
+# pin and redeploys Den API.
 # This promotion is intentionally separate because rapid merges previously recycled
 # every running cloud workspace repeatedly.
 # DAYTONA_PIN_CHANNEL resolves pin ping-pong: release pinning defers to this channel.
@@ -26,15 +28,49 @@ permissions:
   contents: read
 
 concurrency:
-  # Per-push runs queue/batch naturally; in-flight snapshot publishes are never cancelled.
-  group: ${{ github.workflow }}
+  # GitHub replaces the pending run even with cancel-in-progress:false. A docs
+  # push must not evict a selected runtime push; give every push its own group.
+  # Only promotion runs serialize with one another, as before.
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || 'promotion' }}
   cancel-in-progress: false
 
 jobs:
+  scope:
+    name: Select web runtime inputs
+    if: github.repository == 'different-ai/openwork'
+    runs-on: ubuntu-latest
+    outputs:
+      affected: ${{ steps.inputs.outcome == 'success' && steps.inputs.outputs.fingerprint != '' && steps.inputs.outputs.affected || 'true' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: github.event_name == 'push'
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: github.event_name == 'push'
+        with:
+          node-version: 24.22.1
+      - name: Compare runtime build inputs
+        id: inputs
+        if: github.event_name == 'push'
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: node .github/scripts/build-inputs.mjs --target runtime --base "$BASE_SHA" --head "$HEAD_SHA"
+
   publish-daytona-snapshot:
     name: Build Web Runtime Snapshot
-    if: github.repository == 'different-ai/openwork'
+    needs: scope
+    # Schedule/dispatch retain SHA names and their unconditional HEAD backstop.
+    # An unavailable selector also builds; only a verified irrelevant push skips.
+    if: ${{ !cancelled() && github.repository == 'different-ai/openwork' && (github.event_name != 'push' || needs.scope.outputs.affected != 'false') }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    # A nightly/manual backstop can target the same SHA as an in-flight push.
+    # Do not race snapshot replacement/readiness for that immutable name.
+    concurrency:
+      group: ${{ github.workflow }}-snapshot-${{ github.sha }}
+      cancel-in-progress: false
     # Render deploy secrets belong to this environment; no deployment is recorded.
     environment:
       name: den-production

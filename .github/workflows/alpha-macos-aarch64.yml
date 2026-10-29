@@ -14,24 +14,8 @@ on:
   push:
     branches:
       - dev
-    paths:
-      - apps/app/**
-      - apps/desktop/**
-      - apps/server/**
-      - packages/docs/**
-      - packages/enterprise-mcp-client/**
-      - packages/computer-use/**
-      - packages/install-config/**
-      - packages/paths/**
-      - packages/types/**
-      - packages/ui/**
-      - patches/**
-      - scripts/release/**
-      - constants.json
-      - package.json
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - .github/workflows/alpha-macos-aarch64.yml
+    # Let the dependency-aware changes job select builds. A workflow path list
+    # misses new transitive packages and source reads outside package manifests.
   workflow_dispatch:
     inputs:
       platform:
@@ -62,13 +46,37 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: alpha-desktop-${{ github.ref }}-${{ inputs.platform || 'all' }}
-  cancel-in-progress: true
-
+# Acquire publication locks only after input selection, in the platform jobs.
+# An unrelated dev push must not cancel an existing or queued desktop build.
 jobs:
+  changes:
+    name: Detect desktop build inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      affected: ${{ steps.classify.outputs.affected }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - name: Classify desktop build inputs
+        id: classify
+        env:
+          BUILD_BASE: ${{ github.event.before }}
+          BUILD_HEAD: ${{ github.sha }}
+        # A dispatch or unavailable diff selects the build, never skips it.
+        run: node .github/scripts/build-inputs.mjs --target desktop --base "${BUILD_BASE:-0000000000000000000000000000000000000000}" --head "$BUILD_HEAD"
+
   publish-alpha-macos-aarch64:
-    if: github.event_name == 'push' || inputs.platform != 'windows-x64'
+    needs: changes
+    if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || inputs.platform != 'windows-x64')
     name: Build + Publish alpha (aarch64-apple-darwin)
     runs-on: macos-14
     # Apple signing secrets belong to this environment; no deployment is recorded.
@@ -128,7 +136,7 @@ jobs:
             macos-pnpm-
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --prefer-offline
+        run: pnpm --filter @openwork/desktop... --filter @openwork/app... --filter openwork-server... install --frozen-lockfile --prefer-offline
 
       - name: Resolve alpha version
         id: alpha-version
@@ -271,7 +279,8 @@ jobs:
         run: node scripts/release/prune-alpha-assets.mjs --repo "$GITHUB_REPOSITORY" --tag "$CHANNEL_TAG" --keep 100
 
   publish-alpha-windows-x64:
-    if: github.event_name == 'push' || inputs.platform != 'macos-arm64'
+    needs: changes
+    if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || inputs.platform != 'macos-arm64')
     name: Build + Publish alpha (x86_64-pc-windows-msvc)
     runs-on: blacksmith-8vcpu-windows-2025
     environment: windows-signing

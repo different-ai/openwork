@@ -13,8 +13,10 @@ on:
     - cron: "37 7 * * *"
   workflow_dispatch:
 
+# A later unrelated push may select no product checks. Do not let it replace a
+# pending relevant dev run; only PR updates share a cancellation group.
 concurrency:
-  group: openwork-tests-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: openwork-tests-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -29,51 +31,84 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       lane: ${{ steps.classify.outputs.lane }}
+      core: ${{ steps.classify.outputs.core }}
+      desktop_smoke: ${{ steps.classify.outputs.desktop_smoke }}
+      snapshot: ${{ steps.classify.outputs.snapshot }}
+      docs: ${{ steps.classify.outputs.docs }}
       den_contract: ${{ steps.classify.outputs.den_contract }}
     steps:
+      - name: Checkout build inputs
+        uses: actions/checkout@v6
       - name: Classify changed files
         id: classify
         uses: actions/github-script@v8
         with:
           script: |
-            if (context.eventName !== "pull_request") {
-              core.setOutput("lane", "full")
-              // Pushes to dev keep their dedicated Generated Den SDK and API Contract workflows.
-              core.setOutput("den_contract", "false")
-              core.info("Selected lane: full")
-              return
+            const { pathToFileURL } = require("node:url")
+            const { execFileSync } = require("node:child_process")
+            const scripts = pathToFileURL(`${process.env.GITHUB_WORKSPACE}/.github/scripts/`)
+            const { changedFiles, isBuildAffected } = await import(new URL("build-inputs.mjs", scripts))
+            const { classifyCiChanges, pullRequestChanges, pushChanges } = await import(new URL("classify-ci-changes.mjs", scripts))
+            let files = null
+            let expectedCount = null
+            if (context.eventName === "pull_request") {
+              ;({ files, expectedCount } = await pullRequestChanges({
+                github, ...context.repo,
+                number: context.payload.pull_request.number,
+                head: context.payload.pull_request.head.sha,
+              }))
+            } else if (context.eventName === "push") {
+              files = pushChanges({
+                base: context.payload.before,
+                head: context.sha,
+                readDiff: changedFiles,
+                // Fetch endpoint objects, not the last commit's file list. A
+                // multi-commit dev push must include every changed input.
+                fetchBase: (base) => execFileSync("git", ["fetch", "--no-tags", "--no-recurse-submodules", "--depth=1", "origin", base], { stdio: "pipe", timeout: 60000 }),
+              })
             }
+            if (files === null && ["pull_request", "push"].includes(context.eventName)) {
+              core.warning("A complete changed-file comparison is unavailable; selecting full regression.")
+            }
+            const selection = classifyCiChanges({ eventName: context.eventName, files, expectedCount }, isBuildAffected)
+            for (const [name, value] of Object.entries(selection)) core.setOutput(name, String(value))
+            core.info(`Selected checks: ${JSON.stringify(selection)}`)
 
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
-              per_page: 100,
-            })
-            const snapshotOnly = files.length === 1
-              && files[0].status === "modified"
-              && files[0].filename === "ee/apps/gateway/src/models/base.json"
-            const docsOnly = files.length > 0
-              && files.every((file) => file.filename.startsWith("packages/docs/")
-                && (!file.previous_filename || file.previous_filename.startsWith("packages/docs/")))
-            const lane = snapshotOnly ? "snapshot" : docsOnly ? "docs" : "full"
-            core.setOutput("lane", lane)
-            core.info(`Selected lane: ${lane}`)
-
-            // Generate and validate contracts from route/schema source; outputs
-            // are ignored build artifacts, never PR inputs.
-            const denContractPrefixes = ["ee/apps/den-api/", "ee/packages/", "packages/types/", "packages/features/", "packages/sdk/"]
-            // The workflow itself is listed so changes to this check exercise it.
-            const denContractFiles = new Set(["packages/docs/openapi.json", ".spectral.yaml", ".spectral-baseline.json", "scripts/api-lint.mjs", "scripts/den-contract.mjs", "scripts/den-contract-cache.mjs", "scripts/den-contract-database.mjs", "scripts/den-contract-hook.mjs", "scripts/features-sync.mjs", "scripts/tests/den-contract-database.test.mjs", "scripts/tests/den-contract-hook.test.mjs", "scripts/tests/den-contract-format.test.mjs", "scripts/tests/den-contract-cache.test.mjs", ".github/workflows/ci-tests.yml"])
-            const touchesDenContract = (name) => Boolean(name) && (denContractFiles.has(name) || denContractPrefixes.some((prefix) => name.startsWith(prefix)))
-            const denContract = lane === "full" && files.some((file) => touchesDenContract(file.filename) || touchesDenContract(file.previous_filename))
-            core.setOutput("den_contract", denContract ? "true" : "false")
-            core.info(`Den API contract check: ${denContract ? "required" : "not affected"}`)
+  # These checks read source only. They must not wait for installs, generated
+  # packages, MySQL, pinned engines, or the packaged desktop they help guard.
+  static-checks:
+    name: Static CI and outbound access checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.22.1
+      - name: Test fork authorization and free screening policy
+        run: node --test .github/scripts/contributor-pr.test.mjs .github/scripts/contributor-screen.test.mjs .github/scripts/warden-check.test.mjs .github/scripts/warden-report.test.mjs .github/scripts/warden-fast.test.mjs .github/scripts/setup-browser.test.mjs
+      - name: Test on-demand PR proof review builds and CI timing
+        run: node --test .github/scripts/pr-proof-review-build.test.mjs .github/scripts/pr-proof-selection.test.mjs .github/scripts/ci-time-to-green.test.mjs evals/scripts/engine-parity-binaries.test.mjs evals/scripts/run-parity-proof.test.mjs
+      - name: Test build inputs, publication recovery and deployment boundaries
+        run: >-
+          node --test
+          .github/scripts/build-inputs.test.mjs
+          .github/scripts/classify-ci-changes.test.mjs
+          .github/scripts/ee-image-inputs.test.mjs
+          .github/scripts/render-build-filters.test.mjs
+          .github/scripts/runtime-scope.test.mjs
+          .github/scripts/build-boundaries-native.test.mjs
+          .github/scripts/build-boundaries-codeql.test.mjs
+      - name: Test CodeQL scope and coverage accounting
+        run: node --test scripts/ci/codeql-config.test.mjs scripts/ci/check-codeql-results.test.mjs
+      - name: Check outbound access manifest
+        run: node scripts/check-outbound-access.mjs
 
   openwork-tests-core:
     name: Unit tests
     needs: classify-changes
-    if: needs.classify-changes.outputs.lane == 'full'
+    if: needs.classify-changes.outputs.core == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     timeout-minutes: 15
     steps:
@@ -142,10 +177,6 @@ jobs:
         run: pnpm --filter @openwork/calendar test
       - name: Test that a streaming reply keeps its place in the chat
         run: pnpm --filter @openwork/app exec bun --conditions=development test --isolate ./tests/reply-keeps-its-place.test.ts
-      - name: Test fork authorization and free screening policy
-        run: node --test .github/scripts/contributor-pr.test.mjs .github/scripts/contributor-screen.test.mjs .github/scripts/warden-check.test.mjs .github/scripts/warden-report.test.mjs .github/scripts/warden-fast.test.mjs .github/scripts/setup-browser.test.mjs
-      - name: Test on-demand PR proof review builds and CI timing
-        run: node --test .github/scripts/pr-proof-review-build.test.mjs .github/scripts/pr-proof-selection.test.mjs .github/scripts/ci-time-to-green.test.mjs evals/scripts/engine-parity-binaries.test.mjs evals/scripts/run-parity-proof.test.mjs
       - name: Test desktop and cloud computer access and interruption
         run: |
           pnpm --filter @openwork/computer-use build
@@ -158,8 +189,6 @@ jobs:
           python3 ee/packages/headless-computer/scripts/vnc-stdio.test.py
           python3 packages/computer-use/computer-x11-worker.test.py
           pnpm --dir evals exec vitest run --config vitest.config.ts --project pr ../apps/server/test/computer-use-tools.vitest.test.ts ../apps/server/test/cloud-computer-lifecycle.vitest.test.ts
-      - name: Test CodeQL scope and coverage accounting
-        run: node --test scripts/ci/codeql-config.test.mjs scripts/ci/check-codeql-results.test.mjs
       - name: Test packaged smoke engine diagnosis and kept logs
         run: |
           bun test apps/server/test/opencode-plugin-deps.test.ts
@@ -246,7 +275,7 @@ jobs:
   openwork-tests-build:
     name: Build and boot the desktop app
     needs: classify-changes
-    if: needs.classify-changes.outputs.lane == 'full'
+    if: needs.classify-changes.outputs.desktop_smoke == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     timeout-minutes: 15
     steps:
@@ -363,8 +392,6 @@ jobs:
       - name: Setup tests
         id: setup
         uses: ./.github/actions/setup-tests
-      - name: Check outbound access manifest
-        run: pnpm check:outbound-access
       # Test source resolution differs from packaged Node plugin resolution.
       - name: Bundle the server plugins the way packaged builds do
         run: |
@@ -485,7 +512,7 @@ jobs:
 
   validate-models-snapshot:
     needs: classify-changes
-    if: needs.classify-changes.outputs.lane == 'snapshot'
+    if: needs.classify-changes.outputs.snapshot == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -547,11 +574,11 @@ jobs:
           }
           NODE
 
-  # Docs never reach a runtime path, so a docs-only PR only needs to prove the
-  # Mintlify site still builds and has no broken pages, anchors, or images.
+  # Validate docs independently of the desktop smoke: images are site-only,
+  # while MD/MDX and docs.json also feed the desktop's embedded agent docs.
   validate-docs:
     needs: classify-changes
-    if: needs.classify-changes.outputs.lane == 'docs'
+    if: needs.classify-changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -633,57 +660,56 @@ jobs:
       - name: Lint the contract and typecheck the SDK
         run: pnpm api:lint && pnpm --filter @openwork/sdk typecheck
 
-  # Single stable context for branch rulesets to require. Green only when
-  # the lane selected by classification succeeds; always reports.
+  # Single stable context for branch rulesets to require. Each selected check
+  # must succeed, every unselected check must be skipped, and static guards
+  # always run. Classification failure/cancellation must never green-skip a gate.
   openwork-tests-required:
-    needs: [classify-changes, openwork-tests-core, openwork-tests-build, validate-models-snapshot, validate-docs, den-contract]
+    needs: [classify-changes, static-checks, openwork-tests-core, openwork-tests-build, validate-models-snapshot, validate-docs, den-contract]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Require the selected test lane to pass
+      - name: Checkout required-check policy
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.22.1
+      - name: Require every selected check to pass
         env:
           CLASSIFY_RESULT: ${{ needs.classify-changes.result }}
-          LANE: ${{ needs.classify-changes.outputs.lane }}
+          STATIC_RESULT: ${{ needs.static-checks.result }}
+          CORE: ${{ needs.classify-changes.outputs.core }}
+          DESKTOP_SMOKE: ${{ needs.classify-changes.outputs.desktop_smoke }}
+          SNAPSHOT: ${{ needs.classify-changes.outputs.snapshot }}
+          DOCS: ${{ needs.classify-changes.outputs.docs }}
+          DEN_CONTRACT: ${{ needs.classify-changes.outputs.den_contract }}
           CORE_RESULT: ${{ needs.openwork-tests-core.result }}
           BUILD_RESULT: ${{ needs.openwork-tests-build.result }}
           SNAPSHOT_RESULT: ${{ needs.validate-models-snapshot.result }}
           DOCS_RESULT: ${{ needs.validate-docs.result }}
-          DEN_CONTRACT: ${{ needs.classify-changes.outputs.den_contract }}
           DEN_CONTRACT_RESULT: ${{ needs.den-contract.result }}
         run: |
-          echo "classification: $CLASSIFY_RESULT ($LANE)"
-          echo "Den API contract (required: $DEN_CONTRACT): $DEN_CONTRACT_RESULT"
-          echo "core product regressions: $CORE_RESULT"
-          echo "packaging and IPC contract: $BUILD_RESULT"
-          echo "snapshot validation: $SNAPSHOT_RESULT"
-          echo "docs validation: $DOCS_RESULT"
-
-          if [ "$CLASSIFY_RESULT" != "success" ]; then
-            echo "Changed-file classification did not succeed; blocking merge." >&2
-            exit 1
-          fi
-
-          if [ "$DEN_CONTRACT" = "true" ] && [ "$DEN_CONTRACT_RESULT" != "success" ]; then
-            echo "The Den API contract check did not pass; regenerate with 'pnpm den:contract'." >&2
-            exit 1
-          fi
-          if [ "$DEN_CONTRACT" != "true" ] && [ "$DEN_CONTRACT_RESULT" != "skipped" ]; then
-            echo "The Den API contract check ran without being selected; blocking merge." >&2
-            exit 1
-          fi
-
-          case "$LANE" in
-            full)
-              [ "$CORE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
-              ;;
-            snapshot)
-              [ "$SNAPSHOT_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
-              ;;
-            docs)
-              [ "$DOCS_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] || exit 1
-              ;;
-            *)
-              echo "Changed-file classification returned an unexpected value; blocking merge." >&2
-              exit 1
-              ;;
-          esac
+          node --input-type=module <<'NODE'
+          import { assertSelectedChecks } from "./.github/scripts/classify-ci-changes.mjs"
+          const { env } = process
+          const checks = {
+            classification: env.CLASSIFY_RESULT,
+            staticChecks: env.STATIC_RESULT,
+            selected: {
+              core: env.CORE,
+              desktop_smoke: env.DESKTOP_SMOKE,
+              snapshot: env.SNAPSHOT,
+              docs: env.DOCS,
+              den_contract: env.DEN_CONTRACT,
+            },
+            results: {
+              core: env.CORE_RESULT,
+              desktop_smoke: env.BUILD_RESULT,
+              snapshot: env.SNAPSHOT_RESULT,
+              docs: env.DOCS_RESULT,
+              den_contract: env.DEN_CONTRACT_RESULT,
+            },
+          }
+          console.log(JSON.stringify(checks, null, 2))
+          assertSelectedChecks(checks)
+          NODE
