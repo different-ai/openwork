@@ -179,20 +179,41 @@ test("a member reaches an honest history limit instead of an inert Show earlier 
   await step("the member opens a long conversation that includes background work", async () => {
     await user.navigate(`${world.url}?assistant=off&history=long&chat=sidechat000000001`);
     await user.see({ role: "textbox", label: "Message Workbot" });
-    await user.wheelAt({ x: 640, y: 200, deltaY: -100000 });
+    await probe.eventually(() => world.windows(), { within: 5000, label: "the newest messages come first, then the rest of the page", until: windows => windows.includes(30) });
     await user.see({ role: "button", label: "Show earlier messages" });
-    evidence.recordAssertionEvidence("Earlier history exists beyond the initial page", "The fixture has 230 mixed records; the first page requests 30", world.windows().includes(30));
+    await user.wheelAt({ x: 640, y: 200, deltaY: -100000 });
+    const windows = world.windows();
+    expect(windows.indexOf(8)).toBeGreaterThanOrEqual(0);
+    expect(windows.indexOf(8)).toBeLessThan(windows.indexOf(30));
+    evidence.recordAssertionEvidence("The newest messages are read first", `The fixture has 230 mixed records; the page read ${windows.join(", ")} turns, the newest 8 before the full page of 30`, windows.indexOf(8) >= 0 && windows.indexOf(8) < windows.indexOf(30));
+    await user.screenshot();
+  });
+  await step("after: earlier messages arrive above without moving the message on screen", async () => {
+    const rows = 'ol[aria-label="Conversation"] > li';
+    const [reading] = (await probe.dom(rows)).elements;
+    // The row's timestamp goes once earlier messages are above it, so it is found again by its question.
+    const question = reading?.text.match(/Earlier question \d+/)?.[0];
+    if (!reading || !question) throw new Error("No conversation row is on screen");
+    await user.click({ role: "button", label: "Show earlier messages" });
+    await probe.eventually(() => world.windows(), { within: 5000, label: "history grows to 60 messages", until: windows => windows.includes(60) });
+    await user.see({ role: "button", label: "Show earlier messages" });
+    const after = (await probe.dom(rows)).elements;
+    const same = after.find(element => element.text.includes(question));
+    expect(after.length).toBeGreaterThan(15);
+    expect(same).toBeDefined();
+    expect(Math.abs((same?.rect.bottom ?? Number.NaN) - reading.rect.bottom)).toBeLessThanOrEqual(2);
+    evidence.recordAssertionEvidence("Loading earlier messages keeps the reader's place", `${after.length} rows after loading; "${question}" stays at ${Math.round(reading.rect.bottom)}px`, same !== undefined && Math.abs(same.rect.bottom - reading.rect.bottom) <= 2);
     await user.screenshot();
   });
   await step("the member repeatedly requests earlier messages", async () => {
-    for (const window of [60, 90, 120, 150, 180, 200]) {
+    for (const window of [90, 120, 150, 180, 200]) {
       await user.click({ role: "button", label: "Show earlier messages" });
       await probe.eventually(() => world.windows(), { within: 5000, label: `history grows to ${window} messages`, until: windows => windows.includes(window) });
       await user.see(window === 200
         ? { text: "History limit reached. Earlier messages aren't available here." }
         : { role: "button", label: "Show earlier messages" });
     }
-    evidence.recordAssertionEvidence("Each request grows the window until the supported limit", "30, 60, 90, 120, 150, 180, 200 requested", world.windows().includes(200));
+    evidence.recordAssertionEvidence("Each request grows the window until the supported limit", "8, 30, 60, 90, 120, 150, 180, 200 requested", world.windows().includes(200));
     await user.screenshot();
   });
   await step("after: the limit names the unavailable history and offers no inert action", async () => {

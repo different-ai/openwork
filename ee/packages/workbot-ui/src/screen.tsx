@@ -56,8 +56,14 @@ import { WorkbotCommandPalette, type WorkbotPaletteTab } from "./command-palette
  * page v4 (screens 1–4) for the thread and v5 (screens 5–8) for files.
  */
 
+/**
+ * The conversation is read newest first: a first page small enough to answer quickly, then the rest of a full page in
+ * the background, then a page more each time the person asks for earlier messages, up to the limit.
+ */
+const FIRST_TURNS = 8;
 const PAGE_TURNS = 30;
 const MAX_TURNS = 200;
+const earlierWindow = (current: number) => Math.min(MAX_TURNS, current < PAGE_TURNS ? PAGE_TURNS : current + PAGE_TURNS);
 const COLUMN = "min-w-0 w-full max-w-[640px]";
 
 function newMessageId() {
@@ -123,7 +129,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
   const queryClient = useQueryClient();
   const draft = useSyncExternalStore(composerState.subscribe, composerState.getSnapshot, composerState.getSnapshot);
   const { pending } = draft;
-  const [turnWindow, setTurnWindow] = useState(PAGE_TURNS);
+  const [turnWindow, setTurnWindow] = useState(FIRST_TURNS);
   const [filesOpen, setFilesOpen] = useState(false);
   // Once activated, keep this shell mounted even when the flag is revoked: draft editors must survive.
   const [teaching, setTeaching] = useState<BrowserTeachingContext>();
@@ -225,6 +231,11 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
   const editMessage = useEditWorkbotMessage();
   const uploads = { uploads: draft.uploads, add: composerState.add, remove: composerState.removeUpload, retry: composerState.retryUpload };
   const data = thread.data?.available ? thread.data : null;
+  // Once the newest messages are on screen, the rest of the first page is read behind them.
+  const earlierToRead = data?.hasEarlier === true && !thread.isPlaceholderData;
+  useEffect(() => {
+    if (earlierToRead && turnWindow < PAGE_TURNS) setTurnWindow(PAGE_TURNS);
+  }, [earlierToRead, turnWindow]);
   // The page, header and message box show before the conversation is read; only the thread waits for it.
   const loading = thread.isPending;
   useEffect(() => {
@@ -346,7 +357,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
       turns={data?.turns ?? []} loading={loading}
       canChange={!busy} onEdit={editTurn} editErrors={editErrors} pending={pending} live={stream.live}
       hasEarlier={data?.hasEarlier ?? false} earlierLimit={turnWindow >= MAX_TURNS && !thread.isPlaceholderData} loadingEarlier={thread.isFetching && thread.isPlaceholderData}
-      onLoadEarlier={() => setTurnWindow(current => Math.min(MAX_TURNS, current + PAGE_TURNS))}
+      onLoadEarlier={() => setTurnWindow(earlierWindow)}
       onRetry={entry => submit(entry.text, entry)}
       onRetryTurn={turn => {
         if (turn.greeting) { setGreetingAwaited(true); start.mutate(); return; }
@@ -532,7 +543,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
             hasEarlier={shown.hasEarlier}
             earlierLimit={turnWindow >= MAX_TURNS && !thread.isPlaceholderData}
             loadingEarlier={thread.isFetching && thread.isPlaceholderData}
-            onLoadEarlier={() => setTurnWindow((current) => Math.min(MAX_TURNS, current + PAGE_TURNS))}
+            onLoadEarlier={() => setTurnWindow(earlierWindow)}
             onRetry={(entry) => submit(entry.text, entry)}
             onRetryTurn={(turn) => {
               if (turn.greeting) {
@@ -973,6 +984,25 @@ function Conversation(props: {
     return () => observer.disconnect();
   }, []);
 
+  // Earlier messages arrive above what the person is reading: unless they're following the newest message, the row
+  // that was first stays where it was on screen, and what arrived is above it to scroll up to. Its bottom is kept,
+  // since a timestamp above its message goes once an earlier message from the same hour is above it.
+  const anchor = useRef<{ key: string; offset: number } | null>(null);
+  const firstKey = rows[0]?.key;
+  useLayoutEffect(() => {
+    const node = scroller.current;
+    if (!node) return;
+    const offset = (key: string) => {
+      const row = node.querySelector(`[data-workbot-row="${CSS.escape(key)}"]`);
+      return row ? row.getBoundingClientRect().bottom - node.getBoundingClientRect().top + node.scrollTop : null;
+    };
+    const previous = anchor.current;
+    const moved = previous && !pinned.current ? offset(previous.key) : null;
+    if (previous && moved !== null && moved !== previous.offset) node.scrollTop += moved - previous.offset;
+    const top = firstKey === undefined ? null : offset(firstKey);
+    anchor.current = firstKey === undefined || top === null ? null : { key: firstKey, offset: top };
+  });
+
   // Sending always brings the conversation back to the newest message.
   const pendingCount = props.pending.length;
   useLayoutEffect(() => {
@@ -1015,7 +1045,7 @@ function Conversation(props: {
               const previous = rows[index - 1] ?? (props.intro?.at ? { at: props.intro.at } : undefined);
               const stamp = showsTimestamp(previous, row);
               return (
-                <li key={row.key} className={`flex flex-col gap-1 ${index > 0 ? (stamp ? "pt-9" : "pt-8") : stamp && props.intro ? "pt-1" : ""}`}>
+                <li key={row.key} data-workbot-row={row.key} className={`flex flex-col gap-1 ${index > 0 ? (stamp ? "pt-9" : "pt-8") : stamp && props.intro ? "pt-1" : ""}`}>
                   {stamp ? <Timestamp at={row.at} /> : null}
                   <TurnView
                     canChange={props.canChange}
