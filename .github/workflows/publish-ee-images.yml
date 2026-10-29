@@ -47,6 +47,7 @@ jobs:
     outputs:
       chart_version: ${{ steps.version.outputs.chart_version }}
       publish: ${{ steps.version.outputs.publish }}
+      publication_channel: ${{ steps.version.outputs.publication_channel }}
     steps:
       - name: Resolve version
         id: version
@@ -55,10 +56,11 @@ jobs:
           INPUT_CHART_VERSION: ${{ inputs.chart_version }}
           INPUT_PUSH: ${{ inputs.push }}
         run: |
+          set -euo pipefail
           publish="false"
           if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
             publish="true"
-          elif [ "$INPUT_PUSH" = "true" ]; then
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "$INPUT_PUSH" = "true" ]; then
             publish="true"
           fi
 
@@ -72,8 +74,20 @@ jobs:
             exit 1
           fi
 
-          echo "chart_version=$chart_version" >> "$GITHUB_OUTPUT"
-          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          publication_channel="publish"
+          if [ "$publish" = "false" ]; then
+            if ! [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+              echo "Non-publishing runs require a unique run ID and attempt" >&2
+              exit 1
+            fi
+            publication_channel="build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          fi
+
+          {
+            echo "chart_version=$chart_version"
+            echo "publish=$publish"
+            echo "publication_channel=$publication_channel"
+          } >> "$GITHUB_OUTPUT"
 
   image-inputs:
     name: Select unpublished image inputs
@@ -81,6 +95,7 @@ jobs:
     outputs:
       images: ${{ steps.inputs.outputs.images }}
       gateway: ${{ steps.inputs.outputs.gateway }}
+      publisher_version: ${{ steps.inputs.outputs.publisher_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -158,12 +173,14 @@ jobs:
         run: helm push "dist/charts/openwork-ee-${{ needs.artifact-version.outputs.chart_version }}.tgz" "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"
 
   ee-images:
-    name: Build ${{ matrix.image }}
+    name: Build ${{ matrix.target }}
     runs-on: ubuntu-latest
     needs: [artifact-version, image-inputs]
     if: ${{ needs.image-inputs.outputs.images != '[]' }}
     concurrency: &image-publish-lock
-      group: ee-publish-${{ matrix.target }}-${{ github.ref }}
+      # Build-only runs cannot evict a pending publisher; superseded publisher
+      # implementations cannot evict the current implementation's job either.
+      group: ee-${{ needs.artifact-version.outputs.publication_channel }}-${{ matrix.target }}-${{ github.ref }}-${{ needs.image-inputs.outputs.publisher_version }}
       cancel-in-progress: false
     strategy:
       fail-fast: false
@@ -179,11 +196,27 @@ jobs:
         with:
           node-version: 24.22.1
 
+      # GitHub retains only one pending job. If an older selector evicted a
+      # newer one, this lock holder must build the newest desired source instead
+      # of rejecting its own stale commit and leaving :dev unpublished.
+      - name: Resolve current source under the target lock
+        id: source
+        env:
+          PUBLISHER_VERSION: ${{ needs.image-inputs.outputs.publisher_version }}
+          PUBLISH_IMAGES: ${{ needs.artifact-version.outputs.publish }}
+        run: node .github/scripts/ee-image-inputs.mjs source
+
       - name: Recheck published inputs under the target lock
         id: inputs
+        if: ${{ steps.source.outputs.current == 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node .github/scripts/ee-image-inputs.mjs check "${{ matrix.target }}"
+
+      - name: Resolve image configuration locally
+        id: config
+        if: ${{ steps.inputs.outputs.build == 'true' }}
+        run: node .github/scripts/ee-image-inputs.mjs config "${{ matrix.target }}"
 
       - name: Set up QEMU
         if: ${{ steps.inputs.outputs.build == 'true' }}
@@ -206,18 +239,21 @@ jobs:
         if: ${{ steps.inputs.outputs.build == 'true' }}
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ steps.config.outputs.image }}
           tags: |
             type=ref,event=tag
             type=semver,pattern={{version}}
-            type=sha,prefix=sha-
-            type=raw,value=build-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+            type=raw,value=sha-${{ steps.source.outputs.source_short_sha }}
+            type=raw,value=build-${{ steps.source.outputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
           # :dev is never a build tag. Promote the successful immutable digest
           # below only if this target still matches the latest dev inputs.
+          # Override event-derived revision metadata when this lock holder has
+          # reconciled a newer checkout: provenance must name the built source.
           labels: |
-            org.opencontainers.image.title=${{ matrix.image }}
+            org.opencontainers.image.title=${{ steps.config.outputs.image }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.source_sha }}
             io.openwork.build-inputs=${{ steps.inputs.outputs.fingerprint }}
             io.openwork.build-target=${{ matrix.target }}
 
@@ -259,44 +295,44 @@ jobs:
         id: build
         # Build every selected image except the Sentry-enabled steps' owners.
         # The exclusion keeps new matrix entries from silently skipping builds.
-        if: ${{ steps.inputs.outputs.build == 'true' && !((matrix.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (matrix.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true')) }}
+        if: ${{ steps.inputs.outputs.build == 'true' && !((steps.config.outputs.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (steps.config.outputs.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true')) }}
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          file: ${{ steps.config.outputs.dockerfile }}
           platforms: ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/dev') && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           load: ${{ github.event_name == 'pull_request' }}
           push: ${{ needs.artifact-version.outputs.publish == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          cache-from: type=gha,scope=${{ steps.config.outputs.image }}
+          cache-to: type=gha,mode=max,scope=${{ steps.config.outputs.image }}
           build-args: |
-            ${{ matrix.image == 'openwork-den-api' && format('DEN_API_VERSION={0}', needs.artifact-version.outputs.chart_version || github.sha) || '' }}
-            ${{ matrix.image == 'openwork-den-gateway' && format('DEN_GATEWAY_VERSION={0}', needs.artifact-version.outputs.chart_version || github.sha) || '' }}
-            ${{ matrix.image == 'openwork-den-api' && 'DEN_UPLOAD_SENTRY_SOURCEMAPS=0' || '' }}
-            ${{ matrix.image == 'openwork-den-web' && 'DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=0' || '' }}
+            ${{ steps.config.outputs.image == 'openwork-den-api' && format('DEN_API_VERSION={0}', needs.artifact-version.outputs.chart_version || steps.source.outputs.source_sha) || '' }}
+            ${{ steps.config.outputs.image == 'openwork-den-gateway' && format('DEN_GATEWAY_VERSION={0}', needs.artifact-version.outputs.chart_version || steps.source.outputs.source_sha) || '' }}
+            ${{ steps.config.outputs.image == 'openwork-den-api' && 'DEN_UPLOAD_SENTRY_SOURCEMAPS=0' || '' }}
+            ${{ steps.config.outputs.image == 'openwork-den-web' && 'DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=0' || '' }}
 
       - name: Build and push with Sentry source-map upload
         id: build_sentry
-        if: ${{ steps.inputs.outputs.build == 'true' && ((matrix.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (matrix.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true')) }}
+        if: ${{ steps.inputs.outputs.build == 'true' && ((steps.config.outputs.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (steps.config.outputs.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true')) }}
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          file: ${{ steps.config.outputs.dockerfile }}
           platforms: ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/dev') && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          cache-from: type=gha,scope=${{ steps.config.outputs.image }}
+          cache-to: type=gha,mode=max,scope=${{ steps.config.outputs.image }}
           build-args: |
-            ${{ matrix.image == 'openwork-den-api' && format('DEN_API_VERSION={0}', needs.artifact-version.outputs.chart_version || github.sha) || '' }}
-            ${{ matrix.image == 'openwork-den-gateway' && format('DEN_GATEWAY_VERSION={0}', needs.artifact-version.outputs.chart_version || github.sha) || '' }}
-            ${{ matrix.image == 'openwork-den-api' && 'DEN_UPLOAD_SENTRY_SOURCEMAPS=1' || '' }}
-            ${{ matrix.image == 'openwork-den-web' && 'DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=1' || '' }}
-            ${{ matrix.image == 'openwork-den-api' && format('DEN_SENTRY_UPLOAD_BUILD_ID={0}-{1}', github.run_id, github.run_attempt) || '' }}
-            ${{ matrix.image == 'openwork-den-web' && format('DEN_WEB_SENTRY_UPLOAD_BUILD_ID={0}-{1}', github.run_id, github.run_attempt) || '' }}
+            ${{ steps.config.outputs.image == 'openwork-den-api' && format('DEN_API_VERSION={0}', needs.artifact-version.outputs.chart_version || steps.source.outputs.source_sha) || '' }}
+            ${{ steps.config.outputs.image == 'openwork-den-gateway' && format('DEN_GATEWAY_VERSION={0}', needs.artifact-version.outputs.chart_version || steps.source.outputs.source_sha) || '' }}
+            ${{ steps.config.outputs.image == 'openwork-den-api' && 'DEN_UPLOAD_SENTRY_SOURCEMAPS=1' || '' }}
+            ${{ steps.config.outputs.image == 'openwork-den-web' && 'DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=1' || '' }}
+            ${{ steps.config.outputs.image == 'openwork-den-api' && format('DEN_SENTRY_UPLOAD_BUILD_ID={0}-{1}', github.run_id, github.run_attempt) || '' }}
+            ${{ steps.config.outputs.image == 'openwork-den-web' && format('DEN_WEB_SENTRY_UPLOAD_BUILD_ID={0}-{1}', github.run_id, github.run_attempt) || '' }}
           secrets: |
             sentry_auth_token=${{ secrets.SENTRY_AUTH_TOKEN }}
             sentry_org=${{ secrets.SENTRY_ORG }}
@@ -306,7 +342,7 @@ jobs:
             sentry_dist=${{ secrets.SENTRY_DIST }}
 
       - name: Assert Den DB migration assets
-        if: ${{ steps.inputs.outputs.build == 'true' && github.event_name == 'pull_request' && matrix.image == 'openwork-den-api' }}
+        if: ${{ steps.inputs.outputs.build == 'true' && github.event_name == 'pull_request' && steps.config.outputs.image == 'openwork-den-api' }}
         shell: bash
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
@@ -328,7 +364,9 @@ jobs:
           set -euo pipefail
 
           image_tag="${IMAGE_TAGS%%$'\n'*}"
-          container_name="openwork-smoke-${{ matrix.image }}"
+          read -r -a smoke_args <<< "$EE_IMAGE_SMOKE_ENV"
+          smoke_args+=("$image_tag")
+          container_name="openwork-smoke-${{ steps.config.outputs.image }}"
           mysql_container=""
           network_name=""
 
@@ -361,7 +399,7 @@ jobs:
           }
           trap cleanup EXIT
 
-          if [ "${{ matrix.image }}" = "openwork-den-api" ]; then
+          if [ "${{ steps.config.outputs.image }}" = "openwork-den-api" ]; then
             network_name="openwork-den-api-smoke"
             mysql_container="openwork-den-api-smoke-mysql"
             database_url="mysql://smoke:smoke@${mysql_container}:3306/smoke"
@@ -406,15 +444,14 @@ jobs:
               --network "$network_name" \
               -P \
               -e DATABASE_URL="$database_url" \
-              ${{ matrix.smoke_env }} \
-              "$image_tag")"
+              "${smoke_args[@]}")"
           else
-            container_id="$(docker run -d --name "$container_name" -P ${{ matrix.smoke_env }} "$image_tag")"
+            container_id="$(docker run -d --name "$container_name" -P "${smoke_args[@]}")"
           fi
 
           host_port=""
           for _ in {1..10}; do
-            host_port="$(docker port "$container_id" "${{ matrix.port }}/tcp" 2>/dev/null | awk -F: 'NR == 1 { print $NF }')"
+            host_port="$(docker port "$container_id" "${{ steps.config.outputs.port }}/tcp" 2>/dev/null | awk -F: 'NR == 1 { print $NF }')"
             if [ -n "$host_port" ]; then
               break
             fi
@@ -425,7 +462,7 @@ jobs:
             exit 1
           fi
 
-          url="http://127.0.0.1:${host_port}${{ matrix.health_path }}"
+          url="http://127.0.0.1:${host_port}${{ steps.config.outputs.health_path }}"
 
           for _ in {1..30}; do
             if node -e "fetch(process.argv[1]).then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))" "$url"; then
@@ -449,7 +486,7 @@ jobs:
   # Reuse exactly the same build/assertion/smoke steps, but give this target its
   # own completion boundary so the source-deploy hook never waits for a matrix.
   den-gateway-image:
-    name: Build ${{ matrix.image }}
+    name: Build ${{ matrix.target }}
     runs-on: ubuntu-latest
     needs: [artifact-version, image-inputs]
     if: ${{ needs.image-inputs.outputs.gateway != '[]' }}

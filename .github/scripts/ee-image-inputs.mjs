@@ -2,6 +2,7 @@
 // EE image selection has one durable baseline: the inputs on the image actually
 // published as :dev. A previous push (or a queued/failed build) is not success.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,6 +50,44 @@ export const EE_IMAGES = [
 ];
 
 export const isDevPush = ({ eventName, ref }) => eventName === "push" && ref === "refs/heads/dev";
+const isDevPublication = ({ eventName, ref, publish }) => publish === true && ref === "refs/heads/dev" && ["push", "workflow_dispatch"].includes(eventName);
+const objectIdValid = (value) => typeof value === "string" && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value) && !/^0+$/.test(value);
+const PUBLISHER_INPUTS = [".github/workflows/publish-ee-images.yml", ".github/scripts/ee-image-inputs.mjs", ".github/scripts/build-inputs.mjs"];
+
+/** Different publisher implementations cannot evict each other's queued jobs. */
+export function publisherVersion({ root = ROOT, ref = "HEAD" } = {}) {
+  if (typeof ref !== "string" || ref.startsWith("-")) throw new Error("Invalid publisher revision");
+  const tree = execFileSync("git", ["ls-tree", "-z", ref, "--", ...PUBLISHER_INPUTS], { cwd: root, encoding: "utf8", stdio: "pipe" });
+  const entries = tree.split("\0").filter(Boolean);
+  if (entries.length !== PUBLISHER_INPUTS.length || entries.some((entry) => !/^100(?:644|755) blob /.test(entry))) {
+    throw new Error("Publisher implementation is unavailable");
+  }
+  return createHash("sha256").update(tree).digest("hex");
+}
+
+/** A surviving publishing queue holder reconciles HEAD, including manual dev publishes. */
+export function sourceDecision({ eventName, ref, publish, sha, latestSha, expectedPublisher, latestPublisher }) {
+  if (typeof publish !== "boolean" || !["push", "workflow_dispatch", "pull_request"].includes(eventName) || (publish && eventName === "pull_request")) {
+    throw new Error("Image publication mode/event is unavailable or invalid");
+  }
+  if (!objectIdValid(sha)) throw new Error("Build source revision is unavailable");
+  if (!isDevPublication({ eventName, ref, publish })) return { current: true, source_sha: sha, source_short_sha: sha.slice(0, 7) };
+  if (!objectIdValid(latestSha) || !fingerprintValid(expectedPublisher) || !fingerprintValid(latestPublisher)) {
+    throw new Error("Latest publisher/source revision is unavailable");
+  }
+  // A newer implementation has its own queue and must execute its own workflow.
+  // Never build its tree using the older workflow's actions/arguments.
+  const current = expectedPublisher === latestPublisher;
+  const selected = current ? latestSha : sha;
+  return { current, source_sha: selected, source_short_sha: selected.slice(0, 7) };
+}
+
+function fetchDev() {
+  // Only disposable Actions checkouts may be shallow. Local invocations never
+  // write a shallow boundary into a developer's shared worktree repository.
+  const depth = process.env.GITHUB_ACTIONS === "true" ? ["--depth=1"] : [];
+  execFileSync("git", ["fetch", "--no-tags", ...depth, "origin", "+refs/heads/dev:refs/remotes/origin/dev"], { cwd: ROOT, stdio: "pipe" });
+}
 
 /** Network is injected so failed, missing and pending publication are testable. */
 export async function imageDecision({ target, eventName, ref, getFingerprint = buildFingerprint, readBaseline }) {
@@ -79,8 +118,17 @@ export async function selectImages(options) {
   };
 }
 
-function matrixEntry({ target, image, dockerfile, port, health_path, smoke_env }) {
-  return { target, image, dockerfile, port, health_path, smoke_env };
+// Cross-job outputs must contain only identifiers. Runtime fixture/configuration
+// strings can trigger GitHub's secret-output filter and suppress an entire matrix.
+function matrixEntry({ target }) {
+  return { target };
+}
+
+export function imageConfiguration(target) {
+  const entry = EE_IMAGES.find((image) => image.target === target);
+  if (!entry) throw new Error("Unknown EE image target");
+  const { image, dockerfile, port, health_path, smoke_env } = entry;
+  return { image, dockerfile, port, health_path, smoke_env };
 }
 
 export function helmDecision({ eventName, ref, files, affected = isBuildAffected }) {
@@ -163,12 +211,38 @@ async function cli([command, target, digest]) {
   if (command === "select") {
     const selection = await selectImages(options);
     for (const decision of selection.decisions) console.log(`${decision.target}: ${decision.build ? "build" : "skip"} (${decision.reason})`);
-    output({ images: selection.images, gateway: selection.gateway });
+    output({ images: selection.images, gateway: selection.gateway, publisher_version: publisherVersion() });
+  } else if (command === "source") {
+    // The version job is authoritative for both the queue channel and whether
+    // this job can publish. Never infer a missing/invalid flag from the event.
+    if (!["true", "false"].includes(process.env.PUBLISH_IMAGES)) throw new Error("PUBLISH_IMAGES must be true or false");
+    const sourceOptions = { ...options, publish: process.env.PUBLISH_IMAGES === "true" };
+    const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
+    let latestSha;
+    let latestPublisher;
+    if (isDevPublication(sourceOptions)) {
+      if (process.env.PUBLISHER_VERSION !== publisherVersion({ ref: sha })) throw new Error("Queued publisher implementation does not match this checkout");
+      fetchDev();
+      latestSha = execFileSync("git", ["rev-parse", "refs/remotes/origin/dev"], { cwd: ROOT, encoding: "utf8" }).trim();
+      latestPublisher = publisherVersion({ ref: latestSha });
+    }
+    const source = sourceDecision({ ...sourceOptions, sha, latestSha, expectedPublisher: process.env.PUBLISHER_VERSION, latestPublisher });
+    if (source.current && source.source_sha !== sha) {
+      execFileSync("git", ["checkout", "--detach", source.source_sha], { cwd: ROOT, stdio: "pipe" });
+    }
+    output(source);
+    if (!source.current) console.log("A newer publisher implementation has its own queue; this older job cannot publish it.");
   } else if (command === "check") {
     if (!EE_IMAGES.some((entry) => entry.target === target)) throw new Error("Unknown EE image target");
     // Recheck after acquiring the target lock: an earlier pending build may
     // have published these exact inputs since the matrix was selected.
     output(await imageDecision({ ...options, target }));
+  } else if (command === "config") {
+    const { smoke_env, ...config } = imageConfiguration(target);
+    if (!process.env.GITHUB_ENV || /[\r\n]/.test(smoke_env)) throw new Error("Local image environment is unavailable or invalid");
+    // Keep smoke fixtures on this runner, never in a cross-job matrix/output.
+    appendFileSync(process.env.GITHUB_ENV, `EE_IMAGE_SMOKE_ENV=${smoke_env}\n`);
+    output(config);
   } else if (command === "helm") {
     let before;
     try { before = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")).before; } catch { /* Fail open. */ }
@@ -181,8 +255,7 @@ async function cli([command, target, digest]) {
     const published = await promoteIfCurrent({
       fingerprint: process.env.BUILD_FINGERPRINT,
       latestFingerprint: () => {
-        // No --depth here: this must never shallow a shared developer clone.
-        execFileSync("git", ["fetch", "--no-tags", "origin", "+refs/heads/dev:refs/remotes/origin/dev"], { cwd: ROOT, stdio: "pipe" });
+        fetchDev();
         return buildFingerprint(target, { root: ROOT, ref: "refs/remotes/origin/dev" });
       },
       promote: () => execFileSync("docker", ["buildx", "imagetools", "create", "--tag", `${repository}:dev`, `${repository}@${digest}`], { stdio: "inherit" }),
@@ -190,7 +263,7 @@ async function cli([command, target, digest]) {
     output({ published });
     if (!published) console.log("Newer dev inputs exist for this target; keeping the immutable build without moving :dev.");
   } else {
-    throw new Error("Expected select, check <target>, helm, or promote <target> <digest>");
+    throw new Error("Expected select, source, check <target>, config <target>, helm, or promote <target> <digest>");
   }
 }
 

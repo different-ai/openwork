@@ -62,6 +62,60 @@ At rollout, let pre-change publishing runs finish (or explicitly cancel them)
 before the new publisher promotes images: an old running workflow cannot acquire
 or honor the new per-target locks.
 
+Cross-job image selection transfers only compact target identifiers and the
+publisher implementation hash. Each build job resolves its image, Dockerfile,
+port, health path and smoke environment locally from the trusted EE catalog;
+smoke fixtures stay in that runner's environment, never in a job matrix output.
+A missing matrix output is an error, not an empty selection to silently skip.
+
+During the initial rollout, GitHub's secret-output filter suppressed the combined
+five-image matrix output while the separate gateway output still transferred.
+Those five jobs never instantiated and therefore did not publish fingerprint
+labels. Repeated selection of those images is conservative recovery until their
+first successful publication, not evidence of an ongoing registry outage. The
+matched substring was not identified; do not infer a particular credential or
+fixture value from the warning.
+
+### EE queue reconciliation
+
+GitHub retains one running and one pending job per concurrency group, but does
+not order selector completion by commit age. While A builds, C's selector can
+queue C before the older B selector finishes; B can then replace pending C.
+Rejecting both stale A and stale B at promotion would leave `:dev` behind until
+another push.
+
+Every surviving dev publication lock holder therefore fetches `origin/dev`
+before checking its publication baseline and builds that latest source, not
+necessarily the commit that queued it. This includes automatic dev pushes and
+manual dev dispatches with **push enabled**. A replacement B job can build and
+publish C without a fourth push. The final per-target freshness check still
+prevents promotion if relevant inputs advance during the build. Build or
+publication failures cannot advance the successful-publication baseline.
+
+Build-only runs, including PRs and the default manual dry-run, use a separate
+channel unique to their run ID and attempt. They cannot replace a pending
+publisher. Publishing dev dispatches share the automatic publication channel and
+must reconcile the latest compatible dev source too; keeping their originally
+selected older SHA could otherwise strand publication after replacing C. The
+version job supplies the publication flag/channel, and source resolution rejects
+missing or invalid flags rather than inferring permission from an event.
+
+The concurrency group also includes a publisher implementation version: the Git
+blob identities of the EE publication workflow, EE image helper and shared build
+input helper. A delayed old implementation cannot evict the new implementation's
+pending job. An older lock holder refuses to build a tree whose publisher
+implementation differs; that tree must run its own workflow and arguments.
+Missing source/version data or a failed dev fetch stops the job before building.
+
+The resolved checkout SHA supplies the immutable image tags, explicit OCI
+revision label and API/gateway version arguments. It is not relabelled as the
+original triggering SHA. Build-only runs, tag runs and manual runs on other refs
+retain their selected checkout. Only dev publishing runs reconcile it to latest
+dev; manual runs still select all six images and Helm. Depth-one fetches are
+confined to disposable Actions checkouts; local invocations never shallow a
+developer's shared clone.
+The rollout caveat about already-running legacy publishers above still applies.
+
 ### Worker snapshots and other workflows
 
 Runtime push builds use the app/server runtime inputs, not native Electron or
