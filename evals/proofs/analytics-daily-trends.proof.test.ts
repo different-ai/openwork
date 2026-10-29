@@ -13,7 +13,7 @@ const test = spec.world(analyticsDailyTrends, {
 test("an admin switches Usage & adoption from weekly to daily trends and back", async ({ world, user, step, evidence }) => {
   await step("before: with daily trends off, the page charts 12 weeks and has no interval switch", async () => {
     await user.see({ role: "heading", label: "Weekly active users" }, { timeoutMs: 90_000 });
-    await user.notSee({ role: "radiogroup", label: "Trend interval" });
+    await user.notSee({ role: "radio", label: "Daily" });
     const { daily, weekly } = await world.analytics();
     evidence.recordAssertionEvidence("Off: the API sends only the weekly trend", `daily present=${daily !== null}; weeks=${weekly.length}`, daily === null && weekly.length === 12);
     expect(daily).toBeNull();
