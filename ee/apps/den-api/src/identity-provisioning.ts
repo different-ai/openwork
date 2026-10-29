@@ -2,7 +2,7 @@ import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, OrganizationTable, ScimProviderTable, SsoProviderTable } from "@openwork-ee/den-db/schema"
 import { emailDomainMatches } from "./account-linking-policy.js"
 import { db } from "./db.js"
-import { getOrganizationEntitlements, parseOrganizationPlan } from "./entitlements.js"
+import { getOrganizationEntitlements } from "./entitlements.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { acceptPendingInvitationForBootstrapMembership, ensureBootstrapMembershipForOrganization } from "./orgs.js"
 import { resolveStoredScimProvider } from "./scim-token-storage.js"
@@ -17,8 +17,10 @@ import { getOrganizationSeatAddEligibility } from "./stripe-billing.js"
  *   organization's verified SSO domain) needs the Team plan (`sso`
  *   entitlement).
  *
- * Outside Enterprise both also respect the Free plan user limit, like an
- * invitation: past it the organization needs an active Team subscription.
+ * Both respect the organization's user limit exactly like an invitation
+ * (organization-plan.ts): Free allows 5 (or more if a platform admin raised
+ * it), a Team or Enterprise plan a platform admin set allows its seats, and a
+ * paid Stripe plan has no limit.
  * Invited people always join through their invitation.
  *
  * Better Auth's SCIM and SSO plugins write member rows through the raw adapter,
@@ -46,8 +48,8 @@ export async function organizationAllowsProvisioning(organizationId: OrgId, kind
     .limit(1)
   if (!organization) return false
   if (!getOrganizationEntitlements(organization.metadata)[kind]) return false
-  // Enterprise organizations (set by a platform admin) are never held to the Free plan limit here.
-  if (parseOrganizationPlan(organization.metadata).tier === "enterprise") return true
+  // The same user limit as an invitation (organization-plan.ts): a plan a
+  // platform admin set allows its seats, a paid Stripe plan has no limit.
   return (await getOrganizationSeatAddEligibility(organizationId)).allowed
 }
 

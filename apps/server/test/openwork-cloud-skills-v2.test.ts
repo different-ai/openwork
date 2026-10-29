@@ -60,6 +60,7 @@ describe("registerCloudSkillDiscovery", () => {
     } });
     const registry = new Map<string, string>();
     let promptHook: ((event: Prompt) => void | Promise<void>) | undefined;
+    let toolHook: ((event: { tool: string; input: unknown }) => void | Promise<void>) | undefined;
     let tick: (() => void) | undefined;
     const realSetInterval = globalThis.setInterval;
     globalThis.setInterval = ((callback: () => void) => {
@@ -83,6 +84,7 @@ describe("registerCloudSkillDiscovery", () => {
           async reload() { apply(); },
         },
         session: { async hook(_name, callback) { promptHook = callback; return { dispose: async () => {} }; } },
+        tool: { async hook(_name, callback) { toolHook = callback; return { dispose: async () => {} }; } },
       });
     } finally {
       globalThis.setInterval = realSetInterval;
@@ -93,8 +95,31 @@ describe("registerCloudSkillDiscovery", () => {
       tick?.();
       for (let attempt = 0; attempt < 20 && JSON.stringify([...registry]) === before; attempt++) await Bun.sleep(10);
     };
-    return { reads, registry, refresh, prompt: async (event: Prompt) => { await promptHook?.(event); return event; } };
+    return {
+      reads, registry, refresh,
+      prompt: async (event: Prompt) => { await promptHook?.(event); return event; },
+      callTool: async (tool: string, input: unknown) => { await toolHook?.({ tool, input }); },
+    };
   }
+
+  test("the model calling the native skill tool gets the verified body in that one call", async () => {
+    const host = await start(() => catalog, url => url.startsWith("skill://crm") ? crmBody : "tampered body");
+    expect(host.registry.get("openwork-cloud-crm-pipeline-sync-7y86nr3j")).toContain("discovery metadata");
+
+    // Other tools and local skills never cost a read.
+    await host.callTool("read", { id: "openwork-cloud-crm-pipeline-sync-7y86nr3j" });
+    await host.callTool("skill", { id: "local-skill" });
+    expect(host.reads).toEqual([]);
+
+    await host.callTool("skill", { id: "openwork-cloud-crm-pipeline-sync-7y86nr3j" });
+    // Read and published before the skill tool runs, counted as a use.
+    expect(host.reads).toEqual([{ urls: ["skill://crm-pipeline-sync-7y86nr3j/SKILL.md"], use: true }]);
+    expect(host.registry.get("openwork-cloud-crm-pipeline-sync-7y86nr3j")).toBe(crmBody);
+
+    // A body that fails its digest keeps the discovery note.
+    await host.callTool("skill", { id: "openwork-cloud-release" });
+    expect(host.registry.get("openwork-cloud-release")).toContain("discovery metadata");
+  });
 
   test("registers metadata only and loads a named skill's body when a message uses it", async () => {
     const host = await start(() => catalog, url => url.startsWith("skill://crm") ? crmBody : "tampered body");

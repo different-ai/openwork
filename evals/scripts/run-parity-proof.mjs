@@ -12,6 +12,7 @@ const specs = new Set([
   "agent-connection-journey.e2e.test.ts",
   "secure-keys-in-chat.e2e.test.ts",
   "agent-permissions.e2e.test.ts",
+  "opencode-v2-drive-upload.proof.test.ts",
 ]);
 
 const v2Only = new Set([
@@ -21,6 +22,8 @@ const v2Only = new Set([
   "live-provider-sync.proof.test.ts",
   // Agent permissions are enforced by OpenCode v2 only.
   "agent-permissions.e2e.test.ts",
+  // The native Drive upload tool exists only on OpenCode v2.
+  "opencode-v2-drive-upload.proof.test.ts",
 ]);
 
 /** Basename of a supported parity spec given its basename or a path in any journey folder; undefined when unsupported. */

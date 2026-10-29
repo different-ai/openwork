@@ -23,30 +23,31 @@ test("a platform admin scans organizations as compact rows and jumps back to the
     await admin.screenshot();
   });
 
-  await step("after: each organization is one compact row with plan and seat controls kept under Manage", async () => {
+  await step("after: each organization is one compact row with its plan, users and a Billing link, and no per-row editor", async () => {
     await admin.navigate(world.url("/admin/organizations?search=Routing"));
     const first = await world.firstRow("organizations", "Routing", 1);
     await admin.see({ testId: first }, { timeoutMs: 60_000 });
     const rows = await adminProbe.dom('[data-testid^="admin-org-row-"]');
-    const editors = await adminProbe.dom('[id^="admin-org-manage-"]');
+    const editors = await adminProbe.dom('[id^="admin-org-manage-"], button[aria-label^="Manage "]');
+    const billingLinks = await adminProbe.dom('[data-testid="admin-organization-billing-link"]');
     const tallest = Math.max(...rows.elements.map((row) => row.rect.height));
-    const ok = rows.elements.length === 50 && tallest <= 120 && editors.elements.length === 0;
-    evidence.recordAssertionEvidence("A full page of organizations reads as short rows with no open editors", `rows=${rows.elements.length}; tallest row=${Math.round(tallest)}px; open Manage panels=${editors.elements.length}`, ok);
+    const ok = rows.elements.length === 50 && tallest <= 120 && editors.elements.length === 0 && billingLinks.elements.length === 50;
+    evidence.recordAssertionEvidence("A full page of organizations reads as short rows, each with a Billing link and no Manage panel", `rows=${rows.elements.length}; tallest row=${Math.round(tallest)}px; Manage panels=${editors.elements.length}; Billing links=${billingLinks.elements.length}`, ok);
     expect(ok).toBe(true);
     await admin.screenshot();
   });
 
-  await step("Manage opens the plan, seats and Free plan user limit for that one organization", async () => {
+  await step("Billing opens the organization's plan and users in one place", async () => {
     await admin.navigate(world.url("/admin/organizations?search=Overview%20workspace"));
-    await admin.click({ role: "button", label: `Manage ${organizationName}` });
-    await admin.see({ role: "button", label: "Save access" });
-    await admin.see({ role: "button", label: `Edit the Free plan user limit for ${organizationName}` });
-    const editors = await adminProbe.dom('[id^="admin-org-manage-"]');
-    const seats = await adminProbe.dom('[data-testid^="admin-org-row-"]');
-    const ok = editors.elements.length === 1 && /\/ 100/.test(seats.elements[0]?.text ?? "");
-    evidence.recordAssertionEvidence("Only the chosen organization's Manage panel opens, next to its seat usage", `open panels=${editors.elements.length}; row=${(seats.elements[0]?.text ?? "missing").slice(0, 120)}`, ok);
+    await admin.click({ role: "link", label: `Billing for ${organizationName}` });
+    await admin.see({ testId: "admin-organization-billing" }, { timeoutMs: 60_000 });
+    await admin.see({ role: "button", label: "Save plan" });
+    const location = await world.location();
+    const ok = location.pathname === `${world.detailPath}/billing`;
+    evidence.recordAssertionEvidence("The row's Billing link opens the organization's Billing tab", `pathname=${location.pathname}`, ok);
     expect(ok).toBe(true);
     await admin.screenshot();
+    await admin.navigate(world.url("/admin/organizations?search=Overview%20workspace"));
   });
 
   await step("opening the organization takes the admin to its member page", async () => {

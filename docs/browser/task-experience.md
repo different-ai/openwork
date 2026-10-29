@@ -36,7 +36,7 @@ Behind the `browserFloatingView` desktop feature (off by default), each
 conversation shows its browser in one of four modes, kept in memory by the
 renderer (`panel/browser-presentation-store.ts`):
 
-- **Hidden**: no browser surface; the header Browser button is unpressed.
+- **Hidden**: no browser surface; the side rail's Browser button is unpressed.
 - **Floating**: a small card on the right of the chat pane, above the composer.
   It snaps to top, middle or bottom (drag, Up/Down/Home/End or its menu) and
   shows a preview of the on-screen tab, its site and its state. "Needs you" in
@@ -47,7 +47,7 @@ renderer (`panel/browser-presentation-store.ts`):
   inside the page, and Exit full screen return to the last floating or side
   choice. Full screen never survives a conversation switch or its page closing.
 
-The header Browser button toggles between hidden and the last floating or side
+The side rail's Browser button toggles between hidden and the last floating or side
 choice. A page the agent opens comes up beside the chat (or stays full screen),
 because the agent acts only on a page the person can see; the person can float
 it from there. Reading and navigating keep working while floating. A browser

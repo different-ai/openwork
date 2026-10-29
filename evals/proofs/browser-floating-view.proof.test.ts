@@ -10,7 +10,7 @@ import { browserFloatingViewWorld } from "../worlds/desktop-chat-features.ts";
 const test = spec.world(browserFloatingViewWorld, {
   resources: {
     surfaces: ["desktop"],
-    services: ["den"],
+    services: ["den", "mock"],
     nativeReason: "Floating, side and full-screen presentation move Electron's native page view, which a browser tab cannot host.",
   },
 });
@@ -26,10 +26,10 @@ test("a person moves the page the agent opened between the side, its own floatin
   let tabId = "";
   let sideWidth = 0;
 
-  // The header Browser button reports what is on screen in data-browser-mode.
-  const headerMode = (mode: string) => probe.eventually(
+  // The side rail's Browser button reports what is on screen in data-browser-mode.
+  const browserMode = (mode: string) => probe.eventually(
     () => probe.dom(`[data-testid="session-browser-toggle"][data-browser-mode="${mode}"]`),
-    { within: WITHIN, until: (dom) => dom.elements.length === 1, label: `the header Browser button reports ${mode}` },
+    { within: WITHIN, until: (dom) => dom.elements.length === 1, label: `the Browser button reports ${mode}` },
   );
   // The agent's page keeps the same native tab in every presentation.
   const pageView = async (shown: boolean) => {
@@ -57,11 +57,15 @@ test("a person moves the page the agent opened between the side, its own floatin
   await step("before: a page the agent opens comes up beside the chat, as it does today", async () => {
     if (await probe.has("Not now")) await user.click({ role: "button", label: "Not now" });
     await user.see(toggle, { timeoutMs: 30_000 });
-    await headerMode("hidden");
+    await browserMode("hidden");
+    // One Browser button, in the side rail; the chat header has none.
+    const browserButtons = await probe.dom('button[aria-label^="Browser"]');
+    expect(browserButtons.elements).toHaveLength(1);
+    expect((await probe.dom('[data-session-header] button[aria-label^="Browser"]')).elements).toHaveLength(0);
     expect((await probe.browserState()).tabs.filter((tab) => tab.ownerSessionId === sessionId)).toEqual([]);
     tabId = browserTabHandle(await agent.run("browser.open_url", { url: world.pageUrl, provider: "builtin" })).tabId;
     await user.notSee({ role: "button", label: "Allow for this thread" });
-    await headerMode("side");
+    await browserMode("side");
     const view = await pageView(true);
     sideWidth = view?.bounds.width ?? 0;
     expect(sideWidth).toBeGreaterThan(0);
@@ -69,8 +73,8 @@ test("a person moves the page the agent opened between the side, its own floatin
     await user.notSee(card);
     evidence.recordAssertionEvidence(
       "The agent's page opens beside the chat",
-      `Without a consent prompt, the page opened in the side panel (${sideWidth}px wide); the header Browser button reads "side" and no floating card is shown.`,
-      sideWidth > 0,
+      `Without a consent prompt, the page opened in the side panel (${sideWidth}px wide); the side rail's Browser button reads "side", it is the only Browser button, and no floating card is shown.`,
+      sideWidth > 0 && browserButtons.elements.length === 1,
     );
     await user.screenshot();
   });
@@ -78,7 +82,7 @@ test("a person moves the page the agent opened between the side, its own floatin
   await step("after: floating the browser moves it into its own borderless window and takes the page off the chat", async () => {
     await user.click({ testId: "browser-mode-float" });
     const floating = await floatingCard();
-    await headerMode("floating");
+    await browserMode("floating");
     expect(await pageView(false)).toMatchObject({ tabId });
     await user.notSee({ testId: "browser-mode-float" });
     await user.notSee(card);
@@ -99,7 +103,7 @@ test("a person moves the page the agent opened between the side, its own floatin
     await (await floatingCard()).user.click({ testId: "browser-mode-fullscreen" });
     await user.see(fullscreen);
     await user.see({ testId: "browser-fullscreen-exit" });
-    await headerMode("fullscreen");
+    await browserMode("fullscreen");
     await floatingClosed();
     // Rest the pointer on Exit (no tooltip), so a toolbar tooltip under the
     // old pointer position cannot legitimately cover the page.
@@ -123,7 +127,7 @@ test("a person moves the page the agent opened between the side, its own floatin
     await user.press("Escape");
     await probe.eventually(() => probe.dom('[data-testid="browser-fullscreen-dialog"]'), { within: WITHIN, until: (dom) => dom.elements.length === 0, label: "full screen finishes closing" });
     await user.notSee(fullscreen);
-    await headerMode("floating");
+    await browserMode("floating");
     const floating = await floatingCard();
     expect(await pageView(false)).toMatchObject({ tabId });
     const windowed = !(await probe.eventually(() => world.appFullscreen(), { within: WITHIN, until: (full) => !full, label: "the app window leaves full screen" }));
@@ -135,26 +139,54 @@ test("a person moves the page the agent opened between the side, its own floatin
     await floating.user.screenshot();
   });
 
-  await step("after: the header Browser button hides the browser and brings it back where it was", async () => {
-    await user.click(toggle);
-    await headerMode("hidden");
+  await step("after: the floating window's close button puts the browser back beside the chat", async () => {
+    const floating = await floatingCard();
+    await floating.user.click({ testId: "browser-floating-close" });
+    await browserMode("side");
     await floatingClosed();
-    expect(await pageView(false)).toMatchObject({ tabId });
+    const view = await pageView(true);
+    expect(view).toMatchObject({ tabId });
+    evidence.recordAssertionEvidence(
+      "Closing the window docks the browser",
+      `The close button closed the floating window and the same page is back beside the chat (${view?.bounds.width ?? 0}px wide).`,
+      view?.tabId === tabId,
+    );
+    await user.screenshot();
+    // Pop it out again for the Browser button step.
+    await user.click({ testId: "browser-mode-float" });
+    await browserMode("floating");
+  });
+
+  await step("after: the Browser button only opens and closes the side panel; it never pops the page out", async () => {
+    // From the floating window, the button docks the page back beside the chat.
     await user.click(toggle);
-    await headerMode("floating");
-    await floatingCard();
+    await browserMode("side");
+    await floatingClosed();
+    await pageView(true);
+    await user.click(toggle);
+    await browserMode("hidden");
+    expect(await pageView(false)).toMatchObject({ tabId });
+    // The person last floated the page, yet showing it again opens the side panel, not a window.
+    await user.click(toggle);
+    await browserMode("side");
+    const view = await pageView(true);
+    const popped = await world.floatingWindowOpen();
+    expect(popped).toBe(false);
     const tabs = (await probe.browserState()).tabs.filter((tab) => tab.ownerSessionId === sessionId);
     expect(tabs.map((tab) => tab.id)).toEqual([tabId]);
     evidence.recordAssertionEvidence(
-      "Hide and show keep the page and its window",
-      `Hidden, neither the card window nor the page is shown; shown again, the card window returns with the same single tab (${tabs.length} owned by this chat).`,
-      tabs.length === 1 && tabs[0]?.id === tabId,
+      "The Browser button toggles the side panel only",
+      `It docked the floating page beside the chat, hid it, and showed it beside the chat again (${view?.bounds.width ?? 0}px wide) with no floating window and the same single tab (${tabs.length} owned by this chat).`,
+      !popped && tabs.length === 1 && tabs[0]?.id === tabId,
     );
     await user.screenshot();
+    // Popping out stays with the browser's own control.
+    await user.click({ testId: "browser-mode-float" });
+    await browserMode("floating");
   });
   await step("after: a page under the person's control has no floating screenshot", async () => {
     await (await floatingCard()).user.click({ testId: "browser-floating-preview" });
-    await headerMode("side");
+    await browserMode("side");
     await user.click({ role: "button", label: "Take over" });
     await user.see({ role: "button", label: "Resume browser" });
     await user.click({ testId: "browser-mode-float" });
@@ -180,13 +212,13 @@ test("a person moves the page the agent opened between the side, its own floatin
 
   await step("turning the rollout off returns the same page to the standard side panel", async () => {
     await world.setCapabilities({ browserFloatingView: false });
-    await probe.eventually(() => probe.dom('[data-testid="session-browser-toggle"]'), { within: 60_000, until: (dom) => dom.elements.length === 0, label: "the admin rollout refresh removes the Browser button" });
+    await probe.eventually(() => probe.dom('[data-testid="session-browser-toggle"]'), { within: 60_000, until: (dom) => dom.elements.length === 0, label: "the admin rollout refresh returns the standard Browser button" });
     await user.notSee(toggle);
     await floatingClosed();
     await user.notSee(card);
     const view = await pageView(true);
     expect(view?.tabId).toBe(tabId);
-    evidence.recordAssertionEvidence("Rollout rollback preserves the page", "The Browser header button and floating card disappeared; the same native tab is visible beside the chat.", view?.tabId === tabId);
+    evidence.recordAssertionEvidence("Rollout rollback preserves the page", "The floating card and the floating Browser button disappeared; the same native tab is visible beside the chat.", view?.tabId === tabId);
     await user.screenshot();
   });
 

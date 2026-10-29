@@ -49,7 +49,7 @@ test("billing and Models report that nothing is sold, with honest people counts"
   const billing = await owner("GET", "/v1/billing")
   assert.equal(billing.status, 200, summary(billing))
   assert.equal(field(billing.body, "billing", "stripe", "configured"), false)
-  assert.deepEqual(field(billing.body, "billing", "plan"), { tier: "free", source: "default", people: 2, joined: 2, invited: 0, freeSeatCount: 5 })
+  assert.deepEqual(field(billing.body, "billing", "plan"), { tier: "free", source: "default", people: 2, joined: 2, invited: 0, freeSeatCount: 5, userLimit: null, endsAt: null }, "nothing limits users where seat billing is not sold")
   assert.deepEqual(field(billing.body, "billing", "plans", "team"), { available: false, unitAmount: 1000, currency: "usd", interval: "month" })
   assert.deepEqual(field(billing.body, "billing", "plans", "enterprise"), { available: false, unitAmount: 2000, currency: "usd", interval: "month" })
   const models = await owner("GET", "/v1/inference")

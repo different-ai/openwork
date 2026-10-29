@@ -3,6 +3,13 @@ import { readFile } from "node:fs/promises";
 import type { GatewayAuthorizationRequest, GatewayDesktopOauthStartResponse, GatewayUsableModel } from "@openwork/types/den/gateway";
 import { CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 import { composeMemberPromptText, memberPromptsSchema } from "@openwork/types/den/prompts";
+import {
+  AUTO_ROUTER_MODEL_ID,
+  AUTO_ROUTER_MODEL_NAME,
+  AUTO_ROUTER_PROVIDER_ID,
+  autoRouterConnectSchema,
+  type AutoRouterConnect,
+} from "@openwork/types/den/auto-router";
 
 import { enginePoolForConfig, rolloverOutcomeApplied, type RolloverOutcome } from "./engine-pool.js";
 import type { EnvService } from "./env-file.js";
@@ -170,6 +177,10 @@ type DenProviderConnection = DenProvider & {
 };
 
 const gatewayProviderSource = "openwork_gateway";
+/** The organization's Auto Router: one runtime provider whose only model asks the Gateway to pick. */
+const autoRouterProviderSource = "openwork_auto_router";
+/** Not OPENWORK_-prefixed: the env store reserves that prefix for OpenWork internals. */
+export const AUTO_ROUTER_API_KEY_ENV = "OW_AUTO_ROUTER_API_KEY";
 
 type EnvEntry = {
   key: string;
@@ -612,6 +623,84 @@ async function fetchOrganizationPrompts(
   }
 }
 
+/**
+ * The organization's Auto Router for this member, from
+ * GET /v1/org/auto-router/connect. null when there is none: the feature is
+ * off, no router is configured, the member has no access (404), or Den
+ * answered something unusable. undefined when it could not be read right now,
+ * so the last known answer for this sign-in stays. Never fails the sync pass.
+ */
+async function fetchAutoRouter(
+  fetchImpl: typeof globalThis.fetch,
+  session: CloudProviderDenSession,
+  signal: AbortSignal,
+  logger?: CloudProviderSyncLogger,
+): Promise<AutoRouterConnect | null | undefined> {
+  let payload: unknown;
+  try {
+    payload = await requestJson(fetchImpl, session, "/v1/org/auto-router/connect", signal, { allowUnavailableResource: true });
+  } catch (error) {
+    if (signal.aborted) throw error;
+    logger?.warn("auto router could not be read; keeping the last known state", {
+      message: error instanceof Error ? error.message : "den_auto_router_failed",
+    });
+    return undefined;
+  }
+  if (payload === undefined) return null;
+  const parsed = autoRouterConnectSchema.safeParse(payload);
+  if (!parsed.success || !parsed.data.apiKey.trim() || !isHttpUrl(parsed.data.baseURL)) {
+    logger?.warn("auto router connect response is invalid; Auto is not offered", {});
+    return null;
+  }
+  return parsed.data;
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+/** Auto as a Den provider row, so it materializes, fingerprints and retires like every managed provider. */
+function autoRouterProvider(connect: AutoRouterConnect): DenProviderConnection {
+  const name = connect.model.name.trim() || AUTO_ROUTER_MODEL_NAME;
+  return {
+    id: AUTO_ROUTER_PROVIDER_ID,
+    providerId: AUTO_ROUTER_PROVIDER_ID,
+    name: AUTO_ROUTER_MODEL_NAME,
+    source: autoRouterProviderSource,
+    updatedAt: null,
+    providerConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      env: [AUTO_ROUTER_API_KEY_ENV],
+      options: { baseURL: connect.baseURL.replace(/\/+$/, "") },
+    },
+    models: [{
+      id: AUTO_ROUTER_MODEL_ID,
+      name,
+      config: {
+        id: AUTO_ROUTER_MODEL_ID,
+        name,
+        attachment: true,
+        reasoning: false,
+        tool_call: true,
+        limit: { context: 200_000, output: 32_000 },
+        modalities: { input: ["text", "image"], output: ["text"] },
+      },
+    }],
+    pinnedModelIds: [],
+    apiKey: connect.apiKey.trim(),
+    apiKeys: null,
+    memberCredentialState: null,
+    declaredEnvNames: [],
+    credentialStatus: null,
+    authUrl: null,
+  };
+}
+
 function stableValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableValue);
   if (!isRecord(value)) return value;
@@ -854,6 +943,8 @@ export class CloudProviderSync {
   private managedProviderIds = new Set<string>();
   private providerEnvHashes = new Map<string, Record<string, string>>();
   private importedAtByCloudProviderId = new Map<string, number>();
+  /** Last Auto Router answer, reused for the same sign-in when Den cannot be read. */
+  private autoRouter: { contextKey: string; connect: AutoRouterConnect | null } | null = null;
   private reloadPending = false;
   private queue: Promise<void> = Promise.resolve();
   private contextGeneration = 0;
@@ -1099,6 +1190,7 @@ export class CloudProviderSync {
     this.managedProviderIds.clear();
     this.providerEnvHashes.clear();
     this.importedAtByCloudProviderId.clear();
+    this.autoRouter = null;
   }
 
   private createTrailingRun(request: CloudProviderSyncRequest): Promise<CloudProviderSyncRunResult> {
@@ -1242,10 +1334,11 @@ export class CloudProviderSync {
       if (request.generation !== this.contextGeneration) return { status: "no_session" };
       const liveProviderSync = await this.liveProviderSync?.() ?? false;
       if (request.generation !== this.contextGeneration) return { status: "no_session" };
-      const [{ llmProviders, inferenceProviders }, storedEnv, organizationPrompts] = await Promise.all([
+      const [{ llmProviders, inferenceProviders }, storedEnv, organizationPrompts, fetchedAutoRouter] = await Promise.all([
         fetchProviders(this.fetchImpl, session, this.providerFetchController.signal, liveProviderSync),
         this.env.list(),
         fetchOrganizationPrompts(this.fetchImpl, session, this.providerFetchController.signal, this.logger),
+        fetchAutoRouter(this.fetchImpl, session, this.providerFetchController.signal, this.logger),
       ]);
       if (request.generation !== this.contextGeneration) return { status: "no_session" };
       if (inferenceProviders === undefined && hadGatewayProviders && matchesMaterializationContext) {
@@ -1256,7 +1349,15 @@ export class CloudProviderSync {
       const localEnvNames = storedEnv
         .filter((entry) => entry.value.trim().length > 0 && this.ownedEnvKeys.get(entry.key) !== hashString(entry.value))
         .map((entry) => entry.key);
-      const prepared = prepareMaterialization([...llmProviders, ...(inferenceProviders ?? [])], localEnvNames);
+      const autoRouter = fetchedAutoRouter !== undefined
+        ? fetchedAutoRouter
+        : this.autoRouter?.contextKey === request.contextKey ? this.autoRouter.connect : null;
+      this.autoRouter = { contextKey: request.contextKey, connect: autoRouter };
+      const prepared = prepareMaterialization([
+        ...llmProviders,
+        ...(inferenceProviders ?? []),
+        ...(autoRouter ? [autoRouterProvider(autoRouter)] : []),
+      ], localEnvNames);
       // Ownership follows the apply that can write, not a pending session.
       // Retain it through suspension, including a partially completed apply.
       this.materializationContextKey = request.contextKey;
@@ -1502,7 +1603,8 @@ export class CloudProviderSync {
       if (!desiredCloudIds.has(cloudId)) this.importedAtByCloudProviderId.delete(cloudId);
     }
     const now = Date.now();
-    this.providers = prepared.providers.map((entry) => {
+    // Auto is a model, not an imported provider; Settings never lists it.
+    this.providers = prepared.providers.filter((entry) => entry.provider.source !== autoRouterProviderSource).map((entry) => {
       const importedAt = this.importedAtByCloudProviderId.get(entry.provider.id) ?? now;
       this.importedAtByCloudProviderId.set(entry.provider.id, importedAt);
       return {

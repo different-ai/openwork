@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { LocalProviderEngineState } from "../../connections/provider-auth/local-provider-engine-state";
+import type { ProviderCredentialHealth } from "../../connections/provider-auth/credential-health";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 
@@ -53,9 +54,16 @@ export function ProviderStatus({ tone, children }: { tone: ProviderStatusTone; c
  * back by the organization (a lock in neutral ink), or not usable on the new
  * engine yet. Never "Ready to use" for a provider the engine skipped.
  */
-export function LocalProviderStatus({ state, organizationName }: { state?: LocalProviderEngineState; organizationName?: string }) {
+export function CredentialHealthStatus({ health }: { health: ProviderCredentialHealth }) {
+  if (health === "rejected") return <ProviderStatus tone="attention">Key not accepted</ProviderStatus>;
+  if (health === "unverified") return <ProviderStatus tone="neutral">Not checked yet</ProviderStatus>;
+  return <ProviderStatus tone="ready">Ready to use</ProviderStatus>;
+}
+
+export function LocalProviderStatus({ state, organizationName, credentialHealth }: { state?: LocalProviderEngineState; organizationName?: string; credentialHealth?: ProviderCredentialHealth }) {
   if (state === "managed_by_organization") return <ProviderStatus tone="locked">{organizationName || "Your organization"} manages AI providers</ProviderStatus>;
   if (state === "not_on_engine") return <ProviderStatus tone="neutral">Not available on the new engine yet</ProviderStatus>;
+  if (credentialHealth) return <CredentialHealthStatus health={credentialHealth} />;
   return <ProviderStatus tone="ready">Ready to use</ProviderStatus>;
 }
 

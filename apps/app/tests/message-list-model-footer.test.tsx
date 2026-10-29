@@ -12,6 +12,7 @@ const { PlatformProvider, createDefaultPlatform } = await import("../src/react-a
 const { MessageListProvider } = await import("../src/components/chat/message-list-provider")
 const { MessageList } = await import("../src/components/chat/message-list")
 const { useModelPickerCatalogStore } = await import("../src/react-app/domains/session/models/model-collections-store")
+const { useAutoRouteStore } = await import("../src/react-app/domains/session/sync/auto-route-store")
 let mounted: { root: Root; container: HTMLElement } | null = null
 
 afterEach(async () => {
@@ -22,6 +23,7 @@ afterEach(async () => {
     mounted = null
   }
   useModelPickerCatalogStore.setState({ bySession: {} })
+  useAutoRouteStore.setState({ bySession: {} })
 })
 afterAll(() => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct)
@@ -84,7 +86,9 @@ test("collapsed steps retain duration and count, never duplicate the footer mode
   const container = await render([...steps, answer("reply")])
   const rail = container.querySelector('[data-testid="completed-work-rail"]')
   expect(rail?.tagName).toBe("BUTTON")
-  expect(rail?.textContent).toBe("Worked for 7s · 6 steps")
+  // The count is quiet metadata beside the duration, not a middle-dot string (DESIGN.md C7).
+  expect([...(rail?.querySelectorAll("span:not([aria-hidden])") ?? [])].map((span) => span.textContent)).toEqual(["Worked for 7s", "6 steps"])
+  expect(rail?.getAttribute("aria-label")).toBe("Worked for 7s, 6 steps. Show steps")
   expect(rail?.textContent).not.toContain("Claude Sonnet")
   expect(rail?.getAttribute("aria-label")).not.toContain("Claude Sonnet")
   expect(container.querySelectorAll('[data-testid="reply-model"]').length).toBe(1)
@@ -110,6 +114,20 @@ test("an Auto reply renders the OpenWork mark beside the routed name", async () 
   expect(label?.textContent).toBe("Replied with GPT-6")
   expect(label?.querySelector('svg[aria-label="OpenWork"]')).not.toBeNull()
   expect(label?.querySelector('svg[aria-label="OpenWork"]')?.closest('[aria-hidden="true"]')).not.toBeNull()
+})
+
+test("an Auto Router reply names the model the gateway chose, with its thinking level", async () => {
+  const autoAnswer = (id: string, created: number, completed: number): UIMessage => ({ ...answer(id), metadata: { opencode: { created, completed,
+    replyModel: { providerID: "openwork-auto", modelID: "openwork-auto", requestedProviderID: "openwork-auto", requestedModelID: "openwork-auto" } } } })
+  const auto = [{ providerID: "openwork-auto", modelID: "openwork-auto", title: "Auto", description: "Auto" }]
+  const before = await render([autoAnswer("reply", 1000, 8000)], false, auto)
+  expect(before.querySelector('[data-testid="reply-model"]')?.textContent).toBe("Replied with Auto")
+  await act(async () => useAutoRouteStore.getState().publish("session_fixture", [
+    { at: 1500, provider: "anthropic", model: "claude-haiku-5-5", name: "Claude Haiku 5.5", thinking: "high" },
+  ]))
+  const label = before.querySelector('[data-testid="reply-model"]')
+  expect(label?.textContent).toBe("Replied with Claude Haiku 5.5 · High")
+  expect(before.textContent).not.toContain("openwork-auto")
 })
 
 test("a gateway reply uses the picker's human title without requesting an opaque provider logo", async () => {

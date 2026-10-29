@@ -1,5 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { chmod, mkdir } from "node:fs/promises";
 import net from "node:net";
+import { homedir } from "node:os";
+import { join, relative, resolve, isAbsolute } from "node:path";
 import { deleteEnv, mergeEnv } from "@openwork/paths";
 import { startupPhase } from "./startup-phase.js";
 import { randomUUID } from "node:crypto";
@@ -130,6 +133,12 @@ type ManagedOpencodeServerOptions = {
   excludedPorts?: number[];
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
+  /**
+   * OpenWork-owned directory engine v1 may move its database or global config
+   * into when a standalone OpenCode v2 install owns the shared ones. Omit it to
+   * keep that recovery disabled.
+   */
+  stateDir?: string;
 };
 
 class ManagedOpencodeExitError extends Error {
@@ -147,6 +156,67 @@ function isRetryableAddressInUseExit(error: unknown): boolean {
   return error instanceof ManagedOpencodeExitError &&
     error.exitCode === 1 &&
     error.addressInUse;
+}
+
+/**
+ * Engine v1 and a standalone OpenCode v2 share the same default database and
+ * global config paths. A v2 database has `session_v2` and no `session`, and a
+ * v2 global config may use the `permissions` array; v1 exits 1 on either, and
+ * the whole app then fails to start.
+ *
+ * Each collision moves only the part that collided, and only after v1 refused
+ * it. A shared database that v1 can open is never moved, so existing v1 history
+ * (the source of the v1 to v2 history migration) stays where it was.
+ */
+type ForeignStorage = "database" | "config";
+
+const FOREIGN_DATABASE_EXIT = /Database is not empty and has no session table/;
+const FOREIGN_CONFIG_EXIT = /Configuration is invalid at (.+?)\s*(?:\n|$)[\s\S]*V2 permissions are not supported by OpenCode V1/;
+
+function globalOpencodeConfigDir(env: NodeJS.ProcessEnv): string {
+  return join(env.XDG_CONFIG_HOME?.trim() || join(env.HOME?.trim() || homedir(), ".config"), "opencode");
+}
+
+function isInside(parent: string, child: string): boolean {
+  const path = relative(resolve(parent), resolve(child));
+  return path === "" || (!path.startsWith("..") && !isAbsolute(path));
+}
+
+/** Which shared store, if any, made engine v1 exit. Project config errors are not ours to move. */
+function foreignStorageExit(error: unknown, env: NodeJS.ProcessEnv): ForeignStorage | null {
+  if (!(error instanceof ManagedOpencodeExitError) || error.exitCode !== 1) return null;
+  if (!env.OPENCODE_DB?.trim() && FOREIGN_DATABASE_EXIT.test(error.message)) return "database";
+  const config = error.message.match(FOREIGN_CONFIG_EXIT)?.[1]?.trim();
+  if (config && isInside(globalOpencodeConfigDir(env), config)) return "config";
+  return null;
+}
+
+let isolatedDatabase: string | undefined;
+
+/**
+ * The private database engine v1 was moved to in this process, if any. Its
+ * chats live there rather than in the shared path, so the v1 to v2 history
+ * migration must read them from here.
+ */
+export function isolatedOpencodeV1Database(): string | undefined {
+  return isolatedDatabase;
+}
+
+/**
+ * Private storage for the part that collided. `XDG_CONFIG_HOME` is the only way
+ * to move v1's global config: `OPENCODE_CONFIG_DIR` only adds a layer on top.
+ * It is set on the engine process alone, so OpenWork's own paths do not move.
+ */
+async function isolatedEngineStorageEnv(stateDir: string, storage: ForeignStorage): Promise<Record<string, string>> {
+  await mkdir(stateDir, { recursive: true, mode: 0o700 });
+  await chmod(stateDir, 0o700);
+  if (storage === "database") {
+    isolatedDatabase = join(stateDir, "opencode.db");
+    return { OPENCODE_DB: isolatedDatabase };
+  }
+  const xdgConfig = join(stateDir, "xdg-config");
+  await mkdir(join(xdgConfig, "opencode"), { recursive: true, mode: 0o700 });
+  return { XDG_CONFIG_HOME: xdgConfig };
 }
 
 async function startManagedOpencodeServer(
@@ -280,15 +350,31 @@ export async function createManagedOpencodeServer(options: ManagedOpencodeServer
 
 async function createManagedOpencodeServerInner(options: ManagedOpencodeServerOptions): Promise<ManagedOpencodeServer> {
   const hostname = options.hostname ?? "127.0.0.1";
-  const port = options.port ?? await findFreePort(hostname, options.excludedPorts);
-  try {
-    return await startManagedOpencodeServer(options, hostname, port);
-  } catch (error) {
-    // The automatic free-port probe is necessarily racy. Retry exactly once on
-    // the one startup failure that a new port can safely fix; explicit ports
-    // and all other code-1 exits remain actionable.
-    if (options.port !== undefined || !isRetryableAddressInUseExit(error)) throw error;
-    const retryPort = await findFreePort(hostname, [...(options.excludedPorts ?? []), port]);
-    return startManagedOpencodeServer(options, hostname, retryPort);
+  let port = options.port ?? await findFreePort(hostname, options.excludedPorts);
+  let env = options.env;
+  // Each recovery is taken at most once, independently: a machine whose v2
+  // install owns both the database and the global config needs both moved, and
+  // a moved engine can still lose the free-port race.
+  const retried = new Set<"port" | ForeignStorage>();
+  for (;;) {
+    try {
+      return await startManagedOpencodeServer({ ...options, env }, hostname, port);
+    } catch (error) {
+      // The automatic free-port probe is necessarily racy. Retry exactly once on
+      // the one startup failure that a new port can safely fix; explicit ports
+      // and all other code-1 exits remain actionable.
+      if (options.port === undefined && !retried.has("port") && isRetryableAddressInUseExit(error)) {
+        retried.add("port");
+        port = await findFreePort(hostname, [...(options.excludedPorts ?? []), port]);
+        continue;
+      }
+      const storage = options.stateDir ? foreignStorageExit(error, mergeEnv([process.env, env])) : null;
+      if (options.stateDir && storage && !retried.has(storage)) {
+        retried.add(storage);
+        env = { ...env, ...(await isolatedEngineStorageEnv(options.stateDir, storage)) };
+        continue;
+      }
+      throw error;
+    }
   }
 }

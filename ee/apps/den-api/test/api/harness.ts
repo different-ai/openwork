@@ -19,6 +19,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 import { createDenDb, ensureSchemaRepairs } from "@openwork-ee/den-db"
+import { inlineIndexes } from "./schema-statements.js"
 
 const execFileAsync = promisify(execFile)
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -96,7 +97,7 @@ async function schemaStatements(): Promise<string[]> {
   )
   const start = stdout.indexOf("CREATE ")
   if (start < 0) throw new Error(`drizzle-kit export produced no schema:\n${stdout.slice(0, 500)}`)
-  return stdout.slice(start).split(/;\s*\n/).map((statement) => statement.trim()).filter(Boolean)
+  return inlineIndexes(stdout.slice(start).split(/;\s*\n/).map((statement) => statement.trim()).filter(Boolean))
 }
 
 /** A MySQL connection pool (never PlanetScale's HTTP client) for one database URL. */
@@ -189,7 +190,7 @@ export async function startFakeHttpServer(handler: FakeHandler): Promise<{ url: 
   }
 }
 
-export type FakeMcpTool = { name: string; description: string; text: string }
+export type FakeMcpTool = { name: string; description: string; text: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }
 export type WireEntry = { path: string; rpcMethod: string; authorization: string; status: number; sessionId?: string }
 /**
  * What the fake MCP server answers for one request. `reply` = speak MCP;
@@ -244,7 +245,7 @@ export async function startFakeMcpServer(options: {
       const requested = field(params, "protocolVersion")
       result = { protocolVersion: typeof requested === "string" ? requested : "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "fake-mcp", version: "1.0.0" } }
     } else if (rpcMethod === "tools/list") {
-      result = { tools: options.tools.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: { type: "object", properties: {} } })) }
+      result = { tools: options.tools.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: { type: "object", properties: {} }, ...(tool.annotations ? { annotations: tool.annotations } : {}) })) }
     } else if (rpcMethod === "tools/call") {
       const tool = String(field(params, "name"))
       const found = options.tools.find((entry) => entry.name === tool)
@@ -270,6 +271,8 @@ export async function startFakeMcpServer(options: {
  */
 export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolean; protectedResource?: string } = {}) {
   const requests: { method: string; path: string }[] = []
+  /** When set, a signed-in MCP request is refused with this status and JSON body. */
+  let refusal: { status: number; body: Json } | null = null
   const issued = new Set<string>()
   const codes = new Set<string>()
   let counter = 0
@@ -335,6 +338,7 @@ export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolea
         response.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource"` }).end()
         return
       }
+      if (refusal) return json(response, refusal.status, refusal.body)
       const parsed = parseJson(raw)
       const rpcId = field(parsed, "id")
       const method = field(parsed, "method")
@@ -355,6 +359,10 @@ export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolea
     mcpUrl: `${server.url}/mcp`,
     tokenRequests: () => requests.filter((entry) => entry.path === "/token").length,
     requests,
+    /** Refuse every signed-in MCP request with this answer, or answer normally again with null. */
+    refuseMcp(answer: { status: number; body: Json } | null) {
+      refusal = answer
+    },
   }
 }
 

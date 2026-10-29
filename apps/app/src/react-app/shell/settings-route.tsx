@@ -85,6 +85,7 @@ import ProviderAuthModal, { PROVIDER_LABELS } from "@/react-app/domains/connecti
 import { keylessProviderIds } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { deviceProviders, useLocalProviderEngineStates } from "@/react-app/domains/connections/provider-auth/local-provider-engine-state";
 // Side-effect imports: register extension config components into the registry.
 import { OllamaConfig } from "@/react-app/domains/settings/ollama-config";
@@ -99,9 +100,9 @@ import { EffectivePermissionsPanel } from "@/react-app/domains/settings/panels/e
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
 import { AdvancedView } from "@/react-app/domains/settings/pages/advanced-view";
 import { ClaudeImportView } from "@/react-app/domains/settings/pages/claude-import-view";
-import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
 import { KeyboardShortcutsView } from "@/react-app/domains/settings/pages/keyboard-shortcuts-view";
+import { ComputerUseView } from "@/react-app/domains/settings/pages/computer-use-view";
 import { CloudAccountView } from "@/react-app/domains/settings/pages/cloud-account-view";
 import {
   connectPluginsForComposer,
@@ -118,7 +119,7 @@ import { CloudProvidersView } from "@/react-app/domains/settings/pages/cloud-pro
 import { GatewayUsageSettingsView } from "@/react-app/domains/cloud/gateway-usage-panel";
 import { DebugView } from "@/react-app/domains/settings/pages/debug-view";
 import { EnvironmentView } from "@/react-app/domains/settings/pages/environment-view";
-import { ExtensionsView, type ExtensionsSection } from "@/react-app/domains/settings/pages/extensions-view";
+import { ExtensionsView, sectionForFilter, type ExtensionsSection } from "@/react-app/domains/settings/pages/extensions-view";
 import { McpView } from "@/react-app/domains/settings/pages/mcp-view";
 import { RecoveryView } from "@/react-app/domains/settings/pages/recovery-view";
 import { UpdatesView } from "@/react-app/domains/settings/pages/updates-view";
@@ -303,6 +304,7 @@ export function parseSettingsPath(pathname: string): {
     case "permissions":
     case "appearance":
     case "shortcuts":
+    case "computer":
     case "environment":
     case "updates":
     case "debug":
@@ -452,7 +454,6 @@ export type SettingsSurfaceProps = {
 
 function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const navigate = useNavigate();
-  const claudeImportEnabled = useDesktopFeature("claudeHistoryImport");
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
   const location = useLocation();
   const params = useParams<{ workspaceId?: string }>();
@@ -1020,7 +1021,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     if (autoClient) void autoClient.desktopFreePreferences().then((value) => {
       if (generation === autoGeneration.current) setAutoPreferences(value);
     }).catch(() => {
-      if (generation === autoGeneration.current) setAutoError("Could not verify Auto on this device. Reopen settings to retry.");
+      if (generation === autoGeneration.current) setAutoError("Could not verify OpenWork Free on this device. Reopen settings to retry.");
     });
     return () => { autoGeneration.current++; };
   }, [autoClient]);
@@ -1039,7 +1040,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     } catch {
       if (generation !== autoGeneration.current) return;
       setAutoPreferences(null);
-      setAutoError("Could not verify the change to Auto. Check its state before retrying.");
+      setAutoError("Could not verify the change to OpenWork Free. Check its state before retrying.");
       try { const value = await autoClient.desktopFreePreferences(); if (generation === autoGeneration.current) setAutoPreferences(value); } catch {}
     } finally {
       if (generation === autoGeneration.current) setAutoBusy(false);
@@ -1050,7 +1051,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     ...providerAuthSnapshot.cloudOrgProviders.map((provider) => provider.providerId),
   ]), [providerAuthSnapshot.importedCloudProviders, providerAuthSnapshot.cloudOrgProviders]);
 
-  const handleOpenProviderAuth = useCallback(() => {
+  const credentialStatusEnabled = useDesktopFeature("providerCredentialStatus");
+  const handleOpenProviderAuth = useCallback((preferredProviderId?: string) => {
     if (providerAuthStore.isProviderAddRestricted()) {
       restrictionNotice.show({
         title: t("restrictions.add_custom_providers_disabled_title"),
@@ -1059,7 +1061,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       return;
     }
 
-    void providerAuthStore.openProviderAuthModal();
+    void providerAuthStore.openProviderAuthModal(preferredProviderId ? { preferredProviderId } : undefined);
   }, [providerAuthStore, restrictionNotice]);
 
   useEffect(() => {
@@ -2196,6 +2198,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       case "ai":
         return (
           <AiSettingsView
+            runtimeWorkspaceId={runtimeWorkspaceId}
+            credentialStatusEnabled={credentialStatusEnabled}
+            onReplaceProviderKey={handleOpenProviderAuth}
             busy={busy}
             providerAuthBusy={providerAuthSnapshot.providerAuthBusy}
             providerStatusLabel={providerStatusLabel}
@@ -2258,6 +2263,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onOpenDen={openProvidersInDen}
             cloudProvidersView={
               <CloudProvidersView
+                runtimeWorkspaceId={runtimeWorkspaceId}
+                credentialStatusEnabled={credentialStatusEnabled}
                 key={`${cloudSession.baseUrl}:${cloudSession.activeOrganization?.id ?? "signed-out"}`}
                 embedded
                 onOpenDen={openProvidersInDen}
@@ -2312,6 +2319,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onToggleAnalytics={() => {
               local.setPrefs((previous) => ({ ...previous, analyticsEnabled: !previous.analyticsEnabled }));
             }}
+            keepAwake={local.prefs.keepAwake}
+            onToggleKeepAwake={() => {
+              local.setPrefs((previous) => ({ ...previous, keepAwake: !previous.keepAwake }));
+            }}
             desktopNotifications={local.prefs.desktopNotifications}
             onDesktopNotificationsChange={(desktopNotifications) => {
               local.setPrefs((previous) => ({ ...previous, desktopNotifications }));
@@ -2331,8 +2342,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             extensions={extensionsStore}
             initialSection={route.extensionsSection}
             detailId={route.extensionDetailId ?? null}
-            onDetailIdChange={(id) => {
-              navigateSettingsPath(id ? `extensions/${encodeURIComponent(id)}` : "extensions");
+            onDetailIdChange={(id, filter) => {
+              const section = filter ? sectionForFilter(filter) : "all";
+              navigateSettingsPath(id ? `extensions/${encodeURIComponent(id)}` : section === "all" ? "extensions" : `extensions/${section}`);
             }}
             setSectionRoute={(section) => {
               const path = section === "all" ? "extensions" : `extensions/${section}`;
@@ -2400,8 +2412,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 removeCloudPlugin={(pluginId) => { void extensionsStore.removeCloudOrgPlugin(pluginId); }}
                 hasLocalPluginCopy={(pluginId) => Boolean(extensionsSnapshot.importedCloudPlugins[pluginId])}
                 orgMcpConnectingId={orgMcpConnections.connectingId}
-                connectOrgMcp={(connectionId) => { void orgMcpConnections.connect(connectionId); }}
-                reconnectOrgMcp={(connectionId) => { void orgMcpConnections.connect(connectionId, { forceFreshAuthorization: true }); }}
+                connectOrgMcp={(connectionId, options) => { void orgMcpConnections.connect(connectionId, options); }}
+                reconnectOrgMcp={(connectionId, options) => { void orgMcpConnections.connect(connectionId, { ...options, forceFreshAuthorization: true }); }}
                 orgMcpDisconnectingId={orgMcpConnections.disconnectingId}
                 disconnectOrgMcp={(connectionId) => { void orgMcpConnections.disconnect(connectionId); }}
                 readSkill={readLibrarySkill}
@@ -2430,6 +2442,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       case "cloud-providers":
         return (
           <CloudProvidersView
+            runtimeWorkspaceId={runtimeWorkspaceId}
+            credentialStatusEnabled={credentialStatusEnabled}
             checkDesktopAppRestriction={checkDesktopRestriction}
             cloudOrgProviders={providerAuthSnapshot.cloudOrgProviders}
             connectCloudProvider={providerAuthStore.connectCloudProvider}
@@ -2447,7 +2461,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           />
         );
       case "import":
-        return claudeImportEnabled ? (
+        return (
           <SettingsStack>
             <ClaudeImportView
               key={runtimeWorkspaceId ?? selectedWorkspaceId}
@@ -2456,7 +2470,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               onOpenSession={(sessionId) => navigate(workspaceSessionRoute(selectedWorkspaceId, sessionId))}
             />
           </SettingsStack>
-        ) : null;
+        );
       case "advanced":
         return (
           <SettingsStack>
@@ -2530,6 +2544,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onOpenProviders={() => navigateSettingsPath("ai")}
           />
         );
+      case "computer":
+        return <ComputerUseView />;
       case "updates":
         return (
           <UpdatesView

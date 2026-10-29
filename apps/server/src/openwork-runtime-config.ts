@@ -2,6 +2,7 @@ import { legacyExecutionPermissions } from "./managed-policy-rules.js";
 import { DESKTOP_POLICY_ENFORCEMENT_ENABLED, desktopCapabilityConfig } from "@openwork/types/den/desktop-policies-runtime";
 import { materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast";
 import { isManagedPolicyPlugin } from "./managed-policy-plugin.js";
+import { isLegacyBrowserPlugin } from "./workspace-init.js";
 import { ORGANIZATION_PROVIDER_ID, organizationProviderGate } from "./organization-provider-gate.js";
 /**
  * Runtime OpenCode configuration injected via a server-managed config file
@@ -118,7 +119,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkAnthropicToolSchemaPluginPath(),
       openworkTitleRecoveryPluginPath(),
       openworkGatewayQuotaPluginPath(),
-      ...runtimePluginList(runtimeConfig).filter((plugin) => !isManagedPolicyPlugin(plugin)),
+      ...runtimePluginList(runtimeConfig).filter((plugin) => !isManagedPolicyPlugin(plugin) && !isLegacyBrowserPlugin(plugin)),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
     mcp: Object.fromEntries(Object.entries(runtimeMcpMap(runtimeConfig))

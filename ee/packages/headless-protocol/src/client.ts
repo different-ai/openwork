@@ -75,7 +75,7 @@ export type HeadlessRunnerDeps = {
    * to report the session's content-free totals and state to Den's session index.
    */
   mintToken: (
-    input: HeadlessRunnerActor & { ttlMs?: number; sessionId?: string; messageId?: string; readOnly?: boolean; model?: string; modelAccessRequired?: boolean },
+    input: HeadlessRunnerActor & { ttlMs?: number; sessionId?: string; messageId?: string; readOnly?: boolean; scopes?: readonly string[]; model?: string; modelAccessRequired?: boolean },
   ) => Promise<{ token: string; resumeGrant?: string; modelAccess?: HeadlessModelAccess; indexCapability?: string }>
   /** Resolve scoped turns' persisted model before minting, even when today's default is no longer accessible. */
   modelAccessRequired?: (actor: HeadlessRunnerActor) => Promise<boolean> | boolean
@@ -248,7 +248,20 @@ export type RunnerRepeatLimits = { maxWaitingMs?: number; maxIdenticalFailures?:
  * the computer must be configured on the runner too), so a caller that never asks (Automations) never gets any of
  * them. Slack asks for reactions and tasks where `slackWorkbotReplies` is on.
  */
-export type RunnerCapabilities = { files?: boolean; computer?: boolean; desktop?: boolean; reactions?: boolean; tasks?: boolean; documentNavigation?: boolean }
+export type RunnerCapabilities = {
+  files?: boolean
+  computer?: boolean
+  desktop?: boolean
+  /** The desktop views the conversation may use, at least one: `browser`, `computer` (native apps). Omitted: unchanged. */
+  desktopViews?: RunnerDesktopView[]
+  reactions?: boolean
+  tasks?: boolean
+  documentNavigation?: boolean
+  /** The computer runs through the runner's sandbox gateway (its SANDBOX_GATEWAY) instead of the runner's own provider. */
+  sandboxGateway?: boolean
+}
+export const RUNNER_DESKTOP_VIEWS = ["browser", "computer"] as const
+export type RunnerDesktopView = (typeof RUNNER_DESKTOP_VIEWS)[number]
 
 /**
  * Who a conversation belongs to and how it is shown to the model: `owner` (the caller's key for one person) and `ref`
@@ -262,9 +275,11 @@ const capabilityFields = (input: RunnerCapabilities & RunnerSessionSettings) => 
   ...(input.files !== undefined ? { files: input.files } : {}),
   ...(input.computer !== undefined ? { computer: input.computer } : {}),
   ...(input.desktop !== undefined ? { desktop: input.desktop } : {}),
+  ...(input.desktopViews ? { desktopViews: input.desktopViews } : {}),
   ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
   ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
   ...(input.documentNavigation !== undefined ? { documentNavigation: input.documentNavigation } : {}),
+  ...(input.sandboxGateway !== undefined ? { sandboxGateway: input.sandboxGateway } : {}),
   ...(input.owner ? { owner: input.owner } : {}),
   ...(input.ref ? { ref: input.ref } : {}),
   ...(input.timeZone ? { timeZone: input.timeZone } : {}),
@@ -354,20 +369,36 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       }
       const extras = { ...(input.repeats ? { repeats: input.repeats } : {}), ...capabilityFields(input) }
       let { status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...extras })
-      // An older runner has no document-navigation setting: the conversation keeps its other settings and offers links.
       let compatible: Record<string, unknown> = extras
+      // The newest setting first. An older runner has no sandbox gateway: the computer stays on the runner's own provider.
+      if (unknownSetting(status, payload) && input.sandboxGateway !== undefined) {
+        const { sandboxGateway: _gateway, ...rest } = compatible
+        compatible = rest
+        ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
+      }
+      // An older runner can't limit the desktop to some views, so a conversation allowed fewer than all of them gets no
+      // desktop there rather than every view; it keeps its other settings. Such a conversation is never saved without
+      // turning its desktop off: if the runner won't take that either, the update fails.
+      let limited = false
+      if (unknownSetting(status, payload) && input.desktopViews !== undefined) {
+        const { desktopViews: _views, ...rest } = compatible
+        limited = !RUNNER_DESKTOP_VIEWS.every(view => input.desktopViews!.includes(view))
+        compatible = limited ? { ...rest, desktop: false } : rest
+        ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
+      }
+      // An older runner has no document-navigation setting: the conversation keeps its other settings and offers links.
       if (unknownSetting(status, payload) && input.documentNavigation !== undefined) {
         const { documentNavigation: _navigation, ...rest } = compatible
         compatible = rest
         ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
       }
       // An older runner has no desktop setting. Omitting an explicit off value preserves side-chat settings.
-      if (unknownSetting(status, payload) && input.desktop === false) {
+      if (unknownSetting(status, payload) && input.desktop === false && !limited) {
         const { desktop: _desktop, ...rest } = compatible
         ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...rest }))
       }
       // A runner older than per-session capabilities or settings rejects them: keep the conversation, without them.
-      if (unknownSetting(status, payload) && Object.keys(extras).length && !input.strict) ({ status, payload } = await request(deps, "PUT", sessionPath(id), base))
+      if (unknownSetting(status, payload) && Object.keys(extras).length && !input.strict && !limited) ({ status, payload } = await request(deps, "PUT", sessionPath(id), base))
       const saved = z.object({ id: z.string() }).safeParse(payload)
       if ((status !== 200 && status !== 201) || !saved.success) return { ok: false, status, error: errorCode(payload, `headless_put_${status}`) }
       return { ok: true, value: { id: saved.data.id, created: status === 201 } }
@@ -430,6 +461,16 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
         ttlMs?: number
         attachments?: string[]
         readOnly?: boolean
+        /**
+         * A read-scoped MCP token (`mcp:read`) while the session keeps its own file tools, so a background agent can
+         * keep notes in `memory/` but can't change anything through MCP. `readOnly` also removes the file tools.
+         */
+        mcpReadOnly?: boolean
+        /**
+         * Extra scopes for the read-scoped token, minted by the trusted caller only (a member's background agent
+         * carries the sources it may read). Ignored without `mcpReadOnly` or `readOnly`.
+         */
+        mcpScopes?: readonly string[]
         interrupt?: boolean
         execution?: "steps"
       },
@@ -444,7 +485,8 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
           messageId: input.messageId,
           ...(model ? { model } : {}),
           ...(modelAccessRequired ? { modelAccessRequired: true } : {}),
-          ...(input.readOnly ? { readOnly: true } : {}),
+          ...(input.readOnly || input.mcpReadOnly ? { readOnly: true } : {}),
+          ...((input.readOnly || input.mcpReadOnly) && input.mcpScopes?.length ? { scopes: input.mcpScopes } : {}),
         })
         const modelAccess = issued.modelAccess ?? await deps.modelAccess?.(actor, { ...(model ? { model } : {}), ...(modelAccessRequired ? { modelAccessRequired: true } : {}) })
         return { ...issued, modelAccess }

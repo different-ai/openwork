@@ -102,6 +102,12 @@ export const auditServiceActionDeclarations = [
     notes: MCP_PRINCIPAL,
   },
   {
+    action: "slack_assistant.bot_message.send", kind: "slack_assistant.execution", class: "tenant_external", resource: { type: "slack_message", idFrom: null }, origin: "mcp",
+    tools: ["execute_capability slack_send_as_bot", "openwork-bot.slack_send_as_bot (full tool view)"], callSites: ["src/mcp/capability-registry.ts:slackSendAsBotSource.execute → executeSlackSendAsBot"],
+    external: "Slack Web API with the OpenWork Slack app's bot token (conversations.open and chat.postMessage; chat.getPermalink) and, for a channel post, conversations.history with the member's own Slack token to confirm they can read the channel",
+    notes: `A DM to the caller or a channel post credited to them, from the OpenWork Slack app's bot (feature slackSendAsBot, mcp:write). Refusals (limits, targets, no Slack app, unlinked member) are recorded as failed outcomes. Not callable from Code Mode scripts. ${MCP_PRINCIPAL}`,
+  },
+  {
     action: "organization.plan.set", kind: "platform.admin.organization", class: "tenant_change", resource: { type: "organization", idFrom: "organizationId argument (verified to exist)" }, origin: "platform_admin",
     tools: ["den_update_org_plan", "admin:den_update_org_plan"], callSites: ["src/mcp/admin-tools.ts:den_update_org_plan → updateOrganizationMetadata"],
     notes: "Platform-admin MCP tool (/mcp/admin or /mcp/agent admin capability). Tenant is the verified argument organization; actor is the platform admin user without a member id. REST equivalent organization.plan.update.",

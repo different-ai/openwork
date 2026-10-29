@@ -47,10 +47,10 @@ test("a platform admin creates a sandbox organization from /admin and people who
     const sandbox = (await world.sandboxes()).sandboxes[0];
     organizationId = sandbox?.organizationId ?? "";
     joinLink = sandbox?.joinLink ?? "";
-    const panel = organizationId ? await world.controlPanel(organizationId) : null;
-    const ok = sandbox?.state === "open" && sandbox.connectorCount === 5 && sandbox.memberCount === 1 && sandbox.memberLimit === 3 && panel?.access.freeAuto.enabled === true;
+    const freeAuto = organizationId ? await world.freeAutoOffered(organizationId) : null;
+    const ok = sandbox?.state === "open" && sandbox.connectorCount === 5 && sandbox.memberCount === 1 && sandbox.memberLimit === 3 && freeAuto === true;
     evidence.recordAssertionEvidence("One click creates the organization, five per-person connectors, included models and a join link",
-      `state=${sandbox?.state}; connectors=${sandbox?.connectorCount}; seats=${sandbox?.memberCount}/${sandbox?.memberLimit}; Free Auto=${panel?.access.freeAuto.enabled}; link=${joinLink ? "issued" : "missing"}`, ok);
+      `state=${sandbox?.state}; connectors=${sandbox?.connectorCount}; seats=${sandbox?.memberCount}/${sandbox?.memberLimit}; Free Auto=${freeAuto}; link=${joinLink ? "issued" : "missing"}`, ok);
     expect(ok).toBe(true);
     await admin.screenshot();
   });
@@ -140,9 +140,9 @@ test("a platform admin creates a sandbox organization from /admin and people who
     await admin.click({ role: "button", label: "Close" });
     await admin.see({ testId: "admin-sandbox-state" }, { text: "Closed", timeoutMs: 30_000 });
     const sandbox = (await world.sandboxes()).sandboxes[0];
-    const panel = await world.controlPanel(organizationId);
-    const ok = sandbox?.state === "closed" && sandbox.memberCount === 3 && panel.access.freeAuto.enabled === false;
-    evidence.recordAssertionEvidence("Closing keeps people and data but stops joins and Free Auto", `state=${sandbox?.state}; members=${sandbox?.memberCount}; Free Auto=${panel.access.freeAuto.enabled}`, ok);
+    const freeAuto = await world.freeAutoOffered(organizationId);
+    const ok = sandbox?.state === "closed" && sandbox.memberCount === 3 && freeAuto === false;
+    evidence.recordAssertionEvidence("Closing keeps people and data but stops joins and Free Auto", `state=${sandbox?.state}; members=${sandbox?.memberCount}; Free Auto=${freeAuto}`, ok);
     expect(ok).toBe(true);
     await admin.screenshot();
     await casey.reload();

@@ -4,10 +4,10 @@ import { Dialog } from "@base-ui/react/dialog";
 import { Popover } from "@base-ui/react/popover";
 import { useQuery } from "@tanstack/react-query";
 import { googleDriveProvider } from "@openwork/documents";
-import { googleDriveFileId, workbotContextLabel, type WorkbotViewContext } from "@openwork/types/workbot-context";
+import { googleDriveFileId, workbotContextLabel, workbotContextReadOnly, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import { CalendarDays, FileText, House, Lock, MessageCircle, Monitor, PanelLeft, X } from "lucide-react";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { workbotHost, useRetainedSurface } from "./host";
+import { computerViews, workbotHost, useRetainedSurface } from "./host";
 
 export type WorkspacePage = "home" | "calendar" | "documents" | "computer";
 export const WorkspaceNavigationContext = createContext<((fileId: string) => void) | null>(null);
@@ -95,7 +95,7 @@ export function WorkspaceMenu({ page, onPage, onDocument, onChats, drafts }: { p
           <button type="button" className={row} aria-current={page === "home" ? "page" : undefined} onClick={() => navigate("home")}><House size={16} strokeWidth={1.5} aria-hidden />Home</button>
           <button type="button" className={row} disabled={!host.calendar} aria-current={page === "calendar" ? "page" : undefined} onClick={() => navigate("calendar")} title={!host.calendar ? "Calendar is off. An admin can turn it on." : undefined}><CalendarDays size={16} strokeWidth={1.5} aria-hidden />Calendar{!host.calendar && <Lock size={13} aria-label="Off for this workspace" />}</button>
           {host.documents === true && <button type="button" className={row} aria-current={page === "documents" ? "page" : undefined} onClick={() => navigate("documents")}><FileText size={16} strokeWidth={1.5} aria-hidden />Documents</button>}
-          {host.computer && <button type="button" className={row} aria-current={page === "computer" ? "page" : undefined} onClick={() => navigate("computer")}><Monitor size={16} strokeWidth={1.5} aria-hidden />Computer</button>}
+          {computerViews(host).length > 0 && <button type="button" className={row} aria-current={page === "computer" ? "page" : undefined} onClick={() => navigate("computer")}><Monitor size={16} strokeWidth={1.5} aria-hidden />Computer</button>}
           {onChats && <button type="button" className={row} disabled={drafts} title={drafts ? "Save or close document drafts before switching chats." : undefined} onClick={() => { setOpen(false); onChats(); }}><MessageCircle size={16} strokeWidth={1.5} aria-hidden />Chats{drafts && <Lock size={13} aria-label="Save or close document drafts first" />}</button>}
           {drafts && onChats && <p className="px-3 py-1 text-[12px] text-[var(--wb-muted)]">Save or close drafts to switch chats.</p>}
         </nav>
@@ -114,31 +114,31 @@ export function WorkspaceMenu({ page, onPage, onDocument, onChats, drafts }: { p
 /** The chip names the exact snapshot attached to this message, including draft state. */
 export function SentContext({ context }: { context?: WorkbotViewContext }) {
   if (!context) return null;
-  return <p className="mb-1 truncate text-right text-[11px] text-[var(--wb-muted)]" title={workbotContextLabel(context)} data-workbot-sent-context>{context.kind === "calendar" ? "Calendar" : "Documents"} · {workbotContextLabel(context)}{context.kind === "document" && context.unsaved ? " · Unsaved edits excluded" : ""}</p>;
+  return <p className="mb-1 truncate text-right text-[11px] text-[var(--wb-muted)]" title={workbotContextLabel(context)} data-workbot-sent-context>{context.kind === "browser" ? "Browser" : context.kind === "calendar" ? "Calendar" : "Documents"} · {workbotContextLabel(context)}{context.kind === "document" && context.unsaved ? " · Unsaved edits excluded" : ""}</p>;
 }
 
-/** The composer stays in the workspace; the conversation is disclosed through an anchored Base UI popover. */
+/** The composer stays in the workspace; the conversation shows in an anchored Base UI popover until the person minimizes it. */
 export function WorkspaceAssistant({ name, context, includeContext, onIncludeContext, composer, conversation, onDocument, onComputer = null, unavailable, active, reveal = 0, stayOpen = false }: { active: boolean; /** Opens the computer from the conversation; null while it is on screen. */ onComputer?: (() => void) | null; name: string; context: WorkbotViewContext | null; includeContext: boolean; onIncludeContext(value: boolean): void; composer: ReactNode; conversation: ReactNode; onDocument(fileId: string): void; unavailable: boolean; /** Increments when chat navigation should leave the conversation open beside the document. */ reveal?: number; /** Guided navigation keeps the conversation open while a document opens behind it. */ stayOpen?: boolean }) {
-  const [open, setOpen] = useState(false);
+  // Shown by default; only the person's own minimize hides it, and coming back to a view keeps that choice.
+  const [minimized, setMinimized] = useState(false);
+  const open = active && !minimized;
   const surface = useRetainedSurface(open);
   const anchor = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (!active) setOpen(false); }, [active]);
-  // Only a new request reveals the conversation; coming back to Documents later keeps the person's own choice.
+  // A new request from the conversation shows it again.
   const revealed = useRef(reveal);
-  useEffect(() => { if (active && reveal !== revealed.current) { revealed.current = reveal; setOpen(true); } }, [reveal, active]);
+  useEffect(() => { if (active && reveal !== revealed.current) { revealed.current = reveal; setMinimized(false); } }, [reveal, active]);
   return <div ref={anchor} className="fixed bottom-3 right-3 z-30 w-[min(26rem,calc(100vw-1.5rem))] sm:bottom-5 sm:right-5" data-workbot-workspace-assistant>
     <Popover.Root open={surface.open} onOpenChange={(next, details) => {
       if (surface.blocked) return;
-      // The composer belongs to this explicit disclosure, not to the document behind it.
-      const target = details.reason === "focus-out" && details.event instanceof FocusEvent ? details.event.relatedTarget : details.event.target;
-      if (!next && (details.reason === "outside-press" || details.reason === "focus-out") && target instanceof Node && anchor.current?.contains(target)) {
+      // Working in the document behind it never minimizes the conversation; only Hide, the trigger or Escape do.
+      if (!next && (details.reason === "outside-press" || details.reason === "focus-out")) {
         details.cancel();
         return;
       }
-      setOpen(next);
+      setMinimized(!next);
     }}>
       <div className="mb-1 flex min-w-0 items-center justify-end gap-1.5">
-        {context && <button type="button" aria-pressed={includeContext} onClick={() => onIncludeContext(!includeContext)} title={includeContext ? "Exclude this view from your next message" : "Include a read-only reference to this view"} className={`min-w-0 truncate rounded-full bg-[var(--wb-surface)] px-2.5 py-1 text-[11px] shadow-[var(--wb-card-shadow)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${includeContext ? "text-[var(--wb-text)]" : "text-[var(--wb-muted)] line-through"}`} data-workbot-view-context data-testid="workbot-view-context">{workbotContextLabel(context)}{includeContext ? " · Read-only context" : ""}{context.kind === "document" && context.unsaved ? " · Unsaved edits excluded" : ""}</button>}
+        {context && <button type="button" aria-pressed={includeContext} onClick={() => onIncludeContext(!includeContext)} title={includeContext ? "Exclude this view from your next message" : workbotContextReadOnly(context) ? "Include a read-only reference to this view" : "Tell Workbot which tab you're on"} className={`min-w-0 truncate rounded-full bg-[var(--wb-surface)] px-2.5 py-1 text-[11px] shadow-[var(--wb-card-shadow)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${includeContext ? "text-[var(--wb-text)]" : "text-[var(--wb-muted)] line-through"}`} data-workbot-view-context data-testid="workbot-view-context">{workbotContextLabel(context)}{includeContext ? workbotContextReadOnly(context) ? " · Read-only context" : " · This tab" : ""}{context.kind === "document" && context.unsaved ? " · Unsaved edits excluded" : ""}</button>}
         <Popover.Trigger className="flex h-7 shrink-0 items-center gap-1.5 rounded-full bg-[var(--wb-surface)] px-2.5 text-[11px] text-[var(--wb-text)] shadow-[var(--wb-card-shadow)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" aria-label={open ? "Hide workspace chat" : "Show workspace chat"}><MessageCircle size={13} strokeWidth={1.5} aria-hidden />{name}</Popover.Trigger>
       </div>
       {composer}
@@ -146,8 +146,8 @@ export function WorkspaceAssistant({ name, context, includeContext, onIncludeCon
         <Popover.Positioner anchor={anchor} side="top" align="end" sideOffset={8} collisionPadding={12} className="z-40 max-w-[var(--available-width)]">
           <Popover.Popup initialFocus={false} className="workbot flex h-[min(34rem,var(--available-height))] w-[min(30rem,var(--available-width))] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-[var(--dls-radius,16px)] bg-[var(--wb-surface)] shadow-[var(--wb-panel-shadow)] outline-none" data-workbot-workspace-chat>
             <div className="flex h-10 shrink-0 items-center justify-between px-3"><Popover.Title className="text-[13px] font-medium text-[var(--wb-text)]">{name}</Popover.Title><Popover.Close className={control} aria-label="Hide workspace chat"><X size={15} strokeWidth={1.5} aria-hidden /></Popover.Close></div>
-            <WorkspaceNavigationContext.Provider value={fileId => { if (!stayOpen) setOpen(false); onDocument(fileId); }}>
-              <ComputerNavigationContext.Provider value={onComputer ? () => { if (!stayOpen) setOpen(false); onComputer(); } : null}>
+            <WorkspaceNavigationContext.Provider value={fileId => { if (!stayOpen) setMinimized(true); onDocument(fileId); }}>
+              <ComputerNavigationContext.Provider value={onComputer ? () => { if (!stayOpen) setMinimized(true); onComputer(); } : null}>
                 {unavailable ? <p className="p-4 text-[13px] text-[var(--wb-muted)]" role="status">Chat is unavailable. Open Home to try again.</p> : conversation}
               </ComputerNavigationContext.Provider>
             </WorkspaceNavigationContext.Provider>

@@ -76,7 +76,7 @@ function attentionSignals(data: Dashboard): Signal[] {
   return signals;
 }
 
-function QuickFind() {
+export function QuickFind() {
   const router = useRouter();
   const [organization, setOrganization] = useState("");
   const [user, setUser] = useState("");
@@ -163,8 +163,8 @@ function UsageChart({ data }: { data: Dashboard }) {
   </section>;
 }
 
-export function AdminDashboard({ totalOrganizations, totalUsers, refreshKey, onAccessDenied }: {
-  totalOrganizations: number; totalUsers: number; refreshKey: string | null; onAccessDenied: (access: "signed-out" | "forbidden") => void;
+export function AdminDashboard({ totalOrganizations, totalUsers, refreshKey, onAccessDenied, quickFind = true }: {
+  totalOrganizations: number; totalUsers: number; refreshKey: string | null; onAccessDenied: (access: "signed-out" | "forbidden") => void; quickFind?: boolean;
 }) {
   const [data, setData] = useState<Dashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -222,7 +222,7 @@ export function AdminDashboard({ totalOrganizations, totalUsers, refreshKey, onA
     { key: "cost", header: "Recorded cost", align: "right", render: (org) => <span>{recordedCost(org)}{org.unpricedRequests !== 0 ? <span className="ml-1 text-xs text-amber-800" title="Some prices are missing or coverage is unknown">(partial)</span> : null}</span> },
   ];
   return <div data-testid="admin-dashboard">
-    <QuickFind />
+    {quickFind ? <QuickFind /> : null}
     <div className="flex flex-wrap items-center justify-between gap-3 pt-5 text-xs text-slate-500">
       <p>{data ? `${data.from} – ${data.to} UTC` : "Last 30 days · UTC"}</p>
       <p role={loading ? "status" : undefined}>{loading ? "Updating metrics…" : data ? `Updated ${new Date(data.generatedAt).toLocaleTimeString()}` : "Metrics unavailable"}</p>

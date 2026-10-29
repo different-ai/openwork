@@ -155,6 +155,14 @@ export function verifyInternalMcpPrincipalHeader(header: string | null): Interna
   return parsed
 }
 
+/**
+ * The request is a Connect capability call: an agent acting for the member (in Slack or Workbot chat), not the
+ * member's own browser. Only Den signs this header, so a caller cannot claim it.
+ */
+export function cameThroughConnect(headers: Headers): boolean {
+  return verifyInternalMcpPrincipalHeader(headers.get(INTERNAL_MCP_PRINCIPAL_HEADER)) !== null
+}
+
 /** The MCP credential identifier carried by a verified internal principal header (audit attribution only). */
 export function readInternalMcpPrincipalCredentialId(headers: Headers): string | null {
   const credentialId = verifyInternalMcpPrincipalHeader(headers.get(INTERNAL_MCP_PRINCIPAL_HEADER))?.credentialId

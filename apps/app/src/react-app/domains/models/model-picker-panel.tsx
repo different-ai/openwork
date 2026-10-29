@@ -8,7 +8,7 @@ import { fastModeShortcutLabel } from "@/react-app/shell/fast-mode-shortcut";
 import { resolveThinkingModeShortcutOs, thinkingModeShortcutLabel } from "@/react-app/shell/thinking-mode-shortcut";
 import { AutoAccessFooter } from "@/react-app/domains/cloud/auto-access-ui";
 import { ModelPickerList } from "./model-picker-list";
-import { isAutoModel, type ModelPickerCatalogState, type RetainedModelSelection } from "./model-catalog";
+import { isAutoRouterModel, managesOwnBehavior, type ModelPickerCatalogState, type RetainedModelSelection } from "./model-catalog";
 
 const chordClass = "hidden shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-sans text-xs leading-none text-muted-foreground sm:inline-flex";
 
@@ -92,9 +92,9 @@ export function ModelPickerPanel(props: ModelPickerPanelProps) {
   const controls = getModelBehaviorControls(selectedBehavior.options, selectedBehavior.value);
   const hasEffort = behaviorValue !== null || behaviorOptions.some((option) => option.value !== null);
   const shortcutOs = resolveThinkingModeShortcutOs(undefined, typeof navigator === "undefined" ? "" : navigator.platform);
-  const autoSelected = isAutoModel(current);
+  const autoSelected = managesOwnBehavior(current);
   const canChangeEffort = Boolean(selected && onBehaviorChange && !autoSelected && hasEffort);
-  const effortValueLabel = autoSelected ? "Managed by Auto" : hasEffort ? controls.options.find((option) => option.value === behaviorValue)?.label ?? selectedBehavior.label : "Unavailable";
+  const effortValueLabel = autoSelected ? (isAutoRouterModel(current) ? "Managed by Auto" : "Managed by OpenWork") : hasEffort ? controls.options.find((option) => option.value === behaviorValue)?.label ?? selectedBehavior.label : "Unavailable";
 
   if (effort && selected) {
     return <div data-slot="model-thinking-submenu" className="overflow-y-auto p-2">

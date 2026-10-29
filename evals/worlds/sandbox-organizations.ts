@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { allocateFreePort } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
-import { organizationControlPanelSchema } from "@openwork/types/den/organization-grants";
 import { sandboxListSchema } from "@openwork/types/den/sandbox-organizations";
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -65,10 +64,12 @@ export async function sandboxOrganizationsWorld(seed: Seed) {
         if (!result.response.ok) throw new Error(`Sandbox list failed (${result.response.status}).`);
         return sandboxListSchema.parse(result.body);
       },
-      async controlPanel(organizationId: string) {
-        const result = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/control-panel`);
-        if (!result.response.ok) throw new Error(`Control panel read failed (${result.response.status}).`);
-        return organizationControlPanelSchema.parse(result.body);
+      /** Whether Den offers the sandbox owner Free Auto in this organization (closed or expired sandboxes get none). */
+      async freeAutoOffered(organizationId: string) {
+        const result = await seed.api(den.admin, "/v1/inference/access", { headers: { "x-openwork-org-id": organizationId } });
+        if (!result.response.ok) throw new Error(`Auto access read failed (${result.response.status}).`);
+        const access = record(result.body) && record(result.body.access) ? result.body.access : null;
+        return access?.reason !== "admin_disabled";
       },
       async membership(person: Person, organizationId: string) {
         const result = await seed.api(people[person], "/v1/org", { headers: { "x-openwork-org-id": organizationId } });
@@ -86,7 +87,7 @@ export async function sandboxOrganizationsWorld(seed: Seed) {
       },
       async memberAccess() {
         const read = await seed.api(avery, "/v1/admin/sandbox-orgs");
-        const write = await seed.api(avery, "/v1/admin/sandbox-orgs", { method: "POST", body: JSON.stringify({ name: "Not allowed", connectorBaseUrl: null, days: 1, memberLimit: 1, allowedEmailDomains: [], extraFreeAutoUsd: null }) });
+        const write = await seed.api(avery, "/v1/admin/sandbox-orgs", { method: "POST", body: JSON.stringify({ name: "Not allowed", connectorBaseUrl: null, days: 1, memberLimit: 1, allowedEmailDomains: [] }) });
         return { read: read.response.status, write: write.response.status };
       },
       async [Symbol.asyncDispose]() { await resources.disposeAsync(); },

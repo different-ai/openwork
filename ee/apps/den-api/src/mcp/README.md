@@ -48,11 +48,24 @@ not invalidate calls from cached search-tool lists.
 With `connectStandardTools` on, clients that search large tool lists themselves
 get every connection action, Workflow, App and remote session the member may use
 as its own tool instead of `search_capabilities` and `execute_capability`
-(`connect-tool-view.ts`). The existing supported-client allowlist recognizes
-Claude Code and OpenCode v2 (including OpenWork Desktop) by the request's
-`io.modelcontextprotocol/clientInfo`; `?tools=full` or `?tools=search` overrides
-that guess only while the flag is on. Unknown, missing and 2025-era clients keep
-the search view unless explicitly opted in. Off always restores the search view.
+(`connect-tool-view.ts`). The supported-client allowlist recognizes Claude Code
+and standalone OpenCode v2 by the request's `io.modelcontextprotocol/clientInfo`.
+OpenWork Desktop, Web and headless runs report OpenCode's name but hold a token
+Den minted for OpenWork (`/v1/mcp/token` or a run token), so they keep
+`search_capabilities` and `execute_capability`, whose search ranks better than
+the engine's own. `?tools=full` or `?tools=search` overrides the choice only
+while the flag is on. Unknown, missing and 2025-era clients keep the search
+view unless explicitly opted in. Off always restores the search view.
+
+OpenWork's own engine has its own rollout, `connectEngineTools`
+(`engine-tool-view.ts`, docs/features/connect-engine-tools). With it on, the
+engine gets the full view whatever `connectStandardTools` says, plus
+`search_capabilities` and `execute_capability` for OpenWork's own operations and
+skills, which have no tool of their own (search leaves out every source the
+full view lists, except for an explicit connect request). Its instructions list
+the member's connected services by tool-name prefix, and its tool descriptions
+carry related words from Den's synonym table, because the engine's own search
+ranks plain keywords.
 
 Tools are named like their Code Mode calls (`linear.list_issues`), at most 64
 characters, and run through the executor `execute_capability` uses. Only
@@ -62,6 +75,17 @@ operations stay in the search view, except the key request a connection card
 names. `connection_status` shows the card for a connection that is not ready. A write that changes what an organization's
 members may use sends `notifications/tools/list_changed` to its full-view streams
 on the same replica; the `tools/list` cache hint (60 s, private) covers the rest.
+
+## Slack messages from the OpenWork bot
+
+`slack_send_as_bot` (`slack-send-as-bot.ts`, feature `slackSendAsBot`, off by
+default) is a Den-native capability next to the Slack connection's tools: a DM
+to the caller or a channel post from the OpenWork Slack app's bot, instead of
+as the member (`slack_send_message`). It needs a member and `mcp:write`, so
+read-only tokens never list or run it, and it is not in Code Mode scripts. Limits
+(20 a day, 5 a minute, no repeat of the same text to the same place within 24
+hours) are enforced in the tool. See
+[docs/features/slack-send-as-bot](../../../../../docs/features/slack-send-as-bot/README.md).
 
 ## Allowed Tags
 
@@ -125,9 +149,9 @@ These individual operations are blocked even though their tags may otherwise be 
 The dashboard's `DELETE /v1/mcp-connections/{connectionId}` stays blocked
 (`Authentication`), so no agent request can delete a connection. Agents
 prepare one with `requestMcpConnectionRemoval`
-(`POST /v1/mcp-connections/{connectionId}/removal-request`), shown and
-accepted only with the `agentConnectionRemoval` feature and only to a
-person's own agent (`usageSource: "agent"`, see `catalog-availability.ts`).
+(`POST /v1/mcp-connections/{connectionId}/removal-request`), available to all
+organizations but offered only to a person's own agent, never unattended
+Workflows, Automations or Apps (`usageSource: "agent"`, see `catalog-availability.ts`).
 It checks the same permissions as the dashboard (`connections.delete`, or
 having added the connection), requires the connection's exact
 `expectedName` (409 `connection_name_mismatch`), and refuses a connection

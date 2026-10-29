@@ -63,6 +63,13 @@ export type WorkbotStep = {
   updates: string[]
   /** Work in the computer's browser rather than its other apps; absent for the rest. */
   surface?: "browser"
+  /**
+   * Commands and file reads on its computer (bash, look), with no screen to watch: running Blender from the command
+   * line needs no live view. Absent while it works on the screen (the desktop tool) and from older servers.
+   */
+  background?: true
+  /** Whether Workbot put this screen work in front of the person (the desktop tool's `show`): the last value it gave. */
+  shown?: boolean
   /** The web pages it opened in the browser, oldest first, so the person can open them too. */
   pages?: WorkbotPage[]
 }
@@ -314,22 +321,30 @@ function desktopUpdate(input: Record<string, unknown>): string | null {
 /**
  * Work on Workbot's computer reads as one step, however many commands it took: the person sees that it is using
  * its computer, never commands, retries or failures it recovered from (DESIGN C3, T2). Work in its browser is its own
- * step ("Using the browser"), with the pages it opened. What it is doing, in its own words, travels in `updates`; the
+ * step ("Using the browser"), with the pages it opened, and so is work on its screen apart from commands run in the
+ * background ("Working on my computer"), which has nothing to watch. What it is doing, in its own words, travels in `updates`; the
  * page shows the newest one under the step.
  */
 function addComputerStep(parts: WorkbotPart[], name: string, input: Record<string, unknown>, result: RunnerMessage | undefined, at: number | null) {
   const running = result === undefined
   const browser = name === "desktop" && input.view === "browser"
+  const background = name !== "desktop"
   const described = typeof input.description === "string" && input.description.trim() ? input.description.trim() : null
   const said = described ?? (name === "desktop" ? desktopUpdate(input) : null)
   const doing = said ? said.slice(0, 80) : null
   const last = parts.at(-1)
   const previous = last?.kind === "steps" ? last.steps.at(-1) : undefined
   const step: WorkbotStep =
-    previous?.icon === "computer" && (previous.surface === "browser") === browser
+    previous?.icon === "computer" && (previous.surface === "browser") === browser && (previous.background === true) === background
       ? previous
-      : { label: browser ? "Using the browser" : "Using my computer", icon: "computer", status: "done", app: null, startedAt: at, finishedAt: null, updates: [], ...(browser ? { surface: "browser" as const } : {}) }
+      : {
+          label: browser ? "Using the browser" : background ? "Working on my computer" : "Using my computer",
+          icon: "computer", status: "done", app: null, startedAt: at, finishedAt: null, updates: [],
+          ...(browser ? { surface: "browser" as const } : {}),
+          ...(background ? { background: true as const } : {}),
+        }
   if (doing && step.updates.at(-1) !== doing) step.updates.push(doing)
+  if (!background && typeof input.show === "boolean") step.shown = input.show
   const args = typeof input.args === "object" && input.args !== null ? (input.args as Record<string, unknown>) : {}
   const url = browser && (input.operation === "open" || input.operation === "navigate") ? webAddress(args.url) : null
   if (url) {

@@ -13,7 +13,32 @@ RUN apt-get update \
   && corepack enable \
   && rm -rf /var/lib/apt/lists/*
 
-COPY . .
+# Keep the app/server build closure, not landing pages, docs, screenshots or
+# unrelated services. runtime-scope.test.mjs checks this boundary against the
+# workspace manifests and the plugin's source-level imports.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml constants.json tsconfig.declarations.json turbo.json .nvmrc ./
+COPY patches/ patches/
+COPY apps/app/ apps/app/
+COPY apps/server/ apps/server/
+# Vite reads the shipped desktop version even for the browser app.
+COPY apps/desktop/package.json apps/desktop/package.json
+COPY packages/browser-tabs/ packages/browser-tabs/
+COPY packages/calendar/ packages/calendar/
+COPY packages/codemode/ packages/codemode/
+COPY packages/computer-use/ packages/computer-use/
+COPY packages/documents/ packages/documents/
+COPY packages/enterprise-mcp-client/ packages/enterprise-mcp-client/
+COPY packages/free-auto/ packages/free-auto/
+COPY packages/install-config/ packages/install-config/
+COPY packages/managed-deployments/ packages/managed-deployments/
+COPY packages/paths/ packages/paths/
+COPY packages/types/ packages/types/
+COPY packages/ui/ packages/ui/
+COPY packages/workbook/ packages/workbook/
+# The server bundles this plugin by relative path, outside workspace declarations.
+COPY packages/opencode-plugin/ packages/opencode-plugin/
+COPY packages/remote-sessions/ packages/remote-sessions/
+COPY ee/packages/telemetry-contracts/ ee/packages/telemetry-contracts/
 
 # python3/make/g++ above: better-sqlite3 v13 has no install script, but pnpm's
 # implicit node-gyp build for packages with a binding.gyp still compiles it

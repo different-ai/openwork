@@ -7,7 +7,7 @@ const test = spec.world(orgPromptsDesktop, {
   resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
 });
 
-test("a member's agent follows the organization's prompts for everyone and their team, and stops when Prompts is turned off", async ({ world, user, probe, step, evidence }) => {
+test("a member's agent follows the organization's prompts for everyone and their team, and stops applying prompts after an admin removes them", async ({ world, user, probe, step, evidence }) => {
   await step("given Riley's OpenWork has synced with Den after sign-in", async () => {
     await user.see("composer", { editable: true, timeoutMs: 120_000 });
     const status = await probe.eventually(() => world.sync(), {
@@ -36,8 +36,8 @@ test("a member's agent follows the organization's prompts for everyone and their
     expect(seen).toBe(true);
   });
 
-  await step("after Prompts is turned off for the organization, the next sync removes them from the agent's instructions", async () => {
-    await world.turnPromptsOff();
+  await step("after an admin removes the saved prompts, the next sync removes them from the agent's instructions", async () => {
+    await world.removePrompts();
     expect(await world.sync()).toBe("applied");
     await world.watchFor("## Organization instructions");
     const seen = await world.turnSawWatched(`Share the poster. PROMPTS-${Date.now()}`);

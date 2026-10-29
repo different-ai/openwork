@@ -5,6 +5,7 @@ import { access, chmod, mkdir, readdir, readFile, rename, rm, stat, statfs, writ
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isolatedOpencodeV1Database } from "./managed-opencode.js";
 import { importNodeSqlite } from "./runtime-db.js";
 import {
   createManagedOpencodeV2Server, type ManagedOpencodeV2Server,
@@ -107,6 +108,9 @@ export async function backupV2Database(options: { database: string; directory: s
 export function opencodeV1DatabasePath(env: NodeJS.ProcessEnv = process.env): string {
   if (env.OPENCODE_DB === ":memory:") throw new Error("In-memory OpenCode history cannot be migrated.");
   if (env.OPENCODE_DB?.trim()) return resolve(env.OPENCODE_DB);
+  // Engine v1 moved off a shared database a standalone OpenCode v2 owns.
+  const isolated = isolatedOpencodeV1Database();
+  if (isolated) return isolated;
   return join(env.XDG_DATA_HOME || join(env.HOME || homedir(), ".local", "share"), "opencode", "opencode.db");
 }
 
@@ -203,6 +207,24 @@ export async function hasV1Chat(database: string, id: string): Promise<boolean> 
     } finally { db.close(); }
   } catch {
     return false;
+  }
+}
+
+/** The folder v1 recorded for the top-level chat `id`; null when v1 has no such
+ * chat, it is delegated, or the database is missing or unreadable. */
+export async function v1ChatDirectory(database: string, id: string): Promise<string | null> {
+  try {
+    await access(database);
+    const db = typeof process.versions.bun === "string"
+      ? new (await import("bun:sqlite")).Database(database, { readonly: true })
+      : new (await importNodeSqlite()).DatabaseSync(database, { readOnly: true });
+    try {
+      const row: unknown = db.prepare("SELECT directory, parent_id FROM session WHERE id = ?").get(id);
+      return isRecord(row) && row.parent_id === null && typeof row.directory === "string" && isAbsolute(row.directory)
+        ? row.directory : null;
+    } finally { db.close(); }
+  } catch {
+    return null;
   }
 }
 

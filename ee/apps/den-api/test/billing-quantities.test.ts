@@ -6,7 +6,6 @@ import {
   FREE_ORG_SEAT_COUNT,
   planAfterSubscriptionChange,
   enterpriseSubscriptionQuantity,
-  canAddUser,
   minimumUsersFromStripeMetadata,
 } from "../src/billing-quantities.js"
 
@@ -87,16 +86,6 @@ test("Enterprise bills every user, never below the committed minimum, and at lea
   assert.equal(enterpriseSubscriptionQuantity({ users: 12, minimumUsers: 50 }), 50)
   assert.equal(enterpriseSubscriptionQuantity({ users: 0, minimumUsers: 0 }), 1)
   assert.equal(enterpriseSubscriptionQuantity({ users: Number.NaN, minimumUsers: -3 }), 1)
-})
-
-test("past the Free plan limit, any paid plan lets the organization add users", () => {
-  const seats = { total: 5, free: 5 }
-  const base = { seats, hasSeatSubscription: false, hasEnterpriseSubscription: false, enterprisePlanBypassesLimit: false }
-  assert.equal(canAddUser(base), false)
-  assert.equal(canAddUser({ ...base, hasSeatSubscription: true }), true)
-  assert.equal(canAddUser({ ...base, hasEnterpriseSubscription: true }), true)
-  assert.equal(canAddUser({ ...base, enterprisePlanBypassesLimit: true }), true)
-  assert.equal(canAddUser({ ...base, seats: { total: 4, free: 5 } }), true)
 })
 
 test("the committed minimum is read only from a whole number in Stripe metadata", () => {

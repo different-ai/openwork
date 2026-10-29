@@ -1,10 +1,24 @@
 import { z } from "zod"
+import { organizationPlanStateSchema } from "@openwork/types/den/billing-plans"
 
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+const adminSubscriptionSummarySchema = z.object({
+  status: z.string(), currentPeriodEnd: z.string().datetime().nullable(), cancelAtPeriodEnd: z.boolean(),
+})
 export const adminOrganizationDetailSchema = z.object({
   organization: z.object({
     id: z.string(), name: z.string(), slug: z.string().nullable(), createdAt: z.string().datetime(),
     planTier: z.string(), seatLimit: count, memberCount: count,
+    /** The resolved plan: tier, who pays, users and the limit every join path enforces. Older Den APIs omit it. */
+    plan: organizationPlanStateSchema.optional(),
+    /** Users split into joined members and unexpired pending invitations. Older Den APIs omit it. */
+    people: z.object({ joined: count, invited: count }).optional(),
+    /** The organization's Team (seat) and Enterprise Stripe subscriptions, as last recorded. Older Den APIs omit it. */
+    subscriptions: z.object({ team: adminSubscriptionSummarySchema.nullable(), enterprise: adminSubscriptionSummarySchema.nullable() }).optional(),
+    /** Complimentary OpenWork Web access and any paid OpenWork Web subscription. Older Den APIs omit it. */
+    openworkWeb: z.object({
+      complimentaryAccess: z.boolean(), hasAccess: z.boolean(), hasOngoingSubscription: z.boolean(), subscriptionStatus: z.string().nullable(),
+    }).optional(),
   }),
   members: z.array(z.object({
     id: z.string(), userId: z.string().nullable(), name: z.string().nullable(), email: z.string().nullable(),

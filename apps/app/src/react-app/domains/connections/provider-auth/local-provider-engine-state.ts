@@ -16,8 +16,8 @@ export type LocalProviderEngineStatus = Pick<EngineV2PreviewStatus, "enabled" | 
 /**
  * What OpenCode v2 reports for the providers on this device: the ones it
  * mirrored are ready, the ones it skipped carry their reason. Only while chat
- * runs on v2 and the server explains its skips (the `localProviderMirror`
- * rollout); otherwise there is no engine view and nothing changes.
+ * runs on v2 and the server explains its skips; older servers without that
+ * field have no engine view and keep their existing behavior.
  * Organization providers keep their own rows and states.
  */
 export function localProviderEngineStates(status: LocalProviderEngineStatus | null | undefined): ReadonlyMap<string, LocalProviderEngineState> {

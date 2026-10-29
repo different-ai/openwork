@@ -13,6 +13,15 @@
       "development": "./src/index.ts",
       "default": "./dist/index.js"
     },
+    "./proactive": {
+      "types": {
+        "openwork-build": "./dist/types/src/proactive.d.ts",
+        "default": "./src/proactive.ts"
+      },
+      "bun": "./src/proactive.ts",
+      "development": "./src/proactive.ts",
+      "default": "./dist/proactive.js"
+    },
     "./testing": {
       "types": {
         "openwork-build": "./dist/types/src/testing.d.ts",

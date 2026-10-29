@@ -64,10 +64,10 @@ export function autoQuietlyUnavailable(status: { code?: string | null } | null |
 }
 function notOfferedCopy(code?: string | null) {
   switch (code) {
-    case "free_not_enrolled": return { subtitle: "Not on for your organization yet", detail: "Your organization hasn’t turned on Auto yet. An admin can turn it on. Other models still work." };
-    case "free_not_offered": case "admin_disabled": return { subtitle: "Turned off by your organization", detail: "Your organization has turned off Auto. Other models still work." };
-    case "managed_models_disabled_for_dpa": return { subtitle: "Not available for your organization", detail: "Auto isn’t available under your organization’s data agreement. Other models still work." };
-    default: return { subtitle: "Not available for this account", detail: "Auto isn’t available for this account. Other models still work." };
+    case "free_not_enrolled": return { subtitle: "Not on for your organization yet", detail: "Your organization hasn’t turned on OpenWork Free yet. An admin can turn it on. Other models still work." };
+    case "free_not_offered": case "admin_disabled": return { subtitle: "Turned off by your organization", detail: "Your organization has turned off OpenWork Free. Other models still work." };
+    case "managed_models_disabled_for_dpa": return { subtitle: "Not available for your organization", detail: "OpenWork Free isn’t available under your organization’s data agreement. Other models still work." };
+    default: return { subtitle: "Not available for this account", detail: "OpenWork Free isn’t available for this account. Other models still work." };
   }
 }
 
@@ -141,10 +141,10 @@ export function autoPickerCopy(state: AutoPickerState, signedIn: boolean, minimu
         detail: signedIn ? "This week’s free limit is used up. Pick another model to keep going." : "This week’s free limit is used up. Sign in for a larger free limit.",
         action: signedIn ? null : "Sign in" };
     }
-    case "update_required": return { subtitle: "Needs an OpenWork update", detail: minimumVersion?.trim() ? `Update to ${autoUpdateTarget(minimumVersion)} to keep using Auto. Your draft is kept.` : "Update OpenWork to keep using Auto. Your draft is kept.", action: "Update" };
-    case "unavailable": return { subtitle: "Temporarily unavailable", detail: "Auto is having trouble right now. Other models still work.", action: "Retry" };
-    case "sync": return { subtitle: "Finishing setup", detail: "Auto is almost ready. Reload the workspace if it doesn’t appear.", action: "Reload" };
-    case "ready": return { subtitle: "OpenWork picks the model", detail: "Free access ready", action: null };
+    case "update_required": return { subtitle: "Needs an OpenWork update", detail: minimumVersion?.trim() ? `Update to ${autoUpdateTarget(minimumVersion)} to keep using OpenWork Free. Your draft is kept.` : "Update OpenWork to keep using OpenWork Free. Your draft is kept.", action: "Update" };
+    case "unavailable": return { subtitle: "Temporarily unavailable", detail: "OpenWork Free is having trouble right now. Other models still work.", action: "Retry" };
+    case "sync": return { subtitle: "Finishing setup", detail: "OpenWork Free is almost ready. Reload the workspace if it doesn’t appear.", action: "Reload" };
+    case "ready": return { subtitle: "Free with a usage limit", detail: "Free access ready", action: null };
   }
 }
 
@@ -165,7 +165,7 @@ function limitCopy(wall: AutoAccessWall, signedIn: boolean, now: number) {
   const back = wall.state === "limit" ? autoResetPhrase(wall.resetsAt, now) : null;
   const more = signedIn ? "" : " Sign in for more free use, or pick another model.";
   return {
-    title: back ? "You’ve used your free Auto for now" : "You’ve reached the free Auto limit",
+    title: back ? "You’ve used OpenWork Free for now" : "You’ve reached the OpenWork Free limit",
     detail: back ? `It’s back ${back}.${more || ` ${NEXT_STEP}`}` : (more.trim() || NEXT_STEP),
   };
 }
@@ -180,11 +180,11 @@ export function autoWallCopy(wall: AutoAccessWall, signedIn: boolean, now = Date
     .filter(Boolean).join("\n") || null;
   const copy = (() => {
     switch (wall.state) {
-      case "unavailable": return { title: "Auto is busy right now", detail: "Pick another model to keep going, or try Auto again in a bit." };
-      case "sync": return { title: "Auto is still getting ready", detail: "Wait a moment, or pick another model to keep going." };
+      case "unavailable": return { title: "OpenWork Free is busy right now", detail: "Pick another model to keep going, or try OpenWork Free again in a bit." };
+      case "sync": return { title: "OpenWork Free is still getting ready", detail: "Wait a moment, or pick another model to keep going." };
       case "not_offered":
-        if (wall.code === "free_not_enrolled") return { title: "Auto isn’t on for your organization yet", detail: `An admin can turn it on. ${NEXT_STEP}` };
-        if (wall.code === "managed_models_disabled_for_dpa") return { title: "Auto isn’t available for your organization", detail: NEXT_STEP };
+        if (wall.code === "free_not_enrolled") return { title: "OpenWork Free isn’t on for your organization yet", detail: `An admin can turn it on. ${NEXT_STEP}` };
+        if (wall.code === "managed_models_disabled_for_dpa") return { title: "OpenWork Free isn’t available for your organization", detail: NEXT_STEP };
         return limitCopy(wall, signedIn, now);
       case "limit": case "update": return limitCopy(wall, signedIn, now);
     }

@@ -18,7 +18,7 @@ test("visitors without platform access see a standalone access page while admins
   await step("deep links keep the same access boundary on a narrow screen", async () => {
     const visitor = user.on(world.anonymous);
     await visitor.resizeViewport({ width: 320, height: 900, deviceScaleFactor: 1 });
-    await visitor.navigate(world.url("/admin/organizations/org_00000000000000000000000000/control-panel"));
+    await visitor.navigate(world.url("/admin/organizations/org_00000000000000000000000000/billing"));
     await visitor.see({ role: "heading", label: "Sign in required" });
     await visitor.notSee({ testId: "admin-navigation" });
     const layout = await probe.on(world.anonymous).dom("main");

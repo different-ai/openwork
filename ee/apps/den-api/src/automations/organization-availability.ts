@@ -5,7 +5,6 @@ import type { AutomationExecutionTarget } from "@openwork/types/automations"
 import { readOrganizationAutomationSettings, type OrganizationAutomationSettings } from "@openwork/types/den/automation-settings"
 import { db } from "../db.js"
 import { env } from "../env.js"
-import { organizationFeatureEnabled } from "../features.js"
 import { headlessRunnerConfig } from "../headless-runner/client.js"
 
 export type OrganizationAutomationAvailability = {
@@ -21,20 +20,12 @@ export function headlessAutomationsConfigured(source: Record<string, string | un
   return headlessRunnerConfig(source) !== null
 }
 
-/**
- * What an organization may run now. Without the organizationAutomationSettings rollout this is the deployment's
- * previous behavior (Desktop follows DEN_AUTOMATIONS_ENABLED; Cloud is decided by the runtime checks as before).
- * With it, each kind also follows the organization's setting, and Cloud also needs the headless runner.
- */
+/** What an organization may run now: its settings, deployment switches and, for Cloud, the headless runner. */
 export function automationAvailabilityFor(input: {
   metadata: unknown
-  settingsEnabled: boolean
   headlessRunnerConfigured: boolean
 }): OrganizationAutomationAvailability {
   const settings = readOrganizationAutomationSettings(input.metadata)
-  if (!input.settingsEnabled) {
-    return { settings, headlessRunnerConfigured: input.headlessRunnerConfigured, desktop: env.automations.enabled, cloud: env.automations.runtimeEnabled }
-  }
   return {
     settings,
     headlessRunnerConfigured: input.headlessRunnerConfigured,
@@ -45,11 +36,8 @@ export function automationAvailabilityFor(input: {
 
 export async function organizationAutomationAvailability(organizationId: string): Promise<OrganizationAutomationAvailability> {
   const id = normalizeDenTypeId("organization", organizationId)
-  const [[organization], settingsEnabled] = await Promise.all([
-    db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, id)).limit(1),
-    organizationFeatureEnabled(id, "organizationAutomationSettings"),
-  ])
-  return automationAvailabilityFor({ metadata: organization?.metadata ?? null, settingsEnabled, headlessRunnerConfigured: headlessAutomationsConfigured() })
+  const [organization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, id)).limit(1)
+  return automationAvailabilityFor({ metadata: organization?.metadata ?? null, headlessRunnerConfigured: headlessAutomationsConfigured() })
 }
 
 export async function automationTargetAllowed(organizationId: string, target: AutomationExecutionTarget) {

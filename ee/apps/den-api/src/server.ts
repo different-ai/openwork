@@ -5,11 +5,13 @@ import { markDraining } from "./drain-state.js"
 import app from "./app.js"
 import { startSlackAssistantWorker } from "./slack-assistant/worker.js"
 import { startSlackDesktopHandoffWorker } from "./slack-assistant/desktop-handoff.js"
+import { startWorkbotProactiveWorker } from "./workbot-proactive/worker.js"
 import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
 import { shutdownObservability } from "./observability/runtime.js"
 import { startScimMaintenanceLoop } from "./scim-maintenance.js"
 import { startBillingInvitationExpiryLoop } from "./billing-invitation-expiry.js"
+import { startSandboxExpiryLoop } from "./sandbox-organizations.js"
 import { startLifecycleEmailLoop } from "./lifecycle-emails/index.js"
 import { startCloudIdleStopLoop } from "./workers/cloud-lifecycle.js"
 import { startWorkerProvisioningReconcileLoop } from "./workers/reconciler.js"
@@ -20,16 +22,22 @@ import { startModelsAnalyticsExportLoop } from "./models-analytics-export.js"
 import { markServerListening } from "./server-start.js"
 import { externalToolCatalogCacheUsage } from "./mcp/external-tool-catalog-cache.js"
 import { externalToolsSearchCacheUsage } from "./mcp/external-tools-search-cache.js"
+import { startMcpRegistrationProbeLoop } from "./mcp-registration/probe.js"
+import { startAdminMetricsRefreshLoop } from "./admin-metrics/worker.js"
 
 const stopSlackAssistantWorker = startSlackAssistantWorker()
 const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()
+const stopWorkbotProactiveWorker = startWorkbotProactiveWorker()
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopBillingInvitationExpiryLoop = startBillingInvitationExpiryLoop()
+const stopSandboxExpiryLoop = startSandboxExpiryLoop()
 const stopLifecycleEmailLoop = startLifecycleEmailLoop()
 const stopCloudIdleStopLoop = startCloudIdleStopLoop()
 const stopWorkerProvisioningReconcileLoop = startWorkerProvisioningReconcileLoop()
 const stopGithubSyncWorker = startGithubSyncWorker()
 const stopModelsAnalyticsExportLoop = startModelsAnalyticsExportLoop()
+const stopMcpRegistrationProbeLoop = startMcpRegistrationProbeLoop()
+const stopAdminMetricsRefreshLoop = startAdminMetricsRefreshLoop()
 const automationScheduler = startAutomationSchedulerLoop({ enabled: env.automations.runtimeEnabled })
 // Maintenance frees expired entries even when the original member never returns.
 // Only aggregate sizes and counters are logged; no keys, identities or tool content.
@@ -68,12 +76,16 @@ async function stopBackgroundLoops() {
   const results = await Promise.allSettled([
     stopScimMaintenanceLoop(),
     stopBillingInvitationExpiryLoop(),
+    stopSandboxExpiryLoop(),
     stopLifecycleEmailLoop(),
     stopSlackAssistantWorker(),
     stopSlackDesktopHandoffWorker(),
+    stopWorkbotProactiveWorker(),
     stopCloudIdleStopLoop(),
     stopWorkerProvisioningReconcileLoop(),
     stopGithubSyncWorker(),
+    stopMcpRegistrationProbeLoop(),
+    stopAdminMetricsRefreshLoop(),
     automationScheduler.stop(),
   ])
 

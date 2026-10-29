@@ -141,6 +141,9 @@ const EnvSchema = z.object({
   DEN_SANDBOX_GATEWAY_PROVIDER: z.string().optional(),
   DEN_SANDBOX_GATEWAY_MODELS: z.string().optional(),
   DEN_SANDBOX_GATEWAY_API_KEY: z.string().optional(),
+  // With DEN_SANDBOX_GATEWAY_PROVIDER=openrouter and no shared key, each sandbox gets its own OpenRouter key
+  // (minted with OPENROUTER_MANAGEMENT_API_KEY) capped at this many US dollars unless the admin picks another cap.
+  DEN_SANDBOX_CREDIT_USD: z.string().optional(),
   DEN_DASHBOARDS_ENABLED: z.string().optional(),
   // Default-on deployment kill switches.
   DEN_AUDIT_CAPTURE_ENABLED: z.enum(["true", "false"]).default("true"),
@@ -183,6 +186,12 @@ const EnvSchema = z.object({
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
   LIFECYCLE_EMAILS_ENABLED: z.string().optional(),
   LIFECYCLE_EMAILS_INTERVAL_MS: z.string().optional(),
+  ADMIN_METRICS_REFRESH_ENABLED: z.string().optional(),
+  ADMIN_METRICS_FAST_INTERVAL_MS: z.string().optional(),
+  ADMIN_METRICS_HEAVY_INTERVAL_MS: z.string().optional(),
+  MCP_REGISTRATION_PROBE_ENABLED: z.string().optional(),
+  MCP_REGISTRATION_PROBE_TRY_REGISTRATION: z.string().optional(),
+  MCP_REGISTRATION_PROBE_INTERVAL_MS: z.string().optional(),
   DAYTONA_API_URL: z.string().optional(),
   DAYTONA_API_KEY: z.string().optional(),
   DAYTONA_TARGET: z.string().optional(),
@@ -551,8 +560,8 @@ const generatedArtifactViewsEnabled =
 const appMcpServersEnabled = parseBooleanFlag(optionalString(parsed.DEN_APP_MCP_SERVERS_ENABLED) ?? "true")
 
 // Automations are on by default. Organizations turn Desktop or Cloud
-// Automations off in their settings (organizationAutomationSettings). An
-// explicit DEN_AUTOMATIONS_ENABLED=false remains the operator's complete
+// Automations off in their organization settings. An explicit
+// DEN_AUTOMATIONS_ENABLED=false remains the operator's complete
 // shutdown unless a mixed-version deployment explicitly keeps the
 // compatibility runtime on. A disabled runtime always forces availability off.
 const automationsRuntimeEnabled = parseBooleanFlag(
@@ -701,6 +710,13 @@ const planetscaleCredentials =
 const sandboxWorkplaceUrl = optionalString(parsed.DEN_SANDBOX_WORKPLACE_URL)
   ?? (featureEnvironment.deployment === "cloud" ? "https://open-workplace-workshop.onrender.com" : null)
 const sandboxGatewayApiKey = optionalString(parsed.DEN_SANDBOX_GATEWAY_API_KEY)
+const sandboxGatewayProvider = optionalString(parsed.DEN_SANDBOX_GATEWAY_PROVIDER) ?? (sandboxGatewayApiKey ? "openai" : "openrouter")
+// One OpenRouter key per sandbox, capped, instead of one shared key: needs a management key and no shared key.
+const sandboxMintsOpenRouterKeys = !sandboxGatewayApiKey && sandboxGatewayProvider === "openrouter" && Boolean(optionalString(parsed.OPENROUTER_MANAGEMENT_API_KEY))
+const sandboxDefaultModels = sandboxGatewayProvider === "openrouter"
+  ? "anthropic/claude-sonnet-5.5,openai/gpt-5.5,google/gemini-3.8-flash"
+  : "gpt-6-luna"
+const sandboxCreditUsd = Number.parseInt(optionalString(parsed.DEN_SANDBOX_CREDIT_USD) ?? "50", 10)
 
 export const env = {
   databaseUrl: parsed.DATABASE_URL,
@@ -755,6 +771,21 @@ export const env = {
   lifecycleEmails: {
     enabled: parsed.LIFECYCLE_EMAILS_ENABLED?.trim() === "1",
     intervalMs: Number(parsed.LIFECYCLE_EMAILS_INTERVAL_MS ?? "900000"),
+  },
+  // Admin Control Center snapshots (admin-metrics/worker.ts): today's and 7-day KPIs on the fast tier,
+  // cohorts, sharing, revenue and accounts on the heavy tier. ADMIN_METRICS_REFRESH_ENABLED=0 turns it off.
+  adminMetrics: {
+    enabled: parsed.ADMIN_METRICS_REFRESH_ENABLED?.trim() !== "0",
+    fastIntervalMs: Math.max(60_000, Number(parsed.ADMIN_METRICS_FAST_INTERVAL_MS ?? "300000") || 300_000),
+    heavyIntervalMs: Math.max(300_000, Number(parsed.ADMIN_METRICS_HEAVY_INTERVAL_MS ?? "1800000") || 1_800_000),
+  },
+  // Scheduled check of which preset MCP providers let OpenWork register (mcp-registration/probe.ts). Off unless
+  // MCP_REGISTRATION_PROBE_ENABLED=1; registering a test client with providers is a further opt-in, so self-hosted
+  // installs never create registrations with third parties on their own.
+  mcpRegistrationProbe: {
+    enabled: parsed.MCP_REGISTRATION_PROBE_ENABLED?.trim() === "1",
+    tryRegistration: parsed.MCP_REGISTRATION_PROBE_TRY_REGISTRATION?.trim() === "1",
+    intervalMs: Math.max(3_600_000, Number(parsed.MCP_REGISTRATION_PROBE_INTERVAL_MS ?? "86400000") || 86_400_000),
   },
   requireEmailVerification,
   passwordBreachScreeningEnabled,
@@ -904,11 +935,14 @@ export const env = {
   dashboardsEnabled,
   sandbox: {
     workplaceUrl: sandboxWorkplaceUrl,
-    gateway: sandboxGatewayApiKey
+    gateway: sandboxGatewayApiKey || sandboxMintsOpenRouterKeys
       ? {
-          providerId: optionalString(parsed.DEN_SANDBOX_GATEWAY_PROVIDER) ?? "openai",
-          modelIds: (optionalString(parsed.DEN_SANDBOX_GATEWAY_MODELS) ?? "gpt-6-luna").split(",").map(value => value.trim()).filter(Boolean),
-          apiKey: sandboxGatewayApiKey,
+          providerId: sandboxGatewayProvider,
+          modelIds: (optionalString(parsed.DEN_SANDBOX_GATEWAY_MODELS) ?? sandboxDefaultModels).split(",").map(value => value.trim()).filter(Boolean),
+          /** The key every sandbox shares, or null when each sandbox gets its own capped OpenRouter key. */
+          apiKey: sandboxGatewayApiKey ?? null,
+          /** Default cap for a sandbox's own key; null with a shared key. */
+          creditUsd: sandboxMintsOpenRouterKeys ? (Number.isFinite(sandboxCreditUsd) && sandboxCreditUsd > 0 ? sandboxCreditUsd : 50) : null,
         }
       : null,
   },

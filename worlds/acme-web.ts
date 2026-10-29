@@ -41,7 +41,7 @@ export interface AcmeWebWorld {
 }
 
 /** Seeded Acme Den + real AI Gateway + isolated web runtime; only the upstream model is fake. */
-export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: string; den: string; api: string }, checkpoint?: AcmeStreamCheckpoint, options: { openWorkplace?: boolean } = {}): Promise<AcmeWebWorld> {
+export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: string; den: string; api: string }, checkpoint?: AcmeStreamCheckpoint, options: { openWorkplace?: boolean; v2Only?: boolean } = {}): Promise<AcmeWebWorld> {
   const place = resolvePlace();
   if (place.kind !== "local") {
     throw new Error("Run acme-web co-located with MySQL (--place local), including inside a prepared Daytona sandbox.");
@@ -77,6 +77,7 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: 
     workspace,
     state: "isolated",
     browserHostSuffix: preview ? `.${new URL(preview.app).hostname.split(".").slice(1).join(".")}` : undefined,
+    v2Only: options.v2Only,
     env: {
       ...process.env,
       OPENWORK_WEB_PORT: String(webPort),

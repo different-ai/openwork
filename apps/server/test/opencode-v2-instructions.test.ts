@@ -11,10 +11,19 @@ test("V2 instructions support both individual Connect tools and capability searc
   for (const text of [instructions.operatingInstructions, instructions.connect]) {
     assert.match(text, /search\(\) to discover available tools/);
     assert.match(text, /individual service tools, call them directly/);
-    assert.match(text, /When it exposes search_capabilities and execute_capability instead/);
+    // Both lists at once (OpenWork's engine with connectEngineTools): search covers what has no tool.
+    assert.match(text, /For anything without a tool of its own, use Connect's search_capabilities and execute_capability/);
     assert.doesNotMatch(text, /bare search\(\) function only for other/);
     assert.doesNotMatch(text, /discover services and Workflows with openwork-cloud\.search_capabilities/);
   }
+});
+
+test("V2 Desktop instructions direct recurring work to a reviewable proposal", () => {
+  const instructions = buildOpenWorkV2Instructions(true);
+  assert.match(instructions.automations, /openwork_execute id automation\.propose/);
+  assert.match(instructions.automations, /review and create it in the app/);
+  assert.match(instructions.automations, /each occurrence requires the signed-in desktop runner/);
+  assert.match(instructions.automations, /never claim a Desktop Automation will run while the app is offline/);
 });
 
 test("V2 instructions do not claim Connect is available when disconnected", () => {

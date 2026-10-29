@@ -355,8 +355,8 @@ export type ComputerPermission = "accessibility" | "screenRecording";
 /** The agent needs computer use this chat does not have yet: setup, or the person's allowance. */
 export type ComputerRequest = {
   id: string;
-  /** setup: macOS permissions or a remote connection; script: an app script waiting for the person's approval. */
-  reason: "setup" | "script";
+  /** setup: macOS permissions or a remote connection; script: an app script waiting for the person's approval; files: files an app or page is about to receive. */
+  reason: "setup" | "script" | "files";
   /** The computer the chat uses, e.g. "This Mac" or "Freestyle VM". */
   computer: string;
   placement: "local" | "remote";
@@ -366,6 +366,8 @@ export type ComputerRequest = {
   purpose?: string;
   /** The exact script that runs if the person approves it. */
   script?: { app: "applescript" | "jxa" | "blender"; code: string };
+  /** The files handed over if the person approves: names or full paths, and the app or site receiving them. */
+  files?: { app: string; names: string[] };
 };
 
 /** One chat's computer use state, as the broker reports it. */
@@ -397,6 +399,9 @@ export type ComputerSnapshot = {
   /** This chat's computer steps: time spent on the computer, and waiting for the model between steps. */
   timing?: { steps: number; computerMs: number; modelMs: number; last?: { name: string; computerMs: number; modelMs?: number } };
 };
+
+/** Settings: the computer every chat uses and whether it is set up. */
+export type ComputerStatus = Pick<ComputerSnapshot, "enabled" | "entry" | "targetId" | "targets" | "placement" | "readiness" | "permissions" | "detail">;
 
 /** The live watch view: recent redacted frames and dispatched input, never actionable. */
 export type ComputerPresentation = {
@@ -460,6 +465,8 @@ export type DesktopCommandMap = {
     result: { enabled: boolean };
   };
   desktopSentryClearSession: { args: []; result: { enabled: boolean } };
+  /** Keep the computer from sleeping while this window's agents are working. */
+  desktopSetKeepAwake: { args: [active: boolean]; result: { active: boolean } };
   desktopIntegrationStatus: { args: []; result: DesktopIntegrationStatus };
   desktopIntegrationInstall: {
     args: [options?: { useExternalLauncher?: boolean }];
@@ -472,6 +479,7 @@ export type DesktopCommandMap = {
 
   // Computer use (macOS): chat ownership, the watch view and permission setup
   computerSnapshot: { args: [sessionId: string]; result: ComputerSnapshot };
+  computerStatus: { args: []; result: ComputerStatus };
   computerPresentation: { args: [sessionId: string, visible: boolean]; result: ComputerPresentation | null };
   computerInteract: {
     args: [input: { sessionId: string; id: string; action: "takeover" | "resume" }];
@@ -479,11 +487,12 @@ export type DesktopCommandMap = {
   };
   computerSetup: { args: [permission: ComputerPermission]; result: { setupId: string } };
   computerDismissSetup: { args: [setupId?: string]; result: void };
-  computerChoose: { args: [input: { sessionId: string; targetId: string }]; result: ComputerSnapshot };
+  computerChoose: { args: [targetId: string]; result: ComputerStatus };
   computerHalt: { args: [sessionId: string]; result: ComputerSnapshot };
   computerAnswerRequest: { args: [input: { sessionId: string; answer: "dismiss" | "allow" | "always"; id?: string }]; result: ComputerSnapshot };
   computerSetFeatureEnabled: { args: [enabled: boolean]; result: boolean };
   computerSetRemoteEnabled: { args: [enabled: boolean]; result: boolean };
+  computerSetBackgroundEnabled: { args: [enabled: boolean]; result: boolean };
   computerResetPermission: { args: [permission: ComputerPermission]; result: { setupId: string } };
   computerEndTurn: { args: [sessionId: string]; result: boolean };
 

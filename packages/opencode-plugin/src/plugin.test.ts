@@ -15,11 +15,11 @@ import type {
   RemoteMcpConfig,
 } from "./opencode.ts"
 import { createPlugin, readOptions } from "./plugin.ts"
-import { createDesktopProviderPlugin as createDesktopProviderPluginSource, isDesktopSessionEndpoint, readDesktopSession } from "./desktop.ts"
+import { createDesktopProviderPlugin as createDesktopProviderPluginSource, checkDesktopSession, isDesktopSessionEndpoint } from "./desktop.ts"
 import { createHash } from "node:crypto"
 import type { DenSession, Fetch } from "./den.ts"
 import { setTimeout as delay } from "node:timers/promises"
-import { API, createFakeDen, gatewaySummary, GATEWAY_KEY, MCP_TOKEN, ORG_ID, PROVIDER_ID, SESSION_TOKEN } from "./test-den.ts"
+import { API, createFakeDen, gatewaySummary, GATEWAY_KEY, MCP_TOKEN, MODEL_ID, ORG_ID, PROVIDER_ID, SESSION_TOKEN } from "./test-den.ts"
 
 // Emulate the server-only transport around existing fake Den fixtures. The
 // plugin sees only identity metadata and local inventory responses, never token.
@@ -30,8 +30,13 @@ function createDesktopProviderPlugin(deps: NonNullable<Parameters<typeof createD
     const url = new URL(input)
     if (url.pathname === "/session") {
       const response = await upstream(input, init)
-      const value: unknown = await response.json()
+      // Failed, non-JSON, and malformed local answers reach the plugin unchanged.
+      if (!response.ok) return response
+      const text = await response.text()
+      let value: unknown
+      try { value = JSON.parse(text) } catch { return new Response(text, { status: response.status, headers: response.headers }) }
       if (value === null) { source = null; return Response.json(null) }
+      if (typeof value !== "object" || !("token" in value)) return Response.json(value)
       assert.ok(typeof value === "object" && value !== null && "apiBaseUrl" in value && "token" in value && "orgId" in value)
       assert.ok(typeof value.apiBaseUrl === "string" && typeof value.token === "string" && (value.orgId === null || typeof value.orgId === "string"))
       source = { apiBaseUrl: value.apiBaseUrl, token: value.token, orgId: value.orgId }
@@ -450,7 +455,7 @@ test("desktop bridge accepts only literal loopback and never follows redirects o
   for (const value of ["http://example.test/session", "https://127.0.0.1/session", "http://localhost/session", "http://user@127.0.0.1/session"]) assert.equal(isDesktopSessionEndpoint(value), false)
   assert.equal(isDesktopSessionEndpoint("http://127.0.0.1:1234/session"), true)
   let calls = 0
-  const session = await readDesktopSession(async (_url, init) => {
+  const check = await checkDesktopSession(async (_url, init) => {
     calls++
     assert.equal(new Headers(init?.headers).get("authorization"), "Bearer process-capability")
     assert.equal(init?.redirect, "error")
@@ -458,8 +463,24 @@ test("desktop bridge accepts only literal loopback and never follows redirects o
       inferenceOrigin: "http://127.0.0.1:1234", inferenceKey: `ow_local_${"b".repeat(64)}` })
   }, "http://127.0.0.1:1234/session", "process-capability")
   assert.equal(calls, 1)
-  assert.equal(session?.identity, "a".repeat(64))
-  assert.ok(!JSON.stringify(session).includes(SESSION_TOKEN))
+  assert.equal(check.kind === "session" ? check.value.identity : null, "a".repeat(64))
+  assert.ok(!JSON.stringify(check).includes(SESSION_TOKEN))
+})
+
+test("desktop session check: only an explicit 2xx null is a sign-out; every failure is unknown", async () => {
+  const endpoint = "http://127.0.0.1:1234/session"
+  const kind = async (fetcher: Fetch, capability: string | undefined = "capability") =>
+    (await checkDesktopSession(fetcher, endpoint, capability)).kind
+  assert.equal(await kind(async () => Response.json(null)), "signed_out")
+  assert.equal(await kind(async () => Response.json(null, { status: 500 })), "unknown")
+  assert.equal(await kind(async () => Response.json(null, { status: 401 })), "unknown")
+  assert.equal(await kind(async () => new Response("<html>", { status: 200 })), "unknown")
+  assert.equal(await kind(async () => Response.json({ apiBaseUrl: API, token: SESSION_TOKEN, orgId: ORG_ID })), "unknown")
+  assert.equal(await kind(async () => { throw new TypeError("fetch failed") }), "unknown")
+  assert.equal(await kind(async () => { throw new DOMException("The operation timed out.", "TimeoutError") }), "unknown")
+  // No capability and no process broker: nothing answered, so nothing is known.
+  assert.equal(await kind(async () => assert.fail("no direct fetch without a capability"), undefined), "unknown")
+  assert.equal((await checkDesktopSession(async () => Response.json(null), "http://example.test/session", "capability")).kind, "unknown")
 })
 
 test("desktop provider-only mode reacts to local org changes and sign-out without inventory polling", async () => {
@@ -545,6 +566,152 @@ test("desktop sign-out fences and cancels an in-flight inventory response", asyn
   assert.equal(host.providers().size, 0)
   assert.equal(host.storage.has("desktop/provider-inventory"), false)
   await cleanup?.()
+})
+
+type SessionFailure = "stall" | "throw" | "500" | "invalid-json" | "invalid-shape"
+
+/**
+ * A desktop Location whose local /session check can fail on demand, as it does
+ * when the server is slow (>1.5 s), restarting, or answering garbage. Records
+ * every provider reload and what a model lookup would find at each failed check.
+ */
+async function desktopWithFlakySession(options: { sessionIntervalMs?: number } = {}) {
+  const den = liveDen()
+  const endpoint = "http://127.0.0.1:1234/session"
+  const host = createHost({ desktopSession: endpoint, liveProviderSync: true })
+  const state: { session: DenSession | null; failure: SessionFailure | null } = {
+    session: { apiBaseUrl: API, token: SESSION_TOKEN, orgId: ORG_ID }, failure: null,
+  }
+  const log: string[] = []
+  let failedChecks = 0
+  const modelVisible: boolean[] = []
+  Reflect.set(host.ctx.provider, "reload", async () => { log.push(`reload:${host.providers().size}`) })
+  const findModel = () => host.providers().get(PROVIDER_ID)?.models.some(model => model.id === MODEL_ID) ?? false
+  const cleanup = await createDesktopProviderPlugin({
+    capability: () => "capability", sessionIntervalMs: options.sessionIntervalMs ?? 5,
+    fetch: async (url, init) => {
+      if (url === endpoint) {
+        const failure = state.failure
+        if (!failure) return Response.json(state.session)
+        modelVisible.push(findModel())
+        try {
+          if (failure === "stall") {
+            // Never answers; only the plugin's own 1.5 s session timeout ends it.
+            return await new Promise<Response>((_, reject) => {
+              const signal = init?.signal
+              if (!signal) return
+              if (signal.aborted) reject(signal.reason)
+              signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+            })
+          }
+          if (failure === "throw") throw new TypeError("fetch failed")
+          if (failure === "500") return Response.json({ error: "internal_error" }, { status: 500 })
+          if (failure === "invalid-json") return new Response("<html>busy</html>", { status: 200 })
+          return Response.json({ unexpected: true })
+        } finally { failedChecks++ }
+      }
+      if (url.includes("inference-providers?")) log.push(`inventory:${new Headers(init?.headers).get("x-openwork-org-id")}`)
+      return den.fetch(url, init)
+    },
+  }).setup(host.ctx)
+  for (let i = 0; i < 100 && !findModel(); i++) await delay(2)
+  await settle()
+  assert.ok(findModel(), "signed-in Location published the gateway model")
+  return {
+    den, host, log, state, modelVisible, findModel, cleanup,
+    get failedChecks() { return failedChecks },
+    async waitForFailedChecks(count: number, timeoutMs = 5_000) {
+      const start = failedChecks
+      const deadline = Date.now() + timeoutMs
+      while (failedChecks - start < count && Date.now() < deadline) await delay(2)
+      assert.ok(failedChecks - start >= count, `expected ${count} failed session checks`)
+      await settle()
+    },
+  }
+}
+
+for (const failure of ["stall", "throw", "500", "invalid-json", "invalid-shape"] satisfies SessionFailure[]) {
+  test(`desktop session check failure (${failure}) keeps providers, cache and stream; no reload`, async () => {
+    const flaky = await desktopWithFlakySession()
+    try {
+      const reloads = flaky.log.filter(entry => entry.startsWith("reload:")).length
+      const inventories = flaky.den.inventories
+      const streams = flaky.den.streams.length
+      const cache = JSON.stringify(flaky.host.storage.get("desktop/provider-inventory"))
+      assert.notEqual(cache, undefined)
+      flaky.state.failure = failure
+      await flaky.waitForFailedChecks(failure === "stall" ? 1 : 3)
+      assert.ok(flaky.findModel(), "a model lookup during the failed check still resolves")
+      assert.equal(flaky.host.providers().size, 1, "providers stay published while the local check is unknown")
+      assert.deepEqual(flaky.log.filter(entry => entry === "reload:0"), [], "never reloaded with an empty provider set")
+      assert.equal(JSON.stringify(flaky.host.storage.get("desktop/provider-inventory")), cache, "cache kept")
+      flaky.state.failure = null
+      await delay(20)
+      await settle()
+      assert.ok(flaky.findModel())
+      assert.equal(flaky.log.filter(entry => entry.startsWith("reload:")).length, reloads, "no spurious provider reload")
+      assert.equal(flaky.den.inventories, inventories, "recovery did not refetch inventory")
+      assert.equal(flaky.den.streams.length, streams, "the inventory stream was never torn down")
+      assert.ok(flaky.modelVisible.every(Boolean), "every model lookup inside the failure window found the model")
+    } finally { await flaky.cleanup?.() }
+  })
+}
+
+test("desktop: many consecutive session check failures, then success, never drop providers; real changes still fence", async () => {
+  const flaky = await desktopWithFlakySession()
+  try {
+    const reloads = flaky.log.filter(entry => entry.startsWith("reload:")).length
+    for (const failure of ["throw", "500", "invalid-json", "throw"] satisfies SessionFailure[]) {
+      flaky.state.failure = failure
+      await flaky.waitForFailedChecks(5)
+      assert.ok(flaky.findModel(), `model still resolvable after repeated ${failure}`)
+    }
+    flaky.state.failure = null
+    await delay(20)
+    await settle()
+    assert.ok(flaky.modelVisible.length >= 20)
+    assert.ok(flaky.modelVisible.every(Boolean), "providers never disappeared")
+    assert.equal(flaky.log.filter(entry => entry.startsWith("reload:")).length, reloads, "no reload across the whole outage")
+
+    // An org switch after an outage still drops the old org's providers before
+    // any request for the new org's inventory.
+    flaky.log.length = 0
+    flaky.state.session = { apiBaseUrl: API, token: SESSION_TOKEN, orgId: "org_other" }
+    for (let i = 0; i < 100 && !flaky.log.includes("inventory:org_other"); i++) await delay(2)
+    await settle()
+    const fenced = flaky.log.indexOf("reload:0")
+    const requested = flaky.log.indexOf("inventory:org_other")
+    assert.ok(fenced >= 0 && requested > fenced, `old providers fenced before the new org request: ${flaky.log.join(", ")}`)
+
+    // A failure after the switch keeps the new org's providers.
+    flaky.state.failure = "throw"
+    await flaky.waitForFailedChecks(3)
+    assert.ok(flaky.findModel())
+
+    // An explicit 200 null is a real sign-out: providers and cache go.
+    flaky.state.failure = null
+    flaky.state.session = null
+    for (let i = 0; i < 100 && flaky.host.providers().size; i++) await delay(2)
+    await settle()
+    assert.equal(flaky.host.providers().size, 0)
+    assert.equal(flaky.host.storage.has("desktop/provider-inventory"), false)
+  } finally { await flaky.cleanup?.() }
+})
+
+test("desktop inventory stream reconnect during a failed session check keeps the current session", async () => {
+  // Slow timer: the stream's own reconnect is what asks for the session here.
+  const flaky = await desktopWithFlakySession({ sessionIntervalMs: 60_000 })
+  try {
+    assert.equal(flaky.den.streams.length, 1)
+    flaky.state.failure = "throw"
+    flaky.den.streams[0]?.close()
+    for (let i = 0; i < 400 && flaky.den.streams.length < 2; i++) await delay(10)
+    assert.ok(flaky.failedChecks >= 1, "reconnect re-checked the local session")
+    assert.equal(flaky.den.streams.length, 2, "reconnected with the retained session instead of giving up")
+    await settle()
+    assert.ok(flaky.findModel())
+    assert.deepEqual(flaky.log.filter(entry => entry === "reload:0"), [])
+  } finally { await flaky.cleanup?.() }
 })
 
 test("desktop event inventory failures converge with bounded retries while the stream stays open", async () => {
@@ -651,6 +818,57 @@ test("five desktop Locations share one session stream, fan out changes, and rele
   assert.ok(hosts.slice(1).every(host => host.providers().size === 1))
   for (const cleanup of cleanups.slice(1)) await cleanup?.()
   assert.equal(den.cancelled, 1, "last reference closed the stream")
+})
+
+test("five desktop Locations share one local session poll, all receive changes, and release independently", async () => {
+  const den = liveDen()
+  const endpoint = "http://127.0.0.1:1234/session"
+  let session: DenSession | null = { apiBaseUrl: API, token: SESSION_TOKEN, orgId: ORG_ID }
+  let checks = 0
+  const hosts = Array.from({ length: 5 }, () => createHost({ desktopSession: endpoint, liveProviderSync: true }))
+  const plugin = createDesktopProviderPlugin({
+    capability: () => "capability", sessionIntervalMs: 25,
+    fetch: async (url, init) => {
+      if (url !== endpoint) return den.fetch(url, init)
+      checks++
+      return Response.json(session)
+    },
+  })
+  const cleanups = await Promise.all(hosts.map(host => plugin.setup(host.ctx)))
+  try {
+    await settle()
+    // One startup check for all five, plus the shared inventory stream's own
+    // session lookup when it opens. Unshared, startup alone was five.
+    assert.ok(checks <= 2, `five Locations starting together shared their session check, got ${checks}`)
+    assert.ok(hosts.every(host => host.providers().size === 1))
+    const before = checks
+    await delay(250)
+    // One poll at 25 ms is ~10 checks; five independent Locations would be ~50.
+    assert.ok(checks - before <= 14, `one shared poll, got ${checks - before} checks in 250 ms`)
+    assert.ok(checks - before >= 5, "the shared poll keeps running")
+
+    session = null
+    for (let i = 0; i < 100 && hosts.some(host => host.providers().size); i++) await delay(5)
+    assert.ok(hosts.every(host => host.providers().size === 0), "every Location received the sign-out")
+    assert.ok(hosts.every(host => !host.storage.has("desktop/provider-inventory")))
+
+    session = { apiBaseUrl: API, token: SESSION_TOKEN, orgId: ORG_ID }
+    for (let i = 0; i < 100 && hosts.some(host => !host.providers().size); i++) await delay(5)
+    assert.ok(hosts.every(host => host.providers().size === 1), "every Location received the sign-in")
+
+    for (const cleanup of cleanups.slice(0, 4)) await cleanup?.()
+    const remaining = checks
+    await delay(100)
+    assert.ok(checks > remaining, "the last Location keeps polling after the others unload")
+    session = null
+    for (let i = 0; i < 100 && hosts[4]?.providers().size; i++) await delay(5)
+    assert.equal(hosts[4]?.providers().size, 0)
+    assert.ok(hosts.slice(0, 4).every(host => host.providers().size === 1), "unloaded Locations no longer receive checks")
+    await cleanups[4]?.()
+    const stopped = checks
+    await delay(100)
+    assert.equal(checks, stopped, "the last Location unloading stopped the poll")
+  } finally { for (const cleanup of cleanups) await cleanup?.() }
 })
 
 test("desktop warm offline cache rebinds public catalogs to a new engine port/key without persisting inference credentials", async () => {

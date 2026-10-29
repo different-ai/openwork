@@ -1,21 +1,24 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { eq, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable } from "@openwork-ee/den-db/schema"
-import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
 import { z } from "zod"
 import { db } from "../db.js"
 import { getDesktopReleaseMetadata } from "../desktop-releases.js"
 import { env } from "../env.js"
-import { parseOrganizationPlan, type PlanTier } from "../entitlements.js"
-import { normalizeOrganizationMetadata } from "../organization-limits.js"
+import { adminOrganizationPlanInputSchema, setOrganizationPlanByAdmin } from "../admin-organization-plan.js"
 import { readFeatureRollouts } from "@openwork-ee/den-db/organization-features"
-import { updateFeatureRollout, updateOrganizationFeatureOverrides } from "../features.js"
+import { deploymentFeatureEnabled, updateFeatureRollout, updateOrganizationFeatureOverrides } from "../features.js"
+import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { SANDBOX_MAX_CREDIT_USD, SANDBOX_MAX_DAYS, SANDBOX_MAX_MEMBERS, sandboxCreateInputSchema } from "@openwork/types/den/sandbox-organizations"
+import { closeSandbox, createSandbox, extendSandbox, listSandboxes, sandboxDefaults, setSandboxCredit } from "../sandbox-organizations.js"
 import { FEATURE_KEYS, featureAvailableOn, featureDefinition, featureDocsUrl, featureKeySchema, featureRollout, resolveFeature } from "@openwork/features"
-import { updateOrganizationMetadata } from "../organization-metadata.js"
 import { runPlatformAdminPlatformAction, runPlatformAdminServiceAction, type PlatformAdminAuditActor } from "../audit/mcp-service-audit.js"
 import { readWorkbotAdoptionReport, workbotAdoptionInputSchema } from "../workbot/adoption-report.js"
 import { assertReadOnlySql, isDatabaseTimeLimitError, withDatabaseTimeLimit } from "./admin-query-limit.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
+import { buildRetentionCohorts } from "../admin-metrics/definitions.js"
+import { readTaskUserWindows } from "../admin-metrics/metrics.js"
+import { normalizeRows } from "../admin-metrics/sql.js"
 
 /**
  * den-admin MCP toolset: read-only Den analytics for allowlisted platform
@@ -34,7 +37,7 @@ import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
  * write tools need the caller's mcp:write scope, like connection writes.
  */
 
-export const DEN_ADMIN_MCP_VERSION = "0.9.0"
+export const DEN_ADMIN_MCP_VERSION = "0.11.0"
 
 const QUERY_TIMEOUT_MS = 15_000
 // Slightly under Den's own timer, so the database stops the statement first.
@@ -61,23 +64,7 @@ const organizationSelect = {
   metadata: OrganizationTable.metadata,
 }
 
-/**
- * `db` is drizzle over either mysql2 (returns `[rows, fields]`) or
- * PlanetScale serverless (returns `{ rows }`). Normalize both shapes.
- */
-export function normalizeRows(result: unknown): Row[] {
-  if (Array.isArray(result)) {
-    const first: unknown = result[0]
-    if (Array.isArray(first)) {
-      return first as Row[]
-    }
-    return result as Row[]
-  }
-  if (typeof result === "object" && result !== null && Array.isArray((result as { rows?: unknown }).rows)) {
-    return (result as { rows: Row[] }).rows
-  }
-  return []
-}
+export { normalizeRows }
 
 async function rows(query: SQL): Promise<Row[]> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -164,14 +151,6 @@ async function resolveOrganization(org: string): Promise<
   throw new Error(`No organization matching "${org}"`)
 }
 
-function manualPlan(tier: PlanTier) {
-  return {
-    tier,
-    source: "manual" as const,
-    ...(tier === "enterprise" ? { grantedAt: new Date().toISOString() } : {}),
-  }
-}
-
 function toTime(value: unknown): number | null {
   if (value instanceof Date) {
     const time = value.getTime()
@@ -240,27 +219,6 @@ async function activeUserCount(days: number): Promise<number> {
     const result = await rows(sql`SELECT COUNT(DISTINCT user_id) AS count FROM session
        WHERE updated_at >= DATE_SUB(NOW(), INTERVAL ${interval} DAY)`)
     return n(result[0]?.count)
-  }
-}
-
-/**
- * "Real" active users: executed at least one task in a session in the
- * window — task.* telemetry with a session id, not just sign-ins or
- * heartbeat pings. Returns 0 when the telemetry table is missing.
- */
-async function taskActiveUserCount(days: number): Promise<number> {
-  const interval = intLiteral(days)
-  try {
-    const result = await rows(sql`SELECT COUNT(DISTINCT m.user_id) AS count FROM telemetry_event t
-        JOIN member m ON m.id = t.member_id
-       WHERE m.user_id IS NOT NULL
-         AND t.event_type IN ('task.started', 'task.completed', 'task.failed')
-         AND t.session_id IS NOT NULL
-         AND t.event_timestamp >= DATE_SUB(NOW(), INTERVAL ${interval} DAY)`)
-    return n(result[0]?.count)
-  } catch (error) {
-    if (!isMissingTable(error)) throw error
-    return 0
   }
 }
 
@@ -406,7 +364,7 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
     },
     async () =>
       run(async () => {
-        const [users, orgs, members, invitations, subscriptions, dau, wau, mau, realDau, realWau, realMau] = await Promise.all([
+        const [users, orgs, members, invitations, subscriptions, dau, wau, mau, taskUsers] = await Promise.all([
           rows(sql`SELECT COUNT(*) AS total,
                   SUM(created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS new7d,
                   SUM(created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)) AS new30d
@@ -418,9 +376,10 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
           activeUserCount(1),
           activeUserCount(7),
           activeUserCount(30),
-          taskActiveUserCount(1),
-          taskActiveUserCount(7),
-          taskActiveUserCount(30),
+          readTaskUserWindows(rows, new Date()).catch((error: unknown) => {
+            if (!isMissingTable(error)) throw error
+            return { daily: 0, weekly: 0, monthly: 0 }
+          }),
         ])
         return {
           users: {
@@ -432,13 +391,13 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
           activeMembers: n(members[0]?.total),
           pendingInvitations: n(invitations[0]?.pending),
           activeUsers: { daily: dau, weekly: wau, monthly: mau },
-          realActiveUsers: { daily: realDau, weekly: realWau, monthly: realMau },
+          realActiveUsers: { daily: taskUsers.daily, weekly: taskUsers.weekly, monthly: taskUsers.monthly },
           subscriptions: subscriptions.map((row) => ({
             type: row.type,
             status: row.status,
             count: n(row.count),
           })),
-          note: "active = sign-in session day or any telemetry event; realActive = executed at least one task in a session (task.* events with a session id)",
+          note: "active = sign-in session day or any telemetry event; realActive = ran at least one task in a session from the app (task.* events with a session id), excluding setup agents and removed members, as in the admin Control Center",
         }
       }),
   )
@@ -447,21 +406,26 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
     "den_update_org_plan",
     {
       description:
-        "Admin write tool: grant or remove organization plan access and set the member seat limit. Use tier='enterprise' to grant enterprise access.",
+        "Admin write tool: set an organization's plan (free, team or enterprise) and how many users it allows, counting pending invitations, the same control as /admin › Billing. Invitations, SSO sign-up and SCIM all enforce it unless a paid Stripe plan bills every user. Team and Enterprise may carry a display-only end date (endsAt, YYYY-MM-DD; null clears it). Never changes Stripe. Returns the resolved plan.",
       inputSchema: z.object({
         organizationId: z.string().min(1).describe("Organization id, e.g. org_..."),
         tier: z.enum(["free", "team", "enterprise"]).describe("Plan tier to set"),
-        seatLimit: z.number().int().min(1).max(100000).describe("Maximum active organization members/seats"),
+        seatLimit: z.number().int().min(1).max(100000).describe("Users allowed, counting pending invitations (at least 5; smaller values are raised to 5)"),
+        endsAt: z.string().nullable().optional().describe("Optional end date for team or enterprise, YYYY-MM-DD; display only. null clears it. Not allowed on free."),
       }),
     },
-    async ({ organizationId, tier, seatLimit }) =>
+    async ({ organizationId, tier, seatLimit, endsAt }) =>
       writeScopeMissing("den_update_org_plan") ?? run(async () => {
         if (!isOrganizationId(organizationId)) {
           throw new Error("Invalid organization id")
         }
+        const input = adminOrganizationPlanInputSchema.safeParse({ tier, seatLimit, endsAt })
+        if (!input.success) {
+          throw new Error(input.error.issues[0]?.message ?? "Invalid organization plan")
+        }
 
         const existing = await db
-          .select({ id: OrganizationTable.id, name: OrganizationTable.name, slug: OrganizationTable.slug, metadata: OrganizationTable.metadata })
+          .select({ id: OrganizationTable.id, name: OrganizationTable.name, slug: OrganizationTable.slug })
           .from(OrganizationTable)
           .where(eq(OrganizationTable.id, organizationId))
           .limit(1)
@@ -471,19 +435,7 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
           throw new Error(`No organization found for ${organizationId}`)
         }
 
-        const metadata = await runPlatformAdminServiceAction("organization.plan.set", requireAdmin(), organization, () => updateOrganizationMetadata(organizationId, (current) => {
-          const normalized = normalizeOrganizationMetadata(current).metadata
-          const plan = { ...readOrganizationMetadata(current.plan), ...manualPlan(tier) }
-          if (tier !== "enterprise") delete plan.grantedAt
-          return {
-            ...normalized,
-            plan,
-            limits: {
-              ...normalized.limits,
-              members: seatLimit,
-            },
-          }
-        }))
+        const plan = await runPlatformAdminServiceAction("organization.plan.set", requireAdmin(), organization, () => setOrganizationPlanByAdmin(organizationId, input.data))
 
         return {
           ok: true,
@@ -491,8 +443,8 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
             id: organization.id,
             name: organization.name,
             slug: organization.slug,
-            plan: parseOrganizationPlan(metadata),
-            seatLimit,
+            plan,
+            seatLimit: plan.seats ?? plan.userLimit ?? input.data.seatLimit,
           },
         }
       }),
@@ -530,6 +482,7 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
           organizationId,
           changes: { [capability]: enabled },
           source: "platform",
+          setByUserId: requireAdmin().userId,
         }))
         return {
           ok: true,
@@ -561,6 +514,8 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
             return {
               key,
               label: definition.label,
+              category: definition.category,
+              added: definition.added,
               author: definition.author,
               docsUrl: featureDocsUrl(key),
               deployments: definition.deployments,
@@ -590,7 +545,7 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
         if (!featureAvailableOn(feature, env.features.deployment)) throw new Error(`${feature} is not part of this deployment.`)
         // Deployment-wide: no organization's data changes, so platform evidence only.
         const rollouts = await runPlatformAdminPlatformAction("feature.rollout.set", requireAdmin(), { type: "feature", id: feature }, () =>
-          updateFeatureRollout({ key: feature, enabled, killed, defaultEnabled: featureDefinition(feature).default }))
+          updateFeatureRollout({ key: feature, enabled, killed, defaultEnabled: featureDefinition(feature).default, updatedByUserId: requireAdmin().userId }))
         return { ok: true, feature, ...featureRollout(feature, rollouts) }
       }),
   )
@@ -660,44 +615,21 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
              FROM user WHERE created_at >= DATE_SUB(NOW(), INTERVAL ${intLiteral(weeks)} WEEK)`,
         )
         const activity = await activityDays()
-        const WEEK_MS = 7 * 86_400_000
-        const signupByUser = new Map<string, { week: string; time: number }>()
-        for (const row of users) {
+        const signups = users.flatMap((row) => {
           const time = toTime(row.day)
-          if (typeof row.id !== "string" || typeof row.week !== "string" || time === null) continue
-          signupByUser.set(row.id, { week: row.week, time })
-        }
-        const cohorts = new Map<string, { size: number; retained: Map<number, Set<string>> }>()
-        for (const signup of signupByUser.values()) {
-          const cohort = cohorts.get(signup.week) ?? { size: 0, retained: new Map() }
-          cohort.size += 1
-          cohorts.set(signup.week, cohort)
-        }
-        for (const row of activity) {
-          if (typeof row.uid !== "string") continue
-          const signup = signupByUser.get(row.uid)
+          return typeof row.id === "string" && typeof row.week === "string" && time !== null ? [{ userId: row.id, cohort: row.week, signupTime: time }] : []
+        })
+        const activityRows = activity.flatMap((row) => {
           const dayTime = toTime(row.day)
-          if (!signup || dayTime === null) continue
-          const offset = Math.floor((dayTime - signup.time) / WEEK_MS)
-          if (offset < 0) continue
-          const cohort = cohorts.get(signup.week)
-          if (!cohort) continue
-          const usersAtOffset = cohort.retained.get(offset) ?? new Set<string>()
-          usersAtOffset.add(row.uid)
-          cohort.retained.set(offset, usersAtOffset)
-        }
-        const result = [...cohorts.entries()]
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([week, cohort]) => {
-            const byWeek: Record<string, { users: number; percent: number }> = {}
-            for (const [offset, retainedUsers] of [...cohort.retained.entries()].sort((a, b) => a[0] - b[0])) {
-              byWeek[`week${offset}`] = {
-                users: retainedUsers.size,
-                percent: Math.round((retainedUsers.size / cohort.size) * 1000) / 10,
-              }
-            }
-            return { cohort: week, signups: cohort.size, retention: byWeek }
-          })
+          return typeof row.uid === "string" && dayTime !== null ? [{ userId: row.uid, dayTime }] : []
+        })
+        const result = buildRetentionCohorts(signups, activityRows).map((cohort) => {
+          const byWeek: Record<string, { users: number; percent: number }> = {}
+          for (const [offset, retained] of cohort.retained) {
+            byWeek[`week${offset}`] = { users: retained, percent: Math.round((retained / cohort.signups) * 1000) / 10 }
+          }
+          return { cohort: cohort.cohort, signups: cohort.signups, retention: byWeek }
+        })
         return {
           cohorts: result,
           note: "week0 = signup week; weekN = active N weeks after signup",
@@ -882,4 +814,103 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
         }
       }),
   )
+
+  // Sandbox organizations: the same functions as /v1/admin/sandbox-orgs and the /admin Sandbox page. Platform
+  // evidence only, like those routes (creating one makes a new organization).
+  const sandboxesOn = async () => {
+    if (!await deploymentFeatureEnabled("sandboxOrgs")) throw new Error("Sandbox organizations are turned off on this deployment. Turn on sandboxOrgs (den_set_feature_rollout) first.")
+  }
+  const sandboxId = (value: string) => {
+    if (!isDenTypeId("sandboxOrganization", value)) throw new Error("Invalid sandbox id (expected sbx_... from den_sandbox_list).")
+    return normalizeDenTypeId("sandboxOrganization", value)
+  }
+  const found = <T>(sandbox: T | null) => {
+    if (!sandbox) throw new Error("Sandbox not found.")
+    return { ok: true, sandbox }
+  }
+
+  server.registerTool(
+    "den_sandbox_list",
+    {
+      description: "List sandbox organizations (try-it-out Enterprise orgs for prospects): state, end date, seats, join link, connectors, and the model credit left on each sandbox's own OpenRouter key. Also returns what a new sandbox gets on this deployment.",
+      inputSchema: z.object({}),
+    },
+    async () => run(async () => {
+      await sandboxesOn()
+      return { sandboxes: await listSandboxes(), defaults: sandboxDefaults() }
+    }),
+  )
+
+  server.registerTool(
+    "den_sandbox_create",
+    {
+      description: `Admin write tool: create a sandbox organization owned by you, on the Enterprise plan until it ends, with AI Gateway models for everyone (its own OpenRouter key capped at creditUsd when the deployment mints them), the fictional workplace connectors and a join link to send the prospect. Confirm name, seats, days and credit with the person first.`,
+      inputSchema: z.object({
+        name: z.string().trim().min(2).max(120).describe("Organization name, e.g. 'Trial sandbox'. Never include anything the prospect would consider confidential."),
+        days: z.number().int().min(1).max(SANDBOX_MAX_DAYS).describe("How many days the sandbox stays open"),
+        memberLimit: z.number().int().min(1).max(SANDBOX_MAX_MEMBERS).describe("Seats"),
+        creditUsd: z.number().int().min(1).max(SANDBOX_MAX_CREDIT_USD).optional().describe("Model spending cap in US dollars; omitted uses the deployment default"),
+        allowedEmailDomains: z.array(z.string()).max(20).optional().describe("Only people with these email domains can join; omitted means anyone with the link"),
+        joinRole: z.enum(["member", "admin"]).optional().describe("What people who join become; default admin"),
+        withConnectors: z.boolean().optional().describe("Add the fictional workplace connectors (default true)"),
+      }),
+    },
+    async ({ name, days, memberLimit, creditUsd, allowedEmailDomains, joinRole, withConnectors }) =>
+      writeScopeMissing("den_sandbox_create") ?? run(async () => {
+        await sandboxesOn()
+        const input = sandboxCreateInputSchema.safeParse({
+          name, days, memberLimit, allowedEmailDomains: allowedEmailDomains ?? [], joinRole,
+          connectorBaseUrl: withConnectors === false ? null : sandboxDefaults().workplaceUrl,
+          ...(creditUsd === undefined ? {} : { creditUsd }),
+        })
+        if (!input.success) throw new Error(input.error.issues[0]?.message ?? "Invalid sandbox.")
+        const admin = requireAdmin()
+        const sandbox = await runPlatformAdminPlatformAction("sandbox_organization.create", admin, { type: "sandbox_organization", id: null }, () =>
+          createSandbox(normalizeDenTypeId("user", admin.userId), input.data))
+        return { ok: true, sandbox }
+      }),
+  )
+
+  server.registerTool(
+    "den_sandbox_extend",
+    {
+      description: "Admin write tool: add days to a sandbox (from now or its current end, whichever is later). Reopens a closed or ended sandbox: join link, Free Auto and its own model key come back on, and the Enterprise plan's end date moves.",
+      inputSchema: z.object({ sandboxId: z.string().describe("sbx_... from den_sandbox_list"), days: z.number().int().min(1).max(SANDBOX_MAX_DAYS) }),
+    },
+    async ({ sandboxId: id, days }) =>
+      writeScopeMissing("den_sandbox_extend") ?? run(async () => {
+        await sandboxesOn()
+        const target = sandboxId(id)
+        return found(await runPlatformAdminPlatformAction("sandbox_organization.extend", requireAdmin(), { type: "sandbox_organization", id: target }, () => extendSandbox(target, days)))
+      }),
+  )
+
+  server.registerTool(
+    "den_sandbox_set_credit",
+    {
+      description: "Admin write tool: set the model spending cap, in US dollars, on a sandbox's own OpenRouter key. This is the new total, not an increment: to add $25 to a $50 sandbox, set 75.",
+      inputSchema: z.object({ sandboxId: z.string().describe("sbx_... from den_sandbox_list"), creditUsd: z.number().int().min(1).max(SANDBOX_MAX_CREDIT_USD) }),
+    },
+    async ({ sandboxId: id, creditUsd }) =>
+      writeScopeMissing("den_sandbox_set_credit") ?? run(async () => {
+        await sandboxesOn()
+        const target = sandboxId(id)
+        return found(await runPlatformAdminPlatformAction("sandbox_organization.credit.set", requireAdmin(), { type: "sandbox_organization", id: target }, () => setSandboxCredit(target, creditUsd)))
+      }),
+  )
+
+  server.registerTool(
+    "den_sandbox_close",
+    {
+      description: "Admin write tool: close a sandbox now. Stops the join link, Free Auto and its own model key; the organization, members and their work are kept, and den_sandbox_extend reopens it.",
+      inputSchema: z.object({ sandboxId: z.string().describe("sbx_... from den_sandbox_list") }),
+    },
+    async ({ sandboxId: id }) =>
+      writeScopeMissing("den_sandbox_close") ?? run(async () => {
+        await sandboxesOn()
+        const target = sandboxId(id)
+        return found(await runPlatformAdminPlatformAction("sandbox_organization.close", requireAdmin(), { type: "sandbox_organization", id: target }, () => closeSandbox(target)))
+      }),
+  )
+
 }

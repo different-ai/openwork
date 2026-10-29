@@ -60,13 +60,20 @@ function stubReads(results: Array<unknown[] | Error>, events: string[] = []) {
 function stubWrites(events: string[], writeError?: Error) {
   const inserted: Record<string, unknown>[] = []
   const updated: Record<string, unknown>[] = []
+  /** Rows appended to feature_change (plain inserts, no upsert). */
+  const history: Record<string, unknown>[] = []
   mock.method(db, "insert", () => ({
-    values(value: Record<string, unknown>) {
-      inserted.push(value)
+    values(value: Record<string, unknown> | Record<string, unknown>[]) {
       return {
         async onDuplicateKeyUpdate() {
+          if (!Array.isArray(value)) inserted.push(value)
           events.push(writeError ? "write-failed" : "write")
           if (writeError) throw writeError
+        },
+        then(resolve: (value: undefined) => unknown, reject: (reason: unknown) => unknown) {
+          history.push(...(Array.isArray(value) ? value : [value]))
+          events.push("history")
+          return Promise.resolve(undefined).then(resolve, reject)
         },
       }
     },
@@ -87,7 +94,7 @@ function stubWrites(events: string[], writeError?: Error) {
       }
     },
   }))
-  return { inserted, updated }
+  return { inserted, updated, history }
 }
 
 function stubTransaction(events: string[], commitError?: Error) {
@@ -116,14 +123,16 @@ afterEach(() => mock.restoreAll())
 test("rollout writes invalidate once after the write and successful readback, preserving the result", async () => {
   const events: string[] = []
   const reads = stubReads([rolloutBefore, rolloutAfter], events)
-  const { inserted } = stubWrites(events)
+  const { inserted, history } = stubWrites(events)
+  stubTransaction(events)
   const invalidation = spyInvalidation(events)
   const result = await updateFeatureRollout({ key: "remoteSessionSubagents", killed: true, defaultEnabled: false, updatedByUserId: userId })
   assert.deepEqual(result, { remoteSessionSubagents: { enabled: true, killed: true } })
   assert.deepEqual(inserted, [{ feature_key: "remoteSessionSubagents", enabled: true, killed: true, updated_by_user_id: userId }])
+  assert.deepEqual(history, [{ feature_key: "remoteSessionSubagents", scope: "everyone", action: "killed", organization_id: null, member_id: null, changed_by_user_id: userId }])
   assert.equal(reads.length, 2)
   assert.equal(invalidation.mock.callCount(), 1)
-  assert.deepEqual(events, ["read", "write", "read", "invalidate"])
+  assert.deepEqual(events, ["begin", "read", "write", "history", "commit", "read", "invalidate"])
 })
 
 for (const stage of ["write", "readback"]) {
@@ -131,60 +140,76 @@ for (const stage of ["write", "readback"]) {
     const events: string[] = []
     stubReads(stage === "write" ? [rolloutBefore] : [rolloutBefore, fault], events)
     stubWrites(events, stage === "write" ? fault : undefined)
+    stubTransaction(events)
     const invalidation = spyInvalidation(events)
     await assert.rejects(updateFeatureRollout({ key: "remoteSessionSubagents", killed: true, defaultEnabled: false }), (error: unknown) => error === fault)
     assert.equal(invalidation.mock.callCount(), 1)
-    assert.deepEqual(events, stage === "write" ? ["read", "write-failed", "invalidate"] : ["read", "write", "read-failed", "invalidate"])
+    assert.deepEqual(events, stage === "write"
+      ? ["begin", "read", "write-failed", "transaction-failed", "invalidate"]
+      : ["begin", "read", "write", "history", "commit", "read-failed", "invalidate"])
   })
 }
 
 test("organization override writes invalidate once after the transaction commits, preserving the result", async () => {
   const events: string[] = []
-  const reads = stubReads([[{ metadata: {} }], overrideAfter], events)
-  const { inserted, updated } = stubWrites(events)
+  const reads = stubReads([[{ metadata: {} }], [], overrideAfter], events)
+  const { inserted, updated, history } = stubWrites(events)
   stubTransaction(events)
   const invalidation = spyInvalidation(events)
   const result = await updateOrganizationFeatureOverrides({ organizationId, changes: { remoteSessionSubagents: true }, source: "platform", setByUserId: userId })
   assert.deepEqual(result, { remoteSessionSubagents: true })
   assert.deepEqual(inserted, [{ organization_id: organizationId, feature_key: "remoteSessionSubagents", enabled: true, source: "platform", set_by_user_id: userId }])
+  assert.deepEqual(history, [{ feature_key: "remoteSessionSubagents", scope: "organization", action: "on", organization_id: organizationId, member_id: null, changed_by_user_id: userId }])
   assert.deepEqual(updated, [{ metadata: { capabilities: { remoteSessionSubagents: true } } }])
   assert.equal(reads[0].lock, "update")
   assert.equal(invalidation.mock.callCount(), 1)
-  assert.deepEqual(events, ["begin", "read", "write", "read", "metadata-write", "commit", "invalidate"])
+  assert.deepEqual(events, ["begin", "read", "read", "write", "history", "read", "metadata-write", "commit", "invalidate"])
 })
 
 test("clearing an organization override invalidates after the deletion commits", async () => {
   const events: string[] = []
-  stubReads([[{ metadata: { capabilities: { remoteSessionSubagents: true } } }], []], events)
-  const { inserted, updated } = stubWrites(events)
+  stubReads([[{ metadata: { capabilities: { remoteSessionSubagents: true } } }], overrideAfter, []], events)
+  const { inserted, updated, history } = stubWrites(events)
   stubTransaction(events)
   const invalidation = spyInvalidation(events)
   assert.deepEqual(await updateOrganizationFeatureOverrides({ organizationId, changes: { remoteSessionSubagents: null }, source: "platform" }), {})
   assert.deepEqual(inserted, [])
+  assert.deepEqual(history, [{ feature_key: "remoteSessionSubagents", scope: "organization", action: "reset", organization_id: organizationId, member_id: null, changed_by_user_id: null }])
   assert.deepEqual(updated, [{ metadata: {} }])
   assert.equal(invalidation.mock.callCount(), 1)
-  assert.deepEqual(events, ["begin", "read", "delete", "read", "metadata-write", "commit", "invalidate"])
+  assert.deepEqual(events, ["begin", "read", "read", "delete", "history", "read", "metadata-write", "commit", "invalidate"])
+})
+
+test("setting an override to the value it already has adds nothing to the history", async () => {
+  const events: string[] = []
+  stubReads([[{ metadata: {} }], overrideAfter, overrideAfter], events)
+  const { history } = stubWrites(events)
+  stubTransaction(events)
+  spyInvalidation(events)
+  await updateOrganizationFeatureOverrides({ organizationId, changes: { remoteSessionSubagents: true }, source: "platform", setByUserId: userId })
+  assert.deepEqual(history, [])
+  assert.deepEqual(events, ["begin", "read", "read", "write", "read", "metadata-write", "commit", "invalidate"])
 })
 
 for (const stage of ["write", "commit"]) {
   test(`organization override invalidation runs after an uncertain ${stage} failure and preserves the original error`, async () => {
     const events: string[] = []
-    stubReads(stage === "write" ? [[{ metadata: {} }]] : [[{ metadata: {} }], overrideAfter], events)
+    stubReads(stage === "write" ? [[{ metadata: {} }], []] : [[{ metadata: {} }], [], overrideAfter], events)
     stubWrites(events, stage === "write" ? fault : undefined)
     stubTransaction(events, stage === "commit" ? fault : undefined)
     const invalidation = spyInvalidation(events)
     await assert.rejects(updateOrganizationFeatureOverrides({ organizationId, changes: { remoteSessionSubagents: true }, source: "platform" }), (error: unknown) => error === fault)
     assert.equal(invalidation.mock.callCount(), 1)
     assert.deepEqual(events, stage === "write"
-      ? ["begin", "read", "write-failed", "transaction-failed", "invalidate"]
-      : ["begin", "read", "write", "read", "metadata-write", "commit", "transaction-failed", "invalidate"])
+      ? ["begin", "read", "read", "write-failed", "transaction-failed", "invalidate"]
+      : ["begin", "read", "read", "write", "history", "read", "metadata-write", "commit", "transaction-failed", "invalidate"])
   })
 }
 
 for (const writer of ["rollout", "override"]) {
   test(`${writer} writer does not settle before asynchronous invalidation finishes`, async () => {
     const events: string[] = []
-    stubReads(writer === "rollout" ? [rolloutBefore, rolloutAfter] : [[{ metadata: {} }], overrideAfter], events)
+    stubReads(writer === "rollout" ? [rolloutBefore, rolloutAfter] : [[{ metadata: {} }], [], overrideAfter], events)
     stubWrites(events)
     stubTransaction(events)
     let finishInvalidation = () => {}
@@ -257,25 +282,26 @@ test("a replaced membership does not inherit the previous membership's overrides
 
 test("member override writes invalidate the feature cache after the write commits", async () => {
   const events: string[] = []
-  stubReads([[{ userId }]], events)
-  const { inserted } = stubWrites(events)
+  stubReads([[{ userId }], []], events)
+  const { inserted, history } = stubWrites(events)
   stubTransaction(events)
   const invalidation = spyInvalidation(events)
   assert.equal(await updateMemberFeatureOverrides({ organizationId, memberId, changes: { remoteSessionSubagents: true }, setByUserId: userId }), true)
   assert.deepEqual(inserted, [{ member_id: memberId, feature_key: "remoteSessionSubagents", enabled: true, set_by_user_id: userId }])
+  assert.deepEqual(history, [{ feature_key: "remoteSessionSubagents", scope: "member", action: "on", organization_id: organizationId, member_id: memberId, changed_by_user_id: userId }])
   assert.equal(invalidation.mock.callCount(), 1)
-  assert.deepEqual(events, ["begin", "read", "write", "commit", "invalidate"])
+  assert.deepEqual(events, ["begin", "read", "read", "write", "history", "commit", "invalidate"])
 })
 
 test("member override invalidation runs after an uncertain write failure and preserves the original error", async () => {
   const events: string[] = []
-  stubReads([[{ userId }]], events)
+  stubReads([[{ userId }], []], events)
   stubWrites(events, fault)
   stubTransaction(events)
   const invalidation = spyInvalidation(events)
   await assert.rejects(updateMemberFeatureOverrides({ organizationId, memberId, changes: { remoteSessionSubagents: true }, setByUserId: userId }), (error: unknown) => error === fault)
   assert.equal(invalidation.mock.callCount(), 1)
-  assert.deepEqual(events, ["begin", "read", "write-failed", "transaction-failed", "invalidate"])
+  assert.deepEqual(events, ["begin", "read", "read", "write-failed", "transaction-failed", "invalidate"])
 })
 
 for (const locked of [false, true]) {

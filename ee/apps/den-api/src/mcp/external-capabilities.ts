@@ -45,6 +45,7 @@ import {
 import { compareCapabilityMatches, scoreText, tokenize } from "./search.js"
 import { EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT, scoreExternalTool, selectExternalMcpSearchConnections } from "./external-search-selection.js"
 import type { CapabilityMatch, CapabilityToolAnnotations } from "./search.js"
+import { AGENT_SOURCE_BLOCKED_MESSAGE, agentMayUseExternalTool, agentReadAllowlist, type AgentReadAllowlist } from "./agent-read-sources.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import {
   codemodeScriptPath,
@@ -760,6 +761,8 @@ async function probeExternalMcpConnection(input: {
   limit: number
   deadline: ExternalMcpLifecycleDeadline
   scriptNamespace?: string
+  /** A member's background agent: only the tools it may call. */
+  agent?: AgentReadAllowlist | null
 }): Promise<ExternalCapabilityMatch[]> {
   const matches: ExternalCapabilityMatch[] = []
   const add = (match: ExternalCapabilityMatch) => {
@@ -874,6 +877,7 @@ async function probeExternalMcpConnection(input: {
 
   for (const tool of tools) {
     if (isToolDisabled(connection.toolPolicy, tool.name)) continue
+    if (input.agent && !agentMayUseExternalTool(input.agent, connection, tool)) continue
     const summary = tool.description ?? tool.title ?? tool.name
     const score = scoreExternalTool(connection.name, tool, input.queryTokens)
     if (score <= 0) continue
@@ -913,8 +917,11 @@ export async function searchExternalCapabilities(input: {
   limit?: number
   namespaceContext?: CodemodeConnectionNamespaceContext
   reportCoverage?: (coverage: ExternalMcpSearchCoverage) => void
+  /** A member's background agent's token: only its connections, and only tools that read. */
+  scopes?: ReadonlySet<string>
 }): Promise<ExternalCapabilityMatch[]> {
   if (!input.member) return []
+  const agent = input.scopes ? agentReadAllowlist(input.scopes) : null
   const queryTokens = tokenize(input.query)
   if (queryTokens.length === 0) return []
   const requestedLimit = input.limit ?? 5
@@ -925,11 +932,12 @@ export async function searchExternalCapabilities(input: {
     organizationId: input.organizationId,
     member: input.member,
   })
-  const connections = namespaceContext?.externalMcpConnections ?? await listUsableExternalMcpConnections({
+  const usable = namespaceContext?.externalMcpConnections ?? await listUsableExternalMcpConnections({
     organizationId: normalizeDenTypeId("organization", input.organizationId),
     orgMembershipId: input.member.orgMembershipId,
     teamIds: input.member.teamIds,
   })
+  const connections = agent ? usable.filter((connection) => agent.connectionIds.has(connection.id)) : usable
   const scriptNamespaces = namespaceContext?.namespaces.externalMcp
   const member = input.member
   const selectedConnections = selectExternalMcpSearchConnections(connections, queryTokens, EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT,
@@ -951,6 +959,7 @@ export async function searchExternalCapabilities(input: {
       limit,
       deadline: sharedDeadline,
       scriptNamespace: scriptNamespaces?.get(connection.id),
+      agent,
     }),
   })
 }
@@ -1439,9 +1448,15 @@ export async function executeExternalCapability(input: {
         }
       }
 
-      // Provider-controlled hints cannot prove a tool will not mutate through its credential.
+      // Provider-controlled hints cannot prove a tool will not mutate through its credential. The one exception is a
+      // member's background agent, whose token carries its sources: their reviewed read tools only (agent-read-sources.ts).
       const requiredScope = DEN_MCP_WRITE_SCOPE
-      if (!input.scopes.has(requiredScope)) {
+      const agent = agentReadAllowlist(input.scopes)
+      if (agent && !input.scopes.has(requiredScope)) {
+        if (!agentMayUseExternalTool(agent, connection, tool)) {
+          return { ok: false, error: "insufficient_mcp_scope", requiredScope, message: `${input.toolName}: ${AGENT_SOURCE_BLOCKED_MESSAGE}` }
+        }
+      } else if (!input.scopes.has(requiredScope)) {
         return {
           ok: false,
           error: "insufficient_mcp_scope",

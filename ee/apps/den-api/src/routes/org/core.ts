@@ -26,7 +26,7 @@ import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalid
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { workbotOrigin } from "../../workbot/config.js"
-import { isOpenWorkWebAvailableWithGrants } from "../../openwork-web-availability.js"
+import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
 import { getOpenWorkWebAccess } from "../../stripe-billing.js"
 import {
   acceptInvitationForUser,
@@ -757,7 +757,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           // Effective offer: the deployment switch enables Web generally,
           // while the platform-admin complimentary grant enables only this
           // organization when the deployment switch is off.
-          openworkWeb: await isOpenWorkWebAvailableWithGrants(payload.organization.id, payload.organization.metadata),
+          openworkWeb: isOpenWorkWebAvailableForOrganization(payload.organization.metadata),
           // Workbot is generally available when its app origin is configured (DEN_WORKBOT_URL).
           workbot: workbotOrigin() !== null,
           ...(cloudEnabled ? { cloud: true } : {}),

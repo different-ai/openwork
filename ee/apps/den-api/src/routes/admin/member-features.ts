@@ -1,6 +1,6 @@
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
-import { readFeatureRollouts, readMemberFeatureOverrides, readOrganizationFeatureOverrides, type FeatureOverrideChanges } from "@openwork-ee/den-db/organization-features"
+import { readFeatureRollouts, readLatestFeatureChanges, readMemberFeatureOverrides, readOrganizationFeatureOverrides, type FeatureOverrideChanges } from "@openwork-ee/den-db/organization-features"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { FEATURE_KEYS, featureAvailableOn, mapFeatures, resolveFeature } from "@openwork/features"
 import type { Hono } from "hono"
@@ -9,6 +9,7 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { updateMemberFeatureOverrides } from "../../features.js"
+import { adminFeatureChangeSchema, serializeFeatureChange } from "./feature-changes.js"
 import { adminRoute, jsonValidator } from "../../middleware/index.js"
 import { jsonResponse, invalidRequestSchema, notFoundSchema, unauthorizedSchema, forbiddenSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
@@ -18,6 +19,7 @@ const inputSchema = z.object({ capabilities: z.object(mapFeatures(() => z.boolea
 const stateSchema = z.object({
   enabled: z.boolean(), source: z.enum(["unavailable", "killed", "lock", "override", "member", "everyone"]),
   everyone: z.boolean(), killed: z.boolean(), lock: z.boolean().nullable(), override: z.boolean().nullable(), overrideApplies: z.boolean(),
+  lastChange: adminFeatureChangeSchema.nullable().meta({ description: "Latest change that could affect this member: their override, the organization's, or the deployment-wide state." }),
 })
 const responseSchema = z.object({ featureStates: z.object(mapFeatures(() => stateSchema)) })
 const errors = {
@@ -27,9 +29,10 @@ const errors = {
   404: jsonResponse("Active organization member not found.", notFoundSchema),
 }
 
-async function memberStates(organizationId: string, userId: string) {
-  const [rollouts, overrides, memberOverrides] = await Promise.all([
+async function memberStates(organizationId: string, memberId: string, userId: string) {
+  const [rollouts, overrides, memberOverrides, changes] = await Promise.all([
     readFeatureRollouts(db), readOrganizationFeatureOverrides(db, organizationId), readMemberFeatureOverrides(db, organizationId, userId),
+    readLatestFeatureChanges(db, { organizationId, memberId }),
   ])
   return mapFeatures((key) => {
     const context = { ...env.features, rollouts, overrides }
@@ -37,7 +40,7 @@ async function memberStates(organizationId: string, userId: string) {
     const state = resolveFeature(key, { ...context, memberOverrides })
     // The reusable editor's reset target is the organization setting; its
     // override is the selected member's, not the organization's stored row.
-    return { ...state, everyone: inherited.enabled, override: memberOverrides[key] ?? null }
+    return { ...state, everyone: inherited.enabled, override: memberOverrides[key] ?? null, lastChange: serializeFeatureChange(changes[key]) }
   })
 }
 
@@ -53,7 +56,7 @@ export function registerAdminMemberFeatureRoutes<T extends { Variables: AuthCont
       eq(MemberTable.id, memberId), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt), eq(MemberTable.isSetupAgent, false),
     )).limit(1)
     if (!member?.userId) return c.json({ error: "not_found", message: "Active organization member not found." }, 404)
-    return c.json({ featureStates: await memberStates(organizationId, member.userId) })
+    return c.json({ featureStates: await memberStates(organizationId, memberId, member.userId) })
   })
 
   app.put(path, describeRoute({
@@ -79,6 +82,6 @@ export function registerAdminMemberFeatureRoutes<T extends { Variables: AuthCont
       eq(MemberTable.id, memberId), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt),
     )).limit(1)
     if (!member?.userId) return c.json({ error: "not_found", message: "Active organization member not found." }, 404)
-    return c.json({ featureStates: await memberStates(organizationId, member.userId) })
+    return c.json({ featureStates: await memberStates(organizationId, memberId, member.userId) })
   })
 }

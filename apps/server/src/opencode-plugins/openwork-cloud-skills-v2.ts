@@ -19,6 +19,7 @@ type CatalogSkill = Catalog["skills"][number];
 type NativeSkill = { id: string; name: string; description: string; path: string; content: string };
 type Registration = { dispose(): Promise<void> };
 type PromptEvent = { prompt: { text: string; skills?: Array<{ id: string }> } };
+type ToolEvent = { tool: string; input: unknown };
 export type CloudSkillContext = {
   options: { url: string; token: string };
   skill: {
@@ -26,7 +27,14 @@ export type CloudSkillContext = {
     reload(): Promise<void>;
   };
   session?: { hook(name: "prompt", callback: (event: PromptEvent) => void | Promise<void>): Promise<Registration> };
+  tool?: { hook(name: "execute.before", callback: (event: ToolEvent) => void | Promise<void>): Promise<Registration> };
 };
+
+/** The skill the engine's native `skill` tool is about to load, if any. */
+function skillToolId(event: ToolEvent): string | null {
+  if (event.tool !== "skill" || typeof event.input !== "object" || event.input === null || !("id" in event.input)) return null;
+  return typeof event.input.id === "string" ? event.input.id : null;
+}
 
 export const CLOUD_SKILL_ID_PREFIX = "openwork-cloud-";
 const MAX_SKILLS = 150;
@@ -138,7 +146,8 @@ export function mentionedSkillIds(text: string, skills: ReadonlyArray<Pick<Nativ
 /** Setup starts background discovery without making Cloud a dependency of
  * chatting or local skill discovery. Only authorized catalog entries and
  * digest-verified bodies are added to the native registry. Discovery reads
- * metadata only; a body is read when a message names or attaches its skill. */
+ * metadata only; a body is read when a message names or attaches its skill,
+ * or when the model calls the native skill tool for it. */
 export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
   let skills: NativeSkill[] = [];
   let catalog: Catalog = { skills: [] };
@@ -153,6 +162,7 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
   const controller = new AbortController();
   let registration: Registration | undefined;
   let promptHook: Registration | undefined;
+  let toolHook: Registration | undefined;
 
   const call = async (name: "openwork_skills" | "openwork_skill_read", input: unknown) => {
     const response = await fetch(context.options.url, {
@@ -211,32 +221,47 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
     return publishing;
   };
 
-  const ensurePromptHook = async () => {
-    if (promptHook || !context.session) return;
-    promptHook = await context.session.hook("prompt", async event => {
-      if (skills.length === 0) return;
-      const attached = new Set((event.prompt.skills ?? []).map(skill => skill.id));
-      const mentioned = mentionedSkillIds(event.prompt.text, skills).filter(id => !attached.has(id));
-      if (mentioned.length) event.prompt.skills = [...(event.prompt.skills ?? []), ...mentioned.map(id => ({ id }))];
-      // Only registered skills: an unlisted ID never costs a read.
-      const registered = new Set(skills.map(skill => skill.id));
-      const used = new Set([...attached, ...mentioned].filter(id => registered.has(id)));
-      const entries = catalog.skills.filter(skill => used.has(skillId(skill)));
-      if (entries.length === 0) return;
-      try {
-        // Freshly authorized for this message, and counted by Den as a use.
-        // A body that cannot be read leaves the discovery note: get_skill still works.
-        await readBodies(entries, true);
-        for (const skill of entries) {
-          const id = skillId(skill);
-          warm.splice(0, warm.length, ...warm.filter(entry => entry !== id), id);
-        }
-        warm.splice(0, Math.max(0, warm.length - MAX_WARM_SKILLS));
-        await publish();
-      } catch {
-        // A message is never held back by Cloud skill loading.
+  /** Read the registered skills `ids` names, mark them warm and publish their bodies. */
+  const use = async (ids: Iterable<string>) => {
+    // Only registered skills: an unlisted ID never costs a read.
+    const registered = new Set(skills.map(skill => skill.id));
+    const used = new Set([...ids].filter(id => registered.has(id)));
+    const entries = catalog.skills.filter(skill => used.has(skillId(skill)));
+    if (entries.length === 0) return;
+    try {
+      // Freshly authorized for this use, and counted by Den as one.
+      // A body that cannot be read leaves the discovery note: get_skill still works.
+      await readBodies(entries, true);
+      for (const skill of entries) {
+        const id = skillId(skill);
+        warm.splice(0, warm.length, ...warm.filter(entry => entry !== id), id);
       }
-    });
+      warm.splice(0, Math.max(0, warm.length - MAX_WARM_SKILLS));
+      await publish();
+    } catch {
+      // Neither a message nor a skill call is held back by Cloud skill loading.
+    }
+  };
+
+  const ensureHooks = async () => {
+    if (!promptHook && context.session) {
+      promptHook = await context.session.hook("prompt", async event => {
+        if (skills.length === 0) return;
+        const attached = new Set((event.prompt.skills ?? []).map(skill => skill.id));
+        const mentioned = mentionedSkillIds(event.prompt.text, skills).filter(id => !attached.has(id));
+        if (mentioned.length) event.prompt.skills = [...(event.prompt.skills ?? []), ...mentioned.map(id => ({ id }))];
+        await use([...attached, ...mentioned]);
+      });
+    }
+    // The model picked a skill itself: load its body before the native skill
+    // tool reads the registry, so one call returns the full SKILL.md instead
+    // of a note that sends the model to get_skill for a second call.
+    if (!toolHook && context.tool) {
+      toolHook = await context.tool.hook("execute.before", async event => {
+        const id = skillToolId(event);
+        if (id?.startsWith(CLOUD_SKILL_ID_PREFIX)) await use([id]);
+      });
+    }
   };
 
   const refresh = async () => {
@@ -248,7 +273,7 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
       catalog = catalogSchema.parse(value);
       // Only warm skills whose digest changed are read again.
       await readBodies(warmEntries().filter(skill => skill.digest && !contents.has(skill.digest)), false);
-      await ensurePromptHook();
+      await ensureHooks();
       await publish();
     } catch {
       // Cloud readiness is never a prerequisite to chatting. Discovery entries
@@ -268,6 +293,7 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
     contents.clear();
     await publishing.catch(() => {});
     await promptHook?.dispose();
+    await toolHook?.dispose();
     await registration?.dispose();
   };
 }

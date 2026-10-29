@@ -10,8 +10,8 @@ import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
 /**
  * The owner of "Acme", signed in to a real Den in the real app (in a browser)
  * on the OpenCode v2 engine, with the bundled OpenCode v1 catalog behind it.
- * The `localProviderMirror` rollout starts off and personal providers are
- * allowed. Nothing in this computer's own OpenCode profile is read.
+ * Personal providers are allowed and mirror without a rollout override.
+ * Nothing in this computer's own OpenCode profile is read.
  */
 export async function v2LocalProviderMirror(seed: Seed) {
   const folder = seed.tmpPath("acme");
@@ -22,7 +22,8 @@ export async function v2LocalProviderMirror(seed: Seed) {
   const hostToken = randomUUID();
   const { app, workspace } = await signedInAppWeb(seed, {
     den, webPort, name: "v2-local-provider-mirror", workspacePath, engine: "v2", headless: true,
-    env: { OPENWORK_TOKEN: token, OPENWORK_HOST_TOKEN: hostToken },
+    // Exercise the real policy sync without waiting its production five-minute interval.
+    env: { OPENWORK_TOKEN: token, OPENWORK_HOST_TOKEN: hostToken, OPENWORK_CLOUD_PROVIDER_SYNC_INTERVAL_MS: "1000" },
   });
   const organizationId = await seededOrganizationId(seed, den.admin);
   if (!organizationId) throw new Error("Could not resolve the seeded organization");
@@ -51,13 +52,6 @@ export async function v2LocalProviderMirror(seed: Seed) {
   const linked = await request("/den-session", { method: "PUT", body: { baseUrl: den.ref.apiUrl, token: den.admin.token, orgId: organizationId } });
   if (linked.status >= 300) throw new Error(`Den session handoff failed: HTTP ${linked.status}`);
 
-  const setMirror = async (enabled: boolean) => {
-    const result = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
-      method: "PUT", body: JSON.stringify({ capabilities: { localProviderMirror: enabled } }),
-    });
-    if (!result.response.ok) throw new Error(`Turning localProviderMirror ${enabled ? "on" : "off"} failed: HTTP ${result.response.status}`);
-  };
-
   /** Saved the way the AI Gateway's "Who can use models" saves "Only models you provide". */
   const allowPersonalProviders = async (allowed: boolean) => {
     const stored = await readDefaultDesktopPolicy(seed, den.admin);
@@ -80,13 +74,14 @@ export async function v2LocalProviderMirror(seed: Seed) {
     if (saved.status >= 300) throw new Error(`Seeding the ChatGPT sign-in failed: HTTP ${saved.status}`);
   };
 
-  const session = await seed.session(app, { title: "Pick a model" });
+  // This proof connects its first provider through Settings. Do not create a
+  // chat during setup: a fresh workspace has no usable model until that action.
   return {
-    app, den, workspace, session, setMirror, allowPersonalProviders, signInWithChatGpt,
+    app, den, workspace, allowPersonalProviders, signInWithChatGpt,
     organizationName: "Acme",
     openRouterKey: "sk-or-v1-synthetic-not-a-real-key",
     anthropicKey: "sk-ant-synthetic-not-a-real-key",
     settingsUrl: `${app.webUrl}/workspace/${encodeURIComponent(workspace.workspaceId)}/settings/ai`,
-    sessionUrl: `${app.webUrl}/workspace/${encodeURIComponent(workspace.workspaceId)}/session/${encodeURIComponent(session.sessionId)}`,
+    composerUrl: `${app.webUrl}/workspace/${encodeURIComponent(workspace.workspaceId)}/session`,
   };
 }

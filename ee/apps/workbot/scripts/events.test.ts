@@ -26,7 +26,7 @@ const runnerEvents = (via: string) => [
 const pageEvents = (via: string) => [
   { type: "changed", messageId: "message_001", status: "running" },
   { type: "text", messageId: "message_001", step: 0, delta: via },
-  { type: "working", messageId: "message_001", step: 0, on: "computer" },
+  { type: "working", messageId: "message_001", step: 0, on: "computer", background: true },
 ]
 
 /** The server half of a WebSocket handshake, and unmasked text frames: enough to stand in for a runner that upgrades. */

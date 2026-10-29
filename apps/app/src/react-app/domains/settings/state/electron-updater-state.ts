@@ -788,10 +788,12 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     void checkForUpdates();
   }, [checkForUpdates, updateCheckRequestedAt, updateEnv?.supported, allowedVersionsKnown]);
 
-  const installUpdateAndRestart = useCallback(async () => {
+  const installUpdateAndRestart = useCallback(async (shouldContinue?: () => boolean) => {
     // Restart onto the newest allowed build, fetching it first if one shipped
-    // after the staged download.
+    // after the staged download. The person can call the restart off while
+    // that download runs; the build stays staged for the next restart.
     if (!(await refreshStagedUpdate("install"))) return;
+    if (shouldContinue && !shouldContinue()) return;
     const releaseChannelRequestId = releaseChannelRequestRef.current;
     const stagedUpdateRevision = stagedUpdateRevisionRef.current;
     const isCurrentReleaseChannel = () =>

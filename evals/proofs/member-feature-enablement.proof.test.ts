@@ -22,6 +22,7 @@ test("a platform admin enables a feature for one organization member", async ({ 
   await step("after: the admin enables the feature for the selected member only", async () => {
     await admin.click({ testId: "admin-capability-liveProviderSync" });
     await admin.see({ testId: "admin-capability-source-liveProviderSync" }, { text: "Set for this member" });
+    await admin.see({ testId: "admin-capability-last-change-liveProviderSync" }, { text: /On for this member by/ });
     const state = await adminProbe.eventually(() => world.state(), { within: 10_000, until: value => value.pilot === true, label: "member feature enabled" });
     expect(state).toEqual({ pilot: true, peer: false, override: true });
     evidence.recordAssertionEvidence("Only the selected member receives the feature", JSON.stringify(state), state.pilot === true && state.peer === false && state.override === true);
@@ -34,6 +35,7 @@ test("a platform admin enables a feature for one organization member", async ({ 
     await admin.see({ testId: "admin-capability-source-liveProviderSync" }, { text: "Set for this member" });
     await admin.click({ testId: "admin-capability-reset-liveProviderSync" });
     await admin.see({ testId: "admin-capability-source-liveProviderSync" }, { text: "Set for this organization" });
+    await admin.see({ testId: "admin-capability-last-change-liveProviderSync" }, { text: /Reset to the organization setting by/ });
     const state = await adminProbe.eventually(() => world.state(), { within: 10_000, until: value => value.override === null, label: "organization inheritance restored" });
     expect(state).toEqual({ pilot: false, peer: false, override: null });
     evidence.recordAssertionEvidence("Reset restores organization inheritance", JSON.stringify(state), state.pilot === false && state.peer === false && state.override === null);

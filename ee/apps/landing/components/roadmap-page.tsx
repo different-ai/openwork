@@ -34,8 +34,8 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     heading: ["The desktop app", "is home."],
     intro: "Work on your own files with any model. Skills, connections, and a built-in browser, on macOS, Windows, and Linux.",
     items: {
-      ready: ["macOS, Windows, and Linux", "Skills, plugins, and connections", "Built-in browser", "Files, artifacts, and any model"],
-      building: ["MCP Apps", "Live artifacts", "Sandboxed workspaces"],
+      ready: ["macOS, Windows, and Linux", "Skills, plugins, and connections", "Built-in browser", "Files, artifacts, and any model", "MCP Apps", "Live artifacts"],
+      building: ["Sandboxed workspaces"],
       soon: ["Pick up work on any device"]
     }
   },
@@ -45,9 +45,9 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     heading: ["You set the rules.", "Every surface follows."],
     intro: "OpenWork Cloud is where admins manage models, spend, policies, and access for every team.",
     items: {
-      ready: ["AI Gateway for every provider", "Usage, spend, and hard limits by team", "Desktop policies by team or member", "SSO, teams, and roles"],
+      ready: ["AI Gateway for every provider", "Usage, spend, and hard limits by team", "Desktop policies by team or member", "SSO, teams, and roles", "Audit logs"],
       building: ["Fully managed desktop"],
-      soon: ["Audit logs", "Admin roles for security and IT", "Use the AI Gateway from Codex and Cursor"]
+      soon: ["Admin roles for security and IT", "Use the AI Gateway from Codex and Cursor"]
     }
   },
   {
@@ -132,11 +132,11 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     id: "new-apps",
     label: "New apps",
     heading: ["For people who just", "want it to work."],
-    intro: "New ways to use OpenWork, set up by your team. None is available yet. This is what we’re designing.",
+    intro: "New ways to use OpenWork, set up by your team. OpenWork in Slack is ready today; the rest is what we’re designing.",
     items: {
-      ready: [],
+      ready: ["OpenWork in Slack"],
       building: [],
-      soon: ["A single, streamlined chat", "OpenWork in Slack", "Phone app, starting with MCP Apps"]
+      soon: ["A single, streamlined chat", "Phone app, starting with MCP Apps"]
     }
   }
 ];
@@ -190,14 +190,14 @@ function Frame({ children, tall }: { children: ReactNode; tall?: boolean }) {
   );
 }
 
-function ComingSoonTile({ title, text, children }: { title: string; text: string; children: ReactNode }) {
+function ComingSoonTile({ title, text, status = "soon", children }: { title: string; text: string; status?: RoadmapStatus; children: ReactNode }) {
   return (
     <div className="flex flex-1 flex-col gap-6 rounded-[24px] bg-[var(--lp-tonal)] p-5 md:p-6">
       <div className="flex min-h-[340px] flex-1">{children}</div>
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-[17px] font-semibold tracking-[-0.01em] text-[var(--lp-ink)]">{title}</h3>
-          <RoadmapStatusPill status="soon" />
+          <RoadmapStatusPill status={status} />
         </div>
         <p className="text-[15px] leading-[23px] text-[var(--lp-body)]">{text}</p>
       </div>
@@ -225,7 +225,7 @@ function Preview({ id }: { id: string }) {
         >
           <RoadmapStreamlinedChatPreview />
         </ComingSoonTile>
-        <ComingSoonTile title="OpenWork in Slack" text="Ask from any channel or DM and get the result back in the thread, with the same skills and connections.">
+        <ComingSoonTile title="OpenWork in Slack" status="ready" text="Ask from any channel or DM and get the result back in the thread, with the same skills and connections.">
           <RoadmapSlackPreview />
         </ComingSoonTile>
       </div>
@@ -284,7 +284,9 @@ const SHIPPED = [
   { name: "AI Gateway", detail: "Spend, limits, and usage by team" },
   { name: "Desktop policies", detail: "By org, team, or member" },
   { name: "OpenWork Web", detail: "The full workspace in your browser" },
-  { name: "Automations", detail: "On web and desktop" }
+  { name: "Automations", detail: "On web and desktop" },
+  { name: "Audit logs", detail: "With API and CSV export" },
+  { name: "OpenWork in Slack", detail: "Ask from any channel or DM" }
 ];
 
 export function RoadmapPage() {
@@ -292,7 +294,7 @@ export function RoadmapPage() {
     <div data-testid="openwork-roadmap" className="text-[var(--lp-ink)]">
       <section className="flex flex-col gap-12 pb-4 pt-12 md:pt-20 lg:flex-row lg:items-end lg:gap-16">
         <div className="min-w-0 flex-1">
-          <p className="text-[15px] text-[var(--lp-muted)]">Roadmap, updated September 28</p>
+          <p className="text-[15px] text-[var(--lp-muted)]">Roadmap, updated October 27</p>
           <h1 className="mt-5 text-[clamp(2.5rem,4vw,3.25rem)] font-medium leading-[1.08] tracking-[-0.045em]">
             <span className="block">A workspace for everyone.</span>
             <span className="block">On any platform.</span>

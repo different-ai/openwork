@@ -58,7 +58,7 @@ test("the agent is told to end its turn and never to ask for the key in chat", (
 })
 
 test("agents are offered AI Gateway provider creation", () => {
-  const base = { generatedArtifactViewsEnabled: true, managedDeploymentsEnabled: false, agentConnectionRemovalEnabled: false }
+  const base = { generatedArtifactViewsEnabled: true, managedDeploymentsEnabled: false }
   assert.equal(catalogOperationAvailableToCapabilities(base, { method: "POST", path: "/v1/inference-providers" }), true)
   assert.equal(catalogOperationAvailableToCapabilities(base, { method: "GET", path: "/v1/inference-providers/model-management" }), true)
 })

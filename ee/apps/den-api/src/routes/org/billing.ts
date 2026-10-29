@@ -30,7 +30,7 @@ import { orgMemberRoute, orgPermissionRoute } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { getRequiredUserEmail } from "../../user.js"
 import { env } from "../../env.js"
-import { isOpenWorkWebAvailableWithGrants } from "../../openwork-web-availability.js"
+import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { orgAccessFailureStatus, permissionFailureHeaders, requirePermission } from "./shared.js"
 
@@ -198,7 +198,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
     orgMemberRoute(),
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!await isOpenWorkWebAvailableWithGrants(payload.organization.id, payload.organization.metadata)) {
+      if (!isOpenWorkWebAvailableForOrganization(payload.organization.metadata)) {
         return c.json(openWorkWebUnavailableResponse(), 404)
       }
       const web = await getOpenWorkWebBillingSummary(payload.organization.id)
@@ -317,7 +317,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         return c.json({ url: result.url })
       }
 
-      if (subscriptionType === "web" && !await isOpenWorkWebAvailableWithGrants(payload.organization.id, payload.organization.metadata)) {
+      if (subscriptionType === "web" && !isOpenWorkWebAvailableForOrganization(payload.organization.metadata)) {
         return c.json(openWorkWebUnavailableResponse(), 404)
       }
       const product: BillingNotConfiguredProduct = subscriptionType

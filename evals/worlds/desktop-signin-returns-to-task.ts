@@ -8,7 +8,6 @@ import type { Place, Seed } from "@openwork/env";
 import { z } from "zod";
 import { denForAppWeb } from "./signed-in-app-web.ts";
 
-const FEATURE = "desktopSignInReturn";
 const AUTO = { providerID: "openwork-free", modelID: "openai/gpt-6-luna" };
 
 const record = z.record(z.string(), z.unknown());
@@ -76,8 +75,7 @@ async function freeAutoGateway(witnessUrl: string): Promise<{ origin: string; re
  * answered by a model witness, one conversation, and a Den with Acme where
  * that person (Riley) and a teammate (Jordan) have accounts. Nothing signs the
  * app in: every sign-in in the spec goes through the app's own paste-code UI
- * with a fresh, single-use handoff grant. `desktopSignInReturn` starts off for
- * the deployment, as a signed-out desktop reads it from `GET /v1/features`.
+ * with a fresh, single-use handoff grant. Returning to the task is always on.
  */
 export async function desktopSignInReturnsToTask(seed: Seed, { place }: { place: Place }) {
   await using setup = new AsyncDisposableStack();
@@ -156,17 +154,6 @@ export async function desktopSignInReturnsToTask(seed: Seed, { place }: { place:
       const grant = record.parse(issued.body).grant;
       if (typeof grant !== "string" || !grant) throw new Error("The handoff response had no grant.");
       return grant;
-    },
-    /** A platform admin turns the feature on or off for everyone on the deployment (/admin › Features). */
-    async setSignInReturn(enabled: boolean) {
-      const updated = await seed.api(den.admin, `/v1/admin/features/${FEATURE}`, { method: "PUT", body: JSON.stringify({ enabled }) });
-      if (!updated.response.ok) throw new Error(`Feature rollout failed: HTTP ${updated.response.status}`);
-    },
-    /** What a signed-out desktop reads: the deployment's public feature state. */
-    async signedOutFeature() {
-      const response = await fetch(new URL("/v1/features", den.ref.apiUrl), { cache: "no-store" });
-      const features = record.parse(record.parse(await response.json()).features);
-      return features[FEATURE] === true;
     },
     /** Conversations and workspaces on this desktop, from its local server. */
     async localCounts() {

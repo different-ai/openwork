@@ -32,6 +32,7 @@ test("a contractor's agent asks before commands, runs the ones the team allows, 
   const shell = (command: string): MockAgentToolStep => ({ tool: world.shellTool, arguments: { command, description: "Run a command" } });
   const blockedCommand = "printf '%s' 'saved by the agent' > 'note.txt'";
   const wrappedCommand = `bash -c "printf '%s' 'saved through bash' > 'wrapped-note.txt'"`;
+  const variableCommand = "x=printf; $x '%s' 'saved through a variable' > 'variable-note.txt'";
   const allowedCommand = "echo 'checked in'";
   const askedCommand = "pwd";
 
@@ -84,6 +85,25 @@ test("a contractor's agent asks before commands, runs the ones the team allows, 
     const wrote = await world.wrote("wrapped-note.txt");
     const told = reason(call);
     evidence.recordAssertionEvidence("wrapped command blocked before it ran", `note written: ${wrote}; the agent was told: ${told || "(nothing)"}`,
+      !wrote && told.includes('"printf *" is blocked for Contractors'));
+    expect(wrote).toBe(false);
+    expect(told).toContain('"printf *" is blocked for Contractors');
+  });
+
+  await step("before: the agent names printf through a shell variable it sets on the same line", async () => {
+    await turn("Save the note through a variable.", [shell(variableCommand)]);
+    const call = await settled(world.shellTool, (input) => input.command === variableCommand);
+    await user.notSee(approval);
+    evidence.recordAssertionEvidence("the agent's variable-named printf call", `${call?.status ?? "none"}, no approval asked: ${variableCommand}`, call?.status === "error");
+    expect(call?.status).toBe("error");
+    await user.screenshot();
+  });
+
+  await step("after: the variable-named printf never ran, and the agent was told the Contractors rule instead of Riley being asked to approve it", async () => {
+    const call = await world.toolCall(world.shellTool, (input) => input.command === variableCommand);
+    const wrote = await world.wrote("variable-note.txt");
+    const told = reason(call);
+    evidence.recordAssertionEvidence("variable-named command blocked before it ran", `note written: ${wrote}; the agent was told: ${told || "(nothing)"}`,
       !wrote && told.includes('"printf *" is blocked for Contractors'));
     expect(wrote).toBe(false);
     expect(told).toContain('"printf *" is blocked for Contractors');

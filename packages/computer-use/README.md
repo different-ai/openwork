@@ -16,8 +16,8 @@ with the helper's status; the relaunched helper stops if that parent goes away.
 
 | Command | Purpose |
 | --- | --- |
-| `ComputerUse mcp-embedded` | What the same-team signed OpenWork desktop launches. MCP over stdio; requested targets open directly; the desktop hosts Take over, Continue and Stop over the private `openwork/ui` channel. |
-| `ComputerUse mcp` | MCP server with native controls, available only to the authenticated same-team desktop host. |
+| `ComputerUse mcp-embedded` | What the signed OpenWork desktop app (`com.differentai.openwork`, same team as the helper) launches. Other code the team signs, such as the bundled sidecars, is not a host. MCP over stdio; requested targets open directly; the desktop hosts Take over, Continue and Stop over the private `openwork/ui` channel. |
+| `ComputerUse mcp` | MCP server with native controls, available only to that same authenticated desktop host. |
 | `ComputerUse --check` | Prints `{ok, accessibility, screenRecording, supported, protocolVersion: "openwork.computer-use/1"}` and exits. |
 | `ComputerUse permissions accessibility\|screenRecording` | Triggers the macOS prompt and opens the matching System Settings pane. |
 | `ComputerUse permissions-guide accessibility\|screenRecording` | Floating permission guide driven by its parent over line-delimited JSON (below). |
@@ -28,8 +28,11 @@ A session covers one app, one window and one mode. Technical leases and action
 accounting renew silently; idle cleanup and follow-up requests preserve enabled
 access. Neither renewal nor cleanup clears a human takeover. The modes are
 `observe` (read only), `assist` (accessibility press/set value) and `control`
-(also targeted mouse and keyboard input; the selected window must be in front).
-A kernel-held lock allows one session at a time. Grants, element references,
+(also targeted mouse and keyboard input). Control brings the selected window to
+the front for each step; with `computerUseBackground` on it works in the window
+where it is ([docs](../../docs/features/computer-use-background/README.md)).
+A kernel-held lock allows one session per window, so chats in different windows
+work at once. Grants, element references,
 screenshots and receipts live in process memory and are discarded on close.
 
 | Tool | Purpose |
@@ -83,7 +86,10 @@ buttons offers Take over, Continue and Stop, shows "Your turn" while the person
 has control, and moves to the top of the screen when the window is hidden.
 When the session ends the cursor says it is "all yours" and fades out. Every
 overlay is excluded from screen capture, the frame and cursor ignore the mouse,
-and the pill never activates the helper.
+and the pill never activates the helper. In a background session the frame and
+cursor sit just above the selected window instead of above every window, so a
+window the person brings in front covers them too; the pill stays on top so
+Take over and Stop are always reachable.
 
 The host may pass `OPENWORK_COMPUTER_USE_PRESENCE` as JSON
 `{"name": "…", "color": "#rrggbb"}`. The name falls back to "OpenWork" and the
@@ -117,9 +123,18 @@ node apps/desktop/scripts/prepare-computer-use-helper.mjs --force --outdir apps/
 
 `prepare-computer-use-helper.mjs` builds the release binary and assembles and
 signs the helper app; desktop dev and packaged builds run it automatically.
-Pointer input relies on an availability-checked lookup of the private
-`CGEventSetWindowLocation` symbol; without it, pointer actions fail explicitly
-while accessible controls keep working.
+
+Unit tests cannot show that input reaches real apps. To check a signed build
+on your Mac, run it with computer use on, stop any chat using the computer,
+and run `pnpm --filter @openwork/computer-use prove:mac-apps`. It drives
+Calculator and TextEdit through the desktop's local bridge, broker and helper,
+as the agent does, with a fixed plan and no model. Each scenario checks a real
+outcome (Calculator's display, a file saved on disk) and reports the time of
+every call. `--only calculator-press,textedit-type` picks scenarios; `--json
+<file>` saves the results. Leave the mouse and keyboard alone while it runs.
+Pointer input relies on availability-checked lookups of the private
+`CGEventSetWindowLocation` and `CGEventGetWindowLocation` symbols; without
+them, pointer actions fail explicitly while accessible controls keep working.
 
 ## Windows (This PC)
 
@@ -153,6 +168,20 @@ a Windows chat starts on it.
   and that Windows is not locked or showing a secure prompt; otherwise it stops
   and releases held keys and buttons. A click must land on the selected window
   or its own popup, never on a window covering it.
+- The PC is shared with the person. The agent takes the front only for the
+  moment it acts: it joins the foreground app's input queue for one
+  `SetForegroundWindow` call, the usual way past Windows' foreground lock. 0.4 s
+  after its last focus or input, it gives the front back to the window that had
+  it and puts the pointer back where the person left it. It does neither if the
+  person has clicked, typed or (for the pointer) moved the mouse since.
+- Low-level mouse and keyboard hooks tell the person's own input from the
+  agent's injected events and keep only when it happened, never which key or
+  where. A click or key press of the person's during the agent's moment stops
+  that step (`person_interrupted`). Moving the mouse never stops or delays the
+  agent; if it moves the pointer between the agent placing it and clicking, the
+  pointer goes back to the exact point first. The agent defers at most half a
+  second to a gap in typing or a released button before taking the front, and
+  between steps puts its window back in front at most twice per request.
 - `command` is sent as Ctrl and `option` as Alt. Clipboard, close/quit and
   app-switch chords (Ctrl+C/X/V, Alt+F4, Ctrl+W, Alt+Tab and similar) are refused
   before anything is sent.
@@ -161,9 +190,8 @@ a Windows chat starts on it.
 Not yet on Windows: accessible controls through UI Automation (so no `assist`
 mode, `press` or `set_value`; the agent acts on screenshot coordinates), the
 on-desktop presence overlay, and app scripting (`computer_script` is not
-offered). Windows may refuse to bring a window to the front while the person
-is using another app; the call then fails with nothing sent and asks the
-person to bring it forward.
+offered). If Windows still refuses to bring the window to the front, the call
+fails with nothing sent and the agent observes again.
 
 Build it on Windows with
 `node apps/desktop/scripts/prepare-computer-use-helper.mjs --force`; desktop dev

@@ -19,7 +19,7 @@ import { modelProbeResponse, type ModelProbe } from "./model-probe.js"
 import { CONVERSATION_TABLES, sqlRow, type SessionInput, type StoredMessage, type Store, type Turn } from "./store.js"
 import { LargeBodyUnavailableError, SegmentError, SessionStorage } from "./storage/index.js"
 import { CellsStore } from "./cells-store.js"
-import { ACTIVE, executionSchema, repeatLimitsSchema, turnCredentialsSchema, turnStatusSchema, type SessionComputer } from "./types.js"
+import { ACTIVE, DESKTOP_VIEWS, desktopViewSchema, executionSchema, repeatLimitsSchema, turnCredentialsSchema, turnStatusSchema, type DesktopView, type SessionComputer } from "./types.js"
 
 const createSessionBody = z
   .object({
@@ -31,12 +31,16 @@ const createSessionBody = z
     /** Give this conversation a Linux computer (needs HEADLESS_COMPUTER). Off unless asked for. */
     computer: z.boolean().optional(),
     desktop: z.boolean().optional(),
+    /** The desktop views this conversation may use, at least one; omitted keeps the current ones (all, by default). */
+    desktopViews: z.array(desktopViewSchema).min(1).max(DESKTOP_VIEWS.length).optional(),
     /** Let the model react to the person's message with one emoji (the `react` tool). Off unless asked for. */
     reactions: z.boolean().optional(),
     /** Let the conversation hand longer work to background tasks (start_task) and keep talking. Off unless asked for. */
     tasks: z.boolean().optional(),
     /** The host opens a document beside this chat on the person's explicit request (`open_document`). Off unless asked for. */
     documentNavigation: z.boolean().optional(),
+    /** Run this conversation's computer through the runner's sandbox gateway (SANDBOX_GATEWAY), not its own provider. Off unless asked for. */
+    sandboxGateway: z.boolean().optional(),
     /** Who the conversation belongs to, in the caller's terms, so the caller can list one person's conversations. */
     owner: z.string().min(1).max(200).optional(),
     /** The caller's own id for the conversation, returned when listing. */
@@ -221,8 +225,10 @@ export function createApp(input: {
     if (!session?.computer || !session.desktop) return c.json({ error: "desktop_disabled" }, 403)
     const raw: unknown = await c.req.json().catch(() => null)
     c.header("Cache-Control", "no-store")
+    const allows = (view: DesktopView) => !session.desktopViews || session.desktopViews.includes(view)
     try {
       if (c.req.param("operation") === "demonstration" && input.computer?.browserDemonstration) {
+        if (!allows("browser")) return c.json({ error: "desktop_view_disabled" }, 403)
         const body = demonstrationCommandSchema.safeParse(raw)
         if (!body.success) return c.json({ error: "invalid_request" }, 400)
         return c.json(await input.computer.browserDemonstration(session.id, body.data))
@@ -230,6 +236,7 @@ export function createApp(input: {
       if (c.req.param("operation") === "viewer" && input.computer?.desktopViewer) {
         const body = z.object({ view: z.enum(["browser", "computer"]), control: z.boolean(), origin: z.string().url().max(2048) }).strict().safeParse(raw)
         if (!body.success) return c.json({ error: "invalid_request" }, 400)
+        if (!allows(body.data.view)) return c.json({ error: "desktop_view_disabled" }, 403)
         return c.json(await input.computer.desktopViewer(session.id, body.data))
       }
       if (c.req.param("operation") === "action" && input.computer?.desktopAction) {
@@ -240,7 +247,7 @@ export function createApp(input: {
       return c.json({ error: "desktop_not_configured" }, 409)
     } catch (error) {
       // The page only gets a stable code; the reason goes to the runner's log, where an operator can act on it.
-      const code = typeof error === "object" && error !== null && "desktopCode" in error && (error.desktopCode === "desktop_outdated" || error.desktopCode === "desktop_unresponsive") ? error.desktopCode : "desktop_unavailable"
+      const code = typeof error === "object" && error !== null && "desktopCode" in error && (error.desktopCode === "desktop_outdated" || error.desktopCode === "desktop_unresponsive" || error.desktopCode === "desktop_updating") ? error.desktopCode : "desktop_unavailable"
       console.error("[headless-runner] desktop failed", { sessionId: session.id, operation: c.req.param("operation"), code, error: error instanceof Error ? error.message : "unknown" })
       return c.json({ error: code }, 409)
     }

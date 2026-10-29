@@ -39,7 +39,7 @@ import { newChatId, useStopWorkbotTask, type WorkbotChats, type WorkbotTask } fr
 import { useRetainedSurface } from "./host";
 
 /**
- * Workbot's command palette (feature `workbotCommandPalette`): Cmd+K / Ctrl+K from anywhere, or the search button in
+ * Workbot's command palette: Cmd+K / Ctrl+K from anywhere, or the search button in
  * the header. Every entry is something Workbot already does from a visible control (DESIGN S6): switch chats, start a
  * side chat, stop a reply or a background task, open a page or the files, and the Den pages the header links to.
  * Base UI's Dialog and Autocomplete own focus, the combobox/listbox roles and arrow-key navigation (DESIGN P5).

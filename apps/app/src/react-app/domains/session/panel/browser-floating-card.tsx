@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { EyeOff, Globe, GripVertical, Maximize2, MoreHorizontal, PanelRight } from "lucide-react";
+import { EyeOff, Globe, GripVertical, Maximize2, MoreHorizontal, PanelRight, X } from "lucide-react";
 
 import type { BrowserThumbnail } from "@/app/lib/desktop";
 import { Button } from "@/components/ui/button";
@@ -180,7 +180,8 @@ export function BrowserFloatingCard({ slot, detached = false, tab, snap, onSnap,
   );
 
   // Its own window: the window moves, so the card just fills it and its
-  // header is the drag handle. Snapping only applies inside the chat.
+  // header is the drag handle. Snapping only applies inside the chat. Its X
+  // closes the window and puts the page back beside the chat.
   if (detached) {
     return (
       <aside
@@ -194,8 +195,8 @@ export function BrowserFloatingCard({ slot, detached = false, tab, snap, onSnap,
             <Globe className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
             <span className="truncate">Browser</span>
           </span>
-          {actions}
-          <CardAction label="Hide browser" testId="browser-mode-hide" detached onClick={onHide}><EyeOff /></CardAction>
+          <CardAction label="Full screen" testId="browser-mode-fullscreen" detached onClick={onFullscreen}><Maximize2 /></CardAction>
+          <CardAction label="Close and put back in the app" testId="browser-floating-close" detached onClick={onOpenSide}><X /></CardAction>
         </header>
         {preview}
       </aside>

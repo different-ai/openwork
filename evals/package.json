@@ -13,6 +13,7 @@
     "evidence:judge": "node packages/test-evidence/bin/test-evidence-judge.mjs",
     "design:review": "node packages/test-evidence/bin/test-evidence-design-review.mjs",
     "provision:org-connector-two-members": "node scripts/provision-org-connector-two-members.ts",
+    "agent:replay": "node scripts/agent-replay.ts",
     "lint:layers": "depcruise --config .dependency-cruiser.cjs --ignore-known .dependency-cruiser-known-violations.json packages core proofs worlds bin docs-shots runner scripts ../scenarios",
     "check": "pnpm run check:browser && pnpm run lint:layers && pnpm run lint:specs",
     "lint:specs": "node scripts/spec-lint/cli.ts",

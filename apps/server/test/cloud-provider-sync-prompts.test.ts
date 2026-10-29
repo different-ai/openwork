@@ -27,6 +27,7 @@ function denWithPrompts(reply: { current: PromptsReply }) {
     const path = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url).pathname;
     if (path.endsWith("/llm-providers")) return Response.json({ llmProviders: [] });
     if (path.endsWith("/inference-providers")) return Response.json({ inferenceProviders: [] });
+    if (path.endsWith("/auto-router/connect")) return Response.json({ error: "not_found" }, { status: 404 });
     if (path.endsWith("/me/prompts")) {
       if (reply.current === "network_error") throw new Error("connection refused");
       return Response.json(reply.current.body ?? { error: "feature_disabled" }, { status: reply.current.status });

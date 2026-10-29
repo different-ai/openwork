@@ -56,10 +56,10 @@ describe("a used-up OpenWork Models allowance", () => {
       responseHeaders: { "x-openwork-error-code": "other", "x-openwork-usage-state": "blocked" }, responseBody: "{}" } }, now)).toBeNull();
   });
 
-  test("the transcript keeps today's rate-limited wording for the flag-off fallback and carries the evidence", () => {
+  test("the transcript classifies the allowance without a rollout flag and carries its reset evidence", () => {
     const presentation = presentOpencodeSessionError(v1Error());
-    expect(presentation.kind).toBe("rate-limited");
-    expect(presentation.title).toBe("This model is receiving too many requests");
+    expect(presentation.kind).toBe("generic");
+    expect(presentation.title).toBe("Your workspace used its OpenWork Models allowance");
     expect(presentation.openworkModelsLimit).toEqual({ windowType: "five_hour", resetAt });
     expect(presentation.technicalDetails).not.toMatch(/org_/);
     const restored = sessionErrorPresentationFromUIMessage(createSessionErrorUIMessage("turn", presentation));

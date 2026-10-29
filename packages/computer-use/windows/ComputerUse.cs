@@ -13,7 +13,12 @@
 // start time, so a reused handle never resolves to a different app. Screen pixels
 // are returned only while no other app's window overlaps the target; otherwise
 // the window renders itself. Input stops as soon as the target loses focus,
-// moves, closes, Windows locks, or the host cancels.
+// moves, closes, Windows locks, the host cancels, or the person clicks or types.
+//
+// The PC is shared with the person using it. The agent takes the front only for
+// the moment it acts, then gives the front and the pointer back. Low-level hooks
+// tell the person's own clicks and keys from the agent's injected input; the
+// helper keeps only when they happened, never which key or where.
 //
 // Built with the .NET Framework compiler (C# 5) that ships with Windows; keep
 // to C# 5 syntax.
@@ -46,6 +51,19 @@ static class OpenWorkComputerUse {
   static uint ownSession;
   static int ownIntegrity;
   static bool dpiAware;
+
+  // The moment the agent holds the PC. Touched only on the request worker; the
+  // timer just queues the hand-back behind any request that arrives first.
+  const int HandBackDelay = 400;
+  static Timer handBackTimer;
+  static int momentGeneration;
+  static long momentAt = -1;
+  static Target handBackTarget;
+  static IntPtr handBackWindow;
+  static long takenAt = -1;
+  static bool cursorSaved;
+  static Native.POINT savedCursor;
+  static long cursorSavedAt;
 
   // Surfaces that change the permission boundary, run commands or hold
   // credentials, and OpenWork itself: an agent must not grant itself access.
@@ -418,16 +436,177 @@ static class OpenWorkComputerUse {
       Native.ShowWindow(target.Hwnd, 9);
       WaitUntil(delegate { return !Native.IsIconic(target.Hwnd); }, 1000);
     }
+    long baseline = -1;
     if (!Belongs(target, Native.GetForegroundWindow())) {
-      Native.SetForegroundWindow(target.Hwnd);
+      TakeGap();
+      Remember(target, Native.GetForegroundWindow());
+      baseline = Person.Now;
+      Foreground(target.Hwnd);
       WaitUntil(delegate { return Belongs(target, Native.GetForegroundWindow()); }, 1000);
     }
     if (!Belongs(target, Native.GetForegroundWindow())) {
-      throw new Failure("focus_refused", "Windows kept another window in front, so nothing was sent. Ask the person to bring the window to the front, then observe again.");
+      throw new Failure("focus_refused", "Windows kept another window in front, so nothing was sent. Observe again in a moment.");
     }
+    // A click or key while the window came forward may have landed in it: stop
+    // before any input follows, and leave the front there.
+    if (baseline >= 0 && Person.PressedSince(baseline)) {
+      Forget();
+      throw PersonInterrupted();
+    }
+    // A click or key of the person's from here on stops the input that follows.
+    momentAt = baseline >= 0 ? baseline : Person.Now;
     Native.RECT frame;
     if (!CurrentFrame(target, out frame)) throw new Failure("window_minimized", "The selected window is minimized.");
     return Message("ok", true, "region", Region(frame));
+  }
+
+  // ---- Sharing the PC -----------------------------------------------------
+
+  // Mid-keystroke or holding a button: taking the front now would send the
+  // person's next key or drag into the agent's window. Moving the mouse never
+  // delays the agent, and nonstop typing delays it half a second at most.
+  static void TakeGap() {
+    var clock = Stopwatch.StartNew();
+    while (Person.Busy() && clock.ElapsedMilliseconds < 500) Thread.Sleep(25);
+    // Never raise under a held button, however long it is held: the release of a
+    // drag begun in another app would land in the agent's window as a drop.
+    if (Person.HoldsButton()) throw PersonInterrupted();
+  }
+
+  // Windows lets only the app the person is using change the foreground. Joining
+  // that app's input queue for this one call is the usual way past that lock.
+  static void Foreground(IntPtr hwnd) {
+    if (Native.SetForegroundWindow(hwnd) && Native.GetForegroundWindow() == hwnd) return;
+    uint ignored;
+    var front = Native.GetWindowThreadProcessId(Native.GetForegroundWindow(), out ignored);
+    var self = Native.GetCurrentThreadId();
+    bool joined = front != 0 && front != self && Native.AttachThreadInput(self, front, true);
+    try {
+      Native.BringWindowToTop(hwnd);
+      Native.SetForegroundWindow(hwnd);
+    } finally {
+      if (joined) Native.AttachThreadInput(self, front, false);
+    }
+  }
+
+  // The first window in front wins: one moment can bring the target forward twice.
+  static void Remember(Target target, IntPtr previous) {
+    if (handBackWindow != IntPtr.Zero || previous == IntPtr.Zero || Belongs(target, previous)) return;
+    uint pid;
+    Native.GetWindowThreadProcessId(previous, out pid);
+    if (pid == ownPid || ShellClasses.Contains(ClassOf(previous))) return;
+    handBackTarget = target;
+    handBackWindow = Native.GetAncestor(previous, 2);
+    takenAt = Person.Now;
+  }
+
+  // The person's pointer before the agent first moved it in this moment.
+  static void SaveCursor() {
+    Native.POINT at;
+    if (cursorSaved || !Native.GetCursorPos(out at)) return;
+    savedCursor = at;
+    cursorSaved = true;
+    cursorSavedAt = Person.Now;
+  }
+
+  static void Forget() {
+    handBackTarget = null;
+    handBackWindow = IntPtr.Zero;
+    takenAt = -1;
+    cursorSaved = false;
+    momentAt = -1;
+  }
+
+  // Runs once no request has arrived for HandBackDelay. The front goes back only
+  // while the agent's window still has it and the person has not clicked or
+  // typed since; the pointer goes back only if they have not moved the mouse.
+  // Without the hooks nothing is known about the person, so nothing moves.
+  static void HandBack() {
+    var target = handBackTarget;
+    var window = handBackWindow;
+    long from = long.MaxValue;
+    if (takenAt >= 0) from = takenAt;
+    if (cursorSaved) from = Math.Min(from, cursorSavedAt);
+    bool cursor = cursorSaved && !Person.MovedSince(cursorSavedAt);
+    var point = savedCursor;
+    Forget();
+    if (from == long.MaxValue || !Person.Watching || !InputDesktopIsDefault() || Person.PressedSince(from)) return;
+    if (cursor) Native.SetCursorPos(point.X, point.Y);
+    if (target == null || window == IntPtr.Zero || !Belongs(target, Native.GetForegroundWindow())) return;
+    if (!Native.IsWindow(window) || !Native.IsWindowVisible(window) || Native.IsIconic(window)) return;
+    Foreground(window);
+  }
+
+  static void ScheduleHandBack() {
+    if (handBackTimer == null || handBackWindow == IntPtr.Zero && !cursorSaved) return;
+    handBackTimer.Change(HandBackDelay, Timeout.Infinite);
+  }
+
+  // The person's own clicks, keys and mouse movement, told apart from injected
+  // input by the low-level hooks' flags. Only the times are kept.
+  static class Person {
+    static readonly Stopwatch Clock = Stopwatch.StartNew();
+    static long lastPress = -1, lastKey = -1, lastMove = -1;
+    static Native.HookProc mouseHook, keyboardHook;
+    public static bool Watching;
+    public static long Now { get { return Clock.ElapsedMilliseconds; } }
+
+    public static void Start() {
+      var ready = new ManualResetEvent(false);
+      var thread = new Thread(delegate () {
+        mouseHook = Mouse;
+        keyboardHook = Keyboard;
+        var module = Native.GetModuleHandleW(null);
+        Watching = Native.SetWindowsHookExW(14, mouseHook, module, 0) != IntPtr.Zero
+          && Native.SetWindowsHookExW(13, keyboardHook, module, 0) != IntPtr.Zero;
+        ready.Set();
+        Native.MSG message;
+        while (Native.GetMessageW(out message, IntPtr.Zero, 0, 0) > 0) { }
+      });
+      thread.IsBackground = true;
+      thread.Start();
+      ready.WaitOne(2000);
+    }
+
+    static IntPtr Mouse(int code, IntPtr kind, IntPtr data) {
+      if (code >= 0) {
+        var info = (Native.MSLLHOOKSTRUCT)Marshal.PtrToStructure(data, typeof(Native.MSLLHOOKSTRUCT));
+        if ((info.flags & 0x1) == 0) {
+          int message = kind.ToInt32();
+          // Button downs: left, right, middle, X.
+          if (message == 0x0201 || message == 0x0204 || message == 0x0207 || message == 0x020B) Interlocked.Exchange(ref lastPress, Now);
+          else if (message == 0x0200 || message == 0x020A || message == 0x020E) Interlocked.Exchange(ref lastMove, Now);
+        }
+      }
+      return Native.CallNextHookEx(IntPtr.Zero, code, kind, data);
+    }
+
+    static IntPtr Keyboard(int code, IntPtr kind, IntPtr data) {
+      if (code >= 0) {
+        var info = (Native.KBDLLHOOKSTRUCT)Marshal.PtrToStructure(data, typeof(Native.KBDLLHOOKSTRUCT));
+        int message = kind.ToInt32();
+        if ((info.flags & 0x10) == 0 && (message == 0x0100 || message == 0x0104)) {
+          long now = Now;
+          Interlocked.Exchange(ref lastKey, now);
+          Interlocked.Exchange(ref lastPress, now);
+        }
+      }
+      return Native.CallNextHookEx(IntPtr.Zero, code, kind, data);
+    }
+
+    public static bool PressedSince(long since) { return Interlocked.Read(ref lastPress) > since; }
+    public static bool MovedSince(long since) { return Interlocked.Read(ref lastMove) > since; }
+
+    // The agent holds no button outside its own input, so a button down here is the person's.
+    public static bool Busy() {
+      long key = Interlocked.Read(ref lastKey);
+      return key >= 0 && Now - key < 200 || HoldsButton();
+    }
+
+    public static bool HoldsButton() {
+      return (Native.GetAsyncKeyState(0x01) & 0x8000) != 0 || (Native.GetAsyncKeyState(0x02) & 0x8000) != 0
+        || (Native.GetAsyncKeyState(0x04) & 0x8000) != 0;
+    }
   }
 
   static Dictionary<string, object> Capture(Dictionary<string, object> request) {
@@ -514,6 +693,11 @@ static class OpenWorkComputerUse {
     public bool Attempted;
     public readonly List<ushort> HeldKeys = new List<ushort>();
     public bool HeldButton;
+    // When the agent's moment began, and where it last put the pointer.
+    public long Started;
+    public bool Placed;
+    public int PointX, PointY;
+    public int Refocused;
   }
 
   static readonly Dictionary<string, ushort> Modifier = new Dictionary<string, ushort> { { "control", 0x11 }, { "shift", 0x10 }, { "alt", 0x12 } };
@@ -602,7 +786,7 @@ static class OpenWorkComputerUse {
       throw new Failure("window_moved", "The selected window moved, resized or was minimized. Observe again; nothing was sent.");
     }
     var steps = ParseSteps(request, frame.Right - frame.Left, frame.Bottom - frame.Top);
-    var context = new InputContext { Target = target, Frame = frame, Cancel = new ManualResetEvent(false) };
+    var context = new InputContext { Target = target, Frame = frame, Cancel = new ManualResetEvent(false), Started = momentAt >= 0 ? momentAt : Person.Now };
     lock (CancelGate) {
       if (Cancelled.Remove(id)) { context.Cancel.Close(); return Receipt(context, 0, "cancelled", "Computer input stopped before it started."); }
       activeInput = id;
@@ -611,12 +795,15 @@ static class OpenWorkComputerUse {
     int completed = 0;
     try {
       foreach (var step in steps) {
+        Rejoin(context);
         Check(context);
         Dispatch(context, step);
         completed++;
       }
       return Receipt(context, completed, null, null);
     } catch (Failure failure) {
+      // The person chose where to be: the front and the pointer stay with them.
+      if (failure.Code == "person_interrupted") Forget();
       return Receipt(context, completed, failure.Code, failure.Message);
     } finally {
       Release(context);
@@ -635,9 +822,34 @@ static class OpenWorkComputerUse {
     return receipt;
   }
 
+  // Between steps, a window that came to the front without the person clicking
+  // or typing (a notification, another app's dialog) is put back behind the
+  // target, twice per request at most, so the agent never fights for the front.
+  static void Rejoin(InputContext context) {
+    Interrupted(context);
+    if (context.Refocused >= 2 || Belongs(context.Target, Native.GetForegroundWindow())) return;
+    context.Refocused++;
+    TakeGap();
+    // Typing during that wait already stops the step: stop before the raise, so
+    // the front stays with the person instead of moving under their keys.
+    Interrupted(context);
+    Remember(context.Target, Native.GetForegroundWindow());
+    Foreground(context.Target.Hwnd);
+    WaitUntil(delegate { return Belongs(context.Target, Native.GetForegroundWindow()); }, 500);
+  }
+
+  static void Interrupted(InputContext context) {
+    if (Person.PressedSince(context.Started)) throw PersonInterrupted();
+  }
+
+  static Failure PersonInterrupted() {
+    return new Failure("person_interrupted", "The person clicked or typed, so this step stopped and the PC is theirs for now. Observe again to continue.");
+  }
+
   // Runs before every step and between short chunks of a step.
   static void Check(InputContext context) {
     if (context.Cancel.WaitOne(0)) throw new Failure("cancelled", "Computer input stopped.");
+    Interrupted(context);
     if (!InputDesktopIsDefault()) throw new Failure("desktop_unavailable", "Windows locked or showed a secure prompt. No further input was sent.");
     Native.RECT frame;
     if (!CurrentFrame(context.Target, out frame)) throw new Failure("window_closed", "The selected window closed or was minimized. No further input was sent.");
@@ -705,9 +917,11 @@ static class OpenWorkComputerUse {
     var point = new Native.POINT { X = screenX, Y = screenY };
     if (!Belongs(context.Target, Native.WindowFromPoint(point))) throw new Failure("covered", "Another window covers that point, so nothing was clicked. Observe again.");
     context.Attempted = true;
+    SaveCursor();
     if (!Native.SetCursorPos(screenX, screenY)) throw new Failure("input_refused", "Windows refused to move the pointer.");
     Native.POINT now;
     if (!Native.GetCursorPos(out now) || now.X != screenX || now.Y != screenY) throw new Failure("pointer_blocked", "The pointer could not reach that point. Nothing was clicked.");
+    context.Placed = true; context.PointX = screenX; context.PointY = screenY;
     // A zero-distance move so the app sees the pointer arrive.
     Send(context, MouseEvent(0x0001, 0));
   }
@@ -778,11 +992,19 @@ static class OpenWorkComputerUse {
   // must always come back up.
   static void Send(InputContext context, params Native.INPUT[] inputs) {
     if (context.Cancel.WaitOne(0)) throw new Failure("cancelled", "Computer input stopped.");
+    Interrupted(context);
     if (!Belongs(context.Target, Native.GetForegroundWindow())) throw new Failure("focus_changed", "Another window came to the front. No further input was sent; observe again.");
     foreach (var input in inputs) {
       // Buttons and wheels act on the window under the pointer; plain moves do not.
       if (input.type != 0 || (input.u.mi.dwFlags & ~0x0001u) == 0) continue;
       Native.POINT at;
+      // The pointer is the person's too: if they moved it since the agent placed
+      // it, put it back on the exact point before the button or wheel acts.
+      if (context.Placed && (!Native.GetCursorPos(out at) || at.X != context.PointX || at.Y != context.PointY)) {
+        if (!Native.SetCursorPos(context.PointX, context.PointY) || !Native.GetCursorPos(out at) || at.X != context.PointX || at.Y != context.PointY) {
+          throw new Failure("pointer_blocked", "The pointer could not stay on that point. Nothing was clicked.");
+        }
+      }
       if (!Native.GetCursorPos(out at) || !Belongs(context.Target, Native.WindowFromPoint(at))) {
         throw new Failure("covered", "Another window covers that point, so nothing was clicked. Observe again.");
       }
@@ -824,7 +1046,12 @@ static class OpenWorkComputerUse {
       Emit(Message("type", "error", "code", reason));
       return 3;
     }
+    Person.Start();
     var queue = new BlockingCollection<Dictionary<string, object>>(64);
+    handBackTimer = new Timer(delegate (object state) {
+      // Queued behind any request already waiting; that request makes it stale.
+      try { queue.TryAdd(Message("op", "hand_back", "generation", Thread.VolatileRead(ref momentGeneration))); } catch (InvalidOperationException) { }
+    }, null, Timeout.Infinite, Timeout.Infinite);
     var worker = new Thread(delegate () { foreach (var request in queue.GetConsumingEnumerable()) Handle(request); });
     worker.IsBackground = true;
     worker.Start();
@@ -853,13 +1080,30 @@ static class OpenWorkComputerUse {
     }
     // The host went away or closed the session: stop input and release anything held.
     lock (CancelGate) { if (activeCancel != null) activeCancel.Set(); }
+    handBackTimer.Change(Timeout.Infinite, Timeout.Infinite);
     queue.CompleteAdding();
-    worker.Join(3000);
+    // The session ended: give back what its last moment took.
+    if (worker.Join(3000)) { try { HandBack(); } catch { } }
     return 0;
   }
 
   static void Handle(Dictionary<string, object> request) {
     var id = Field(request, "id");
+    var op = Field(request, "op");
+    if (id == null) {
+      // Queued by the hand-back timer, never by the host; stale once another moment began.
+      object generation;
+      if (op == "hand_back" && request.TryGetValue("generation", out generation) && generation is int && (int)generation == momentGeneration) {
+        try { HandBack(); } catch { Forget(); }
+      }
+      return;
+    }
+    // Focus and input make up the agent's moment; reads leave the hand-back alone.
+    bool moment = op == "focus" || op == "input";
+    if (moment) {
+      momentGeneration++;
+      handBackTimer.Change(Timeout.Infinite, Timeout.Infinite);
+    }
     Dictionary<string, object> result;
     try {
       switch (Field(request, "op")) {
@@ -878,6 +1122,7 @@ static class OpenWorkComputerUse {
     }
     result["id"] = id;
     Emit(result);
+    if (moment) ScheduleHandBack();
   }
 }
 
@@ -901,7 +1146,11 @@ static class Native {
   [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk, wScan; public uint dwFlags, time; public IntPtr dwExtraInfo; }
   [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
   [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public INPUTUNION u; }
+  [StructLayout(LayoutKind.Sequential)] public struct MSLLHOOKSTRUCT { public POINT pt; public uint mouseData, flags, time; public IntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Sequential)] public struct KBDLLHOOKSTRUCT { public uint vkCode, scanCode, flags, time; public IntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Sequential)] public struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam, lParam; public uint time; public POINT pt; }
   public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+  public delegate IntPtr HookProc(int code, IntPtr kind, IntPtr data);
 
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hwnd);
@@ -916,6 +1165,14 @@ static class Native {
   [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint attach, uint to, bool join);
+  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);
+  [DllImport("user32.dll")] public static extern IntPtr SetWindowsHookExW(int kind, HookProc proc, IntPtr module, uint thread);
+  [DllImport("user32.dll")] public static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr kind, IntPtr data);
+  [DllImport("user32.dll")] public static extern int GetMessageW(out MSG message, IntPtr hwnd, uint min, uint max);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr GetModuleHandleW(string name);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int command);
   [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
   [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hwnd, uint command);

@@ -13,13 +13,13 @@ const managedPaths = [
 test("managed deployment capabilities stay hidden until the organization has the managed deployments rollout", () => {
   for (const generatedArtifactViewsEnabled of [true, false]) {
     for (const operation of managedPaths) {
-      assert.equal(catalogOperationAvailableToCapabilities({ generatedArtifactViewsEnabled, managedDeploymentsEnabled: false, agentConnectionRemovalEnabled: false }, operation), false)
-      assert.equal(catalogOperationAvailableToCapabilities({ generatedArtifactViewsEnabled, managedDeploymentsEnabled: true, agentConnectionRemovalEnabled: false }, operation), true)
+      assert.equal(catalogOperationAvailableToCapabilities({ generatedArtifactViewsEnabled, managedDeploymentsEnabled: false }, operation), false)
+      assert.equal(catalogOperationAvailableToCapabilities({ generatedArtifactViewsEnabled, managedDeploymentsEnabled: true }, operation), true)
     }
   }
   // Unrelated capabilities are unaffected by the deployment rollout.
-  assert.equal(catalogOperationAvailableToCapabilities({ generatedArtifactViewsEnabled: true, managedDeploymentsEnabled: false, agentConnectionRemovalEnabled: false }, { method: "GET", path: "/v1/plugins" }), true)
-  assert.equal(catalogOperationAvailableToCapabilities({ generatedArtifactViewsEnabled: false, managedDeploymentsEnabled: true, agentConnectionRemovalEnabled: false }, { method: "GET", path: "/v1/artifact-views/abc" }), false)
+  assert.equal(catalogOperationAvailableToCapabilities({ generatedArtifactViewsEnabled: true, managedDeploymentsEnabled: false }, { method: "GET", path: "/v1/plugins" }), true)
+  assert.equal(catalogOperationAvailableToCapabilities({ generatedArtifactViewsEnabled: false, managedDeploymentsEnabled: true }, { method: "GET", path: "/v1/artifact-views/abc" }), false)
 })
 
 test("a launch handoff is either an approval link or a cloud shell command, never both or neither", () => {

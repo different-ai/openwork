@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { DenButton } from "../app/(den)/_components/ui/button";
-import { AdminDashboard } from "./admin/admin-dashboard";
-import { DenSelect } from "../app/(den)/_components/ui/select";
-import { Check, ChevronRight, Copy, Download, Pencil, Search, Trash2 } from "lucide-react";
+import { AdminDashboard, QuickFind } from "./admin/admin-dashboard";
+import { AdminControlCenter } from "./admin/control-center/admin-control-center";
+import { Check, Copy, Download, Search, Trash2 } from "lucide-react";
+import { planEndLabel } from "../app/(den)/_lib/plan-display";
 import { mapFeatures } from "@openwork/features";
 import { denApiCredentials, denBrowserEndpoint } from "../app/(den)/_lib/den-api-origin";
 import { withStoredBearer } from "./admin/admin-request";
@@ -159,6 +160,12 @@ type AdminOrganization = {
   freeSeatCount: number;
   seatsFreeAdditional: number;
   billableSeatCount: number;
+  /** Users the plan allows, counting pending invitations; null when nothing limits it. */
+  userLimit: number | null;
+  /** Display-only end date of a plan a platform admin set, YYYY-MM-DD. */
+  endsAt: string | null;
+  ended: boolean;
+  paidBy: "none" | "stripe_team" | "stripe_enterprise";
   features: AdminOrganizationFeatures | null;
   openworkWebAccess: AdminOpenWorkWebAccess;
 };
@@ -450,6 +457,10 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
           freeSeatCount: toNumberValue(value.freeSeatCount) || DEFAULT_FREE_SEAT_COUNT,
           seatsFreeAdditional: toNumberValue(value.seatsFreeAdditional),
           billableSeatCount: toNumberValue(value.billableSeatCount),
+          userLimit: typeof value.userLimit === "number" ? value.userLimit : null,
+          endsAt: toStringValue(value.endsAt),
+          ended: value.ended === true,
+          paidBy: value.paidBy === "stripe_team" || value.paidBy === "stripe_enterprise" ? value.paidBy : "none",
           features: isRecord(value.featureStates) || isRecord(value.capabilities)
             ? parseAdminOrganizationFeatures(value.featureStates, value.capabilities)
             : null,
@@ -765,6 +776,10 @@ function buildFixtureOrganization(index: number, includeFeatures = false): Admin
     freeSeatCount: target ? 25 : DEFAULT_FREE_SEAT_COUNT,
     seatsFreeAdditional: target ? 20 : 0,
     billableSeatCount: target ? 103 : 0,
+    userLimit: target ? 500 : 5,
+    endsAt: null,
+    ended: false,
+    paidBy: "none",
     features: includeFeatures ? mapFeatures((key) => {
       const enabled = target && key === "workbotDocuments";
       return { enabled, source: "everyone", everyone: enabled, killed: false, override: null, overrideApplies: true };
@@ -976,32 +991,6 @@ async function requestJson(path: string, signal?: AbortSignal) {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
-}
-
-async function patchJson(path: string, body: unknown) {
-  const endpoint = denBrowserEndpoint(path);
-  const response = await fetch(endpoint, {
-    method: "PATCH",
-    credentials: denApiCredentials(endpoint),
-    headers: withStoredBearer({
-      Accept: "application/json",
-      "Content-Type": "application/json"
-    }),
-    body: JSON.stringify(body)
-  });
-
-  const text = await response.text();
-  let payload: unknown = null;
-
-  if (text) {
-    try {
-      payload = JSON.parse(text);
-    } catch {
-      payload = text;
-    }
-  }
-
-  return { response, payload };
 }
 
 async function postJson(path: string, body: unknown) {
@@ -1352,11 +1341,6 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
   const [includeBilling, setIncludeBilling] = useState(false);
   const [usersLoading, setUsersLoading] = useState(false);
   const [organizationsLoading, setOrganizationsLoading] = useState(false);
-  const [expandedOrgIds, setExpandedOrgIds] = useState<Record<string, boolean>>({});
-  const [orgDrafts, setOrgDrafts] = useState<Record<string, { tier: AdminOrganization["plan"]["tier"]; seatLimit: string }>>({});
-  const [savingOrgId, setSavingOrgId] = useState<string | null>(null);
-  const [freeSeatsDialog, setFreeSeatsDialog] = useState<{ org: AdminOrganization; totalFreeSeats: string } | null>(null);
-  const [savingFreeSeatsOrgId, setSavingFreeSeatsOrgId] = useState<string | null>(null);
   const [deleteUserDialog, setDeleteUserDialog] = useState<AdminUser | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [adminEmail, setAdminEmail] = useState("");
@@ -1846,113 +1830,6 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
     organizationSearchStartedAtRef.current = null;
   }, [organizationQuery, organizationsLoading, payload]);
 
-  useEffect(() => {
-    if (!payload) {
-      setOrgDrafts({});
-      return;
-    }
-
-    const drafts: Record<string, { tier: AdminOrganization["plan"]["tier"]; seatLimit: string }> = {};
-    for (const org of payload.organizations) {
-      drafts[org.id] = { tier: org.plan.tier, seatLimit: String(org.seatLimit) };
-    }
-    setOrgDrafts(drafts);
-  }, [payload?.organizations]);
-
-  const saveOrganizationPlan = useCallback(async (org: AdminOrganization) => {
-    const draft = orgDrafts[org.id];
-    if (!draft) {
-      return;
-    }
-
-    const seatLimit = Number(draft.seatLimit);
-    if (!Number.isInteger(seatLimit) || seatLimit < 1) {
-      setError("Seat limit must be a positive whole number.");
-      return;
-    }
-
-    setSavingOrgId(org.id);
-    setError(null);
-
-    try {
-      const { response, payload: nextPayload } = await patchJson(`/v1/admin/organizations/${org.id}/plan`, {
-        tier: draft.tier,
-        seatLimit
-      });
-
-      if (!response.ok) {
-        setError(getErrorMessage(nextPayload, `Could not update ${org.name}.`));
-        return;
-      }
-
-      setPayload((current) => {
-        if (!current) {
-          return current;
-        }
-        return {
-          ...current,
-          organizations: current.organizations.map((entry) => entry.id === org.id
-            ? { ...entry, plan: { ...entry.plan, tier: draft.tier, source: "manual" }, seatLimit }
-            : entry)
-        };
-      });
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unknown network error");
-    } finally {
-      setSavingOrgId(null);
-    }
-  }, [orgDrafts]);
-
-  const saveOrganizationFreeSeats = useCallback(async () => {
-    if (!freeSeatsDialog) {
-      return;
-    }
-
-    const totalFreeSeats = Number(freeSeatsDialog.totalFreeSeats);
-    if (!Number.isInteger(totalFreeSeats) || totalFreeSeats < DEFAULT_FREE_SEAT_COUNT) {
-      setError(`The Free plan user limit must be a whole number, at least ${DEFAULT_FREE_SEAT_COUNT}.`);
-      return;
-    }
-
-    setSavingFreeSeatsOrgId(freeSeatsDialog.org.id);
-    setError(null);
-
-    try {
-      const { response, payload: nextPayload } = await patchJson(`/v1/admin/organizations/${freeSeatsDialog.org.id}/free-seats`, {
-        totalFreeSeats
-      });
-
-      if (!response.ok) {
-        setError(getErrorMessage(nextPayload, `Could not update the Free plan user limit for ${freeSeatsDialog.org.name}.`));
-        return;
-      }
-
-      const updatedOrganization = isRecord(nextPayload) && isRecord(nextPayload.organization) ? nextPayload.organization : null;
-      setPayload((current) => {
-        if (!current || !updatedOrganization) {
-          return current;
-        }
-        return {
-          ...current,
-          organizations: current.organizations.map((entry) => entry.id === freeSeatsDialog.org.id
-            ? {
-              ...entry,
-              memberCount: toNumberValue(updatedOrganization.memberCount),
-              freeSeatCount: toNumberValue(updatedOrganization.freeSeatCount),
-              seatsFreeAdditional: toNumberValue(updatedOrganization.seatsFreeAdditional),
-              billableSeatCount: toNumberValue(updatedOrganization.billableSeatCount)
-            }
-            : entry)
-        };
-      });
-      setFreeSeatsDialog(null);
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unknown network error");
-    } finally {
-      setSavingFreeSeatsOrgId(null);
-    }
-  }, [freeSeatsDialog]);
-
   const deleteUser = useCallback(async () => {
     if (!deleteUserDialog) {
       return;
@@ -1984,18 +1861,20 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
 
     if (viewMode === "organizations") {
       downloadCsv(`den-organizations-${date}.csv`, [
-        ["id", "name", "slug", "plan", "plan_source", "seat_limit", "free_seats", "additional_free_seats", "chargeable_seats", "members", "created_at"],
+        ["id", "name", "slug", "plan", "plan_source", "paid_by", "users", "user_limit", "ends_at", "free_seats", "additional_free_seats", "chargeable_seats", "created_at"],
         ...filteredOrganizations.map((org) => [
           org.id,
           org.name,
           org.slug,
           org.plan.tier,
           org.plan.source,
-          String(org.seatLimit),
+          org.paidBy,
+          String(org.memberCount),
+          org.userLimit === null ? "" : String(org.userLimit),
+          org.endsAt ?? "",
           String(org.freeSeatCount),
           String(org.seatsFreeAdditional),
           String(org.billableSeatCount),
-          String(org.memberCount),
           org.createdAt ?? ""
         ])
       ]);
@@ -2100,7 +1979,12 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
         ) : null}
 
         {section === "overview" ? <>
-        <AdminDashboard refreshKey={payload.generatedAt} totalOrganizations={payload.summary.totalOrganizations} totalUsers={payload.summary.totalUsers} onAccessDenied={handleDashboardAccessDenied} />
+        <QuickFind />
+        <AdminControlCenter onAccessDenied={handleDashboardAccessDenied} />
+        <section aria-labelledby="admin-gateway-usage-title" className="border-t border-slate-200 pt-5">
+          <h2 id="admin-gateway-usage-title" className="text-sm font-semibold text-slate-950">AI gateway usage</h2>
+          <AdminDashboard quickFind={false} refreshKey={payload.generatedAt} totalOrganizations={payload.summary.totalOrganizations} totalUsers={payload.summary.totalUsers} onAccessDenied={handleDashboardAccessDenied} />
+        </section>
         <details className="border-t border-slate-200 py-4">
           <summary className="w-fit cursor-pointer text-sm font-medium text-slate-700 focus-visible:outline-2 focus-visible:outline-slate-500">More analytics</summary>
           <div className="mt-4"><DenButton size="sm" variant="secondary" loading={analyticsLoading} onClick={() => void loadAnalytics()}>{analyticsLoaded ? "Refresh analytics" : "Load analytics"}</DenButton></div>
@@ -2311,21 +2195,19 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
           {viewMode === "organizations" ? (
             filteredOrganizations.length > 0 ? (
               <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
-                <div aria-hidden="true" className="hidden border-b border-slate-200 bg-slate-50/80 px-4 py-2 text-xs font-medium text-slate-500 lg:grid lg:grid-cols-[minmax(0,1fr)_10rem_16rem] lg:gap-4 xl:grid-cols-[minmax(0,1fr)_10rem_7rem_16rem]">
-                  <span>Organization</span><span>Seats</span><span className="hidden xl:block">Created</span><span className="text-right">Actions</span>
+                <div aria-hidden="true" className="hidden border-b border-slate-200 bg-slate-50/80 px-4 py-2 text-xs font-medium text-slate-500 lg:grid lg:grid-cols-[minmax(0,1fr)_12rem_12rem] lg:gap-4 xl:grid-cols-[minmax(0,1fr)_12rem_7rem_12rem]">
+                  <span>Organization</span><span>Users</span><span className="hidden xl:block">Created</span><span className="text-right">Actions</span>
                 </div>
                 <ul className="divide-y divide-slate-200">
                 {filteredOrganizations.map((org) => {
-              const draft = orgDrafts[org.id] ?? { tier: org.plan.tier, seatLimit: String(org.seatLimit) };
-              const changed = draft.tier !== org.plan.tier || draft.seatLimit !== String(org.seatLimit);
-              const expanded = Boolean(expandedOrgIds[org.id]) || changed;
-              const overLimit = org.memberCount > org.seatLimit;
-              const seatShare = org.seatLimit > 0 ? Math.min(100, Math.round((org.memberCount / org.seatLimit) * 100)) : 100;
-              const panelId = `admin-org-manage-${org.id}`;
+              const limited = org.paidBy === "none" && org.userLimit !== null;
+              const full = limited && org.userLimit !== null && org.memberCount >= org.userLimit;
+              const share = limited && org.userLimit ? Math.min(100, Math.round((org.memberCount / org.userLimit) * 100)) : 0;
+              const endLabel = planEndLabel(org.endsAt, org.ended);
 
               return (
-                <li key={org.id} data-testid={`admin-org-row-${org.slug}`} style={{ contentVisibility: "auto", containIntrinsicSize: expanded ? "auto 320px" : "auto 72px" }} className={`min-w-0 ${expanded ? "bg-slate-50/50" : ""}`}>
-                  <div className="grid min-w-0 grid-cols-2 items-center gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_10rem_16rem] lg:gap-4 xl:grid-cols-[minmax(0,1fr)_10rem_7rem_16rem]">
+                <li key={org.id} data-testid={`admin-org-row-${org.slug}`} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 64px" }} className="min-w-0">
+                  <div className="grid min-w-0 grid-cols-2 items-center gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_12rem_12rem] lg:gap-4 xl:grid-cols-[minmax(0,1fr)_12rem_7rem_12rem]">
                     <div className="col-span-2 min-w-0 lg:col-span-1">
                       <div className="flex min-w-0 items-center gap-2">
                         <Link href={adminOrganizationHref(org.id, routeSearch, routePage)} prefetch={false} className="min-w-0 truncate text-sm font-semibold text-slate-950 hover:underline">{org.name}</Link>
@@ -2347,16 +2229,17 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
                       </div>
                     </div>
 
-                    <div className="min-w-0" title={`Free plan up to ${org.freeSeatCount} · ${org.billableSeatCount} billed on Team`}>
-                      <p className={`text-sm tabular-nums ${overLimit ? "font-medium text-amber-700" : "text-slate-700"}`}>
-                        {formatCount(org.memberCount)} / {formatCount(org.seatLimit)} <span className="text-xs text-slate-500">seats</span>
+                    <div className="min-w-0" data-testid={`admin-org-users-${org.slug}`}>
+                      <p className="text-sm tabular-nums text-slate-700">
+                        {limited && org.userLimit !== null
+                          ? <>{formatCount(org.memberCount)} / {formatCount(org.userLimit)}{endLabel ? <span className={org.ended ? "text-amber-700" : "text-slate-500"}> · {endLabel}</span> : null}</>
+                          : <>{formatCount(org.memberCount)} <span className="text-slate-500">· {org.paidBy === "none" ? "no limit" : "paid in Stripe"}</span></>}
                       </p>
-                      <div className="mt-1 h-1 w-full max-w-[8rem] overflow-hidden rounded-full bg-slate-100" aria-hidden="true">
-                        <div className={`h-full rounded-full ${overLimit ? "bg-amber-500" : seatShare >= 80 ? "bg-slate-600" : "bg-slate-400"}`} style={{ width: `${Math.max(seatShare, 4)}%` }} />
-                      </div>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Free plan up to {org.freeSeatCount}{org.billableSeatCount > 0 ? <span className="text-amber-700"> · {org.billableSeatCount} billed on Team</span> : null}
-                      </p>
+                      {limited ? (
+                        <div className="mt-1 h-1 w-full max-w-[8rem] overflow-hidden rounded-full bg-slate-100" aria-hidden="true">
+                          <div className={`h-full rounded-full ${full ? "bg-slate-700" : "bg-slate-400"}`} style={{ width: `${Math.max(share, 4)}%` }} />
+                        </div>
+                      ) : null}
                     </div>
 
                     <p className="text-sm text-slate-600 lg:hidden xl:block" title={formatDateTime(org.createdAt)}><span className="xl:hidden">Created </span>{org.createdAt ? formatRelativeTime(org.createdAt) : "—"}</p>
@@ -2366,105 +2249,12 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
                         data-testid="admin-organization-features-link" className="rounded-md px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950">
                         Features
                       </Link>
-                      <Link href={adminOrganizationHref(org.id, routeSearch, routePage, "control-panel")} prefetch={false}
-                        data-testid="admin-organization-control-panel-link" className="whitespace-nowrap rounded-md px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950">
-                        Control panel
+                      <Link href={adminOrganizationHref(org.id, routeSearch, routePage, "billing")} prefetch={false}
+                        data-testid="admin-organization-billing-link" aria-label={`Billing for ${org.name}`} className="rounded-md px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950">
+                        Billing
                       </Link>
-                      <button
-                        type="button"
-                        aria-expanded={expanded}
-                        aria-controls={panelId}
-                        aria-label={`Manage ${org.name}`}
-                        onClick={() => setExpandedOrgIds((current) => ({ ...current, [org.id]: !expanded }))}
-                        disabled={changed && expanded}
-                        className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-sm font-medium transition disabled:cursor-default ${expanded ? "border-slate-300 bg-white text-slate-950" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-950"}`}
-                      >
-                        Manage
-                        <ChevronRight size={14} aria-hidden="true" className={`transition-transform duration-150 ease-out ${expanded ? "rotate-90" : ""}`} />
-                      </button>
                     </div>
                   </div>
-
-                  {expanded ? (
-                  <div id={panelId} className="grid min-w-0 gap-5 border-t border-slate-200 px-4 py-4 lg:grid-cols-2 lg:gap-0 lg:divide-x lg:divide-slate-200">
-                    <div className="min-w-0 lg:pr-5">
-                      <p className="text-sm font-semibold text-slate-950">Plan and seat limit</p>
-                      <p className="mt-0.5 text-xs text-slate-500">Plan source: {formatProvider(org.plan.source)}</p>
-                      <div className="mt-3 grid grid-cols-2 gap-3">
-                        <label className="grid min-w-0 gap-1.5">
-                          <span className="text-xs font-medium text-slate-500">Plan</span>
-                          <DenSelect
-                            value={draft.tier}
-                            onChange={(event) => {
-                              const tier = event.target.value === "enterprise" || event.target.value === "team" ? event.target.value : "free";
-                              setOrgDrafts((current) => ({ ...current, [org.id]: { ...draft, tier } }));
-                            }}
-                            className="w-full min-w-0 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
-                          >
-                            <option value="free">Free</option>
-                            <option value="team">Team</option>
-                            <option value="enterprise">Enterprise</option>
-                          </DenSelect>
-                        </label>
-                        <label className="grid min-w-0 gap-1.5">
-                          <span className="text-xs font-medium text-slate-500">Seats</span>
-                          <input
-                            type="number"
-                            min={1}
-                            value={draft.seatLimit}
-                            onChange={(event) => setOrgDrafts((current) => ({ ...current, [org.id]: { ...draft, seatLimit: event.target.value } }))}
-                            className="w-full min-w-0 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
-                          />
-                        </label>
-                      </div>
-                      <div className="mt-3 flex items-center justify-end gap-2">
-                        {changed ? (
-                          <button
-                            type="button"
-                            onClick={() => setOrgDrafts((current) => {
-                              const next = { ...current };
-                              delete next[org.id];
-                              return next;
-                            })}
-                            disabled={savingOrgId === org.id}
-                            className="rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-60"
-                          >
-                            Discard
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void saveOrganizationPlan(org);
-                          }}
-                          disabled={!changed || savingOrgId === org.id}
-                          className="inline-flex items-center justify-center rounded-md bg-slate-950 px-4 py-1.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          {savingOrgId === org.id ? "Saving..." : "Save access"}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="min-w-0 lg:pl-5">
-                      <p className="text-sm font-semibold text-slate-950">Free plan user limit</p>
-                      <div className="mt-2 flex items-center gap-2">
-                        <p className="text-2xl font-semibold tabular-nums text-slate-950">{org.freeSeatCount}</p>
-                        <button
-                          type="button"
-                          aria-label={`Edit the Free plan user limit for ${org.name}`}
-                          onClick={() => setFreeSeatsDialog({ org, totalFreeSeats: String(org.freeSeatCount) })}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
-                        >
-                          <Pencil size={13} aria-hidden="true" />
-                        </button>
-                      </div>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {org.seatsFreeAdditional > 0 ? `${org.seatsFreeAdditional} additional on top of the default` : "Default included"} · {org.billableSeatCount} billed on Team
-                      </p>
-                    </div>
-
-                  </div>
-                  ) : null}
                 </li>
               );
                 })}
@@ -2720,61 +2510,6 @@ export function DenAdminPanel({ initialPayload, section }: { initialPayload: unk
 
         <p className="mt-6 text-xs leading-6 text-slate-500">Snapshot generated {formatDateTime(payload.generatedAt)}.</p>
       </div> : null}
-
-      {freeSeatsDialog ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="free-seats-dialog-title"
-          onClick={() => setFreeSeatsDialog(null)}
-        >
-          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Organization billing</p>
-            <h2 id="free-seats-dialog-title" className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-slate-950">
-              Edit Free plan user limit
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              How many users {freeSeatsDialog.org.name} can have before it must upgrade to the Team plan. This only moves the upgrade point: the Team plan still bills every user. The default is {DEFAULT_FREE_SEAT_COUNT}; OpenWork saves only the additional users in organization metadata.
-            </p>
-
-            <label className="mt-5 grid gap-2">
-              <span className="text-xs font-medium text-slate-500">Users allowed on the Free plan</span>
-              <input
-                type="number"
-                min={DEFAULT_FREE_SEAT_COUNT}
-                value={freeSeatsDialog.totalFreeSeats}
-                onChange={(event) => setFreeSeatsDialog({ ...freeSeatsDialog, totalFreeSeats: event.target.value })}
-                className="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
-              />
-            </label>
-
-            <p className="mt-3 rounded-md bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500">
-              Additional metadata value to save: {Math.max(0, Number(freeSeatsDialog.totalFreeSeats) - DEFAULT_FREE_SEAT_COUNT) || 0}
-            </p>
-
-            <div className="mt-6 flex flex-wrap justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setFreeSeatsDialog(null)}
-                className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void saveOrganizationFreeSeats();
-                }}
-                disabled={savingFreeSeatsOrgId === freeSeatsDialog.org.id}
-                className="inline-flex items-center justify-center rounded-md bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {savingFreeSeatsOrgId === freeSeatsDialog.org.id ? "Saving..." : "Save"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {deleteUserDialog ? (
         <div

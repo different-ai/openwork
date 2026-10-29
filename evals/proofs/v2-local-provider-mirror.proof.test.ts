@@ -11,12 +11,11 @@ const WITHIN = 60_000;
 
 test("an owner's OpenRouter and Anthropic keys reach the new engine's model picker and AI Providers, which stays honest about sign-ins and Acme's provider rule", async ({ world, user, probe, step, evidence }) => {
   const pickerModels = async (providerId: string) => (await probe.dom(`[data-testid="composer-model-picker"] [data-model-key^="${providerId}:"]`)).elements.length;
-  const openRouterModels = () => pickerModels("openrouter");
   const row = async (providerId: string) => (await probe.dom(`[data-testid="local-provider-${providerId}"]`)).elements.map(element => element.text).join(" ");
 
   /** Open the chat's model picker and search it; opening it also asks the desktop to refresh providers. */
   async function searchPicker(query: string) {
-    await user.navigate(world.sessionUrl);
+    await user.navigate(world.composerUrl);
     await user.see("composer", { editable: true, timeoutMs: WITHIN });
     await user.click("Change model");
     await user.see({ testId: "composer-model-picker" });
@@ -57,21 +56,7 @@ test("an owner's OpenRouter and Anthropic keys reach the new engine's model pick
     };
   };
 
-  await step("before: with the rollout off, a saved OpenRouter key never reaches the new engine's model picker", async () => {
-    await connectOpenRouter();
-    const status = await engineStatus();
-    expect(status.skipped).toContain('"openrouter"');
-    await searchPicker("OpenRouter");
-    await user.see({ text: "OpenRouter isn't connected in this workspace." }, { timeoutMs: WITHIN });
-    const count = await openRouterModels();
-    expect(count).toBe(0);
-    evidence.recordAssertionEvidence("The key is saved, the engine drops it, and the picker says OpenRouter isn't connected", `${count} OpenRouter models listed; engine skipped ${status.skipped}, mirrored ${status.mirrored}`, count === 0 && status.skipped.includes('"openrouter"'));
-    await user.screenshot();
-    await user.press("Escape");
-  });
-
-  await step("after: with the rollout on, connecting OpenRouter reads Ready to use in AI Providers", async () => {
-    await world.setMirror(true);
+  await step("without a rollout override, connecting OpenRouter reads Ready to use in AI Providers", async () => {
     await connectOpenRouter();
     const text = await probe.eventually(() => row("openrouter"), { within: WITHIN, label: "the OpenRouter row", until: value => value.includes("Ready to use") });
     const status = await engineStatus();
@@ -80,7 +65,7 @@ test("an owner's OpenRouter and Anthropic keys reach the new engine's model pick
     await user.screenshot();
   });
 
-  await step("after: OpenRouter's models are in the new engine's model picker", async () => {
+  await step("OpenRouter's models are in the new engine's model picker", async () => {
     const count = await pickerUntil("OpenRouter models in the picker", value => value > 0);
     expect(count).toBeGreaterThan(0);
     evidence.recordAssertionEvidence("The same key now lists OpenRouter's models on the new engine", `${count} OpenRouter models match "OpenRouter"`, count > 0);
@@ -88,7 +73,7 @@ test("an owner's OpenRouter and Anthropic keys reach the new engine's model pick
     await user.press("Escape");
   });
 
-  await step("after: a second key, Anthropic, is listed in AI Providers next to OpenRouter right after it is saved", async () => {
+  await step("a second key, Anthropic, is listed in AI Providers next to OpenRouter right after it is saved", async () => {
     await connectProvider("Anthropic", world.anthropicKey);
     await user.see({ testId: "local-provider-openrouter" }, { timeoutMs: WITHIN });
     // As a person does: no reload, no restart. A short wait covers rendering, not a later refresh.
@@ -102,7 +87,7 @@ test("an owner's OpenRouter and Anthropic keys reach the new engine's model pick
     await user.screenshot();
   });
 
-  await step("after: Anthropic's models are in the picker too", async () => {
+  await step("Anthropic's models are in the picker too", async () => {
     const count = await pickerUntil("Anthropic models in the picker", value => value > 0, { id: "anthropic", name: "Anthropic" });
     expect(count).toBeGreaterThan(0);
     evidence.recordAssertionEvidence("The second key lists its models on the new engine", `${count} Anthropic models match "Anthropic"`, count > 0);
@@ -110,7 +95,7 @@ test("an owner's OpenRouter and Anthropic keys reach the new engine's model pick
     await user.press("Escape");
   });
 
-  await step("after: a ChatGPT sign-in the new engine cannot use yet says so instead of Ready to use", async () => {
+  await step("a ChatGPT sign-in the new engine cannot use yet says so instead of Ready to use", async () => {
     await world.signInWithChatGpt();
     await user.navigate(world.settingsUrl);
     await user.see({ testId: "local-provider-openai" }, { timeoutMs: WITHIN });
@@ -123,7 +108,7 @@ test("an owner's OpenRouter and Anthropic keys reach the new engine's model pick
     await user.screenshot();
   });
 
-  await step("after: when Acme allows only its own providers, OpenRouter leaves the picker", async () => {
+  await step("when Acme allows only its own providers, OpenRouter leaves the picker", async () => {
     await world.allowPersonalProviders(false);
     await user.reload();
     const count = await pickerUntil("OpenRouter gone from the picker", value => value === 0);
@@ -133,7 +118,7 @@ test("an owner's OpenRouter and Anthropic keys reach the new engine's model pick
     await user.press("Escape");
   });
 
-  await step("after: AI Providers keeps the OpenRouter row with a lock that names who manages providers", async () => {
+  await step("AI Providers keeps the OpenRouter row with a lock that names who manages providers", async () => {
     await user.navigate(world.settingsUrl);
     const text = await probe.eventually(() => row("openrouter"), {
       within: WITHIN, label: "the locked OpenRouter row", until: value => value.includes(`${world.organizationName} manages AI providers`),
@@ -147,6 +132,20 @@ test("an owner's OpenRouter and Anthropic keys reach the new engine's model pick
     expect(connectLocked).toBe(true);
     expect(reasons).toContain('{"id":"openrouter","reason":"policy"}');
     evidence.recordAssertionEvidence("Blocked, not missing: the row stays with a lock and the owner's name, and Connect a provider is locked", `${text}; lock=${locked}; Connect a provider locked=${connectLocked}; engine skipped ${reasons}`, locked && connectLocked);
+    await user.screenshot();
+  });
+
+  await step("allowing personal providers again restores the saved key without reconnecting it", async () => {
+    await world.allowPersonalProviders(true);
+    await user.reload();
+    const count = await pickerUntil("OpenRouter restored in the picker", value => value > 0);
+    expect(count).toBeGreaterThan(0);
+    await user.press("Escape");
+    await user.navigate(world.settingsUrl);
+    const text = await probe.eventually(() => row("openrouter"), {
+      within: WITHIN, label: "the restored OpenRouter row", until: value => value.includes("Ready to use"),
+    });
+    evidence.recordAssertionEvidence("Policy refresh restores the saved key without another connection", `${count} OpenRouter models; ${text}`, count > 0 && text.includes("Ready to use"));
     await user.screenshot();
   });
 });

@@ -32,7 +32,9 @@ test("Den web refuses the same unsafe return targets as Den API", () => {
 
 test("the billing summary, plan offers and the seat quote parse from the API shapes", () => {
   const payload = { billing: { stripe: {}, plan, plans } };
-  assert.deepEqual(parseBillingPlanSummary(payload), plan);
+  assert.deepEqual(parseBillingPlanSummary(payload), { ...plan, userLimit: null, endsAt: null }, "older Den APIs omit the user limit and end date");
+  assert.deepEqual(parseBillingPlanSummary({ billing: { plan: { ...plan, tier: "enterprise", source: "manual", userLimit: 20, endsAt: "2026-11-22" } } }),
+    { ...plan, tier: "enterprise", source: "manual", userLimit: 20, endsAt: "2026-11-22" })
   assert.deepEqual(parseBillingPlans(payload), plans);
   assert.equal(parseBillingPlanSummary({ billing: { stripe: {} } }), null, "older Den APIs have no plan");
   assert.equal(parseBillingPlans({ billing: { plans: { team: {} } } }), null);

@@ -26,6 +26,7 @@ import {
   type BillingPlanSummary,
 } from "../../_lib/billing-checkout";
 import { BillingPlanCard } from "./billing-plan-card";
+import { planUsageLabel } from "../../_lib/plan-display";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import {
@@ -437,10 +438,11 @@ export function BillingDashboardScreen() {
   const planSummary = stripeBilling?.plan ?? null;
   const planOffers = stripeBilling?.plans ?? null;
   const teamPlanEnabled = orgFeatureEnabled(orgContext, "teamPlan");
-  // Plan first (DESIGN s12): with Team checkout on, the plan card replaces the
-  // legacy seat purchase and add-ons stay separate below.
-  const showPlanCard = teamPlanEnabled && planSummary !== null && planOffers !== null;
-  const peopleSummary = planSummary ? peopleLabel(planSummary) : `${activeMemberCount} ${activeMemberCount === 1 ? "person" : "people"}`;
+  // Plan first (DESIGN s12): the plan card shows the real plan whatever
+  // `teamPlan` is; `teamPlan` only decides whether it offers Team checkout. A
+  // Free workspace without Team checkout keeps the legacy seats card below.
+  const showPlanCard = planSummary !== null && planOffers !== null && (planSummary.tier !== "free" || teamPlanEnabled);
+  const peopleSummary = planSummary ? planUsageLabel(planSummary) ?? peopleLabel(planSummary) : `${activeMemberCount} ${activeMemberCount === 1 ? "person" : "people"}`;
   const planActiveLabel = planSummary && planSummary.tier !== "free"
     ? `${planSummary.tier === "enterprise" ? "Enterprise" : "Team"} is active for ${activeOrg?.name ?? "this workspace"}.`
     : null;
@@ -564,6 +566,7 @@ export function BillingDashboardScreen() {
           requestedAddPeople={requestedAddPeople}
           busy={stripeActionBusy === "plan-checkout" || stripeActionBusy === "portal" ? stripeActionBusy : null}
           notSold={planNotSold}
+          teamOffered={teamPlanEnabled}
           onStartTeam={(addPeople) => void startTeamCheckout(addPeople)}
           onOpenPortal={() => void openStripePortal()}
         />

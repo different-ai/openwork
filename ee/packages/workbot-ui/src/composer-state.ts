@@ -85,10 +85,12 @@ export function createComposerState(uploadFile: Uploader) {
       if (upload) release(upload);
       publish({ ...state, uploads: state.uploads.filter(upload => upload.key !== key) });
     },
-    enqueue: (input: { id: string; text: string; context?: WorkbotViewContext; teachingId?: string; teachingStepId?: number; correctionOf?: string; correctionReference?: WorkbotCorrectionReference; attachments?: WorkbotAttachment[] }) => {
+    /** `keepDraft`: a message that isn't the draft (a correction, a tap on Show me) leaves the draft and its uploads alone. */
+    enqueue: ({ keepDraft = false, ...input }: { id: string; text: string; context?: WorkbotViewContext; teachingId?: string; teachingStepId?: number; correctionOf?: string; correctionReference?: WorkbotCorrectionReference; attachments?: WorkbotAttachment[]; keepDraft?: boolean }) => {
+      const separate = keepDraft || input.correctionOf !== undefined;
       const entry: Pending = { ...input, attachments: input.attachments ?? [], sentAt: Date.now(),
-        uploads: input.correctionOf ? [] : state.uploads, failed: null };
-      publish({ ...state, ...(input.correctionOf ? {} : { text: "", uploads: [] }), pending: [...state.pending, entry] });
+        uploads: separate ? [] : state.uploads, failed: null };
+      publish({ ...state, ...(separate ? {} : { text: "", uploads: [] }), pending: [...state.pending, entry] });
       return entry.id;
     },
     send: async (id: string, sender: Sender, retry = false) => {

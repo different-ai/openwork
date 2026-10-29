@@ -7,12 +7,16 @@ import {
   TeamMemberTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { AUTOMATION_CLOUD_DEFAULT_MODEL, AUTOMATION_FREE_MODEL, automationModelAllowedByProvider } from "@openwork/types/automations"
+import {
+  AUTOMATION_CLOUD_DEFAULT_MODEL,
+  AUTOMATION_FREE_MODEL,
+  automationModelAllowedByProvider,
+  isDenAuthorizedAutomationProvider,
+  type AutomationExecutionTarget,
+} from "@openwork/types/automations"
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 import { db } from "../db.js"
 import { organizationAllowsManagedModels } from "../inference.js"
-import { calculateDesktopPolicyForOrgMember } from "../desktop-policies.js"
-import { organizationFeatureEnabled } from "../features.js"
 
 type ProviderId = typeof LlmProviderTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -39,7 +43,8 @@ export type AutomationModelSelection = {
 }
 
 export type ResolvedAutomationModel = AutomationModelSelection & {
-  accessKind: "free" | "openwork_managed" | "authorized_custom" | "cloud_default"
+  /** `desktop_runtime`: a provider only the executing desktop has; that runtime checks it before each run. */
+  accessKind: "free" | "openwork_managed" | "authorized_custom" | "cloud_default" | "desktop_runtime"
   providerRecordId: string | null
   providerName: string
   modelName: string
@@ -63,7 +68,6 @@ export type AutomationModelAuthorityStore = {
   findProvider(input: { organizationId: string; providerId: string }): Promise<AutomationAuthorityProvider | null>
   findModel(input: { providerRecordId: ProviderId; modelId: string }): Promise<AutomationAuthorityModel | null>
   canAccessProvider(input: { member: AutomationAuthorityMember; providerRecordId: ProviderId }): Promise<boolean>
-  allowsZenModel(input: { organizationId: string; ownerMemberId: string }): Promise<boolean>
 }
 
 const databaseAuthorityStore: AutomationModelAuthorityStore = {
@@ -123,17 +127,6 @@ const databaseAuthorityStore: AutomationModelAuthorityStore = {
     )).limit(1)
     return Boolean(grants[0])
   },
-
-  async allowsZenModel(input) {
-    // The removeOpencodeZen rollout retires Zen for Automations too; affected
-    // ones ask their owner to choose another model (model_access_lost).
-    if (await organizationFeatureEnabled(input.organizationId, "removeOpencodeZen")) return false
-    const policy = await calculateDesktopPolicyForOrgMember({
-      organizationId: normalizeDenTypeId("organization", input.organizationId),
-      orgMemberId: normalizeDenTypeId("member", input.ownerMemberId),
-    })
-    return policy.allowZenModel
-  },
 }
 
 function enabledOpenWorkModel(modelId: string) {
@@ -159,8 +152,15 @@ function resolvedProviderModel(input: {
   }
 }
 
+export type AutomationModelAccessInput = {
+  organizationId: string
+  ownerMemberId: string
+  /** Where this check's run executes; a desktop can use providers Den has no record of. */
+  executionTarget: AutomationExecutionTarget
+} & AutomationModelSelection
+
 export async function resolveAutomationModelAccessWithStore(
-  input: { organizationId: string; ownerMemberId: string } & AutomationModelSelection,
+  input: AutomationModelAccessInput,
   store: AutomationModelAuthorityStore,
 ): Promise<AutomationAuthorityResult> {
   const member = await store.findActiveMember(input)
@@ -188,26 +188,10 @@ export async function resolveAutomationModelAccessWithStore(
   }
 
   if (input.providerId === AUTOMATION_FREE_MODEL.providerId) {
-    if (input.modelId !== AUTOMATION_FREE_MODEL.modelId) {
-      return { ok: false, code: "model_access_lost", message: "The selected free model is not available for Automations." }
-    }
-    if (!await store.allowsZenModel(input)) {
-      return {
-        ok: false,
-        code: "model_access_lost",
-        message: "The selected OpenCode Zen model is no longer available. Choose a supported model to resume this Automation.",
-      }
-    }
     return {
-      ok: true,
-      value: {
-        accessKind: "free",
-        providerRecordId: null,
-        providerId: input.providerId,
-        modelId: input.modelId,
-        providerName: AUTOMATION_FREE_MODEL.providerName,
-        modelName: AUTOMATION_FREE_MODEL.modelName,
-      },
+      ok: false,
+      code: "model_access_lost",
+      message: "The selected OpenCode Zen model is no longer available. Choose a supported model to resume this Automation.",
     }
   }
 
@@ -235,6 +219,27 @@ export async function resolveAutomationModelAccessWithStore(
         modelId: input.modelId,
         providerName: provider.name,
         modelName: model.displayName.replace(/^OpenWork:\s*/, ""),
+      },
+    }
+  }
+
+  if (!isDenAuthorizedAutomationProvider(input.providerId)) {
+    // Desktop Automations run on the owner's desktop with the providers it has
+    // (connected there, or AI Gateway providers synced for the owner). Den holds
+    // no record of them, so the desktop runtime refuses a model it lacks before
+    // the run starts. The cloud has none of them.
+    if (input.executionTarget !== "desktop") {
+      return { ok: false, code: "provider_unavailable", message: "This model is only available on a desktop. Choose a model your organization provides to run this Automation in the cloud." }
+    }
+    return {
+      ok: true,
+      value: {
+        accessKind: "desktop_runtime",
+        providerRecordId: null,
+        providerId: input.providerId,
+        modelId: input.modelId,
+        providerName: input.providerId,
+        modelName: input.modelId,
       },
     }
   }
@@ -274,12 +279,7 @@ export function isActiveAutomationOwner(
   return isActiveAutomationOwnerWithStore(input, databaseAuthorityStore)
 }
 
-export function resolveAutomationModelAccess(input: {
-  organizationId: string
-  ownerMemberId: string
-  providerId: string
-  modelId: string
-}): Promise<AutomationAuthorityResult> {
+export function resolveAutomationModelAccess(input: AutomationModelAccessInput): Promise<AutomationAuthorityResult> {
   return resolveAutomationModelAccessWithStore(input, databaseAuthorityStore)
 }
 

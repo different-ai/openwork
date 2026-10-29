@@ -5,12 +5,11 @@ import { AGENT_CONNECTION_REMOVAL_PATH, catalogOperationAvailableToCapabilities 
 const removal = { method: "POST", path: AGENT_CONNECTION_REMOVAL_PATH }
 const base = { generatedArtifactViewsEnabled: true, managedDeploymentsEnabled: false }
 
-test("connection removal is offered only to a person's own agent, and only with the rollout", () => {
-  assert.equal(catalogOperationAvailableToCapabilities({ ...base, agentConnectionRemovalEnabled: false, usageSource: "agent" }, removal), false)
-  assert.equal(catalogOperationAvailableToCapabilities({ ...base, agentConnectionRemovalEnabled: true, usageSource: "agent" }, removal), true)
-  for (const usageSource of ["workflow", "automation", "app", undefined]) {
-    assert.equal(catalogOperationAvailableToCapabilities({ ...base, agentConnectionRemovalEnabled: true, usageSource }, removal), false, String(usageSource))
+test("connection removal is offered only to a person's own agent", () => {
+  assert.equal(catalogOperationAvailableToCapabilities({ ...base, usageSource: "agent" }, removal), true)
+  for (const usageSource of ["workflow", "automation", "app", "artifact", undefined]) {
+    assert.equal(catalogOperationAvailableToCapabilities({ ...base, usageSource }, removal), false, String(usageSource))
   }
   // Other connection operations are unaffected.
-  assert.equal(catalogOperationAvailableToCapabilities({ ...base, agentConnectionRemovalEnabled: false }, { method: "GET", path: "/v1/mcp-connections" }), true)
+  assert.equal(catalogOperationAvailableToCapabilities(base, { method: "GET", path: "/v1/mcp-connections" }), true)
 })

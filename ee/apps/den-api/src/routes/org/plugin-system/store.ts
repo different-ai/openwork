@@ -1,3 +1,4 @@
+import { deriveConnectionState } from "@openwork/types/den/connection-state"
 import { and, asc, count, desc, eq, inArray, isNull, notExists, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
@@ -840,14 +841,14 @@ const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = [
     icon: { src: "/openwork-mark.svg" },
     composer: { prompt: "Use the OpenWork Browser extension to " },
     setup: { instructions: "OpenWork Browser is ready by default in desktop workspaces." },
-    resources: [{ type: "opencode-plugin", id: "opencode-chrome-devtools", packageName: "opencode-chrome-devtools", required: true }],
+    resources: [{ type: "opencode-plugin", id: "openwork-chrome-devtools", label: "OpenWork browser tools", required: true }],
     contributions: [
       { type: "settings-panel", ref: "openwork.browser.settings", location: "settings-detail" },
       { type: "session-side-panel", ref: "openwork.browser.panel", location: "session-right-pane" },
       { type: "composer-prompt", prompt: "Use the OpenWork Browser extension to ", location: "composer" },
     ],
     enablement: [{ type: "toggle-enabled", ref: "openwork-browser", label: "Enabled" }],
-    lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:opencode-chrome-devtools"] },
+    lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:openwork-chrome-devtools"] },
     defaultEnabled: true,
   },
   {
@@ -2484,27 +2485,6 @@ export async function listMeLibraryPluginItems(input: { context: PluginArchActor
   }))
 }
 
-function memberConnectionState(connection: MemberUsableConnectionFacts) {
-  if (
-    connection.setupRequired
-    || connection.issuerReviewRequired
-    || connection.reconnectActionOwner === "organization_admin"
-    || connection.authPolicyConfirmed === false
-    || connection.authTypeMismatch
-    || (connection.oauthClientRequired && !connection.oauthClientConfigured)
-    || (connection.credentialMode === "shared" && !connection.connectedForMe)
-  ) {
-    return "needs_admin_setup"
-  }
-  if (connection.credentialMode === "per_member" && (!connection.connectedForMe || connection.needsReconnect)) {
-    return "needs_signin"
-  }
-  if (connection.connectedForMe || (connection.credentialMode === "shared" && connection.connected)) {
-    return "connected"
-  }
-  return "available"
-}
-
 export async function listMeLibraryConnectionItems(input: {
   connections: MemberUsableConnectionFacts[]
   context: PluginArchActorContext
@@ -2580,7 +2560,7 @@ export async function listMeLibraryConnectionItems(input: {
       description: null,
       transport: connection.nativeProviderKey !== null ? "native" : "mcp",
       provider: connection.nativeProviderKey,
-      state: memberConnectionState(connection),
+      state: deriveConnectionState(connection).member,
       connectedAt: connection.connectedAt,
       edges,
     }

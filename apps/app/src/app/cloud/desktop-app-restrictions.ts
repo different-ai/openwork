@@ -17,17 +17,27 @@ export const DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID = "opencode";
 export function checkDesktopAppRestriction(input: {
   config: DenDesktopConfig | null | undefined;
   restriction: DesktopAppRestrictionKey;
-  /** The `removeOpencodeZen` feature as read signed out (`GET /v1/features`). */
-  opencodeZenRemoved?: boolean;
 }) {
-  // Removing OpenCode Zen is a product rollout, not an organization policy, so it
-  // applies even while desktop policy enforcement is off. It reuses the Zen
-  // restriction so every surface that already honors it (model list, Connect,
-  // Automations, the engine's disabled providers) drops Zen in one place.
-  if (input.restriction === "allowZenModel" && (input.opencodeZenRemoved === true || input.config?.removeOpencodeZen === true)) {
+  // OpenCode Zen is retired, including signed-out and offline use. Reuse the
+  // restriction every surface already honors (model list, Connect, Automations
+  // and the engine's disabled providers), regardless of organization policy.
+  if (input.restriction === "allowZenModel") {
     return true;
   }
   return desktopPolicyKeyEnforced(input.restriction) && input.config?.[input.restriction] === false;
+}
+
+const RETIRED_OPENCODE_ZEN_TERMS = "opencode zen big pickle free";
+
+/**
+ * Whether Connect a provider shows OpenCode Zen as retired where it used to be
+ * listed: only while Zen itself is missing from the list, and for an empty
+ * search or one a person looking for Zen would type.
+ */
+export function showsRetiredOpencodeZen(input: { providerIds: readonly string[]; query: string }) {
+  if (input.providerIds.some((id) => id.trim().toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID)) return false;
+  const query = input.query.trim().toLowerCase();
+  return !query || RETIRED_OPENCODE_ZEN_TERMS.includes(query);
 }
 
 /** Catalog copy explaining why the organization blocked a capability. */

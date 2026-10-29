@@ -4,19 +4,20 @@ import { ChevronDown, Lock } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type ReactNode, useRef, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
-import { getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags, getToolTesterRoute, permissionLockReason } from "../../_lib/den-org";
+import { getLibraryConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags, getToolTesterRoute, orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessAddedToast } from "./access-summary";
 import { signInSentence } from "./admin-connectors";
 import { connectorAccountReady } from "./connector-detail";
+import { assignedConnectorForLibrary, personalConnectorDisconnectLabel } from "./connector-library-navigation";
 import { ChatButton, WhatYourAiCanDo } from "./connector-page-screen";
 import { GOOGLE_WORKSPACE_QUICK_ADD_ID, isNativeProviderCatalogId, MICROSOFT_365_QUICK_ADD_ID } from "./connector-catalog";
 import { useMemberSignIn } from "./connector-setup";
 import { ConnectorSettingsForm } from "./connector-settings";
 import { useDenToast } from "./den-toast";
 import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
-import { ConfirmDialog, DetailRows, ItemMenu, removeEntry, ItemPanel } from "./item-list";
+import { ConfirmDialog, DetailRows, ItemMenu, removeEntry, ItemPanel, LinkButton } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import { useSaveConnectionAccess } from "./item-sharing";
 import { connectionMcpSetupUrl } from "./mcp-connection-app-setup";
@@ -25,6 +26,8 @@ import {
   isNativeProviderConnectionId,
   useDeleteMcpConnection,
   useDisconnectMcpConnection,
+  useDisconnectMyProviderAccount,
+  useMcpConnections,
   useMcpConnectionTools,
   useUpdateMcpConnection,
 } from "./mcp-connections-data";
@@ -134,6 +137,11 @@ export function AdminConnectorPageScreen({ connection, confirmRemove = false }: 
   const router = useRouter();
   const toast = useDenToast();
   const { orgSlug, orgContext } = useOrgDashboard();
+  const libraryNavigation = orgFeatureEnabled(orgContext, "libraryConnectorNavigation");
+  const usable = useMcpConnections("usable", { enabled: libraryNavigation });
+  const assignedConnection = assignedConnectorForLibrary(libraryNavigation, connection.id, usable.data);
+  const personalDisconnectLabel = personalConnectorDisconnectLabel(assignedConnection);
+  const disconnectMyAccount = useDisconnectMyProviderAccount();
   const memberAccess = orgContext
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
     : null;
@@ -232,6 +240,18 @@ export function AdminConnectorPageScreen({ connection, confirmRemove = false }: 
               label={`More for ${name}`}
               entries={[
                 { label: "Edit settings", onSelect: () => setSettingsOpen(true) },
+                ...(personalDisconnectLabel && assignedConnection ? [{
+                  label: personalDisconnectLabel,
+                  disabled: disconnectMyAccount.isPending,
+                  onSelect: async () => {
+                    try {
+                      await disconnectMyAccount.mutateAsync(assignedConnection);
+                      toast({ title: personalDisconnectLabel === "Remove your key" ? `Your key for ${name} is removed` : `You are signed out of ${name}`, description: "Everyone else stays signed in." });
+                    } catch {
+                      toast({ title: personalDisconnectLabel === "Remove your key" ? `Could not remove your key for ${name}` : `Could not sign out of ${name}`, description: "Try again." });
+                    }
+                  },
+                }] : []),
                 ...(!native && signedIn && memberAccess?.canManageConnections ? [{ label: "Test tools", href: `${getToolTesterRoute(orgSlug)}?connectionId=${encodeURIComponent(connectionId)}` }] : []),
                 ...(!native && connection.authType !== "none" && connection.connected && memberAccess?.canDisconnectAnyConnection ? [{
                   label: "Sign everyone out",
@@ -244,6 +264,7 @@ export function AdminConnectorPageScreen({ connection, confirmRemove = false }: 
                 ...(aliasOnly ? [] : [canRemove ? { ...removeEntry(name, remove), confirm: removeConfirm } : { label: "Remove", destructive: true, disabled: true }]),
               ]}
             />
+            {assignedConnection ? <LinkButton href={getLibraryConnectorRoute(orgSlug, assignedConnection.id)}>Open in My Library</LinkButton> : null}
             <ChatButton name={name} />
           </>
         )}

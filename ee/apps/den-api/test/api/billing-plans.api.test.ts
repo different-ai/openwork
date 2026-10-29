@@ -119,7 +119,7 @@ test("paying for Team for six people sets the plan and unlocks Team features, wi
   assert.deepEqual(await orgPlan(acme.owner, acme.orgId), { plan: { tier: "team", source: "stripe" }, sso: true })
   const billing = await acme.call("GET", "/v1/billing")
   assert.equal(billing.status, 200, summary(billing))
-  assert.deepEqual(field(billing.body, "billing", "plan"), { tier: "team", source: "stripe", people: 5, joined: 5, invited: 0, freeSeatCount: 5 })
+  assert.deepEqual(field(billing.body, "billing", "plan"), { tier: "team", source: "stripe", people: 5, joined: 5, invited: 0, freeSeatCount: 5, userLimit: null, endsAt: null })
   assert.equal(field(billing.body, "billing", "stripe", "seats", "hasActiveSubscription"), true)
   assert.equal(field(billing.body, "billing", "stripe", "hasActiveSubscription"), false, "OpenWork Models is a separate purchase")
   assert.equal(stripe.state().subscriptions.filter((subscription) => subscription.metadata.org_id === acme.orgId && subscription.metadata.subscription_type === "inference").length, 0)
@@ -131,7 +131,7 @@ test("on Team, the sixth person is invited and every person is billed", async ()
   const subscription = stripe.state().subscriptions.find((entry) => entry.metadata.org_id === acme.orgId)
   assert.equal(subscription?.items.data[0]?.quantity, 6, "per-person plans bill every counted person, invited included")
   const billing = await acme.call("GET", "/v1/billing")
-  assert.deepEqual(field(billing.body, "billing", "plan"), { tier: "team", source: "stripe", people: 6, joined: 5, invited: 1, freeSeatCount: 5 })
+  assert.deepEqual(field(billing.body, "billing", "plan"), { tier: "team", source: "stripe", people: 6, joined: 5, invited: 1, freeSeatCount: 5, userLimit: null, endsAt: null })
   assert.equal(field(billing.body, "billing", "stripe", "seats", "subscription", "quantity"), 6)
 })
 
@@ -196,6 +196,7 @@ test("a manual Enterprise grant is never lowered by buying or cancelling Team", 
   const grant = await den.request(adminToken, "PATCH", `/v1/admin/organizations/${granted.orgId}/plan`, { body: { tier: "enterprise", seatLimit: 50 } })
   assert.equal(grant.status, 200, summary(grant))
   assert.equal(field(await orgPlan(granted.owner, granted.orgId), "plan", "source"), "manual")
+  assert.equal(field((await granted.call("GET", "/v1/billing")).body, "billing", "plan", "userLimit"), 50, "the admin-set plan allows its users")
 
   const started = await granted.call("POST", "/v1/billing/stripe/checkout", { type: "plan", plan: "team", returnTo: "https://evil.example/dashboard" })
   assert.equal(started.status, 200, summary(started))
@@ -208,6 +209,7 @@ test("a manual Enterprise grant is never lowered by buying or cancelling Team", 
   const kept = await orgPlan(granted.owner, granted.orgId)
   assert.equal(field(kept, "plan", "tier"), "enterprise")
   assert.equal(field(kept, "plan", "source"), "manual")
+  assert.equal(field((await granted.call("GET", "/v1/billing")).body, "billing", "plan", "userLimit"), null, "paying for Team in Stripe lifts the limit")
 
   const subscription = stripe.state().subscriptions.find((entry) => entry.metadata.org_id === granted.orgId)
   assert.ok(subscription)

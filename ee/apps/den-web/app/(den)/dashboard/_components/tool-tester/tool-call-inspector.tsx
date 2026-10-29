@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Check, CircleCheck, CircleX, LockKeyhole, X } from "lucide-react";
+import { Check, ChevronRight, CircleCheck, CircleX, LockKeyhole, X } from "lucide-react";
+import { toolResultPresentation } from "./result-presentation";
 import { UnderlineTabs } from "../../../_components/ui/tabs";
 import {
   type ExternalMcpInspectionBody,
@@ -203,7 +204,29 @@ function ResponseInspection({ inspection }: { inspection: ExternalMcpToolCallIns
   );
 }
 
-export function McpToolCallInspector({ outcome }: { outcome: McpToolCallOutcome }) {
+function ToolResult({ result }: { result: unknown }) {
+  const presentation = toolResultPresentation(result);
+  return (
+    <div className="space-y-3">
+      {presentation.isError ? <p role="alert" className="text-[12px] text-red-600">The tool returned an error.</p> : null}
+      {presentation.blocks.map((block, index) => (
+        <pre key={index} className={`max-h-80 overflow-auto whitespace-pre-wrap break-words text-[12px] leading-5 text-[var(--dls-text-primary)] ${block.kind === "text" ? "font-sans" : "font-mono"}`}>
+          {block.text}
+        </pre>
+      ))}
+      {presentation.emptyMessage ? <p className="text-[12px] text-[var(--dls-text-secondary)]">{presentation.emptyMessage}</p> : null}
+      <details className="group/result border-t border-[var(--dls-border)] pt-3">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[12px] font-medium text-[var(--dls-text-secondary)] [&::-webkit-details-marker]:hidden">
+          <ChevronRight className="h-4 w-4 shrink-0 transition-transform duration-150 ease-out group-open/result:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
+          Technical details
+        </summary>
+        <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-gray-950 p-3 text-[11px] leading-[18px] text-gray-100">{formatJson(result)}</pre>
+      </details>
+    </div>
+  );
+}
+
+export function McpToolCallInspector({ outcome, revisedSetup = false }: { outcome: McpToolCallOutcome; revisedSetup?: boolean }) {
   const [activeTab, setActiveTab] = useState<"result" | "request" | "response">("result");
   const succeeded = outcome.status === "completed";
   const summary = outcome.failureAttribution?.likelySource
@@ -247,8 +270,10 @@ export function McpToolCallInspector({ outcome }: { outcome: McpToolCallOutcome 
       <div className="p-4">
         {activeTab === "result" ? (
           <div className="space-y-2">
-            <pre className="max-h-80 overflow-auto rounded-xl bg-gray-950 p-3 text-[11px] leading-[18px] text-gray-100">{formatJson(outcome.result)}</pre>
-            <p className="inline-flex items-center gap-1.5 text-[10px] text-gray-500">
+            {revisedSetup ? <ToolResult result={outcome.result} /> : (
+              <pre className="max-h-80 overflow-auto rounded-xl bg-gray-50 p-3 text-[12px] leading-[18px] text-gray-700">{formatJson(outcome.result)}</pre>
+            )}
+            <p className="inline-flex items-center gap-1.5 text-[12px] text-gray-500">
               <LockKeyhole className="h-3 w-3" aria-hidden="true" /> Credential headers redacted. Returned only for this run — never stored in OpenWork logs.
             </p>
           </div>

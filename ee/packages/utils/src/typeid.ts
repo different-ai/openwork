@@ -129,12 +129,16 @@ export const idTypesMapNameToPrefix = {
   agentPermissionPolicy: "agp",
   agentPermissionSetting: "aps",
   orgDefaultModel: "odm",
+  autoRouter: "aur",
+  autoRouterRoute: "arr",
   headlessResumeGrant: "hrsg",
   desktopStartupReport: "dsr",
   accountFollowUpAction: "afa",
   orgPrompt: "osp",
   orgPromptAccess: "ospa",
   sandboxOrganization: "sbx",
+  mcpRegistrationStatus: "mrs",
+  mcpRegistrationEvent: "mre",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

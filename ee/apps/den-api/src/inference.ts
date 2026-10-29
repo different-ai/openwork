@@ -41,8 +41,7 @@ import { revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecyc
 import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { MEMBER_FREE_STATUS_PATH } from "@openwork/free-auto"
 import { calculateDesktopPolicyForOrgMember } from "./desktop-policies.js"
-import { freeAutoGrantAllowance, grantUsd } from "@openwork-ee/den-db"
-import { getOrganizationBenefits } from "./organization-benefits.js"
+import { sandboxFreeAutoStopped } from "@openwork-ee/den-db"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -63,7 +62,8 @@ type Database = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
 export async function freeAutoBlockedByDesktopPolicy(input: Pick<FreeMemberInput, "organizationId" | "memberId">): Promise<boolean> {
   const policy = await calculateDesktopPolicyForOrgMember({ organizationId: input.organizationId, orgMemberId: input.memberId })
   if (policy.allowZenModel === false) return true
-  return (await getOrganizationBenefits(input.organizationId)).settings.freeAuto === "disabled"
+  // A closed or expired sandbox organization gets no Free Auto until a platform admin extends it.
+  return sandboxFreeAutoStopped(db, input.organizationId)
 }
 
 export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<InferenceAccess> {
@@ -86,12 +86,7 @@ export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<
     const identity = freeHash("member", input.userId)
     const [bucket] = await db.select({ used_amount: InferenceFreeUsageBucketTable.used_amount }).from(InferenceFreeUsageBucketTable).where(and(
       eq(InferenceFreeUsageBucketTable.identity_hash, identity), eq(InferenceFreeUsageBucketTable.window_start_at, freeInferenceWindow(now).start))).limit(1)
-    const access = freeInferenceAccess({ config: env.inferenceFree, now, bucket })
-    if (access.kind === "unavailable") return { ...access, defaultPinned }
-    const allowance = freeAutoGrantAllowance(await getOrganizationBenefits(input.organizationId))
-    if (allowance.unlimited) return { ...access, kind: "free", reason: null, weeklyLimitUsd: null, remainingUsd: null, defaultPinned }
-    const remainingUsd = (access.remainingUsd ?? 0) + grantUsd(allowance.remainingAmount)
-    return { ...access, ...(remainingUsd > 0 ? { kind: "free", reason: null, remainingUsd } : {}), defaultPinned }
+    return { ...freeInferenceAccess({ config: env.inferenceFree, now, bucket }), defaultPinned }
   } catch (error) {
     return unavailable(error instanceof ManagedModelsPolicyError && error.code === "managed_models_disabled_for_dpa" ? "admin_disabled" : "accounting_unavailable")
   }
@@ -114,9 +109,7 @@ export async function getFreeInferenceProviderSummary(organizationId: OrgId): Pr
     reason = "admin_disabled"
   }
   if (!freeInferenceOrganizationAllowed(organization.metadata)) reason = "admin_disabled"
-  const benefits = await getOrganizationBenefits(organizationId)
-  if (benefits.settings.freeAuto === "disabled") reason = "admin_disabled"
-  const grants = freeAutoGrantAllowance(benefits)
+  if (await sandboxFreeAutoStopped(db, organizationId)) reason = "admin_disabled"
   const summary: FreeInferenceProviderSummary = {
     state: reason ? "disabled" : "available", reason,
     defaultPinned: freeInferenceDefaultPinned(organization.metadata),
@@ -142,7 +135,7 @@ export async function getFreeInferenceProviderSummary(organizationId: OrgId): Pr
     return { ...summary, state: "unavailable", reason: "accounting_unavailable" }
   }
   return { ...summary, allowance: { ...summary.allowance,
-    exhaustedMembers: grants.unlimited || grants.remainingAmount > 0 ? 0 : accesses.filter((access) => access.kind === "exhausted").length,
+    exhaustedMembers: accesses.filter((access) => access.kind === "exhausted").length,
     usedUsd: Number(usage.usedAmount) / INFERENCE_USAGE_CONVERSION_FACTOR,
     requestCount: Number(usage.requestCount),
   } }

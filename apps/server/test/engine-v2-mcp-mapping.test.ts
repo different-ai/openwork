@@ -18,10 +18,18 @@ test("managed openwork-cloud opts into V2 protocol auto without leaking unsuppor
     timeout: 12_000,
   }, "openwork-cloud"), {
     ...remote,
+    headers: { ...remote.headers, "x-openwork-mcp-client-capabilities": "native-skills-v1" },
     protocol: "auto",
     codemode: false,
     timeout: { startup: 12_000, catalog: 12_000, execution: 12_000 },
   });
+});
+
+test("managed openwork-cloud tells Den it lists skills natively, keeping other capabilities", () => {
+  const mapped = mapRuntimeMcpToV2({ ...remote, headers: { ...remote.headers, "X-OpenWork-MCP-Client-Capabilities": "other-v1" } }, "openwork-cloud");
+  assert.deepEqual(mapped?.headers, { ...remote.headers, "X-OpenWork-MCP-Client-Capabilities": "other-v1,native-skills-v1" });
+  const again = mapRuntimeMcpToV2({ ...remote, headers: mapped?.headers }, "openwork-cloud");
+  assert.deepEqual(again?.headers, mapped?.headers, "the capability is added once");
 });
 
 test("generic remote MCPs keep the legacy default even with the same URL or runtime protocol fields", () => {

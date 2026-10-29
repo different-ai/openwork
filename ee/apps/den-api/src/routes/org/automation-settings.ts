@@ -8,7 +8,6 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { automationAvailabilityFor, headlessAutomationsConfigured } from "../../automations/organization-availability.js"
 import { env } from "../../env.js"
-import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, requireOrgPermission } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { updateOrganizationMetadata } from "../../organization-metadata.js"
@@ -32,7 +31,7 @@ const automationSettingsInputSchema = organizationAutomationSettingsSchema.parti
 const errorSchema = z.object({ error: z.string(), message: z.string() })
 
 function view(metadata: unknown) {
-  const availability = automationAvailabilityFor({ metadata, settingsEnabled: true, headlessRunnerConfigured: headlessAutomationsConfigured() })
+  const availability = automationAvailabilityFor({ metadata, headlessRunnerConfigured: headlessAutomationsConfigured() })
   return {
     settings: readOrganizationAutomationSettings(metadata),
     available: { desktop: availability.desktop, cloud: availability.cloud },
@@ -52,11 +51,9 @@ export function registerOrgAutomationSettingsRoutes<T extends { Variables: OrgRo
       responses: {
         200: jsonResponse("Automation settings returned.", automationSettingsViewSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
-        404: jsonResponse("Automation settings are not turned on for this organization.", errorSchema),
       },
     }),
     orgMemberRoute(),
-    requireFeature("organizationAutomationSettings"),
     async (c) => {
       c.header("Cache-Control", "no-store")
       return c.json(view(c.get("organizationContext").organization.metadata))
@@ -74,12 +71,10 @@ export function registerOrgAutomationSettingsRoutes<T extends { Variables: OrgRo
         400: jsonResponse("The request was invalid.", invalidRequestSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
         403: jsonResponse("The caller cannot edit organization settings.", forbiddenSchema),
-        404: jsonResponse("Automation settings are not turned on for this organization.", errorSchema),
         409: jsonResponse("Cloud Automations need the deployment's headless runner.", errorSchema),
       },
     }),
     orgMemberRoute(),
-    requireFeature("organizationAutomationSettings"),
     requireOrgPermission("organization.update"),
     jsonValidator(automationSettingsInputSchema),
     async (c) => {

@@ -165,12 +165,12 @@ describe("where a successful handoff lands", () => {
 });
 
 describe("starting sign-in from a conversation", () => {
-  test("on: records the target and opens the browser without leaving the route", () => {
+  test("records the target and opens the browser without leaving the route", () => {
     const storage = memoryStorage();
     const openLink = mock((_url: string) => {});
     const markDesktopSignInInitiated = mock(() => {});
     const fallback = mock(() => {});
-    const result = beginSignInReturn({ path: conversation, authUrl, pendingTurn: true }, { enabled: true, openLink, markDesktopSignInInitiated, fallback, now: T0, storage });
+    const result = beginSignInReturn({ path: conversation, authUrl, pendingTurn: true }, { openLink, markDesktopSignInInitiated, fallback, now: T0, storage });
     expect(result).toBe("in-place");
     expect(fallback).not.toHaveBeenCalled();
     expect(openLink).toHaveBeenCalledWith(authUrl);
@@ -178,20 +178,19 @@ describe("starting sign-in from a conversation", () => {
     expect(readSignInReturnTarget(T0, storage)).toMatchObject({ path: conversation, pendingTurn: true });
   });
 
-  test("off: the entry point's existing behaviour runs and nothing is recorded", () => {
-    const storage = memoryStorage();
+  test("unavailable storage still opens sign-in without retaining a return target", () => {
     const openLink = mock((_url: string) => {});
     const fallback = mock(() => {});
-    expect(beginSignInReturn({ path: conversation, authUrl }, { enabled: false, openLink, markDesktopSignInInitiated: () => {}, fallback, now: T0, storage })).toBe("fallback");
-    expect(fallback).toHaveBeenCalledTimes(1);
-    expect(openLink).not.toHaveBeenCalled();
-    expect(storage.values.size).toBe(0);
+    expect(beginSignInReturn({ path: conversation, authUrl }, { openLink, markDesktopSignInInitiated: () => {}, fallback, storage: null })).toBe("in-place");
+    expect(fallback).not.toHaveBeenCalled();
+    expect(openLink).toHaveBeenCalledWith(authUrl);
+    expect(readSignInReturnTarget(T0, null)).toBeNull();
   });
 
   test("from a sign-in surface it keeps the existing behaviour", () => {
     const storage = memoryStorage();
     const fallback = mock(() => {});
-    expect(beginSignInReturn({ path: "/onboarding", authUrl }, { enabled: true, openLink: () => {}, markDesktopSignInInitiated: () => {}, fallback, now: T0, storage })).toBe("fallback");
+    expect(beginSignInReturn({ path: "/onboarding", authUrl }, { openLink: () => {}, markDesktopSignInInitiated: () => {}, fallback, now: T0, storage })).toBe("fallback");
     expect(fallback).toHaveBeenCalledTimes(1);
   });
 });
@@ -212,22 +211,17 @@ describe("in the app", () => {
     await GlobalRegistrator.unregister();
   });
 
-  test("Auto's Sign in stays on the conversation when on, and opens Cloud account settings when off", () => {
+  test("Auto's Sign in always keeps the conversation on screen", () => {
     window.location.hash = `#${conversation}`;
     const openLink = mock((_url: string) => {});
-    const signIn = (enabled: boolean) => (request: { pendingTurn?: boolean; fallback?: () => void }) => beginSignInReturn(
+    const signIn = (request: { pendingTurn?: boolean; fallback?: () => void }) => beginSignInReturn(
       { path: conversation, authUrl, pendingTurn: request.pendingTurn },
-      { enabled, openLink, markDesktopSignInInitiated: () => {}, fallback: request.fallback ?? (() => {}) },
+      { openLink, markDesktopSignInInitiated: () => {}, fallback: request.fallback ?? (() => {}) },
     );
-    openAutoSignIn(undefined, signIn(true), { workspaceId: "ws_local", sessionId: "ses_contract" });
+    openAutoSignIn(undefined, signIn, { workspaceId: "ws_local", sessionId: "ses_contract" });
     expect(window.location.hash).toBe(`#${conversation}`);
     expect(openLink).toHaveBeenCalledWith(authUrl);
     expect(readSignInReturnTarget()?.path).toBe(conversation);
-
-    clearSignInReturnTarget();
-    openAutoSignIn(undefined, signIn(false));
-    expect(window.location.hash).toBe("#/workspace/ws_local/settings/cloud-account");
-    expect(readSignInReturnTarget()).toBeNull();
   });
 
   test("a desktop sign-in with several organizations holds the choice, then returns once with the org named", async () => {

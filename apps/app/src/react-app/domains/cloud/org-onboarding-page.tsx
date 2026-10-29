@@ -665,7 +665,7 @@ export function ResourceSelectionPage({ autoContinue = false, previousOrgId = ""
         window.localStorage.setItem(RELOAD_AFTER_ONBOARDING_KEY, "1");
       } catch {}
     }
-    // A sign-in started from a conversation returns there (`desktopSignInReturn`).
+    // A sign-in started from a conversation returns there.
     if (!completeSignInReturn(navigate)) navigate("/session", { replace: true });
     // Stores and caches across the app still hold the previous organization's
     // providers, skills and connections. Start over at the route above.

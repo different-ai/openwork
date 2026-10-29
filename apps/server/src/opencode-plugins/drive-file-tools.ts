@@ -30,6 +30,22 @@ export const drivePushFileArgs = z.object({
   name: z.string().min(1).max(255).optional().describe("Name for a copy."),
 }).strict();
 
+/** What the model sees for each tool; v1 tools and the v2 context plugin share these. */
+export const DRIVE_FILE_TOOLS = {
+  drive_pull_file: {
+    description: "Save a Google Drive, OneDrive or SharePoint file into the workspace and return its path and revision, never its content. Use it to analyze or edit Office, PDF, CSV or any large file with shell tools. Docs, Sheets and Slides arrive as docx, xlsx and pptx unless format says otherwise.",
+    args: drivePullFileArgs,
+  },
+  drive_file_status: {
+    description: "For files pulled with drive_pull_file, report whether the local copy has edits not saved back and whether the file changed in Drive, OneDrive or SharePoint since the pull.",
+    args: driveFileStatusArgs,
+  },
+  drive_push_file: {
+    description: "Save a pulled file back to where it came from when the person asks. Asks the person first. Stored files, including Office files in OneDrive and SharePoint, are replaced in place as a new version; Google Docs, Sheets and Slides and PDF conversions are saved as a new file next to the original. Returns drive_conflict, and changes nothing, when someone changed the file since the pull: pull it again and reapply the edits, or save a copy.",
+    args: drivePushFileArgs,
+  },
+} satisfies Record<DriveFileAction, { description: string; args: z.ZodObject }>;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -45,7 +61,7 @@ async function askPermission(context: unknown, permission: DriveFileAction, patt
 export function createDriveFileTools(call: CallDriveAction) {
   return {
     drive_pull_file: {
-      description: "Save a Google Drive, OneDrive or SharePoint file into the workspace and return its path and revision, never its content. Use it to analyze or edit Office, PDF, CSV or any large file with shell tools. Docs, Sheets and Slides arrive as docx, xlsx and pptx unless format says otherwise.",
+      description: DRIVE_FILE_TOOLS.drive_pull_file.description,
       args: drivePullFileArgs.shape,
       async execute(rawArgs: unknown, context: unknown) {
         const args = drivePullFileArgs.parse(rawArgs ?? {});
@@ -54,14 +70,14 @@ export function createDriveFileTools(call: CallDriveAction) {
       },
     },
     drive_file_status: {
-      description: "For files pulled with drive_pull_file, report whether the local copy has edits not saved back and whether the file changed in Drive, OneDrive or SharePoint since the pull.",
+      description: DRIVE_FILE_TOOLS.drive_file_status.description,
       args: driveFileStatusArgs.shape,
       async execute(rawArgs: unknown, context: unknown) {
         return JSON.stringify(await call("drive_file_status", driveFileStatusArgs.parse(rawArgs ?? {}), context), null, 2);
       },
     },
     drive_push_file: {
-      description: "Save a pulled file back to where it came from when the person asks. Asks the person first. Stored files, including Office files in OneDrive and SharePoint, are replaced in place as a new version; Google Docs, Sheets and Slides and PDF conversions are saved as a new file next to the original. Returns drive_conflict, and changes nothing, when someone changed the file since the pull: pull it again and reapply the edits, or save a copy.",
+      description: DRIVE_FILE_TOOLS.drive_push_file.description,
       args: drivePushFileArgs.shape,
       async execute(rawArgs: unknown, context: unknown) {
         const args = drivePushFileArgs.parse(rawArgs ?? {});

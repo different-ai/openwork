@@ -1,7 +1,8 @@
 /**
- * Automations are on by default; with the organizationAutomationSettings rollout an organization admin turns
+ * Automations are on by default; an organization admin turns
  * Desktop and Cloud Automations off separately, and Cloud Automations need the deployment's headless runner.
  */
+import { AUTOMATION_FREE_MODEL, AUTOMATION_MODEL_ATTENTION_CAPABILITY, AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER } from "@openwork/types/automations"
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
 import { bootDen, field, summary } from "./harness.js"
@@ -25,11 +26,11 @@ test("Automations are on by default for every organization", async () => {
   assert.equal(config.status, 200, summary(config))
   assert.equal(field(config.body, "automationsEnabled"), true)
   assert.equal(field(config.body, "desktopAutomationsEnabled"), true)
+  assert.equal(field(config.body, "localProviderMirror"), true, "published desktops always mirror local providers")
+  assert.equal(field(config.body, "removeOpencodeZen"), true, "published desktops always remove the retired Zen provider")
 })
 
-test("the settings stay hidden until the rollout is on for the organization", async () => {
-  assert.equal((await asOwner("GET", "/v1/org/automation-settings")).status, 404)
-  assert.equal((await den.setFeature(orgId, "organizationAutomationSettings", true)).status, 200)
+test("every organization has Automation settings, with Cloud unavailable without a runner", async () => {
   const read = await asMember("GET", "/v1/org/automation-settings")
   assert.equal(read.status, 200, summary(read))
   assert.deepEqual(field(read.body, "settings"), { desktop: true, cloud: true })
@@ -43,6 +44,28 @@ test("only people who can edit organization settings change them, and Cloud cann
   assert.equal(cloud.status, 409, summary(cloud))
   assert.equal(field(cloud.body, "error"), "headless_runner_required")
   assert.equal((await asOwner("PUT", "/v1/org/automation-settings", {})).status, 400)
+})
+
+test("updated desktops cannot create Automations on retired Zen models", async () => {
+  const refused = await asMember("POST", "/v1/automations", {
+    ...desktopAutomation,
+    model: { providerId: AUTOMATION_FREE_MODEL.providerId, modelId: AUTOMATION_FREE_MODEL.modelId },
+  }, { [AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER]: AUTOMATION_MODEL_ATTENTION_CAPABILITY })
+  assert.equal(refused.status, 409, summary(refused))
+  assert.equal(field(refused.body, "error"), "model_access_lost")
+  assert.match(String(field(refused.body, "message")), /OpenCode Zen model is no longer available/)
+})
+
+test("updated desktops create Automations on models connected only on the desktop (#6482)", async () => {
+  const capable = { [AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER]: AUTOMATION_MODEL_ATTENTION_CAPABILITY }
+  for (const model of [desktopAutomation.model, { providerId: "ipr_01k0000000000000000000000a", modelId: "gateway-model" }]) {
+    const created = await asMember("POST", "/v1/automations", { ...desktopAutomation, model }, capable)
+    assert.equal(created.status, 201, summary(created))
+    const automationId = String(field(field(created.body, "automation"), "id"))
+    const listed = await asMember("GET", `/v1/automations/${automationId}`, undefined, capable)
+    assert.equal(field(field(listed.body, "automation"), "needsAttentionReason"), null, summary(listed))
+    assert.equal((await asMember("DELETE", `/v1/automations/${automationId}`, undefined, capable)).status < 300, true)
+  }
 })
 
 test("turning Desktop Automations off stops desktops from running them and members from creating them", async () => {
@@ -69,11 +92,9 @@ test("turning Desktop Automations off stops desktops from running them and membe
   assert.notEqual(field(again.body, "error"), "automation_desktop_disabled", summary(again))
 })
 
-test("turning the rollout off restores the previous behavior without losing the saved choice", async () => {
+test("saved organization choices remain effective on subsequent reads", async () => {
   await asOwner("PUT", "/v1/org/automation-settings", { desktop: false })
-  assert.equal((await den.setFeature(orgId, "organizationAutomationSettings", false)).status, 200)
   const config = await asMember("GET", "/v1/me/desktop-config")
-  assert.equal(field(config.body, "desktopAutomationsEnabled"), true)
-  assert.equal((await den.setFeature(orgId, "organizationAutomationSettings", true)).status, 200)
+  assert.equal(field(config.body, "desktopAutomationsEnabled"), false)
   assert.deepEqual(field((await asMember("GET", "/v1/org/automation-settings")).body, "settings"), { desktop: false, cloud: true })
 })

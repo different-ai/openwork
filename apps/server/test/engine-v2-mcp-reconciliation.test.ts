@@ -26,6 +26,7 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) 
     return new Response(null, { status: 204 });
   }
   if (path.startsWith("/api/experimental/mcp/") && request.method === "DELETE") {
+    if (name === "broken") return new Response(null, { status: 500 });
     mutations.push({ method: "DELETE", name });
     registered.delete(name);
     return new Response(null, { status: 204 });
@@ -35,7 +36,7 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) 
 console.log("server listening on http://127.0.0.1:" + server.port);
 `;
 
-test("V2 reconciliation scopes protocol auto to managed Connect and fingerprints replacements", async () => {
+async function isolatedPreviewEnvironment(engineMode: string) {
   const root = await mkdtemp(join(tmpdir(), "openwork-v2-mcp-reconcile-"));
   const binary = join(root, "fake-engine");
   const environment = {
@@ -46,7 +47,7 @@ test("V2 reconciliation scopes protocol auto to managed Connect and fingerprints
     XDG_CACHE_HOME: join(root, "cache"),
     OPENWORK_RUNTIME_DB: join(root, "runtime.sqlite"),
     OPENWORK_OPENCODE2_BIN: binary,
-    OPENWORK_ENGINE_V2_PREVIEW: "sidecar",
+    OPENWORK_ENGINE_V2_PREVIEW: engineMode,
   };
   const previous = new Map(Object.keys(environment).map(key => [key, process.env[key]]));
   Object.assign(process.env, environment);
@@ -55,8 +56,23 @@ test("V2 reconciliation scopes protocol auto to managed Connect and fingerprints
     approval: { mode: "auto", timeoutMs: 1000 }, corsOrigins: [], workspaces: [], authorizedRoots: [], readOnly: false,
     startedAt: Date.now(), tokenSource: "generated", hostTokenSource: "generated", logFormat: "json", logRequests: false,
   };
+  const restore = async () => {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await rm(root, { recursive: true, force: true });
+  };
+  return { root, binary, environment, config, restore };
+}
+
+test("V2 reconciliation scopes protocol auto to managed Connect and fingerprints replacements", async () => {
+  const { root, binary, environment, config, restore } = await isolatedPreviewEnvironment("sidecar");
   const remote = { type: "remote", url: "https://connect.example.test/mcp/agent", oauth: false,
     headers: { Authorization: "Bearer synthetic-test-token" } };
+  // Connect alone is told that the v2 engine lists organization skills natively.
+  const connect = (value: typeof remote) => ({ ...value, protocol: "auto",
+    headers: { ...value.headers, "x-openwork-mcp-client-capabilities": "native-skills-v1" } });
   const preview = createEngineV2Preview({ config, deferStart: true });
   try {
     await mkdir(environment.XDG_CONFIG_HOME);
@@ -81,7 +97,7 @@ test("V2 reconciliation scopes protocol auto to managed Connect and fingerprints
     // Independent registrations may be read from the runtime store in either
     // order. Assert both complete payloads, without prescribing their order.
     assert.deepEqual(new Set(await mutations()), new Set([
-      { method: "PUT", name: "openwork-cloud", config: { ...remote, protocol: "auto" } },
+      { method: "PUT", name: "openwork-cloud", config: connect(remote) },
       { method: "PUT", name: "generic", config: remote },
     ]));
     await preview.syncWorkspaceMcp("workspace", directory);
@@ -95,14 +111,36 @@ test("V2 reconciliation scopes protocol auto to managed Connect and fingerprints
     await preview.syncWorkspaceMcp("workspace", directory);
     assert.deepEqual((await mutations()).slice(2), [
       { method: "DELETE", name: "openwork-cloud" },
-      { method: "PUT", name: "openwork-cloud", config: { ...rotated, protocol: "auto" } },
+      { method: "PUT", name: "openwork-cloud", config: connect(rotated) },
     ], "mapped credential changes replace Connect, while unsupported generic fields do not change its fingerprint");
+
+    // A connection whose replacement the engine refuses fails only callers
+    // that ask about it, not a Connect reconnect in the same folder.
+    await writeGlobalRuntimeOpencodeConfig(config, () => ({ mcp: { "openwork-cloud": rotated, generic: remote, broken: remote } }));
+    await preview.syncWorkspaceMcp("workspace", directory);
+    await writeGlobalRuntimeOpencodeConfig(config, () => ({ mcp: { "openwork-cloud": rotated, generic: remote, broken: rotated } }));
+    await preview.syncWorkspaceMcp("workspace", directory, { reconnect: ["openwork-cloud"] });
+    await preview.syncWorkspaceMcp("workspace", directory, { servers: ["generic"] });
+    await assert.rejects(preview.syncWorkspaceMcp("workspace", directory, { servers: ["broken"] }), /broken: OpenCode v2 MCP removal failed \(500\)$/);
+    await assert.rejects(preview.syncWorkspaceMcp("workspace", directory), /broken: OpenCode v2 MCP removal failed \(500\)/);
   } finally {
     await preview.stop();
-    for (const [key, value] of previous) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+    await restore();
+  }
+});
+
+test("Saving a connection succeeds without waiting on a v2 engine that is not serving chats", async () => {
+  // "sidecar": v1 serves chats. "chat": v2 is selected but has not started.
+  for (const engineMode of ["sidecar", "chat"]) {
+    const { root, config, restore } = await isolatedPreviewEnvironment(engineMode);
+    const preview = createEngineV2Preview({ config, deferStart: true });
+    try {
+      assert.equal(preview.status().enabled, true);
+      assert.equal(preview.status().running, false);
+      await preview.settleWorkspaceMcp("workspace", join(root, "workspace"), "generic");
+    } finally {
+      await preview.stop();
+      await restore();
     }
-    await rm(root, { recursive: true, force: true });
   }
 });

@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { FEATURE_KEYS, FEATURES, featureDocsUrl, mapFeatures, type FeatureKey } from "@openwork/features";
+import { FEATURE_CATEGORIES, FEATURE_KEYS, FEATURES, featureDocsUrl, featuresByCategory, mapFeatures, type FeatureKey } from "@openwork/features";
 import { DenButton } from "../../app/(den)/_components/ui/button";
 import { DenSwitch } from "../../app/(den)/_components/ui/switch";
 import { requestAdmin, sendAdmin } from "./admin-request";
+import { describeFeatureChange, parseFeatureChange, type AdminFeatureChange } from "./feature-change";
 
 export type AdminFeatureState = {
   enabled: boolean;
@@ -14,6 +15,8 @@ export type AdminFeatureState = {
   killed: boolean;
   override: boolean | null;
   overrideApplies: boolean;
+  /** Latest change that could affect this organization or member; absent from organization lists and older servers. */
+  lastChange?: AdminFeatureChange | null;
 };
 export type AdminOrganizationFeatures = Record<FeatureKey, AdminFeatureState>;
 
@@ -44,8 +47,14 @@ export function parseAdminOrganizationFeatures(featureStates: unknown, capabilit
       killed: state.killed === true,
       override: typeof state.override === "boolean" ? state.override : null,
       overrideApplies: state.overrideApplies === true,
+      lastChange: parseFeatureChange(state.lastChange),
     };
   });
+}
+
+/** "2026-10-23" → "23 Oct 2026", read as a calendar day (no time zone shift). */
+function formatAddedDay(added: string): string {
+  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${added}T00:00:00Z`));
 }
 
 function describeSource(state: AdminFeatureState): string {
@@ -57,6 +66,11 @@ function describeSource(state: AdminFeatureState): string {
     case "killed": return "Turned off everywhere";
     case "unavailable": return "Not part of this deployment";
   }
+}
+
+/** Features this deployment has, in registry order. */
+function visibleKeys(features: AdminOrganizationFeatures): FeatureKey[] {
+  return FEATURE_KEYS.filter((key) => features[key].source !== "unavailable");
 }
 
 export type AdminFeatureAccessFailure = { access: "signed-out" | "forbidden"; message: string };
@@ -138,8 +152,10 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
         {[0, 1, 2].map((row) => <div key={row} className="h-16 rounded-lg bg-gray-100" aria-hidden="true" />)}
       </div> : null}
       {saveError ? <p data-testid="admin-capability-error" role="alert" className="mt-3 text-sm text-red-700">Could not confirm the save. Showing the previous setting. {saveError}</p> : null}
-      {features ? <ul className="mt-3 min-w-0 divide-y divide-slate-200">
-        {FEATURE_KEYS.filter((key) => features[key].source !== "unavailable").map((key) => {
+      {features ? featuresByCategory(visibleKeys(features)).map(({ category, keys }) => <section key={category} className="mt-4 min-w-0" aria-labelledby={`admin-feature-group-${category}`} data-testid={`admin-feature-group-${category}`}>
+        <h3 id={`admin-feature-group-${category}`} className="text-xs font-semibold uppercase tracking-wide text-slate-500">{FEATURE_CATEGORIES[category].label}</h3>
+        <ul className="mt-1 min-w-0 divide-y divide-slate-200">
+        {keys.map((key) => {
           const state = features[key];
           const definition = FEATURES[key];
           return (
@@ -151,8 +167,9 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
                   <span className="block text-sm font-medium text-slate-700">{definition.label}</span>
                   <span id={`admin-feature-source-${key}`} className="mt-1 block text-xs text-slate-500" data-testid={`admin-capability-source-${key}`}>{memberId && state.source === "everyone" ? `Organization setting: ${state.enabled ? "on" : "off"}` : describeSource(state)}</span>
                   <span className="mt-1 block text-xs leading-5 text-slate-500">{definition.description}</span>
+                  {state.lastChange ? <span className="mt-1 block text-xs text-slate-500" data-testid={`admin-capability-last-change-${key}`}>Last change: {describeFeatureChange(state.lastChange, { showScope: true })}</span> : null}
                   <span className="mt-1 block text-xs text-slate-500">
-                    Author @{definition.author}
+                    Added {formatAddedDay(definition.added)} · Author @{definition.author}
                     {featureDocsUrl(key) ? <> · <a href={featureDocsUrl(key) ?? undefined} target="_blank" rel="noreferrer" className="font-medium text-slate-700 underline-offset-2 hover:underline">Internal docs</a></> : null}
                   </span>
                 </span>
@@ -165,7 +182,8 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
             </li>
           );
         })}
-      </ul> : null}
+        </ul>
+      </section>) : null}
     </section>
   );
 }

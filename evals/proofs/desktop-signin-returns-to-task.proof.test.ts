@@ -31,15 +31,6 @@ async function dismissAccountMenu(user: User, probe: Probe) {
   });
 }
 
-async function pasteInAccountMenu(user: User, probe: Probe, grant: string) {
-  await user.click({ testId: "account-status-menu" });
-  await user.see({ role: "button", label: /^(?:Paste|Hide) sign-in code$/ });
-  if (await probe.has("Paste sign-in code")) await user.click({ role: "button", label: "Paste sign-in code" });
-  // A disposable, single-use fixture grant, not a password.
-  await user.type(PASTE_FIELD, grant, { replace: true });
-  await user.click({ role: "button", label: "Finish sign-in" });
-}
-
 async function signOut(user: User, probe: Probe) {
   await dismissAccountMenu(user, probe);
   await user.click({ testId: "account-status-menu" });
@@ -67,29 +58,7 @@ test("a person using Desktop without an account chats on Auto, signs in, and com
     await user.screenshot();
   });
 
-  await step("before: with the switch off, signing in from the conversation lands on the session root and the conversation and draft are gone", async () => {
-    const switchedOn = await world.signedOutFeature();
-    expect(switchedOn).toBe(false);
-    await user.type("composer", DRAFT);
-    await pasteInAccountMenu(user, probe, await world.grantFor("riley"));
-    await user.see({ role: "button", label: "Riley — account and status" }, { timeoutMs: 90_000 });
-    const landed = await probe.eventually(() => route(probe), {
-      within: 60_000, label: "chat opens after sign-in",
-      until: (url) => !url.includes("/onboarding") && !url.includes(world.sessionId),
-    });
-    await dismissAccountMenu(user, probe);
-    await user.notSee({ text: world.reply });
-    await user.notSee({ text: DRAFT });
-    evidence.recordAssertionEvidence("today's sign-in drops the conversation", `switch on for signed-out desktops=${switchedOn}; started on ${conversationUrl}; landed on ${landed}; answer and draft on screen=false`, !switchedOn && landed !== conversationUrl);
-    expect(landed).not.toBe(conversationUrl);
-    await user.screenshot();
-    await signOut(user, probe);
-  });
-
-  await step("after: with the switch on, Sign in keeps the conversation and its draft on screen while the browser finishes", async () => {
-    await world.setSignInReturn(true);
-    const switchedOn = await world.signedOutFeature();
-    expect(switchedOn).toBe(true);
+  await step("Sign in keeps the conversation and its draft on screen while the browser finishes", async () => {
     await user.navigate(world.sessionUrl);
     await user.see({ text: world.reply }, { timeoutMs: 90_000 });
     await user.type("composer", DRAFT, { replace: true });
@@ -101,13 +70,13 @@ test("a person using Desktop without an account chats on Auto, signs in, and com
     await user.see({ text: world.reply });
     await user.see("composer", { text: DRAFT });
     const url = await route(probe);
-    evidence.recordAssertionEvidence("the conversation stays put while sign-in finishes in the browser", `switch on=${switchedOn}; route=${url}; answer and draft on screen; notice offers Copy sign-in link, Paste sign-in code and Cancel`, url === conversationUrl);
+    evidence.recordAssertionEvidence("the conversation stays put while sign-in finishes in the browser", `route=${url}; answer and draft on screen; notice offers Copy sign-in link, Paste sign-in code and Cancel`, url === conversationUrl);
     expect(url).toBe(conversationUrl);
     await user.screenshot();
   });
 
   let before = { sessions: 0, workspaces: 0 };
-  await step("after: finishing sign-in returns to the same conversation with the draft, still on Auto, signed in to Acme", async () => {
+  await step("finishing sign-in returns to the same conversation with the draft, still on Auto, signed in to Acme", async () => {
     before = await world.localCounts();
     await user.click({ role: "button", label: "Paste sign-in code" });
     await user.type(PASTE_FIELD, await world.grantFor("riley"), { replace: true });

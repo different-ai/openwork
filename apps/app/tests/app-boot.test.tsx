@@ -1,6 +1,7 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { act, useEffect, type ReactNode } from "react";
+import { act, useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -116,15 +117,24 @@ function TreeProbe() {
   );
 }
 
+// index.react.tsx mounts QueryClientProvider above AppProviders, so providers
+// in the tree (such as feature-flag readers) may use TanStack Query.
+function QueryRoot({ children }: { children: ReactNode }) {
+  const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+}
+
 function ProductionTree({ children }: { children: ReactNode }) {
   return (
-    <BootStateProvider>
-      <ServerProvider defaultUrl="http://127.0.0.1:4096">
-        <DenAuthProvider>
-          <EnterpriseAwareAppProviders>{children}</EnterpriseAwareAppProviders>
-        </DenAuthProvider>
-      </ServerProvider>
-    </BootStateProvider>
+    <QueryRoot>
+      <BootStateProvider>
+        <ServerProvider defaultUrl="http://127.0.0.1:4096">
+          <DenAuthProvider>
+            <EnterpriseAwareAppProviders>{children}</EnterpriseAwareAppProviders>
+          </DenAuthProvider>
+        </ServerProvider>
+      </BootStateProvider>
+    </QueryRoot>
   );
 }
 
@@ -148,11 +158,13 @@ describe("app boot", () => {
     let markup = "";
     expect(() => {
       markup = renderToStaticMarkup(
-        <DenAuthProvider>
-          <EnterpriseAwareAppProviders>
-            <UpdaterProbe />
-          </EnterpriseAwareAppProviders>
-        </DenAuthProvider>,
+        <QueryRoot>
+          <DenAuthProvider>
+            <EnterpriseAwareAppProviders>
+              <UpdaterProbe />
+            </EnterpriseAwareAppProviders>
+          </DenAuthProvider>
+        </QueryRoot>,
       );
     }).not.toThrow();
     expect(markup).toContain("updater-context-ok");

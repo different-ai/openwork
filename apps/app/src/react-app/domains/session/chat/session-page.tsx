@@ -1,5 +1,7 @@
 /** @jsxImportSource react */
 import { focusPaneComposerSoon } from "./workbench-pane-focus";
+import { isOpencodeConfigErrorMessage } from "@openwork/types/opencode-config-error";
+import { childOrigin, prepareChildReturn } from "@/lib/child-navigation";
 import { newSessionDraftOwnerKey } from "./new-session-destination";
 import { usePendingConversationStore } from "./pending-conversation-store";
 import { PendingConversationView } from "./pending-conversation";
@@ -7,7 +9,7 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
-import { ArrowLeft, Cloud, FileText, Globe, Maximize2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, CheckCheck, Cloud, FileText, Globe, Maximize2, MoreHorizontal, PanelRight, TextSearch, Undo2, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -57,6 +59,7 @@ import { AppSidebar } from "../sidebar/app-sidebar";
 import { MainSidebarControls } from "../sidebar/sidebar-chrome";
 import { MobileChatActions, MobileChatNavigation } from "./mobile-chat-navigation";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
+import type { SessionSettleState } from "../sidebar/session-settle";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
 import { useSessionFindStore } from "../surface/find-store";
 import {
@@ -91,14 +94,14 @@ import { getSidePanelSessionKey } from "../panel/side-panel-session";
 import { useCreateTab, useOpenBrowserRailPane } from "../panel/use-side-panel-tabs";
 import { useBrowserPresentationController } from "../panel/use-browser-presentation";
 import { useBrowserAgentTurns } from "../panel/agent-viewport";
-import { BrowserHeaderButton, BrowserPresentationSurfaces } from "../panel/browser-presentation";
+import { BrowserPresentationSurfaces, BrowserRailButton } from "../panel/browser-presentation";
 import { DebugRailProvider, DebugRailSlot } from "../panel/debug-rail-slot";
 import { SessionDebugPanel } from "../surface/debug-panel";
 import { FloatingSlotProvider, SessionFloatingLayer } from "../panel/floating-slot";
 import { useDesktopFeature } from "../status/use-desktop-feature";
 import { CloudComputerControl } from "../computer/cloud-computer-control";
 import { ComputerControl } from "../computer/computer-control";
-import { useComputerBridge } from "../computer/computer-store";
+import { useComputerEndTurn } from "../computer/computer-store";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
@@ -166,6 +169,9 @@ export type SessionPageSidebarProps = {
   selectedSessionId: string | null;
   developerMode: boolean;
   sessionStatusById: Record<string, string>;
+  settleWorkspaceIds?: ReadonlySet<string>;
+  /** The Workspaces · Feed switch ships with `settledSessions`. */
+  feedEnabled?: boolean;
   sessionAttentionLabelById?: Record<string, string>;
   sessionAttentionSourceById?: Record<string, "child" | "descendant">;
   connectingWorkspaceId: string | null;
@@ -226,6 +232,8 @@ export type SessionPagePaneRuntime = {
 };
 
 export type SessionPageProps = {
+  /** Settle state of the open session; one toggle shared with the sidebar, palette and shortcut. */
+  currentSessionSettle?: SessionSettleState;
   sessionReferenceInventories?: readonly SessionReferenceInventory[];
   createWorkspaceSessionMetadataCallbacks?: (runtime: SessionMetadataRuntime) => SessionMetadataCallbacks;
   isSessionReferenceCurrent?: (reference: SessionReferenceIdentity) => boolean;
@@ -488,8 +496,8 @@ export function SessionPage(props: SessionPageProps) {
   const filesRailActive = panelRailActive && activePanelTab?.type !== "browser";
   const showCloudSignIn = shellConfig.cloudSignin && !denAuth.isSignedIn && denAuth.status !== "checking";
   const cloudSignIn = useCloudSignIn();
-  // The browser opens on Den's sign-up tab (label stays "Sign in"); with
-  // `desktopSignInReturn` this conversation stays on screen and sign-in returns to it.
+  // The browser opens on Den's sign-up tab (label stays "Sign in").
+  // This conversation stays on screen and sign-in returns to it.
   const openCloudSignIn = useCallback(() => {
     cloudSignIn({ workspaceId: props.selectedWorkspaceId, sessionId: props.selectedSessionId });
   }, [cloudSignIn, props.selectedSessionId, props.selectedWorkspaceId]);
@@ -644,7 +652,7 @@ export function SessionPage(props: SessionPageProps) {
   const remoteComputersFeature = useDesktopFeature("remoteComputers");
   // The button hides itself when this computer can't run it and no VM is connected.
   const computerUse = computerUseFeature && isElectronRuntime();
-  useComputerBridge(props.sidebar.sessionStatusById, computerUse, remoteComputersFeature);
+  useComputerEndTurn(props.sidebar.sessionStatusById, computerUse);
   useBrowserAgentTurns(props.sidebar.sessionStatusById);
 
   // Open the side panel of the conversation that owns a browser event. For the
@@ -1079,7 +1087,10 @@ export function SessionPage(props: SessionPageProps) {
     selectedWorkspaceGroupError ||
     "";
   const showSelectedWorkspaceError = Boolean(selectedWorkspaceErrorMessage);
-  const selectedWorkspaceErrorTitle = "OpenCode unavailable";
+  // A config error already names the file, the field and the fix (C6).
+  const selectedWorkspaceErrorTitle = isOpencodeConfigErrorMessage(selectedWorkspaceErrorMessage)
+    ? selectedWorkspaceErrorMessage
+    : "OpenCode unavailable";
 
   const reactSessionBaseUrl = props.opencodeBaseUrl?.trim() ?? "";
   const reactSessionToken =
@@ -1166,6 +1177,14 @@ export function SessionPage(props: SessionPageProps) {
     !showWorkspaceSetupEmptyState &&
     !canRenderReactSurface;
   const findButtonSessionId = props.selectedSessionId;
+  const currentSessionSettle = props.currentSessionSettle;
+  const showSettleButton = Boolean(
+    findButtonSessionId && !props.primarySlot && !hasMainContentTakeover
+      && currentSessionSettle && (currentSessionSettle.settled || currentSessionSettle.canSettle),
+  );
+  const settleLabel = currentSessionSettle?.settled
+    ? t("session_management.unsettle_session")
+    : t("session_management.settle_session");
   const canGoBackInConversationHistory = !pendingConversationHistoryNavigation && canNavigateSelectedConversationHistory(
     conversationHistory,
     props.selectedWorkspaceId,
@@ -1239,6 +1258,11 @@ export function SessionPage(props: SessionPageProps) {
     return null;
   }, [props.selectedSessionId, props.sidebar.workspaceSessionGroups]);
 
+  const returnFromChild = useCallback(() => {
+    if (!parentSessionLink) return;
+    prepareChildReturn(JSON.stringify([reactSessionBaseUrl, props.runtimeWorkspaceId, props.surface?.draftScope]), props.selectedSessionId!);
+    openSessionTab(parentSessionLink.workspaceId, parentSessionLink.sessionId);
+  }, [parentSessionLink, openSessionTab, reactSessionBaseUrl, props.runtimeWorkspaceId, props.surface?.draftScope, props.selectedSessionId]);
   const focusWorkbenchSessionControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "workbench.session.focus",
     label: "Focus an open session",
@@ -1415,6 +1439,8 @@ export function SessionPage(props: SessionPageProps) {
           selectedSessionId={props.sidebar.selectedSessionId}
           showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
           sessionStatusById={props.sidebar.sessionStatusById}
+          settleWorkspaceIds={props.sidebar.settleWorkspaceIds}
+          feedEnabled={props.sidebar.feedEnabled}
           sessionAttentionLabelById={props.sidebar.sessionAttentionLabelById}
           sessionAttentionSourceById={props.sidebar.sessionAttentionSourceById}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
@@ -1467,7 +1493,7 @@ export function SessionPage(props: SessionPageProps) {
               onFiles={openArtifactRailPane}
               fileCount={artifactTargetCount}
               onSignIn={showCloudSignIn ? openCloudSignIn : undefined}
-              onParent={parentSessionLink ? () => openSessionTab(parentSessionLink.workspaceId, parentSessionLink.sessionId) : undefined}
+              onParent={parentSessionLink ? returnFromChild : undefined}
             />
           ) : undefined}
           extensionsActive={props.extensionsActive}
@@ -1512,7 +1538,7 @@ export function SessionPage(props: SessionPageProps) {
                         className="h-6 shrink-0 cursor-pointer gap-1 rounded-lg px-1.5 text-[12px] text-gray-10 transition-colors hover:bg-muted hover:text-foreground titlebar-no-drag"
                         data-parent-session-back={parentSessionLink.sessionId}
                         aria-label={`Back to ${parentSessionLink.title || "parent chat"}`}
-                        onClick={() => openSessionTab(parentSessionLink.workspaceId, parentSessionLink.sessionId)}
+                        onClick={returnFromChild}
                       >
                         <ArrowLeft size={14} />
                         <span className="max-w-40 truncate max-lg:hidden">
@@ -1578,6 +1604,26 @@ export function SessionPage(props: SessionPageProps) {
                   <TooltipContent>Find in conversation ({isMacPlatform() ? "⌘F" : "Ctrl+F"})</TooltipContent>
                 </Tooltip>
               ) : null}
+              {showSettleButton && currentSessionSettle ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="hidden rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground lg:inline-flex"
+                        aria-label={settleLabel}
+                        aria-keyshortcuts={isMacPlatform() ? "Meta+Shift+E" : "Control+Shift+E"}
+                        data-session-header-settle={currentSessionSettle.settled ? "settled" : "active"}
+                        onClick={currentSessionSettle.toggle}
+                      >
+                        {currentSessionSettle.settled ? <Undo2 size={16} /> : <CheckCheck size={16} />}
+                      </Button>
+                    }
+                  />
+                  <TooltipContent>{settleLabel} ({isMacPlatform() ? "⌘⇧E" : "Ctrl+Shift+E"})</TooltipContent>
+                </Tooltip>
+              ) : null}
               {showCloudSignIn ? (
                 <Button
                   variant="secondary"
@@ -1613,6 +1659,12 @@ export function SessionPage(props: SessionPageProps) {
                       Find in conversation
                     </DropdownMenuItem>
                   ) : null}
+                  {showSettleButton && currentSessionSettle ? (
+                    <DropdownMenuItem onClick={currentSessionSettle.toggle}>
+                      {currentSessionSettle.settled ? <Undo2 className="size-4" /> : <CheckCheck className="size-4" />}
+                      {settleLabel}
+                    </DropdownMenuItem>
+                  ) : null}
                   <DropdownMenuItem onClick={openArtifactRailPane}>
                     <FileText className="size-4" />
                     Files{artifactTargetCount > 0 ? ` (${artifactTargetCount})` : ""}
@@ -1643,7 +1695,6 @@ export function SessionPage(props: SessionPageProps) {
               ) : null}
               {!isElectronRuntime() && computerUseFeature && remoteComputersFeature && props.openworkServerClient ? <CloudComputerControl client={props.openworkServerClient} /> : null}
               {computerUse && props.selectedSessionId ? <ComputerControl key={props.selectedSessionId} sessionId={props.selectedSessionId} /> : null}
-              {browserPresentation.enabled ? <BrowserHeaderButton controller={browserPresentation} /> : null}
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -1832,6 +1883,9 @@ export function SessionPage(props: SessionPageProps) {
                             respondQuestion={props.respondQuestion}
                             safeStringify={props.safeStringify}
                             onOpenTarget={props.surface?.onOpenTarget ?? openTarget}
+                            sessionTitle={sessionTitleForId(props.sidebar.workspaceSessionGroups, props.selectedSessionId!, props.selectedWorkspaceId!)}
+                            parentSessionTitle={parentSessionLink?.title}
+                            onReturnToParent={parentSessionLink ? returnFromChild : undefined}
                             onOpenSubagentSession={openSubagentSession}
                           />
                         </div>
@@ -1906,7 +1960,23 @@ export function SessionPage(props: SessionPageProps) {
                                     workspaceRoot: splitPaneRuntime.workspaceRoot,
                                     workspaceType: splitPaneRuntime.workspaceType,
                                   }, target, options, sourceSessionId)}
-                                  onOpenSubagentSession={(sessionId) => openSessionTab(splitSession.workspaceId, sessionId)}
+                                  sessionTitle={splitSession.title}
+                                  onOpenSubagentSession={(sessionId) => {
+                                    openWorkbenchTab({ workspaceId: splitSession.workspaceId, sessionId,
+                                      title: sessionTitleForId(props.sidebar.workspaceSessionGroups, sessionId, splitSession.workspaceId) });
+                                    setWorkbenchSplit({ workspaceId: splitSession.workspaceId, sessionId });
+                                    focusWorkbenchPane("secondary");
+                                  }}
+                                  onReturnToParent={() => {
+                                    const scope = JSON.stringify([splitPaneRuntime.opencodeBaseUrl, splitPaneRuntime.runtimeWorkspaceId, splitPaneRuntime.surface.draftScope]);
+                                    const origin = childOrigin(scope, splitSession.sessionId);
+                                    const nativeParent = props.sidebar.workspaceSessionGroups.find(group => group.workspace.id === splitSession.workspaceId)?.sessions.find(session => session.id === splitSession.sessionId)?.parentID;
+                                    const parent = origin?.parentId ?? nativeParent;
+                                    if (parent) { openWorkbenchTab({ workspaceId: splitSession.workspaceId, sessionId: parent,
+                                      title: origin?.title ?? sessionTitleForId(props.sidebar.workspaceSessionGroups, parent, splitSession.workspaceId) });
+                                      setWorkbenchSplit({ workspaceId: splitSession.workspaceId, sessionId: parent });
+                                      focusWorkbenchPane("secondary"); }
+                                  }}
                                 />
                               </div>
                             ) : (
@@ -2010,7 +2080,8 @@ export function SessionPage(props: SessionPageProps) {
             ) : null}
           </ResizablePanelGroup>
           <aside className={cn("w-10 shrink-0 flex-col items-center gap-1 px-1 py-2 text-muted-foreground mac:titlebar-no-drag", props.developerMode ? "flex" : "hidden", props.primarySurface !== "flat" && "lg:flex")}>
-            {isElectronRuntime() ? (
+            {/* With the floating browser on, the same button also brings back a floating page. */}
+            {isElectronRuntime() && browserPresentation.enabled ? <BrowserRailButton controller={browserPresentation} /> : isElectronRuntime() ? (
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -2018,7 +2089,7 @@ export function SessionPage(props: SessionPageProps) {
                   "rounded-xl transition-colors hover:bg-muted hover:text-foreground",
                   browserRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
                 )}
-                onClick={browserPresentation.enabled ? () => browserPresentation.present(browserRailActive ? "hidden" : "side") : openBrowserRailPane}
+                onClick={openBrowserRailPane}
                 title="Browser"
                 aria-label="Browser"
                 aria-pressed={browserRailActive}

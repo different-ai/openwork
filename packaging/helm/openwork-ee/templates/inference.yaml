@@ -87,6 +87,15 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- if not (hasKey $gateway.env "TYPESAFE_API_KEY") }}
+            # Auto Model Routing (Jev). Optional: without it Auto uses its fallback model.
+            - name: TYPESAFE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "openwork-ee.secretName" . | quote }}
+                  key: {{ .Values.secret.keys.typesafeApiKey | default "TYPESAFE_API_KEY" | quote }}
+                  optional: true
+            {{- end }}
             {{- include "openwork-ee.gatewayDeploymentEnv" (dict "root" . "env" $gateway.env) | nindent 12 }}
             {{- include "openwork-ee.gatewayTokenEnv" . | nindent 12 }}
           {{- with $gateway.probes.liveness }}

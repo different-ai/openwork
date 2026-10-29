@@ -62,11 +62,15 @@ export type FakeStripeWorld = AsyncDisposable & {
 };
 
 export async function fakeStripe(seed: Seed, options: { place?: Place } = {}): Promise<FakeStripeWorld> {
+  return startFakeStripeForDen(`${seed.tmpPath("fake-stripe-egress")}.jsonl`, options);
+}
+
+/** The same fake for code that boots Den without a Seed (preview worlds). */
+export async function startFakeStripeForDen(egressFile: string, options: { place?: Place } = {}): Promise<FakeStripeWorld> {
   if (options.place && options.place.kind !== "local") {
     throw new Error("Fake Stripe needs local placement: Den and headless Chrome must reach 127.0.0.1.");
   }
   const server = await startFakeStripe({ secretKey: FAKE_STRIPE_SECRET_KEY, prices: Object.values(FAKE_STRIPE_PRICES) });
-  const egressFile = `${seed.tmpPath("fake-stripe-egress")}.jsonl`;
   const guard = new URL("../packages/labs/src/models-egress-guard.mjs", import.meta.url).href;
   const preload = `await import(${JSON.stringify(guard)})`;
   return {

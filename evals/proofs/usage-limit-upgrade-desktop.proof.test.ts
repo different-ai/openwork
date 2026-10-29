@@ -2,7 +2,7 @@ import { expect } from "vitest";
 import { spec, type Probe, type User } from "@openwork/testkit";
 import { usageLimitUpgradeDesktop } from "../worlds/usage-limit-upgrade-desktop.ts";
 
-// Real app, engine and gateway (its own disposable database) with a fake OpenRouter upstream; Den holds roles and the switch.
+// Real app, engine and gateway (its own disposable database) with a fake OpenRouter upstream; Den holds roles.
 const test = spec.world(usageLimitUpgradeDesktop, {
   timeout: 900_000,
   needs: { placement: "local" },
@@ -22,26 +22,10 @@ test("an owner whose workspace used its OpenWork Models allowance sees when it r
   await user.resizeViewport({ width: 1280, height: 860, deviceScaleFactor: 1 });
   const cards = () => probe.dom('[data-testid="usage-limit-card"]');
 
-  await step("before: with the new card off, the used-up allowance reads as too many requests", async () => {
+  await step("the owner's card says what ran out, when it resets and that the message is saved, with a team-provider action", async () => {
     const before = await world.gatewayRequests();
     await send(user, probe, "Draft the Q4 hiring plan from these notes.");
-    // Engine v1 calls it a rate limit; engine v2 shows the gateway's own words. Neither shows the new card.
-    await user.see({ text: /^(This model is receiving too many requests|Your workspace used its OpenWork Models allowance\.)$/ }, { timeoutMs: 90_000 });
-    await user.notSee({ testId: "usage-limit-card" });
-    await user.notSee({ text: /Retrying/ });
-    const sent = await world.gatewayRequests() - before;
-    evidence.recordAssertionEvidence("The gateway refused the message once and the engine did not retry it", `gateway requests for this message=${sent}; card shown=no`, sent === 1);
-    expect(sent).toBe(1);
-    await user.screenshot();
-  });
-
-  await step("after: the owner's card says what ran out, when it resets and that the message is saved, with a team-provider action", async () => {
-    await world.turnOnUsageLimitCard();
-    await user.reload();
-    await user.see({ testId: "usage-limit-card" }, { timeoutMs: 60_000 });
-    const before = await world.gatewayRequests();
-    await send(user, probe, "Try the hiring plan again.");
-    const shown = await probe.eventually(cards, { within: 90_000, label: "both refused messages show the usage-limit card", until: (value) => value.elements.length === 2 });
+    const shown = await probe.eventually(cards, { within: 90_000, label: "the refused message shows the usage-limit card", until: (value) => value.elements.length === 1 });
     const latest = shown.elements.at(-1)?.text ?? "";
     expect(latest).toContain("Acme used its OpenWork Models allowance");
     expect(latest).toMatch(/5-hour allowance resets in (1 hour|\d+ minutes)/);
@@ -58,7 +42,7 @@ test("an owner whose workspace used its OpenWork Models allowance sees when it r
   });
 
   await step("Use another model opens the model picker so the owner can keep working", async () => {
-    await user.click({ role: "button", label: "Use another model", nth: 1 });
+    await user.click({ role: "button", label: "Use another model" });
     await user.see({ testId: "composer-model-picker" });
     const picker = await probe.dom('[data-testid="composer-model-picker"]');
     const open = picker.elements.length === 1 && picker.elements[0]?.text.includes(world.modelName) === true;

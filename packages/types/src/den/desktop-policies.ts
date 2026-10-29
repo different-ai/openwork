@@ -90,11 +90,13 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowZenModel",
-    teamLabel: "Use OpenCode models",
+    // Historical key name. OpenCode Zen is retired in every OpenWork app
+    // regardless of this value; it now only controls the free Auto model.
+    teamLabel: "Use the free starter model",
     group: "ai",
-    name: "Enable OpenCode Zen Models",
-    description: "Allow users to use the built in models provided by OpenCode.",
-    userNotice: "Your administrator has disabled access to OpenCode Models.",
+    name: "Free starter model (Auto)",
+    description: "Allow users to use OpenWork's free, rate-limited Auto model. OpenCode Zen models are retired and never offered.",
+    userNotice: "Your administrator has turned off the free starter model.",
     defaultValue: true,
     restrictedValue: false,
   },
@@ -428,9 +430,10 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     connectEnabled: z.boolean().optional(),
     /** Whether the server may start the live OpenCode provider engine. Missing means off. */
     liveProviderSync: z.boolean().optional(),
-    /** Whether the server mirrors API keys added on this computer into OpenCode v2. Missing means off. */
+    nativeAffordanceCodeMode: z.boolean().optional(),
+    /** Compatibility for older clients: true. Current hosts always mirror personal API keys into OpenCode v2. */
     localProviderMirror: z.boolean().optional(),
-    /** OpenCode Zen models (Big Pickle and other free `opencode` models) are removed. Missing means off. */
+    /** Compatibility for older clients: true. Current clients always remove retired OpenCode Zen models. */
     removeOpencodeZen: z.boolean().optional(),
     onboardingPrompts: onboardingPromptsSchema.optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema.optional(),
@@ -847,6 +850,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     ...(dashboardEnabled !== undefined ? { dashboardEnabled } : {}),
     ...(connectEnabled !== undefined ? { connectEnabled } : {}),
     ...(typeof raw?.liveProviderSync === "boolean" ? { liveProviderSync: raw.liveProviderSync } : {}),
+    ...(typeof raw?.nativeAffordanceCodeMode === "boolean" ? { nativeAffordanceCodeMode: raw.nativeAffordanceCodeMode } : {}),
     ...(typeof raw?.localProviderMirror === "boolean" ? { localProviderMirror: raw.localProviderMirror } : {}),
     ...(typeof raw?.removeOpencodeZen === "boolean" ? { removeOpencodeZen: raw.removeOpencodeZen } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),

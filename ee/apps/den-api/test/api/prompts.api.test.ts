@@ -14,15 +14,13 @@ const admin = await den.newMember(owner, org.orgId, "Prompt Admin", "admin")
 const sales = await den.createTeam(owner, org.orgId, "Sales", [person.memberId])
 const design = await den.createTeam(owner, org.orgId, "Design", [person.memberId])
 
-test("prompts answer 404 while the feature is off", async () => {
-  assert.equal((await den.request(owner.token, "GET", "/v1/org/prompts", { orgId: org.orgId })).status, 404)
-  assert.equal((await den.request(person.token, "GET", "/v1/me/prompts", { orgId: org.orgId })).status, 404)
+test("members receive an empty prompt list before any prompts are saved", async () => {
+  const mine = await den.request(person.token, "GET", "/v1/me/prompts", { orgId: org.orgId })
+  assert.equal(mine.status, 200, summary(mine))
+  assert.deepEqual(field(mine.body, "prompts"), [])
 })
 
 test("admins set prompts for everyone and teams; members get them in order", async () => {
-  const enabled = await den.setFeature(org.orgId, "orgPrompts", true)
-  assert.ok(enabled.status < 300, summary(enabled))
-
   const empty = await den.request(owner.token, "GET", "/v1/org/prompts", { orgId: org.orgId })
   assert.equal(empty.status, 200, summary(empty))
   assert.equal(field(empty.body, "everyone"), null)

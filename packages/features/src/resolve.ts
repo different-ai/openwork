@@ -14,12 +14,15 @@
 
 import { z } from "zod"
 import {
+  FEATURE_CATEGORIES,
   FEATURES,
+  type FeatureCategory,
   type FeatureDefinition,
   type FeatureDeployment,
   type FeatureKey,
   type FeatureMap,
   type FeatureOverrides,
+  type OutcomeFeatureKey,
 } from "@openwork/features/registry"
 
 /**
@@ -67,6 +70,13 @@ export const RETIRED_FEATURE_KEYS = [
   "offlineRecovery",
   // Folded into connectStandardTools (2026-10): one rollout for schemas and all supported clients.
   "connectToolShapes", "desktopConnectStandardTools",
+  // Generally available (2026-10): completed desktop, Workbot and organization rollouts.
+  "localProviderMirror", "organizationAutomationSettings", "agentConnectionRemoval",
+  "workbotCommandPalette", "usageLimitUpgrade", "removeOpencodeZen",
+  "desktopSignInReturn", "claudeHistoryImport", "orgPrompts",
+  // Removed (2026-10): an organization's plan and seats are set in one place in /admin (Billing);
+  // Stripe-billed Enterprise is a plain /admin control and organization grants are gone.
+  "enterprisePlan", "organizationGrants",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {
@@ -75,9 +85,34 @@ export function isFeatureKey(value: string): value is FeatureKey {
 
 export const FEATURE_KEYS: readonly FeatureKey[] = Object.keys(FEATURES).filter(isFeatureKey)
 
+function isFeatureCategory(value: string): value is FeatureCategory {
+  return Object.hasOwn(FEATURE_CATEGORIES, value)
+}
+
+/** Category keys in the order /admin shows them. */
+export const FEATURE_CATEGORY_KEYS: readonly FeatureCategory[] = Object.keys(FEATURE_CATEGORIES).filter(isFeatureCategory)
+
 export function featureDefinition(key: FeatureKey): FeatureDefinition {
   return FEATURES[key]
 }
+
+/** The given keys (every feature by default) grouped in FEATURE_CATEGORIES order; empty groups are left out. */
+export function featuresByCategory(keys: readonly FeatureKey[] = FEATURE_KEYS): Array<{ category: FeatureCategory; keys: FeatureKey[] }> {
+  const groups: Array<{ category: FeatureCategory; keys: FeatureKey[] }> = []
+  for (const category of FEATURE_CATEGORY_KEYS) {
+    const inCategory = keys.filter((key) => featureDefinition(key).category === category)
+    if (inCategory.length > 0) groups.push({ category, keys: inCategory })
+  }
+  return groups
+}
+
+/** The feature declares `outcomes`: /admin › Features reads whether it ran and worked. */
+export function featureHasOutcomes(key: FeatureKey): key is OutcomeFeatureKey {
+  return featureDefinition(key).outcomes === true
+}
+
+/** Every feature that declares `outcomes`, in registry order. */
+export const OUTCOME_FEATURE_KEYS: readonly OutcomeFeatureKey[] = FEATURE_KEYS.filter(featureHasOutcomes)
 
 /** Internal docs are read in the open-source repo, on the default branch. */
 export const FEATURE_DOCS_BASE_URL = "https://github.com/different-ai/openwork/blob/dev/"

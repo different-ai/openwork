@@ -8,25 +8,26 @@ import { DenButton } from "../../app/(den)/_components/ui/button";
 import { DenInput } from "../../app/(den)/_components/ui/input";
 import { DenTable, type DenTableColumn } from "../../app/(den)/_components/ui/table";
 import { AdminOrganizationFeatureControls, type AdminFeatureAccessFailure } from "./admin-organization-feature-controls";
+import { AdminOrganizationFeatureUsageView } from "./admin-organization-feature-usage";
 import { AdminAccessScreen } from "./admin-access-screen";
 import { AdminBreadcrumbs } from "./admin-breadcrumbs";
 import { ADMIN_LIST_PAGE_SIZE, useAdminListLocation } from "./admin-list-location";
 import { requestAdmin, withStoredBearer, type AdminResult } from "./admin-request";
 import { useAdminSessionCookie } from "./admin-shell";
 import { recordAdminOrganizationVisit } from "./admin-recent-organizations";
-import { AdminOrganizationControlPanel } from "./admin-organization-control-panel";
-import { AdminEnterpriseBilling } from "./admin-enterprise-billing";
+import { AdminOrganizationBilling } from "./admin-organization-billing";
+import { formatPlanDate, planName } from "../../app/(den)/_lib/plan-display";
 
 const AdminOrganizationInsights = lazy(() => import("./admin-organization-insights").then((module) => ({ default: module.AdminOrganizationInsights })));
 
-type Section = "members" | "usage" | "insights" | "features" | "control-panel";
+type Section = "members" | "usage" | "insights" | "features" | "billing";
 type DataSection = Extract<Section, "members" | "usage" | "insights">;
 type Organization = AdminOrganizationDetail["organization"];
 type PageData = AdminOrganizationDetail & { usage?: AdminOrganizationUsage["usage"]; insights?: InsightReport["insights"] };
 type Member = AdminOrganizationDetail["members"][number];
 const SECTIONS: { id: Section; label: string }[] = [
   { id: "members", label: "Members" }, { id: "usage", label: "Usage" }, { id: "insights", label: "Insights" },
-  { id: "features", label: "Features" }, { id: "control-panel", label: "Control panel" },
+  { id: "features", label: "Features" }, { id: "billing", label: "Billing" },
 ];
 const zeroUsage: AdminOrganizationUsageTotals = { requests: 0, tokens: 0, costMicroUsd: 0, unreportedRequests: 0, unpricedRequests: 0 };
 const count = (value: number) => new Intl.NumberFormat().format(value);
@@ -40,8 +41,24 @@ function Coverage({ totals }: { totals: AdminOrganizationUsageTotals }) {
   return <p className="mt-1 text-xs text-gray-500">{totals.unreportedRequests === null ? "Token coverage unknown" : `${requests(totals.unreportedRequests)} without reported tokens`}; {totals.unpricedRequests === null ? "price coverage unknown" : `${requests(totals.unpricedRequests)} without a recorded price`}.</p>;
 }
 
+/** "Enterprise · set by admin", "Team · paid in Stripe" or "Free". */
+function planSummary(organization: Organization) {
+  const plan = organization.plan;
+  if (!plan) return planName(organization.planTier === "team" || organization.planTier === "enterprise" ? organization.planTier : "free");
+  if (plan.paidBy !== "none") return `${planName(plan.paidBy === "stripe_enterprise" ? "enterprise" : "team")} · paid in Stripe`;
+  if (plan.tier === "free") return "Free";
+  return `${planName(plan.tier)} · ${plan.source === "grandfathered" ? "grandfathered" : "set by admin"}`;
+}
+
+/** "7 of 20" or "31 · no limit". */
+function usersSummary(organization: Organization) {
+  const plan = organization.plan;
+  if (!plan) return `${count(organization.memberCount)} / ${count(organization.seatLimit)}`;
+  return plan.userLimit === null ? `${count(plan.users)} · no limit` : `${count(plan.users)} of ${count(plan.userLimit)}`;
+}
+
 function sectionPath(organizationId: string, section: Section, search: string, offset: number) {
-  if (section === "features" || section === "control-panel") return null;
+  if (section === "features" || section === "billing") return null;
   const listed = section !== "insights";
   const query = new URLSearchParams({ limit: listed ? String(ADMIN_LIST_PAGE_SIZE) : "1", offset: listed ? String(offset) : "0" });
   if (listed && search.trim()) query.set("search", search.trim());
@@ -81,6 +98,7 @@ type OrganizationContextValue = {
   organization: Organization | null;
   verified: boolean;
   refreshKey: number;
+  refresh: () => void;
   fail: (failure: AdminFeatureAccessFailure) => void;
   setSectionBusy: (busy: boolean) => void;
 };
@@ -170,7 +188,7 @@ export function AdminOrganizationLayout({ organizationId, children }: { organiza
   };
 
   return (
-    <OrganizationContext.Provider value={{ organization, verified: organization !== null, refreshKey, fail, setSectionBusy }}>
+    <OrganizationContext.Provider value={{ organization, verified: organization !== null, refreshKey, refresh: () => setRefreshKey((value) => value + 1), fail, setSectionBusy }}>
     {breadcrumbs}
     <section data-testid="admin-organization-page" aria-busy={refreshing || sectionBusy} className="min-w-0 bg-white">
       {errorMessage ? <p role="alert" className="border-b border-gray-200 p-4 text-sm text-red-700">{errorMessage} Use Refresh to try again. Showing the last successful snapshot.</p> : null}
@@ -182,8 +200,9 @@ export function AdminOrganizationLayout({ organizationId, children }: { organiza
         {organization ? <>
           <p className="mt-2 break-all text-xs text-gray-500">{organization.slug || organization.id}</p>
           <dl className="mt-5 flex flex-wrap gap-x-8 gap-y-3 text-sm">
-            <div><dt className="text-gray-500">Plan</dt><dd className="mt-1 capitalize text-gray-900">{organization.planTier}</dd></div>
-            <div><dt className="text-gray-500">Members</dt><dd className="mt-1 text-gray-900">{count(organization.memberCount)} / {count(organization.seatLimit)} seats</dd></div>
+            <div data-testid="admin-organization-plan"><dt className="text-gray-500">Plan</dt><dd className="mt-1 text-gray-900">{planSummary(organization)}</dd></div>
+            <div data-testid="admin-organization-users"><dt className="text-gray-500">Users</dt><dd className="mt-1 tabular-nums text-gray-900">{usersSummary(organization)}</dd></div>
+            {organization.plan?.endsAt ? <div data-testid="admin-organization-ends"><dt className="text-gray-500">{organization.plan.ended ? "Ended" : "Ends"}</dt><dd className={`mt-1 ${organization.plan.ended ? "text-amber-800" : "text-gray-900"}`}>{formatPlanDate(organization.plan.endsAt, { year: true })}</dd></div> : null}
             <div><dt className="text-gray-500">Created</dt><dd className="mt-1 text-gray-900">{date(organization.createdAt)}</dd></div>
           </dl>
         </> : <div className="mt-3 h-16 w-80 max-w-full rounded-sm bg-gray-100" />}
@@ -206,7 +225,7 @@ function SectionSkeleton({ label }: { label: string }) {
 }
 
 export function AdminOrganizationPage({ organizationId, section }: { organizationId: string; section: Section }) {
-  const { organization, verified, refreshKey, fail, setSectionBusy } = useOrganization();
+  const { organization, verified, refreshKey, refresh, fail, setSectionBusy } = useOrganization();
   const { search, draftSearch, page, offset, setSearch, setPage } = useAdminListLocation();
   const path = sectionPath(organizationId, section, search, offset);
   // `trusted` is false only for a snapshot read from memory before this
@@ -241,8 +260,11 @@ export function AdminOrganizationPage({ organizationId, section }: { organizatio
     return () => { cancelled = true; window.clearTimeout(timeout); };
   }, [path, section, search, refreshKey, fail]);
 
-  if (section === "features") return <AdminOrganizationFeatureControls key={organizationId} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} />;
-  if (section === "control-panel") return <><AdminOrganizationControlPanel key={organizationId} organizationId={organizationId} onAccessFailure={fail} /><AdminEnterpriseBilling key={`enterprise:${organizationId}`} organizationId={organizationId} onAccessFailure={fail} /></>;
+  if (section === "features") return <>
+    <AdminOrganizationFeatureUsageView key={`usage:${organizationId}`} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} />
+    <AdminOrganizationFeatureControls key={organizationId} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} />
+  </>;
+  if (section === "billing") return organization ? <AdminOrganizationBilling key={organizationId} organization={organization} onSaved={refresh} onAccessFailure={fail} /> : <SectionSkeleton label="Loading billing" />;
 
   const data = snapshot && (snapshot.trusted || verified) ? snapshot.data : null;
   const errorNotice = errorMessage ? <p role="alert" className="border-b border-gray-200 p-4 text-sm text-red-700">{errorMessage} Use Refresh to try again.{data ? " Showing the last successful snapshot." : ""}</p> : null;

@@ -63,7 +63,7 @@ import { auditRequestMiddleware } from "./audit/request-capture.js"
 import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
 import { sanitizePublicResponseHeaders } from "./public-response-headers.js"
 import { isDraining } from "./drain-state.js"
-import { AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER } from "@openwork/types/automations"
+import { AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER, AUTOMATION_SCHEDULE_KINDS_HEADER } from "@openwork/types/automations"
 
 type AppVariables = RequestIdVariables & AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> & Partial<MemberTeamsContext>
 
@@ -199,7 +199,7 @@ if (!env.corsHandledByEdge) {
       credentials: true,
       // Browser clients (app-web) send the Automation model-attention capability header on create/update/run;
       // without it here the preflight fails and the request never reaches Den ("Failed to fetch").
-      allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id", "X-OpenWork-Audit-Correlation", AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER],
+      allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id", "X-OpenWork-Audit-Correlation", AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER, AUTOMATION_SCHEDULE_KINDS_HEADER],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       exposeHeaders: ["Content-Length", "Content-Disposition", "X-Audit-Next-Cursor", "X-Audit-Snapshot-Sequence", "X-Audit-Resource-Scope"],
       maxAge: 600,

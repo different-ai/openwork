@@ -17,6 +17,7 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import {
+  FEATURE_CATEGORIES,
   FEATURES,
   FEATURE_KEYS,
   RETIRED_FEATURE_KEYS,
@@ -121,12 +122,12 @@ const problems = []
 // Features declared before internal docs were required. This list only
 // shrinks: write the doc, set `docs`, and remove the key here.
 const FEATURES_WITHOUT_DOCS = new Set([
-  "administratorRecovery", "organizationGrants", "sandboxOrgs", "organizationAutomationSettings",
-  "connectionMcpServers", "agentConnectionRemoval", "enterprisePlan", "workbotDocuments",
+  "administratorRecovery", "sandboxOrgs",
+  "connectionMcpServers", "workbotDocuments",
   "workbotDocumentEditing", "workbotWorkspaceAssistant", "workbotIncludedModels", "workbotUsageRecovery",
-  "usageLimitUpgrade", "automationCalendar", "removeOpencodeZen", "computerUse", "browserLiveView",
-  "browserFloatingView", "remoteComputers", "desktopSignInReturn", "activationChecklist",
-  "connectStandardTools", "claudeHistoryImport", "teamPlan", "selfServeEnterprise", "orgPrompts", "sessionTokenHashing",
+  "automationCalendar", "computerUse", "browserLiveView",
+  "browserFloatingView", "remoteComputers", "activationChecklist",
+  "connectStandardTools", "teamPlan", "selfServeEnterprise", "sessionTokenHashing",
 ])
 
 /** The internal doc exists under docs/ (not the published packages/docs) and its images resolve. */
@@ -195,6 +196,12 @@ if (check) {
     if (!since) {
       problems.push(`Feature "${key}" since must be "YYYY-MM".`)
       continue
+    }
+    if (!Object.hasOwn(FEATURE_CATEGORIES, definition.category)) {
+      problems.push(`Feature "${key}" needs a category, one of: ${Object.keys(FEATURE_CATEGORIES).join(", ")}.`)
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(definition.added ?? "") || Number.isNaN(Date.parse(`${definition.added}T00:00:00Z`))) {
+      problems.push(`Feature "${key}" added must be the day the flag was added, "YYYY-MM-DD".`)
     }
     if (definition.deployments.length === 0) problems.push(`Feature "${key}" must exist on at least one deployment.`)
     if (typeof definition.author !== "string" || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(definition.author)) {

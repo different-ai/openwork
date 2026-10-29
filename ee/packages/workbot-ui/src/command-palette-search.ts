@@ -1,7 +1,7 @@
 import fuzzysort from "fuzzysort";
 
 /**
- * Ranking for Workbot's command palette (feature `workbotCommandPalette`): pure, so it is tested without a page.
+ * Ranking for Workbot's command palette: pure, so it is tested without a page.
  * The same idea as the desktop palette's search (apps/app/src/react-app/shell/command-palette-search.ts): fuzzy
  * match on the title first, then keywords and detail; recently used entries win ties.
  */

@@ -15,7 +15,7 @@ import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-co
 import { openAutoProviderSettings } from "@/react-app/domains/cloud/auto-access-ui";
 import { openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
 import { openComposerModelPickerEvent } from "@/app/lib/inference-access";
-import { isAutoModel, modelTitle, nonDefaultModelSummary, type RetainedModelSelection } from "@/react-app/domains/models/model-catalog";
+import { fixedModelTitle, managesOwnBehavior, modelTitle, nonDefaultModelSummary, type RetainedModelSelection } from "@/react-app/domains/models/model-catalog";
 import { useModelPickerCatalogStore } from "@/react-app/domains/session/models/model-collections-store";
 
 export { ModelPickerFooter } from "@/react-app/domains/models/model-picker-panel";
@@ -76,14 +76,14 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
   const selectedBehavior = getModelBehaviorSelection(selected?.behaviorOptions ?? behaviorOptions, behaviorValue);
   const controls = getModelBehaviorControls(selectedBehavior.options, selectedBehavior.value);
   // Fast shows on its own as a quiet "· Fast" after the model name; the effort beside it is the base level ("High", not "High + Fast").
-  const fastOn = controls.fast && !isAutoModel(value);
+  const fastOn = controls.fast && !managesOwnBehavior(value);
   const summary = fastOn
     ? (behaviorValue === FAST_DEFAULT_VARIANT ? null : controls.options.find((option) => option.value === behaviorValue)?.label ?? null)
     : nonDefaultModelSummary(value, behaviorValue, selectedBehavior.label);
   const select = (option: ModelOption, behavior?: { variant: string | null }) => choice.choose(option, () => {
     onChange({ providerID: option.providerID, modelID: option.modelID }, behavior?.variant);
     // Setting the model keeps the variant when the model is unchanged, so apply it directly too.
-    if (behavior && !isAutoModel(option)) onBehaviorChange?.(behavior.variant);
+    if (behavior && !managesOwnBehavior(option)) onBehaviorChange?.(behavior.variant);
     onOpenChange(false);
   });
   const openProvider = () => { onOpenChange(false); window.dispatchEvent(new Event(openProviderAuthEvent)); };
@@ -95,7 +95,7 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
   }}>
     <PopoverTrigger type="button" disabled={disabled} aria-label="Change model"
       className="inline-flex h-9 min-w-0 items-center gap-1.5 px-2.5 text-sm text-muted-foreground hover:text-foreground focus-visible:rounded focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
-      <span className="max-w-56 truncate">{hideValue ? "Select model" : isAutoModel(value) ? "Auto" : catalog.currentOption ? modelTitle(catalog.currentOption) : "Select model"}{!hideValue && summary ? ` · ${summary}` : ""}{!hideValue && fastOn ? <span data-testid="model-fast-indicator" className="text-xs font-medium"> · Fast</span> : null}</span><ChevronDown className="size-3" />
+      <span className="max-w-56 truncate">{hideValue ? "Select model" : fixedModelTitle(value) ?? (catalog.currentOption ? modelTitle(catalog.currentOption) : "Select model")}{!hideValue && summary ? ` · ${summary}` : ""}{!hideValue && fastOn ? <span data-testid="model-fast-indicator" className="text-xs font-medium"> · Fast</span> : null}</span><ChevronDown className="size-3" />
     </PopoverTrigger>
     <PopoverContent ref={popupRef} tabIndex={-1} align="start" initialFocus={() => isMobile || focusAlternative ? popupRef.current : searchInputRef.current} data-testid="composer-model-picker" className="flex max-h-[min(var(--available-height),36rem)] w-90 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl p-0">
       <ModelPickerPanel searchInputRef={searchInputRef} options={options} current={value} behaviorValue={behaviorValue} fallbackBehaviorOptions={behaviorOptions}

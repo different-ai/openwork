@@ -19,6 +19,7 @@ export function createUiControlServer({
   computerTask = undefined,
   computerProgram = undefined,
   computerScript = undefined,
+  computerEnabled = undefined,
 }) {
   let uiControlServer = null;
   let uiControlDiscoveryPath = null;
@@ -168,6 +169,10 @@ export function createUiControlServer({
           const controller = new AbortController();
           response.once("close", () => { if (!response.writableEnded) controller.abort(); });
           sendJsonResponse(response, 200, await browserTask(await readJsonRequestBody(request), { signal: controller.signal }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/computer/enabled") {
+          sendJsonResponse(response, 200, { enabled: typeof computerEnabled === "function" && computerEnabled() === true });
           return;
         }
         if (request.method === "POST" && url.pathname === "/computer/program") {

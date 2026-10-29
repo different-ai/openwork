@@ -8,15 +8,9 @@ import { denDashboardUrl } from "@/app/lib/den-dashboard-links";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { openAlternativeModelPicker } from "@/app/lib/inference-access";
 import { usePlatform } from "@/react-app/kernel/platform";
-import { useDesktopFeature } from "../session/status/use-desktop-feature";
 import { useDenAuth } from "./den-auth-provider";
 import { getOpenWorkModelsActionUrl, useOpenWorkModelsPromoEligibility } from "./openwork-models-promo";
 import { openWorkModelsLimitCopy, usageLimitActions, type OpenWorkModelsLimit, type UsageLimitAction, type UsageLimitActionId, type UsageLimitViewer } from "./usage-limit-state";
-
-/** The new usage-limit card is on for this person (registry `usageLimitUpgrade`; signed out, the deployment switch). */
-export function useUsageLimitUpgrade(): boolean {
-  return useDesktopFeature("usageLimitUpgrade");
-}
 
 /**
  * Who is looking at the limit: signed in or not, whether they can buy for the active organization (owners and

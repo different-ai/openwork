@@ -1,6 +1,7 @@
 import { and, eq, gt, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthUserTable, InvitationTable, MemberTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { BILLING_PLAN_TIERS } from "@openwork/types/den/billing-plans"
 import { desktopConfigSchema } from "@openwork/types/den/desktop-policies"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
@@ -13,7 +14,7 @@ import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { automationAvailabilityFor, headlessAutomationsConfigured } from "../../automations/organization-availability.js"
 import { authenticatedRoute, jsonValidator, orgMemberRoute, userSessionRoute, type OrganizationContextVariables, type UserOrganizationsContext } from "../../middleware/index.js"
-import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSummary } from "../../orgs.js"
 import type { AuthContextVariables } from "../../session.js"
@@ -22,9 +23,10 @@ import { readAgentPermissionRulesForMember } from "../../agent-permissions.js"
 import { desktopConfigDefaultModel } from "../../default-model.js"
 import { readPromptsForMember } from "../../prompts.js"
 import { memberPromptsSchema } from "@openwork/types/den/prompts"
-import { getOrganizationFeatures, requireFeature } from "../../features.js"
+import { getOrganizationFeatures } from "../../features.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import { registerMeActivationRoutes } from "./activation.js"
+import { registerMeAgentRoutes } from "./agent.js"
 
 const DOWNLOAD_LINK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
 const DOWNLOAD_LINK_RATE_LIMIT_MAX = 5
@@ -37,6 +39,8 @@ const meResponseSchema = z.object({
 const meOrganizationsResponseSchema = z.object({
   orgs: z.array(z.object({
     id: denTypeIdSchema("organization"),
+    planTier: z.enum(BILLING_PLAN_TIERS),
+    isSandbox: z.boolean(),
     isActive: z.boolean(),
   }).passthrough()),
   activeOrgId: denTypeIdSchema("organization").nullable(),
@@ -165,6 +169,7 @@ async function checkDownloadLinkRateLimit(userId: string, now: number) {
 
 export function registerMeRoutes<T extends { Variables: AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
   registerMeActivationRoutes(app)
+  registerMeAgentRoutes(app)
 
   app.get(
     "/v1/me",
@@ -425,15 +430,13 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
     describeRoute({
       tags: ["Users"],
       summary: "Get current user's prompts",
-      description: "Returns the system prompts that apply to the caller in their active organization, in the order desktops append them to OpenWork's instructions: prompts for everyone, then each of the caller's teams' prompts by team name, then prompts assigned to the caller. Desktops read it with their provider sync. Requires the Prompts feature; answers 404 while it is off, and desktops then add no prompts.",
+      description: "Returns the system prompts that apply to the caller in their active organization, in the order desktops append them to OpenWork's instructions: prompts for everyone, then each of the caller's teams' prompts by team name, then prompts assigned to the caller. Desktops read it with their provider sync.",
       responses: {
         200: jsonResponse("Current user prompts returned successfully.", memberPromptsSchema),
         401: jsonResponse("The caller must be signed in to read their prompts.", unauthorizedSchema),
-        404: jsonResponse("Prompts is off for the organization.", notFoundSchema),
       },
     }),
     orgMemberRoute(),
-    requireFeature("orgPrompts"),
     async (c) => {
       const { organization, currentMember } = c.get("organizationContext")
       c.header("Cache-Control", "no-store")
@@ -467,7 +470,6 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       const defaultModel = await desktopConfigDefaultModel({ organizationId: organization.id, memberId: currentMember.id })
       const automations = automationAvailabilityFor({
         metadata: organization.metadata,
-        settingsEnabled: features.organizationAutomationSettings,
         headlessRunnerConfigured: headlessAutomationsConfigured(),
       })
 
@@ -481,8 +483,10 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         // Compatibility field for published desktops: Connect is always on.
         connectEnabled: true,
         liveProviderSync: features.liveProviderSync,
-        localProviderMirror: features.localProviderMirror,
-        removeOpencodeZen: features.removeOpencodeZen,
+        nativeAffordanceCodeMode: features.nativeAffordanceCodeMode,
+        // Compatibility fields for published desktops: both behaviors are now always on.
+        localProviderMirror: true,
+        removeOpencodeZen: true,
         agentPermissions,
         ...(defaultModel ? { defaultModel } : {}),
         ...(Array.isArray(metadata.allowedDesktopVersions)

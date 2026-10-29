@@ -17,7 +17,6 @@ const asOwner = den.as(owner, orgId)
 const asMember = den.as(member, orgId)
 
 test("with a headless runner, Cloud Automations are on and can be turned off and back on", async () => {
-  assert.equal((await den.setFeature(orgId, "organizationAutomationSettings", true)).status, 200)
   const read = await asMember("GET", "/v1/org/automation-settings")
   assert.equal(field(read.body, "headlessRunnerConfigured"), true, summary(read))
   assert.deepEqual(field(read.body, "available"), { desktop: true, cloud: true })

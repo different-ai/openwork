@@ -32,8 +32,11 @@ export const denSessionSchema = z.object({
   enabled: z.boolean(),
   canSchedule: z.boolean(),
   computer: z.boolean().default(false),
+  browser: z.boolean().default(false),
   browserDemonstrations: z.boolean().default(false),
   browserLiveView: z.boolean().default(false),
+  /** Workbot's computers run through the runner's sandbox gateway. Older Dens omit it: the runner's own provider. */
+  sandboxGateway: z.boolean().default(false),
   /** Workbot's Calendar tab is on (while Workbot is on). Older Dens omit it: off. */
   calendar: z.boolean().optional(),
   documents: z.boolean().default(false),
@@ -47,7 +50,6 @@ export const denSessionSchema = z.object({
   /** Side chats are on for this person. A Den from before side chats doesn't say: off. */
   sideChats: z.boolean().default(false),
   /** The Cmd+K / Ctrl+K command palette. A Den from before it doesn't say: off. */
-  commandPalette: z.boolean().default(false),
   /** The organization's default model for Workbot's turns. Null, or a Den from before it, means the runner's default. */
   model: z.string().nullable().default(null),
   verifyModel: z.boolean().default(false),

@@ -1,4 +1,4 @@
-// Where an in-app sign-in comes back to (the `desktopSignInReturn` feature).
+// Where an in-app sign-in comes back to.
 //
 // A person who signs in from a conversation should land back in that same
 // conversation, with their draft and model, instead of on the session root.
@@ -267,15 +267,14 @@ export function resolvePostHandoffRoute(input: {
 export type BeginSignInResult = "in-place" | "fallback";
 
 /**
- * Starts an in-app sign-in. With the feature on, records where to return,
- * marks the sign-in as desktop-initiated and opens the browser without
- * leaving the route. Off (or from a route that cannot be returned to), runs
- * the entry point's existing behaviour unchanged.
+ * Starts an in-app sign-in, records where to return, marks it desktop-initiated
+ * and opens the browser without leaving the route. Routes that cannot be
+ * returned to keep the entry point's existing behavior. Without storage, sign-in
+ * still opens and finishes on the default route.
  */
 export function beginSignInReturn(
   request: SignInReturnStart & { authUrl: string },
   deps: {
-    enabled: boolean;
     openLink: (url: string) => void;
     markDesktopSignInInitiated: () => void;
     fallback: () => void;
@@ -283,7 +282,7 @@ export function beginSignInReturn(
     storage?: SignInReturnStorage | null;
   },
 ): BeginSignInResult {
-  if (!deps.enabled || !isReturnablePath(request.path)) {
+  if (!isReturnablePath(request.path)) {
     deps.fallback();
     return "fallback";
   }

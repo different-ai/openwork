@@ -4,7 +4,6 @@ import {
   AnonymousInferenceUsageBucketTable as GuestBucket, AnonymousInferenceUsageTable as GuestUsage,
   InferenceFreeUsageBucketTable as MemberBucket, InferenceFreeUsageTable as MemberUsage,
   freeAutoLimitId, freeAutoObservationRateId, recordFreeAutoLimit,
-  OrganizationTable, chargeFreeAutoGrants, freeAutoGrantAllowance, readOrganizationBenefits, type FreeAutoGrantAdmission,
 } from "@openwork-ee/den-db"
 import { freeInferenceWindow, INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
 import { DESKTOP_FREE_PROOF_CLOCK_SKEW_MS, type DesktopFreeAccessStatus } from "@openwork/free-auto"
@@ -20,7 +19,7 @@ export type FreeUsageReceipt = { eventId: string; model: string; amount: number;
 /** A usage window, like one paid Models limit policy window. */
 export type FreeWindow = { id: string; scope: "member" | "installation" | "global"; identity: string;
   window: "weekly" | "daily" | "monthly"; start: Date; end: Date; limit: number }
-export type FreeAdmission = { ok: true; windows: FreeWindow[]; grantAdmission?: FreeAutoGrantAdmission } | { ok: false; code: string }
+export type FreeAdmission = { ok: true; windows: FreeWindow[] } | { ok: false; code: string }
 
 export function freeUsageBucketId(scope: string, identity: string, window: string, start: Date) {
   return freeIdentityHash("free", ["usage", scope, identity, window, start.toISOString()].join(":"))
@@ -115,10 +114,9 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
         ]
     return values.map((value) => ({ ...value, id: freeUsageBucketId(value.scope, value.identity, value.window, value.start) }))
   }
-  async function used(tx: Tx, window: FreeWindow, lock = false) {
+  async function used(tx: Tx, window: FreeWindow) {
     const table = family === "member" ? MemberBucket : GuestBucket
-    const query = tx.select({ used: table.used_amount }).from(table).where(eq(table.id, window.id)).limit(1)
-    const [row] = await (lock ? query.for("update") : query)
+    const [row] = await tx.select({ used: table.used_amount }).from(table).where(eq(table.id, window.id)).limit(1)
     return row?.used ?? 0
   }
   async function addUsage(tx: Tx, window: FreeWindow, amount: number) {
@@ -143,25 +141,7 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
       if (!code && total >= window.limit) code = window.scope === "global" ? "anonymous_capacity_exceeded" : "anonymous_limit_exceeded"
       if (!personalLimit && window.scope !== "global" && window.limit > 0 && total >= window.limit) personalLimit = window
     }
-    let grantAdmission: FreeAutoGrantAdmission | undefined
-    if (principal.kind === "member") {
-      const benefits = await readOrganizationBenefits(tx, principal.organizationId)
-      const grants = freeAutoGrantAllowance(benefits)
-      if (benefits.enabled) {
-        grantAdmission = { grantIds: grants.grantIds, unlimited: grants.unlimited }
-        if (benefits.settings.freeAuto === "disabled") code = "free_principal_rejected"
-        else if (grants.unlimited || grants.remainingAmount > 0) {
-          if (code === "anonymous_limit_exceeded") code = null
-          personalLimit = null
-          if (allowance) allowance = { ...allowance,
-            limitUsd: allowance.limitUsd + grants.totalAmount / INFERENCE_USAGE_CONVERSION_FACTOR,
-            usedUsd: Math.min(allowance.usedUsd, allowance.limitUsd) + grants.usedAmount / INFERENCE_USAGE_CONVERSION_FACTOR,
-            remainingUsd: allowance.remainingUsd + grants.remainingAmount / INFERENCE_USAGE_CONVERSION_FACTOR,
-            unlimited: grants.unlimited }
-        }
-      }
-    }
-    return { windows: all, allowance, code, personalLimit, now, grantAdmission }
+    return { windows: all, allowance, code, personalLimit, now }
   }
 
   /** Called after the capacity slot is released. Analytics failures and overflow never change the response. */
@@ -241,20 +221,18 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
       }))
       if (!result) return { ok: false, code: "free_principal_rejected" }
       await observeLimit(principal, result)
-      return result.code ? { ok: false, code: result.code } : { ok: true, windows: result.windows, grantAdmission: result.grantAdmission }
+      return result.code ? { ok: false, code: result.code } : { ok: true, windows: result.windows }
     },
     /**
      * After a request: record its cost once and add it to each window it was admitted under. Without a usage
      * report (the stream broke, or the client left) the fixed estimate is charged instead. Returns false when this
      * request or completion was already charged.
      */
-    async charge(input: { requestId: string; principal: FreePrincipal; windows: FreeWindow[]; grantAdmission?: FreeAutoGrantAdmission; receipt: FreeUsageReceipt | null }) {
+    async charge(input: { requestId: string; principal: FreePrincipal; windows: FreeWindow[]; receipt: FreeUsageReceipt | null }) {
       const receipt = validFreeReceipt(input.receipt) ? input.receipt : null
       const amount = receipt?.amount ?? config.unreportedUsageAmount
       const { principal } = input
       return database.transaction(async (tx) => {
-        // Shared grant pools and admin writes use the same organization-first locking order.
-        if (principal.kind === "member" && input.grantAdmission) await tx.select({ id: OrganizationTable.id }).from(OrganizationTable).where(eq(OrganizationTable.id, principal.organizationId)).limit(1).for("update")
         const usage = family === "member" ? MemberUsage : GuestUsage
         const [existing] = await tx.select({ id: usage.request_id }).from(usage).where(or(eq(usage.request_id, input.requestId),
           receipt ? eq(usage.completion_id, receipt.eventId) : undefined)).limit(1)
@@ -270,16 +248,7 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
           if (isDuplicate(error)) return false
           throw error
         }
-        for (const window of input.windows) {
-          if (principal.kind === "member" && input.grantAdmission && window.scope === "member") {
-            // Materialize and lock the per-person bucket before reading its remaining standard allowance.
-            await addUsage(tx, window, 0)
-            const standardRemaining = Math.max(0, window.limit - await used(tx, window, true))
-            await chargeFreeAutoGrants(tx, { organizationId: principal.organizationId, requestId: input.requestId,
-              admission: input.grantAdmission, amount: Math.max(0, amount - standardRemaining) })
-          }
-          await addUsage(tx, window, amount)
-        }
+        for (const window of input.windows) await addUsage(tx, window, amount)
         return true
       })
     },

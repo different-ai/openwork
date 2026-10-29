@@ -2,6 +2,7 @@ import { buildManagedProviderConfig, readProviderEnvNames, selectPrimaryCredenti
 import { applyEdits, modify } from "jsonc-parser";
 import type { ProviderConfig } from "@opencode-ai/sdk/v2/client";
 import type { GatewayUsableModel } from "@openwork/types/den/gateway";
+import { AUTO_ROUTER_PROVIDER_ID } from "@openwork/types/den/auto-router";
 import type { ModelOption, ModelRef } from "@/app/types";
 import { catalogModelVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 
@@ -83,13 +84,14 @@ export const getCloudManagedProviderId = (
 /**
  * A provider key in `opencode.jsonc` that is owned by the cloud-import system:
  * `lpr_*` keys (org-managed providers), `ipr_*` keys (providers routed through
- * the OpenWork inference gateway) and the `openwork` hosted provider.
+ * the OpenWork inference gateway), the `openwork` hosted provider and the
+ * organization's Auto Router (`openwork-auto`).
  * These keys are never hand-authored, so re-importing over an existing block
  * with one of these ids is a safe reconcile (recovers a lost import baseline)
  * rather than a clobber of a user's manual provider (#2346).
  */
 export const isCloudManagedProviderKey = (providerId: string) =>
-  /^(lpr|ipr)_/i.test(providerId) || providerId.trim() === "openwork";
+  /^(lpr|ipr)_/i.test(providerId) || providerId.trim() === "openwork" || providerId.trim() === AUTO_ROUTER_PROVIDER_ID;
 
 export const OPENWORK_GATEWAY_PROVIDER_SOURCE = "openwork_gateway";
 /** Badge copy for providers routed through the OpenWork inference gateway. */

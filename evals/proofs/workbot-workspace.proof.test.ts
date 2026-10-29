@@ -25,17 +25,19 @@ test("a member asks about an open document and calendar without losing a draft",
     const sent = await probe.eventually(() => world.messages(), { within: 5000, label: "the question includes visible document metadata", until: values => values.length === 1 });
     expect(sent[0]).toMatchObject({ text: "Summarize this", context: { kind: "document", fileId: "file_brief", title: "Project brief.txt", unsaved: true } });
     expect(JSON.stringify(sent)).not.toContain("Private unsaved draft");
-    await user.notSee({ role: "button", label: "Hide workspace chat" });
+    // The conversation is shown by default beside the document; editing the document did not minimize it.
+    await user.see({ role: "button", label: "Hide workspace chat" });
+    expect((await probe.dom("[data-workbot-workspace-chat]")).elements).toHaveLength(1);
     expect((await probe.dom('textarea[aria-label="Message Workbot"]')).elements.some(input => input.focused)).toBe(true);
-    await user.click({ role: "button", label: "Show workspace chat" });
     await user.see({ role: "link", label: "Budget notes", nth: 0 });
     expect((await probe.url())).toContain("/documents");
     expect(world.opened()).toEqual(["file_brief"]);
     evidence.recordAssertionEvidence("Only the current file metadata accompanies the question", JSON.stringify(sent[0]), !JSON.stringify(sent).includes("Private unsaved draft"));
     await user.screenshot();
   });
-  await step("the member moves to Calendar and asks about the displayed week", async () => {
+  await step("the member minimizes the chat, moves to Calendar and asks about the displayed week", async () => {
     await user.click({ role: "button", label: "Hide workspace chat" });
+    await probe.eventually(() => probe.dom("[data-workbot-workspace-chat]"), { within: 3000, label: "the chat minimizes", until: layout => layout.elements.length === 0 });
     await user.click({ role: "button", label: "Open workspace navigation" });
     await user.see({ text: "Save or close drafts to switch chats." });
     await user.press("Escape");
@@ -73,6 +75,8 @@ test("a member asks about an open document and calendar without losing a draft",
   await step("a document opens only after the member chooses its link", async () => {
     await user.click({ role: "link", label: "Budget notes", nth: 0 });
     await user.see({ role: "textbox", label: "Document text" }, { value: "Budget overview" });
+    // The earlier exclusion was for Project brief; the newly opened document is shared again.
+    await user.see({ testId: "workbot-view-context", text: /Budget notes\.txt · Read-only context/ });
     expect(world.opened()).toEqual(["file_brief", "file_budget"]);
     await user.click({ role: "button", label: "Show workspace chat" });
     await user.click({ role: "link", label: "Restricted document", nth: 0 });

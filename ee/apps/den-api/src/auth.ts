@@ -47,13 +47,14 @@ import {
 import { DEN_ACCOUNT_CONFIG, DEN_USER_CONFIG } from "./account-linking-policy.js";
 import { cache } from "./cache.js";
 import { deploymentFeatureEnabled } from "./features.js";
+import { lastSignInCookieChange, lastSignInCookieWrites } from "./last-sign-in-method.js";
 import { hashSessionTokens } from "./session-token.js";
 import { auditBetterAuthAfter, auditBetterAuthBefore, auditBetterAuthRefusal, auditBetterAuthSessionAfter, auditBetterAuthSessionBefore, BETTER_AUTH_AUDIT_AFTER_PATHS, BETTER_AUTH_AUDIT_BEFORE_PATHS, BETTER_AUTH_SESSION_AFTER_PATHS, BETTER_AUTH_SESSION_BEFORE_PATHS, noteOAuthConsentReference, noteOAuthRevocation, noteOAuthTokenIssuance, type BetterAuthHookSession } from "./audit/better-auth.js";
 import { auditUserUpdateAfter, auditUserUpdateBefore, recordAccountDeleted, recordIdentityLinked, recordIdentityUnlinked } from "./audit/domain/account.js";
 import { auditSessionMethod, auditSessionRevokeReason, recordSessionCreated, recordSessionRevoked } from "./audit/domain/sessions.js";
 import { SCIM_TOKEN_STORAGE_STRATEGY } from "./scim-token-storage.js";
 import { createScimExistingUserLinkCheck } from "./scim-existing-user-linking.js";
-import { isCimdClientIdUrlAllowed } from "./mcp/cimd-policy.js";
+import { fetchCimdMetadataResource, isCimdClientIdUrlAllowed } from "./mcp/cimd-policy.js";
 import { withLoopbackRedirectRelaxation } from "./mcp/cimd-loopback-redirects.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
@@ -110,7 +111,7 @@ import { readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstra
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
-import { cimdClientDiscovery } from "@better-auth/cimd";
+import { createCimdClientDiscovery } from "@better-auth/cimd";
 import { extendOAuthProvider, oauthProvider } from "@better-auth/oauth-provider";
 import { scim } from "@better-auth/scim";
 import { sso } from "@better-auth/sso";
@@ -754,6 +755,36 @@ function getEnterpriseAuthRedirectUrl(input: {
   return url.toString();
 }
 
+const lastSignInLogger = appLogger.child({ component: "last_sign_in_method" });
+
+/**
+ * Remembers a password, Google or GitHub sign-in in a long-lived cookie, and
+ * forgets it after an SSO sign-in (feature `lastUsedSignIn`). Never fails the
+ * sign-in: a broken feature lookup only skips remembering.
+ */
+async function updateLastSignInCookie(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
+  const change = lastSignInCookieChange({
+    path: ctx.path,
+    provider: readStringProperty(ctx.params, "id") ?? readStringProperty(ctx.body, "provider"),
+    signedIn: Boolean(ctx.context.newSession),
+  });
+  if (!change) return;
+  if (change.type === "remember") {
+    const enabled = await deploymentFeatureEnabled("lastUsedSignIn").catch((error: unknown) => {
+      lastSignInLogger.warn("could not read lastUsedSignIn; not remembering the sign-in method", { auth_path: ctx.path, error_name: error instanceof Error ? error.name : typeof error });
+      return false;
+    });
+    if (!enabled) return;
+  }
+  const writes = lastSignInCookieWrites(change, {
+    secure: env.betterAuthUrl.startsWith("https:"),
+    cookieDomain: env.betterAuthCookieDomain,
+  });
+  for (const write of writes) {
+    ctx.setCookie(write.name, write.value, write.options);
+  }
+}
+
 function removeSsoTestSessionCookie(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
   const headers = ctx.context.responseHeaders;
   if (!headers) return;
@@ -1262,11 +1293,19 @@ export const auth = betterAuth({
         return;
       }
 
+      if (ctx.path === "/sign-in/email" || ctx.path === "/sign-up/email" || ctx.path === "/sign-in/social") {
+        await updateLastSignInCookie(ctx);
+        return;
+      }
+
       if (ctx.path === "/sso/callback/:providerId" || ctx.path === "/sso/saml2/sp/acs/:providerId") {
         const callbackUrl = ctx.context.responseHeaders?.get("location") ?? null;
         const intentId = getSsoTestIntentIdFromCallbackUrl(callbackUrl);
         const providerId = readStringProperty(ctx.params, "providerId");
         if (!intentId || !providerId) {
+          // A real SSO sign-in (not an admin's connection test) forgets the
+          // remembered password or social method.
+          await updateLastSignInCookie(ctx);
           return;
         }
 
@@ -1307,6 +1346,7 @@ export const auth = betterAuth({
           email: newSession.user.email,
           emailVerified: newSession.user.emailVerified === true,
         });
+        await updateLastSignInCookie(ctx);
         return;
       }
 
@@ -1749,12 +1789,13 @@ export const auth = betterAuth({
           // Same discovery the @better-auth/cimd plugin installs, wrapped so a
           // registered loopback redirect matches on any port (RFC 8252 §7.3),
           // which native MCP clients such as Claude Code depend on.
-          clientDiscovery: withLoopbackRedirectRelaxation(cimdClientDiscovery({
+          clientDiscovery: withLoopbackRedirectRelaxation(createCimdClientDiscovery({
             // Redirect URIs are matched at authorize time and Den's MCP redirect
             // policy still applies; native clients legitimately redirect to
             // loopback or another origin than the one hosting their document.
             originBoundFields: ["post_logout_redirect_uris", "client_uri"],
-            allowFetch: (url) => isCimdClientIdUrlAllowed(url),
+            fetchClientMetadataResource: fetchCimdMetadataResource,
+            isMetadataDocumentUrlAllowed: (url) => isCimdClientIdUrlAllowed(url),
             onClientCreated: ({ client }) => {
               logger.info("Registered MCP client from its client ID metadata document", {
                 clientId: client.clientId,

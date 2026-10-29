@@ -58,21 +58,7 @@ function requestRemoval(token: string, connectionId: string, body: Record<string
   return den.callMcpTool(token, "execute_capability", { name: "requestMcpConnectionRemoval", path: { connectionId }, body })
 }
 
-test("with the rollout off, agents cannot find or call connection removal", async () => {
-  const id = await addConnection(owner, "Rollout Off Tracker")
-  const search = await den.callMcpTool(ownerToken, "search_capabilities", { query: "delete connection", limit: 20 })
-  assert.equal(search.isError, false, search.raw.slice(0, 400))
-  assert.equal(matchNames(search).includes("requestMcpConnectionRemoval"), false)
-
-  const direct = await ownerApi("POST", `/v1/mcp-connections/${id}/removal-request`, { expectedName: "Rollout Off Tracker" })
-  assert.equal(direct.status, 404, summary(direct))
-  assert.equal(field(direct.body, "error"), "feature_disabled")
-  assert.ok((await listedIds()).includes(id))
-})
-
 test("an owner's agent prepares removing the exact connection; nothing is removed until the person confirms in Den", async () => {
-  const enabled = await den.setFeature(orgId, "agentConnectionRemoval", true)
-  assert.equal(enabled.status, 200, summary(enabled))
   const id = await addConnection(owner, "Lab Deploys")
   const before = await storedRows(id)
   assert.equal(before.connections, 1)

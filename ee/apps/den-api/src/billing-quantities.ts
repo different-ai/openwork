@@ -110,24 +110,6 @@ export function minimumUsersFromStripeMetadata(metadata: Record<string, string> 
 }
 
 /**
- * Whether one more user may be added. Within its free seats any organization
- * may; past them it needs a paid plan: a Team (seat) subscription, an
- * Enterprise subscription, or (when allowed) an Enterprise plan set by a
- * platform admin or grandfathered.
- */
-export function canAddUser(input: {
-  seats: { total: number; free: number }
-  hasSeatSubscription: boolean
-  hasEnterpriseSubscription: boolean
-  enterprisePlanBypassesLimit: boolean
-}) {
-  return canAddUserWithoutSeatSubscription(input.seats)
-    || input.hasSeatSubscription
-    || input.hasEnterpriseSubscription
-    || input.enterprisePlanBypassesLimit
-}
-
-/**
  * The plan an organization should have after one of its paid plan
  * subscriptions changes, or null to leave it alone.
  *

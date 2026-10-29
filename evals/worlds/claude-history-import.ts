@@ -2,7 +2,6 @@ import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Seed } from "@openwork/env";
 import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
-import { seededOrganizationId } from "./organization-capabilities.ts";
 
 /** Two Claude Code sessions saved for the workspace folder, shaped like Claude Code's own transcripts. */
 const sessions = [
@@ -47,7 +46,7 @@ function transcript(session: (typeof sessions)[number]): string {
  * A signed-in owner whose project folder has Claude Code history. Claude Code
  * keeps sessions under `<CLAUDE_CONFIG_DIR>/projects/<folder name>`; the world
  * points the OpenWork server at a private config folder, so nothing on the
- * test machine is read. Import starts off for the organization.
+ * test machine is read. Import is available without rollout configuration.
  */
 export async function claudeHistoryImportWorld(seed: Seed) {
   const folder = seed.tmpPath("claude-history-project");
@@ -63,15 +62,8 @@ export async function claudeHistoryImportWorld(seed: Seed) {
     den, webPort, name: "claude-history-import", workspacePath, engine: "v2",
     env: { CLAUDE_CONFIG_DIR: claudeConfig },
   });
-  const organizationId = await seededOrganizationId(seed, den.admin);
-  const setImport = async (enabled: boolean) => {
-    const result = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
-      method: "PUT", body: JSON.stringify({ capabilities: { claudeHistoryImport: enabled } }),
-    });
-    if (!result.response.ok) throw new Error(`Turning Claude import ${enabled ? "on" : "off"} failed: HTTP ${result.response.status}`);
-  };
   return {
-    app, den, workspace, sessions, setImport,
+    app, den, workspace, sessions,
     settingsUrl: (tab: string) => `${app.webUrl}/workspace/${encodeURIComponent(workspace.workspaceId)}/settings/${tab}`,
   };
 }

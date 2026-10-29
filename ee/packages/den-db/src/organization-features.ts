@@ -1,5 +1,5 @@
-import { and, eq, inArray, isNull } from "drizzle-orm"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm"
+import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
   isFeatureKey,
   mapFeatures,
@@ -13,8 +13,9 @@ import {
   type ResolvedFeature,
 } from "@openwork/features"
 import type { createDenDb } from "./client"
+import { AuthUserTable } from "./schema/auth"
 import { MemberTable, OrganizationTable } from "./schema/org"
-import { FeatureRolloutTable, MemberFeatureTable, OrganizationFeatureTable } from "./schema/organization-features"
+import { FeatureChangeTable, FeatureRolloutTable, FeatureUsageTable, MemberFeatureTable, OrganizationFeatureTable } from "./schema/organization-features"
 
 /**
  * Storage for feature state (on/off for everyone and kill switch per feature) and
@@ -119,13 +120,123 @@ export async function setFeatureRollout(
   input: { key: FeatureKey; enabled?: boolean; killed?: boolean; updatedByUserId?: string | null; defaultEnabled: boolean },
 ): Promise<FeatureRollouts> {
   const updatedByUserId = input.updatedByUserId ? normalizeDenTypeId("user", input.updatedByUserId) : null
-  const current = (await readFeatureRollouts(database))[input.key]
-  const enabled = input.enabled ?? current?.enabled ?? input.defaultEnabled
-  const killed = input.killed ?? current?.killed ?? false
-  await database.insert(FeatureRolloutTable)
-    .values({ feature_key: input.key, enabled, killed, updated_by_user_id: updatedByUserId })
-    .onDuplicateKeyUpdate({ set: { enabled, killed, updated_by_user_id: updatedByUserId } })
+  await database.transaction(async (tx) => {
+    const current = (await readFeatureRollouts(tx))[input.key]
+    const wasEnabled = current?.enabled ?? input.defaultEnabled
+    const wasKilled = current?.killed ?? false
+    const enabled = input.enabled ?? wasEnabled
+    const killed = input.killed ?? wasKilled
+    await tx.insert(FeatureRolloutTable)
+      .values({ feature_key: input.key, enabled, killed, updated_by_user_id: updatedByUserId })
+      .onDuplicateKeyUpdate({ set: { enabled, killed, updated_by_user_id: updatedByUserId } })
+    const changes: FeatureChangeAction[] = []
+    if (killed !== wasKilled) changes.push(killed ? "killed" : "restored")
+    if (enabled !== wasEnabled) changes.push(enabled ? "on" : "off")
+    await recordFeatureChanges(tx, changes.map((action) => ({ key: input.key, scope: "everyone", action, changedByUserId: updatedByUserId })))
+  })
   return readFeatureRollouts(database)
+}
+
+export type FeatureChangeScope = (typeof FeatureChangeTable.$inferSelect)["scope"]
+export type FeatureChangeAction = (typeof FeatureChangeTable.$inferSelect)["action"]
+
+/** The most recent change to one feature, with who made it. */
+export type FeatureChange = {
+  scope: FeatureChangeScope
+  action: FeatureChangeAction
+  at: Date
+  /** Null when the change was made without a signed-in person (e.g. a deploy-time script) or the user was deleted. */
+  by: { id: string; name: string; email: string } | null
+}
+
+type FeatureChangeInput = {
+  key: FeatureKey
+  scope: FeatureChangeScope
+  action: FeatureChangeAction
+  organizationId?: string | null
+  memberId?: string | null
+  changedByUserId: string | null
+}
+
+/** Appends to the feature history. Call inside the transaction that made the change. */
+async function recordFeatureChanges(database: FeatureDatabase, changes: FeatureChangeInput[]): Promise<void> {
+  if (changes.length === 0) return
+  await database.insert(FeatureChangeTable).values(changes.map((change) => ({
+    feature_key: change.key,
+    scope: change.scope,
+    action: change.action,
+    organization_id: change.organizationId ? normalizeDenTypeId("organization", change.organizationId) : null,
+    member_id: change.memberId ? normalizeDenTypeId("member", change.memberId) : null,
+    changed_by_user_id: change.changedByUserId ? normalizeDenTypeId("user", change.changedByUserId) : null,
+  })))
+}
+
+/** What a stored override change does to the history: nothing when the value is the same. */
+function overrideChangeAction(previous: boolean | undefined, next: boolean | null): FeatureChangeAction | null {
+  if (next === null) return previous === undefined ? null : "reset"
+  return previous === next ? null : next ? "on" : "off"
+}
+
+function latestPerFeature(rows: Array<{
+  feature_key: string
+  scope: FeatureChangeScope
+  action: FeatureChangeAction
+  created_at: Date
+  user_id: string | null
+  user_name: string | null
+  user_email: string | null
+}>): Partial<Record<FeatureKey, FeatureChange>> {
+  const latest: Partial<Record<FeatureKey, FeatureChange>> = {}
+  // Rows arrive newest first: the first one per key wins.
+  for (const row of rows) {
+    if (!isFeatureKey(row.feature_key) || latest[row.feature_key]) continue
+    latest[row.feature_key] = {
+      scope: row.scope,
+      action: row.action,
+      at: row.created_at,
+      by: row.user_id && row.user_name !== null && row.user_email !== null ? { id: row.user_id, name: row.user_name, email: row.user_email } : null,
+    }
+  }
+  return latest
+}
+
+const featureChangeColumns = {
+  feature_key: FeatureChangeTable.feature_key,
+  scope: FeatureChangeTable.scope,
+  action: FeatureChangeTable.action,
+  created_at: FeatureChangeTable.created_at,
+  user_id: AuthUserTable.id,
+  user_name: AuthUserTable.name,
+  user_email: AuthUserTable.email,
+}
+
+/**
+ * The latest change per feature that could have changed what one organization
+ * gets (its own override or the deployment-wide state), or, without an
+ * organization, the latest deployment-wide change per feature.
+ */
+export async function readLatestFeatureChanges(
+  database: FeatureDatabase,
+  input: { organizationId?: string | null; memberId?: string | null } = {},
+): Promise<Partial<Record<FeatureKey, FeatureChange>>> {
+  const scopes = [eq(FeatureChangeTable.scope, "everyone")]
+  if (input.organizationId) {
+    const organizationId = normalizeDenTypeId("organization", input.organizationId)
+    scopes.push(and(eq(FeatureChangeTable.scope, "organization"), eq(FeatureChangeTable.organization_id, organizationId))!)
+    if (input.memberId) {
+      scopes.push(and(
+        eq(FeatureChangeTable.scope, "member"),
+        eq(FeatureChangeTable.organization_id, organizationId),
+        eq(FeatureChangeTable.member_id, normalizeDenTypeId("member", input.memberId)),
+      )!)
+    }
+  }
+  const rows = await database.select(featureChangeColumns)
+    .from(FeatureChangeTable)
+    .leftJoin(AuthUserTable, eq(AuthUserTable.id, FeatureChangeTable.changed_by_user_id))
+    .where(or(...scopes))
+    .orderBy(desc(FeatureChangeTable.created_at), desc(FeatureChangeTable.id))
+  return latestPerFeature(rows)
 }
 
 function parseMetadata(value: unknown): Record<string, unknown> {
@@ -168,8 +279,12 @@ export async function setOrganizationFeatureOverrides(
       .for("update")
     if (!organization) throw new Error("organization_not_found")
 
+    const previous = await readOrganizationFeatureOverrides(tx, organizationId)
+    const history: FeatureChangeInput[] = []
     for (const [key, value] of Object.entries(input.changes)) {
       if (!isFeatureKey(key) || value === undefined) continue
+      const action = overrideChangeAction(previous[key], value)
+      if (action) history.push({ key, scope: "organization", action, organizationId, changedByUserId: setByUserId })
       if (value === null) {
         await tx.delete(OrganizationFeatureTable).where(and(
           eq(OrganizationFeatureTable.organization_id, organizationId),
@@ -181,6 +296,7 @@ export async function setOrganizationFeatureOverrides(
         .values({ organization_id: organizationId, feature_key: key, enabled: value, source: input.source, set_by_user_id: setByUserId })
         .onDuplicateKeyUpdate({ set: { enabled: value, source: input.source, set_by_user_id: setByUserId } })
     }
+    await recordFeatureChanges(tx, history)
 
     const overrides = await readOrganizationFeatureOverrides(tx, organizationId)
     const metadata = parseMetadata(organization.metadata)
@@ -242,8 +358,13 @@ export async function setMemberFeatureOverrides(database: Db, input: {
       isNull(MemberTable.removedAt), eq(MemberTable.isSetupAgent, false),
     )).limit(1).for("update")
     if (!member?.userId) return false
+    const previous = toOverrides(await tx.select({ feature_key: MemberFeatureTable.feature_key, enabled: MemberFeatureTable.enabled })
+      .from(MemberFeatureTable).where(eq(MemberFeatureTable.member_id, memberId)))
+    const history: FeatureChangeInput[] = []
     for (const [key, value] of Object.entries(input.changes)) {
       if (!isFeatureKey(key) || value === undefined) continue
+      const action = overrideChangeAction(previous[key], value)
+      if (action) history.push({ key, scope: "member", action, organizationId, memberId, changedByUserId: setByUserId })
       if (value === null) {
         await tx.delete(MemberFeatureTable).where(and(eq(MemberFeatureTable.member_id, memberId), eq(MemberFeatureTable.feature_key, key)))
       } else {
@@ -251,6 +372,148 @@ export async function setMemberFeatureOverrides(database: Db, input: {
           .onDuplicateKeyUpdate({ set: { enabled: value, set_by_user_id: setByUserId } })
       }
     }
+    await recordFeatureChanges(tx, history)
     return true
   })
+}
+
+/** UTC calendar day, as stored in feature_usage.last_used_day. */
+export function featureUsageDay(at: Date): string {
+  return at.toISOString().slice(0, 10)
+}
+
+/**
+ * Marks that a member used features today. Idempotent per day: a second write
+ * on the same UTC day only moves last_used_at, a write on a later day also
+ * adds one to days_used.
+ */
+export async function recordFeatureUsage(database: FeatureDatabase, input: {
+  organizationId: string
+  memberId: string
+  keys: readonly FeatureKey[]
+  at?: Date
+}): Promise<void> {
+  if (input.keys.length === 0) return
+  const at = input.at ?? new Date()
+  const day = featureUsageDay(at)
+  const organizationId = normalizeDenTypeId("organization", input.organizationId)
+  const memberId = normalizeDenTypeId("member", input.memberId)
+  await database.insert(FeatureUsageTable)
+    .values(input.keys.map((key) => ({
+      member_id: memberId, feature_key: key, organization_id: organizationId,
+      first_used_at: at, last_used_at: at, last_used_day: day, days_used: 1,
+    })))
+    .onDuplicateKeyUpdate({ set: {
+      // days_used reads the old last_used_day: the column is declared first, and drizzle assigns in column order.
+      days_used: sql`${FeatureUsageTable.days_used} + if(${FeatureUsageTable.last_used_day} < values(${FeatureUsageTable.last_used_day}), 1, 0)`,
+      last_used_day: sql`greatest(${FeatureUsageTable.last_used_day}, values(${FeatureUsageTable.last_used_day}))`,
+      last_used_at: sql`greatest(${FeatureUsageTable.last_used_at}, values(${FeatureUsageTable.last_used_at}))`,
+    } })
+}
+
+export type FeatureUsageRow = {
+  memberId: DenTypeId<"member">
+  featureKey: FeatureKey
+  firstUsedAt: Date
+  lastUsedAt: Date
+  daysUsed: number
+}
+
+/** Every recorded use in one organization, for its active members only. */
+export async function readOrganizationFeatureUsage(database: FeatureDatabase, organizationId: string): Promise<FeatureUsageRow[]> {
+  const rows = await database.select({
+    member_id: FeatureUsageTable.member_id,
+    feature_key: FeatureUsageTable.feature_key,
+    first_used_at: FeatureUsageTable.first_used_at,
+    last_used_at: FeatureUsageTable.last_used_at,
+    days_used: FeatureUsageTable.days_used,
+  })
+    .from(FeatureUsageTable)
+    .innerJoin(MemberTable, eq(MemberTable.id, FeatureUsageTable.member_id))
+    .where(and(
+      eq(FeatureUsageTable.organization_id, normalizeDenTypeId("organization", organizationId)),
+      eq(MemberTable.organizationId, normalizeDenTypeId("organization", organizationId)),
+      isNull(MemberTable.removedAt),
+    ))
+  return rows.flatMap((row) => isFeatureKey(row.feature_key) ? [{
+    memberId: row.member_id, featureKey: row.feature_key,
+    firstUsedAt: row.first_used_at, lastUsedAt: row.last_used_at, daysUsed: row.days_used,
+  }] : [])
+}
+
+/** Every active member's overrides in one organization, keyed by member id. */
+export async function readOrganizationMemberFeatureOverrides(database: FeatureDatabase, organizationId: string): Promise<Map<DenTypeId<"member">, FeatureOverrides>> {
+  const rows = await database.select({ member_id: MemberFeatureTable.member_id, feature_key: MemberFeatureTable.feature_key, enabled: MemberFeatureTable.enabled })
+    .from(MemberFeatureTable)
+    .innerJoin(MemberTable, eq(MemberTable.id, MemberFeatureTable.member_id))
+    .where(and(
+      eq(MemberTable.organizationId, normalizeDenTypeId("organization", organizationId)),
+      isNull(MemberTable.removedAt),
+      eq(MemberTable.isSetupAgent, false),
+    ))
+  const result = new Map<DenTypeId<"member">, FeatureOverrides>()
+  for (const row of rows) {
+    if (!isFeatureKey(row.feature_key)) continue
+    const overrides = result.get(row.member_id) ?? {}
+    overrides[row.feature_key] = row.enabled
+    result.set(row.member_id, overrides)
+  }
+  return result
+}
+
+/** Per organization and feature: active members who used it since `since`, and the latest use. */
+export type FeatureUsageSince = {
+  organizationId: DenTypeId<"organization">
+  featureKey: FeatureKey
+  members: number
+  lastUsedAt: Date
+}
+
+/**
+ * Who used features since `since`, across organizations (one feature with `featureKey`), active members only, for
+ * /admin › Features. Reads the feature_usage_org_feature index (organization, feature, last use) and members by
+ * primary key.
+ */
+export async function readFeatureUsageSince(database: FeatureDatabase, input: { since: Date; featureKey?: FeatureKey }): Promise<FeatureUsageSince[]> {
+  const rows = await database.select({
+    organization_id: FeatureUsageTable.organization_id,
+    feature_key: FeatureUsageTable.feature_key,
+    members: sql<string>`count(*)`,
+    last_used_at: sql<Date>`max(${FeatureUsageTable.last_used_at})`.mapWith(FeatureUsageTable.last_used_at),
+  })
+    .from(FeatureUsageTable)
+    .innerJoin(MemberTable, and(eq(MemberTable.id, FeatureUsageTable.member_id), eq(MemberTable.organizationId, FeatureUsageTable.organization_id)))
+    .where(and(
+      gte(FeatureUsageTable.last_used_at, input.since),
+      isNull(MemberTable.removedAt),
+      input.featureKey ? eq(FeatureUsageTable.feature_key, input.featureKey) : undefined,
+    ))
+    .groupBy(FeatureUsageTable.organization_id, FeatureUsageTable.feature_key)
+  return rows.flatMap((row) => isFeatureKey(row.feature_key) ? [{
+    organizationId: row.organization_id, featureKey: row.feature_key, members: Number(row.members), lastUsedAt: row.last_used_at,
+  }] : [])
+}
+
+/** How many organizations have a stored override turning each feature on, and off. */
+export async function readOrganizationFeatureOverrideCounts(database: FeatureDatabase): Promise<Partial<Record<FeatureKey, { on: number; off: number }>>> {
+  const rows = await database.select({ feature_key: OrganizationFeatureTable.feature_key, enabled: OrganizationFeatureTable.enabled, organizations: sql<string>`count(*)` })
+    .from(OrganizationFeatureTable)
+    .groupBy(OrganizationFeatureTable.feature_key, OrganizationFeatureTable.enabled)
+  const counts: Partial<Record<FeatureKey, { on: number; off: number }>> = {}
+  for (const row of rows) {
+    if (!isFeatureKey(row.feature_key)) continue
+    const entry = counts[row.feature_key] ?? { on: 0, off: 0 }
+    if (row.enabled) entry.on += Number(row.organizations)
+    else entry.off += Number(row.organizations)
+    counts[row.feature_key] = entry
+  }
+  return counts
+}
+
+/** Every organization with a stored override for one feature, and its value. */
+export async function readFeatureOverrideOrganizations(database: FeatureDatabase, key: FeatureKey): Promise<Map<DenTypeId<"organization">, boolean>> {
+  const rows = await database.select({ organization_id: OrganizationFeatureTable.organization_id, enabled: OrganizationFeatureTable.enabled })
+    .from(OrganizationFeatureTable)
+    .where(eq(OrganizationFeatureTable.feature_key, key))
+  return new Map(rows.map((row) => [row.organization_id, row.enabled]))
 }

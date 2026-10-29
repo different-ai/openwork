@@ -1,7 +1,8 @@
 /**
  * Sandbox organizations: platform admins create try-it-out organizations behind the cloud-only sandboxOrgs
  * rollout; anyone with the join link joins as a member until the seats run out, the sandbox closes, or the
- * link is replaced. Closing stops Free Auto without removing members.
+ * link is replaced. A closed or expired sandbox gets no Free Auto (Den API reads the sandbox row; no grants or
+ * benefit settings are written) without removing members, and extending it restores Free Auto.
  */
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
@@ -15,11 +16,26 @@ const verify = (userId: string) => client.execute("UPDATE user SET email_verifie
 
 const admin = await den.signUp("Platform Admin", `platform-admin+${den.stamp}@example.test`)
 const create = (body: Record<string, unknown>) => den.request(admin.token, "POST", "/v1/admin/sandbox-orgs", {
-  body: { name: "Trial sandbox", connectorBaseUrl: "http://127.0.0.1:9/", days: 14, memberLimit: 3, allowedEmailDomains: [], extraFreeAutoUsd: null, joinRole: "member", ...body },
+  body: { name: "Trial sandbox", connectorBaseUrl: "http://127.0.0.1:9/", days: 14, memberLimit: 3, allowedEmailDomains: [], joinRole: "member", ...body },
 })
 const tokenOf = (sandbox: unknown) => text(new URL(text(field(sandbox, "joinLink"), "join link")).searchParams.get("token"), "join token")
 const join = (token: string, joinToken: string) => den.request(token, "POST", "/v1/sandbox-join", { body: { token: joinToken } })
-const freeAuto = async (orgId: string) => field((await den.request(admin.token, "GET", `/v1/admin/organizations/${orgId}/control-panel`)).body, "access", "freeAuto", "enabled")
+/** What a member's app sees: whether Den offers them Free Auto, and whether it issues the Free Auto credential. */
+async function freeAuto(orgId: string) {
+  const access = await den.as(admin, orgId)("GET", "/v1/inference/access")
+  assert.equal(access.status, 200, summary(access))
+  const credential = await den.as(admin, orgId)("POST", "/v1/inference/free/credential")
+  const offered = field(access.body, "access", "reason") !== "admin_disabled"
+  assert.equal(credential.status === 200, offered, `access and credential agree: ${summary(access)} / ${summary(credential)}`)
+  if (!offered) assert.equal(field(credential.body, "error"), "free_not_offered", summary(credential))
+  return offered
+}
+/** ARRANGE ONLY: the sandbox's time ran out (waiting days is not practical in a test). */
+const expire = (sandboxId: string) => client.execute("UPDATE sandbox_organization SET expires_at = DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 1 MINUTE) WHERE id = ?", [sandboxId])
+const grantRows = async (orgId: string) => {
+  const [rows] = await client.query("SELECT (SELECT count(*) FROM organization_grant WHERE organization_id = ?) + (SELECT count(*) FROM organization_benefit_setting WHERE organization_id = ?) AS total", [orgId, orgId])
+  return Number(field(Array.isArray(rows) ? rows[0] : null, "total") ?? -1)
+}
 
 test("sandboxes stay unavailable until the platform turns the rollout on", async () => {
   const listed = await den.request(admin.token, "GET", "/v1/admin/sandbox-orgs")
@@ -35,17 +51,18 @@ test("sandboxes stay unavailable until the platform turns the rollout on", async
 test("only platform admins create or list sandboxes", async () => {
   const person = await den.signUp("Not Admin")
   assert.equal((await den.request(person.token, "GET", "/v1/admin/sandbox-orgs")).status, 403)
-  assert.equal((await den.request(person.token, "POST", "/v1/admin/sandbox-orgs", { body: { name: "Nope", connectorBaseUrl: null, days: 1, memberLimit: 1, allowedEmailDomains: [], extraFreeAutoUsd: null } })).status, 403)
+  assert.equal((await den.request(person.token, "POST", "/v1/admin/sandbox-orgs", { body: { name: "Nope", connectorBaseUrl: null, days: 1, memberLimit: 1, allowedEmailDomains: [] } })).status, 403)
 })
 
 test("a sandbox gets five per-person connectors, Free Auto and a join link that makes people members until seats run out", async () => {
-  const created = await create({ extraFreeAutoUsd: 10 })
+  const created = await create({})
   assert.equal(created.status, 200, summary(created))
   const sandbox = field(created.body, "sandbox")
   const orgId = text(field(sandbox, "organizationId"), "organization id")
   assert.equal(field(sandbox, "connectorCount"), 5)
   assert.equal(field(sandbox, "memberCount"), 1, "the creating admin is the only member")
   assert.equal(await freeAuto(orgId), true)
+  assert.equal(await grantRows(orgId), 0, "no organization grants or benefit settings are written")
   const joinToken = tokenOf(sandbox)
 
   const connections = list(field((await den.as(admin, orgId)("GET", "/v1/mcp-connections")).body, "connections"))
@@ -67,6 +84,15 @@ test("a sandbox gets five per-person connectors, Free Auto and a join link that 
   assert.equal(field(context.body, "currentMember", "role"), "member", summary(context))
 
   await join((await den.signUp("Riley Trial")).token, joinToken)
+  for (const person of [admin, avery]) {
+    const directory = await den.request(person.token, "GET", "/v1/me/orgs")
+    assert.equal(directory.status, 200, summary(directory))
+    const entry = list(field(directory.body, "orgs")).find((org) => org.id === orgId)
+    assert.equal(field(entry, "isSandbox"), true, "owners and joiners see the same sandbox identity")
+    assert.equal(field(entry, "planTier"), "enterprise", "the sandbox label is separate from its Enterprise plan")
+    assert.equal(field(entry, "memberCount"), 3)
+    assert.equal(field(entry, "joinToken"), undefined, "the directory never exposes sandbox join secrets")
+  }
   const late = await join((await den.signUp("Casey Late")).token, joinToken)
   assert.equal(late.status, 409, summary(late))
   assert.equal(field(late.body, "error"), "sandbox_full")
@@ -81,6 +107,9 @@ test("closing stops joins and Free Auto, keeps members, and extending reopens bo
   const closed = await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/close`)
   assert.equal(field(closed.body, "sandbox", "state"), "closed", summary(closed))
   assert.equal(field(closed.body, "sandbox", "memberCount"), 2)
+  const directory = await den.request(admin.token, "GET", "/v1/me/orgs")
+  const closedEntry = list(field(directory.body, "orgs")).find((org) => org.id === orgId)
+  assert.equal(field(closedEntry, "isSandbox"), true, "closing does not relabel a sandbox as Free")
   assert.equal(await freeAuto(orgId), false)
   const refused = await join((await den.signUp("After Close")).token, joinToken)
   assert.equal(field(refused.body, "error"), "sandbox_closed", summary(refused))
@@ -88,6 +117,38 @@ test("closing stops joins and Free Auto, keeps members, and extending reopens bo
   const extended = await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/extend`, { body: { days: 7 } })
   assert.equal(field(extended.body, "sandbox", "state"), "open", summary(extended))
   assert.equal(await freeAuto(orgId), true)
+})
+
+test("a sandbox whose time ran out gets no Free Auto, even before anyone lists or joins it; an ordinary organization keeps it", async () => {
+  const sandbox = field((await create({ memberLimit: 10 })).body, "sandbox")
+  const id = text(field(sandbox, "id"), "sandbox id"), orgId = text(field(sandbox, "organizationId"), "organization id")
+  assert.equal(await freeAuto(orgId), true)
+  await expire(id)
+  assert.equal(await freeAuto(orgId), false, "expiry alone stops Free Auto; nothing had to close the sandbox first")
+
+  const ordinary = await den.createOrg(admin, "Ordinary organization")
+  assert.equal(await freeAuto(ordinary.orgId), true)
+
+  const extended = await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/extend`, { body: { days: 7 } })
+  assert.equal(field(extended.body, "sandbox", "state"), "open", summary(extended))
+  assert.equal(await freeAuto(orgId), true)
+})
+
+test("the organization directory reports real plans independently of ownership", async () => {
+  const ordinary = await den.createOrg(admin, "Ordinary plan workspace")
+  for (const tier of ["free", "team", "enterprise"]) {
+    if (tier !== "free") {
+      const saved = await den.request(admin.token, "PATCH", `/v1/admin/organizations/${ordinary.orgId}/plan`, { body: { tier, seatLimit: 10 } })
+      assert.equal(saved.status, 200, summary(saved))
+    }
+    const directory = await den.request(admin.token, "GET", "/v1/me/orgs")
+    assert.equal(directory.status, 200, summary(directory))
+    const entry = list(field(directory.body, "orgs")).find((org) => org.id === ordinary.orgId)
+    assert.equal(field(entry, "role"), "owner")
+    assert.equal(field(entry, "isSandbox"), false)
+    assert.equal(field(entry, "planTier"), tier)
+    assert.equal(field(entry, "memberCount"), 1)
+  }
 })
 
 test("replacing the link stops the old one; a domain-limited sandbox refuses other email domains", async () => {
@@ -120,7 +181,7 @@ test("people joining at the same moment cannot take more seats than the sandbox 
 })
 
 test("sandboxes make people who join admins by default", async () => {
-  const created = await den.request(admin.token, "POST", "/v1/admin/sandbox-orgs", { body: { name: "Default role sandbox", connectorBaseUrl: null, days: 7, memberLimit: 5, allowedEmailDomains: [], extraFreeAutoUsd: null } })
+  const created = await den.request(admin.token, "POST", "/v1/admin/sandbox-orgs", { body: { name: "Default role sandbox", connectorBaseUrl: null, days: 7, memberLimit: 5, allowedEmailDomains: [] } })
   const sandbox = field(created.body, "sandbox")
   assert.equal(field(sandbox, "joinRole"), "admin", summary(created))
   const orgId = text(field(sandbox, "organizationId"), "organization id")

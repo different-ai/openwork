@@ -183,6 +183,53 @@ function skillReference(part: DynamicToolUIPart): string | null {
   return (asked.startsWith("plugin:") ? name.replace(/-[a-z0-9]{8}$/, "") : name) || null
 }
 
+/** Den keeps marketplace skill names unique with an 8-character id suffix. */
+function plainSkillName(name: string): string {
+  return name.replace(/-(?=[a-z0-9]*\d)[a-z0-9]{8}$/, "")
+}
+
+function sentence(service: string | null, present: string, past: string, failure: string): CapabilityCallSentence {
+  return { service, present, past, failure }
+}
+
+/**
+ * Code Mode's own engine tools (`tools.opencode.*`) arrive as
+ * "opencode_<tool>". They are the agent working inside OpenWork, so they never
+ * name the engine as a service (T2): a skill read names the skill, anything
+ * else names the connection it read from.
+ */
+function engineToolSentence(action: string, input: Record<string, unknown> | null): CapabilityCallSentence {
+  const server = typeof input?.server === "string" && input.server.trim() ? serviceNameFromSlug(input.server.trim()) : null
+  if (action === "read_mcp_resource") {
+    const uri = typeof input?.uri === "string" ? input.uri : ""
+    if (uri === "skill://index.json") {
+      return sentence(null, "Looking through your skills", "Looked through your skills", "Couldn't look through your skills")
+    }
+    const skill = /^skill:\/\/([^/]+)\/SKILL\.md$/.exec(uri)?.[1]
+    if (skill) {
+      const target = `your ${plainSkillName(skill)} skill`
+      return sentence(null, `Using ${target}…`, `Used ${target}`, `Couldn't use ${target}`)
+    }
+    const from = server ? ` from ${server}` : ""
+    return sentence(server, `Reading a document${from}`, `Read a document${from}`, `Couldn't read a document${from}`)
+  }
+  if (action === "list_mcp_resources") {
+    const from = server ? ` from ${server}` : ""
+    return sentence(server, `Listing available documents${from}`, `Listed available documents${from}`, `Couldn't list documents${from}`)
+  }
+  if (action === "models") return sentence(null, "Looking up models", "Looked up models", "Couldn't look up models")
+  if (action === "session_rename") {
+    const title = typeof input?.title === "string" && input.title.trim() ? ` to “${truncate(input.title.trim(), 60)}”` : ""
+    return sentence(null, `Renaming this chat${title}`, `Renamed this chat${title}`, "Couldn't rename this chat")
+  }
+  if (action === "session_move") {
+    const folder = typeof input?.directory === "string" ? input.directory.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) : undefined
+    const to = folder ? ` to ${folder}` : ""
+    return sentence(null, `Moving this chat${to}`, `Moved this chat${to}`, "Couldn't move this chat")
+  }
+  return sentence(null, verbPhrase(action, "present"), verbPhrase(action, "past"), `Couldn't ${baseVerbPhrase(action)}`)
+}
+
 export function getConnectionStatusProbeId(part: DynamicToolUIPart): string | null {
   if (part.toolName !== "openwork_execute_capability" && part.toolName !== "openwork-cloud_execute_capability") return null
   const input = parseRecord(part.input)
@@ -255,6 +302,15 @@ export function getCapabilityCallSentence(
 
   if (toolName.endsWith("execute_capability")) {
     const name = isRecord(part.input) && typeof part.input.name === "string" ? part.input.name : null
+    // Reading the organization directory to find a person or team by name.
+    if (name && /(?:^|:)getOrg$/.test(name)) {
+      return {
+        service: null,
+        present: "Looking up people in your organization",
+        past: "Looked up people in your organization",
+        failure: "Couldn't look up people in your organization",
+      }
+    }
     const split = name ? splitCapabilityName(name) : null
     if (split) {
       const suffix = quoted ? `:${quoted}` : ""
@@ -345,6 +401,10 @@ export function getCapabilityCallSentence(
       present: `Running a capability${quoted ? ` for${quoted}` : ""}`,
       past: `Ran a capability${quoted ? ` for${quoted}` : ""}`,
     }
+  }
+
+  if (toolName.startsWith("opencode_")) {
+    return engineToolSentence(toolName.slice("opencode_".length), parseRecord(part.input))
   }
 
   // Generic "{connection}_{tool}" MCP tools.

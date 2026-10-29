@@ -12,20 +12,11 @@ const WITHIN = 30_000;
 test("an owner brings a Claude Code session into the workspace from Settings and reads it as a regular chat", async ({ world, user, probe, step, evidence }) => {
   const [fix, notes] = world.sessions;
 
-  await step("before: with import off, workspace settings have no Import page", async () => {
+  await step("workspace Import lists the Claude Code sessions saved for this folder without rollout setup", async () => {
     await user.navigate(world.settingsUrl("preferences"));
     await user.see({ text: "Permissions" }, { timeoutMs: 60_000 });
-    await user.notSee({ text: "Import" });
-    const offered = await probe.has("Claude Code sessions in this folder");
-    expect(offered).toBe(false);
-    evidence.recordAssertionEvidence("No Import page while the rollout is off", "Workspace settings list Preferences, Permissions, Extensions and Advanced only", !offered);
-    await user.screenshot();
-  });
-
-  await step("after the rollout is on, Import lists the Claude Code sessions saved for this folder", async () => {
-    await world.setImport(true);
-    await user.reload();
-    await user.click({ text: "Import" }, { timeoutMs: 60_000 });
+    await user.see({ text: "Import" }, { timeoutMs: 60_000 });
+    await user.click({ text: "Import" });
     await user.see({ text: "Claude Code sessions in this folder" });
     await user.see({ text: fix.title }, { timeoutMs: WITHIN });
     await user.see({ text: notes.title });
@@ -38,7 +29,7 @@ test("an owner brings a Claude Code session into the workspace from Settings and
     await user.screenshot();
   });
 
-  await step("after: importing one session marks it Imported and leaves the other untouched", async () => {
+  await step("importing one session marks it Imported and leaves the other untouched", async () => {
     // Sessions not imported yet start ticked; leave one out.
     await user.see({ role: "button", label: "Import 2 sessions" });
     await user.click({ role: "checkbox", label: notes.title });
@@ -51,7 +42,7 @@ test("an owner brings a Claude Code session into the workspace from Settings and
     await user.screenshot();
   });
 
-  await step("after: opening it shows the Claude Code conversation, with its question, the tool it ran and its answer", async () => {
+  await step("opening it shows the Claude Code conversation, with its question, the tool it ran and its answer", async () => {
     await user.click({ role: "button", label: "Open" });
     await user.see({ text: fix.question }, { timeoutMs: 60_000 });
     await user.see({ text: fix.answer }, { timeoutMs: WITHIN });

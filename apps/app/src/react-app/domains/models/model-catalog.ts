@@ -1,3 +1,4 @@
+import { AUTO_ROUTER_MODEL_ID, AUTO_ROUTER_MODEL_NAME, AUTO_ROUTER_PROVIDER_ID } from "@openwork/types/den/auto-router";
 import type { ModelOption, ModelRef } from "@/app/types";
 import type { CloudImportedProvider } from "@/app/cloud/import-state";
 import { modelRefKey, nextFavoriteModel } from "../session/models/model-collections-store";
@@ -23,11 +24,27 @@ export function retainedModelCopy(reason: RetainedModelSelection["reason"]) {
   }
 }
 export function nonDefaultModelSummary(model: ModelRef, value: string | null, label: string) {
-  return !isAutoModel(model) && value !== null ? label : null;
+  return !managesOwnBehavior(model) && value !== null ? label : null;
 }
 
+// "OpenWork Free": the free model every desktop gets. Its ids (and the `Auto`
+// names of these helpers) predate the organization's Auto Router and stay so
+// saved selections keep working; people only ever read "OpenWork Free".
 export const AUTO_MODEL_ID = "openai/gpt-6-luna";
 export const AUTO_PROVIDER_ID = "openwork-free";
+export const FREE_MODEL_NAME = "OpenWork Free";
+/** The picker group that holds only the Auto Router's model, above everything else, without a label. */
+export const AUTO_ROUTER_GROUP = "Auto";
+
+/** The organization's Auto Router: the Gateway picks the real model for every prompt. Not OpenWork Free. */
+export function isAutoRouterModel(model: ModelRef | null | undefined) {
+  return model?.providerID === AUTO_ROUTER_PROVIDER_ID && model.modelID === AUTO_ROUTER_MODEL_ID;
+}
+
+/** Models that choose their own settings, so they offer no effort, fast mode or inherited behavior. */
+export function managesOwnBehavior(model: ModelRef | null | undefined) {
+  return isAutoModel(model) || isAutoRouterModel(model);
+}
 export const EXPLICIT_MODEL_CHOICE_KEY = "openwork.modelChoice.explicit";
 export function shouldSelectInitialAuto(input: { available: readonly ModelRef[]; current: ModelRef | null; empty: boolean; explicit: boolean }) {
   return input.empty && !input.explicit && Boolean(starterModel(input.available))
@@ -66,12 +83,23 @@ export function openWorkModelsLunaReplacement<T extends ModelRef & { disabled?: 
   return isAutoModel(current) ? openWorkModelsLuna(available) : undefined;
 }
 
+/**
+ * OpenWork Free (provider `openwork-free`), never the Auto Router: use
+ * `isAutoRouterModel` for the model people see as "Auto".
+ */
 export function isAutoModel(model: ModelRef | null | undefined) {
   return isFreeAutoModel(model);
 }
 
+/** The fixed display name of OpenWork Free or Auto, whatever the engine calls them; undefined for other models. */
+export function fixedModelTitle(model: ModelRef): string | undefined {
+  if (isAutoModel(model)) return FREE_MODEL_NAME;
+  if (isAutoRouterModel(model)) return AUTO_ROUTER_MODEL_NAME;
+  return undefined;
+}
+
 export function modelSource(model: ModelRef & { source?: ModelOption["source"] }): ModelSource {
-  if (isAutoModel(model) || model.providerID === "openwork" || model.source === "gateway" || model.providerID.startsWith("ipr_")) return "gateway";
+  if (isAutoModel(model) || isAutoRouterModel(model) || model.providerID === "openwork" || model.source === "gateway" || model.providerID.startsWith("ipr_")) return "gateway";
   if (model.source === "cloud" || model.providerID.startsWith("lpr_")) return "organization";
   return "local";
 }
@@ -83,7 +111,8 @@ function isOpaqueModelId(value: string) {
 
 /** A model's display name: its title, never an opaque gateway id (then "<Provider> model"). */
 export function modelTitle(model: ModelRef & { title?: string; description?: string }) {
-  if (isAutoModel(model)) return "Auto";
+  const fixed = fixedModelTitle(model);
+  if (fixed) return fixed;
   const name = model.title?.trim() || model.modelID;
   if (!isOpaqueModelId(name)) return name;
   const provider = model.description?.trim();
@@ -92,7 +121,8 @@ export function modelTitle(model: ModelRef & { title?: string; description?: str
 
 /** A name safe to show as a value: the public title, never an opaque provider/model id. */
 export function publicModelTitle(model: ModelRef & { title?: string }): string | undefined {
-  if (isAutoModel(model)) return "Auto";
+  const fixed = fixedModelTitle(model);
+  if (fixed) return fixed;
   const title = model.title?.trim();
   if (!title || title === model.modelID || isOpaqueModelId(title)) return undefined;
   return title;
@@ -100,7 +130,7 @@ export function publicModelTitle(model: ModelRef & { title?: string }): string |
 
 /** The OpenWork Models row's meta line, the same in Settings and the Connect a provider sheet. */
 export function autoProviderSubtitle() {
-  return "Auto";
+  return FREE_MODEL_NAME;
 }
 
 const MODEL_MAKERS: readonly [RegExp, string][] = [
@@ -126,7 +156,8 @@ export function modelStateLabel(model: ModelOption): string | null {
 }
 
 export function modelSubtitle(model: ModelOption, exhausted = false) {
-  if (isAutoModel(model)) return exhausted ? "Limit used up" : "OpenWork picks the model";
+  if (isAutoModel(model)) return exhausted ? "Limit used up" : "Free with a usage limit";
+  if (isAutoRouterModel(model)) return "Picks the best model for each task";
   // Gateway models assigned to the member that wait on their own provider sign-in.
   if (model.gatewayAuthorization) return [model.description?.trim(), "Sign-in required"].filter(Boolean).join(" · ");
   return [model.description?.trim(), model.organizationPinOrder !== undefined ? "pinned by your org" : null].filter(Boolean).join(" · ");
@@ -200,6 +231,8 @@ export function modelGroups(options: readonly ModelOption[], personal: readonly 
     });
     if (items.length) groups.push({ value, items });
   };
+  // Auto stands alone at the top, wherever else it would be listed.
+  add(AUTO_ROUTER_GROUP, available.filter(isAutoRouterModel));
   add("Pinned", orderedModelPins(available, personal));
   add("Recent", recent.flatMap((model) => available.filter((option) => modelRefKey(option) === modelRefKey(model))), false);
   add("OpenWork Models", available.filter((option) => option.providerID === "openwork" || option.providerID === AUTO_PROVIDER_ID));

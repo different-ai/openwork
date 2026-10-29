@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { setImmediate } from "node:timers/promises"
 import { test } from "node:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { RemoteSessionCommand, RemoteSessionDesktopSession } from "../src/remote-sessions/commands.js"
@@ -178,6 +179,146 @@ test("registered offloads preserve trusted Slack result handoff", async () => {
   }))
   assert.equal(linked, true)
   assert.equal(result.structuredContent?.resultPostedInThread, true)
+})
+
+const desktopSessionActions: readonly ("read" | "send" | "stop")[] = ["read", "send", "stop"]
+for (const action of desktopSessionActions) {
+  for (const scenario of [
+    { name: "registered", registered: true, hasAccess: false, connected: true, controlCapable: true, error: null },
+    { name: "legacy", registered: false, hasAccess: true, connected: true, controlCapable: true, error: null },
+    { name: "gated legacy", registered: false, hasAccess: false, connected: true, controlCapable: true, error: "openwork_web_access_required" },
+    { name: "offline registered", registered: true, hasAccess: false, connected: false, controlCapable: true, error: "desktop_offline" },
+    { name: "outdated registered", registered: true, hasAccess: false, connected: true, controlCapable: false, error: "desktop_update_required" },
+    { name: "offline legacy", registered: false, hasAccess: true, connected: false, controlCapable: true, error: "desktop_offline" },
+    { name: "outdated legacy", registered: false, hasAccess: true, connected: false, controlCapable: false, error: "desktop_update_required" },
+    { name: "gated outdated legacy", registered: false, hasAccess: false, connected: false, controlCapable: false, error: "openwork_web_access_required" },
+  ]) {
+    test(`${action} resolves ${scenario.name} ownership and runner only once per request`, async () => {
+      const session: RemoteSessionDesktopSession = {
+        commandId: "synthetic-command", ownerMemberId, runnerId: "synthetic-runner", sessionId: "synthetic-session",
+        workspaceId: "synthetic-workspace", title: "Synthetic session", engine: "v2", status: "idle", updatedAt: 1,
+      }
+      let lookups = 0
+      let runners = 0
+      let accessReads = 0
+      let enqueued = 0
+      const dependencies = deps({
+        getOpenWorkWebAccess: async () => {
+          accessReads++
+          assert.equal(scenario.registered, false, "registered sessions must bypass Web entitlement reads")
+          return { hasAccess: scenario.hasAccess }
+        },
+        resolveRuntime: async () => { throw new Error("An owned desktop session must never fall back to Cloud") },
+        commandStore: { ...DEFAULT_REMOTE_SESSION_DEPS.commandStore, findDesktopSession: async (scope) => {
+          lookups++
+          assert.deepEqual(scope, { organizationId, createdByUserId: userId, sessionId: session.sessionId, workspaceId: session.workspaceId })
+          return session
+        } },
+        desktopRunner: async (scope) => {
+          runners++
+          assert.deepEqual(scope, { organizationId, ownerMemberId, runnerId: session.runnerId })
+          return scenario
+        },
+        requestWait: { timeoutMs: 0, pollMs: 1 },
+        requestStore: { ...DEFAULT_REMOTE_SESSION_DEPS.requestStore, enqueue: async (input) => {
+          enqueued++
+          assert.equal(input.organizationId, organizationId)
+          assert.equal(input.createdByUserId, userId)
+          assert.equal(input.ownerMemberId, ownerMemberId)
+          assert.equal(input.targetRunnerId, session.runnerId)
+          assert.equal(input.commandId, session.commandId)
+          assert.equal(input.workspaceId, session.workspaceId)
+          assert.equal(input.sessionId, session.sessionId)
+          assert.equal(input.action, action)
+          return { ...input, id: "synthetic-request", status: "pending", outcome: null, error: null,
+            expiresAt: Date.now() + input.ttlMs, claimedAt: null, completedAt: null, createdAt: 1, updatedAt: 1 }
+        } },
+      })
+      // Reusing the same deps must still read fresh ownership and runner state on each call.
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const result = await call(action, { sessionId: session.sessionId, workspaceId: session.workspaceId, prompt: "Follow up" }, dependencies)
+        assert.equal(result.error, scenario.error !== null)
+        assert.equal(result.payload.error, scenario.error ?? undefined)
+        assert.equal(lookups, attempt)
+        assert.equal(runners, attempt)
+        assert.equal(accessReads, scenario.registered ? 0 : attempt)
+        assert.equal(enqueued, scenario.error === null ? attempt : 0)
+        if (scenario.error === null) assert.equal(result.payload.state, "pending")
+      }
+    })
+  }
+
+  for (const hasAccess of [false, true]) {
+    test(`${action} reuses an ownership miss and preserves the Cloud entitlement gate (${hasAccess})`, async () => {
+      let lookups = 0
+      let runtimeReads = 0
+      let accessReads = 0
+      const result = await call(action, { sessionId: "synthetic-cloud-session", prompt: "Follow up" }, deps({
+        commandStore: { ...DEFAULT_REMOTE_SESSION_DEPS.commandStore, findDesktopSession: async (scope) => {
+          lookups++
+          assert.deepEqual(scope, { organizationId, createdByUserId: userId, sessionId: "synthetic-cloud-session" })
+          return null
+        } },
+        desktopRunner: async () => { throw new Error("An unowned session must not resolve a desktop runner") },
+        getOpenWorkWebAccess: async () => { accessReads++; return { hasAccess } },
+        resolveRuntime: async (scope) => {
+          runtimeReads++
+          assert.deepEqual(scope, { organizationId, userId, provisionIfMissing: false })
+          return { ok: false, error: "needs_cloud_setup", message: "Synthetic Cloud setup required", retryable: false }
+        },
+      }))
+      assert.equal(result.payload.error, hasAccess ? "needs_cloud_setup" : "openwork_web_access_required")
+      assert.equal(lookups, 1)
+      assert.equal(accessReads, 1)
+      assert.equal(runtimeReads, hasAccess ? 1 : 0)
+    })
+  }
+}
+
+for (const blocked of ["entitlement", "inventory"]) {
+  test(`targets starts entitlement and inventory reads together while ${blocked} is blocked`, async () => {
+    let release = () => {}
+    const ready = new Promise<void>((resolve) => { release = resolve })
+    const started: string[] = []
+    const reading = call("targets", {}, deps({
+      getOpenWorkWebAccess: async () => {
+        started.push("entitlement")
+        if (blocked === "entitlement") await ready
+        return { hasAccess: true }
+      },
+      desktopTargets: async (scope) => {
+        started.push("inventory")
+        assert.deepEqual(scope, { organizationId, userId })
+        if (blocked === "inventory") await ready
+        return { ownerMemberId, computers: [computer()] }
+      },
+    }))
+    try {
+      await setImmediate()
+      assert.deepEqual(started, ["entitlement", "inventory"], "neither independent read should wait for the other")
+    } finally {
+      release()
+      const result = await reading
+      assert.equal(result.error, false)
+      assert.deepEqual(result.payload.cloud, { available: true })
+    }
+  })
+}
+
+test("targets only advertises Cloud when both entitlement and deployment allow it", async () => {
+  for (const hasAccess of [false, true]) {
+    for (const available of [false, true]) {
+      let availabilityReads = 0
+      const result = await call("targets", {}, deps({
+        getOpenWorkWebAccess: async () => ({ hasAccess }),
+        cloudAvailable: () => { availabilityReads++; return available },
+      }))
+      assert.deepEqual(result.payload.cloud, { available: hasAccess && available })
+      assert.equal(availabilityReads, hasAccess ? 1 : 0)
+      assert.ok(Array.isArray(result.payload.computers))
+      assert.equal(result.payload.computers.length, 1)
+    }
+  }
 })
 
 test("MCP discovery describes the harness-neutral offload target", () => {

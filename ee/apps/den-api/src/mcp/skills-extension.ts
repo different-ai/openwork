@@ -95,25 +95,30 @@ export function registerSkillsExtension(server: McpServer, load: () => Promise<R
 }
 
 const INDEX_DESCRIPTION_CHARS = 160
-const INDEX_BUDGET_CHARS = 6_000
 
 /**
  * A short always-on skill index for MCP server instructions, so clients that
  * put server instructions in the system prompt see which skills exist without
- * calling list_skills first. Bounded: it is sent with every session.
+ * calling list_skills first. It takes at most `budgetChars`, what the
+ * instructions leave under their limit (agent-server.ts), and its last line
+ * points at list_skills for the skills that do not fit; with no room for that
+ * line there is no index.
  */
-export function skillIndexInstructions(skills: RemoteSkillDescriptor[]): string {
-  if (skills.length === 0) return ""
+export function skillIndexInstructions(skills: readonly RemoteSkillDescriptor[], budgetChars: number): string {
   const header = "Skills available to this member (load one with get_skill by its name before doing that kind of task):"
+  const more = (count: number) => `- …and ${count} more; call list_skills to see them all.`
+  if (skills.length === 0 || header.length + 1 + more(skills.length).length > budgetChars) return ""
   const lines: string[] = []
   let used = header.length
-  for (const skill of skills) {
+  for (const [index, skill] of skills.entries()) {
     const description = skill.description.length > INDEX_DESCRIPTION_CHARS
       ? `${skill.description.slice(0, INDEX_DESCRIPTION_CHARS - 1).trimEnd()}…`
       : skill.description
     const line = `- ${skill.name}: ${description}`
-    if (used + line.length + 1 > INDEX_BUDGET_CHARS) {
-      lines.push(`- …and ${skills.length - lines.length} more; call list_skills to see them all.`)
+    // Keep room for the pointer to the skills after this one.
+    const pointer = index === skills.length - 1 ? 0 : more(skills.length - index - 1).length + 1
+    if (used + line.length + 1 + pointer > budgetChars) {
+      lines.push(more(skills.length - index))
       break
     }
     lines.push(line)

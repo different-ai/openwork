@@ -86,10 +86,21 @@ it runs, whether it is working, waiting on the person or finished, and its
 answer. Its routes under `/v1/remote-sessions/` run these same capabilities
 with the member's own session. One loop in the app follows every shown
 session with one waiting `status` call at a time, not while the window is
-hidden or offline, and stops once they settle. The transcript is read only
-while the person has the session open, when its status changes; follow-ups
-and stop go through `send` and `stop`. Answering a pending permission or
-question stays on the computer that runs the session.
+hidden or offline, and stops once they settle. Stop on the row goes through
+`stop`. Answering a pending permission or question stays on the computer that
+runs the session.
+
+Two features roll this out in steps, both on Cloud and self-hosted and off by
+default:
+
+- `remoteSessionSubagents`: the row, its progress, Stop, the sidebar's
+  needs-you marker, and the Den routes and `status` capability behind them.
+- `remoteSessionThreadView` (needs the first): clicking the row opens the
+  session's conversation beside the chat. The transcript is read only while
+  it is open, when the status changes; follow-ups go through `send`. Off, the
+  row shows progress only and a conversation tab left open from before says
+  the view is turned off. Den routes stay behind `remoteSessionSubagents`:
+  Stop also reads a slow desktop's pending receipt through `read`.
 
 Slack uses the same capabilities and trusted run-token provenance to post a
 result back to its originating thread. A model cannot choose an arbitrary

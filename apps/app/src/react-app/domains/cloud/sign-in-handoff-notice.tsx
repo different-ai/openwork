@@ -17,7 +17,7 @@ import { useManualSignInCode } from "./use-manual-sign-in-code";
 
 /**
  * Shown above the composer of the conversation a sign-in started from while
- * the browser finishes it (`desktopSignInReturn`). The conversation and its
+ * the browser finishes it. The conversation and its
  * draft stay on screen; the code fallback is always visible, not only after
  * a failure (DESIGN P11).
  */

@@ -169,22 +169,51 @@ marketing story is:
 This is reflected on `/pricing` and `/enterprise` as "Desktop policies &
 version controls".
 
+## One place for an organization's plan and users
+
+A platform admin sets an organization's plan in `/admin` › organization ›
+**Billing** (`PATCH /v1/admin/organizations/:id/plan`, or the admin MCP tool
+`den_update_org_plan`; both call `setOrganizationPlanByAdmin`): Free, Team or
+Enterprise, how many users it allows, and for Team and Enterprise an optional
+end date. Stored in `organization.metadata.plan` (`tier`, `source`, `seats`,
+`endsAt`, `grantedAt`, `grandfatheredAt`); `limits.members` mirrors the number
+for one release. On Free the number is stored as `seatsFreeAdditional` above 5.
+
+One pure rule (`ee/apps/den-api/src/organization-plan.ts`) decides how many
+users an organization may have, counting pending invitations, for every way
+people join: email invitations, SSO sign-up and verified-domain joins, and
+SCIM. No feature flag takes part.
+
+- An active paid Stripe plan (Team seat subscription active or trialing; a
+  sales-led Enterprise subscription active, trialing or past due): no limit.
+- Otherwise a Team or Enterprise plan a platform admin set, or grandfathered:
+  its seats, never fewer than 5.
+- Otherwise Free: 5 plus any extra free users.
+
+Limits apply only where seat billing gates members (hosted multi-organization
+deployments with Stripe seat billing configured). A full Free workspace gets
+the 402 Team upgrade; a full plan OpenWork set gets `409 org_limit_reached`
+("Your Enterprise plan includes N users… Ask your OpenWork contact to add
+seats."), never the Team upgrade. The end date is display only: `/admin` and
+the customer Billing page show "Ended <date>", and nothing changes.
+
 ## Enterprise plan billing (sales-led)
 
-Behind the `enterprisePlan` feature (cloud only, off). Enterprise is sold by
-us and billed through Stripe, not bought at checkout.
+A plain `/admin` control (no feature flag). Enterprise is sold by us and billed
+through Stripe, not bought at checkout.
 
 - **Stripe setup:** one Enterprise product (`STRIPE_ENTERPRISE_PRODUCT_ID` on
   den-api). Each customer gets their own recurring per-user price on that
   product, so subscriptions are recognised by product, not price.
-- **Starting it:** a platform admin opens the organization's Control panel in
-  `/admin` and enters the contract price, the committed minimum users, the
-  billing email and the invoice terms
-  (`POST /v1/admin/organizations/:id/enterprise-subscription`). Den creates a
-  `send_invoice` subscription with `subscription_type: enterprise` and
-  `minimum_users` in its metadata. A Team plan (seat) subscription is canceled
-  with a prorated credit, and an admin-set or grandfathered plan is handed over
-  to Stripe (`plan: { tier: "enterprise", source: "stripe" }`).
+- **Starting it:** a platform admin opens the organization's Billing tab in
+  `/admin`, expands "Bill an Enterprise contract through Stripe" and enters the
+  contract price, the committed minimum users, the billing email and the
+  invoice terms (`POST /v1/admin/organizations/:id/enterprise-subscription`).
+  Den creates a `send_invoice` subscription with `subscription_type:
+  enterprise` and `minimum_users` in its metadata. A Team plan (seat)
+  subscription is canceled with a prorated credit, and an admin-set or
+  grandfathered plan is handed over to Stripe
+  (`plan: { tier: "enterprise", source: "stripe" }`).
 - **Quantity:** every user (the same count as Team, Models and Web), never
   below the committed minimum, at least 1. It follows member and invitation
   changes like the other subscriptions. The minimum is changed with
@@ -194,17 +223,12 @@ us and billed through Stripe, not bought at checkout.
   the organization is Enterprise from Stripe; it outranks Team. When it ends the
   organization falls back to Team if it still pays for Team, otherwise Free.
   Admin-set and grandfathered plans are never changed by Stripe.
-- **User limit:** an active Enterprise subscription lifts the Free plan user
-  limit for invitations, SCIM and SSO. While the feature is on for the
-  organization, an Enterprise plan without one (admin-set or grandfathered)
-  lifts it too.
+- **User limit:** an active Enterprise subscription has no user limit (Stripe
+  bills every user); see the rule above.
 - **Billing page:** organizations with an Enterprise subscription see an
   Enterprise plan card (users billed, minimum, next invoice, invoices in the
   Stripe portal) instead of the Team plan card. OpenWork Models and OpenWork
   Web stay separate subscriptions.
-- **Turning it off:** blocks starting new Enterprise subscriptions and the
-  limit bypass for admin-set Enterprise plans. Existing Enterprise subscriptions
-  keep billing, keep the plan and keep their organization's invites working.
 
 ## Open questions
 

@@ -940,16 +940,12 @@ async function executeDesktopSessionAction(
   input: RemoteSessionExecuteInput,
   body: unknown,
   session: RemoteSessionDesktopSession,
+  runner: Awaited<ReturnType<RemoteSessionExecuteDeps["desktopRunner"]>>,
   deps: RemoteSessionExecuteDeps,
 ): Promise<RemoteSessionToolResult> {
   if (input.action !== "read" && input.action !== "send" && input.action !== "stop") {
     throw new Error("remote_session_desktop_action_invariant")
   }
-  const runner = await deps.desktopRunner({
-    organizationId: input.organizationId,
-    ownerMemberId: session.ownerMemberId,
-    runnerId: session.runnerId,
-  })
   if (!runner.controlCapable) {
     return errorResult({
       target: "desktop",
@@ -1192,28 +1188,36 @@ async function executeRemoteSession(
     }
   }
 
-  // Registered clients are an OpenWork offload surface, not an entitlement to
-  // a Cloud worker. Keep Cloud and legacy desktop access rules unchanged.
-  const registeredCreate = input.action === "create" && createBodySchema.parse(parsedBody.data).target === "registered"
-  if (input.action === "read" || input.action === "send" || input.action === "stop") {
-    const session = await findDesktopSession(input, parsedBody.data, deps)
-    if (session) {
-      const runner = await deps.desktopRunner({ organizationId: input.organizationId, ownerMemberId: session.ownerMemberId, runnerId: session.runnerId })
-      if (runner.registered) {
-        return executeDesktopSessionAction(input, parsedBody.data, session, deps)
-      }
-    }
-  }
-  const webAccess = registeredCreate ? { hasAccess: false } : await deps.getOpenWorkWebAccess(input.organizationId)
   if (input.action === "targets") {
     const body = targetsBodySchema.parse(parsedBody.data)
-    const targets = await (deps.desktopTargets ?? defaultDesktopTargets)({ organizationId: input.organizationId, userId: input.userId })
+    const [webAccess, targets] = await Promise.all([
+      deps.getOpenWorkWebAccess(input.organizationId),
+      (deps.desktopTargets ?? defaultDesktopTargets)({ organizationId: input.organizationId, userId: input.userId }),
+    ])
     return jsonResult(targetsPayload(targets, {
       includeModels: body.includeModels === true,
       cloudAvailable: webAccess.hasAccess && (deps.cloudAvailable ?? cloudRemoteSessionsAvailable)(),
       now: Date.now(),
     }))
   }
+
+  // Registered clients are an OpenWork offload surface, not an entitlement to
+  // a Cloud worker. Keep Cloud and legacy desktop access rules unchanged.
+  const registeredCreate = input.action === "create" && createBodySchema.parse(parsedBody.data).target === "registered"
+  // Resolve ownership and runner presence once for this call, including a miss.
+  // Registered clients bypass Web access; legacy desktops still check it first.
+  let desktop: { session: RemoteSessionDesktopSession; runner: Awaited<ReturnType<RemoteSessionExecuteDeps["desktopRunner"]>> } | null = null
+  if (input.action === "read" || input.action === "send" || input.action === "stop") {
+    const session = await findDesktopSession(input, parsedBody.data, deps)
+    if (session) {
+      const runner = await deps.desktopRunner({ organizationId: input.organizationId, ownerMemberId: session.ownerMemberId, runnerId: session.runnerId })
+      desktop = { session, runner }
+      if (runner.registered) {
+        return executeDesktopSessionAction(input, parsedBody.data, session, runner, deps)
+      }
+    }
+  }
+  const webAccess = registeredCreate ? { hasAccess: false } : await deps.getOpenWorkWebAccess(input.organizationId)
   if (!registeredCreate && !webAccess.hasAccess) {
     return errorResult({
       error: OPENWORK_WEB_ACCESS_REQUIRED_CODE,
@@ -1222,10 +1226,7 @@ async function executeRemoteSession(
     })
   }
 
-  if (input.action === "read" || input.action === "send" || input.action === "stop") {
-    const desktopSession = await findDesktopSession(input, parsedBody.data, deps)
-    if (desktopSession) return executeDesktopSessionAction(input, parsedBody.data, desktopSession, deps)
-  }
+  if (desktop) return executeDesktopSessionAction(input, parsedBody.data, desktop.session, desktop.runner, deps)
 
   if (input.action === "create") {
     const body = createBodySchema.parse(parsedBody.data)

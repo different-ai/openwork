@@ -7,7 +7,6 @@ import {
   getAllowedDesktopVersionsFromMetadata,
   getOrgAccessFlags,
   getRequireSsoFromMetadata,
-  orgFeatureEnabled,
   permissionLockReason,
 } from "../../_lib/den-org";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
@@ -664,9 +663,7 @@ export function OrgSettingsScreen() {
           </div>
         </DenCard>
 
-        {orgFeatureEnabled(orgContext, "organizationAutomationSettings") ? (
-          <OrgAutomationSettingsSection canManage={canManageSettings} />
-        ) : null}
+        <OrgAutomationSettingsSection canManage={canManageSettings} />
 
         <DenCard size="spacious" className="grid gap-6">
           <div className="grid gap-2">

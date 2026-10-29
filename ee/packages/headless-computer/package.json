@@ -23,6 +23,7 @@
   "dependencies": {
     "@openwork/sandbox": "workspace:*",
     "@openwork/sandbox-daytona": "workspace:*",
+    "@openwork/sandbox-differently": "workspace:*",
     "@openwork/sandbox-freestyle": "workspace:*",
     "freestyle": "0.2.13",
     "ws": "8.21.0",

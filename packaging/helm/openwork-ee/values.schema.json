@@ -61,6 +61,46 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "libraryDetailBreadcrumbs": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Library: detail breadcrumbs: Navigate from a skill or connector to its parent plugin or Library category without losing your place. Renders DEN_FEATURE_LIBRARY_DETAIL_BREADCRUMBS."
+            },
+            "desktopUpdateDownloadWindow": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: restart to update before the download: Restart to update shows in the desktop title bar as soon as an update is found. Clicking it opens a small window that downloads the update with its progress, then restarts, instead of waiting with no sign of the download. Renders DEN_FEATURE_DESKTOP_UPDATE_DOWNLOAD_WINDOW."
+            },
+            "nativeAffordanceCodeMode": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "OpenWork commands in Code Mode: Let assistants compose OpenWork queries and sidebar commands in Code Mode using the same checked app actions. Renders DEN_FEATURE_NATIVE_AFFORDANCE_CODE_MODE."
+            },
+            "libraryConnectorNavigation": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Library: connected items and skill previews: Open assigned connectors in My Library from Manage and expand skills in plugins and My Library. Renders DEN_FEATURE_LIBRARY_CONNECTOR_NAVIGATION."
+            },
             "mcpAppLibraries": {
               "enum": [
                 "",
@@ -70,6 +110,46 @@
                 false
               ],
               "description": "Apps: built-in libraries: Apps built in OpenWork can use icons, charts, animation, 3D and SVG drawing from pinned libraries bundled into each App, with no remote scripts or network access. Renders DEN_FEATURE_MCP_APP_LIBRARIES."
+            },
+            "autoRouter": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "AI Gateway: Auto Router: Admins describe when to use each AI Gateway model, and members can pick Auto: each prompt goes to the model and thinking level that fits it best. Renders DEN_FEATURE_AUTO_ROUTER."
+            },
+            "gatewayProviderTest": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "AI Gateway: test a provider before adding it: When adding an AI Gateway provider with a shared API key, admins test it first: AI Gateway sends one short prompt with their settings, and the provider can only be added once it answers. Renders DEN_FEATURE_GATEWAY_PROVIDER_TEST."
+            },
+            "settledSessions": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: settle finished sessions: Finished sessions can be settled into a collapsed Settled row at the end of their workspace, by hand or after a few idle days, and come back on new activity. Renders DEN_FEATURE_SETTLED_SESSIONS."
+            },
+            "mermaidZoom": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: zoom into diagrams: Mermaid diagrams in chat and file previews can be zoomed, panned and opened full screen so large diagrams are readable. Renders DEN_FEATURE_MERMAID_ZOOM."
             },
             "administratorRecovery": {
               "enum": [
@@ -91,16 +171,6 @@
               ],
               "description": "Native dictation: Dictate editable prompts in OpenWork and Workbot using native desktop dictation or live browser speech recognition. Renders DEN_FEATURE_NATIVE_DICTATION."
             },
-            "organizationGrants": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Organization control panel and grants: Platform admins control complimentary access and grant organizations extra or unlimited Free Auto usage, with optional expiration. Renders DEN_FEATURE_ORGANIZATION_GRANTS."
-            },
             "sandboxOrgs": {
               "enum": [
                 "",
@@ -110,16 +180,6 @@
                 false
               ],
               "description": "Sandbox organizations: Platform admins create try-it-out organizations from /admin with fictional workplace connectors, included models and a shareable join link that expires. Renders DEN_FEATURE_SANDBOX_ORGS."
-            },
-            "organizationAutomationSettings": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Automations: organization settings: Organization admins turn Desktop Automations and Cloud Automations on or off for their organization. Cloud Automations need the deployment's headless runner. Renders DEN_FEATURE_ORGANIZATION_AUTOMATION_SETTINGS."
             },
             "connectionMcpServers": {
               "enum": [
@@ -131,7 +191,7 @@
               ],
               "description": "Connect: an MCP server for each connection: Members can add one connected service, such as Gmail or Linear, to an agent like Claude Code as its own MCP server that lists only that service's tools. Renders DEN_FEATURE_CONNECTION_MCP_SERVERS."
             },
-            "localProviderMirror": {
+            "slackSendAsBot": {
               "enum": [
                 "",
                 "true",
@@ -139,7 +199,7 @@
                 true,
                 false
               ],
-              "description": "OpenCode v2: providers added on this computer: API keys people add on their computer, such as OpenRouter, OpenAI or Anthropic, show in the chat model picker on the new engine. AI Providers says when the organization manages providers or a sign-in is not available on the new engine yet. Renders DEN_FEATURE_LOCAL_PROVIDER_MIRROR."
+              "description": "Connect: Slack messages from the OpenWork bot: Chats and Automations can send a Slack message from the OpenWork app instead of as the member: a DM that notifies them (\"ping me when this is done\") or a channel post that names whose agent sent it. Needs the OpenWork app in Slack; limited to 20 messages a day per member. Renders DEN_FEATURE_SLACK_SEND_AS_BOT."
             },
             "liveProviderSync": {
               "enum": [
@@ -151,16 +211,6 @@
               ],
               "description": "Live provider sync: Keep desktop OpenCode v2 models up to date with the organization's AI Gateway in real time. Renders DEN_FEATURE_LIVE_PROVIDER_SYNC."
             },
-            "agentConnectionRemoval": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Agents remove connections: People allowed to remove a connection can ask their agent to prepare removing it, then confirm the removal in OpenWork. Renders DEN_FEATURE_AGENT_CONNECTION_REMOVAL."
-            },
             "managedDeployments": {
               "enum": [
                 "",
@@ -170,16 +220,6 @@
                 false
               ],
               "description": "Managed deployments: Organization admins install OpenWork in their own AWS account or Google Cloud project and see its health and updates in OpenWork, and agents connected to OpenWork can create and follow those deployments. Renders DEN_FEATURE_MANAGED_DEPLOYMENTS."
-            },
-            "enterprisePlan": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Enterprise plan billing: Platform admins start a Stripe-billed Enterprise plan for an organization, with a custom price and a minimum number of users. Enterprise organizations invite people without the Free plan user limit and see their Enterprise plan on the Billing page. Renders DEN_FEATURE_ENTERPRISE_PLAN."
             },
             "workbotDocuments": {
               "enum": [
@@ -211,7 +251,7 @@
               ],
               "description": "Workbot: workspace assistant: Members ask Workbot about the document or calendar view they have open, chat without leaving their work, and navigate from a compact sidebar. Workbot offers to open the documents it mentions, and the conversation stays open beside the document. Renders DEN_FEATURE_WORKBOT_WORKSPACE_ASSISTANT."
             },
-            "workbotCommandPalette": {
+            "workbotProactive": {
               "enum": [
                 "",
                 "true",
@@ -219,7 +259,27 @@
                 true,
                 false
               ],
-              "description": "Workbot: command palette: Members press Cmd+K or Ctrl+K, or the search button in Workbot's header, to search and jump to their chats, background tasks, pages and settings, or run an action, from the keyboard. Renders DEN_FEATURE_WORKBOT_COMMAND_PALETTE."
+              "description": "Workbot: Your agent: Every member gets a background agent that reads their Gmail and Google Calendar each morning and about every three hours in working hours, and sends them one short DM from the Workbot Slack app only when something needs them. Admins turn it on and choose what it tells people about in Manage › Workbot; members turn it off, snooze it or mute a kind of message. It only reads and never sends, accepts or edits anything for them. Renders DEN_FEATURE_WORKBOT_PROACTIVE."
+            },
+            "workbotAgentHealthView": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: Your agent health in Manage › Workbot: Admins see, for the last 7 days and per responsibility, how many checks members' agents ran, the share that stayed quiet, how many messages they sent and how many members muted it. Counts only, no member names or content. Needs Workbot: Your agent. Renders DEN_FEATURE_WORKBOT_AGENT_HEALTH_VIEW."
+            },
+            "workbotAgentLibrary": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: My agent in the Library: Members see their agent in the Library: when it last checked and what happened, why it stayed quiet, today's checks with the messages it sent, and what it tells them about. They tell it what they care about in their own words, in chat or on the page (always, never, when, how), narrow its hours or limit within the admin's, and undo any change. The agent honors those words and the narrower limits. Needs Workbot: Your agent. Renders DEN_FEATURE_WORKBOT_AGENT_LIBRARY."
             },
             "workbotIncludedModels": {
               "enum": [
@@ -241,16 +301,6 @@
               ],
               "description": "Workbot: usage limits and upgrades: Signed-in Workbot uses free Auto or the member’s paid Models Luna entitlement, with allowance recovery and permission-aware upgrades in the conversation. Renders DEN_FEATURE_WORKBOT_USAGE_RECOVERY."
             },
-            "usageLimitUpgrade": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Usage limits: one limit card with an upgrade: When free Auto, OpenWork Models or an AI Gateway budget runs out in the desktop app, one card says what ran out, when it resets and that the message is saved, with the upgrade or request that fits the person’s role and a way to keep working with another model. Renders DEN_FEATURE_USAGE_LIMIT_UPGRADE."
-            },
             "automationCalendar": {
               "enum": [
                 "",
@@ -261,7 +311,7 @@
               ],
               "description": "Calendar: desktop app: Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar. Renders DEN_FEATURE_AUTOMATION_CALENDAR."
             },
-            "removeOpencodeZen": {
+            "automationIntervalSchedules": {
               "enum": [
                 "",
                 "true",
@@ -269,7 +319,17 @@
                 true,
                 false
               ],
-              "description": "Remove OpenCode Zen models: Desktop and OpenWork Web stop offering free OpenCode Zen models such as Big Pickle: they leave the model list, are disabled in the engine, and new chats and Automations start on the organization's models or Auto instead. Renders DEN_FEATURE_REMOVE_OPENCODE_ZEN."
+              "description": "Automations: every few hours: Members and their agents can schedule an Automation to run every few hours, for example every 3 hours between 9:00 and 18:00 on weekdays, instead of once a day or once a week. Renders DEN_FEATURE_AUTOMATION_INTERVAL_SCHEDULES."
+            },
+            "automationCalendarTriggers": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Automations: before or after meetings: Members and their agents can run a Cloud Automation a set time before or after each meeting on their Google Calendar, for example 5 minutes after every meeting with people outside the organization. Renders DEN_FEATURE_AUTOMATION_CALENDAR_TRIGGERS."
             },
             "computerUse": {
               "enum": [
@@ -280,6 +340,26 @@
                 false
               ],
               "description": "Computer use: Let agents use Mac apps or a managed cloud desktop with a live view and Take over and Stop controls. While enabled, requested apps and windows open directly without additional OpenWork approval prompts. GUI access is experimental and is not sandboxed by structured-tool permission rules. Renders DEN_FEATURE_COMPUTER_USE."
+            },
+            "computerUseBackground": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: computer use in the background: On a Mac, agents work in app windows where they are, without bringing them to the front or moving your cursor, so you keep working and several chats can work at once. Agents read the app's controls first and take a screenshot only when they need one. Blender and other canvas apps still come to the front. Needs computer use. Renders DEN_FEATURE_COMPUTER_USE_BACKGROUND."
+            },
+            "browserUse": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: browser use: Workbot uses the browser on its cloud computer, with a Browser view people can watch and take over. Needs remote computers. Computer use separately controls Workbot's other desktop apps. Renders DEN_FEATURE_BROWSER_USE."
             },
             "browserDemonstrations": {
               "enum": [
@@ -299,7 +379,7 @@
                 true,
                 false
               ],
-              "description": "Workbot: browser live view: Workbot's Browser view streams the browser page itself, sending a frame only when the page changes, instead of video of the whole browser window. Taking control still uses the full window. Renders DEN_FEATURE_BROWSER_LIVE_VIEW."
+              "description": "Workbot: browser live view: Workbot's Browser view streams the browser page itself, sending a frame only when the page changes, instead of video of the whole browser window, with Workbot's own tabs to switch and close. Taking control sends input to the page, so Chrome's toolbar stays hidden. Renders DEN_FEATURE_BROWSER_LIVE_VIEW."
             },
             "browserFloatingView": {
               "enum": [
@@ -309,7 +389,7 @@
                 true,
                 false
               ],
-              "description": "Desktop: floating and full-screen browser: The built-in browser can float as a small live card over the chat, sit beside it, or fill the window, with a Browser button in the chat header that shows when it needs the person. Renders DEN_FEATURE_BROWSER_FLOATING_VIEW."
+              "description": "Desktop: floating and full-screen browser: The built-in browser can float as a small live card over the chat, sit beside it, or fill the window, with the side rail's Browser button showing when it needs the person. Renders DEN_FEATURE_BROWSER_FLOATING_VIEW."
             },
             "remoteComputers": {
               "enum": [
@@ -321,6 +401,16 @@
               ],
               "description": "Desktop: computer use on remote computers: Use a Linux cloud computer with its browser and desktop in OpenWork Web, or connect a VM from Desktop. Configured and conversation-owned desktops open directly when enabled, including follow-ups and internal session renewal. Take over and Stop stay available. Renders DEN_FEATURE_REMOTE_COMPUTERS."
             },
+            "sandboxGateway": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: computers through the sandbox gateway: Workbot's cloud computers for this organization run through the runner's sandbox gateway (Differently), which holds the provider keys and picks the provider, instead of the runner's own Freestyle or Daytona account. Needs a runner with SANDBOX_GATEWAY set; without one, or while it is down, new computers use the runner's own provider. Renders DEN_FEATURE_SANDBOX_GATEWAY."
+            },
             "remoteSessionSubagents": {
               "enum": [
                 "",
@@ -329,9 +419,9 @@
                 true,
                 false
               ],
-              "description": "Desktop: tasks on other computers as sub-agents: A task the agent starts on the cloud or another computer shows in the chat like a sub-agent: whether it is working, needs an answer or finished, and its conversation, which people can open, follow up on and stop. Renders DEN_FEATURE_REMOTE_SESSION_SUBAGENTS."
+              "description": "Desktop: tasks on other computers as sub-agents: A task the agent starts on the cloud or another computer shows in the chat as a sub-agent row: where it runs, whether it is working, needs an answer or finished, and a Stop button. Renders DEN_FEATURE_REMOTE_SESSION_SUBAGENTS."
             },
-            "desktopSignInReturn": {
+            "remoteSessionThreadView": {
               "enum": [
                 "",
                 "true",
@@ -339,17 +429,7 @@
                 true,
                 false
               ],
-              "description": "Desktop: sign-in returns you to the same task: Signing in from a conversation keeps it and its draft on screen while the browser finishes, then returns to that same conversation with the draft and model intact. Renders DEN_FEATURE_DESKTOP_SIGN_IN_RETURN."
-            },
-            "claudeHistoryImport": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Desktop: import Claude conversations: Settings has an Import page that brings conversations from a Claude data export and Claude Code sessions saved on this computer into the workspace as regular OpenWork chats. Renders DEN_FEATURE_CLAUDE_HISTORY_IMPORT."
+              "description": "Desktop: open a sub-agent task's conversation: Clicking the row of a task on another computer opens its conversation beside the chat, where people read it and follow up. Needs tasks on other computers as sub-agents. Renders DEN_FEATURE_REMOTE_SESSION_THREAD_VIEW."
             },
             "activationChecklist": {
               "enum": [
@@ -369,7 +449,17 @@
                 true,
                 false
               ],
-              "description": "Connect: standard tools: Supported clients, including OpenWork Desktop, OpenCode and Claude Code, discover connected actions, Workflows and Apps as individual tools. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas. Renders DEN_FEATURE_CONNECT_STANDARD_TOOLS."
+              "description": "Connect: standard tools: Claude Code and standalone OpenCode discover connected actions, Workflows and Apps as individual tools; OpenWork Desktop, Web and automation runs keep capability search. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas. Renders DEN_FEATURE_CONNECT_STANDARD_TOOLS."
+            },
+            "connectEngineTools": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Connect: a tool for each action in OpenWork's engine: OpenWork Desktop, Web and automation runs get each connected action, Workflow and App as its own tool, found with their engine's Code Mode search; capability search stays for OpenWork's own operations and skills. Other clients are unaffected. Turning this off restores capability search. Renders DEN_FEATURE_CONNECT_ENGINE_TOOLS."
             },
             "teamPlan": {
               "enum": [
@@ -391,7 +481,7 @@
               ],
               "description": "Self-serve Enterprise: Owners can buy Enterprise by card at the planned per-person price. Renders DEN_FEATURE_SELF_SERVE_ENTERPRISE."
             },
-            "orgPrompts": {
+            "gatewayProviderAuthErrors": {
               "enum": [
                 "",
                 "true",
@@ -399,7 +489,27 @@
                 true,
                 false
               ],
-              "description": "Prompts: Admins write a system prompt for everyone and for each team on the team's Prompts tab. Desktops add the prompts that apply to a member to every agent's instructions: Everyone's first, then each team's by team name. Turning this off stops desktops adding them at their next sync; saved prompts are kept. Renders DEN_FEATURE_ORG_PROMPTS."
+              "description": "AI Gateway: rejected provider credentials in chat: When a provider rejects your organization's AI Gateway credential, the chat says which provider rejected it and asks you to contact your administrator, with a request ID for support, instead of sending you to your own model settings. Renders DEN_FEATURE_GATEWAY_PROVIDER_AUTH_ERRORS."
+            },
+            "providerCredentialStatus": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: honest AI provider key status: AI Providers says \"Not checked yet\" for a key that has not answered a chat, and \"Key not accepted\" with Replace key (or ask your admin, for organization providers) after the provider rejects it, instead of always \"Ready to use\". Renders DEN_FEATURE_PROVIDER_CREDENTIAL_STATUS."
+            },
+            "outlookAttachments": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Outlook attachments: Agents read the files attached to Outlook messages and create Outlook drafts and replies with workspace files attached, after the member approves each draft. Drafts are never sent. Renders DEN_FEATURE_OUTLOOK_ATTACHMENTS."
             },
             "sessionTokenHashing": {
               "enum": [
@@ -410,6 +520,76 @@
                 false
               ],
               "description": "Hashed sign-in sessions: Den keeps only a one-way hash of each sign-in session token, so a copy of the database cannot sign anyone in. New sessions are stored hashed and older ones convert the next time they are used; turn on only once every Den replica runs a release that reads both forms. Renders DEN_FEATURE_SESSION_TOKEN_HASHING."
+            },
+            "lastUsedSignIn": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Remember last sign-in method: People who last signed in with a password, Google or GitHub skip the email step next time: Den web lists the sign-in methods with a Last used badge, and Single sign-on returns to the email step. Signing in with SSO forgets the method. Renders DEN_FEATURE_LAST_USED_SIGN_IN."
+            },
+            "customConnectorSetup": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Connect: revised custom connector setup: Revised custom MCP setup: live server checks, reviewed permissions and manual sign-in addresses, copyable callback, persistent app credentials, and a direct connection-to-sharing flow. Tool Tester shows meaningful results before raw metadata. Turning it off restores the existing setup and result display; saved connections keep working. Renders DEN_FEATURE_CUSTOM_CONNECTOR_SETUP."
+            },
+            "expandedMcpPresets": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Connect: more MCP server presets: Admins see more reviewed official MCP servers (Airtable, Amplitude, Canva, Fireflies, Hugging Face, Lucid, Mural, Vercel, PostHog, monday.com, Honeycomb, Klaviyo, Semgrep, Cal.com, Tavily, Figma) to add with one click in Manage › Connectors. Each uses the same OAuth or API-key flow as the existing presets. Turning it off hides the new suggestions; existing connections stay. Renders DEN_FEATURE_EXPANDED_MCP_PRESETS."
+            },
+            "analyticsDailyTrends": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Analytics: daily trends: Usage & adoption shows active users, sessions and tasks per day for the last 30 days, with a Daily / Weekly switch next to the project filter. Turning it off returns to the 12-week weekly charts. Renders DEN_FEATURE_ANALYTICS_DAILY_TRENDS."
+            },
+            "gatewayProviderRemovalLimits": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "AI Gateway: keep spend limits when removing a provider: Removing an AI Gateway provider that has spend limits asks whether to move those limits to another provider or delete them, instead of leaving them pointing at nothing. Limits whose provider was already removed show Provider removed and Not applied, with Choose provider. Renders DEN_FEATURE_GATEWAY_PROVIDER_REMOVAL_LIMITS."
+            },
+            "guidedSlackSetup": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Connect: guided Slack setup: Manage › Connectors › Add Slack walks admins through one checklist: choose Read and act or Read only (nothing preselected; the choice sets the scopes OpenWork asks Slack for), Create app in Slack (prefilled with OpenWork's redirect URL, those scopes and MCP on), turn on Agents › MCP, paste the client ID and secret, sign in to test, and optionally add @openwork. The MCP step shows the real result after the test sign-in. Turning it off brings back the previous setup screen; existing connections stay. Renders DEN_FEATURE_GUIDED_SLACK_SETUP."
+            },
+            "libraryConnectorOrgSetup": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: connectors that need an organization app: In the desktop Library, Slack and GitHub no longer ask for an app's client ID and secret: members see them locked until an admin sets them up, admins open the setup in OpenWork Cloud, connectors the organization already has offer Sign in from Add a connector, and a sign-in that fails says why, with a link to the service's app settings when that is the fix. Renders DEN_FEATURE_LIBRARY_CONNECTOR_ORG_SETUP."
             },
             "gatewayDashboard": {
               "enum": [
@@ -1172,6 +1352,116 @@
               "description": "Retired: no longer a feature switch. Ignored."
             },
             "desktopConnectStandardTools": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "localProviderMirror": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "organizationAutomationSettings": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "agentConnectionRemoval": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "workbotCommandPalette": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "usageLimitUpgrade": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "removeOpencodeZen": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "desktopSignInReturn": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "claudeHistoryImport": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "orgPrompts": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "enterprisePlan": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "organizationGrants": {
               "enum": [
                 "",
                 "true",

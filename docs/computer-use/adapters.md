@@ -2,8 +2,8 @@
 
 Computer use gives the agent access to a *computer* when its rollout is enabled. A computer is an
 adapter: this Mac (the native helper), this Windows PC (the Windows helper) or
-a remote machine such as a Freestyle or Daytona Linux VM. Each chat picks one in
-the Computer popover and keeps it.
+a remote machine such as a Freestyle or Daytona Linux VM. The person picks one
+once in Settings › Computer use, and every chat uses it.
 
 ## Layers
 
@@ -38,8 +38,8 @@ by the same Apple team.
 Both are registry features (`packages/features/src/registry.ts`), off by default
 and read by the desktop from Den like every other feature:
 
-- `computerUse`: the Computer button, the tools and the broker. Turning it off
-  ends any running session.
+- `computerUse`: Settings › Computer use, the tools and the broker. Turning it
+  off ends any running session.
 - `remoteComputers`: VMs in the computer list. Off, VMs are hidden, a chat that
   chose a VM uses this computer, and a VM session ends at once; each chat's
   saved choice returns when the feature is back on. Requires `computerUse`
@@ -76,7 +76,7 @@ Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -auth "$HOME/.Xauthority"
 Run the desktop apps and remote commands as that same account, with access to
 its authority file. Display access control stays enabled and TCP listening is
 disabled. Existing Freestyle worlds use their configured display on `:99`.
-Readiness reports what is missing. The Computer popover lists configured VMs beside this Mac. Enabled computer use opens the requested target directly on personal Macs, configured remote desktops and conversation-owned VMs. The sole or focused window is resolved from current state; an explicit window_id selects a particular target. Only genuine target ambiguity needs clarification. Follow-ups and technical renewal retain access, while Take over requires Continue and Stop cancels current work. On a Mac or a Windows PC a new chat starts on this computer; on Linux an available VM is the default when no computer was previously chosen.
+Readiness reports what is missing. Settings › Computer use shows it, with the macOS permissions checklist, and lists configured VMs beside this Mac; the chat itself shows no idle status, only the live view while the agent works. Enabled computer use opens the requested target directly on personal Macs, configured remote desktops and conversation-owned VMs. The sole or focused window is resolved from current state; an explicit window_id selects a particular target. Only genuine target ambiguity needs clarification. Follow-ups and technical renewal retain access, while Take over requires Continue and Stop cancels current work. On a Mac or a Windows PC chats start on this computer; on Linux an available VM is the default when no computer was chosen in Settings.
 
 ## This PC (Windows)
 

@@ -6,13 +6,14 @@ import { t } from "@/i18n";
 import { gatewayConnectProviderKey, type GatewayConnectProvider, isCloudManagedProviderKey } from "../../connections/provider-auth/cloud-provider-config";
 import { isKeylessZenProvider } from "../../connections/provider-auth/provider-policy";
 import type { ProviderLoadState } from "../../connections/provider-auth/store";
+import { credentialHealthKey, useProviderCredentialHealth, type ProviderCredentialHealth } from "../../connections/provider-auth/credential-health";
 import type { LocalProviderEngineState } from "../../connections/provider-auth/local-provider-engine-state";
 import { AUTO_PROVIDER_ID, autoProviderSubtitle } from "@/react-app/domains/models/model-catalog";
 import { SettingsNotice } from "../settings-section";
 import { LayoutStack } from "../settings-layout";
 import { SettingsPanel, SettingsPanelDescription, SettingsPanelHeading, SettingsPanelTitle } from "../shell/panel";
 import { getSettingsTabLabel } from "../shell/settings-page";
-import { LocalProviderStatus, ProviderList, ProviderMeta, ProviderRow, ProviderStatus, ProviderTile } from "./provider-rows";
+import { CredentialHealthStatus, LocalProviderStatus, ProviderList, ProviderMeta, ProviderRow, ProviderStatus, ProviderTile } from "./provider-rows";
 
 export type ConnectedProvider = {
   id: string;
@@ -22,6 +23,9 @@ export type ConnectedProvider = {
 
 export type AiSettingsViewProps = {
   busy: boolean;
+  runtimeWorkspaceId?: string | null;
+  credentialStatusEnabled?: boolean;
+  onReplaceProviderKey?: (providerId: string) => void | Promise<void>;
   providerAuthBusy: boolean;
   providerStatusLabel: string;
   providerStatusStyle: string;
@@ -100,6 +104,10 @@ export function aiProvidersDescription(input: { signedIn: boolean; organizationN
 }
 
 export function AiSettingsView(props: AiSettingsViewProps) {
+  const healthEntries = useProviderCredentialHealth((state) => state.entries);
+  const providerHealth = (providerId: string): ProviderCredentialHealth | undefined => props.credentialStatusEnabled
+    ? (props.runtimeWorkspaceId ? healthEntries[credentialHealthKey(props.runtimeWorkspaceId, providerId)]?.status : undefined) ?? "unverified"
+    : undefined;
   const ready = props.providerLoadState.status === "ready";
   const loading = props.providerLoadState.status === "loading" || props.providerLoadState.status === "idle";
   const error = props.providerLoadState.error;
@@ -115,6 +123,9 @@ export function AiSettingsView(props: AiSettingsViewProps) {
   const locked = !props.canAddProviders;
   const deviceCount = local.length + Number(showAuto);
   const rowsBusy = props.busy || props.providerAuthBusy || props.disconnectingProviderId !== null;
+  const needsCredentialRecovery = (providerId: string) => providerHealth(providerId) === "rejected"
+    && props.localProviderStates?.get(providerId) !== "managed_by_organization"
+    && props.localProviderStates?.get(providerId) !== "not_on_engine";
 
   return <LayoutStack>
     <SettingsPanel>
@@ -160,9 +171,13 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           scope="device"
           tile={<ProviderTile providerId={provider.id} name={provider.name} />}
           name={provider.name}
-          status={<LocalProviderStatus state={props.localProviderStates?.get(provider.id)} organizationName={props.organizationName} />}
-          meta={<ProviderMeta id={provider.id} parts={[deviceSourceLabel(provider.source), props.organizationProviderIds?.has(provider.id) ? `also available from ${props.organizationName || "your organization"}` : null]} />}
-          actions={<Button variant="ghost" disabled={rowsBusy || !ready || !props.canDisconnectProvider(provider)} onClick={() => void props.onDisconnectProvider(provider.id)}>{props.disconnectingProviderId === provider.id ? t("settings.disconnecting") : props.canDisconnectProvider(provider) ? t("settings.disconnect") : t("settings.managed_by_env")}</Button>}
+          status={<LocalProviderStatus state={props.localProviderStates?.get(provider.id)} organizationName={props.organizationName} credentialHealth={providerHealth(provider.id)} />}
+          meta={<ProviderMeta id={provider.id} parts={[deviceSourceLabel(provider.source), props.organizationProviderIds?.has(provider.id) ? `also available from ${props.organizationName || "your organization"}` : null, needsCredentialRecovery(provider.id) && provider.source === "env" ? "Update the environment credential, then restart the workspace." : null]} />}
+          actions={needsCredentialRecovery(provider.id) && provider.source === "env"
+            ? <span className="text-xs text-muted-foreground" title="Update the environment credential, then restart the workspace.">Update environment</span>
+            : needsCredentialRecovery(provider.id)
+            ? <Button variant="outline" disabled={rowsBusy || !ready || locked || !props.onReplaceProviderKey} onClick={() => void props.onReplaceProviderKey?.(provider.id)}>Replace key</Button>
+            : <Button variant="ghost" disabled={rowsBusy || !ready || !props.canDisconnectProvider(provider)} onClick={() => void props.onDisconnectProvider(provider.id)}>{props.disconnectingProviderId === provider.id ? t("settings.disconnecting") : props.canDisconnectProvider(provider) ? t("settings.disconnect") : t("settings.managed_by_env")}</Button>}
         />)}
         {disabled.map((provider) => <ProviderRow
           key={`disabled:${provider.id}`}
@@ -177,7 +192,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
       </ProviderList> : ready ? <p className="text-sm text-muted-foreground">{t("settings.no_providers_connected")}</p> : null}
 
       {props.autoError ? <SettingsNotice tone="error">{props.autoError}</SettingsNotice> : null}
-      {props.autoPreferences && !props.autoPreferences.canEnable ? <p className="text-xs text-muted-foreground">Auto is unavailable on this device or blocked by your organization administrator.</p> : null}
+      {props.autoPreferences && !props.autoPreferences.canEnable ? <p className="text-xs text-muted-foreground">OpenWork Free is unavailable on this device or blocked by your organization administrator.</p> : null}
       {props.providerConnectError ? <SettingsNotice tone="error">{props.providerConnectError}</SettingsNotice> : null}
       {props.providerDisconnectStatus ? <SettingsNotice>{props.providerDisconnectStatus}</SettingsNotice> : null}
       {props.providerDisconnectError ? <SettingsNotice tone="error">{props.providerDisconnectError}</SettingsNotice> : null}
@@ -189,7 +204,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
         {props.onOpenDen ? <Button variant="ghost" onClick={props.onOpenDen}>Open in Den</Button> : null}
       </div>
       <ProviderList>
-        {organization.map((provider) => <ProviderRow key={provider.id} scope="organization" tile={<ProviderTile providerId={provider.id} name={provider.name} />} name={provider.name} status={<ProviderStatus tone="ready">Ready to use</ProviderStatus>} meta={<ProviderMeta id={provider.id} parts={["Managed in Den"]} />} />)}
+        {organization.map((provider) => <ProviderRow key={provider.id} scope="organization" tile={<ProviderTile providerId={provider.id} name={provider.name} />} name={provider.name} status={props.credentialStatusEnabled ? <CredentialHealthStatus health={providerHealth(provider.id) ?? "unverified"} /> : <ProviderStatus tone="ready">Ready to use</ProviderStatus>} meta={<ProviderMeta id={provider.id} parts={["Managed in Den"]} />} actions={providerHealth(provider.id) === "rejected" ? <span className="text-xs text-muted-foreground">Contact your admin</span> : null} />)}
         {props.gatewayConnectProviders?.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={props.connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={props.onConnectGatewayProvider} onCancel={props.onCancelGatewayConnect} />)}
       </ProviderList>
     </section> : null)}

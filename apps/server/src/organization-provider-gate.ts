@@ -1,7 +1,7 @@
 import { desktopCapabilityConfig, type DesktopConfig } from "@openwork/types/den/desktop-policies-runtime";
 
-/** Providers an organization owns: Den-imported (lpr_), Gateway (ipr_) and hosted OpenWork Models. */
-export const ORGANIZATION_PROVIDER_ID = /^(?:lpr_|ipr_|openwork$)/i;
+/** Providers an organization owns: Den-imported (lpr_), Gateway (ipr_), hosted OpenWork Models and the Auto Router. */
+export const ORGANIZATION_PROVIDER_ID = /^(?:lpr_|ipr_|openwork$|openwork-auto$)/i;
 
 /**
  * When the organization allows only its own providers ("Only models you

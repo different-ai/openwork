@@ -8,7 +8,7 @@ import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { getEveryoneRoute, getOrgAccessFlags, orgFeatureEnabled, permissionLockReason, type DenOrgContext } from "../../_lib/den-org";
+import { getEveryoneRoute, getOrgAccessFlags, permissionLockReason, type DenOrgContext } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
@@ -24,9 +24,9 @@ const ownPromptClass = `${promptReadClass} border-gray-200 bg-white text-gray-90
 /** A prompt inherited from Everyone: same shape, quieter, no fill. */
 const inheritedPromptClass = `${promptReadClass} border-gray-100 text-gray-600`;
 
-/** The Prompts tab shows for people who can view prompts while the Prompts feature is on. */
+/** The Prompts tab shows for people who can view prompts. */
 export function promptsTabVisible(orgContext: DenOrgContext | null): boolean {
-  if (!orgContext || !orgFeatureEnabled(orgContext, "orgPrompts")) return false;
+  if (!orgContext) return false;
   return getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canViewPrompts;
 }
 

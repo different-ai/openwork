@@ -19,6 +19,7 @@ import {
   type BillingPlans,
   type BillingPlanSummary,
 } from "../../_lib/billing-checkout";
+import { planUsageLabel } from "../../_lib/plan-display";
 
 const TIER_NAMES: Record<BillingPlanSummary["tier"], string> = { free: "Free", team: "Team", enterprise: "Enterprise" };
 
@@ -37,6 +38,7 @@ export function BillingPlanCard({
   requestedAddPeople,
   busy,
   notSold,
+  teamOffered = true,
   onStartTeam,
   onOpenPortal,
 }: {
@@ -51,6 +53,8 @@ export function BillingPlanCard({
   busy: "plan-checkout" | "portal" | null;
   /** The last Start Team answered 503 billing_not_configured. */
   notSold: boolean;
+  /** `teamPlan` is on for this organization: a Free workspace is offered Team. */
+  teamOffered?: boolean;
   onStartTeam: (addPeople: number) => void;
   onOpenPortal: () => void;
 }) {
@@ -63,12 +67,13 @@ export function BillingPlanCard({
   const unitAmount = plan.tier === "enterprise" ? plans.enterprise.unitAmount : team.unitAmount;
   const billedPeople = seatQuantity ?? plan.people;
   const teamSold = team.available && !notSold;
+  const adminSetUsage = planUsageLabel(plan);
 
   return (
     <DenCard className="mb-6" data-testid="billing-plan-card">
       <DenSectionHeader
         title="Plan"
-        description={peopleLabel(plan)}
+        description={adminSetUsage ?? peopleLabel(plan)}
         action={
           plan.tier === "free"
             ? <DenBadge tone="neutral">Free</DenBadge>
@@ -87,7 +92,7 @@ export function BillingPlanCard({
             value={paidByStripe ? formatMoneyMinor(billedPeople * unitAmount, team.currency) : formatMoneyMinor(0, team.currency)}
             valueCaption={`per ${seatInterval}`}
           />
-        ) : teamSold ? (
+        ) : !teamOffered ? null : teamSold ? (
           <div className="flex flex-wrap items-end justify-between gap-4 pt-4" data-testid="billing-plan-team-offer">
             <div className="grid gap-1">
               <p className="text-[14px] font-medium text-gray-950">Team</p>

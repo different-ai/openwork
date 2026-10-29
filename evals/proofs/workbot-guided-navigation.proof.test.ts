@@ -8,7 +8,7 @@ test("Workbot offers a document it mentions and the conversation stays open besi
   await user.resizeViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   // The member's main chat on Home, past its first-run welcome.
   world.seedOwnerConversation("Hi Workbot");
-  await step("before: opening a linked document from the main chat leaves the conversation behind", async () => {
+  await step("before: opening a linked document from the main chat shows it in Documents", async () => {
     await user.navigate(world.url);
     await user.type({ role: "textbox", label: "Message Workbot" }, "Where are the budget notes?");
     await user.press("Enter");
@@ -16,9 +16,8 @@ test("Workbot offers a document it mentions and the conversation stays open besi
     await user.notSee({ testId: "workbot-document-offer" });
     await user.click({ role: "link", label: "Budget notes", nth: 0 });
     await user.see({ role: "textbox", label: "Document text" }, { value: "Budget overview" });
-    const chat = await probe.dom("[data-workbot-workspace-chat]");
-    evidence.recordAssertionEvidence("Without guided navigation the chat collapses after opening", "Budget notes opened; no conversation beside it", chat.elements.length === 0);
-    expect(chat.elements).toHaveLength(0);
+    expect(await probe.url()).toContain("/documents");
+    evidence.recordAssertionEvidence("Without guided navigation the link still opens the document", "Budget notes opened in Documents", (await probe.url()).includes("/documents"));
     await user.screenshot();
   });
   await step("after: from the main chat, Workbot's Open action shows the document with the same conversation open beside it", async () => {
@@ -105,7 +104,8 @@ test("Workbot offers a document it mentions and the conversation stays open besi
   await step("reloading the conversation never replays an earlier request to open a document", async () => {
     const opens = world.opened().filter(id => id === "file_brief").length;
     await user.reload();
-    await user.click({ role: "button", label: "Show workspace chat" });
+    // The conversation is shown by default, so the earlier request is visible straight away.
+    await user.see({ role: "button", label: "Hide workspace chat" });
     await user.see({ text: "Open the project brief for me" });
     await user.notSee({ text: "Opening in Documents…" });
     expect((await probe.dom('.ow-document-tabs [data-document-id="file_brief"]')).elements).toHaveLength(0);
@@ -135,7 +135,7 @@ test("Workbot offers a document it mentions and the conversation stays open besi
     await user.click({ role: "button", label: "Project brief.txt" });
     world.releaseDocumentMetadata();
     await user.see({ role: "textbox", label: "Document text" }, { value: "Project overview" });
-    await user.click({ role: "button", label: "Show workspace chat" });
+    // Choosing a tab behind the conversation does not minimize it.
     await user.see({ text: "Not opened, because you moved on." });
     expect((await probe.dom('.ow-document-tabs [data-document-id="file_sheet"]')).elements).toHaveLength(0);
     // The conversation renders on Home (hidden) and beside the document, so count at least one.

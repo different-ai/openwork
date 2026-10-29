@@ -23,11 +23,11 @@ async function me(session: Record<string, unknown>) {
   return body.commandPalette
 }
 
-test("the page sees the palette only when Den turns it on for a member Workbot is on for", async () => {
-  assert.equal(await me({ enabled: true }), false, "a Den from before the feature says nothing: off")
-  assert.equal(await me({ enabled: true, commandPalette: false }), false)
-  assert.equal(await me({ enabled: false, commandPalette: true }), false, "never while Workbot itself is off")
+test("the palette is available by default regardless of legacy Den rollout values", async () => {
+  assert.equal(await me({ enabled: true }), true, "older Dens may omit the compatibility field")
+  assert.equal(await me({ enabled: true, commandPalette: false }), true, "retired rollout values cannot hide the palette")
   assert.equal(await me({ enabled: true, commandPalette: true }), true)
+  assert.equal(await me({ enabled: false, commandPalette: false }), true, "Workbot access is enforced separately from the palette compatibility field")
 })
 
 const items: Rankable[] = [

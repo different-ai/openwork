@@ -96,8 +96,6 @@ const DESKTOP_CONFIG_ITEMS = [
   "onboardingPromptDescriptions",
   "agentPermissions",
   "defaultModel",
-  // Applies live: a running app drops OpenCode Zen as soon as the rollout reaches it.
-  "removeOpencodeZen",
 ] as const satisfies readonly (keyof DenDesktopConfig)[];
 
 // The member a cached config was fetched for. The cache is per organization,
@@ -618,33 +616,11 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     };
   }, [applyDesktopConfigActions]);
 
-  // Signed out there is no desktop config; the deployment's feature switch
-  // decides whether OpenCode Zen models are removed. Unreachable means off.
-  const signedOut = denAuth.status === "signed_out";
-  const [deploymentZenRemoved, setDeploymentZenRemoved] = useState(false);
-  useEffect(() => {
-    if (!signedOut) return;
-    let cancelled = false;
-    const read = () => {
-      void createDenClient({ baseUrl: readDenSettings().baseUrl }).getDeploymentFeatures()
-        .then((features) => { if (!cancelled) setDeploymentZenRemoved(features.removeOpencodeZen === true); })
-        .catch(() => { if (!cancelled) setDeploymentZenRemoved(false); });
-    };
-    read();
-    const interval = window.setInterval(read, 60_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [signedOut]);
-  const opencodeZenRemoved = signedOut ? deploymentZenRemoved : config?.removeOpencodeZen === true;
-
   const configRef = useRef(config);
   configRef.current = config;
-  // A new identity when Zen removal changes re-runs effects that sync it (engine disabled providers).
   const checkRestriction = useCallback<DesktopAppRestrictionChecker>(
-    ({ restriction }) => checkDesktopAppRestriction({ config: configRef.current, restriction, opencodeZenRemoved }),
-    [opencodeZenRemoved],
+    ({ restriction }) => checkDesktopAppRestriction({ config: configRef.current, restriction }),
+    [],
   );
   const value = useMemo<DesktopConfigStore>(() => {
     return {

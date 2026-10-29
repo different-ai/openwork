@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy, ExternalLink } from "lucide-react";
-import { freePlanUserLimitMessage, getErrorMessage, getOrgPaymentRequiredError, requestJson } from "../_lib/den-flow";
+import { freePlanUserLimitMessage, getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, requestJson } from "../_lib/den-flow";
 import {
   PENDING_WORKSPACE_CLAIM_STORAGE_KEY,
   getOrgDashboardRoute,
@@ -93,6 +93,14 @@ async function inviteTeammates(inviteEmails: readonly string[]): Promise<string>
   if (freePlanLimit) {
     const invited = succeeded > 0 ? `Invited ${pluralize(succeeded, "teammate")}. ` : "";
     return `${invited}${freePlanUserLimitMessage(freePlanLimit.freeSeatCount)}`;
+  }
+  // A full Team or Enterprise plan set by OpenWork: the server says how many users it includes.
+  const planLimit = results
+    .map((result) => (result.status === "fulfilled" ? getOrgLimitError(result.value.payload) : null))
+    .find((limit) => limit !== null);
+  if (planLimit) {
+    const invited = succeeded > 0 ? `Invited ${pluralize(succeeded, "teammate")}. ` : "";
+    return `${invited}${planLimit.message}`;
   }
 
   if (failed === 0) {

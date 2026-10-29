@@ -16,6 +16,8 @@ enum Responsibility {
     private static let hostKey = "OPENWORK_COMPUTER_USE_HOST_PID"
     private static var parentWatch: DispatchSourceProcess?
     private static var helperPID: pid_t = 0
+    /// This process is the relaunched helper: its parent is the first helper process.
+    private(set) static var relaunched = false
 
     /// The desktop that launched the helper, across the relaunch.
     static let hostPID: pid_t = {
@@ -27,15 +29,16 @@ enum Responsibility {
     /// or this one when macOS offers no way to disclaim responsibility.
     static func relaunchDisclaimed(requireTrustedHost: Bool) {
         if ProcessInfo.processInfo.environment[relaunchedKey] == "1" {
+            relaunched = true
             _ = hostPID
             unsetenv(relaunchedKey); unsetenv(hostKey)
             exitWithParent()
             return
         }
-        // The relaunched helper's parent is this same-team process, so the
+        // The relaunched helper's parent is this helper process, so the
         // desktop's identity is checked here, before anything is started.
         if requireTrustedHost && !HostTrust.embeddedHostIsTrusted() {
-            fputs("Computer control requires the helper and desktop host to be signed by the same Apple team.\n", stderr)
+            fputs("Computer control requires the signed OpenWork desktop app as its host.\n", stderr)
             exit(1)
         }
         typealias SetDisclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32

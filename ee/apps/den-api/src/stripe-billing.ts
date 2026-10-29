@@ -13,13 +13,12 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { db } from "./db.js"
 import { env } from "./env.js"
-import type { DenOrgMode } from "./env.js"
 import { setInferenceEnabled } from "./inference.js"
 import { assertOrganizationManagedModelsAllowed, updateOrganizationMetadata } from "./organization-metadata.js"
 import { appLogger } from "./observability/logger.js"
-import { complimentaryWebAccessForOrganization, isOpenWorkWebAvailable } from "./openwork-web-availability.js"
-import { resolveOpenWorkWebAccess } from "./openwork-web-access.js"
-import { parseOrganizationPlan, type OrganizationPlan } from "./entitlements.js"
+import { isOpenWorkWebAvailable } from "./openwork-web-availability.js"
+import { hasOpenWorkWebComplimentaryAccess, resolveOpenWorkWebAccess } from "./openwork-web-access.js"
+import { parseOrganizationPlan } from "./entitlements.js"
 import {
   billingNotConfiguredMessage,
   PLAN_CURRENCY,
@@ -38,9 +37,10 @@ import {
   planTierFromSubscriptionMetadata,
   reconcileOrganizationPlan,
 } from "./billing-plans.js"
-import { canAddUser, enterpriseSubscriptionQuantity, minimumUsersFromStripeMetadata, normalizeUserCount, OPENWORK_WEB_QUANTITY_DEFINITION, type OrganizationBillingQuantities } from "./billing-quantities.js"
+import { enterpriseSubscriptionQuantity, minimumUsersFromStripeMetadata, normalizeUserCount, OPENWORK_WEB_QUANTITY_DEFINITION, type OrganizationBillingQuantities } from "./billing-quantities.js"
 import { billingUserCondition, getOrganizationBillingQuantities } from "./billing-users.js"
-import { organizationFeatureEnabled } from "./features.js"
+import { getOrganizationPlanState } from "./organization-plan-state.js"
+import { personAddRefusal } from "./organization-plan.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -357,7 +357,7 @@ async function organizationOpenWorkWebComplimentaryAccess(organizationId: OrgId)
     .from(OrganizationTable)
     .where(eq(OrganizationTable.id, organizationId))
     .limit(1)
-  return complimentaryWebAccessForOrganization(organizationId, rows[0]?.metadata)
+  return hasOpenWorkWebComplimentaryAccess(rows[0]?.metadata)
 }
 
 export function isEligibleOpenWorkWebSubscriptionStatus(status: string | null | undefined) {
@@ -402,13 +402,7 @@ export function openWorkWebPaymentStatus(status: string | null | undefined, paym
 // where Stripe seat billing is configured. Single-org (self-hosted /
 // enterprise) deployments never restrict member count, and without Stripe
 // configured the 402 would be a dead end the operator cannot resolve.
-export function isSeatBillingGateEnabled(input: {
-  orgMode: DenOrgMode
-  stripeSecretKey: string | undefined
-  stripeSeatPriceId: string | undefined
-}) {
-  return input.orgMode === "multi_org" && Boolean(input.stripeSecretKey && input.stripeSeatPriceId)
-}
+export { isSeatBillingGateEnabled } from "./organization-plan.js"
 
 async function findOrgSubscriptionByType(organizationId: OrgId, subscriptionType: OrgSubscriptionTypeValue) {
   return db
@@ -613,45 +607,28 @@ export async function organizationHasOngoingOpenWorkWebSubscription(organization
   return Boolean(row && isOngoingOpenWorkWebSubscriptionStatus(row.status))
 }
 
-async function organizationPlanTier(organizationId: OrgId) {
-  const rows = await db
-    .select({ metadata: OrganizationTable.metadata })
-    .from(OrganizationTable)
-    .where(eq(OrganizationTable.id, organizationId))
-    .limit(1)
-  return parseOrganizationPlan(rows[0]?.metadata).tier
-}
-
+/**
+ * Whether one more person may join the organization, by any path: an email
+ * invitation, SSO sign-up, a verified-domain join or SCIM. One rule for all of
+ * them (organization-plan.ts). `reason` tells a refusal on Free (offer the
+ * Team plan) from a full plan a platform admin set (ask for more seats).
+ */
 export async function getOrganizationSeatAddEligibility(organizationId: OrgId) {
-  const { seats } = await getOrganizationBillingQuantities(organizationId)
-  const gateEnabled = isSeatBillingGateEnabled({
-    orgMode: env.orgMode,
-    stripeSecretKey: env.stripe.secretKey,
-    stripeSeatPriceId: env.stripe.seatPriceId,
-  })
-  const base = {
-    currentCount: seats.total,
-    freeSeatCount: seats.free,
-    billableSeatCount: seats.chargeable,
-  }
-  if (!gateEnabled || canAddUser({ seats, hasSeatSubscription: false, hasEnterpriseSubscription: false, enterprisePlanBypassesLimit: false })) {
-    return { allowed: true, ...base, hasActiveSeatSubscription: false, hasActiveEnterpriseSubscription: false }
-  }
-
-  const [hasActiveSeatSubscription, hasActiveEnterpriseSubscription] = await Promise.all([
+  const [plan, { seats }, hasActiveSeatSubscription, hasActiveEnterpriseSubscription] = await Promise.all([
+    getOrganizationPlanState(organizationId),
+    getOrganizationBillingQuantities(organizationId),
     organizationHasActiveSeatSubscription(organizationId),
     organizationHasActiveEnterpriseSubscription(organizationId),
   ])
-  // A paying Enterprise subscription always lifts the limit. An Enterprise
-  // plan without one (set by a platform admin, or grandfathered) lifts it
-  // only while the enterprisePlan feature is on, so turning it off restores
-  // the earlier behaviour.
-  const enterprisePlanBypassesLimit = !hasActiveSeatSubscription && !hasActiveEnterpriseSubscription
-    && await organizationPlanTier(organizationId) === "enterprise"
-    && await organizationFeatureEnabled(organizationId, "enterprisePlan")
+  if (!plan) throw new Error("organization_not_found")
+  const refusal = personAddRefusal(plan)
   return {
-    allowed: canAddUser({ seats, hasSeatSubscription: hasActiveSeatSubscription, hasEnterpriseSubscription: hasActiveEnterpriseSubscription, enterprisePlanBypassesLimit }),
-    ...base,
+    allowed: refusal === null,
+    reason: refusal,
+    plan,
+    currentCount: plan.users,
+    freeSeatCount: seats.free,
+    billableSeatCount: seats.chargeable,
     hasActiveSeatSubscription,
     hasActiveEnterpriseSubscription,
   }
@@ -782,15 +759,6 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
   }
 
   return findOrgSubscriptionByStripeId(subscription.id)
-}
-
-async function readOrganizationPlan(organizationId: OrgId): Promise<OrganizationPlan | null> {
-  const [row] = await db
-    .select({ metadata: OrganizationTable.metadata })
-    .from(OrganizationTable)
-    .where(eq(OrganizationTable.id, organizationId))
-    .limit(1)
-  return row ? parseOrganizationPlan(row.metadata) : null
 }
 
 async function currentStripeSubscriptionStatus(stripeSubscriptionId: string) {
@@ -1482,7 +1450,7 @@ export async function getOrgBillingSummary(input: {
   const seatCounts = quantities.seats
   const [peopleCounts, organizationPlan] = await Promise.all([
     getOrganizationPeopleCounts(input.organizationId),
-    readOrganizationPlan(input.organizationId),
+    getOrganizationPlanState(input.organizationId),
   ])
   const plan: BillingPlanSummary = {
     tier: organizationPlan?.tier ?? "free",
@@ -1491,6 +1459,8 @@ export async function getOrgBillingSummary(input: {
     joined: peopleCounts.joined,
     invited: peopleCounts.invited,
     freeSeatCount: seatCounts.free,
+    userLimit: organizationPlan?.userLimit ?? null,
+    endsAt: organizationPlan?.endsAt ?? null,
   }
   const hasActiveSubscription = Boolean(row && ACTIVE_STATUSES.has(row.status))
   const hasActiveSeatSubscription = Boolean(seatRow && ACTIVE_STATUSES.has(seatRow.status))

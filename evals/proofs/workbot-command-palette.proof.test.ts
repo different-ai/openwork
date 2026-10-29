@@ -31,23 +31,10 @@ test("a member opens the command palette with Cmd+K and runs a command without l
     await focused();
   };
 
-  await step("before: with the feature off there is no search button and Cmd+K does nothing", async () => {
-    await user.see({ text: "On it. The venue research is still running." });
-    await user.notSee({ role: "button", label: "Search and actions" });
-    await user.click({ role: "textbox", label: "Message Workbot" });
-    await user.press("Meta+k");
-    await user.press("Control+k");
-    await user.notSee({ role: "dialog" }, { timeoutMs: 1000 });
-    const absent = (await probe.dom(palette)).elements.length === 0 && (await probe.dom("[data-workbot-palette-trigger]")).elements.length === 0;
-    evidence.recordAssertionEvidence("The palette is fully hidden while the feature is off", "No header button; Cmd/Ctrl+K opened nothing", absent);
-    expect(absent).toBe(true);
-    await user.screenshot();
-  });
-
   world.holdChats();
   await user.navigate(world.url);
 
-  await step("after: the header has a search button and the page is otherwise unchanged", async () => {
+  await step("the header offers search and actions by default, without a rollout field", async () => {
     await user.see({ role: "button", label: "Search and actions" });
     await user.see({ text: "On it. The venue research is still running." });
     await user.screenshot();
@@ -67,6 +54,10 @@ test("a member opens the command palette with Cmd+K and runs a command without l
     const listedAll = expected.every(title => rows.some(text => text.startsWith(title)));
     evidence.recordAssertionEvidence("The palette opens over the composer with real actions, chats, a running task, pages and settings", rows.join(" | "), listedAll);
     expect(listedAll).toBe(true);
+    const unavailable = ["Documents", "Computer", "Show files", "Stop the reply"];
+    const preservesAvailability = unavailable.every(title => !rows.some(text => text.startsWith(title)));
+    evidence.recordAssertionEvidence("Default search preserves existing page and action availability", `Unavailable in this workspace: ${unavailable.join(", ")}`, preservesAvailability);
+    expect(preservesAvailability).toBe(true);
     await user.screenshot();
   });
 

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import {
+  FEATURE_CATEGORIES,
   FEATURE_KEYS,
   FEATURES,
   FEATURE_DOCS_BASE_URL,
+  featuresByCategory,
   featureDocsUrl,
   featureKeySchema,
   featureLockEnvName,
@@ -13,9 +15,11 @@ import {
   resolveFeatures,
   RETIRED_FEATURE_KEYS,
   type FeatureContext,
+  type FeatureDefinition,
 } from "@openwork/features"
 
 const base: FeatureContext = { deployment: "cloud", locks: {}, rollouts: {}, overrides: {} }
+const featureDocs = (feature: FeatureDefinition) => feature.docs
 
 test("without stored state, every feature follows its registry default", () => {
   for (const key of FEATURE_KEYS) {
@@ -26,10 +30,27 @@ test("without stored state, every feature follows its registry default", () => {
   }
 })
 
+test("every feature has a known category and the day it was added", () => {
+  for (const key of FEATURE_KEYS) {
+    const { category, added, since } = FEATURES[key]
+    assert.ok(Object.hasOwn(FEATURE_CATEGORIES, category), key)
+    assert.match(added, /^\d{4}-\d{2}-\d{2}$/, key)
+    assert.ok(!Number.isNaN(Date.parse(`${added}T00:00:00Z`)), key)
+    assert.ok(added.slice(0, 7) <= since, `${key} was added after its since month`)
+  }
+})
+
+test("features by category keeps category order and lists every feature once", () => {
+  const groups = featuresByCategory()
+  assert.deepEqual(groups.map((group) => group.category), Object.keys(FEATURE_CATEGORIES).filter((category) => groups.some((group) => group.category === category)))
+  assert.deepEqual(groups.flatMap((group) => group.keys).sort(), [...FEATURE_KEYS].sort())
+  assert.ok(groups.every((group) => group.keys.length > 0))
+})
+
 test("every feature names its author, and docs link to internal docs in the repo", () => {
   for (const key of FEATURE_KEYS) {
     assert.match(FEATURES[key].author, /^[A-Za-z0-9-]+$/, key)
-    const docs = FEATURES[key].docs
+    const docs = featureDocs(FEATURES[key])
     if (docs === undefined) {
       assert.equal(featureDocsUrl(key), null)
     } else {
@@ -103,6 +124,33 @@ test("retired GA locks cannot disable models, skills, permissions or team member
   assert.equal(parsed.deployment, "self_hosted")
   assert.deepEqual(parsed.locks, {})
   assert.equal(parsed.problems.length, 7)
+  assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
+})
+
+test("completed desktop, Workbot and organization rollouts ignore legacy opt-out locks", () => {
+  const retired = [
+    "localProviderMirror", "organizationAutomationSettings", "agentConnectionRemoval",
+    "workbotCommandPalette", "usageLimitUpgrade", "removeOpencodeZen",
+    "desktopSignInReturn", "claudeHistoryImport", "orgPrompts",
+  ]
+  for (const key of retired) {
+    assert.equal(featureKeySchema.safeParse(key).success, false, key)
+    assert.equal(Object.hasOwn(resolveFeatures(base), key), false, key)
+    assert.ok(RETIRED_FEATURE_KEYS.some((retiredKey) => retiredKey === key), key)
+  }
+  const parsed = parseFeatureEnvironment({
+    DEN_FEATURE_LOCAL_PROVIDER_MIRROR: "false",
+    DEN_FEATURE_ORGANIZATION_AUTOMATION_SETTINGS: "false",
+    DEN_FEATURE_AGENT_CONNECTION_REMOVAL: "false",
+    DEN_FEATURE_WORKBOT_COMMAND_PALETTE: "false",
+    DEN_FEATURE_USAGE_LIMIT_UPGRADE: "false",
+    DEN_FEATURE_REMOVE_OPENCODE_ZEN: "false",
+    DEN_FEATURE_DESKTOP_SIGN_IN_RETURN: "false",
+    DEN_FEATURE_CLAUDE_HISTORY_IMPORT: "false",
+    DEN_FEATURE_ORG_PROMPTS: "false",
+  })
+  assert.deepEqual(parsed.locks, {})
+  assert.equal(parsed.problems.length, retired.length)
   assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
 })
 

@@ -39,6 +39,7 @@ import { isGoogleAuthorizationFailure, parseGoogleError } from "./google-workspa
 import { registerGmailManagementRoutes } from "./gmail-management.js"
 import { registerGoogleProductivityManagementRoutes } from "./google-productivity-management.js"
 import { registerGoogleDocumentRoutes } from "./google-documents.js"
+import { registerGoogleChatRoutes } from "./google-chat.js"
 import { listTeamsForMember } from "../../orgs.js"
 import { readInternalCapabilityConnectorId } from "../../session.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -445,6 +446,38 @@ async function googleWorkspaceToken(input: {
   return { kind: "ok", accessToken: token.accessToken, account: token.account, enabledScopes, enabledFeatures, connectionId: credentialProviderId }
 }
 
+export type MemberCalendarRead =
+  | { kind: "ok"; json: unknown }
+  | { kind: "needs_connection" | "policy_blocked" | "missing_scope" | "google_api_error" }
+
+/**
+ * Reads a member's primary Google Calendar for their agent's event source (calendar changes that wake it early),
+ * outside any request: one read-only `GET`, expanded recurring events and cancelled ones (`showDeleted`), so a
+ * cancellation can be told from a move. With `connectionId` (members' agents) it reads through exactly that Google
+ * Workspace connection, never one of the member's other Google accounts; without it, the member's default connection.
+ */
+export async function readMemberGoogleCalendar(input: {
+  organizationId: DenTypeId<"organization">
+  orgMembershipId: DenTypeId<"member">
+  connectionId?: string | null
+  timeMin: string
+  timeMax: string
+}): Promise<MemberCalendarRead> {
+  const token = await googleWorkspaceToken({ organizationId: input.organizationId, orgMembershipId: input.orgMembershipId, connectionId: input.connectionId ?? null })
+  if (token.kind !== "ok") return { kind: token.kind }
+  if (missingScope(token.account, [CALENDAR_READ_SCOPE, CALENDAR_EVENTS_SCOPE])) return { kind: "missing_scope" }
+  const url = new URL(`${calendarApiBase()}/calendar/v3/calendars/primary/events`)
+  url.searchParams.set("timeMin", input.timeMin)
+  url.searchParams.set("timeMax", input.timeMax)
+  url.searchParams.set("singleEvents", "true")
+  url.searchParams.set("showDeleted", "true")
+  url.searchParams.set("orderBy", "startTime")
+  url.searchParams.set("maxResults", "250")
+  const response = await googleWorkspaceApiFetch(url, { headers: { authorization: `Bearer ${token.accessToken}` } })
+  if (!response.ok) return { kind: "google_api_error" }
+  return { kind: "ok", json: await readJson(response) }
+}
+
 async function googleApiError(operation: string, response: Response) {
   const text = await response.text()
   return { error: "google_api_error" as const, message: `${operation} failed: ${response.status} ${text.slice(0, 300)}` }
@@ -755,6 +788,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
   registerGmailManagementRoutes(app, actionDependencies)
   registerGoogleProductivityManagementRoutes(app, actionDependencies)
   registerGoogleDocumentRoutes(app, actionDependencies)
+  registerGoogleChatRoutes(app, actionDependencies)
 
   app.post(
     "/v1/direct-uploads/google-workspace/drive-files",

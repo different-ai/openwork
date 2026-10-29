@@ -71,6 +71,7 @@ import {
 import { deleteSkill, listSkills, renderSkillContentForResponse, upsertSkill } from "./skills.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
+import { opencodeConfigApiError } from "./opencode-config-error.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
@@ -85,7 +86,7 @@ import {
 import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
 import { defaultWorkspaceOpenworkConfig, ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
-import { sanitizeCommandName, validateMcpName, validateUserMcpName } from "./validators.js";
+import { sanitizeCommandName, validateMcpName, validateUserMcpName, validateUserOpencodeConfigText, validateUserProviderUpdate } from "./validators.js";
 import { TokenService } from "./tokens.js";
 import { resetManagedProviderAuthCache, syncManagedProviderAuth } from "./managed-provider-auth.js";
 import { EnvService } from "./env-file.js";
@@ -668,6 +669,8 @@ async function assertWorkspaceOwnsProxiedSessionRead(
     if (result.response?.status === 404) {
       throw new ApiError(404, "session_not_found", "Session not found");
     }
+    const configError = opencodeConfigApiError(result.error, `/session/${encodeURIComponent(sessionId)}`);
+    if (configError) throw configError;
     throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
       ...(result.response ? { status: result.response.status } : {}),
       body: result.error,
@@ -778,7 +781,6 @@ function admitSessionCommand(
 // Backoff for re-sending managed provider credentials the engine did not take
 // during startup. After the last attempt, the next launch tries again.
 const STARTUP_PROVIDER_AUTH_RETRY_DELAYS_MS = [2_000, 10_000, 30_000, 120_000];
-const LOCAL_PROVIDER_MIRROR_POLICY_WAIT_MS = 1_500;
 
 export async function startServer(
   config: ServerConfig,
@@ -837,18 +839,7 @@ export async function startServer(
   };
   const engineV2Preview: EngineV2Preview = createEngineV2Preview({ config, env, deferStart: true,
     resolveLiveProviderSync,
-    // The signed-in member's rollout from Den; signed out it stays off. A slow
-    // or unreachable Den never holds the mirror: the answer last verified for
-    // this sign-in stands in.
-    resolveLocalProviderMirror: async () => {
-      const policy = managedDesktopPolicy(config);
-      let timer: NodeJS.Timeout | undefined;
-      const fresh = await Promise.race([
-        policy.current().catch(() => policy.known()),
-        new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), LOCAL_PROVIDER_MIRROR_POLICY_WAIT_MS); }),
-      ]).finally(() => clearTimeout(timer));
-      return (fresh === undefined ? policy.known() : fresh)?.localProviderMirror === true;
-    },
+    resolveNativeAffordanceCodeMode: async () => (await managedDesktopPolicy(config).current())?.nativeAffordanceCodeMode === true,
     autoUpgradeIdle: async () => (await describeV1EngineActivity(config)).verdict === "idle",
     autoUpgradeError: (error) => logger.log("warn", "Automatic engine upgrade failed; keeping v1", { error }),
     providerSession: () => cloudProviderSync.currentSession(),
@@ -859,7 +850,10 @@ export async function startServer(
         ...init, headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" },
       }));
       const payload: unknown = await response.json();
-      if (!response.ok) throw new Error(`OpenWork read failed (${response.status})`);
+      if (!response.ok) {
+        const message = payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string" ? `: ${payload.message}` : "";
+        throw new Error(`OpenWork request failed (${response.status})${message}`);
+      }
       return payload;
     },
   });
@@ -870,7 +864,6 @@ export async function startServer(
       // The same signed-in desktop-config hydration as organization defaults. A
       // missing field/older Den is off; never infer this from org metadata.
       await engineV2Preview.setLiveProviderSync(await resolveLiveProviderSync());
-      void engineV2Preview.recheckLocalProviderMirror().catch(() => undefined);
       return engineV2Preview.status().liveProviderSync;
     },
     reloadEngine: async () => {
@@ -1003,8 +996,7 @@ export async function startServer(
             // credential store. Join v2 catalog reconciliation before reporting
             // that save complete, so the engine's status already explains it.
             await engineV2Preview.refreshProviders();
-            // With the localProviderMirror rollout (the mirror then explains
-            // its skips), also rebuild v1's provider state for this folder:
+            // Also rebuild v1's provider state for this folder:
             // AI Providers lists providers from v1, which caches them per
             // folder and otherwise keeps the old list until a restart.
             // Disposed in place, not through the engine pool: the pool skips a
@@ -1012,7 +1004,7 @@ export async function startServer(
             // credentials are not part of that file, so every save after the
             // first was skipped. Never spawns an engine, and never while v1 is
             // running work.
-            if (engineV2Preview.status().skippedProviders && !await engineHasActiveSessions(config, workspace)) {
+            if (!await engineHasActiveSessions(config, workspace)) {
               await reloadOpencodeEngineInPlace(config, workspace, engineMcpServerState, { awaitPostRefreshSync: false })
                 .catch((error) => logger.log("warn", "Could not refresh OpenCode v1 providers after a provider change.", {
                   error: error instanceof Error ? error.message : String(error),
@@ -1070,6 +1062,7 @@ export async function startServer(
             proxyPath: mount.restPath,
             connection,
             describeUncopiedChat: (sessionId) => engineV2Preview.describeUncopiedChat(sessionId),
+            logWarning: (message, attributes) => logger.log("warn", message, attributes),
             // A turn uses the connections that are ready; MCP upkeep runs in
             // the background and the engine adds tools as connections finish.
             prepareExecution: async (directory) => {
@@ -1437,6 +1430,9 @@ export async function proxyOpencodeV2Request(input: Parameters<typeof forwardOpe
   finally { await release(); }
 }
 
+/** Chats resolved at once when a workspace lists its v2 sessions. */
+const SESSION_LIST_HOME_CONCURRENCY = 8;
+
 async function forwardOpencodeV2Request(input: {
   actor: Actor;
   config: ServerConfig;
@@ -1452,6 +1448,8 @@ async function forwardOpencodeV2Request(input: {
   /** Why v2 has no such chat when it is a v1 chat not copied yet. */
   describeUncopiedChat?: (sessionId: string) => Promise<string | null>;
   recoverySignal?: AbortSignal;
+  /** Reports a chat left out of a list because the engine could not read it. */
+  logWarning?: (message: string, attributes: Record<string, string | null>) => void;
 }): Promise<Response> {
   const method = input.request.method.toUpperCase();
   const readRequest = method === "GET" || method === "HEAD";
@@ -1789,10 +1787,31 @@ async function forwardOpencodeV2Request(input: {
     const data = isRecord(payload) && "data" in payload ? payload.data : payload;
     const items = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.items) ? data.items : null;
     if (!items) throw new ApiError(502, "invalid_engine_response", "Invalid session list response");
-    const scoped = (await Promise.all(items.map(async (item: unknown) =>
-      await homes.resolve(item) === expectedHome ? homes.project(item) : null,
-    ))).filter((item) => item !== null);
+    // Like the pending lists above: a chat the engine cannot read (deleted while
+    // listing, or history it cannot decode) is left out, never the whole list.
+    // A bounded number at a time, so a large migrated set does not flood the engine.
+    const results: unknown[] = new Array(items.length).fill(null);
+    let nextIndex = 0;
+    const resolveNext = async (): Promise<void> => {
+      while (nextIndex < items.length) {
+        const index = nextIndex++;
+        const item: unknown = items[index];
+        try {
+          results[index] = await homes.resolve(item) === expectedHome ? await homes.project(item) : null;
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          const session = nativeSession(item);
+          input.logWarning?.("Left an unreadable chat out of the v2 session list", {
+            sessionId: typeof session?.id === "string" ? session.id : null,
+            workspaceId: input.workspace.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(SESSION_LIST_HOME_CONCURRENCY, items.length) }, resolveNext));
     signal?.throwIfAborted();
+    const scoped = results.filter((item) => item !== null);
     const scopedData = isRecord(data) ? { ...data, items: scoped } : scoped;
     const scopedPayload = isRecord(payload) && "data" in payload ? { ...payload, data: scopedData } : scopedData;
     const responseHeaders = new Headers(response.headers);
@@ -1804,8 +1823,14 @@ async function forwardOpencodeV2Request(input: {
     const payload: unknown = await response.json();
     const data = isRecord(payload) && isRecord(payload.data) ? payload.data : {};
     const entries = await Promise.all(Object.entries(data).map(async ([id, status]) => {
-      const home = await homes.stored(id) ?? await homes.resolve(await readNative(`/api/session/${encodeURIComponent(id)}`));
-      return home === expectedHome ? [id, status] : null;
+      try {
+        const home = await homes.stored(id) ?? await homes.resolve(await readNative(`/api/session/${encodeURIComponent(id)}`));
+        return home === expectedHome ? [id, status] : null;
+      } catch (error) {
+        // One unreadable chat must not hide every other running chat.
+        if (signal?.aborted) throw error;
+        return null;
+      }
     }));
     return jsonResponse({ data: Object.fromEntries(entries.filter(entry => entry !== null)) });
   }
@@ -1926,6 +1951,8 @@ export function unwrapOpencodeResult<T, E>(result: OpencodeClientResult<T, E>, p
       path,
     });
   }
+  const configError = opencodeConfigApiError(result.error, path);
+  if (configError) throw configError;
   throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
     status: result.response.status,
     body: result.error,
@@ -3551,6 +3578,7 @@ function createRoutes(
     const workspace = resolveEngineRuntimeWorkspace(config);
     const body = await readJsonBody(ctx.request);
     const providerPatch = parseRuntimeProviderPatchPayload(body);
+    validateUserProviderUpdate(providerPatch);
     const result = await writeGlobalRuntimeOpencodeConfig(config, (current) => ({
       ...current,
       provider: mergeRuntimeProviderUpdate(current.provider, providerPatch),
@@ -3663,6 +3691,7 @@ function createRoutes(
       throw new ApiError(400, "invalid_payload", "content must be a string");
     }
 
+    validateUserOpencodeConfigText(content);
     const configPath = resolveOpencodeConfigFilePath(scope, workspace.path);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
@@ -3758,6 +3787,7 @@ function createRoutes(
       const mergeProviderModels = new Set(Array.isArray(body.mergeProviderModels)
         ? body.mergeProviderModels.filter((id): id is string => typeof id === "string")
         : []);
+      validateUserProviderUpdate(providerUpdate);
       // Removing a provider is always allowed; adding or changing one must fit the organization's model access.
       if (Object.keys(providerUpdate).length) await managedDesktopPolicy(config).assert("provider", {
         providerIDs: Object.entries(providerUpdate).filter(([, value]) => value !== null).map(([id]) => id),

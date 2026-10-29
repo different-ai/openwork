@@ -15,10 +15,11 @@
     "build:workspace-dependencies": "node ../../../scripts/build-workspace-dependencies.mjs @openwork-ee/gateway"
   },
   "dependencies": {
-    "@hono/node-server": "2.0.12",
+    "@hono/node-server": "2.1.5",
     "@openwork-ee/den-db": "workspace:*",
     "@openwork-ee/telemetry": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
+    "@openwork/features": "workspace:*",
     "@openwork/free-auto": "workspace:*",
     "@openwork/types": "workspace:*",
     "@sentry/hono": "^10.65.0",

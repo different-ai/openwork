@@ -151,6 +151,33 @@ export const checkoutStartResponseSchema = z.object({
 });
 export type CheckoutStartResponse = z.infer<typeof checkoutStartResponseSchema>;
 
+/** Who pays for the organization's plan: nobody (Free or set by a platform admin), or a Stripe subscription. */
+export const PLAN_PAID_BY = ["none", "stripe_team", "stripe_enterprise"] as const;
+export type PlanPaidBy = (typeof PLAN_PAID_BY)[number];
+
+/** A calendar date, `YYYY-MM-DD`, such as the optional end of a plan a platform admin set. */
+export const planEndDateSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, "Use a date such as 2026-11-22.");
+
+/**
+ * An organization's plan as every check sees it: the one rule that decides how
+ * many users it may have. `userLimit` is null when nothing limits it (a paid
+ * Stripe plan bills every user, or the deployment does not gate seats).
+ * `endsAt` is display only: nothing changes when it passes.
+ */
+export const organizationPlanStateSchema = z.object({
+  tier: z.enum(BILLING_PLAN_TIERS),
+  source: z.enum(BILLING_PLAN_SOURCES),
+  paidBy: z.enum(PLAN_PAID_BY),
+  /** Joined members plus unexpired pending invitations. */
+  users: z.number().int().nonnegative(),
+  userLimit: z.number().int().positive().nullable(),
+  /** Users a platform admin set for a Team or Enterprise plan; null on Free. */
+  seats: z.number().int().positive().nullable(),
+  endsAt: planEndDateSchema.nullable(),
+  ended: z.boolean(),
+}).meta({ ref: "OrganizationPlanState" });
+export type OrganizationPlanState = z.infer<typeof organizationPlanStateSchema>;
+
 export const billingPlanSummarySchema = z.object({
   tier: z.enum(BILLING_PLAN_TIERS),
   source: z.enum(BILLING_PLAN_SOURCES),
@@ -159,6 +186,10 @@ export const billingPlanSummarySchema = z.object({
   joined: z.number().int(),
   invited: z.number().int(),
   freeSeatCount: z.number().int(),
+  /** Users the plan allows, counting pending invitations; null when nothing limits it. Older Den APIs omit it. */
+  userLimit: z.number().int().nullable().default(null),
+  /** Optional end date of a plan a platform admin set (`YYYY-MM-DD`), display only. Older Den APIs omit it. */
+  endsAt: z.string().nullable().default(null),
 });
 export type BillingPlanSummary = z.infer<typeof billingPlanSummarySchema>;
 

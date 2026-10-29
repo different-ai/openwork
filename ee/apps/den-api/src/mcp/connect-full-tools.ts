@@ -4,6 +4,7 @@ import type { ExternalMcpToolPolicy } from "@openwork-ee/den-db"
 import { z } from "zod"
 import { isToolDisabled } from "../capability-sources/external-mcp-tool-policy.js"
 import type { ExecuteCapabilityToolResult } from "./capability-registry.js"
+import { toolTitle, withSafetyHints } from "./tool-labels.js"
 
 /**
  * Connect's full tool view: every capability the member may use, listed as
@@ -12,14 +13,16 @@ import type { ExecuteCapabilityToolResult } from "./capability-registry.js"
  * A tool is named like the Code Mode call for the same capability,
  * `<namespace>.<tool>` (`linear.list_issues` is `tools.linear.list_issues` in
  * execute_capability_script). Capabilities with no Code Mode namespace use
- * hyphenated ones (`run-workflow`, `open-app`, `remote-session`), which a
- * connection's namespace can never be. Names keep to the MCP name characters
+ * hyphenated ones (`run-workflow`, `open-app`, `remote-session`,
+ * `openwork-bot`), which a connection's namespace can never be. Names keep to the MCP name characters
  * and to 64 characters, so clients that prefix them (`mcp__<server>__<tool>`
  * in Claude Code, which drops names over 128) still accept them.
  *
  * Every tool runs through the executor execute_capability uses, with the same
  * `{ name, arguments }` it receives, so grants, tool policy, scopes,
- * connection checks, audit and usage counting are unchanged.
+ * connection checks, audit and usage counting are unchanged. Every tool has a
+ * title and a safety hint (tool-labels.ts), filled in where its source states
+ * none.
  */
 
 export const CONNECT_FULL_TOOL_NAME_MAX_LENGTH = 64
@@ -27,6 +30,8 @@ export const CONNECTION_STATUS_TOOL_NAME = "connection_status"
 export const WORKFLOW_TOOL_NAMESPACE = "run-workflow"
 export const APP_TOOL_NAMESPACE = "open-app"
 export const REMOTE_SESSION_TOOL_NAMESPACE = "remote-session"
+/** slack_send_as_bot's namespace: `openwork-bot.slack_send_as_bot`. */
+export const OPENWORK_BOT_TOOL_NAMESPACE = "openwork-bot"
 
 export type ConnectFullToolCandidate = {
   namespace: string
@@ -40,7 +45,7 @@ export type ConnectFullToolCandidate = {
   annotations?: ToolAnnotations
 }
 
-export type ConnectFullTool = ConnectFullToolCandidate & { name: string }
+export type ConnectFullTool = ConnectFullToolCandidate & { name: string; title: string; annotations: ToolAnnotations }
 
 /** What execute_capability receives; the older path/query/body fields stay for its own callers. */
 export type CapabilityCall = { name: string; arguments?: unknown; path?: unknown; query?: unknown; body?: unknown }
@@ -73,7 +78,12 @@ export function connectFullToolName(namespace: string, toolName: string): string
 export function buildConnectFullTools(candidates: readonly ConnectFullToolCandidate[]): ConnectFullTool[] {
   const named = candidates
     .flatMap((candidate) => objectSchema(candidate.inputSchema)
-      ? [{ ...candidate, name: connectFullToolName(candidate.namespace, candidate.toolName) }]
+      ? [{
+        ...candidate,
+        name: connectFullToolName(candidate.namespace, candidate.toolName),
+        title: candidate.title ?? toolTitle(candidate.toolName, candidate.description),
+        annotations: withSafetyHints(candidate.annotations),
+      }]
       : [])
     .sort((left, right) => compare(left.name, right.name) || compare(left.capability, right.capability))
   const byName = new Map<string, ConnectFullTool>()
@@ -161,11 +171,11 @@ export function registerConnectFullTools(input: {
 }) {
   for (const tool of input.tools) {
     input.server.registerTool(tool.name, {
-      ...(tool.title ? { title: tool.title } : {}),
+      title: tool.title,
       description: tool.description,
       inputSchema: advertisedSchema(tool.inputSchema),
       ...(tool.outputSchema ? { outputSchema: advertisedSchema(tool.outputSchema) } : {}),
-      ...(tool.annotations ? { annotations: tool.annotations } : {}),
+      annotations: tool.annotations,
     }, async (args: unknown) => input.execute({ name: tool.capability, arguments: args }))
   }
 }
@@ -187,7 +197,7 @@ export function registerConnectionStatusTool(input: {
         : "Every service you may use is ready.",
       "Use only when the user asks to connect a service or a tool fails because its connection is not ready.",
     ].join(" "),
-    annotations: { readOnlyHint: true, openWorldHint: true },
+    annotations: withSafetyHints({ readOnlyHint: true, openWorldHint: true }),
     inputSchema: z.object({
       connection: (namespaces.length > 0 ? z.enum(namespaces as [string, ...string[]]) : z.string())
         .describe("The service, as named in parentheses in this tool's description."),

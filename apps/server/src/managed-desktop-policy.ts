@@ -11,8 +11,8 @@ import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./
 import { agentPermissionDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
 
 const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
-/** Org-managed providers: Den-imported (lpr_), Gateway (ipr_) and hosted OpenWork Models. */
-const MANAGED_PROVIDER = /^(?:lpr_|ipr_)|^openwork$/i;
+/** Org-managed providers: Den-imported (lpr_), Gateway (ipr_), hosted OpenWork Models and the Auto Router. */
+const MANAGED_PROVIDER = /^(?:lpr_|ipr_)|^openwork(?:-auto)?$/i;
 /** One member's sign-in: another member of the same organization has another token. */
 function sessionKey(session: CloudProviderDenSession) { return `${session.baseUrl}\n${session.orgId}\n${session.token}`; }
 // The first cold read previously had 10s; keep two reads under the 15s plugin budget and one read under the 10s session-install budget.
@@ -191,7 +191,7 @@ class ManagedDesktopPolicy {
         // Model access/permissions keep their offline policy. A rollout is
         // different: a newly started engine must not resurrect live sync from
         // a stale grant after its kill switch changed while disconnected.
-        return this.lastKnown?.key === sessionKey(session) ? { ...this.lastKnown.policy, liveProviderSync: false } : null;
+        return this.lastKnown?.key === sessionKey(session) ? { ...this.lastKnown.policy, liveProviderSync: false, nativeAffordanceCodeMode: false } : null;
       }
       throw new ApiError(403, "policy_unavailable", "Your organization's policy could not be verified. Try again when connected.");
     }

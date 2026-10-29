@@ -36,6 +36,8 @@ export const providerBackgroundSteps = ["catalog.refresh"]
 export const providerUncoveredRoutes = [
   "DELETE /v1/inference-providers/:inferenceProviderId/oauth",
   "POST /v1/inference-providers/migrate-from-llm-provider",
+  // Testing an unsaved key through AI Gateway: no local write, request evidence only.
+  "POST /v1/inference-providers/test-connection",
   // LiteLLM setup, sync and member key connection: request evidence only (routes/integrations.ts).
   "POST /v1/inference-providers/litellm",
   "POST /v1/inference-providers/:inferenceProviderId/litellm/sync",
@@ -198,7 +200,7 @@ export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>
   "sso.ts": bridged(["organization.sso.connection_registered", "organization.sso.connection_enabled", "organization.sso.connection_disabled", "organization.sso.connection_deleted"], ["sso_connection"]),
   "teams.ts": routes("Team and membership management."),
   "web-origins.ts": bridged(["organization.web_origin.approved", "organization.web_origin.removed"], ["web_origin"]),
-  "workbot-settings.ts": routes("Workbot default model setting (organization metadata)."),
+  "workbot-settings.ts": routes("Workbot default model and members' agent settings (organization metadata and the Your agent template version)."),
 }
 
 function boundary(limitations: string): AuditCoverageDeclaration {
@@ -215,7 +217,7 @@ export const otherAuditSurfaces: readonly Readonly<{ location: string; surface: 
   { location: "ee/apps/den-api/src/mcp", surface: "mcp", coverage: { ...genericRequestCoverage, status: "implemented_scoped", emitter: "src/audit/service-capture.ts:runAuditedServiceAction via src/audit/mcp-service-audit.ts (declarations: src/audit/service-actions.ts)",
     operationKinds: [...new Set(auditServiceActionDeclarations.map(({ kind }) => kind))].sort(), actions: auditServiceActionEventTypes(),
     resources: [...new Set(auditServiceActionDeclarations.map(({ resource }) => resource.type))].sort(),
-    limitations: `MCP consumption transport is the only MCP exclusion (${MCP_CONSUMPTION_EXCLUSIONS.map(({ method, path }) => `${method} ${path}`).join(", ")}). Tool calls re-entering den-api through invokeMcpOperation are recorded at the destination route with origin mcp. Direct service mutations (create/update skill and app, artifact view save/activate/retire, workflow run records, remote-session create/send/stop, admin plan/capability tools) use runAuditedServiceAction; external MCP tool side effects are not observed.` } },
+    limitations: `MCP consumption transport is the only MCP exclusion (${MCP_CONSUMPTION_EXCLUSIONS.map(({ method, path }) => `${method} ${path}`).join(", ")}). Tool calls re-entering den-api through invokeMcpOperation are recorded at the destination route with origin mcp. Direct service mutations (create/update skill and app, artifact view save/activate/retire, workflow run records, remote-session create/send/stop, Slack messages from the OpenWork bot, admin plan/capability tools) use runAuditedServiceAction; external MCP tool side effects are not observed.` } },
   { location: "ee/apps/den-api/src/workers", surface: "job", coverage: jobOutcomes(["connector_sync.completed"], "GitHub connector sync events record connector_sync.completed when terminal. Worker provisioning, cloud lifecycle (wake, idle stop, recovery) and the provisioning reconciler record no outcome: their terminal worker status is written by several independent paths (continueCloudProvisioning success/failure, reconciler markFailed, lifecycle markWorkerFailed, worker-access recovery) and is visible on the worker row only. No persisted initiating audit event id.") },
   { location: "ee/apps/den-api/src/automations", surface: "job", coverage: jobOutcomes(["automation_run.started", "automation_run.completed"], "Scheduler-created runs record automation_run.started; every run records exactly one automation_run.completed whichever executor made the terminal transition. Run output, prompts and results are never recorded. The initiating request event id is not persisted on automation_run (no causedByEventId link).") },
   { location: "ee/apps/den-api/src/llm/gateway-matrix.ts", surface: "job", coverage: { ...providerCoverage, limitations: "Only refreshGatewayCatalog local mutations via catalog.refresh; no general job or runtime token-refresh coverage." } },

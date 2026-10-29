@@ -1,8 +1,32 @@
 import { readWorkbotModel, withWorkbotModel, isWorkbotManagedLuna, workbotModelTestSchema, workbotSettingsInputSchema, workbotSettingsSchema } from "@openwork/types/den/workbot-settings"
+import {
+  mergeAgentTemplate,
+  mergeWorkbotProactiveSettings,
+  readWorkbotProactiveSettings,
+  withWorkbotProactiveSettings,
+  workbotProactiveSettingsInputSchema,
+  workbotProactiveHealthSchema,
+  workbotProactiveViewSchema,
+  AGENT_CORE_SOURCES,
+  AGENT_CORE_SOURCE_COPY,
+  AGENT_RESPONSIBILITIES,
+  type WorkbotProactiveHealth,
+  type WorkbotProactiveSettings,
+  type WorkbotProactiveView,
+} from "@openwork/types/den/workbot-proactive"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, requireOrgPermission, userSessionRoute } from "../../middleware/index.js"
+import { proactiveRunnerReady, readProactiveSettings } from "../../workbot-proactive/access.js"
+import { workbotSlackAppReady } from "../../slack-assistant/direct-message.js"
+import { readAgentTemplate, saveAgentTemplate, type AgentTemplateVersion } from "../../workbot-proactive/template.js"
+import { readAgentChecks, readAgentMutes } from "../../workbot-proactive/repository.js"
+import { groupSourceConnections } from "../../workbot-proactive/sources.js"
+import { listOrganizationSourceConnections } from "../../workbot-proactive/sources-repository.js"
+import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import { workbotOrigin } from "../../workbot/config.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import { testOrganizationWorkbotModel } from "../../workbot/model-test.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -33,11 +57,148 @@ const requireWorkbotSettingsRead: ReturnType<typeof requireOrgPermission> = asyn
   return requireOrgPermission("inference.view")(c, next)
 }
 
+/** Your agent needs Workbot on this deployment, the same capability that gates Workbot itself. */
+const requireWorkbotDeployed: ReturnType<typeof requireOrgPermission> = async (c, next) => {
+  if (workbotOrigin() === null) return c.json({ error: "feature_disabled" as const, feature: "workbot" }, 404)
+  return next()
+}
+
+const workbotProactiveViewDocumentSchema = workbotProactiveViewSchema.meta({ ref: "WorkbotProactiveSettings" })
+const workbotProactiveHealthDocumentSchema = workbotProactiveHealthSchema.meta({ ref: "WorkbotProactiveHealth" })
+const workbotProactiveInputDocumentSchema = workbotProactiveSettingsInputSchema.meta({ ref: "WorkbotProactiveSettingsInput" })
+const invalidHoursSchema = z.object({ error: z.literal("invalid_working_hours"), message: z.string() }).meta({ ref: "WorkbotProactiveInvalidHoursError" })
+export const INVALID_WORKING_HOURS_MESSAGE = "The workday must end after it starts."
+
+async function proactiveView(organizationId: DenTypeId<"organization">, settings: WorkbotProactiveSettings, template: AgentTemplateVersion, canViewConnections: boolean): Promise<WorkbotProactiveView> {
+  const { versionId, version, responsibilities, instructions } = template
+  return {
+    settings,
+    template: { versionId, version, responsibilities, instructions },
+    slackReady: await workbotSlackAppReady(organizationId),
+    runnerReady: proactiveRunnerReady(),
+    // Connection names and URLs only for callers who may view the organization's connections.
+    sourceConnections: canViewConnections ? groupSourceConnections(await listOrganizationSourceConnections(organizationId)) : null,
+  }
+}
+
 /**
  * Manage › Workbot: the organization's default model for its cloud agents (Workbot, the Slack assistant, and cloud
  * Automations set to the cloud default). Admins choose it from their AI Gateway models.
  */
 export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  app.get(
+    "/v1/org/workbot-settings/proactive",
+    describeRoute({
+      tags: ["Organizations"],
+      summary: "Get the settings for members' agents",
+      description:
+        "Returns how members' agents work in this organization (Manage › Workbot): whether they are on, working hours, the daily limit per member, whether members start opted in, the default place messages go (a DM from the Workbot Slack app), what agents may read (`settings.sources`: calendar, email and team chat, and each other connection by id: `everyone` = on for everyone, `members` = members choose, `off` = not allowed; agents only ever read; `coreConnections` = the connections an admin picked for calendar, email or chat, absent for every connection that serves it) with the organization's connections behind each (`sourceConnections`, null without View connections), and the current \"Your agent\" template version (preset responsibilities and organization instructions). Also says whether the Workbot Slack app is installed to send those DMs and whether the headless runner the agents run on is configured. Requires the workbotProactive feature, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
+      responses: {
+        200: jsonResponse("Agent settings returned.", workbotProactiveViewDocumentSchema),
+        401: jsonResponse("Authentication required.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks both View OpenWork Models settings and Manage OpenWork Models.", forbiddenSchema),
+        404: notFound,
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("workbotProactive"),
+    requireWorkbotDeployed,
+    requireWorkbotSettingsRead,
+    async (c) => {
+      c.header("Cache-Control", "no-store")
+      const organizationId = c.get("organizationContext").organization.id
+      const canViewConnections = (await memberPermissionsForRequest(c))?.has("connections.view") ?? false
+      return c.json(await proactiveView(organizationId, await readProactiveSettings(organizationId), await readAgentTemplate(organizationId), canViewConnections))
+    },
+  )
+
+  app.get(
+    "/v1/org/workbot-settings/proactive/health",
+    describeRoute({
+      tags: ["Organizations"],
+      summary: "Get how members' agents are doing",
+      description:
+        "For the last 7 days (UTC) and each responsibility: how many checks members' agents ran about it, how many of those stayed quiet, how many messages it produced, and how many members muted it, with the number of members who have an agent. Counts only: no member names, message text or email content. Requires the workbotProactive and workbotAgentHealthView features, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
+      responses: {
+        200: jsonResponse("Agent health returned.", workbotProactiveHealthDocumentSchema),
+        401: jsonResponse("Authentication required.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks both View OpenWork Models settings and Manage OpenWork Models.", forbiddenSchema),
+        404: notFound,
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("workbotProactive"),
+    requireFeature("workbotAgentHealthView"),
+    requireWorkbotDeployed,
+    requireWorkbotSettingsRead,
+    async (c) => {
+      c.header("Cache-Control", "no-store")
+      const organizationId = c.get("organizationContext").organization.id
+      const days = 7
+      const from = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10)
+      const [checks, mutes] = [await readAgentChecks(organizationId, from), await readAgentMutes(organizationId)]
+      const health: WorkbotProactiveHealth = {
+        days,
+        members: mutes.members,
+        responsibilities: AGENT_RESPONSIBILITIES.map((id) => {
+          const counted = checks.find((entry) => entry.responsibility === id)
+          return { id, checks: counted?.checks ?? 0, quiet: counted?.quiet ?? 0, sent: counted?.sent ?? 0, muted: mutes.muted.get(id) ?? 0 }
+        }),
+      }
+      return c.json(health)
+    },
+  )
+
+  app.put(
+    "/v1/org/workbot-settings/proactive",
+    describeRoute({
+      tags: ["Organizations"],
+      summary: "Change the settings for members' agents",
+      description:
+        "Changes any subset of how members' agents work. Policy fields (on/off, working hours, daily limit, members' starting choice, default destination: a Workbot DM or nowhere, never a channel) apply from the next pass; members' own choices (muted, snoozed, turned off, their own destination) are kept. `sources` sets what agents may read: `calendar`, `email`, `chat` and `connections` by connection id, each `everyone` (on for everyone), `members` (members choose; null also means this) or `off` (not allowed). `sources.coreConnections.{calendar,email,chat}` picks which of the organization's connections serve that source (ids from `sourceConnections`; null goes back to every connection that serves it), so a member's other accounts on the same service are never read or asked for. Members can never read a source the admin didn't allow or turn off one that is on for everyone. A change to responsibilities or instructions saves a new version of the organization's \"Your agent\" template. Agents only read and never send, edit or delete anything for members. Requires the workbotProactive feature, Workbot on this deployment and Manage OpenWork Models.",
+      responses: {
+        200: jsonResponse("Agent settings saved.", workbotProactiveViewDocumentSchema),
+        400: jsonResponse("The request was invalid, or the workday would end before it starts.", z.union([invalidHoursSchema, invalidRequestSchema])),
+        401: jsonResponse("Authentication required.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks the Manage OpenWork Models permission.", forbiddenSchema),
+        404: notFound,
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("workbotProactive"),
+    requireWorkbotDeployed,
+    requireOrgPermission("inference.manage"),
+    jsonValidator(workbotProactiveInputDocumentSchema),
+    async (c) => {
+      c.header("Cache-Control", "no-store")
+      const { organization, currentMember } = c.get("organizationContext")
+      const requested = c.req.valid("json")
+      // A per-connection policy only for the organization's own connections (calendar, email and chat have their own),
+      // and calendar, email and chat only through connections that can serve them.
+      const groups = groupSourceConnections(await listOrganizationSourceConnections(organization.id))
+      const others = new Set(groups.other.map((connection) => connection.id))
+      const unknown = Object.keys(requested.sources?.connections ?? {}).filter((id) => !others.has(id))
+      if (unknown.length) return c.json({ error: "invalid_request" as const, message: `No connection ${unknown[0]} in this organization.` }, 400)
+      for (const kind of AGENT_CORE_SOURCES) {
+        const picked = requested.sources?.coreConnections?.[kind] ?? []
+        const serving = new Set(groups[kind].map((connection) => connection.id))
+        const wrong = picked.find((id) => !serving.has(id))
+        if (wrong) return c.json({ error: "invalid_request" as const, message: `Connection ${wrong} can't serve ${AGENT_CORE_SOURCE_COPY[kind].label.toLowerCase()}.` }, 400)
+      }
+      const change = requested
+      const result: { settings: WorkbotProactiveSettings | null } = { settings: null }
+      await updateOrganizationMetadata(organization.id, (current) => {
+        result.settings = mergeWorkbotProactiveSettings(readWorkbotProactiveSettings(current), change)
+        return result.settings ? withWorkbotProactiveSettings(current, result.settings) : current
+      })
+      if (!result.settings) return c.json({ error: "invalid_working_hours" as const, message: INVALID_WORKING_HOURS_MESSAGE }, 400)
+      const current = await readAgentTemplate(organization.id)
+      const content = mergeAgentTemplate(current, change)
+      const template = content ? await saveAgentTemplate({ organizationId: organization.id, memberId: currentMember.id, content }) : current
+      return c.json(await proactiveView(organization.id, result.settings, template, (await memberPermissionsForRequest(c))?.has("connections.view") ?? false))
+    },
+  )
+
   app.post(
     "/v1/org/workbot-settings/test-default-model",
     describeRoute({

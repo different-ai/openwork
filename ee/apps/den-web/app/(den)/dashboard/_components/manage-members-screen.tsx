@@ -599,14 +599,16 @@ export function ManageMembersScreen() {
     >
       <OrgLimitDialog
         open={Boolean(limitDialogError)}
-        title={limitDialogError?.limitType === "members" ? "Member limit reached" : "Worker limit reached"}
+        eyebrow={limitDialogError?.limitType === "members" ? null : "Workspace limit"}
+        title={limitDialogError?.limitType === "workers" ? "Worker limit reached" : "Your plan is full"}
         message={limitDialogError?.message ?? "This workspace reached its current plan limit."}
         detail={
           limitDialogError
-            ? `${limitDialogError.currentCount} of ${limitDialogError.limit} ${limitDialogError.limitType} are already in use.`
+            ? `${limitDialogError.currentCount} of ${limitDialogError.limit} ${limitDialogError.limitType === "members" ? "users" : "workers"} are already in use.`
             : null
         }
-        feedbackHref={feedbackHref}
+        actionLabel={limitDialogError?.limitType === "members" ? undefined : "Contact support"}
+        feedbackHref={limitDialogError?.limitType === "members" ? undefined : feedbackHref}
         onClose={() => setLimitDialogError(null)}
       />
       <OrgLimitDialog

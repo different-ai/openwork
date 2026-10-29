@@ -1,7 +1,6 @@
 # Workbot: command palette
 
-- Feature key: `workbotCommandPalette`
-- Deployments: cloud and self-hosted, off by default
+- Availability: cloud and self-hosted, on by default wherever Workbot is available
 - Author: @benjaminshafii
 
 Members press **Cmd+K** (macOS) or **Ctrl+K** (Windows, Linux), or the search
@@ -23,16 +22,12 @@ where it was (usually the message box).
 
 ![The palette open over the conversation](./workbot-command-palette.png)
 
-With the feature off nothing changes: no header button, the shortcut does
-nothing, and no extra request is made.
-
-![Feature off: the header without the search button](./workbot-command-palette-off.png)
-
 ## How it works
 
-- Den reports `commandPalette` on `GET /v1/workbot/session` from the feature;
-  Workbot passes it through `GET /v1/workbot/me` (off while Workbot itself is
-  off) to `WorkbotHost.commandPalette`.
+- The palette and header button are always mounted for an available Workbot
+  page. Neither needs a feature flag or a host opt-in. Den's
+  `GET /v1/workbot/session` and Workbot's `GET /v1/workbot/me` retain a true
+  `commandPalette` field for older clients; current clients do not gate on it.
 - `ee/packages/workbot-ui/src/command-palette.tsx` renders it with Base UI
   `Dialog` and inline `Autocomplete` (combobox, listbox, active descendant,
   live result count). Ranking and recents are in `command-palette-search.ts`
@@ -41,19 +36,16 @@ nothing, and no extra request is made.
 - No new server routes. Chats come from `GET /v1/workbot/chats` (already used
   by the Chats drawer), tasks from the conversation already on screen; Stop
   calls the task card's existing stop route.
+- Existing Workbot access, host capabilities and action availability still
+  apply. Making search available does not grant access to pages, files,
+  chats or task actions the person cannot otherwise use.
 - Recents are kept in this browser's local storage
   (`workbot.command-palette.recents`, entry ids only).
-
-## Turning it off
-
-Safe at any moment: the next `/v1/workbot/me` read hides the button and the
-shortcut. Nothing is stored on the server, and an open palette simply closes
-on the next page load.
 
 ## Proof
 
 `evals/proofs/workbot-command-palette.proof.test.ts` (`pnpm evals:e2e
 workbot-command-palette --local`) drives the real Workbot page headless:
-feature off, Cmd+K from the composer, loading, search with highlights, nested
-Chats list, no results, Cmd+Enter stopping a task, Enter opening Calendar,
-recents, and a 390px phone.
+default availability without a rollout field, Cmd+K from the composer,
+loading, search with highlights, nested Chats list, no results, Cmd+Enter
+stopping a task, Enter opening Calendar, recents, and a 390px phone.

@@ -155,7 +155,7 @@ export class AnonymousInferenceService {
       const bytes = await readBoundedBody(response.body, ERROR_BODY_LIMIT, signal);
       if (!response.ok) {
         const failure = memberCredentialFailure(response.status, bytes);
-        throw new ApiError(failure.status, failure.code, "Signed-in Auto access could not be authorized.");
+        throw new ApiError(failure.status, failure.code, "Signed-in OpenWork Free access could not be authorized.");
       }
       const apiKey = parseMemberCredential(JSON.parse(new TextDecoder().decode(bytes)), this.settings.origin);
       await this.assertDispatchAllowed();
@@ -224,7 +224,7 @@ export class AnonymousInferenceService {
       if (this.config.readOnly) throw new ApiError(403, "read_only", "This device is read-only.");
       if (enabled) {
         await managedDesktopPolicy(this.config).assert("model", { providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID });
-        if (!(await this.preferences()).canEnable) throw new ApiError(403, "auto_blocked", "Auto is unavailable on this device or blocked by your administrator.");
+        if (!(await this.preferences()).canEnable) throw new ApiError(403, "auto_blocked", "OpenWork Free is unavailable on this device or blocked by your administrator.");
       } else {
         this.disable();
         this.localAccessToken = freshLocalToken();
@@ -330,7 +330,7 @@ export class AnonymousInferenceService {
     if (!free && !(model === undefined && this.selectedAutoSessions.has(route.sessionID))) return;
     const status = await this.status(true);
     if (status.state !== "ready") throw new ApiError(statusHttpCode(status.state),
-      status.code ?? "anonymous_unavailable", "Auto is not available. Check desktop free access status.", status);
+      status.code ?? "anonymous_unavailable", "OpenWork Free is not available. Check desktop free access status.", status);
     this.activation.start(route.sessionID);
   }
 
@@ -436,7 +436,7 @@ export class AnonymousInferenceService {
       if (endpoint !== "models") {
         const status = await this.status(true);
         signal.throwIfAborted();
-        if (status.state !== "ready") return Response.json({ error: { ...status, message: "Auto is not available.", type: "openwork_anonymous_error" } }, {
+        if (status.state !== "ready") return Response.json({ error: { ...status, message: "OpenWork Free is not available.", type: "openwork_anonymous_error" } }, {
           status: statusHttpCode(status.state),
         });
       }
@@ -475,7 +475,7 @@ export class AnonymousInferenceService {
       }
       if (error instanceof ApiError) return jsonError(error.status, error.code, error.message);
       this.logger.log("warn", "Desktop free inference failed before a response began.");
-      return jsonError(503, "anonymous_unavailable", "Auto is temporarily unavailable. Try again later or use your own provider.");
+      return jsonError(503, "anonymous_unavailable", "OpenWork Free is temporarily unavailable. Try again later or use your own provider.");
     } finally { if (!streaming) cleanup(); }
   }
 

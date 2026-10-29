@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -18,6 +20,8 @@ import { output, secret } from "../../packages/world/src/outputs.ts";
 import { targetFromEnv } from "../../packages/world/src/target.ts";
 import { trackResource } from "../../packages/world/src/ledger.ts";
 import { progress } from "../../packages/world/src/events.ts";
+import { startFakeStripeForDen } from "../../evals/worlds/fake-stripe.ts";
+import { seedPlanShapes, type DenCall } from "../../evals/worlds/plan-shapes.ts";
 
 const previewSteps = progress();
 import { provisionWindowsReleaseSandbox } from "../../evals/packages/hosts/src/windows-release.ts";
@@ -25,7 +29,7 @@ import { sourceFor, sourcesFromEnv } from "../../packages/world/src/source.ts";
 import { seedsFromEnv } from "../../packages/world/src/seed.ts";
 import type { WorldOutput } from "../../packages/world/src/outputs.ts";
 
-export type PreviewScenario = "blank" | "fresh" | "team" | "restricted" | "workspace";
+export type PreviewScenario = "blank" | "fresh" | "team" | "restricted" | "workspace" | "plans";
 /**
  * `desktop` is the app alone (no Den), `den` is Den alone (no desktop), and
  * `full` is Den plus a desktop wired to it.
@@ -46,7 +50,8 @@ const PREVIEW_FULL_APP_ENV = { ...PREVIEW_APP_ENV, OPENWORK_AUTOMATION_RUNNER: "
 /** Scenarios each preview accepts; `blank` is a published desktop release. */
 export const PREVIEW_SCENARIOS: Record<PreviewSurface, readonly PreviewScenario[]> = {
   desktop: ["fresh", "blank"],
-  den: DEN_SCENARIOS,
+  // `plans` boots a loopback test-mode Stripe, so it is Den alone on this computer.
+  den: [...DEN_SCENARIOS, "plans"],
   full: DEN_SCENARIOS,
 };
 
@@ -66,7 +71,7 @@ export function parsePreviewOptions(argv: readonly string[], allowExternalReleas
   let distribution: DesktopReleaseDistribution | undefined;
   for (let i = 0; i < argv.length; i += 2) {
     const value = argv[i + 1];
-    if (argv[i] === "--scenario" && (value === "blank" || value === "fresh" || value === "team" || value === "restricted" || value === "workspace")) {
+    if (argv[i] === "--scenario" && value !== undefined && isPreviewScenario(value)) {
       scenario = value;
     } else if (argv[i] === "--lifetime" && value !== undefined && /^\d+$/.test(value) && Number(value) <= 1440) {
       lifetimeMinutes = Number(value);
@@ -75,7 +80,7 @@ export function parsePreviewOptions(argv: readonly string[], allowExternalReleas
     } else if (argv[i] === "--distribution" && (value === "public" || value === "cloud" || value === "enterprise")) {
       distribution = value;
     } else {
-      throw new Error("Use --scenario blank|fresh|team|restricted|workspace, --release <x.y.z>, --distribution public|cloud|enterprise, and --lifetime <minutes, 0 keeps running, maximum 1440>.");
+      throw new Error("Use --scenario blank|fresh|team|restricted|workspace|plans, --release <x.y.z>, --distribution public|cloud|enterprise, and --lifetime <minutes, 0 keeps running, maximum 1440>.");
     }
   }
   if ((releaseVersion === undefined) !== (distribution === undefined)) {
@@ -151,6 +156,20 @@ async function localSourceRef(): Promise<string> {
     timeout: 10_000,
   });
   return stdout.trim();
+}
+
+/** The plan organizations from evals/worlds/plan-shapes.ts, seeded as this preview's platform admin. */
+async function seedPreviewPlanShapes(den: Den, checkoutOrigin: string) {
+  const authorization = `Bearer ${den.admin.token}`;
+  const call: DenCall = async (path, init) => {
+    const result = await denFetch(den.ref, path, { method: init?.method, body: init?.body, headers: { ...init?.headers, authorization } });
+    return { status: result.response.status, ok: result.response.ok, body: result.body };
+  };
+  const context = await call("/v1/org");
+  const organization = record(context.body) ? context.body.organization : undefined;
+  const northwindId = record(organization) && typeof organization.id === "string" ? organization.id : "";
+  if (!northwindId) throw new Error("The plans seed found no seeded organization.");
+  return seedPlanShapes(call, { northwindId, checkoutOrigin });
 }
 
 async function setupTeam(den: Den, restricted: boolean): Promise<void> {
@@ -311,14 +330,24 @@ export async function bootDenPreview(stack: AsyncDisposableStack, place: Place, 
   assertIsolatedInfrastructure();
   const source = await previewSourceRef(place);
   const fresh = scenario === "fresh";
+  const plans = scenario === "plans";
+  if (plans && (surface !== "den" || place.kind !== "local")) throw new Error("The plans seed runs a loopback test-mode Stripe: use preview-den on this computer (local/host).");
+  const stripe = plans ? stack.use(await startFakeStripeForDen(join(tmpdir(), `openwork-preview-stripe-${randomBytes(6).toString("hex")}.jsonl`), { place })) : null;
+  const ownerEmail = `preview-${randomBytes(6).toString("hex")}@example.test`;
   const den = stack.use(await server({
     place, provision: !fresh, web: true,
     daytonaAutoStopMinutes: 0,
-    ...(!fresh ? { org: { name: "Preview team", admin: { name: "Preview owner", email: `preview-${randomBytes(6).toString("hex")}@example.test` } } } : {}),
-    env: { OPENWORK_DEV_MODE: "1", DEN_REQUIRE_EMAIL_VERIFICATION: "false", RESEND_API_KEY: "", SMTP_HOST: "" },
+    ...(plans
+      ? { org: { name: "Northwind Trial", admin: { name: "Preview owner", email: ownerEmail }, members: { quinn: { name: "Quinn Joined" } } } }
+      : !fresh ? { org: { name: "Preview team", admin: { name: "Preview owner", email: ownerEmail } } } : {}),
+    env: {
+      OPENWORK_DEV_MODE: "1", DEN_REQUIRE_EMAIL_VERIFICATION: "false", RESEND_API_KEY: "", SMTP_HOST: "",
+      ...(stripe ? { ...stripe.denEnv, DEN_PLAN_GATING_ENABLED: "true" } : {}),
+    },
   }));
-  // Every seeded org gets the in-memory demo apps plus real connectors; fresh stays a true first launch.
-  const demo = fresh ? null : await bootDemoWorkspace(stack, den);
+  const planShapes = stripe ? await seedPreviewPlanShapes(den, stripe.checkoutOrigin) : null;
+  // Every seeded org gets the in-memory demo apps plus real connectors; fresh and plans stay without them.
+  const demo = fresh || plans ? null : await bootDemoWorkspace(stack, den);
   if (demo) {
     await connectDemoWorkspace(den, demo);
     await setupTeam(den, scenario === "restricted");
@@ -337,6 +366,14 @@ export async function bootDenPreview(stack: AsyncDisposableStack, place: Place, 
     outputs.demoApps = output(DEMO_WORKSPACE_SERVICES.map((service) => service.name).join(", "), { group: "Demo apps",
       note: "Acme Robotics demo data (you are Alex Chen); reads and writes stay in memory until the world stops. Notion (live) and Linear (live) are real connectors." });
     if (demo.stateUrl) outputs.demoState = output(demo.stateUrl, { group: "Demo apps", note: "Live demo data; POST /reset restores the seed" });
+  }
+  if (planShapes) {
+    outputs.preview = output(`${den.ref.webUrl}/dashboard/members`, { group: "Preview", note: "Signed in as the owner of every plan organization; switch organizations from the sidebar" });
+    outputs.admin = output(`${den.ref.webUrl}/admin`, { group: "Preview", note: "The test account is this Den's platform admin: Organizations › an organization › Billing" });
+    for (const shape of [planShapes.northwind, planShapes.acme, planShapes.contoso, planShapes.exampleCorp]) {
+      outputs[`plan${shape.name.replace(/[^A-Za-z]/g, "")}`] = output(shape.name, { group: "Plan organizations", note: shape.tryThis });
+    }
+    if (stripe) outputs.testStripe = output(stripe.checkoutOrigin, { group: "Services", note: "Loopback test-mode Stripe; no real Stripe or money" });
   }
   if (!fresh) {
     outputs.email = output(den.admin.email, { group: "Test account" });
@@ -438,7 +475,7 @@ export async function bootFreestyleDesktop(
 }
 
 function isPreviewScenario(value: string): value is PreviewScenario {
-  return value === "blank" || value === "fresh" || value === "team" || value === "restricted" || value === "workspace";
+  return value === "blank" || value === "fresh" || value === "team" || value === "restricted" || value === "workspace" || value === "plans";
 }
 
 function pinSourceRef(sha: string, label: string): void {
