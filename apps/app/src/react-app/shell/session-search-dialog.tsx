@@ -1,6 +1,5 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState } from "react";
-import fuzzysort from "fuzzysort";
 import { ClockIcon, TypeIcon } from "lucide-react";
 
 import {
@@ -23,6 +22,7 @@ import {
 import { formatRelativeTime } from "@/app/utils";
 import {
   dedupeSearchableSessions,
+  rankSearchableSessions,
   type SearchableSession,
 } from "@/react-app/domains/session/search/session-search";
 
@@ -49,8 +49,9 @@ export type SessionSearchDialogProps = {
 };
 
 /**
- * Session search across every workspace by title (Cmd/Ctrl+Shift+F). With an
- * empty query it lists recent sessions.
+ * Session search across every workspace by title (Cmd/Ctrl+Shift+F), newest
+ * message first. With an empty query it lists recent sessions. Sub-agent
+ * sessions are left out upstream; they open from their parent's task card.
  */
 export function SessionSearchDialog(props: SessionSearchDialogProps) {
   const [query, setQuery] = useState("");
@@ -66,24 +67,19 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
 
   const groups = useMemo<ResultGroup[]>(() => {
     if (!trimmedQuery) {
-      const recent = [...sessions]
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-        .slice(0, RECENT_LIMIT)
-        .map((session) => ({
-          id: `recent:${session.workspaceId}:${session.sessionId}`,
-          kind: "recent" as const,
-          session,
-        }));
+      const recent = rankSearchableSessions(sessions, "", RECENT_LIMIT).map((session) => ({
+        id: `recent:${session.workspaceId}:${session.sessionId}`,
+        kind: "recent" as const,
+        session,
+      }));
       return recent.length > 0 ? [{ value: "Recent sessions", items: recent }] : [];
     }
 
-    const titleItems = fuzzysort
-      .go(trimmedQuery, sessions, { keys: ["title", "workspaceTitle"], limit: RESULT_LIMIT })
-      .map((hit) => ({
-        id: `title:${hit.obj.workspaceId}:${hit.obj.sessionId}`,
-        kind: "title" as const,
-        session: hit.obj,
-      }));
+    const titleItems = rankSearchableSessions(sessions, trimmedQuery, RESULT_LIMIT).map((session) => ({
+      id: `title:${session.workspaceId}:${session.sessionId}`,
+      kind: "title" as const,
+      session,
+    }));
     return titleItems.length > 0 ? [{ value: "Sessions", items: titleItems }] : [];
   }, [sessions, trimmedQuery]);
 
