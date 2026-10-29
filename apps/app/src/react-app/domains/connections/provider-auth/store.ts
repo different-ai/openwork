@@ -375,11 +375,11 @@ function providerListModelEntitlementOptions(
 export type ProviderAuthStore = ReturnType<typeof createProviderAuthStore>;
 
 /**
- * The Den session last delivered to the local server, keyed like
- * getDenSessionDeliveryKey (sign-in, server and server generation). Shared by
- * every store: each route builds its own, and re-sending an unchanged sign-in
- * on every route mount paused provider sync and cut live Gateway replies
- * (ENG-994). Cleared on sign-out, when the server forgets the session.
+ * The Den session last delivered to each local server, shared by every store:
+ * each route builds its own store (with its own view of the same server), and
+ * re-sending an unchanged sign-in on every route mount paused provider sync and
+ * cut live Gateway replies (ENG-994). Keyed by sharedDenSessionDeliveryKey;
+ * cleared on sign-out, when the server forgets the session.
  */
 const deliveredDenSession = { identity: "", sync: "" };
 
@@ -417,6 +417,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   let cloudOrgProvidersInFlight: Promise<DenOrgLlmProvider[]> | null = null;
   let cloudOrgProvidersGeneration = 0;
   let cloudProviderSyncContextKey = "";
+  let lastDenSessionPushKey = "";
+  let lastDenIdentityPushKey = "";
   let denSessionDelivery: { key: string; controller: AbortController } | null = null;
   let denSessionPushInFlight: { mode: "identity" | "sync"; promise: Promise<boolean> } | null = null;
 
@@ -519,10 +521,36 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     ]);
   };
 
+  /**
+   * The same sign-in on the same server process, however this route reaches it
+   * (root or workspace-mounted URL, client token). Empty without a known server
+   * generation: a restarted server must receive the session again.
+   */
+  const sharedDenSessionDeliveryKey = () => {
+    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const settings = readDenSettings();
+    const generation = openworkSnapshot.openworkServerHostInfo?.generation;
+    const baseUrl = openworkSnapshot.openworkServerClient?.baseUrl ?? "";
+    if (generation === null || generation === undefined || !baseUrl || !serverHandlesProviderSync()
+      || !settings.authToken?.trim() || !settings.activeOrgId?.trim()) return "";
+    let origin = baseUrl;
+    try { origin = new URL(baseUrl).origin; } catch { /* keep the raw base URL */ }
+    return JSON.stringify([
+      settings.apiBaseUrl ?? resolveDenBaseUrls(settings).apiBaseUrl,
+      settings.activeOrgId.trim(),
+      settings.authToken.trim(),
+      origin,
+      openworkSnapshot.openworkServerAuth?.hostToken,
+      generation,
+    ]);
+  };
+
   const invalidateDenSessionDelivery = () => {
     denSessionDelivery?.controller.abort();
     denSessionDelivery = null;
     denSessionPushInFlight = null;
+    lastDenSessionPushKey = "";
+    lastDenIdentityPushKey = "";
     cloudProviderSyncContextKey = "";
   };
 
@@ -546,7 +574,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const delivery = syncDenSessionDelivery();
     const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
     if (!delivery || !openworkClient || disposed) return Promise.resolve(false);
-    if (!force && delivery.key === deliveredDenSession[mode]) return Promise.resolve(true);
+    const sharedKey = sharedDenSessionDeliveryKey();
+    if (!force && (delivery.key === (mode === "identity" ? lastDenIdentityPushKey : lastDenSessionPushKey)
+      || (sharedKey !== "" && sharedKey === deliveredDenSession[mode]))) return Promise.resolve(true);
     if (denSessionPushInFlight) {
       if (denSessionPushInFlight.mode === mode) return denSessionPushInFlight.promise;
       // Readiness can recover during early verification, including an older
@@ -555,7 +585,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         isCurrentDenSessionDelivery(delivery) ? pushDenSession(mode, force) : false);
     }
     if (mode === "sync" && !hasCloudProviderSyncPrerequisites()) return Promise.resolve(false);
-    if (mode === "sync") deliveredDenSession.sync = "";
+    if (mode === "sync") {
+      lastDenSessionPushKey = "";
+      deliveredDenSession.sync = "";
+    }
     const settings = readDenSettings();
     const apiBaseUrl = settings.apiBaseUrl ?? resolveDenBaseUrls(settings).apiBaseUrl;
     const token = settings.authToken?.trim() ?? "";
@@ -569,9 +602,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           const put = mode === "identity" ? openworkClient.putDenIdentity : openworkClient.putDenSession;
           await put({ baseUrl: apiBaseUrl, token, orgId }, delivery.controller.signal);
           if (!isCurrentDenSessionDelivery(delivery)) return false;
-          deliveredDenSession.identity = delivery.key;
-          if (mode === "sync") deliveredDenSession.sync = delivery.key;
-          else if (deliveredDenSession.sync !== delivery.key) deliveredDenSession.sync = "";
+          lastDenIdentityPushKey = delivery.key;
+          lastDenSessionPushKey = mode === "sync" ? delivery.key : "";
+          deliveredDenSession.identity = sharedKey;
+          deliveredDenSession.sync = mode === "sync" ? sharedKey : "";
           return true;
         } catch (error) {
           if (!isCurrentDenSessionDelivery(delivery)) return false;

@@ -48,7 +48,7 @@ test("live V2 delivers Den session before skipping legacy sync and provider read
   }
 });
 
-test("ENG-994: another route's store does not re-deliver an unchanged Den session", async () => {
+test("ENG-994: another route's store does not re-deliver an unchanged Den session to the same server", async () => {
   const requests: string[] = [];
   const fetch = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -60,28 +60,37 @@ test("ENG-994: another route's store does not re-deliver an unchanged Den sessio
     });
     return Response.json({ ok: true });
   });
-  const settings = createLiveProviderStore();
-  const session = createLiveProviderStore();
+  const delivered = () => requests.filter((request) => request.includes("/den-session"));
+  // Settings reaches the server at its root; the chat route through the
+  // workspace mount with its own client token. Same server process.
+  const settings = createLiveProviderStore({ generation: 7 });
+  const chat = createLiveProviderStore({ generation: 7, baseUrl: "http://localhost:8787/workspace/workspace", token: "fixture-workspace-client" });
+  const restarted = createLiveProviderStore({ generation: 8 });
   try {
     await settings.runCloudProviderSync("sign_in");
-    // Each route mounts its own store; delivering the same sign-in again paused
-    // provider sync on the server and cut live Gateway replies.
-    await session.runCloudProviderSync("app_launch");
-    expect(requests.filter((request) => request.includes("/den-session"))).toEqual(["PUT /den-session"]);
+    // Delivering the same sign-in again on every route mount paused provider
+    // sync on the server and cut live Gateway replies.
+    await chat.runCloudProviderSync("app_launch");
+    expect(delivered()).toEqual(["PUT /den-session"]);
 
-    // After sign-out the server forgot the session, so the same sign-in is delivered again.
+    // A restarted server (new generation) must receive the session again.
+    await restarted.runCloudProviderSync("app_launch");
+    expect(delivered()).toEqual(["PUT /den-session", "PUT /den-session"]);
+
+    // So must the same server after sign-out cleared it.
     forgetDeliveredDenSession();
-    await session.runCloudProviderSync("sign_in");
-    expect(requests.filter((request) => request.includes("/den-session"))).toEqual(["PUT /den-session", "PUT /den-session"]);
+    await chat.runCloudProviderSync("sign_in");
+    expect(delivered()).toEqual(["PUT /den-session", "PUT /den-session", "PUT /workspace/workspace/den-session"]);
   } finally {
     settings.dispose();
-    session.dispose();
+    chat.dispose();
+    restarted.dispose();
     fetch.mockRestore();
   }
 });
 
-function createLiveProviderStore() {
-  const server = createOpenworkServerClient({ baseUrl: "http://localhost:8787", hostToken: "fixture-host" });
+function createLiveProviderStore(view: { generation?: number; baseUrl?: string; token?: string } = {}) {
+  const server = createOpenworkServerClient({ baseUrl: view.baseUrl ?? "http://localhost:8787", token: view.token, hostToken: "fixture-host" });
   const client = createClientV2("http://localhost:8787/opencode2", "/workspace", {});
   return createProviderAuthStore({
     client: () => client,
@@ -92,7 +101,8 @@ function createLiveProviderStore() {
     runtimeWorkspaceId: () => "workspace",
     openworkServer: { getSnapshot: () => ({
       openworkServerStatus: "connected", openworkServerClient: server,
-      openworkServerCapabilities: { providerSync: true }, openworkServerAuth: { hostToken: "fixture-host" },
+      openworkServerCapabilities: { providerSync: true }, openworkServerAuth: { token: view.token, hostToken: "fixture-host" },
+      ...(view.generation === undefined ? {} : { openworkServerHostInfo: { generation: view.generation } }),
     }) },
     setProviders: () => {}, setProviderDefaults: () => {}, setProviderConnectedIds: () => {}, setDisabledProviders: () => {},
     markOpencodeConfigReloadRequired: () => {},
