@@ -513,7 +513,9 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
 function messageRole(value: Record<string, unknown>): V2MessageRole {
   const raw = readString(value, "role") ?? readString(value, "type");
   if (raw === "user") return "user";
-  if (raw === "system" || raw === "synthetic" || raw === "compaction") return "system";
+  // OpenCode 2.1+ ends every turn with an `idle` marker; like compaction it is
+  // bookkeeping, not a visible message.
+  if (raw === "system" || raw === "synthetic" || raw === "compaction" || raw === "idle") return "system";
   return "assistant";
 }
 
