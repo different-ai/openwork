@@ -1089,17 +1089,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       throw new Error(t("providers.provider_id_required"));
     }
 
-    const currentDisabled = normalizeDisabledProviders(options.disabledProviders());
-    const nextDisabled = disabled
+    const nextFrom = (currentDisabled: string[]) => disabled
       ? [...currentDisabled.filter((entry) => entry !== resolvedProviderId), resolvedProviderId]
       : currentDisabled.filter((entry) => entry !== resolvedProviderId);
-
-    if (
+    const unchanged = (currentDisabled: string[], nextDisabled: string[]) =>
       nextDisabled.length === currentDisabled.length &&
-      nextDisabled.every((entry, index) => entry === currentDisabled[index])
-    ) {
-      return false;
-    }
+      nextDisabled.every((entry, index) => entry === currentDisabled[index]);
 
     // Prefer runtime OPENCODE_CONFIG injection (server SQLite) so OpenCode Zen
     // and other built-in/env-backed providers can be disabled without editing
@@ -1120,6 +1115,23 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     );
 
     if (canUseManagedRuntime || c) {
+      // Each write replaces the whole list. This store's copy can be stale (the
+      // chat route disables OpenCode Zen on every mount, after Settings may
+      // have disconnected another provider), and writing it back re-enabled
+      // that provider (ENG-994). Build on the current list.
+      const currentDisabled = normalizeDisabledProviders(await readManagedDisabledProviders({
+        opencodeClient: c,
+        openworkClient: openworkSnapshot.openworkServerClient,
+        workspaceId,
+        workspaceType,
+      }).catch(() => options.disabledProviders()));
+      const nextDisabled = nextFrom(currentDisabled);
+      if (unchanged(currentDisabled, nextDisabled)) {
+        if (!unchanged(normalizeDisabledProviders(options.disabledProviders()), currentDisabled)) {
+          options.setDisabledProviders(currentDisabled);
+        }
+        return false;
+      }
       const result = await updateManagedDisabledProviders({
         opencodeClient: c,
         openworkClient: openworkSnapshot.openworkServerClient,
@@ -1135,6 +1147,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       emitChange();
       return true;
     }
+
+    const currentDisabled = normalizeDisabledProviders(options.disabledProviders());
+    const nextDisabled = nextFrom(currentDisabled);
+    if (unchanged(currentDisabled, nextDisabled)) return false;
 
     const updatedConfig = await updateProjectConfigFile(
       (raw) => formatConfigWithProviderDisabledState(raw, resolvedProviderId, disabled),

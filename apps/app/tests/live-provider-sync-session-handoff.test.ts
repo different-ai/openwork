@@ -89,6 +89,39 @@ test("ENG-994: another route's store does not re-deliver an unchanged Den sessio
   }
 });
 
+test("ENG-994: disabling OpenCode Zen on mount keeps a provider another route disconnected", async () => {
+  // The chat route disables Zen on every mount from its own (stale) copy of
+  // the list. Writing that copy back re-enabled a provider Settings had just
+  // disconnected, and the write repeated on every mount.
+  let runtime = ["remote"];
+  const writes: string[][] = [];
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const path = new URL(request.url).pathname;
+    if (path === "/workspace/workspace/runtime-config/disabled-providers") {
+      if (request.method === "POST") {
+        const body: unknown = await request.json();
+        runtime = typeof body === "object" && body !== null && "providers" in body && Array.isArray(body.providers)
+          ? body.providers.filter((entry): entry is string => typeof entry === "string") : [];
+        writes.push(runtime);
+      }
+      return Response.json({ ok: true, disabledProviders: runtime });
+    }
+    return Response.json({});
+  });
+  const chat = createLiveProviderStore();
+  try {
+    expect(await chat.ensureProjectProviderDisabledState("opencode", true)).toBe(true);
+    expect(writes).toEqual([["remote", "opencode"]]);
+    // A later mount finds Zen already disabled and writes nothing.
+    expect(await chat.ensureProjectProviderDisabledState("opencode", true)).toBe(false);
+    expect(writes).toEqual([["remote", "opencode"]]);
+  } finally {
+    chat.dispose();
+    fetch.mockRestore();
+  }
+});
+
 function createLiveProviderStore(view: { generation?: number; baseUrl?: string; token?: string } = {}) {
   const server = createOpenworkServerClient({ baseUrl: view.baseUrl ?? "http://localhost:8787", token: view.token, hostToken: "fixture-host" });
   const client = createClientV2("http://localhost:8787/opencode2", "/workspace", {});
