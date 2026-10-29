@@ -9,7 +9,8 @@ import {
   AUTOMATION_SCHEDULE_KINDS,
   AUTOMATION_SCHEDULE_KINDS_HEADER,
 } from "@openwork/types/automations";
-import type { GatewayProviderSummary } from "@openwork/types/den/gateway";
+import type { GatewayAuthorizationRequest, GatewayProviderSummary } from "@openwork/types/den/gateway";
+import { parseGatewayUsableModel } from "./gateway-usable-model";
 import type { DesktopStartupReport } from "@openwork/types/den/diagnostics";
 import {
   parseModelRemovalInventory,
@@ -340,6 +341,12 @@ export type DenMcpToken = {
 };
 
 export type DenOrgGatewayProvider = Pick<GatewayProviderSummary, "id" | "providerId" | "name" | "source">;
+
+/** A Gateway provider as this member can use it: ready models plus sets still awaiting their sign-in. */
+export type DenOrgUsableGatewayProvider = Pick<
+  GatewayProviderSummary,
+  "id" | "providerId" | "name" | "source" | "credentialStatus" | "updatedAt" | "models" | "authorizationRequests"
+>;
 
 export type DenOrgLlmProviderModel = {
   id: string;
@@ -2155,6 +2162,70 @@ function getDenOrgGatewayProviders(payload: unknown): DenOrgGatewayProvider[] {
   });
 }
 
+function parseDenOrgUsableGatewayProvider(value: unknown): DenOrgUsableGatewayProvider | null {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" || !/^ipr_/i.test(value.id) ||
+    typeof value.providerId !== "string" || !value.providerId.trim() ||
+    typeof value.name !== "string" || !value.name.trim() ||
+    value.source !== "openwork_gateway" ||
+    (value.credentialStatus !== "ready" && value.credentialStatus !== "member_auth_required" && value.credentialStatus !== "org_credential_missing")
+  ) {
+    return null;
+  }
+  const models = Array.isArray(value.models)
+    ? value.models.flatMap((model) => {
+        const parsed = parseGatewayUsableModel(model);
+        return parsed ? [parsed] : [];
+      })
+    : [];
+  const authorizationRequests: GatewayAuthorizationRequest[] = Array.isArray(value.authorizationRequests)
+    ? value.authorizationRequests.flatMap((request) => {
+        if (
+          !isRecord(request) ||
+          typeof request.credentialSetId !== "string" || !/^gcs_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(request.credentialSetId) ||
+          typeof request.name !== "string" || !request.name.trim() ||
+          typeof request.authUrl !== "string" || !request.authUrl.trim()
+        ) {
+          return [];
+        }
+        const credentialSetId = request.credentialSetId;
+        return [{
+          credentialSetId,
+          name: request.name,
+          authUrl: request.authUrl,
+          ...(Array.isArray(request.models)
+            ? { models: request.models.flatMap((model) => {
+                const parsed = parseGatewayUsableModel(model, credentialSetId);
+                return parsed ? [parsed] : [];
+              }) }
+            : {}),
+        }];
+      })
+    : [];
+  return {
+    id: value.id,
+    providerId: value.providerId,
+    name: value.name,
+    source: value.source,
+    credentialStatus: value.credentialStatus,
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : "",
+    models,
+    authorizationRequests,
+  };
+}
+
+/** Lenient for display: one malformed row is dropped rather than hiding every provider. */
+function getDenOrgUsableGatewayProviders(payload: unknown): DenOrgUsableGatewayProvider[] {
+  if (!isRecord(payload) || !Array.isArray(payload.inferenceProviders)) {
+    throw new DenApiError(500, "invalid_gateway_providers_payload", "AI Gateway provider response was invalid.");
+  }
+  return payload.inferenceProviders.flatMap((provider: unknown) => {
+    const parsed = parseDenOrgUsableGatewayProvider(provider);
+    return parsed ? [parsed] : [];
+  });
+}
+
 const CONNECTION_READINESS_FAILURES = ["sign_in_required", "sign_in_rejected", "setup_required", "provider_setup_required", "unavailable", "timed_out", "settings_changed", "tools_unreadable"] as const;
 export type DenConnectionReadinessFailure = (typeof CONNECTION_READINESS_FAILURES)[number];
 
@@ -3398,6 +3469,22 @@ export function createDenClient(options: {
         return getDenOrgGatewayProviders(payload);
       } catch (error) {
         if (!options.requireCompleteInventory && error instanceof DenApiError && [404, 405, 501].includes(error.status)) return [];
+        throw error;
+      }
+    },
+
+    /** The member's usable Gateway providers, with models and pending sign-ins. [] on Den servers without Gateway. */
+    async listOrgUsableGatewayProviders(orgId: string): Promise<DenOrgUsableGatewayProvider[]> {
+      try {
+        const payload = await requestJson<unknown>(baseUrls, "/v1/inference-providers?scope=usable", {
+          method: "GET",
+          token,
+          organizationId: orgId,
+          cache: "no-store",
+        });
+        return getDenOrgUsableGatewayProviders(payload);
+      } catch (error) {
+        if (error instanceof DenApiError && [404, 405, 501].includes(error.status)) return [];
         throw error;
       }
     },
