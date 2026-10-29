@@ -11,6 +11,11 @@ function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
 
+/** Attribute encoding is separate from text encoding; styles stay fixed/allowlisted. */
+export function escapeHtmlAttribute(value: string): string {
+  return escapeHtml(value).replace(/"/g, "&quot;").replace(/'/g, "&#39;")
+}
+
 function safeUrl(url: string): boolean {
   if (/[\s\x00-\x1f\x7f<>"'\\]/.test(url)) return false
   try {
@@ -25,7 +30,7 @@ function safeUrl(url: string): boolean {
 function link(label: DraftBody, url: string): DraftBody {
   return {
     plain: `${label.plain} (${url})`,
-    html: safeUrl(url) ? `<a href="${escapeHtml(url)}">${label.html}</a>` : `${label.html} (${escapeHtml(url)})`,
+    html: safeUrl(url) ? `<a href="${escapeHtmlAttribute(url)}">${label.html}</a>` : `${label.html} (${escapeHtml(url)})`,
   }
 }
 
@@ -101,7 +106,7 @@ function inline(text: string, depth = 0, allowLinks = true): DraftBody {
       let url = bare.replace(/[.,;:!?]+$/, "")
       while (url.endsWith(")") && url.split(")").length > url.split("(").length) url = url.slice(0, -1)
       if (safeUrl(url)) {
-        append({ plain: url, html: `<a href="${escapeHtml(url)}">${escapeHtml(url)}</a>` })
+        append({ plain: url, html: `<a href="${escapeHtmlAttribute(url)}">${escapeHtml(url)}</a>` })
         index += url.length
         continue
       }
@@ -113,7 +118,7 @@ function inline(text: string, depth = 0, allowLinks = true): DraftBody {
 }
 
 function line(content: DraftBody): string {
-  return content.html.length === 0 ? "<div><br></div>" : `<div dir="ltr" style="${lineStyle}">${content.html}</div>`
+  return content.html.length === 0 ? "<div><br></div>" : `<div dir="ltr" style="${escapeHtmlAttribute(lineStyle)}">${content.html}</div>`
 }
 
 function listItem(text: string): { indent: number; ordered: boolean; number: number; text: string } | null {
@@ -190,9 +195,9 @@ function blocks(lines: string[], normalizeProse: (text: string) => string, depth
           index++
         }
       }
-      items.push(`<li style="${lineStyle}">${itemHtml}</li>`)
+      items.push(`<li style="${escapeHtmlAttribute(lineStyle)}">${itemHtml}</li>`)
     }
-    const start = first.ordered && first.number !== 1 ? ` start="${first.number}"` : ""
+    const start = first.ordered && first.number !== 1 ? ` start="${escapeHtmlAttribute(String(first.number))}"` : ""
     return { plain: text.join("\n"), html: `<${tag}${start} dir="ltr" style="margin:0;padding-left:2em">${items.join("")}</${tag}>` }
   }
   while (index < lines.length) {
@@ -205,7 +210,7 @@ function blocks(lines: string[], normalizeProse: (text: string) => string, depth
       if (index < lines.length) index++
       const text = code.join("\n")
       plain.push(text)
-      html.push(`<pre dir="ltr" style="${lineStyle};margin:0;font-family:monospace">${escapeHtml(text)}</pre>`)
+      html.push(`<pre dir="ltr" style="${escapeHtmlAttribute(`${lineStyle};margin:0;font-family:monospace`)}">${escapeHtml(text)}</pre>`)
       continue
     }
     if (quoteAt(index) && depth < maxDepth) {
@@ -241,7 +246,7 @@ function blocks(lines: string[], normalizeProse: (text: string) => string, depth
       plain.push(textRows.join("\n"))
       html.push(`<div dir="ltr"><table style="border-collapse:collapse">${rows.map((row, rowIndex) => `<tr>${row.map((cell, column) => {
         const tag = rowIndex === 0 ? "th" : "td"
-        return `<${tag} style="border:1px solid #dadce0;padding:4px 8px;text-align:${table.alignments[column]};${lineStyle}">${cell.html}</${tag}>`
+        return `<${tag} style="${escapeHtmlAttribute(`border:1px solid #dadce0;padding:4px 8px;text-align:${table.alignments[column]};${lineStyle}`)}">${cell.html}</${tag}>`
       }).join("")}</tr>`).join("")}</table></div>`)
       continue
     }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { parseDocument, DomUtils } from "htmlparser2"
 import { buildGmailDraftRaw } from "../src/capability-sources/gmail.ts"
+import { escapeHtmlAttribute } from "../src/capability-sources/gmail-draft-body.ts"
 
 function parts(body: string, extra: Partial<Parameters<typeof buildGmailDraftRaw>[0]> = {}): { plain: string; html: string } {
   const mime = Buffer.from(buildGmailDraftRaw({ to: "recipient@example.com", subject: "Draft", body, ...extra }), "base64url").toString("utf8")
@@ -171,6 +172,55 @@ test("draft input cannot inject elements, attributes, styles or unsafe link sche
     }
   }
 })
+
+test("attribute encoding escapes all five HTML attribute metacharacters", () => {
+  assert.equal(escapeHtmlAttribute('&\"\'<>'), "&amp;&quot;&#39;&lt;&gt;")
+  for (const payload of ['\" onmouseover=\"alert(1)', "' onmouseover='alert(1)"]) {
+    for (const [attribute, value] of [["href", `https://example.com/?q=${payload}&x=<tag>`], ["style", `white-space:pre-wrap;${payload}`]]) {
+      const encoded = escapeHtmlAttribute(value)
+      assert.ok(!/[\"'<>]/.test(encoded), encoded)
+      const elements = DomUtils.findAll(() => true, parseDocument(`<div ${attribute}="${encoded}">content</div>`).children)
+      assert.equal(elements.length, 1)
+      assert.deepEqual(Object.keys(elements[0].attribs), [attribute])
+      assert.equal(elements[0].attribs[attribute], value)
+    }
+  }
+})
+
+for (const payload of ['\" onmouseover=\"alert(1)', "' onmouseover='alert(1)"]) {
+  test(`draft cannot promote quote payload ${JSON.stringify(payload)} from text or URLs to attributes`, () => {
+    for (const body of [
+      `[${payload}](https://example.com/?a=1&b=2)`,
+      `[label](https://example.com/${payload})`,
+      `https://example.com/${payload}`,
+      `**${payload}**`,
+      `- ${payload}\n  - nested ${payload}`,
+      `3. ${payload}`,
+      `> ${payload}`,
+      `~~~${payload}\n${payload}\n~~~`,
+      `| Label | Value |\n| --- | ---: |\n| ${payload} | ${payload} |`,
+      `| Label | Value |\n| --- | ---:${payload} |\n| text | text |`,
+    ]) {
+      const result = parts(body)
+      const elements = DomUtils.findAll(() => true, parseDocument(result.html).children)
+      assert.ok(elements.length > 0)
+      assert.ok(elements.every(element => !Object.keys(element.attribs).some(name => /^on/i.test(name))))
+      for (const element of elements) {
+        if (element.attribs.href) {
+          assert.ok(["http:", "https:", "mailto:"].includes(new URL(element.attribs.href).protocol))
+          assert.ok(!/[\"'<>\s]/.test(element.attribs.href))
+        }
+        if (element.attribs.style) {
+          assert.ok(!element.attribs.style.includes("onmouseover"))
+          assert.ok(!/[\"'<>]/.test(element.attribs.style))
+        }
+        if (element.attribs.start) assert.equal(element.attribs.start, "3")
+      }
+      assert.ok(DomUtils.textContent(parseDocument(result.html)).includes(payload))
+    }
+    assert.ok(!parts(`[label](https://example.com/${payload})`).html.includes("<a "))
+  })
+}
 
 test("draft handles maximum-size unmatched backticks and bounded quote nesting", { timeout: 2_000 }, () => {
   const body = "Literal " + "`".repeat(49_992)
