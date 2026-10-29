@@ -254,11 +254,12 @@ test("an interval Automation's occurrences mark its owner's use of the feature o
   assert.equal(created.status, 201, summary(created))
   const automationId = text(field(created.body, "automation", "id"), "Automation id")
   let clock = Number(field(created.body, "automation", "nextDueAt"))
+  const options = { intervalSchedulesEnabled: async () => true, calendarTriggersEnabled: async () => false }
   const service = new AutomationService({
-    intervalSchedulesEnabled: async () => true,
-    calendarTriggersEnabled: async () => false,
+    ...options,
     markFeaturesUsed: createFeatureUsageMarker((input) => recordFeatureUsage(db, input), () => new Date(clock)),
   })
+  const warmUp = new AutomationService({ ...options, markFeaturesUsed: () => {} })
   const usage = async () => {
     const [row] = await db.select({ daysUsed: FeatureUsageTable.days_used, lastUsedDay: FeatureUsageTable.last_used_day }).from(FeatureUsageTable).where(and(
       eq(FeatureUsageTable.member_id, normalizeDenTypeId("member", acme.owner.memberId)),
@@ -271,12 +272,15 @@ test("an interval Automation's occurrences mark its owner's use of the feature o
     return usage()
   }
   /** Runs the due occurrence, then finishes it so the next one is not an overlap. */
-  const occurrence = async () => {
-    await service.tick({ now: clock })
+  const occurrence = async (runner = service) => {
+    await runner.tick({ now: clock })
     await db.update(AutomationRunTable).set({ status: "succeeded" }).where(eq(AutomationRunTable.automation_id, normalizeDenTypeId("automation", automationId)))
     const next = await asOwner("GET", `/v1/automations/${automationId}`)
     clock = Number(field(next.body, "automation", "nextDueAt"))
   }
+  // Start from a day's first occurrence, so that day has later ones whatever the time now
+  // (after 18:00 UTC the next one is the day's last). Warm-up runs record no use.
+  while (new Date(clock).getUTCHours() !== 0) await occurrence(warmUp)
   const firstDay = new Date(clock).toISOString().slice(0, 10)
   await occurrence()
   const first = await eventually((row) => row !== undefined)
