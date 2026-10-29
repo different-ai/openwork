@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import { focusPaneComposerSoon } from "./workbench-pane-focus";
+import { isOpencodeConfigErrorMessage } from "@openwork/types/opencode-config-error";
 import { childOrigin, prepareChildReturn } from "@/lib/child-navigation";
 import { newSessionDraftOwnerKey } from "./new-session-destination";
 import { usePendingConversationStore } from "./pending-conversation-store";
@@ -8,7 +9,7 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
-import { ArrowLeft, Cloud, FileText, Globe, Maximize2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, CheckCheck, Cloud, FileText, Globe, Maximize2, MoreHorizontal, PanelRight, TextSearch, Undo2, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -58,6 +59,7 @@ import { AppSidebar } from "../sidebar/app-sidebar";
 import { MainSidebarControls } from "../sidebar/sidebar-chrome";
 import { MobileChatActions, MobileChatNavigation } from "./mobile-chat-navigation";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
+import type { SessionSettleState } from "../sidebar/session-settle";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
 import { useSessionFindStore } from "../surface/find-store";
 import {
@@ -167,6 +169,9 @@ export type SessionPageSidebarProps = {
   selectedSessionId: string | null;
   developerMode: boolean;
   sessionStatusById: Record<string, string>;
+  settleWorkspaceIds?: ReadonlySet<string>;
+  /** The Workspaces · Feed switch ships with `settledSessions`. */
+  feedEnabled?: boolean;
   sessionAttentionLabelById?: Record<string, string>;
   sessionAttentionSourceById?: Record<string, "child" | "descendant">;
   connectingWorkspaceId: string | null;
@@ -227,6 +232,8 @@ export type SessionPagePaneRuntime = {
 };
 
 export type SessionPageProps = {
+  /** Settle state of the open session; one toggle shared with the sidebar, palette and shortcut. */
+  currentSessionSettle?: SessionSettleState;
   sessionReferenceInventories?: readonly SessionReferenceInventory[];
   createWorkspaceSessionMetadataCallbacks?: (runtime: SessionMetadataRuntime) => SessionMetadataCallbacks;
   isSessionReferenceCurrent?: (reference: SessionReferenceIdentity) => boolean;
@@ -1080,7 +1087,10 @@ export function SessionPage(props: SessionPageProps) {
     selectedWorkspaceGroupError ||
     "";
   const showSelectedWorkspaceError = Boolean(selectedWorkspaceErrorMessage);
-  const selectedWorkspaceErrorTitle = "OpenCode unavailable";
+  // A config error already names the file, the field and the fix (C6).
+  const selectedWorkspaceErrorTitle = isOpencodeConfigErrorMessage(selectedWorkspaceErrorMessage)
+    ? selectedWorkspaceErrorMessage
+    : "OpenCode unavailable";
 
   const reactSessionBaseUrl = props.opencodeBaseUrl?.trim() ?? "";
   const reactSessionToken =
@@ -1167,6 +1177,14 @@ export function SessionPage(props: SessionPageProps) {
     !showWorkspaceSetupEmptyState &&
     !canRenderReactSurface;
   const findButtonSessionId = props.selectedSessionId;
+  const currentSessionSettle = props.currentSessionSettle;
+  const showSettleButton = Boolean(
+    findButtonSessionId && !props.primarySlot && !hasMainContentTakeover
+      && currentSessionSettle && (currentSessionSettle.settled || currentSessionSettle.canSettle),
+  );
+  const settleLabel = currentSessionSettle?.settled
+    ? t("session_management.unsettle_session")
+    : t("session_management.settle_session");
   const canGoBackInConversationHistory = !pendingConversationHistoryNavigation && canNavigateSelectedConversationHistory(
     conversationHistory,
     props.selectedWorkspaceId,
@@ -1421,6 +1439,8 @@ export function SessionPage(props: SessionPageProps) {
           selectedSessionId={props.sidebar.selectedSessionId}
           showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
           sessionStatusById={props.sidebar.sessionStatusById}
+          settleWorkspaceIds={props.sidebar.settleWorkspaceIds}
+          feedEnabled={props.sidebar.feedEnabled}
           sessionAttentionLabelById={props.sidebar.sessionAttentionLabelById}
           sessionAttentionSourceById={props.sidebar.sessionAttentionSourceById}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
@@ -1584,6 +1604,26 @@ export function SessionPage(props: SessionPageProps) {
                   <TooltipContent>Find in conversation ({isMacPlatform() ? "⌘F" : "Ctrl+F"})</TooltipContent>
                 </Tooltip>
               ) : null}
+              {showSettleButton && currentSessionSettle ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="hidden rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground lg:inline-flex"
+                        aria-label={settleLabel}
+                        aria-keyshortcuts={isMacPlatform() ? "Meta+Shift+E" : "Control+Shift+E"}
+                        data-session-header-settle={currentSessionSettle.settled ? "settled" : "active"}
+                        onClick={currentSessionSettle.toggle}
+                      >
+                        {currentSessionSettle.settled ? <Undo2 size={16} /> : <CheckCheck size={16} />}
+                      </Button>
+                    }
+                  />
+                  <TooltipContent>{settleLabel} ({isMacPlatform() ? "⌘⇧E" : "Ctrl+Shift+E"})</TooltipContent>
+                </Tooltip>
+              ) : null}
               {showCloudSignIn ? (
                 <Button
                   variant="secondary"
@@ -1617,6 +1657,12 @@ export function SessionPage(props: SessionPageProps) {
                     >
                       <TextSearch className="size-4" />
                       Find in conversation
+                    </DropdownMenuItem>
+                  ) : null}
+                  {showSettleButton && currentSessionSettle ? (
+                    <DropdownMenuItem onClick={currentSessionSettle.toggle}>
+                      {currentSessionSettle.settled ? <Undo2 className="size-4" /> : <CheckCheck className="size-4" />}
+                      {settleLabel}
                     </DropdownMenuItem>
                   ) : null}
                   <DropdownMenuItem onClick={openArtifactRailPane}>

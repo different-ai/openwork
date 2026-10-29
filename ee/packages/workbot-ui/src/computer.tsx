@@ -362,6 +362,7 @@ function BrowserFrame({ page, stream }: { page: ScreencastPage; stream: Screenca
           // Like Chrome, a thin divider separates two background tabs, not a background tab from the front one.
           const divider = index > 0 && !active && tabs[index - 1] !== front;
           return <div key={tab.id} className={`group relative flex h-8 w-[15rem] min-w-[3.5rem] shrink items-center rounded-t-lg text-[12px] ${active ? "bg-[var(--wb-surface)] text-[var(--wb-text)]" : "text-[var(--wb-muted)] hover:bg-[var(--wb-chip)]/70"}`}
+            onMouseDown={(event) => { if (event.button === 1) event.preventDefault(); }}
             onAuxClick={(event) => { if (event.button === 1 && tabsOn) { event.preventDefault(); close(tab.id); } }}>
             {divider ? <span className="absolute left-0 top-2 h-4 w-px -translate-x-px bg-[var(--wb-ring)] group-hover:opacity-0" aria-hidden /> : null}
             <button type="button" role="tab" aria-selected={active} tabIndex={active ? 0 : -1} disabled={!tabsOn} title={tab.url ? `${title}\n${tab.url}` : title}

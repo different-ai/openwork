@@ -4,6 +4,8 @@ import { db } from "./db.js"
 
 type FeatureUsage = { organizationId: string; memberId: string; keys: readonly FeatureKey[] }
 type RecordFeatureUsage = (input: FeatureUsage & { at: Date }) => Promise<void>
+/** Marks that a member used features; never throws or waits (see createFeatureUsageMarker). */
+export type MarkFeaturesUsed = (input: FeatureUsage) => void
 
 /**
  * Who used which feature, for /admin. Best effort: never throws and never
@@ -14,7 +16,7 @@ type RecordFeatureUsage = (input: FeatureUsage & { at: Date }) => Promise<void>
  * last_used_at. The set is cleared when the day changes, so it holds at most
  * one day of active (member, feature) pairs.
  */
-export function createFeatureUsageMarker(record: RecordFeatureUsage, now: () => Date = () => new Date()) {
+export function createFeatureUsageMarker(record: RecordFeatureUsage, now: () => Date = () => new Date()): MarkFeaturesUsed {
   let seenDay = ""
   const seen = new Set<string>()
 
@@ -46,5 +48,8 @@ export function createFeatureUsageMarker(record: RecordFeatureUsage, now: () => 
   }
 }
 
-/** Records that a member used features (gated route or client report); see createFeatureUsageMarker. */
+/**
+ * Records that a member used features: a gated route, a client report, or background work done for them (an
+ * Automation's schedule firing, Your agent's check, a slack_send_as_bot message). See createFeatureUsageMarker.
+ */
 export const markFeaturesUsed = createFeatureUsageMarker((input) => recordFeatureUsage(db, input))

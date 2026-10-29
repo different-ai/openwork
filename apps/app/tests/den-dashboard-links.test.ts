@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { join, relative, resolve } from "node:path"
-import { DEN_DASHBOARD_LINKS, denDashboardUrl } from "../src/app/lib/den-dashboard-links"
+import { DEN_CONNECTOR_SETUP_PATH, DEN_DASHBOARD_LINKS, denConnectorSetupUrl, denDashboardUrl } from "../src/app/lib/den-dashboard-links"
 
 const appSrc = resolve(import.meta.dir, "../src")
 const denWebApp = resolve(import.meta.dir, "../../../ee/apps/den-web/app")
@@ -66,4 +66,10 @@ test("every Den dashboard address in desktop source is a den-web page", () => {
   expect(links.length).toBeGreaterThan(5)
   const missing = links.filter((link) => !denWebHasPage(denWebApp, denPathSegments(link.path)))
   expect(missing).toEqual([])
+})
+
+test("the connector setup link opens Den's admin setup for one catalog entry", () => {
+  const path = new URL(denConnectorSetupUrl("https://den.example.test", "slack") ?? "").pathname
+  expect(path).toBe(`${DEN_CONNECTOR_SETUP_PATH}slack`)
+  expect({ path, exists: denWebHasPage(denWebApp, denPathSegments(path)) }).toEqual({ path, exists: true })
 })

@@ -53,7 +53,13 @@ export function MyAgentScreen() {
   if (!agent.data) return <MyAgentPanelSkeleton library={libraryHref} />;
 
   const connections = (library.data ?? []).filter(isConnection);
-  const google = connections.find((item) => item.provider === "google-workspace");
+  // The Google connection the agent reads through (one that needs the member first), not just the first one listed:
+  // a member can have a work and a personal Google connection.
+  const used = (agent.data.sources ?? []).filter((source) => source.kind !== "other").flatMap((source) => source.connections);
+  const googles = connections.filter((item) => item.provider === "google-workspace");
+  const google = googles.find((item) => used.some((connection) => connection.id === item.id && connection.state !== "connected"))
+    ?? googles.find((item) => used.some((connection) => connection.id === item.id))
+    ?? googles[0];
   const links: MyAgentLinks = {
     library: libraryHref,
     google: {

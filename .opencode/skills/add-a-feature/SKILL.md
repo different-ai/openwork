@@ -1,14 +1,14 @@
 ---
 name: add-a-feature
-description: Decide whether work needs a feature flag (usually it does not), and if it does, declare it, roll it out (per organization, for everyone, cloud or self-hosted), revert or kill it. Use for big changes such as a new engine or product area, and when finishing or removing a rollout.
+description: Decide whether work needs a feature flag (any change to product behavior users can see does), then declare it, roll it out (per organization, for everyone, cloud or self-hosted), revert or kill it. Use for any user-visible behavior change, and when finishing or removing a rollout.
 ---
 
 # Skill: Add a feature
 
-**Default: no flag.** Most work, including most new UI, ships directly and is
-reverted with a normal revert if needed. A flag is the exception, for the few
-changes where turning it off without a deploy is worth the extra code, the
-cleanup later, and the `/admin` noise.
+**Default: flag what users see.** Any change to product behavior that users
+can see ships behind a feature, so it can be turned off without a deploy.
+Work users won't notice as a behavior change ships directly and is reverted
+with a normal revert if needed.
 
 When a flag is warranted, it is a **feature** in the registry, declared
 **before any feature code**, off.
@@ -44,32 +44,32 @@ Member overrides are scoped to a membership, never a user globally. Pass `{ user
 
 ## Does this need a feature?
 
-Almost always **no**. Only add one when **both** are true:
+**Yes**, whenever the change alters product behavior that users can see, in
+the desktop app, Den (including organization admin screens), MCP Apps or the
+gateway:
 
-1. It is big: a new product area, a new engine or worker, or a rewrite of a
-   core customer flow (sign-in, chat runs, sync, billing, access control).
-2. Turning it off without a deploy would actually matter: it can break
-   customers in ways a revert is too slow for, it needs a gradual per-org
-   rollout, or it must stay off on self-hosted installs.
+- New or changed flows, steps, screens, tabs, options, settings or tools.
+- Changed defaults, or something users relied on that now works differently
+  or is removed.
+- New product areas, engines or workers, and rewrites of core flows
+  (sign-in, chat runs, sync, billing, access control).
 
-Everything else ships without a flag, including:
+These ship without a flag:
 
 - **Platform `/admin`**: the pages we use to run the deployment (Features,
   organizations, grants, plans, sandboxes, recovery) and the admin MCP tools.
-  Platform admin access already gates them. Organization admin screens in Den
-  follow the same rules as any other customer screen below.
-- New screens, tabs, buttons, settings or tools that add to the product
-  without changing what already works.
-- UI changes of any size that do not break a flow: layout, spacing, density,
-  toolbars, rows, icons, wording, things moving.
-- Bug fixes, copy changes, refactors, internal tooling, dev/eval/CI scripts.
+  Platform admin access already gates them.
+- Bug fixes that restore intended behavior.
+- Polish that doesn't change what people can do: spacing, density, icons,
+  wording.
+- Refactors, internal tooling, dev/eval/CI scripts.
 
 Not a feature either: something that only keeps older clients working
 (compat shim with a removal condition), something worked out from what is
 configured (derive it in code), or a setting that changes *how* something
 works rather than *whether* people get it (put it in `env.ts` / Helm `config.<area>`).
 
-If you are unsure, do not add a flag. Say in the PR why it is safe without one.
+If you are unsure, add a flag. When you ship without one, say in the PR why users won't see a behavior change.
 
 ## 1. Declare it, off
 
@@ -137,6 +137,15 @@ it on, who used it in the last 7 and 30 days, and when each person last used it.
   desktop `apps/app/src/app/lib/den.ts`) at the action that actually exercises
   the feature, never on render of shared chrome.
 - Den records only keys that are on for the member, one row per member and feature (ids and days, no content).
+- Background work (a schedule, a calendar, an agent's checks, messages a run sends) has no request: call
+  `markFeaturesUsed` once at the chokepoint where that work happens for a member, as automation dispatch,
+  the Your agent wake and `slack_send_as_bot` do.
+
+`/admin` › Features (`/admin/feature-usage`) shows the same per feature across organizations, and whether it
+works. A background feature sets `outcomes: true` in the registry and registers one reader in
+`ee/apps/den-api/src/feature-outcomes/readers.ts` that counts outcomes from the table it already writes (runs,
+succeeded, failed, skipped by reason, delivered, per day and organization). The typecheck and
+`test/feature-outcomes.test.ts` fail until the reader exists. Never add a usage table for this.
 
 ## 4. Roll it out
 

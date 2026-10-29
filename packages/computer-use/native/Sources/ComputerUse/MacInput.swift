@@ -41,6 +41,8 @@ final class MacInput {
     private var heldModifiers: (pid: pid_t, flags: CGEventFlags)?
     private var lastPointer: (pid: pid_t, windowID: CGWindowID, point: CGPoint)?
     private var routes: [pid_t: PointerRoute] = [:]
+    /// The current step runs in the background, so keys to Chromium-class apps are signed.
+    private var signsKeys = false
     // One gesture's events share a group so the app coalesces them as one.
     private var gesture: Int64 = 0
     private struct DispatchFeedback {
@@ -92,10 +94,12 @@ final class MacInput {
         feedback = DispatchFeedback(action: action.name, frame: lease.frame, send: send)
         gesture = Int64(UInt32.random(in: 1...UInt32.max))
         _ = route(for: app)
+        signsKeys = background
         var finished = false
         defer {
             if !finished { releaseAll() }
             feedback = nil
+            signsKeys = false
         }
         do {
             try check(); try checkWindow(); try check()
@@ -237,6 +241,9 @@ final class MacInput {
         event.setIntegerValueField(.eventSourceUnixProcessID, value: Int64(ProcessInfo.processInfo.processIdentifier))
         event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
         if pointer, routes[pid] == .skyLight, let skyLightPost = Self.skyLightPost {
+            skyLightPost(pid, event)
+        } else if !pointer, signsKeys, routes[pid] == .skyLight, let skyLightPost = Self.skyLightPost, KeyAuthentication.attach(event, pid: pid) {
+            // A background key reaches these apps only signed and through SkyLight.
             skyLightPost(pid, event)
         } else {
             event.postToPid(pid)

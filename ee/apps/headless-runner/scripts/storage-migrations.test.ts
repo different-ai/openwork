@@ -11,7 +11,7 @@ import { Store } from "../src/store.js"
 import { memoryBlobs, seedConversation, withBaseRunner } from "./storage-fixture.js"
 
 const project = join(import.meta.dirname, "..")
-const LATEST = 4
+const LATEST = 5
 const BASE = process.env.STORAGE_TEST_BASE ?? "origin/dev"
 
 function tempDb() {

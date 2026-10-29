@@ -65,6 +65,8 @@ const sessionSchema = z.object({
   browserDemonstrations: z.boolean().optional(),
   /** The Browser view streams the page with Chromium's screencast; off on older Dens. */
   browserLiveView: z.boolean().optional(),
+  /** Workbot's computers run through the runner's sandbox gateway instead of its own provider; off on older Dens. */
+  sandboxGateway: z.boolean().optional(),
   /** Workbot shows its Calendar tab: Workbot is on. Older Dens omit it. */
   calendar: z.boolean().optional(),
   /** Connected document browsing; off on older Dens. */
@@ -396,6 +398,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         browser: features.browserUse && features.remoteComputers,
         browserDemonstrations: features.browserDemonstrations && features.browserUse && features.remoteComputers,
         browserLiveView: features.browserLiveView && features.browserUse && features.remoteComputers,
+        sandboxGateway: features.sandboxGateway,
         canSchedule,
         calendar: true,
         documents: features.workbotDocuments,

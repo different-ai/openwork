@@ -61,6 +61,26 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "libraryDetailBreadcrumbs": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Library: detail breadcrumbs: Navigate from a skill or connector to its parent plugin or Library category without losing your place. Renders DEN_FEATURE_LIBRARY_DETAIL_BREADCRUMBS."
+            },
+            "desktopUpdateDownloadWindow": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: restart to update before the download: Restart to update shows in the desktop title bar as soon as an update is found. Clicking it opens a small window that downloads the update with its progress, then restarts, instead of waiting with no sign of the download. Renders DEN_FEATURE_DESKTOP_UPDATE_DOWNLOAD_WINDOW."
+            },
             "nativeAffordanceCodeMode": {
               "enum": [
                 "",
@@ -100,6 +120,26 @@
                 false
               ],
               "description": "AI Gateway: Auto Router: Admins describe when to use each AI Gateway model, and members can pick Auto: each prompt goes to the model and thinking level that fits it best. Renders DEN_FEATURE_AUTO_ROUTER."
+            },
+            "gatewayProviderTest": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "AI Gateway: test a provider before adding it: When adding an AI Gateway provider with a shared API key, admins test it first: AI Gateway sends one short prompt with their settings, and the provider can only be added once it answers. Renders DEN_FEATURE_GATEWAY_PROVIDER_TEST."
+            },
+            "settledSessions": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: settle finished sessions: Finished sessions can be settled into a collapsed Settled row at the end of their workspace, by hand or after a few idle days, and come back on new activity. Renders DEN_FEATURE_SETTLED_SESSIONS."
             },
             "mermaidZoom": {
               "enum": [
@@ -361,6 +401,16 @@
               ],
               "description": "Desktop: computer use on remote computers: Use a Linux cloud computer with its browser and desktop in OpenWork Web, or connect a VM from Desktop. Configured and conversation-owned desktops open directly when enabled, including follow-ups and internal session renewal. Take over and Stop stay available. Renders DEN_FEATURE_REMOTE_COMPUTERS."
             },
+            "sandboxGateway": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: computers through the sandbox gateway: Workbot's cloud computers for this organization run through the runner's sandbox gateway (Differently), which holds the provider keys and picks the provider, instead of the runner's own Freestyle or Daytona account. Needs a runner with SANDBOX_GATEWAY set; without one, or while it is down, new computers use the runner's own provider. Renders DEN_FEATURE_SANDBOX_GATEWAY."
+            },
             "remoteSessionSubagents": {
               "enum": [
                 "",
@@ -399,7 +449,17 @@
                 true,
                 false
               ],
-              "description": "Connect: standard tools: Supported clients, including OpenWork Desktop, OpenCode and Claude Code, discover connected actions, Workflows and Apps as individual tools. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas. Renders DEN_FEATURE_CONNECT_STANDARD_TOOLS."
+              "description": "Connect: standard tools: Claude Code and standalone OpenCode discover connected actions, Workflows and Apps as individual tools; OpenWork Desktop, Web and automation runs keep capability search. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas. Renders DEN_FEATURE_CONNECT_STANDARD_TOOLS."
+            },
+            "connectEngineTools": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Connect: a tool for each action in OpenWork's engine: OpenWork Desktop, Web and automation runs get each connected action, Workflow and App as its own tool, found with their engine's Code Mode search; capability search stays for OpenWork's own operations and skills. Other clients are unaffected. Turning this off restores capability search. Renders DEN_FEATURE_CONNECT_ENGINE_TOOLS."
             },
             "teamPlan": {
               "enum": [
@@ -471,6 +531,16 @@
               ],
               "description": "Remember last sign-in method: People who last signed in with a password, Google or GitHub skip the email step next time: Den web lists the sign-in methods with a Last used badge, and Single sign-on returns to the email step. Signing in with SSO forgets the method. Renders DEN_FEATURE_LAST_USED_SIGN_IN."
             },
+            "customConnectorSetup": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Connect: revised custom connector setup: Revised custom MCP setup: live server checks, reviewed permissions and manual sign-in addresses, copyable callback, persistent app credentials, and a direct connection-to-sharing flow. Tool Tester shows meaningful results before raw metadata. Turning it off restores the existing setup and result display; saved connections keep working. Renders DEN_FEATURE_CUSTOM_CONNECTOR_SETUP."
+            },
             "expandedMcpPresets": {
               "enum": [
                 "",
@@ -480,6 +550,46 @@
                 false
               ],
               "description": "Connect: more MCP server presets: Admins see more reviewed official MCP servers (Airtable, Amplitude, Canva, Fireflies, Hugging Face, Lucid, Mural, Vercel, PostHog, monday.com, Honeycomb, Klaviyo, Semgrep, Cal.com, Tavily, Figma) to add with one click in Manage › Connectors. Each uses the same OAuth or API-key flow as the existing presets. Turning it off hides the new suggestions; existing connections stay. Renders DEN_FEATURE_EXPANDED_MCP_PRESETS."
+            },
+            "analyticsDailyTrends": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Analytics: daily trends: Usage & adoption shows active users, sessions and tasks per day for the last 30 days, with a Daily / Weekly switch next to the project filter. Turning it off returns to the 12-week weekly charts. Renders DEN_FEATURE_ANALYTICS_DAILY_TRENDS."
+            },
+            "gatewayProviderRemovalLimits": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "AI Gateway: keep spend limits when removing a provider: Removing an AI Gateway provider that has spend limits asks whether to move those limits to another provider or delete them, instead of leaving them pointing at nothing. Limits whose provider was already removed show Provider removed and Not applied, with Choose provider. Renders DEN_FEATURE_GATEWAY_PROVIDER_REMOVAL_LIMITS."
+            },
+            "guidedSlackSetup": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Connect: guided Slack setup: Manage › Connectors › Add Slack walks admins through one checklist: choose Read and act or Read only (nothing preselected; the choice sets the scopes OpenWork asks Slack for), Create app in Slack (prefilled with OpenWork's redirect URL, those scopes and MCP on), turn on Agents › MCP, paste the client ID and secret, sign in to test, and optionally add @openwork. The MCP step shows the real result after the test sign-in. Turning it off brings back the previous setup screen; existing connections stay. Renders DEN_FEATURE_GUIDED_SLACK_SETUP."
+            },
+            "libraryConnectorOrgSetup": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: connectors that need an organization app: In the desktop Library, Slack and GitHub no longer ask for an app's client ID and secret: members see them locked until an admin sets them up, admins open the setup in OpenWork Cloud, connectors the organization already has offer Sign in from Add a connector, and a sign-in that fails says why, with a link to the service's app settings when that is the fix. Renders DEN_FEATURE_LIBRARY_CONNECTOR_ORG_SETUP."
             },
             "gatewayDashboard": {
               "enum": [

@@ -49,6 +49,7 @@ import { registerAdminFreeAutoConversionsRoutes } from "./free-auto-conversions.
 import { registerAdminFreeAutoUsageRoutes } from "./free-auto-usage.js"
 import { registerAdminSecurityRoutes } from "./security.js"
 import { registerAdminDashboardRoute } from "./dashboard.js"
+import { registerAdminControlCenterRoutes } from "./control-center.js"
 import { registerAdminOpportunitiesRoute } from "./opportunities.js"
 import { registerAdminServiceReadinessRoutes } from "./services.js"
 import { registerAdminOrganizationDetailRoutes } from "./organization-detail.js"
@@ -1441,6 +1442,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
   registerAdminMcpRegistrationRoutes(app)
   registerAdminOrganizationDetailRoutes(app)
   registerAdminDashboardRoute(app)
+  registerAdminControlCenterRoutes(app)
   registerAdminOpportunitiesRoute(app)
   registerAdminServiceReadinessRoutes(app)
   registerAdminSandboxOrganizationRoutes(app)

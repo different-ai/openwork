@@ -232,6 +232,17 @@ export class Computers {
     return this.vms.has(sessionId)
   }
 
+  /** Starts (or wakes) the conversation's VM and waits for it, for a host that chooses where a computer is made. */
+  async start(sessionId: string) {
+    await this.vm(sessionId)
+    this.release(sessionId)
+  }
+
+  /** Whether the conversation has a computer here, running or paused, without starting it. */
+  async has(sessionId: string) {
+    return this.vms.has(sessionId) || Boolean(await this.provider.find({ idempotencyKey: this.slug(sessionId), labels: this.spec(sessionId).labels }))
+  }
+
   /** Starts (or wakes) the conversation's VM in the background, so the first command doesn't wait for it. */
   prewarm(sessionId: string) {
     void this.vm(sessionId)
@@ -340,6 +351,8 @@ export class Computers {
       if (await this.runningJobs(vm) > 0) return this.release(sessionId)
       // Nobody is using it: the moment to move a computer built from an older image onto the current one.
       if (!this.working.has(sessionId) && await this.staleImage(sessionId, vm)) vm = await this.replace(sessionId, vm, { required: false }) ?? vm
+      // A provider that can neither pause nor stop keeps the computer running until its own expiry.
+      if (!this.provider.describe().stopResume) return this.options.pauses?.clear(sessionId)
       await (this.provider.blocks?.pause ? this.provider.blocks.pause(vm, { timeoutMs: 30_000 }) : this.provider.stop(vm, { timeoutMs: 30_000 }))
       this.options.pauses?.clear(sessionId)
     } catch {

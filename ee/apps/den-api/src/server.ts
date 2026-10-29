@@ -11,6 +11,7 @@ import { appLogger } from "./observability/logger.js"
 import { shutdownObservability } from "./observability/runtime.js"
 import { startScimMaintenanceLoop } from "./scim-maintenance.js"
 import { startBillingInvitationExpiryLoop } from "./billing-invitation-expiry.js"
+import { startSandboxExpiryLoop } from "./sandbox-organizations.js"
 import { startLifecycleEmailLoop } from "./lifecycle-emails/index.js"
 import { startCloudIdleStopLoop } from "./workers/cloud-lifecycle.js"
 import { startWorkerProvisioningReconcileLoop } from "./workers/reconciler.js"
@@ -20,18 +21,21 @@ import { startAutomationSchedulerLoop } from "./automations/scheduler-loop.js"
 import { startModelsAnalyticsExportLoop } from "./models-analytics-export.js"
 import { markServerListening } from "./server-start.js"
 import { startMcpRegistrationProbeLoop } from "./mcp-registration/probe.js"
+import { startAdminMetricsRefreshLoop } from "./admin-metrics/worker.js"
 
 const stopSlackAssistantWorker = startSlackAssistantWorker()
 const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()
 const stopWorkbotProactiveWorker = startWorkbotProactiveWorker()
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopBillingInvitationExpiryLoop = startBillingInvitationExpiryLoop()
+const stopSandboxExpiryLoop = startSandboxExpiryLoop()
 const stopLifecycleEmailLoop = startLifecycleEmailLoop()
 const stopCloudIdleStopLoop = startCloudIdleStopLoop()
 const stopWorkerProvisioningReconcileLoop = startWorkerProvisioningReconcileLoop()
 const stopGithubSyncWorker = startGithubSyncWorker()
 const stopModelsAnalyticsExportLoop = startModelsAnalyticsExportLoop()
 const stopMcpRegistrationProbeLoop = startMcpRegistrationProbeLoop()
+const stopAdminMetricsRefreshLoop = startAdminMetricsRefreshLoop()
 const automationScheduler = startAutomationSchedulerLoop({ enabled: env.automations.runtimeEnabled })
 
 appLogger.info("external mcp implementation selected", { component: "server", runtime: externalMcpClientRuntimeName })
@@ -54,6 +58,7 @@ async function stopBackgroundLoops() {
   const results = await Promise.allSettled([
     stopScimMaintenanceLoop(),
     stopBillingInvitationExpiryLoop(),
+    stopSandboxExpiryLoop(),
     stopLifecycleEmailLoop(),
     stopSlackAssistantWorker(),
     stopSlackDesktopHandoffWorker(),
@@ -62,6 +67,7 @@ async function stopBackgroundLoops() {
     stopWorkerProvisioningReconcileLoop(),
     stopGithubSyncWorker(),
     stopMcpRegistrationProbeLoop(),
+    stopAdminMetricsRefreshLoop(),
     automationScheduler.stop(),
   ])
 

@@ -16,9 +16,10 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSegmented } from "../../_components/ui/segmented";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getAiGatewayProviderRoute, getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
+import { getAiGatewayProviderRoute, getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource } from "./inference-provider-data";
+import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, useOrgInferenceProviders } from "./inference-provider-data";
+import { ProviderRemovalUsageLimits, useProviderRemovalUsageLimits } from "./provider-removal-usage-limits";
 import type { DenInferenceProviderDetails } from "./inference-provider-request";
 import {
   LITELLM_DOC_URL, createLiteLlmProvider, liteLlmAccessGroupId, liteLlmAccessTitle, liteLlmAttentionLabel, liteLlmCreateError, liteLlmIssueStrategyLabel, liteLlmKeyLabel,
@@ -202,7 +203,7 @@ export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean })
 export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { provider: DenInferenceProviderDetails; reload: () => Promise<void>; embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
-  const { orgSlug, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
+  const { orgId, orgSlug, orgContext, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
   const status = provider.litellm;
   const uiMode: LiteLlmMode = status ? liteLlmStatusMode(status) : "org";
   const [busy, setBusy] = useState<"sync" | "key" | "access" | "issue" | "remove" | null>(null);
@@ -212,6 +213,8 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
   const [apiKey, setApiKey] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const cancelDeleteRef = useRef<HTMLButtonElement | null>(null);
+  const { inferenceProviders } = useOrgInferenceProviders(orgId);
+  const removalLimits = useProviderRemovalUsageLimits({ orgId, providerId: provider.id, open: confirmDelete, providers: inferenceProviders, featureOn: orgFeatureEnabled(orgContext, "gatewayProviderRemovalLimits") });
   const accessGroupId = liteLlmAccessGroupId(provider);
   const set = provider.credentialSets[0] ?? null;
   const grants = provider.accessGrants.filter((grant) => grant.modelGroupId === accessGroupId && grant.credentialSetId === set?.id);
@@ -268,12 +271,13 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
     setError(null);
     try {
       await runReauthableAction("delete-inference-provider", async () => {
-        await deleteInferenceProvider(provider.id, createAuditOperationContext());
+        await deleteInferenceProvider(provider.id, createAuditOperationContext(), removalLimits.requestChoice());
         setConfirmDelete(false);
         router.push(getAiGatewayProvidersRoute(orgSlug));
         router.refresh();
       });
     } catch (cause) {
+      if (removalLimits.handleRemoveError(cause)) return;
       setError(cause instanceof Error ? cause.message : "Could not remove the provider.");
     } finally { setBusy(null); }
   }
@@ -378,13 +382,14 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
       </section>
 
       <DenStickyActionBar sticky={false} summary={<span>{status ? `${liteLlmModeLabel(uiMode)} · ${status.modelCount} models · ${liteLlmSyncedLabel(status.lastSyncedAt).toLowerCase()}` : provider.name}</span>}>
-        <AlertDialog.Root open={confirmDelete && !reauthDialogOpen} onOpenChange={(open) => { if (busy === "remove") return; setConfirmDelete(open); }}>
+        <AlertDialog.Root open={confirmDelete && !reauthDialogOpen} onOpenChange={(open) => { if (busy === "remove") return; setConfirmDelete(open); if (!open) removalLimits.reset(); }}>
           <AlertDialog.Trigger disabled={busy !== null} className={buttonVariants({ variant: "secondary" })} data-testid="gateway-provider-remove">Remove</AlertDialog.Trigger>
           <AlertDialog.Portal>
             <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-gray-950/45" />
             <AlertDialog.Popup initialFocus={cancelDeleteRef} className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-gray-200 bg-white p-5 outline-none">
               <AlertDialog.Title className="text-[15px] font-medium text-gray-950">Remove {provider.name}?</AlertDialog.Title>
               <AlertDialog.Description className="mt-2 text-[13px] leading-5 text-gray-600">People lose these models and their saved LiteLLM keys. Your LiteLLM proxy is not changed.</AlertDialog.Description>
+              <ProviderRemovalUsageLimits providerName={provider.name} usageLimits={removalLimits.usageLimits} targets={removalLimits.targets} choice={removalLimits.choice} onChange={removalLimits.setChoice} disabled={busy === "remove"} />
               <div className="mt-5 flex justify-end gap-2">
                 <AlertDialog.Close ref={cancelDeleteRef} disabled={busy === "remove"} className={buttonVariants({ variant: "secondary" })}>Cancel</AlertDialog.Close>
                 <DenButton variant="destructive" loading={busy === "remove"} onClick={() => void remove()}>Remove provider</DenButton>

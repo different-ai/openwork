@@ -1,5 +1,5 @@
 import { denFetch } from "@openwork/behaviors";
-import type { Seed } from "@openwork/env";
+import { queryDenDatabase, type Seed } from "@openwork/env";
 import { healthFixture } from "./den-service-readiness.ts";
 import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 import { chatAs } from "./workbot-agent-library.ts";
@@ -11,9 +11,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Your agent's sources: Den with Workbot and Your agent on for one organization (My bot on too), a Google Workspace
- * connector the member hasn't signed in to, and three more connections everyone can use without signing in (a local
- * MCP fixture behind fictional meeting notes, issue tracker and wiki connections). Nothing is read: no turn runs
- * during the proof; "chat" is the Connect call Workbot makes for the member.
+ * connector the member hasn't signed in to, and three shared connections everyone can use without signing in. They
+ * are created against a local MCP fixture, then pointed at Granola's, Linear's and Notion's MCP addresses: agents only
+ * read services whose read tools are reviewed, recognised by that address. Nothing contacts those services and no turn
+ * runs during the proof; "chat" is the Connect call Workbot makes for the member.
  */
 export async function workbotAgentSourcesWorld(seed: Seed) {
   const stack = new AsyncDisposableStack();
@@ -44,10 +45,16 @@ export async function workbotAgentSourcesWorld(seed: Seed) {
       features: ["calendarRead", "gmailDraft", "driveRead"],
       access: { orgWide: true },
     });
-    const connect = (name: string) => seed.orgConnection(den.admin, { name, url: den.mocks.tools.mcpUrl, authType: "none", credentialMode: "shared", access: { orgWide: true } });
-    const notes = await connect("Granola");
-    const tracker = await connect("Linear");
-    const wiki = await connect("Notion");
+    const databaseUrl = den.database?.url;
+    if (!databaseUrl || !new URL(databaseUrl).pathname.startsWith("/openwork_eval_")) throw new Error("The sources world needs its own eval database.");
+    const connect = async (name: string, serviceUrl: string) => {
+      const created = await seed.orgConnection(den.admin, { name, url: den.mocks.tools.mcpUrl, authType: "none", credentialMode: "shared", access: { orgWide: true } });
+      await queryDenDatabase(databaseUrl, "UPDATE external_mcp_connection SET url = ? WHERE id = ?", [serviceUrl, created.id]);
+      return created;
+    };
+    const notes = await connect("Granola", "https://mcp.granola.ai/mcp");
+    const tracker = await connect("Linear", "https://mcp.linear.app/mcp");
+    const wiki = await connect("Notion", "https://mcp.notion.com/mcp");
 
     const headers = { authorization: `Bearer ${den.admin.token}`, "x-openwork-org-id": organizationId };
     const viewport = { width: 1280, height: 2200, deviceScaleFactor: 1 };

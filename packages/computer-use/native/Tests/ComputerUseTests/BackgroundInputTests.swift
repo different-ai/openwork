@@ -32,7 +32,34 @@ final class BackgroundInputTests: XCTestCase {
         XCTAssertTrue(InputDelivery.stepNeedsFront(.click(point, 1, .maskShift), route: .appKit))
         XCTAssertTrue(InputDelivery.stepNeedsFront(.move(point), route: .appKit))
         XCTAssertTrue(InputDelivery.stepNeedsFront(.drag([point, point]), route: .appKit))
-        XCTAssertTrue(InputDelivery.stepNeedsFront(.type("hi"), route: .skyLight), "Chromium keys need a signed envelope")
+        XCTAssertTrue(InputDelivery.stepNeedsFront(.type("hi"), route: .skyLight, signedKeys: false), "Chromium keys need a signed envelope")
+        XCTAssertTrue(InputDelivery.stepNeedsFront(.key("enter", []), route: .skyLight, signedKeys: false))
+    }
+
+    func testSignedKeysLetChromiumTypeInTheBackground() {
+        XCTAssertFalse(InputDelivery.stepNeedsFront(.type("hi"), route: .skyLight, signedKeys: true))
+        XCTAssertFalse(InputDelivery.stepNeedsFront(.key("enter", []), route: .skyLight, signedKeys: true))
+        // Menu shortcuts still need the front, signed or not.
+        XCTAssertTrue(InputDelivery.stepNeedsFront(.key("s", .maskCommand), route: .skyLight, signedKeys: true))
+    }
+
+    func testKeyEventsExposeTheirWindowServerRecord() throws {
+        let event = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true))
+        XCTAssertNotNil(KeyAuthentication.record(event))
+        if ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0)) {
+            XCTAssertTrue(KeyAuthentication.available, "macOS 15 and later can sign background keys")
+        }
+    }
+
+    func testOnlyChromiumAndElectronGetTheLegacyAccessibilityRequest() {
+        XCTAssertTrue(PointerRoute.isChromium(bundleID: "com.google.Chrome", info: [:]))
+        XCTAssertTrue(PointerRoute.isChromium(bundleID: "com.example.Chat", info: ["ElectronAsarIntegrity": [:]]))
+        XCTAssertFalse(PointerRoute.isChromium(bundleID: "com.example.Pad", info: ["UIDeviceFamily": [2, 6]]), "Catalyst is not Chromium")
+        XCTAssertFalse(PointerRoute.isChromium(bundleID: "com.apple.TextEdit", info: [:]))
+        XCTAssertTrue(ChromiumAccessibility.useLegacyRequest(chromium: true, manual: .attributeUnsupported))
+        XCTAssertFalse(ChromiumAccessibility.useLegacyRequest(chromium: false, manual: .attributeUnsupported), "native apps never get it")
+        XCTAssertFalse(ChromiumAccessibility.useLegacyRequest(chromium: true, manual: .cannotComplete), "a busy app is not an unsupported one")
+        XCTAssertFalse(ChromiumAccessibility.useLegacyRequest(chromium: true, manual: .success))
     }
 
     func testClicksSendOnlyTheFocusRecordAndKeysAddTheMakeKeyPair() {

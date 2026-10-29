@@ -138,6 +138,8 @@ export type SessionComputer = {
   browserDemonstration?(sessionId: string, command: import("@openwork/types/browser-demonstration").DemonstrationCommand): Promise<import("@openwork/types/browser-demonstration").DemonstrationReply>
   desktopAction?(sessionId: string, action: "continue" | "pause" | "resume" | "rebuild"): Promise<{ ok: boolean }>
   run(sessionId: string, name: string, input: Record<string, unknown>): Promise<ToolResult>
+  /** Whether this conversation has a computer here at all (see computer-route.ts); unset means every conversation does. */
+  available?(sessionId: string): boolean
   known(sessionId: string): boolean
   prewarm(sessionId: string): void
   release(sessionId: string): void

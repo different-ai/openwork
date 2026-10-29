@@ -79,10 +79,10 @@ export default {
         addProviderSafeTool(editor, {
           name,
           description: name === "openwork_context"
-            ? "Read OpenWork app context and available affordances. Use this to discover session.search and session.read for other conversations, session.group commands for sidebar groups, and automation.propose for scheduled work."
+            ? "Read OpenWork app context and available affordances. Use this to discover session.search and session.read for other conversations, session.group commands for sidebar groups, session.create and session.send to start or message other sessions, session.question.list and session.question.answer for questions another session is waiting on, and automation.propose for scheduled work."
             : name === "openwork_query"
               ? "Read an OpenWork affordance without changing the app or navigating. Use the exact id and arguments from openwork_context; session.read includes live background-agent activity."
-              : "Run an OpenWork command listed in openwork_context: change sidebar groups or propose an Automation for the person to review and create. A proposal does not create, activate, or run anything. Use the exact id and arguments from openwork_context.",
+              : "Run an OpenWork command listed in openwork_context: change sidebar groups, create or message sessions, answer another session's pending question with the person's answers, or propose an Automation for the person to review and create. A proposal does not create, activate, or run anything. Use the exact id and arguments from openwork_context.",
           input: name === "openwork_context" ? { type: "object", properties: {}, additionalProperties: false } : {
             type: "object", properties: { id: { type: "string" }, args: { type: "object", additionalProperties: true } },
             required: ["id"], additionalProperties: false,
@@ -93,7 +93,13 @@ export default {
             const response = await fetch(context.options.url, {
               method: "POST", redirect: "error", signal: call.signal,
               headers: { Authorization: `Bearer ${context.options.token}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ name, input, sessionId: call.sessionID, ...(context.options.codeMode === true ? { codeMode: true } : {}) }),
+              body: JSON.stringify({
+                name, input, sessionId: call.sessionID, ...(context.options.codeMode === true ? { codeMode: true } : {}),
+                // A command that asks first shows its approval at this call in the chat.
+                ...(name === "openwork_execute" && context.location?.directory && call.messageID && call.id ? {
+                  caller: { directory: context.location.directory, messageId: call.messageID, callId: call.id, ...(call.agent ? { agent: call.agent } : {}) },
+                } : {}),
+              }),
             });
             if (!response.ok) throw new Error(`OpenWork ${name === "openwork_execute" ? "command" : "read"} failed (${response.status})`);
             return { content: [{ type: "text", text: await response.text() }] };
@@ -122,10 +128,10 @@ export default {
       });
       addProviderSafeTool(editor, {
         name: "openwork_outlook_draft",
-        description: "Create an Outlook draft, or a reply draft to one Outlook message, with workspace files attached through OpenWork Cloud, outside model context. Use this when the user asks to email or reply with local files from Outlook. A new draft needs to and subject; a reply takes replyToMessageId and body only, keeping the message's recipients and subject. Up to ten files, each under 3 MB and 4 MiB in all; paths are workspace-relative or absolute under an authorized workspace root. connectionId (microsoft-365 or emc_...) selects a Microsoft account. The person approves each draft in the chat first, and it is never sent. Never retry an unconfirmed draft automatically.",
+        description: "Create an Outlook draft, or a reply draft to one Outlook message, with workspace files attached through OpenWork Cloud, outside model context. Use this when the user asks to email or reply with local files from Outlook. A new draft needs to and subject; a reply takes replyToMessageId and body only, keeping the message's recipients and subject. body is plain text unless bodyContentType is html; use html for links, line breaks, tables or a signature. Up to ten files, each under 3 MB and 4 MiB in all; paths are workspace-relative or absolute under an authorized workspace root. connectionId (microsoft-365 or emc_...) selects a Microsoft account. The person approves each draft in the chat first, and it is never sent. Never retry an unconfirmed draft automatically.",
         input: { type: "object", properties: {
           to: { type: "array", items: { type: "string" } }, cc: { type: "array", items: { type: "string" } }, bcc: { type: "array", items: { type: "string" } },
-          subject: { type: "string" }, body: { type: "string" }, replyToMessageId: { type: "string" },
+          subject: { type: "string" }, body: { type: "string" }, bodyContentType: { type: "string", enum: ["text", "html"] }, replyToMessageId: { type: "string" },
           connectionId: { type: "string", pattern: "^(microsoft-365|emc_[A-Za-z0-9]+)$" },
           paths: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 10 },
         }, required: ["body", "paths"], additionalProperties: false },

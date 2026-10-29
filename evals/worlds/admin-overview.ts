@@ -1,4 +1,5 @@
 import { queryDenDatabase, type Seed } from "@openwork/env";
+import { adminControlCenterSchema } from "@openwork/types/den/admin-control-center";
 import { adminActiveUsersSchema, adminDashboardSchema, adminOrganizationDetailSchema, adminOrganizationInsightsSchema, adminOrganizationUsageSchema } from "@openwork/types/den/admin-organization";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -72,7 +73,8 @@ export async function adminOverviewWorld(seed: Seed) {
   if (!killed.response.ok) throw new Error("Could not set up a globally disabled feature.");
   const viewport = { width: 1280, height: 700 };
   const anonymous = await seed.web({ den, startPath: "/admin/users?search=Routing&page=2", headless: true, viewport });
-  const admin = await seed.web({ den, signedInAs: den.admin, startPath: "/admin/users", headless: true, viewport: { width: 1280, height: 200 } });
+  // A short window keeps the first member's consumption section well beyond the 400px prefetch margin.
+  const admin = await seed.web({ den, signedInAs: den.admin, startPath: "/admin/users", headless: true, viewport: { width: 1280, height: 120 } });
   const member = await seed.web({ den, signedInAs: den.members.member, startPath: "/admin/organizations", headless: true, viewport });
   return {
     anonymous, admin, member, organizationId, memberId,
@@ -111,6 +113,16 @@ export async function adminOverviewWorld(seed: Seed) {
     },
     async dashboardAccess() {
       return (await seed.api(den.members.member, "/v1/admin/dashboard")).response.status;
+    },
+    async controlCenter() {
+      const result = await seed.api(den.admin, "/v1/admin/control-center?range=30d");
+      if (!result.response.ok) throw new Error(`Control Center failed (${result.response.status}).`);
+      return adminControlCenterSchema.parse(result.body);
+    },
+    async controlCenterAccess() {
+      const read = await seed.api(den.members.member, "/v1/admin/control-center");
+      const refresh = await seed.api(den.members.member, "/v1/admin/control-center/refresh", { method: "POST" });
+      return { read: read.response.status, refresh: refresh.response.status };
     },
     async organizationInsights() {
       const result = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/insights?limit=1`);
@@ -169,6 +181,7 @@ export async function adminOverviewWorld(seed: Seed) {
           overview: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/admin/overview")).length,
           usage: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/inference-usage")).length,
           dashboard: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/admin/dashboard")).length,
+          controlCenter: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/admin/control-center")).length,
           activeUsers: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/admin/dashboard/active-users")).length,
           metrics: resources.filter((entry) => new URL(entry.name).pathname.endsWith("/admin/metrics")).length,
           organizationInsights: resources.filter((entry) => /\/v1\/admin\/organizations\/[^/]+\/insights$/.test(new URL(entry.name).pathname)).length,

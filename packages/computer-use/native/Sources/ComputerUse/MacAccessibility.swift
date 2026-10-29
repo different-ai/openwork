@@ -231,6 +231,20 @@ struct AXReadBudget {
     func check() throws { _ = try timeout() }
 }
 
+/// Chromium and Electron build their web-content accessibility tree only for an
+/// assistive client that asks. `AXManualAccessibility` is the modern request;
+/// some Electron builds know only the legacy `AXEnhancedUserInterface`, which
+/// native apps never get because it changes how they animate.
+enum ChromiumAccessibility {
+    static func useLegacyRequest(chromium: Bool, manual: AXError) -> Bool {
+        chromium && manual == .attributeUnsupported
+    }
+    static let webArea = "AXWebArea"
+    static let contentWait: TimeInterval = 2
+    static let probeDepth = 10
+    static let probeNodes = 400
+}
+
 @MainActor
 final class MacAccessibility {
     func windows(_ app: AppIdentity) async throws -> [WindowTarget] {
@@ -241,14 +255,33 @@ final class MacAccessibility {
         // Electron exposes its accessibility tree on demand. This is its
         // documented assistive-technology handshake, not a macOS permission grant.
         // Native apps can reject the optional attribute and still expose windows.
-        if (attribute(root, "AXManualAccessibility") as? Bool) == false,
+        var manualValue: CFTypeRef?
+        let manual = AXUIElementCopyAttributeValue(root, "AXManualAccessibility" as CFString, &manualValue)
+        let chromium = PointerRoute.isChromium(bundleID: app.bundleID,
+            info: app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:])
+        var requested = false
+        if manual == .success, (manualValue as? Bool) == false,
            AXUIElementSetAttributeValue(root, "AXManualAccessibility" as CFString, kCFBooleanTrue) == .success {
+            requested = true
             // Electron debounces activation for two seconds. Do not keep setting
             // the attribute during retries: that restarts its countdown.
             let deadline = ProcessInfo.processInfo.systemUptime + 3
             while ProcessInfo.processInfo.systemUptime < deadline {
                 try app.validate()
                 if (attribute(root, "AXManualAccessibility") as? Bool) == true { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+        } else if ChromiumAccessibility.useLegacyRequest(chromium: chromium, manual: manual),
+                  (attribute(root, "AXEnhancedUserInterface") as? Bool) != true,
+                  AXUIElementSetAttributeValue(root, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue) == .success {
+            requested = true
+        }
+        // The tree is built asynchronously after the request; wait for its web
+        // content so a covered window reads in full the first time.
+        if requested, chromium {
+            let deadline = ProcessInfo.processInfo.systemUptime + ChromiumAccessibility.contentWait
+            while ProcessInfo.processInfo.systemUptime < deadline, !hasWebContent(root) {
+                try app.validate()
                 try await Task.sleep(nanoseconds: 100_000_000)
             }
         }
@@ -664,6 +697,23 @@ final class MacAccessibility {
         return CGRect(origin: point, size: dimensions)
     }
     func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? { try? checkedAttribute(element, name, AXReadBudget()) }
+    /// Whether any window of the app already exposes a web area, read breadth-first
+    /// within a small bound so a large tree never stalls opening a session.
+    private func hasWebContent(_ root: AXUIElement) -> Bool {
+        var level = attribute(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
+        var seen = 0
+        for _ in 0..<ChromiumAccessibility.probeDepth where !level.isEmpty && seen < ChromiumAccessibility.probeNodes {
+            var next: [AXUIElement] = []
+            for element in level {
+                seen += 1
+                if (attribute(element, kAXRoleAttribute) as? String) == ChromiumAccessibility.webArea { return true }
+                if seen >= ChromiumAccessibility.probeNodes { return false }
+                next += attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
+            }
+            level = next
+        }
+        return false
+    }
     func elementAttribute(_ element: AXUIElement, _ name: String) -> AXUIElement? { try? checkedElement(element, name, AXReadBudget()) }
     func frame(_ element: AXUIElement) -> CGRect? { try? checkedFrame(element, AXReadBudget()) }
 }

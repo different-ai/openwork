@@ -165,6 +165,15 @@ function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
         event.stopPropagation();
         showBrowserTabContextMenu({ clientX: event.clientX, clientY: event.clientY });
       } : undefined}
+      // Middle-click closes a tab, as in a browser; stopping mousedown keeps it from starting autoscroll.
+      onMouseDown={(event: React.MouseEvent<HTMLDivElement>) => {
+        if (event.button === 1) event.preventDefault();
+      }}
+      onAuxClick={(event: React.MouseEvent<HTMLDivElement>) => {
+        if (event.button !== 1) return;
+        event.preventDefault();
+        onClose(tab);
+      }}
     >
       <div ref={tabRef} className="relative" data-browser-shortcut-tab={tab.type === "browser" ? tab.id : undefined}>
         <PanelTab

@@ -61,6 +61,20 @@ export const sessionSendArgsSchema = z.object({
   reveal: z.boolean().optional().describe("true to also open that session in the person's focused pane after sending. Defaults to false: nothing on screen changes."),
 });
 
+/** The engine permission a person answers before the agent answers another session's question for them. */
+export const SESSION_QUESTION_ANSWER_PERMISSION = "openwork_session_question_answer";
+
+export const sessionQuestionListArgsSchema = z.object({
+  sessionId: z.string().trim().min(1).describe("Session ID from session.search or session.read."),
+  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Omit to resolve the session across all workspaces."),
+});
+
+export const sessionQuestionAnswerArgsSchema = sessionQuestionListArgsSchema.extend({
+  requestId: z.string().trim().min(1).describe("Pending question id from session.question.list."),
+  answers: z.array(z.array(z.string().trim().min(1).max(10_000)).min(1).max(50)).min(1).max(20)
+    .describe("One array per question, in order: the chosen option labels, or the person's own text where the question allows it."),
+});
+
 /** Argument schemas by affordance id; sessionContribution must advertise exactly these keys. */
 export const sessionAffordanceArgsSchemas = {
   "models.list": openworkModelsListArgsSchema,
@@ -68,6 +82,8 @@ export const sessionAffordanceArgsSchemas = {
   "session.read": sessionReadArgsSchema,
   "session.create": sessionCreateArgsSchema,
   "session.send": sessionSendArgsSchema,
+  "session.question.list": sessionQuestionListArgsSchema,
+  "session.question.answer": sessionQuestionAnswerArgsSchema,
 };
 
 export type ConnectSkillDescriptor = {
@@ -206,6 +222,32 @@ function sessionContribution(): OpenworkFeatureContribution {
           argument("text", "string", true, "Prompt text appended as a new user message (≤100000 chars)."),
           argument("workspaceId", "string", false, "Optional workspace id or name."),
           argument("reveal", "boolean", false, "true to also open that session in the person's focused pane after sending. Defaults to false."),
+        ],
+        effects: writeEffects,
+      }),
+      affordance({
+        id: "session.question.list",
+        kind: "query",
+        title: "List a session's pending questions",
+        description: "List the questions another session is waiting on the person to answer (session.read status waiting), with each question's options and whether it takes several choices or the person's own text.",
+        provider,
+        arguments: [
+          argument("sessionId", "string", true, "Session id from session.search or session.read."),
+          argument("workspaceId", "string", false, "Optional workspace id or name."),
+        ],
+        effects: readEffects,
+      }),
+      affordance({
+        id: "session.question.answer",
+        kind: "command",
+        title: "Answer a session's pending question",
+        description: "Answer a pending question from session.question.list on the person's behalf, only with answers the person gave or asked you to choose. The waiting session continues with them.",
+        provider,
+        arguments: [
+          argument("sessionId", "string", true, "Session id that asked the question."),
+          argument("requestId", "string", true, "Pending question id from session.question.list."),
+          argument("answers", "array", true, "One array per question, in order: chosen option labels, or the person's own text where allowed."),
+          argument("workspaceId", "string", false, "Optional workspace id or name."),
         ],
         effects: writeEffects,
       }),

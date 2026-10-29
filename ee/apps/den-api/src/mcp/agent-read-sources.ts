@@ -6,8 +6,9 @@ import { AGENT_CORE_SOURCES, type AgentCoreSource } from "@openwork/types/den/wo
  * (`calendar`, `email`, `chat`) and the connections behind every source it may read.
  *
  * - A plain `mcp:read` token never calls a connection's own tools: provider hints can't prove a tool won't change
- *   anything. An agent token may, but only on its connections and only tools that read: a reviewed list for the
- *   services we know, otherwise a tool its provider marks read-only whose name reads and never writes.
+ *   anything. An agent token may, but only on its connections and only tools we reviewed as reads, per service
+ *   (`REVIEWED_READ_TOOLS`). A service without a reviewed list can't be a source at all; its provider's hints and tool
+ *   names never make a tool callable.
  * - Native Google Workspace and Microsoft 365 reads are limited to the core sources that are on: calendar events,
  *   mail, and Teams chats. Nothing else (files, drafts, sites) and never a non-GET.
  *
@@ -17,24 +18,33 @@ import { AGENT_CORE_SOURCES, type AgentCoreSource } from "@openwork/types/den/wo
 export const AGENT_READ_SCOPE = "openwork:agent-read"
 const SOURCE_SCOPE_PREFIX = "openwork:agent-source:"
 const CONNECTION_SCOPE_PREFIX = "openwork:agent-connection:"
+/** `openwork:agent-core:<kind>:<connectionId>`: one core source, read through one connection. */
+const CORE_SCOPE_PREFIX = "openwork:agent-core:"
 
 export type AgentReadAllowlist = {
   /** Core sources that are on. */
   kinds: ReadonlySet<AgentCoreSource>
   /** Connections the agent may read through, native and external. */
   connectionIds: ReadonlySet<string>
+  /** `<kind>:<connectionId>`: which core source each native connection may be read for. */
+  pairs: ReadonlySet<string>
 }
 
 function isCoreSource(value: string): value is AgentCoreSource {
   return AGENT_CORE_SOURCES.some((source) => source === value)
 }
 
+function pairKey(kind: AgentCoreSource, connectionId: string) {
+  return `${kind}:${connectionId}`
+}
+
 /** The extra token scopes for an agent turn that may read these sources through these connections. */
-export function agentReadScopes(input: { kinds: readonly AgentCoreSource[]; connectionIds: readonly string[] }): string[] {
+export function agentReadScopes(input: { kinds: readonly AgentCoreSource[]; connectionIds: readonly string[]; pairs?: readonly { kind: AgentCoreSource; connectionId: string }[] }): string[] {
   return [
     AGENT_READ_SCOPE,
     ...[...new Set(input.kinds)].map((kind) => `${SOURCE_SCOPE_PREFIX}${kind}`),
     ...[...new Set(input.connectionIds)].map((id) => `${CONNECTION_SCOPE_PREFIX}${id}`),
+    ...[...new Set((input.pairs ?? []).map((pair) => pairKey(pair.kind, pair.connectionId)))].map((key) => `${CORE_SCOPE_PREFIX}${key}`),
   ]
 }
 
@@ -43,6 +53,7 @@ export function agentReadAllowlist(scopes: ReadonlySet<string>): AgentReadAllowl
   if (!scopes.has(AGENT_READ_SCOPE)) return null
   const kinds = new Set<AgentCoreSource>()
   const connectionIds = new Set<string>()
+  const pairs = new Set<string>()
   for (const scope of scopes) {
     if (scope.startsWith(SOURCE_SCOPE_PREFIX)) {
       const kind = scope.slice(SOURCE_SCOPE_PREFIX.length)
@@ -50,9 +61,15 @@ export function agentReadAllowlist(scopes: ReadonlySet<string>): AgentReadAllowl
     } else if (scope.startsWith(CONNECTION_SCOPE_PREFIX)) {
       const id = scope.slice(CONNECTION_SCOPE_PREFIX.length)
       if (id) connectionIds.add(id)
+    } else if (scope.startsWith(CORE_SCOPE_PREFIX)) {
+      const rest = scope.slice(CORE_SCOPE_PREFIX.length)
+      const split = rest.indexOf(":")
+      const kind = split > 0 ? rest.slice(0, split) : ""
+      const id = split > 0 ? rest.slice(split + 1) : ""
+      if (isCoreSource(kind) && id) pairs.add(pairKey(kind, id))
     }
   }
-  return { kinds, connectionIds }
+  return { kinds, connectionIds, pairs }
 }
 
 /** Which core source a native capability reads, from its route; null for anything else (files, drafts, sites…). */
@@ -64,16 +81,16 @@ export function nativeSourceKind(path: string): AgentCoreSource | null {
   return null
 }
 
-/** A native capability the agent may call: a GET on one of its connections, for a core source that is on. */
+/** A native capability the agent may call: a GET on one of its connections, for a core source read through that connection. */
 export function agentMayUseNative(allowlist: AgentReadAllowlist, connectionId: string, operation: { method: string; path: string }): boolean {
   if (operation.method.toUpperCase() !== "GET" || !allowlist.connectionIds.has(connectionId)) return false
   const kind = nativeSourceKind(operation.path)
-  return kind !== null && allowlist.kinds.has(kind)
+  return kind !== null && allowlist.kinds.has(kind) && allowlist.pairs.has(pairKey(kind, connectionId))
 }
 
 /**
- * Tools reviewed as reads, by the service's MCP host. Only names here or tools that pass `looksLikeRead` are callable,
- * and never one whose name says it writes.
+ * Tools reviewed as reads, by the service's MCP host (the URL its preset connects to). Only these are callable, and
+ * never one whose name says it writes, even if it is listed here by mistake.
  */
 const REVIEWED_READ_TOOLS: Record<string, ReadonlySet<string>> = {
   "mcp.slack.com": new Set([
@@ -96,13 +113,6 @@ const REVIEWED_READ_TOOLS: Record<string, ReadonlySet<string>> = {
 }
 
 const WRITE_WORDS = /(?:^|[_\-.\s]|[a-z](?=[A-Z]))(send|post|create|update|upsert|delete|remove|write|edit|modify|move|archive|add|set|schedule|reply|draft|upload|invite|share|assign|close|merge|comment|react|publish|trash|cancel|accept|decline|approve|mark|submit|execute|run|trigger)(?=$|[_\-.\s]|[A-Z])/i
-const READ_WORDS = /(?:^|[_\-.\s]|[a-z](?=[A-Z]))(get|list|search|read|fetch|find|query|lookup|view|describe|retrieve|show)(?=$|[_\-.\s]|[A-Z])/i
-
-/** A tool its provider marks read-only (and not destructive) whose name reads and never writes. */
-function looksLikeRead(tool: { name: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }): boolean {
-  return tool.annotations?.readOnlyHint === true && tool.annotations.destructiveHint !== true && READ_WORDS.test(tool.name) && !WRITE_WORDS.test(tool.name)
-}
-
 function hostOf(url: string): string | null {
   try {
     return new URL(url).hostname.toLowerCase()
@@ -111,19 +121,41 @@ function hostOf(url: string): string | null {
   }
 }
 
-/** Whether a connection's tool only reads, by the rules above. */
-export function agentReadTool(connectionUrl: string, tool: { name: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }): boolean {
+/** Whether agents can read through a connection at all: its service has a reviewed list of read tools. */
+export function agentReadableConnection(connectionUrl: string): boolean {
+  const host = hostOf(connectionUrl)
+  return host !== null && REVIEWED_READ_TOOLS[host] !== undefined
+}
+
+/** Whether a connection's tool is one we reviewed as a read. Provider hints are never enough. */
+export function agentReadTool(connectionUrl: string, tool: { name: string }): boolean {
   if (WRITE_WORDS.test(tool.name)) return false
   const host = hostOf(connectionUrl)
-  if (host && REVIEWED_READ_TOOLS[host]?.has(tool.name)) return true
-  return looksLikeRead(tool)
+  return host !== null && REVIEWED_READ_TOOLS[host]?.has(tool.name) === true
+}
+
+/**
+ * Where a message may link when it drew on a connection: the service's own site, by its reviewed host. Never derived
+ * from a hostname (a public suffix like co.uk would let any site through).
+ */
+const SERVICE_LINK_DOMAINS: Record<string, readonly string[]> = {
+  "mcp.slack.com": ["slack.com"],
+  "mcp.linear.app": ["linear.app"],
+  "mcp.notion.com": ["notion.so", "notion.com"],
+  "api.githubcopilot.com": ["github.com"],
+  "mcp.granola.ai": ["granola.ai"],
+}
+
+export function serviceLinkDomains(connectionUrl: string): readonly string[] {
+  const host = hostOf(connectionUrl)
+  return host ? SERVICE_LINK_DOMAINS[host] ?? [] : []
 }
 
 /** An external tool the agent may call: one of its connections, and a tool that only reads. */
 export function agentMayUseExternalTool(
   allowlist: AgentReadAllowlist,
   connection: { id: string; url: string },
-  tool: { name: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } },
+  tool: { name: string },
 ): boolean {
   return allowlist.connectionIds.has(connection.id) && agentReadTool(connection.url, tool)
 }

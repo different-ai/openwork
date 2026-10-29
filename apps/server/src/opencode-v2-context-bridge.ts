@@ -93,9 +93,55 @@ export async function askEngineApproval(engine: EngineConnection | undefined, ap
     watching.abort();
   }
 }
-// Only sidebar-group commands can write through the generic affordance path.
-// Automation proposals are inert: the person explicitly creates one in the renderer.
-const commandIds: readonly string[] = [...SESSION_GROUP_COMMAND_IDS, "automation.propose"];
+// Only sidebar-group, session create/send and question-answer commands can
+// write through the generic affordance path. Automation proposals are inert:
+// the person explicitly creates one in the renderer.
+const commandIds: readonly string[] = [
+  ...SESSION_GROUP_COMMAND_IDS, "session.create", "session.send", "session.question.answer", "automation.propose",
+];
+const questionReplyRoute = /^\/workspace\/[^/]+\/opencode2\/api\/session\/[^/]+\/form\/[^/]+\/reply$/;
+// Best-effort window commands session.create and session.send follow up with.
+const windowCommandIds: readonly string[] = ["workspace.reload_sessions", "session.open"];
+const sessionWriteRoute = /^\/workspace\/([^/]+)\/opencode\/session(?:\/([^/]+)\/prompt_async)?$/;
+/** A v2 question-form reply as sent: a path the URL parser would normalize is refused. */
+export function isQuestionReplyPath(path: string): boolean {
+  return questionReplyRoute.test(path) && new URL(path, "http://127.0.0.1").pathname === path;
+}
+type Post = (path: string, body: Record<string, unknown>) => Promise<unknown>;
+/**
+ * session.create and session.send write the v1 session and prompt_async
+ * shapes; v2 takes the same session, model and prompt on its native routes.
+ * Returns undefined for any other path, which is then refused.
+ */
+export async function postV2SessionWrite(path: string, body: Record<string, unknown>, post: Post): Promise<unknown> {
+  const match = sessionWriteRoute.exec(path);
+  if (!match || new URL(path, "http://127.0.0.1").pathname !== path) return undefined;
+  const base = `/workspace/${match[1]}/opencode2/api/session`;
+  const sessionId = match[2];
+  if (!sessionId) {
+    const created = await post(base, { ...(typeof body.title === "string" ? { title: body.title } : {}), ...(isRecord(body.model) ? { model: body.model } : {}) });
+    const row = isRecord(created) && "data" in created ? created.data : created;
+    const info = isRecord(row) && isRecord(row.info) ? row.info : row;
+    if (!isRecord(info) || typeof info.id !== "string") throw new Error("Invalid engine session response");
+    const model = info.model;
+    return {
+      id: info.id, title: typeof info.title === "string" ? info.title : null,
+      model: isRecord(model) && typeof model.providerID === "string" && typeof model.id === "string" ? model : null,
+    };
+  }
+  const model = isRecord(body.model) ? body.model : undefined;
+  if (model && typeof model.providerID === "string" && typeof model.modelID === "string") {
+    await post(`${base}/${sessionId}/model`, { model: {
+      providerID: model.providerID, id: model.modelID, ...(typeof body.variant === "string" ? { variant: body.variant } : {}),
+    } });
+  }
+  const parts = Array.isArray(body.parts) ? body.parts : [];
+  const text = parts.map(part => isRecord(part) && part.type === "text" && typeof part.text === "string" ? part.text : "").join("");
+  await post(`${base}/${sessionId}/prompt`, {
+    text, ...(typeof body.messageID === "string" ? { id: body.messageID } : {}), delivery: "steer",
+  });
+  return null;
+}
 const sessionGroupRoute = /^\/workspace\/[^/]+\/session-groups(?:\/assignments\/[^/]+|\/[^/]+)?$/;
 /** A session-group route as sent: a path the URL parser would normalize (dot segments) is refused. */
 export function isSessionGroupWritePath(path: string): boolean {
@@ -112,7 +158,7 @@ const gmailDraftSchema = z.object({
 }).strict();
 const addresses = z.array(z.string().min(1)).max(50).optional();
 const outlookDraftSchema = z.object({
-  to: addresses, cc: addresses, bcc: addresses, subject: z.string().min(1).optional(), body: z.string(),
+  to: addresses, cc: addresses, bcc: addresses, subject: z.string().min(1).optional(), body: z.string(), bodyContentType: z.enum(["text", "html"]).optional(),
   replyToMessageId: z.string().min(1).optional(), connectionId: z.string().optional(),
   paths: z.array(z.string().min(1)).min(1).max(10),
 }).strict();
@@ -260,7 +306,14 @@ export async function createV2ContextBridge(
         // mount keep its workspace ownership checks.
         other: { engine: "v1", get: path => read(path) },
         post: async (path: string, body: Record<string, unknown>, signal?: AbortSignal) => {
-          if (path !== "/experimental/ui-control/request" || !["context", "query"].includes(String(body.kind))) {
+          const execute = call.name === "openwork_execute";
+          if (execute && path !== "/experimental/ui-control/request") {
+            const written = await postV2SessionWrite(path, body, (target, payload) => read(target, { method: "POST", body: JSON.stringify(payload) }));
+            if (written !== undefined) return written;
+            if (isQuestionReplyPath(path)) return read(path, { method: "POST", body: JSON.stringify(body), signal });
+          }
+          const windowCommand = execute && body.kind === "command" && isRecord(body.input) && windowCommandIds.includes(String(body.input.id));
+          if (path !== "/experimental/ui-control/request" || (!["context", "query"].includes(String(body.kind)) && !windowCommand)) {
             throw new Error("Only OpenWork reads are available");
           }
           return read(path, { method: "POST", body: JSON.stringify(body), signal });
@@ -276,13 +329,25 @@ export async function createV2ContextBridge(
         if (call.name === "openwork_query") return plugin.tool.openwork_query.execute(call.input);
         if (call.name === "openwork_execute") {
           const id = isRecord(call.input) ? String(call.input.id) : "";
-          if (!commandIds.includes(id)) throw new Error(`${id || "This command"} is not available here; only session group changes and automation proposals are`);
-          return plugin.tool.openwork_execute.execute(call.input, call.sessionId ? { sessionID: call.sessionId } : {});
+          if (!commandIds.includes(id)) throw new Error(`${id || "This command"} is not available here; only session group changes, session.create, session.send, session.question.answer and automation proposals are`);
+          const { sessionId, caller } = call;
+          // Commands that ask first (answering another session's question)
+          // ask in the calling chat through the engine's own prompt.
+          const ask = sessionId && caller ? async (approval: { permission: string; patterns: string[]; metadata: Record<string, unknown> }) => {
+            await askEngineApproval(engine?.(), {
+              directory: caller.directory, sessionId, messageId: caller.messageId, callId: caller.callId, ...(caller.agent ? { agent: caller.agent } : {}),
+              action: approval.permission, resources: approval.patterns, metadata: approval.metadata,
+              subject: "answering this question", nothing: "the question was not answered",
+            }, AbortSignal.any([request.signal, AbortSignal.timeout(APPROVAL_WAIT_MS)]));
+            // The writes after an approval get their own budget.
+            deadline = AbortSignal.timeout(60_000);
+          } : undefined;
+          return plugin.tool.openwork_execute.execute(call.input, { ...(sessionId ? { sessionID: sessionId } : {}), ...(ask ? { ask } : {}) });
         }
         const context: unknown = JSON.parse(await plugin.tool.openwork_context.execute());
         const filtered = bridgeAffordances(context);
         return JSON.stringify(isRecord(filtered) ? { ...filtered, instructions: {
-          context: "Use openwork_query for the discovered read-only affordances and openwork_execute for session.group commands or automation.propose. An automation proposal only shows a review card; it does not create, activate, or run anything. When Code Mode exposes these tools, discover their exact paths with search and compose them there, preserving exceptions and verifying the resulting groups. For other conversations, use session.search then session.read. Session reads include current activity and background-agent counts."
+          context: "Use openwork_query for the discovered read-only affordances and openwork_execute for session.group commands, session.create, session.send, session.question.answer or automation.propose. An automation proposal only shows a review card; it does not create, activate, or run anything. When Code Mode exposes these tools, discover their exact paths with search and compose them there, preserving exceptions and verifying the resulting groups. For other conversations, use session.search then session.read. Session reads include current activity and background-agent counts."
         } } : filtered);
       });
       return new Response(result, { headers: { "Content-Type": "application/json" } });

@@ -41,6 +41,11 @@ export interface OpencodeV2ProviderSpec {
   models: OpencodeV2ModelSpec[];
   whitelist?: string[];
   blacklist?: string[];
+  /**
+   * A provider of the engine's own catalog: the config carries only its key,
+   * and the engine supplies the endpoints, adapters and models it knows.
+   */
+  native?: boolean;
 }
 
 export interface ManagedOpencodeV2ServerOptions {
@@ -243,6 +248,10 @@ export function renderOpencodeV2Config(input: {
     && (!input.desktopSession || !/^ipr_/i.test(provider.id)));
   const providerConfig: Record<string, unknown> = {};
   for (const provider of enabledProviders) {
+    if (provider.native) {
+      providerConfig[provider.id] = { settings: { apiKey: provider.apiKey } };
+      continue;
+    }
     const providerPackage = provider.package?.replace(/^@opencode-ai\/ai\//, "@opencode/ai/") ?? "@opencode/ai/providers/openai-compatible";
     const models: Record<string, unknown> = {};
     for (const model of provider.models) {
