@@ -49,8 +49,18 @@ test("a member recovers a helper's unanswered question after losing its live not
     await user.reload();
     await user.see({ text: world.child.question }, { timeoutMs: 60_000 });
     await user.click({ role: "button", label: /^Child checklist/ });
-    await user.see({ text: /User has answered your questions:.*="Child checklist"/ }, { timeoutMs: 90_000 });
+    await probe.eventually(pending, {
+      within: 60_000, label: "only the helper's request is settled",
+      until: items => items.length === 1 && items[0]?.id === unrelated[0]?.id,
+    });
     expect(await pending()).toEqual(unrelated);
+    await user.notSee({ text: world.unrelated.question });
+    // The completed task is a doorway into the helper's chat, not an inline
+    // copy of its answer. Read the answer through the helper's own disclosure.
+    await user.click({ role: "button", label: "Choose delegated task format. Open sub-agent chat" });
+    await user.see({ role: "button", label: "Task format Answered" }, { timeoutMs: 90_000 });
+    await user.click({ role: "button", label: "Task format Answered" });
+    await user.see({ text: /User has answered your questions:.*="Child checklist"/ });
     await user.notSee({ text: world.unrelated.question });
     await user.screenshot();
   });

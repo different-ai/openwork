@@ -1,9 +1,9 @@
 import { addInitScript, browserScript } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
-import { delegatedQuestionHandoffOn } from "./chat.ts";
+import { delegatedQuestionHandoff } from "./chat.ts";
 
 export async function childDecisionsWeb(seed: Seed) {
-  const world = await delegatedQuestionHandoffOn(seed, "web");
+  const world = await delegatedQuestionHandoff(seed);
   // Inject a transport fault before the next page load. The engine still owns
   // real pending forms; only their live notification is lost. Snapshot reads,
   // tool progress, session ownership and answers pass through unchanged.
