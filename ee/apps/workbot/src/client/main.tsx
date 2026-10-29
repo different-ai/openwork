@@ -108,8 +108,37 @@ function App() {
   return null
 }
 
+/**
+ * index.html draws the header and a message box before this script loads. Once the app draws, the words typed there
+ * move to the app's own message box, with the caret where it was, and the boot page goes.
+ */
+function handOffBoot(root: HTMLElement) {
+  const boot = document.getElementById("workbot-boot")
+  if (!boot) return
+  const observer = new MutationObserver(() => {
+    if (!root.firstElementChild) return
+    observer.disconnect()
+    const typed = boot.querySelector("textarea")
+    const box = Array.from(root.querySelectorAll<HTMLTextAreaElement>("[data-workbot-composer] textarea")).find(node => node.offsetParent !== null && !node.disabled)
+    if (typed && box) {
+      if (typed.value && !box.value) {
+        // Through the element's own setter and an input event, so React's onChange sees it as typing.
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(box, typed.value)
+        box.dispatchEvent(new Event("input", { bubbles: true }))
+      }
+      if (document.activeElement === typed) {
+        box.focus()
+        box.setSelectionRange(typed.selectionStart, typed.selectionEnd)
+      }
+    }
+    boot.remove()
+  })
+  observer.observe(root, { childList: true, subtree: true })
+}
+
 const root = document.getElementById("root")
 if (root) {
+  handOffBoot(root)
   createRoot(root).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>

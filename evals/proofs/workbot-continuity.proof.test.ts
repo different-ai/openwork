@@ -4,6 +4,28 @@ import { workbotContinuity } from "../worlds/workbot-continuity.ts";
 
 const test = spec.world(workbotContinuity, { timeout: 120_000, needs: { placement: "local" }, resources: { surfaces: [], services: [] } });
 
+test("a member can write to Workbot before the conversation has loaded", async ({ world, user, probe, step, evidence }) => {
+  await user.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
+  await step("before: the conversation read is still on its way, and the page already has its message box", async () => {
+    world.holdThread();
+    await user.navigate(`${world.url}?assistant=off`);
+    await probe.eventually(() => world.pendingThreads(), { within: 5000, label: "the conversation read is held", until: count => count > 0 });
+    await user.see({ role: "textbox", label: "Message Workbot" });
+    await user.see({ label: "Loading conversation" });
+    await user.type({ role: "textbox", label: "Message Workbot" }, "Started before it loaded");
+    evidence.recordAssertionEvidence("The message box works while the conversation loads", "The thread read is held; the header, a placeholder and an editable message box are on screen", world.pendingThreads() > 0 && world.attempts().length === 0);
+    await user.screenshot();
+  });
+  await step("after: the conversation fills in around the words already typed", async () => {
+    world.releaseThread();
+    await user.see({ text: "Use Monday" });
+    await user.notSee({ label: "Loading conversation" });
+    await user.see({ role: "textbox", label: "Message Workbot" }, { value: "Started before it loaded" });
+    evidence.recordAssertionEvidence("Loading never replaces the draft", "The earlier messages arrive and the unsent words stay in the message box", world.attempts().length === 0);
+    await user.screenshot();
+  });
+});
+
 test("a member keeps separate chat drafts and one draft across Home and Documents", async ({ world, user, probe, step, evidence }) => {
   await user.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
   await step("the member leaves a question unsent in a side chat", async () => {

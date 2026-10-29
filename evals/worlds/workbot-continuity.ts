@@ -18,6 +18,10 @@ export async function workbotContinuity(_seed: Seed, { place }: { place: Place }
   const requests: number[] = [];
   const historyPages: Array<{ records: number; messages: number }> = [];
   let uploadCount = 0;
+  // Holds conversation reads, so a check can look at the page before its first read answers.
+  let holdThread = false;
+  const releaseThreads: (() => void)[] = [];
+  const releaseThread = () => { holdThread = false; for (const resolve of releaseThreads.splice(0)) resolve(); };
   const turn = (id: string, text: string, index: number) => ({ id, text, sentAt: 1_790_000_000_000 + index * 1000, finishedAt: 1_790_000_000_100 + index * 1000, status: "done", attachments: [], outputs: [], parts: [{ kind: "text", text: `Reply ${index + 1}` }], modelSteps: 1, error: null });
   try {
     const fixtureDir = await mkdtemp(join(tmpdir(), "workbot-continuity-"));
@@ -49,6 +53,7 @@ export async function workbotContinuity(_seed: Seed, { place }: { place: Place }
           const history = referring.searchParams.get("history") === "long";
           if (url.pathname === "/v1/workbot/me") return json({ name: "Alex", email: "alex@example.test", userId: "user_example", organizationId: "org_example", organizationName: "Example", enabled: true, calendar: true, documents: true, documentEditing: true, nativeDictation: referring.searchParams.get("dictation") === "on", workspaceAssistant: referring.searchParams.get("assistant") !== "off", canSchedule: false, sideChats: true, denUrl: "https://workspace.example.test" });
           if (url.pathname === "/v1/workbot") {
+            if (holdThread) await new Promise<void>(resolve => releaseThreads.push(resolve));
             const count = Math.min(200, Number(url.searchParams.get("turns") ?? 30));
             requests.push(count);
             const prior = Array.from({ length: history ? 230 : 2 }, (_, index) => turn(`message${String(index).padStart(4, "0")}`, index === 0 ? "Use Monday" : `Earlier question ${index + 1}`, index));
@@ -96,10 +101,11 @@ export async function workbotContinuity(_seed: Seed, { place }: { place: Place }
       } }],
     });
     resources.defer(() => vite.close());
+    resources.defer(releaseThread);
     await vite.listen();
     const url = vite.resolvedUrls?.local[0];
     if (!url) throw new Error("Workbot fixture did not start");
     const web = resources.use(await chrome({ host: place.host(), name: "workbot-continuity", startUrl: `${url}?chat=sidechat000000001`, headless: true }));
-    return { web, url, notesPath, attempts: () => [...attempts], uploads: () => uploadCount, windows: () => [...requests], historyPages: () => [...historyPages], async [Symbol.asyncDispose]() { await resources.disposeAsync(); } };
+    return { web, url, notesPath, attempts: () => [...attempts], uploads: () => uploadCount, windows: () => [...requests], historyPages: () => [...historyPages], holdThread: () => { holdThread = true; }, pendingThreads: () => releaseThreads.length, releaseThread, async [Symbol.asyncDispose]() { await resources.disposeAsync(); } };
   } catch (error) { await resources.disposeAsync(); throw error; }
 }
