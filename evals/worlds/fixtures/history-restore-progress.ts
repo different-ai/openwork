@@ -1,6 +1,6 @@
 // Bun fixture builder/counter for the real migration-progress desktop proof.
 // All history is synthetic and all database paths are supplied by the testkit.
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, readlink, realpath, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { join } from "node:path";
@@ -35,13 +35,35 @@ if (command === "count") {
     } finally { db.close(); }
   };
   const owners = async () => {
-    const { stdout } = await exec("/usr/sbin/lsof", ["-t", converted]).catch(() => ({ stdout: "" }));
     const pids: number[] = [];
-    for (const value of new Set(stdout.trim().split(/\s+/))) {
-      const pid = Number(value);
+    if (process.platform === "darwin") {
+      const { stdout } = await exec("/usr/sbin/lsof", ["-t", converted]).catch(() => ({ stdout: "" }));
+      for (const value of new Set(stdout.trim().split(/\s+/))) {
+        const pid = Number(value);
+        if (!Number.isSafeInteger(pid) || pid <= 0) continue;
+        const { stdout: line } = await exec("/bin/ps", ["-p", String(pid), "-o", "command="]).catch(() => ({ stdout: "" }));
+        if (line.includes(repo) && line.includes("opencode-v2-migration-process.js")) pids.push(pid);
+      }
+      return pids;
+    }
+    if (process.platform !== "linux") throw new Error("The restore-progress fixture needs POSIX process signals");
+    // CI's Linux image has procfs, but need not have lsof. Read commands only
+    // (never process environments), then inspect FD links ONLY for this
+    // checkout's migration-worker candidates. Both gates must match our exact
+    // disposable database before a process can be signalled.
+    const expected = await realpath(converted);
+    const { stdout } = await exec("ps", ["-eo", "pid=,args="]);
+    for (const line of stdout.split("\n")) {
+      const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+      if (!match || !match[2].includes(repo) || !match[2].includes("opencode-v2-migration-process.js")) continue;
+      const pid = Number(match[1]);
       if (!Number.isSafeInteger(pid) || pid <= 0) continue;
-      const { stdout: line } = await exec("/bin/ps", ["-p", String(pid), "-o", "command="]).catch(() => ({ stdout: "" }));
-      if (line.includes(repo) && line.includes("opencode-v2-migration-process.js")) pids.push(pid);
+      const directory = `/proc/${pid}/fd`;
+      const descriptors = await readdir(directory).catch(() => []);
+      for (const descriptor of descriptors) {
+        const target = await readlink(join(directory, descriptor)).catch(() => "");
+        if (target === expected) { pids.push(pid); break; }
+      }
     }
     return pids;
   };

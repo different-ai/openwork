@@ -1,16 +1,14 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { historyRestoreProgress } from "../worlds/history-restore-progress.ts";
 
 const test = spec.world(historyRestoreProgress, {
   timeout: 600_000,
-  needs: { commands: ["bun", "pnpm"], platform: "darwin", placement: "local" },
+  needs: { commands: ["bun", "pnpm"], placement: "local" },
   resources: { surfaces: ["desktop"], services: [], nativeReason: "Capture the actual isolated Electron migration dialog while its real worker restores native-converted synthetic history." },
 });
 
-test("the migration dialog reports real restoring progress instead of an indeterminate chat count", async ({ world, user, probe, step, evidence }) => {
+test("the migration dialog reports real restoring progress instead of an indeterminate chat count", async ({ world, user, probe, step }) => {
   await user.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
   await user.reload();
   await step("open the actual running migration through its progress control", async () => {
@@ -60,9 +58,7 @@ test("the migration dialog reports real restoring progress instead of an indeter
       within: 5_000, label: "one settled, unclipped migration dialog", until: value => value.healthy,
     });
     expect(healthy.healthy).toBe(true);
-    evidence.recordAssertionEvidence("The real worker and the dialog agree on the restoration phase", `phase=${String(status?.phase)}; committed messages=${counters.done}/${counters.total}; label=${label}`, true);
     const shot = await user.screenshot();
-    const output = process.env.OPENWORK_HISTORY_SCREENSHOT_OUTPUT;
-    if (output) { await mkdir(dirname(output), { recursive: true }); await writeFile(output, shot.png); }
+    await world.saveFrame(shot.png);
   });
 });

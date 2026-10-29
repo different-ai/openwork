@@ -50,6 +50,10 @@ export async function historyRestoreProgress(seed: Seed) {
   return {
     app,
     legacy: process.env.OPENWORK_HISTORY_SCREENSHOT_VARIANT === "before",
+    async saveFrame(png: Uint8Array) {
+      const output = process.env.OPENWORK_HISTORY_SCREENSHOT_OUTPUT;
+      if (output) { await mkdir(dirname(output), { recursive: true }); await writeFile(output, png); }
+    },
     async advance() {
       await exec("bun", [fixture, root, workspace, binaries.OPENWORK_OPENCODE2_BIN, "advance"], { cwd: repoRoot, timeout: 200_000 });
     },
