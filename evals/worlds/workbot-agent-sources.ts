@@ -5,13 +5,6 @@ import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 import { chatAs } from "./workbot-agent-library.ts";
 import { ENCRYPTION_KEY } from "./workbot-proactive.ts";
 
-const text = (value: string) => ({ content: [{ type: "text" as const, text: value }] });
-const SUPPORT_DESK_TOOLS = [
-  { name: "list_tickets", description: "List open tickets", inputSchema: { type: "object", properties: {} }, annotations: { readOnlyHint: true, destructiveHint: false }, result: text("TICKET-7 is waiting on you") },
-  { name: "get_ticket", description: "Read one ticket", inputSchema: { type: "object", properties: {} }, result: text("TICKET-7") },
-  { name: "close_ticket", description: "Close a ticket", inputSchema: { type: "object", properties: {} }, annotations: { readOnlyHint: false, destructiveHint: true }, result: text("closed") },
-];
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -21,9 +14,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * connector the member hasn't signed in to, and three shared connections everyone can use without signing in. They
  * are created against a local MCP fixture, then pointed at Granola's, Linear's and Notion's MCP addresses: agents only
  * read services whose read tools are reviewed, recognised by that address. A fourth, "Support desk", stays on the
- * fixture: a service without reviewed reads, which agents only read through the tools an admin approves. Nothing
- * contacts the reviewed services and no turn runs during the proof; "chat" is the Connect call Workbot makes for the
- * member.
+ * fixture: a service without reviewed reads, which can't be a source at all. Nothing contacts the reviewed services
+ * and no turn runs during the proof; "chat" is the Connect call Workbot makes for the member.
  */
 export async function workbotAgentSourcesWorld(seed: Seed) {
   const stack = new AsyncDisposableStack();
@@ -35,7 +27,7 @@ export async function workbotAgentSourcesWorld(seed: Seed) {
         admin: { name: "Workspace Owner" },
         members: { member: { name: "Workspace Member" } },
       },
-      mocks: { tools: seed.mock({ isolatedProcessEnv: true, allowUnauthenticatedMcp: true, tools: SUPPORT_DESK_TOOLS }) },
+      mocks: { tools: seed.mock({ isolatedProcessEnv: true, allowUnauthenticatedMcp: true }) },
       env: {
         DEN_WORKBOT_URL: "http://localhost:3020",
         DEN_HEADLESS_RUNNER_URL: runner.url,

@@ -5,7 +5,7 @@ import { DEFAULT_AGENT_TEMPLATE, DEFAULT_WORKBOT_PROACTIVE_SETTINGS, type AgentR
 import { WorkbotProactivePanel } from "./workbot-proactive-section";
 import { previewTime } from "./workbot-proactive-preview";
 import { WorkbotProactiveHealthTable } from "./workbot-proactive-health";
-import { addSourceChange, addableTo, removeSourceChange, SourceToolPicker, WorkbotProactiveSources } from "./workbot-proactive-sources";
+import { addSourceChange, addableTo, removeSourceChange, WorkbotProactiveSources } from "./workbot-proactive-sources";
 
 const ready: WorkbotProactiveView = {
   settings: { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS, enabled: true },
@@ -21,11 +21,10 @@ const ready: WorkbotProactiveView = {
       { id: "emc_tracker", name: "Issue tracker", url: "https://mcp.linear.app/mcp" },
     ],
     all: [
-      { id: "google-workspace", name: "Google Workspace", url: "https://google.com", native: true, reviewed: true, slots: ["calendar", "email"] },
-      { id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp", native: false, reviewed: true, slots: ["calendar", "email", "chat", "other"] },
-      { id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp", native: false, reviewed: true, slots: ["calendar", "email", "chat", "other"] },
-      { id: "emc_tracker", name: "Issue tracker", url: "https://mcp.linear.app/mcp", native: false, reviewed: true, slots: ["calendar", "email", "chat", "other"] },
-      { id: "emc_crm", name: "Acme CRM", url: "https://mcp.crm.example/mcp", native: false, reviewed: false, slots: ["calendar", "email", "chat", "other"] },
+      { id: "google-workspace", name: "Google Workspace", url: "https://google.com", native: true, slots: ["calendar", "email"] },
+      { id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp", native: false, slots: ["calendar", "email", "chat", "other"] },
+      { id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp", native: false, slots: ["calendar", "email", "chat", "other"] },
+      { id: "emc_tracker", name: "Issue tracker", url: "https://mcp.linear.app/mcp", native: false, slots: ["calendar", "email", "chat", "other"] },
     ],
   },
 };
@@ -108,8 +107,8 @@ test("the health table shows checks, the share that stayed quiet, messages and m
   assert.match(view, /Waiting on you 0 — 0 0 of 12/);
 });
 
-function sources(view: WorkbotProactiveView = ready, canManage = true, picking: Parameters<typeof WorkbotProactiveSources>[0]["initialPicking"] = null) {
-  return renderToStaticMarkup(<WorkbotProactiveSources view={view} canManage={canManage} saving={false} onChange={() => undefined} initialPicking={picking} />);
+function sources(view: WorkbotProactiveView = ready, canManage = true) {
+  return renderToStaticMarkup(<WorkbotProactiveSources view={view} canManage={canManage} saving={false} onChange={() => undefined} />);
 }
 
 function row(html: string, testId: string) {
@@ -120,7 +119,6 @@ function withSources(view: WorkbotProactiveView, change: Partial<WorkbotProactiv
   return { ...view, settings: { ...view.settings, sources: { ...view.settings.sources, ...change } } };
 }
 
-const crm = ready.sourceConnections?.all.find((option) => option.id === "emc_crm");
 const legacy = { id: "google-workspace", name: "Google Workspace", url: "https://google.com" };
 const personal = { id: "gws_personal", name: "Google Workspace - Personal", url: "https://google.com" };
 
@@ -142,8 +140,8 @@ test("what agents read: a legacy and a newer Google Workspace are both listed an
   const two: WorkbotProactiveView = { ...ready, sourceConnections: {
     calendar: [legacy, personal], email: [legacy, personal], chat: [], other: [],
     all: [
-      { ...legacy, native: true, reviewed: true, slots: ["calendar", "email"] },
-      { ...personal, native: true, reviewed: true, slots: ["calendar", "email"] },
+      { ...legacy, native: true, slots: ["calendar", "email"] },
+      { ...personal, native: true, slots: ["calendar", "email"] },
     ],
   } };
   const html = sources(two);
@@ -155,45 +153,13 @@ test("what agents read: a legacy and a newer Google Workspace are both listed an
   assert.match(text(sources({ ...two, sourceConnections: two.sourceConnections && { ...two.sourceConnections, calendar: [], email: [], chat: [] } })), /Team chat On for everyone No sources/);
 });
 
-test("what agents read: Add source lists every connection not already there; one with reviewed reads is added at once", () => {
-  assert.deepEqual(addableTo(ready, "calendar").map((option) => option.id), ["emc_slack", "emc_notes", "emc_tracker", "emc_crm"]);
-  assert.deepEqual(addableTo(ready, "chat").map((option) => option.id), ["emc_notes", "emc_tracker", "emc_crm"], "Google can't serve team chat");
-  assert.deepEqual(addableTo(ready, "other").map((option) => option.id), ["emc_slack", "emc_crm"]);
+test("what agents read: Add source lists every connection not already there, and adds it at once", () => {
+  assert.deepEqual(addableTo(ready, "calendar").map((option) => option.id), ["emc_slack", "emc_notes", "emc_tracker"]);
+  assert.deepEqual(addableTo(ready, "chat").map((option) => option.id), ["emc_notes", "emc_tracker"], "Google can't serve team chat");
+  assert.deepEqual(addableTo(ready, "other").map((option) => option.id), ["emc_slack"]);
   assert.deepEqual(addSourceChange(ready, "email", "emc_notes"), { coreConnections: { email: ["google-workspace", "emc_notes"] } });
-  assert.deepEqual(addSourceChange(ready, "other", "emc_crm", { tools: ["search_contacts"], versions: { search_contacts: "sha256:seen" } }), { otherConnections: ["emc_notes", "emc_tracker", "emc_crm"], readTools: { emc_crm: ["search_contacts"] }, readToolVersions: { emc_crm: { search_contacts: "sha256:seen" } } }, "approves the tools as the admin saw them");
+  assert.match(row(sources(withSources(ready, { coreConnections: { calendar: ["google-workspace", "emc_notes"] } })), "workbot-source-calendar-emc_notes"), /Meeting notes Read on checks; no early meeting alerts Remove/, "only Google's calendar wakes the agent early");
   assert.deepEqual(removeSourceChange(ready, "other", "emc_notes"), { otherConnections: ["emc_tracker"], connections: { emc_notes: null } });
-});
-
-test("what agents read: an MCP without reviewed reads needs its tools ticked; nothing starts ticked and writes can't be", () => {
-  assert.ok(crm);
-  const adding = sources(ready, true, { slot: "email", option: crm, adding: true });
-  assert.match(row(adding, "workbot-source-email-adding"), /Acme CRM Not added yet/);
-  assert.match(adding, /data-testid="workbot-source-tool-picker"/);
-  const tools = [
-    { name: "search_contacts", description: "Find contacts", readOnlyHint: true, blocked: false, changed: false, version: "sha256:a" },
-    { name: "list_deals", readOnlyHint: true, blocked: false, changed: true, version: "sha256:b" },
-    { name: "lookup_owner", blocked: true, changed: false, version: "sha256:c" },
-    { name: "delete_contact", readOnlyHint: true, blocked: true, changed: false, version: "sha256:d" },
-  ];
-  const picker = renderToStaticMarkup(<SourceToolPicker name="Acme CRM" tools={tools} error={null} initial={[]} saving={false} onSave={() => undefined} onCancel={() => undefined} />);
-  assert.match(text(picker), /Tools agents may use in Acme CRM/);
-  assert.match(text(picker), /search_contacts Marked read-only by the provider/);
-  assert.equal((picker.match(/aria-pressed="true"/g) ?? []).length, 0, "nothing ticked by default");
-  assert.match(/<button[^>]*data-testid="workbot-source-tool-delete_contact"[^>]*>/.exec(picker)?.[0] ?? "", /disabled=""/, "a write-named tool is listed but can't be ticked");
-  assert.match(text(picker), /delete_contact Can change things/);
-  assert.match(text(picker), /lookup_owner Not marked read-only by the provider/, "only tools the provider marks read-only can be approved");
-  assert.match(/<button[^>]*data-testid="workbot-source-tool-lookup_owner"[^>]*>/.exec(picker)?.[0] ?? "", /disabled=""/);
-  assert.match(text(picker), /list_deals Changed by the provider\. Approve again/, "an approval the provider changed since says so");
-  assert.match(/<button[^>]*>(?:(?!<\/button>).)*Approve tools/.exec(picker)?.[0] ?? "", /disabled=""/, "saving needs at least one tool");
-  const edit = renderToStaticMarkup(<SourceToolPicker name="Acme CRM" tools={tools} error={null} initial={["list_deals"]} saving={false} onSave={() => undefined} onCancel={() => undefined} />);
-  assert.match(text(edit), /Approve 1 tool/);
-  const loading = renderToStaticMarkup(<SourceToolPicker name="Acme CRM" tools={null} error={null} initial={[]} saving={false} onSave={() => undefined} onCancel={() => undefined} />);
-  assert.match(loading, /aria-busy="true"/);
-
-  const added = sources(withSources(ready, { coreConnections: { calendar: ["google-workspace", "emc_crm"] }, otherConnections: ["emc_crm"], readTools: { emc_crm: ["search_contacts", "list_deals", "get_deal"] } }));
-  assert.match(row(added, "workbot-source-calendar-emc_crm"), /Acme CRM Read on checks; no early meeting alerts Approved by your admin: 3 tools Remove/);
-  assert.match(row(added, "workbot-source-other-emc_crm"), /Acme CRM Approved by your admin: 3 tools Members choose Remove/);
-  assert.doesNotMatch(row(added, "workbot-source-calendar-google-workspace"), /early meeting|Approved/, "Google's calendar wakes the agent early; reviewed reads need no approval");
 });
 
 test("what agents read: locked for people who can't manage it, and without View connections", () => {

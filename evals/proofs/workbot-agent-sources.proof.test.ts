@@ -6,7 +6,7 @@ import { workbotAgentSourcesWorld } from "../worlds/workbot-agent-sources.ts";
 const test = spec.world(workbotAgentSourcesWorld, { resources: { surfaces: ["web"], services: ["den", "mock"] }, needs: { placement: "local" }, timeout: 600_000 });
 
 // DESIGN S2 (one row per source: label left, state and its one control right), S7 (Add source is a Base UI popover),
-// P1 (state, not explanation: "Approved by your admin: 1 tool"), P4/C5 (a source the admin decided is
+// P1 (state, not explanation: "No sources", "Read on checks; no early meeting alerts"), P4/C5 (a source the admin decided is
 // shown locked with the reason and who changes it), P8 (chat's change says how to undo it), C1/C7 (verb-first actions:
 // "Connect Gmail", "Edit"; sentence case). Chat is the Connect call Workbot makes for the member.
 test("an admin chooses what agents read; a member turns sources on and steers them in chat or on the page, never past the admin", async ({ world, user, probe, step, evidence }) => {
@@ -40,25 +40,22 @@ test("an admin chooses what agents read; a member turns sources on and steers th
     await owner.screenshot();
   });
 
-  await step("the owner adds Support desk to Email: it needs its tools approved, nothing is ticked, and a tool that changes things can't be", async () => {
+  await step("the owner adds Granola to Email; Support desk, a service without reviewed reads, isn't offered", async () => {
     await owner.click({ role: "button", label: "Add source to Email" });
-    await owner.click({ role: "menuitem", label: "Support desk" });
-    await owner.see({ text: "Tools agents may use in Support desk" }, { timeoutMs: 30_000 });
-    await owner.see({ text: "Can change things" });
+    await owner.see({ role: "menuitem", label: "Granola" }, { timeoutMs: 30_000 });
+    await owner.notSee({ role: "menuitem", label: "Support desk" });
     await owner.screenshot();
-    await owner.see({ text: "Not marked read-only by the provider" });
-    await owner.click({ testId: "workbot-source-tool-list_tickets" });
-    await owner.click({ role: "button", label: "Approve 1 tool" });
+    await owner.click({ role: "menuitem", label: "Granola" });
     const policy = await ownerProbe.eventually(() => world.policy(), {
       within: 30_000,
-      label: "Support desk reads email through its approved tool",
-      until: (value) => JSON.stringify(value).includes(`"readTools":{"${desk.id}":["list_tickets"]}`),
+      label: "Email reads through Granola too",
+      until: (value) => agentSourcesPolicySchema.safeParse(value).data?.coreConnections?.email?.includes(notes.id) === true,
     });
     const saved = agentSourcesPolicySchema.parse(policy);
-    const reads = saved.coreConnections?.email?.includes(desk.id) === true && saved.readTools?.[desk.id]?.join(",") === "list_tickets";
-    evidence.recordAssertionEvidence("Saved on the server", `email reads through: ${saved.coreConnections?.email?.join(", ")}; approved for Support desk: ${saved.readTools?.[desk.id]?.join(", ")}`, reads);
+    const reads = saved.coreConnections?.email?.includes(notes.id) === true && saved.coreConnections.email.includes(desk.id) === false;
+    evidence.recordAssertionEvidence("Saved on the server", `email reads through: ${saved.coreConnections?.email?.join(", ")}`, reads);
     expect(reads).toBe(true);
-    await owner.see({ text: "Approved by your admin: 1 tool" });
+    await owner.see({ role: "button", label: "Remove Granola from Email" });
     await owner.screenshot();
   });
 

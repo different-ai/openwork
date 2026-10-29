@@ -1,5 +1,4 @@
 import { AGENT_CORE_SOURCES, type AgentCoreSource } from "@openwork/types/den/workbot-proactive"
-import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
 
 /**
  * What a member's background agent ("Your agent") may read through Connect. Its turn runs with a read-scoped token
@@ -8,13 +7,8 @@ import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
  *
  * - A plain `mcp:read` token never calls a connection's own tools: provider hints can't prove a tool won't change
  *   anything. An agent token may, but only on its connections and only tools we reviewed as reads, per service
- *   (`REVIEWED_READ_TOOLS`), or, for a service without a reviewed list, the tools an admin approved for that
- *   connection (`readTools` in the organization's policy, read when the call is made; agent-approved-tools.ts). An
- *   approval is pinned to the tool's exact definition when the admin saves it (`readToolPins`): if the provider changes
- *   the tool (its description, inputs or hints) while keeping its name, the approval no longer matches and the agent
- *   can't call it until an admin approves it again. Only tools the provider marks read-only (and not destructive) can
- *   be approved or called this way. A tool whose name says it writes is never callable, approved or not; provider
- *   hints alone never make a tool callable.
+ *   (`REVIEWED_READ_TOOLS`). A service without a reviewed list can't be a source at all; its provider's hints and tool
+ *   names never make a tool callable.
  * - Native Google Workspace and Microsoft 365 reads are limited to the core sources that are on: calendar events,
  *   mail, and Teams chats. Nothing else (files, drafts, sites) and never a non-GET.
  *
@@ -34,12 +28,6 @@ export type AgentReadAllowlist = {
   connectionIds: ReadonlySet<string>
   /** `<kind>:<connectionId>`: which core source each native connection may be read for. */
   pairs: ReadonlySet<string>
-  /**
-   * Tools an admin approved per connection without a reviewed read list, each with the definition it was approved as
-   * (`agentToolDigest`). Never carried on the token: added when the call is made from the organization's current
-   * policy, so a removed approval takes effect at once.
-   */
-  approvedTools?: ReadonlyMap<string, ReadonlyMap<string, string>>
 }
 
 function isCoreSource(value: string): value is AgentCoreSource {
@@ -133,55 +121,17 @@ function hostOf(url: string): string | null {
   }
 }
 
-/** Whether a connection's service has a reviewed list of read tools (no admin approval needed). */
+/** Whether agents can read through a connection at all: its service has a reviewed list of read tools. */
 export function agentReadableConnection(connectionUrl: string): boolean {
   const host = hostOf(connectionUrl)
   return host !== null && REVIEWED_READ_TOOLS[host] !== undefined
 }
 
-/** A tool whose name says it writes (send, create, delete, update…): never callable by an agent, never approvable. */
-export function agentToolBlocked(toolName: string): boolean {
-  return WRITE_WORDS.test(toolName)
-}
-
-/** An MCP tool as its provider lists it: what an approval is pinned to. */
-export type AgentToolDefinition = {
-  name: string
-  description?: string
-  inputSchema?: Record<string, unknown>
-  annotations?: { title?: string; readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean }
-}
-
-/** The provider marks the tool read-only and not destructive. Required, never sufficient, for an approved tool. */
-export function agentToolMarkedReadOnly(tool: Pick<AgentToolDefinition, "annotations">): boolean {
-  return tool.annotations?.readOnlyHint === true && tool.annotations.destructiveHint !== true
-}
-
-/**
- * The exact definition an admin approved: name, description, input schema and hints. A provider that changes any of
- * them under the same name no longer matches, so the approval stops applying.
- */
-export function agentToolDigest(tool: AgentToolDefinition): string {
-  const annotations = tool.annotations
-    ? Object.fromEntries((["title", "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"] as const)
-      .flatMap((key) => (tool.annotations?.[key] === undefined ? [] : [[key, tool.annotations[key]]])))
-    : null
-  return externalMcpToolSchemaDigest({ name: tool.name, description: tool.description ?? null, inputSchema: tool.inputSchema ?? null, annotations })
-}
-
-/**
- * Whether a connection's tool is a read the agent may call: one we reviewed for its service, or, for a service
- * without a reviewed list, one the admin approved whose live definition is still the one approved and is still marked
- * read-only. Provider hints alone are never enough.
- */
-export function agentReadTool(connectionUrl: string, tool: AgentToolDefinition, approved?: ReadonlyMap<string, string>): boolean {
-  if (agentToolBlocked(tool.name)) return false
+/** Whether a connection's tool is one we reviewed as a read. Provider hints are never enough. */
+export function agentReadTool(connectionUrl: string, tool: { name: string }): boolean {
+  if (WRITE_WORDS.test(tool.name)) return false
   const host = hostOf(connectionUrl)
-  if (host === null) return false
-  const reviewed = REVIEWED_READ_TOOLS[host]
-  if (reviewed) return reviewed.has(tool.name)
-  const pinned = approved?.get(tool.name)
-  return pinned !== undefined && agentToolMarkedReadOnly(tool) && pinned === agentToolDigest(tool)
+  return host !== null && REVIEWED_READ_TOOLS[host]?.has(tool.name) === true
 }
 
 /**
@@ -201,13 +151,13 @@ export function serviceLinkDomains(connectionUrl: string): readonly string[] {
   return host ? SERVICE_LINK_DOMAINS[host] ?? [] : []
 }
 
-/** An external tool the agent may call: one of its connections, and a reviewed or admin-approved read. */
+/** An external tool the agent may call: one of its connections, and a tool that only reads. */
 export function agentMayUseExternalTool(
-  allowlist: Pick<AgentReadAllowlist, "connectionIds" | "approvedTools">,
+  allowlist: AgentReadAllowlist,
   connection: { id: string; url: string },
-  tool: AgentToolDefinition,
+  tool: { name: string },
 ): boolean {
-  return allowlist.connectionIds.has(connection.id) && agentReadTool(connection.url, tool, allowlist.approvedTools?.get(connection.id))
+  return allowlist.connectionIds.has(connection.id) && agentReadTool(connection.url, tool)
 }
 
 export const AGENT_SOURCE_BLOCKED_MESSAGE = "Your agent may only read the sources its member turned on, and only tools that read."
