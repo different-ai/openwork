@@ -63,7 +63,7 @@ function RouteOption({ group, value, checked, onSelect, title, description, dete
         />
         <span className="flex min-w-0 flex-col gap-0.5">
           <span className="flex flex-wrap items-center gap-2">
-            <span id={`${id}-title`} className={`text-[14px] font-medium leading-5 ${locked ? "text-gray-400" : "text-gray-900"}`}>{title}</span>
+            <span id={`${id}-title`} className={`text-[14px] font-medium leading-5 ${locked ? "text-gray-500" : "text-gray-900"}`}>{title}</span>
             {detecting || detected ? <DetectedBadge loading={detecting} /> : null}
           </span>
           {locked ? (
@@ -303,7 +303,7 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
                       type="button"
                       onClick={() => setHeaders((rows) => rows.filter((entry) => entry.id !== row.id))}
                       aria-label={`Remove header ${index + 1}`}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900/5"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900/5"
                     >
                       <X className="h-4 w-4" strokeWidth={1.5} aria-hidden />
                     </button>
