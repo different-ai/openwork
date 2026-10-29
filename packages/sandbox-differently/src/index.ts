@@ -323,11 +323,17 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
           }
         },
       },
-      // Only where every pool can pause: hosts check for this block before pausing.
+      // Left out where the configured pools can't pause: hosts check for this block before pausing.
       ...(options.lifecycle?.pause === false ? {} : {
         pause: async (h: SandboxHandle, opts: { timeoutMs: number }) => {
           const sandboxId = identity(h.ref)
-          if (lifecycle && !lifecycle.pause) unsupported("pausing on these pools")
+          // Discovered after hosts read the block (wrappers copy it): pools that can only stop do that, keeping the disk.
+          if (lifecycle && !lifecycle.pause) {
+            if (!lifecycle.stop) unsupported("pausing or stopping on these pools")
+            await call("POST", path(sandboxId, "/stop"), { timeoutMs: opts.timeoutMs })
+            await settle(sandboxId, ["stopped"], opts.timeoutMs)
+            return
+          }
           await call("POST", path(sandboxId, "/pause"), { timeoutMs: opts.timeoutMs })
           await settle(sandboxId, ["paused"], opts.timeoutMs)
         },

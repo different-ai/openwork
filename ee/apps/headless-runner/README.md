@@ -460,8 +460,9 @@ which side made it (the `computer_sides` table):
 
 Gateway computers share the runner's scope, pause, keep-days, persistence and
 desktop settings, and ask for Daytona's size (2 CPUs, 4 GiB, 8 GiB disk). They
-are paused when idle only where every enabled gateway pool can pause or stop,
-which the adapter reads from Differently as it creates them. Elsewhere (for
+are paused when idle only where every enabled gateway pool can pause or stop
+(pools that can only stop are stopped, keeping the disk), which the adapter
+reads from Differently as it creates them. Elsewhere (for
 example OpenSandbox on Kubernetes without a snapshot registry) an idle computer
 runs until Differently's TTL removes it. With only a gateway configured,
 sessions without the setting get no computer. The desktop viewer needs a gateway pool that publishes port
