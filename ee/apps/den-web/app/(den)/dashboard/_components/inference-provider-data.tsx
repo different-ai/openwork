@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GatewayAccessGrantWrite, GatewayCredentialSetWrite, GatewayModelGroupWrite, GatewayProviderTestResult } from "@openwork/types/den/gateway";
 import { auditOperationHeaders, type AuditOperationContext } from "@openwork/types/den/audit";
+import { gatewayProviderHasUsageLimitsSchema, type GatewayProviderRemovalLimitChoice, type GatewayProviderRemovalUsageLimit } from "@openwork/types/den/gateway-usage-limits";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import {
@@ -175,12 +176,26 @@ export async function deleteGatewayResource(providerId: string, resource: Gatewa
   if (!response.ok) throw getRequestError(payload, response, `Could not delete ${resource} (${response.status}).`);
 }
 
-export async function deleteInferenceProvider(inferenceProviderId: string, auditContext?: AuditOperationContext) {
+/** The provider still has usage limits; the person chooses where they go before it is removed. */
+export class ProviderHasUsageLimitsError extends Error {
+  constructor(message: string, readonly usageLimits: GatewayProviderRemovalUsageLimit[]) {
+    super(message);
+  }
+}
+
+export async function deleteInferenceProvider(inferenceProviderId: string, auditContext?: AuditOperationContext, usageLimits?: GatewayProviderRemovalLimitChoice) {
+  const query = new URLSearchParams();
+  if (usageLimits) query.set("usageLimits", usageLimits.action);
+  if (usageLimits?.action === "move") query.set("moveUsageLimitsTo", usageLimits.providerId);
   const { response, payload } = await requestJson(
-    `/v1/inference-providers/${encodeURIComponent(inferenceProviderId)}`,
+    `/v1/inference-providers/${encodeURIComponent(inferenceProviderId)}${query.size ? `?${query}` : ""}`,
     { method: "DELETE", headers: auditOperationHeaders(auditContext) },
     12000,
   );
+  if (response.status === 409) {
+    const conflict = gatewayProviderHasUsageLimitsSchema.safeParse(payload);
+    if (conflict.success) throw new ProviderHasUsageLimitsError(conflict.data.message, conflict.data.usageLimits);
+  }
   if (response.status !== 204 && !response.ok) {
     throw getRequestError(payload, response, `Failed to delete the gateway provider (${response.status}).`);
   }
