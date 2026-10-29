@@ -8,6 +8,21 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <!-- Ask who is signed in while the app's script downloads; host.ts uses this answer for its first read. -->
     <script>window.__workbotMe = fetch("/v1/workbot/me", { credentials: "same-origin", headers: { accept: "application/json" } }).catch(function () { return null })</script>
+    <!-- Then read the newest messages for that person, still before the script arrives. The read names them the way
+         host.ts does, so the server refuses it for anyone else; host.ts uses it once, for the same first read
+         (FIRST_TURNS in screen.tsx). -->
+    <script>
+      window.__workbotThread = window.__workbotMe.then(function (response) {
+        if (!response || !response.ok) return null
+        return response.clone().json().then(function (me) {
+          if (!me.enabled || !me.userId || !me.organizationId) return null
+          var chat = me.sideChats ? new URLSearchParams(location.search).get("chat") : null
+          var path = "/v1/workbot?turns=8" + (chat && /^[a-z0-9]{16,40}$/.test(chat) ? "&chat=" + chat : "")
+          var headers = { accept: "application/json", "x-openwork-client-user": me.userId, "x-openwork-client-organization": me.organizationId }
+          return { path: path, userId: me.userId, organizationId: me.organizationId, response: fetch(path, { credentials: "same-origin", headers: headers }) }
+        })
+      }).catch(function () { return null })
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&family=IBM+Plex+Mono:wght@400;500&display=swap" />

@@ -39,8 +39,11 @@ export function signIn() {
   window.location.assign(`/auth/login?return=${encodeURIComponent(back)}`)
 }
 
+/** The conversation read index.html started for the person its early /me answer named. */
+type EarlyThread = { path: string; userId: string; organizationId: string; response: Promise<Response> }
+
 declare global {
-  interface Window { __workbotMe?: Promise<Response | null> }
+  interface Window { __workbotMe?: Promise<Response | null>; __workbotThread?: Promise<EarlyThread | null> }
 }
 
 /** The answer index.html started fetching before this script loaded; given out once, so later reads are fresh. */
@@ -56,6 +59,19 @@ export async function fetchMe(): Promise<Me | null> {
   if (response.status === 401) return null
   if (!response.ok) throw new Error("Workbot couldn't reach OpenWork. Try again in a minute.")
   return meSchema.parse(await response.json())
+}
+
+/**
+ * index.html's conversation read, given out once to the page's first conversation read, and only when it asked for
+ * the same chat for the same person. Any other first read leaves it unused and asks the server itself.
+ */
+async function takeEarlyThread(path: string, me: Me) {
+  const pending = window.__workbotThread
+  if (!pending || !path.startsWith("/v1/workbot?")) return null
+  window.__workbotThread = undefined
+  const early = await pending
+  if (!early || early.path !== path || early.userId !== me.userId || early.organizationId !== me.organizationId) return null
+  return early.response.catch(() => null)
 }
 
 const noApps: Array<{ id: string; name: string }> = []
@@ -80,7 +96,8 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
       const headers = scopedHeaders(init.headers)
       headers.set("Accept", "application/json")
       if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json")
-      const response = await fetch(path, { ...init, headers, credentials: "same-origin", signal: init.signal ?? AbortSignal.timeout(timeoutMs) })
+      const early = (init.method ?? "GET") === "GET" ? await takeEarlyThread(path, me) : null
+      const response = early ?? await fetch(path, { ...init, headers, credentials: "same-origin", signal: init.signal ?? AbortSignal.timeout(timeoutMs) })
       // The parent owns auth recovery, including when Documents is retained
       // behind another workspace page. Never navigate that owner away on 401.
       if (response.status === 401) {

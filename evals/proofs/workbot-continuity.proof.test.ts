@@ -26,6 +26,30 @@ test("a member can write to Workbot before the conversation has loaded", async (
   });
 });
 
+test("a member's newest messages are on their way before the app's script arrives", async ({ world, user, probe, step, evidence }) => {
+  await user.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
+  const before = world.threadReads().length;
+  await step("before: the app's script is still downloading, and the conversation read has already been made for the signed-in member", async () => {
+    world.holdScript();
+    await user.navigate(`${world.url}?assistant=off`);
+    await probe.eventually(() => world.pendingScripts(), { within: 5000, label: "the app's script is held", until: count => count > 0 });
+    const reads = await probe.eventually(() => world.threadReads().slice(before), { within: 5000, label: "the page reads the conversation without the script", until: reads => reads.length > 0 });
+    expect(reads[0]).toEqual({ turns: 8, user: "user_example" });
+    await user.see({ role: "textbox", label: "Message Workbot" });
+    evidence.recordAssertionEvidence("The conversation read starts beside the sign-in check", `With the script held, the page read the newest ${reads[0]?.turns} turns and named ${reads[0]?.user}`, reads[0]?.turns === 8 && reads[0]?.user === "user_example");
+    await user.screenshot();
+  });
+  await step("after: the app shows that read's messages without asking again", async () => {
+    world.releaseScript();
+    await user.see({ text: "Use Monday" });
+    const reads = world.threadReads().slice(before);
+    expect(reads.filter(read => read.turns === 8)).toHaveLength(1);
+    expect(reads.every(read => read.user === "user_example")).toBe(true);
+    evidence.recordAssertionEvidence("The early read is used once", `Conversation reads after opening: ${reads.map(read => read.turns).join(", ")}; every one named the signed-in member`, reads.filter(read => read.turns === 8).length === 1);
+    await user.screenshot();
+  });
+});
+
 test("a member keeps separate chat drafts and one draft across Home and Documents", async ({ world, user, probe, step, evidence }) => {
   await user.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
   await step("the member leaves a question unsent in a side chat", async () => {
