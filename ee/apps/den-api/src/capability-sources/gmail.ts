@@ -6,7 +6,9 @@
 
 import { randomUUID } from "node:crypto"
 
-const HARD_WRAP_MIN_LINE_LENGTH = 50
+const HARD_WRAP_MIN_LINE_LENGTH = 68
+const HARD_WRAP_MAX_LINE_LENGTH = 80
+const HARD_WRAP_MAX_WIDTH_VARIATION = 8
 
 function hasNonAscii(value: string): boolean {
   for (const char of value) {
@@ -79,8 +81,16 @@ function normalizeDraftBody(body: string): string {
       .replace(/\*\*([^*\n]+)\*\*/g, "$1")
       .replace(/__([^_\n]+)__/g, "$1")
       .replace(/`([^`\n]+)`/g, "$1"))
-    const looksHardWrapped = lines.slice(0, -1).every((line) => line.trimEnd().length >= HARD_WRAP_MIN_LINE_LENGTH)
-    return lines.length > 1 && looksHardWrapped ? cleanedLines.map((line) => line.trim()).join(" ") : cleanedLines.join("\n")
+    const wrappedLines = lines.slice(0, -1).map((line) => line.trimEnd())
+    // Require repeated, similarly sized mid-sentence wraps. A pair of long
+    // signature/address lines or complete sentences is not evidence of wrapping.
+    const widths = wrappedLines.map((line) => line.length)
+    const looksHardWrapped = wrappedLines.length >= 2
+      && wrappedLines.every((line) => line.length >= HARD_WRAP_MIN_LINE_LENGTH
+        && line.length <= HARD_WRAP_MAX_LINE_LENGTH && !/[.!?,;:][\"')\]]*$/.test(line))
+      && Math.max(...widths) - Math.min(...widths) <= HARD_WRAP_MAX_WIDTH_VARIATION
+      && lines[lines.length - 1].trimEnd().length <= Math.max(...widths)
+    return looksHardWrapped ? cleanedLines.map((line) => line.trim()).join(" ") : cleanedLines.join("\n")
   })
 }
 
