@@ -315,6 +315,12 @@ export type ExternalMcpPreset = {
   requiresOAuthClient?: boolean;
   defaultOAuthClientId?: string;
   supportedAuthTypes?: ExternalMcpAuthType[];
+  /** The scopes OpenWork asks for when the preset is added; a provider app must allow every one. */
+  defaultOAuthScopes?: string[];
+  /** Extra scopes the provider offers; requested only after an admin explicitly chooses them. */
+  optionalOAuthScopes?: string[];
+  /** Presets that need a pre-registered OAuth app: the exact redirect URL to register in it. */
+  oauthCallbackUrl?: string;
   /** What OpenWork last learned about signing in to this provider. */
   registrationStatus?: McpRegistrationStatus;
 };

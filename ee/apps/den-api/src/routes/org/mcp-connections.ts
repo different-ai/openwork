@@ -116,9 +116,11 @@ import {
   externalMcpCompatibleCallbackUrl,
   externalMcpClientMetadataUrl,
   externalMcpSharedCallbackUrl,
+  externalMcpSharedCallbackUrlIfConfigured,
 } from "../../capability-sources/external-mcp-oauth-contract.js"
 import type { MemberTeamSummary } from "../../orgs.js"
 import {
+  externalMcpPresetForResponse,
   externalMcpPresetListResponseSchema,
   externalMcpPresetResponseSchema,
   externalMcpPresetsForCatalog,
@@ -2693,7 +2695,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Capability Sources"],
       summary: "List predefined External MCP Connection presets",
-      description: "Common third-party MCP servers (Notion, Linear, Stripe, Slack, ...) an admin can add with one click, prefilled with a real name and URL. registrationStatus says what OpenWork last learned about signing in to each provider (for example dynamic_refused: the provider only accepts apps it approved), and is absent until checked.",
+      description: "Common third-party MCP servers (Notion, Linear, Stripe, Slack, ...) an admin can add with one click, prefilled with a real name and URL. Presets that need a pre-registered OAuth app include oauthCallbackUrl, the redirect URL to register in it. registrationStatus says what OpenWork last learned about signing in to each provider (for example dynamic_refused: the provider only accepts apps it approved), and is absent until checked.",
       responses: {
         200: jsonResponse("Presets.", externalMcpPresetListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -2706,11 +2708,12 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         org ? organizationFeatureEnabled(org.organization.id, "expandedMcpPresets", { userId: org.currentMember.userId }) : false,
         mcpRegistrationStatusByPreset(),
       ])
+      const oauthCallbackUrl = externalMcpSharedCallbackUrlIfConfigured()
       return c.json({
-        presets: externalMcpPresetsForCatalog({ expanded }).map((preset) => {
-          const registrationStatus = registration.get(preset.presetId)
-          return registrationStatus && registrationStatus !== "unknown" ? { ...preset, registrationStatus } : preset
-        }),
+        presets: externalMcpPresetsForCatalog({ expanded }).map((preset) => externalMcpPresetForResponse(preset, {
+          registrationStatus: registration.get(preset.presetId),
+          oauthCallbackUrl,
+        })),
       })
     },
   )

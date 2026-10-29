@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { connectorAccountReady } from "./connector-detail";
 import { type ConnectorRoute, routeSignInMethod } from "./connector-route";
-import { type ConnectorSignInMethod, connectorSignInMethod, oauthClientSecretRequired, oauthRequestFields } from "./connector-sign-in-method";
+import { type ConnectorSignInMethod, connectorSignInMethod, oauthClientSecretRequired, oauthRequestFieldsForTarget } from "./connector-sign-in-method";
 import { libraryQueryKeys } from "./library-data";
 import { credentialModeForAuth, personalApiKeyStatus, usesMemberApiKey } from "./member-api-key";
 import { pollMcpAuthorization } from "./mcp-account-authorization-state";
@@ -36,7 +36,11 @@ export type ConnectorTarget = {
   url: string;
   description: string;
   /** The catalog preset's own sign-in requirement, when the target came from the catalog. */
-  preset?: Pick<ExternalMcpPreset, "authType" | "requiresOAuthClient" | "defaultOAuthClientId"> | null;
+  preset?: Pick<ExternalMcpPreset, "authType" | "requiresOAuthClient" | "defaultOAuthClientId">
+    & Partial<Pick<ExternalMcpPreset, "presetId" | "defaultOAuthScopes" | "optionalOAuthScopes" | "oauthCallbackUrl">>
+    | null;
+  /** Scopes the admin explicitly chose (guided Slack setup); they win over the preset's and the server's lists. */
+  requestedScopes?: readonly string[];
 };
 
 const POLL_INTERVAL_MS = 1500;
@@ -165,7 +169,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       ...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
       ...apiKeyAuthSchemeInput(auth.authType, auth.apiKeyAuthScheme ?? DEFAULT_API_KEY_AUTH_SCHEME),
       ...(auth.oauthClient ? { oauthClient: auth.oauthClient } : {}),
-      ...(auth.authType === "oauth" ? oauthRequestFields(discovery) : {}),
+      ...(auth.authType === "oauth" ? oauthRequestFieldsForTarget(discovery, target) : {}),
       ...(auth.manualOAuthEndpoints ? { manualOAuthEndpoints: auth.manualOAuthEndpoints } : {}),
       ...(requestHeaders.length > 0 ? { requestHeaders } : {}),
       access: { orgWide: false, memberIds: [orgContext.currentMember.id], teamIds: [] },
@@ -457,7 +461,9 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     savePerMemberApiKeys,
     saveOAuthApp,
     canSignIn,
+    signedIn,
     signingIn: signIn.kind === "waiting",
+    signInError: signIn.kind === "failed" ? signIn.message : null,
     /** Sign-in failed for a server people sign in to; an admin can try their own OAuth app instead. */
     signInFailed: signIn.kind === "failed" && (method === "sign_in" || connection?.authType === "oauth"),
     startSignIn,
