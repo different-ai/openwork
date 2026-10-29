@@ -1,11 +1,12 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { memberAgentSavedSchema, memberAgentViewSchema } from "@openwork/types/den/workbot-proactive";
+import { agentSourcesPolicySchema, memberAgentSavedSchema, memberAgentViewSchema } from "@openwork/types/den/workbot-proactive";
 import { workbotAgentSourcesWorld } from "../worlds/workbot-agent-sources.ts";
 
 const test = spec.world(workbotAgentSourcesWorld, { resources: { surfaces: ["web"], services: ["den", "mock"] }, needs: { placement: "local" }, timeout: 600_000 });
 
-// DESIGN S2 (one row per source: label left, state and its one control right), P4/C5 (a source the admin decided is
+// DESIGN S2 (one row per source: label left, state and its one control right), S7 (Add source is a Base UI popover),
+// P1 (state, not explanation: "Approved by your admin: 1 tool"), P4/C5 (a source the admin decided is
 // shown locked with the reason and who changes it), P8 (chat's change says how to undo it), C1/C7 (verb-first actions:
 // "Connect Gmail", "Edit"; sentence case). Chat is the Connect call Workbot makes for the member.
 test("an admin chooses what agents read; a member turns sources on and steers them in chat or on the page, never past the admin", async ({ world, user, probe, step, evidence }) => {
@@ -13,11 +14,12 @@ test("an admin chooses what agents read; a member turns sources on and steers th
   const member = user.on(world.member), memberProbe = probe.on(world.member);
   const agent = async () => memberAgentViewSchema.parse((await memberProbe.api(world.den.members.member, "/v1/me/agent")).body);
   const sourceOf = async (id: string) => (await agent()).sources?.find((source) => source.id === id);
-  const { notes, tracker, wiki } = world.connections;
+  const { notes, tracker, wiki, desk } = world.connections;
 
-  await step("before: calendar, email and team chat are on for everyone; every other connection is up to members", async () => {
+  await step("before: calendar, email and team chat are on for everyone; Other context lists the reviewed services, up to members", async () => {
     await owner.see({ text: "What agents read" }, { timeoutMs: 90_000 });
-    await owner.click({ text: "Other connections (3)" });
+    await owner.see({ text: "Other context" });
+    await owner.see({ role: "button", label: "Remove Granola from Other context" });
     await owner.see({ text: "Read only. Agents never send, edit or delete through these." });
     const policy = await world.policy();
     const defaults = JSON.stringify({ calendar: "everyone", email: "everyone", chat: "everyone", connections: {} });
@@ -35,6 +37,27 @@ test("an admin chooses what agents read; a member turns sources on and steers th
       until: (value) => typeof value === "object" && value !== null && JSON.stringify(value).includes(`"${wiki.id}":"off"`),
     });
     evidence.recordAssertionEvidence("Saved on the server", `sources.connections: ${JSON.stringify(policy)}`, JSON.stringify(policy).includes(`"${wiki.id}":"off"`));
+    await owner.screenshot();
+  });
+
+  await step("the owner adds Support desk to Email: it needs its tools approved, nothing is ticked, and a tool that changes things can't be", async () => {
+    await owner.click({ role: "button", label: "Add source to Email" });
+    await owner.click({ role: "menuitem", label: "Support desk" });
+    await owner.see({ text: "Tools agents may use in Support desk" }, { timeoutMs: 30_000 });
+    await owner.see({ text: "Can change things" });
+    await owner.screenshot();
+    await owner.click({ role: "button", label: "list_tickets" });
+    await owner.click({ role: "button", label: "Approve 1 tool" });
+    const policy = await ownerProbe.eventually(() => world.policy(), {
+      within: 30_000,
+      label: "Support desk reads email through its approved tool",
+      until: (value) => JSON.stringify(value).includes(`"readTools":{"${desk.id}":["list_tickets"]}`),
+    });
+    const saved = agentSourcesPolicySchema.parse(policy);
+    const reads = saved.coreConnections?.email?.includes(desk.id) === true && saved.readTools?.[desk.id]?.join(",") === "list_tickets";
+    evidence.recordAssertionEvidence("Saved on the server", `email reads through: ${saved.coreConnections?.email?.join(", ")}; approved for Support desk: ${saved.readTools?.[desk.id]?.join(", ")}`, reads);
+    expect(reads).toBe(true);
+    await owner.see({ text: "Approved by your admin: 1 tool" });
     await owner.screenshot();
   });
 
