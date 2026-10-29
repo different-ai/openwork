@@ -195,3 +195,10 @@ test("the v2 bridge writes only question-form reply routes for answers", () => {
     "/workspace/ws1/opencode2/api/session/s2/prompt",
   ]) assert.equal(isQuestionReplyPath(path), false, path);
 });
+
+test("a wrong argument name is refused with the valid names, instead of being dropped", async () => {
+  const { transport } = v1Host();
+  const listed = await call(transport, "openwork_query", "session.question.list", { sessionId: "s2", limit: 5 });
+  assert.equal(listed.ok, false, JSON.stringify(listed));
+  assert.equal(listed.error, 'Unknown argument "limit". Valid arguments: sessionId, workspaceId.');
+});

@@ -1491,7 +1491,8 @@ function sessionArgumentError(error: z.ZodError, rawArgs: unknown): { ok: false;
     const detail = issue.code === "too_big" && issue.origin === "string" && typeof value === "string"
       ? `${value.trim().length.toLocaleString("en-US")} characters, max ${issue.maximum.toLocaleString("en-US")}`
       : issue.message;
-    return { path, message: `${path}: ${detail}` };
+    // Unknown keys belong to the argument object itself, which has no path.
+    return { path, message: path ? `${path}: ${detail}` : detail };
   });
   return { ok: false, error: issues.map((issue) => issue.message).join("; "), issues };
 }

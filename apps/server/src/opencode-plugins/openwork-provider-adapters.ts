@@ -12,6 +12,20 @@ import type {
 } from "@openwork/types/openwork-provider";
 import { z } from "zod";
 
+/**
+ * An affordance's argument object. Keys it does not define are refused with
+ * the valid names, so a wrong name (`limit` for `count`) fails loudly instead
+ * of being dropped and silently falling back to a default.
+ */
+export function strictArgsSchema<Shape extends z.ZodRawShape>(shape: Shape) {
+  const valid = Object.keys(shape).join(", ");
+  return z.strictObject(shape, {
+    error: (issue) => issue.code === "unrecognized_keys"
+      ? `Unknown argument${issue.keys.length === 1 ? "" : "s"} ${issue.keys.map((key) => JSON.stringify(key)).join(", ")}. Valid arguments: ${valid}.`
+      : undefined,
+  });
+}
+
 // Epoch milliseconds or an ISO-8601 string; resolve with sessionTimestampMs.
 const sessionTimestampArgSchema = z.union([z.number().int().nonnegative(), z.string().trim().min(1)])
   .refine((value) => typeof value === "number" || Number.isFinite(Date.parse(value)), {
@@ -22,7 +36,7 @@ export function sessionTimestampMs(value: z.infer<typeof sessionTimestampArgSche
   return typeof value === "number" ? value : Date.parse(value);
 }
 
-export const sessionSearchArgsSchema = z.object({
+export const sessionSearchArgsSchema = strictArgsSchema({
   query: z.string().trim().min(1).describe("Text to search for across OpenWork session titles and message transcripts."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name to limit the search."),
   limit: z.number().int().positive().max(20).optional().describe("Maximum matching sessions to return. Defaults to 10, max 20."),
@@ -34,7 +48,7 @@ export const sessionSearchArgsSchema = z.object({
   archived: z.enum(["include", "exclude", "only"]).optional().describe("Archived sessions: include (default), exclude, or only."),
 });
 
-export const sessionReadArgsSchema = z.object({
+export const sessionReadArgsSchema = strictArgsSchema({
   sessionId: z.string().trim().min(1).describe("OpenWork/OpenCode session ID returned by session.search."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Omit to resolve the session across all workspaces."),
   count: z.number().int().positive().max(100).optional().describe("Number of transcript messages to return. Defaults to 30, max 100."),
@@ -44,7 +58,7 @@ export const sessionReadArgsSchema = z.object({
 
 export const sessionModelArgSchema = openworkModelSelectorSchema;
 
-export const sessionCreateArgsSchema = z.object({
+export const sessionCreateArgsSchema = strictArgsSchema({
   sessions: z.array(z.object({
     title: z.string().trim().min(1).transform((title) => title.length > 120 ? `${title.slice(0, 119)}…` : title).describe("Short title shown in the OpenWork session list."),
     prompt: z.string().trim().min(1).max(100_000).describe("Self-contained task to start in the new session."),
@@ -54,7 +68,7 @@ export const sessionCreateArgsSchema = z.object({
   model: sessionModelArgSchema.optional().describe("Model and reasoning effort for every created session unless an entry overrides it. Omit to use the engine default."),
 });
 
-export const sessionSendArgsSchema = z.object({
+export const sessionSendArgsSchema = strictArgsSchema({
   sessionId: z.string().trim().min(1).describe("Session ID of the existing session to message, from session.search, session.read, or session.list_sessions."),
   text: z.string().trim().min(1).max(100_000).describe("Prompt text appended to that session as a new user message."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Omit to resolve the session across all workspaces."),
@@ -64,12 +78,16 @@ export const sessionSendArgsSchema = z.object({
 /** The engine permission a person answers before the agent answers another session's question for them. */
 export const SESSION_QUESTION_ANSWER_PERMISSION = "openwork_session_question_answer";
 
-export const sessionQuestionListArgsSchema = z.object({
+const sessionQuestionListArgsShape = {
   sessionId: z.string().trim().min(1).describe("Session ID from session.search or session.read."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Omit to resolve the session across all workspaces."),
-});
+};
 
-export const sessionQuestionAnswerArgsSchema = sessionQuestionListArgsSchema.extend({
+export const sessionQuestionListArgsSchema = strictArgsSchema(sessionQuestionListArgsShape);
+
+// Built from the shape, not extended: an extended schema keeps the list of valid names it was made with.
+export const sessionQuestionAnswerArgsSchema = strictArgsSchema({
+  ...sessionQuestionListArgsShape,
   requestId: z.string().trim().min(1).describe("Pending question id from session.question.list."),
   answers: z.array(z.array(z.string().trim().min(1).max(10_000)).min(1).max(50)).min(1).max(20)
     .describe("One array per question, in order: the chosen option labels, or the person's own text where the question allows it."),

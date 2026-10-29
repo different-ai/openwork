@@ -66,6 +66,9 @@ describe("session reference pill", () => {
     expect(instruction.text).toContain('"session.read"');
     expect(instruction.text).toContain("ses_login");
     expect(instruction.text).toContain("not accessible");
+    // A summary or a default read is partial; the hint says how to reach earlier messages.
+    expect(instruction.text).toContain('"from": "start"');
+    expect(instruction.text).toContain("session.search");
   });
 
   test("validates pills read back from message metadata", () => {

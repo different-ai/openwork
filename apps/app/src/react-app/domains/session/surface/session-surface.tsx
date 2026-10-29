@@ -3672,7 +3672,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const sessionReadTranscriptControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.read_transcript",
     label: "Read the current session transcript",
-    description: "Return the last messages from the current session transcript as readable text, including the session ID, title, and message count.",
+    description: "Return the last messages of the session on screen (the current one only) as readable text, with its session ID and message count. To read any other session, use session.read with its sessionId.",
     kind: "query",
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
