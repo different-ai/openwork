@@ -1,0 +1,6 @@
+.expo/
+ios/
+android/
+dist/
+expo-env.d.ts
+e2e/results/

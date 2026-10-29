@@ -362,6 +362,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotMobile: {
+    label: "Workbot: phone app",
+    description: "Members can sign in to the Workbot app on iPhone and Android and use Workbot there. Needs Workbot.",
+    category: "workbot",
+    added: "2026-10-08",
+    since: "2026-10",
+    author: "reachjalil",
+    docs: "docs/features/workbot-mobile/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   automationCalendar: {
     label: "Calendar: desktop app",
     description: "Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar.",

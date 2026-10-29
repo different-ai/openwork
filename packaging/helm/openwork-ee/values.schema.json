@@ -301,6 +301,16 @@
               ],
               "description": "Workbot: usage limits and upgrades: Signed-in Workbot uses free Auto or the member’s paid Models Luna entitlement, with allowance recovery and permission-aware upgrades in the conversation. Renders DEN_FEATURE_WORKBOT_USAGE_RECOVERY."
             },
+            "workbotMobile": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: phone app: Members can sign in to the Workbot app on iPhone and Android and use Workbot there. Needs Workbot. Renders DEN_FEATURE_WORKBOT_MOBILE."
+            },
             "automationCalendar": {
               "enum": [
                 "",

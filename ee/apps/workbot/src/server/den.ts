@@ -59,6 +59,8 @@ export const denSessionSchema = z.object({
   stepTurns: z.boolean().default(false),
   /** New chats get their own session cell on the runner (per-chat session cells). A Den from before it doesn't say: off. */
   sessionCells: z.boolean().default(false),
+  /** The Workbot phone app is on for this person. A Den from before the phone app doesn't say: off. */
+  mobile: z.boolean().default(false),
 })
 
 const runTokenSchema = z.object({
@@ -192,8 +194,11 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     /** The member's Get set up checklist; Den computes every step and enforces the feature. */
     activation: (accessToken: string) => authorized("GET", "/v1/workbot/activation", accessToken),
     activationEvent: (accessToken: string, body: unknown) => authorized("POST", "/v1/workbot/activation/events", accessToken, body),
-    /** Where to send the browser to sign in; Den returns it to /auth/callback with a code. */
-    async authorizeUrl(input: { state: string; verifier: string; chooseWorkspace?: boolean }) {
+    /**
+     * Where to send the browser to sign in; Den returns it to /auth/callback with a code. The phone app keeps its own
+     * PKCE verifier and passes only its challenge, so the code is useless to anyone but the app that asked.
+     */
+    async authorizeUrl(input: { state: string; chooseWorkspace?: boolean } & ({ verifier: string } | { challenge: string })) {
       const { authorizationEndpoint, resource } = await discover()
       const url = new URL(authorizationEndpoint)
       url.search = new URLSearchParams({
@@ -202,7 +207,7 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
         redirect_uri: redirectUri,
         scope: SCOPES,
         state: input.state,
-        code_challenge: pkceChallenge(input.verifier),
+        code_challenge: "challenge" in input ? input.challenge : pkceChallenge(input.verifier),
         code_challenge_method: "S256",
         // Explicit workspace changes must not silently reuse the active workspace's existing grant.
         ...(input.chooseWorkspace ? { prompt: "consent" } : {}),
