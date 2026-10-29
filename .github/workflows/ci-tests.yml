@@ -124,6 +124,8 @@ jobs:
         run: pnpm --filter @openwork/app exec bun test --isolate ./tests/starting-thread-follow-ups.test.ts
       - name: Test settling finished sessions
         run: pnpm --filter @openwork/app exec bun test --isolate ./tests/session-settle.test.ts
+      - name: Test the sidebar Feed view
+        run: pnpm --filter @openwork/app exec bun test --isolate ./tests/session-feed.test.ts
       - name: Test the OpenCode v2 session lifecycle mapping
         run: pnpm --filter @openwork/app exec bun test --isolate ./tests/opencode-v2-session-lifecycle.test.ts
       - name: Test the chat Working line and run time across follow-ups

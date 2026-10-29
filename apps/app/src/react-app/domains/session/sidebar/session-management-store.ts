@@ -77,11 +77,15 @@ export type SessionSettleSnapshot = {
 export const AUTO_SETTLE_DAY_OPTIONS = [0, 1, 3, 7] as const;
 export const DEFAULT_AUTO_SETTLE_DAYS = 3;
 
+export type SidebarView = "workspaces" | "feed";
+
 type SessionManagementState = {
   pinnedIds: string[];
   unreadIds: string[];
   settledById: Record<string, SessionSettleEntry>;
   autoSettleDays: number;
+  /** Sidebar layout: the workspace tree, or every workspace's sessions in one feed. */
+  sidebarView: SidebarView;
   orderByWorkspace: Record<string, string[]>;
   groupsByWorkspace: Record<string, WorkspaceGroupState>;
 };
@@ -96,6 +100,7 @@ type SessionManagementActions = {
   unsettle: (sessionId: string) => SessionSettleSnapshot;
   restoreSettle: (sessionId: string, snapshot: SessionSettleSnapshot) => void;
   setAutoSettleDays: (days: number) => void;
+  setSidebarView: (view: SidebarView) => void;
   reorderSessions: (workspaceId: string, sessionIds: string[]) => void;
   assignGroup: (workspaceId: string, sessionId: string, groupId: string | null) => void;
   createGroup: (workspaceId: string, label: string) => void;
@@ -245,6 +250,7 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
       unreadIds: [],
       settledById: {},
       autoSettleDays: DEFAULT_AUTO_SETTLE_DAYS,
+      sidebarView: "workspaces",
       orderByWorkspace: {},
       groupsByWorkspace: {},
 
@@ -305,6 +311,8 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
           if (snapshot.unread) unreadIds.push(sessionId);
           return { settledById, pinnedIds, unreadIds };
         }),
+
+      setSidebarView: (view) => set({ sidebarView: view === "feed" ? "feed" : "workspaces" }),
 
       setAutoSettleDays: (days) =>
         set({ autoSettleDays: AUTO_SETTLE_DAY_OPTIONS.some((option) => option === days) ? days : DEFAULT_AUTO_SETTLE_DAYS }),

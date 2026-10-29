@@ -17,6 +17,12 @@ Automation, an approval request) brings it back.
   or waiting. Settings › Preferences › "Settle idle sessions after" changes it
   (Never, 1, 3 or 7 days).
 - OpenCode v1 workspaces keep today's sidebar.
+- A **Workspaces · Feed** switch replaces the Workspaces label. Feed lists every
+  workspace's sessions in one stream: **Needs you** first, then Today,
+  Yesterday and Earlier by last activity. Each row has a second line with its
+  workspace and group, and what it is doing or how long ago it was active.
+  Settled sessions from every workspace sit in a collapsed **Settled** shelf
+  above Archived. The choice is remembered on the device.
 
 ## How it works
 
