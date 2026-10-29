@@ -1485,13 +1485,7 @@ async function forwardOpencodeV2Request(input: {
     target.searchParams.set("location[directory]", input.workspace.path);
   }
 
-  const headers = new Headers(input.request.headers);
-  headers.delete("authorization");
-  headers.delete("x-openwork-host-token");
-  headers.delete("x-openwork-client-id");
-  headers.delete("host");
-  headers.delete("origin");
-  headers.delete("transfer-encoding");
+  const headers = forwardableProxyRequestHeaders(input.request.headers);
   headers.set("authorization", `Basic ${Buffer.from(`opencode:${input.connection.password}`).toString("base64")}`);
 
   // Like the v1 proxy: an engine that is down or restarting is an expected
@@ -2005,13 +1999,7 @@ async function forwardOpencodeRequest(input: {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
 
-  let headers = new Headers(input.request.headers);
-  headers.delete("authorization");
-  headers.delete("x-openwork-host-token");
-  headers.delete("x-openwork-client-id");
-  headers.delete("host");
-  headers.delete("origin");
-  headers.delete("transfer-encoding");
+  let headers = forwardableProxyRequestHeaders(input.request.headers);
 
   const directory = workspace ? resolveOpencodeDirectory(workspace) : null;
   let search = input.url.search;
@@ -2434,6 +2422,35 @@ async function proxyEngineEventStreams(input: {
     statusText: primary.response.statusText,
     headers,
   });
+}
+
+/**
+ * Copy client request headers for forwarding to the engine, dropping
+ * hop-by-hop and transport-level headers. Node's fetch (undici) rejects some
+ * of these outright (e.g. `expect: 100-continue` throws NotSupportedError
+ * "expect header not supported", surfacing as `TypeError: fetch failed`), and
+ * none of them are meaningful across a proxy hop.
+ */
+const PROXY_STRIPPED_REQUEST_HEADERS = [
+  "authorization",
+  "x-openwork-host-token",
+  "x-openwork-client-id",
+  "host",
+  "origin",
+  "transfer-encoding",
+  "expect",
+  "connection",
+  "keep-alive",
+  "proxy-connection",
+  "upgrade",
+  "te",
+  "trailer",
+] as const;
+
+export function forwardableProxyRequestHeaders(source: HeadersInit): Headers {
+  const headers = new Headers(source);
+  for (const name of PROXY_STRIPPED_REQUEST_HEADERS) headers.delete(name);
+  return headers;
 }
 
 /**
