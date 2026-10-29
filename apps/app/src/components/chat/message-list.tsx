@@ -2083,7 +2083,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
         )
         }}
       >
-        {!runActive && backgroundCount > 0 && <div data-background-agents className="flex items-center gap-3 px-3 py-2 text-sm text-muted-foreground md:px-5">
+        {!runActive && backgroundCount > 0 && <div data-background-agents className="mx-auto flex w-full max-w-3xl items-center gap-3 px-2 py-2 text-sm text-muted-foreground md:px-10">
           <span>{syncDegraded ? "Background activity — reconnecting…" : `${backgroundCount} ${backgroundCount === 1 ? "agent" : "agents"} running`}</span>
           {/* Stops only the background helpers; the chat itself is already idle. */}
           {onStopSubagentSession && !syncDegraded ? (
