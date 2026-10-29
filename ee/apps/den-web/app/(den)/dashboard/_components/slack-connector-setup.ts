@@ -53,13 +53,50 @@ export function slackCreateAppUrl(manifest: SlackUserOAuthManifest): string {
   return `${SLACK_APPS_URL}?new_app=1&manifest_json=${encodeURIComponent(JSON.stringify(manifest))}`;
 }
 
+/**
+ * What OpenWork may do in Slack, chosen explicitly by the admin before any
+ * Slack app manifest or connection exists. Nothing is preselected.
+ */
+export type SlackScopeChoice = "read_and_act" | "read_only";
+
+type SlackPresetScopes = { defaultOAuthScopes?: readonly string[]; optionalOAuthScopes?: readonly string[] };
+
+/**
+ * The user scopes for a choice: "Read and act" is everything Slack's MCP
+ * server offers (the preset's default plus its optional scopes); "Read only"
+ * is the same set without any `:write` scope. No choice, no scopes.
+ */
+export function slackScopesFor(choice: SlackScopeChoice | null, preset: SlackPresetScopes | null | undefined): string[] {
+  if (!choice) return [];
+  const all = [...new Set([...(preset?.defaultOAuthScopes ?? []), ...(preset?.optionalOAuthScopes ?? [])])];
+  return choice === "read_and_act" ? all : all.filter((scope) => !scope.endsWith(":write"));
+}
+
+/**
+ * The setup target with the admin's explicit choice saved as the scopes the
+ * new connection requests. Without a choice (or without the guided preset's
+ * optional list) the target is unchanged, so only the preset's minimum applies.
+ */
+export function withSlackScopeChoice<T extends { preset?: SlackPresetScopes | null; requestedScopes?: readonly string[] }>(
+  target: T | null,
+  choice: SlackScopeChoice | null,
+): T | null {
+  if (!target || !choice || !target.preset?.optionalOAuthScopes?.length) return target;
+  return { ...target, requestedScopes: slackScopesFor(choice, target.preset) };
+}
+
 /** What Den knows about the optional @openwork assistant for this connection. */
 export type SlackAssistantStatus = "hidden" | "waiting" | "unavailable" | "installed";
 
 export type SlackSetupInput = {
   /** The redirect URL to register; null when this deployment has no public API address. */
   callbackUrl: string | null;
+  /** The admin's choice; null until they pick one. */
+  scopeChoice: SlackScopeChoice | null;
+  /** The scopes for that choice, which the manifest and the new connection both use. */
   scopes: readonly string[];
+  /** Scopes saved on the connection once it exists. */
+  savedScopeCount: number | null;
   /** The client ID (and secret) are saved on the connection. */
   appSaved: boolean;
   /** The admin marked Agents › MCP as on. Den can't see it before someone signs in. */
@@ -76,7 +113,7 @@ export type SlackSetupInput = {
   assistant: SlackAssistantStatus;
 };
 
-export type SlackSetupStepId = "slack-app" | "slack-mcp" | "sign-in-method" | "sign-in" | "slack-assistant";
+export type SlackSetupStepId = "slack-access" | "slack-app" | "slack-mcp" | "sign-in-method" | "sign-in" | "slack-assistant";
 
 export type SlackSetupStep = {
   id: SlackSetupStepId;
@@ -90,6 +127,7 @@ export type SlackSetupStep = {
 };
 
 export type SlackSetupOffer =
+  | "scope-choice"
   | "create-app"
   | "existing-app-details"
   | "open-slack-apps"
@@ -115,6 +153,25 @@ export function slackSetupSteps(input: SlackSetupInput): SlackSetupStep[] {
   const ready = input.signedIn && readiness?.status === "ready";
   const mcpRefused = input.signedIn && slackMcpRefused(readiness);
   const checkPending = input.signedIn && (input.checking || !readiness);
+  const chosen = input.scopeChoice !== null;
+
+  const access: SlackSetupStep = input.appSaved
+    ? {
+      id: "slack-access",
+      title: "Access chosen",
+      description: `${input.savedScopeCount ?? 0} Slack scopes saved. Change them in the connector's settings.`,
+      status: "done",
+      offers: [],
+    }
+    : chosen
+    ? {
+      id: "slack-access",
+      title: input.scopeChoice === "read_and_act" ? "Reads and acts in Slack" : "Reads Slack only",
+      description: `${input.scopes.length} user scopes.`,
+      status: "done",
+      offers: ["scope-choice"],
+    }
+    : { id: "slack-access", title: "Choose what OpenWork can do in Slack", description: "Not chosen yet.", status: "current", offers: ["scope-choice"] };
 
   const app: SlackSetupStep = input.callbackUrl === null && !input.appSaved
     ? {
@@ -126,6 +183,8 @@ export function slackSetupSteps(input: SlackSetupInput): SlackSetupStep[] {
     }
     : input.appSaved
     ? { id: "slack-app", title: "Slack app created", description: "Its client ID is saved.", status: "done", offers: [] }
+    : !chosen
+    ? { id: "slack-app", title: "Create the Slack app", description: "Waits for your choice above.", status: "waiting", offers: [] }
     : {
       id: "slack-app",
       title: "Create the Slack app",
@@ -162,6 +221,8 @@ export function slackSetupSteps(input: SlackSetupInput): SlackSetupStep[] {
 
   const credentials: SlackSetupStep = input.appSaved
     ? { id: "sign-in-method", title: "Client ID and secret added", description: "Saved.", status: "done", offers: [] }
+    : !chosen
+    ? { id: "sign-in-method", title: "Add the client ID and secret", description: "Waits for your choice above.", status: "waiting", offers: [] }
     : {
       id: "sign-in-method",
       title: "Add the client ID and secret",
@@ -194,7 +255,7 @@ export function slackSetupSteps(input: SlackSetupInput): SlackSetupStep[] {
     };
   })();
 
-  const steps = [app, mcp, credentials, signIn];
+  const steps = [access, app, mcp, credentials, signIn];
   if (input.assistant === "hidden") return steps;
   const assistant: SlackSetupStep = input.assistant === "installed"
     ? { id: "slack-assistant", title: "@openwork added to Slack", description: "Optional.", status: "done", optional: true, offers: [] }

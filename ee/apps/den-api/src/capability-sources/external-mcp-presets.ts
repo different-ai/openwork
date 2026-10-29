@@ -20,6 +20,8 @@ export type ExternalMcpPreset = {
   defaultOAuthClientId?: string
   authorizationServerIssuer?: string
   defaultOAuthScopes?: readonly string[]
+  /** Extra scopes the provider offers that are requested only after an admin explicitly chooses them. */
+  optionalOAuthScopes?: readonly string[]
   /** What OpenWork last learned about signing in to this provider; absent until it has been checked. */
   registrationStatus?: McpRegistrationStatus
   /** Response only: the redirect URL an admin registers in the provider's OAuth app. */
@@ -37,6 +39,7 @@ export const externalMcpPresetResponseSchema = z.object({
   defaultOAuthClientId: z.string().min(1).optional(),
   authorizationServerIssuer: z.string().url().optional(),
   defaultOAuthScopes: z.array(z.string()).optional(),
+  optionalOAuthScopes: z.array(z.string()).optional().describe("Extra scopes the provider offers. Never requested by default; setup requests them only after an admin explicitly chooses them."),
   registrationStatus: mcpRegistrationStatusSchema.optional(),
   oauthCallbackUrl: z.string().url().optional().describe("For presets that need a pre-registered OAuth app: the exact redirect URL to register in it. Absent when this deployment has no public API URL."),
 }).meta({ ref: "ExternalMcpPresetResponse" })
@@ -105,41 +108,41 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
     authType: "oauth",
     requiresOAuthClient: true,
     authorizationServerIssuer: "https://mcp.slack.com",
-    // The full user-scope set Slack's MCP server advertises (scopes_supported),
-    // which is what connections set up in Den already request. The guided
-    // setup's Slack app manifest uses this same list, so the app always allows
-    // every scope OpenWork asks for. Admins can narrow a connection's
-    // Requested OAuth scopes afterwards (for example, drop the write scopes).
     defaultOAuthScopes: [
+      "search:read.public",
+      "search:read.private",
+      "search:read.im",
+      "search:read.mpim",
+      "search:read.files",
+      "chat:write",
+      "channels:history",
+      "groups:history",
+      "im:history",
+      "mpim:history",
+      "users:read",
+    ],
+    // The rest of the user scopes Slack's MCP server offers. Never requested by
+    // default: guided Slack setup asks the admin to choose them explicitly
+    // ("Read and act"), and that choice is saved as the connection's scopes.
+    optionalOAuthScopes: [
       "canvases:read",
       "canvases:write",
-      "channels:history",
       "channels:read",
       "channels:write",
-      "chat:write",
       "emoji:read",
       "files:read",
       "files:write",
-      "groups:history",
       "groups:read",
       "groups:write",
-      "im:history",
       "im:read",
       "im:write",
       "lists:read",
       "lists:write",
-      "mpim:history",
       "mpim:read",
       "mpim:write",
       "reactions:read",
       "reactions:write",
-      "search:read.files",
-      "search:read.im",
-      "search:read.mpim",
-      "search:read.private",
-      "search:read.public",
       "search:read.users",
-      "users:read",
       "users:read.email",
     ],
   },
@@ -307,7 +310,6 @@ export const ALL_EXTERNAL_MCP_PRESETS: readonly ExternalMcpPreset[] = [
   ...EXTERNAL_MCP_PRESETS_EXPANDED,
 ]
 
-/** Presets shown in the connector catalog and the add-connection preset list. */
 /**
  * One preset as the catalog returns it. Presets that need a pre-registered
  * OAuth app carry the redirect URL the admin registers in it, so setup can
@@ -324,6 +326,7 @@ export function externalMcpPresetForResponse(
   }
 }
 
+/** Presets shown in the connector catalog and the add-connection preset list. */
 export function externalMcpPresetsForCatalog(options: { expanded?: boolean } = {}): ExternalMcpPreset[] {
   const { expanded = false } = options
   return expanded

@@ -13,7 +13,7 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
-test("an admin sets up Slack from one guided checklist: a prefilled Slack app, the MCP switch, credentials, then a test sign-in", async ({ world, user, probe, step, evidence }) => {
+test("an admin sets up Slack from one guided checklist: an explicit access choice, a prefilled Slack app, the MCP switch, credentials, then a test sign-in", async ({ world, user, probe, step, evidence }) => {
   const admin = user.on(world.web);
   const observed = probe.on(world.web);
   const STATUSES = ["waiting", "running", "current", "done", "failed", "blocked"];
@@ -27,6 +27,7 @@ test("an admin sets up Slack from one guided checklist: a prefilled Slack app, t
 
   let callbackUrl = "";
   let presetScopes: string[] = [];
+  let defaultScopes: string[] = [];
 
   await step("before: with guided Slack setup off, Add Slack shows the shared connector checks as it does today", async () => {
     await admin.navigate(world.url("/dashboard/mcp-connections/new/slack"));
@@ -42,23 +43,41 @@ test("an admin sets up Slack from one guided checklist: a prefilled Slack app, t
     await admin.screenshot();
   });
 
-  await step("the checklist opens with Create app in Slack, prefilled with this Den's redirect URL and the connector's scopes", async () => {
+  await step("before: with guided setup on, nothing is chosen for the admin and the Slack app link stays locked", async () => {
     await world.enableGuidedSlackSetup();
     const slack = (await world.presets()).find((preset) => preset.presetId === "slack");
     callbackUrl = typeof slack?.oauthCallbackUrl === "string" ? slack.oauthCallbackUrl : "";
-    presetScopes = stringArray(slack?.defaultOAuthScopes);
+    defaultScopes = stringArray(slack?.defaultOAuthScopes);
+    presetScopes = [...new Set([...defaultScopes, ...stringArray(slack?.optionalOAuthScopes)])];
     await admin.navigate(world.url("/dashboard/mcp-connections/new/slack"));
-    await admin.see({ testId: "setup-check-slack-app" }, { timeoutMs: 90_000 });
+    await admin.see({ testId: "slack-setup-scope-choice" }, { timeoutMs: 90_000 });
+    await admin.see({ text: "Choose what OpenWork can do in Slack" });
+    const selected = (await observed.dom('[data-testid="slack-setup-scope-choice"] input:checked')).elements.length;
+    const link = (await observed.dom('[data-testid="slack-setup-create-app"]')).elements.length;
+    const fields = (await observed.dom('[data-testid="setup-oauth-app"]')).elements.length;
+    const states = { access: await status("slack-access"), app: await status("slack-app"), credentials: await status("sign-in-method"), signIn: await status("sign-in") };
+    const ok = selected === 0 && link === 0 && fields === 0 && states.access === "current" && states.app === "waiting" && states.credentials === "waiting" && states.signIn === "waiting";
+    evidence.recordAssertionEvidence(
+      "No access level is preselected, and no app link, credential fields or sign-in exist before the choice",
+      `options selected=${selected}; Create app link=${link}; credential fields=${fields}; access=${states.access}; create app=${states.app}; client ID=${states.credentials}; sign in=${states.signIn}`,
+      ok,
+    );
+    expect(ok).toBe(true);
+    await admin.screenshot();
+  });
+
+  await step("the admin explicitly chooses Read and act; Create app in Slack is prefilled with this Den's redirect URL and all 30 scopes", async () => {
+    await admin.click({ testId: "slack-setup-scope-read_and_act" });
     await admin.see({ role: "link", label: "Create app in Slack" });
     const opensSlack = (await observed.dom('a[data-testid="slack-setup-create-app"][href^="https://api.slack.com/apps?new_app=1&manifest_json="]')).elements.length === 1;
     const hasRedirect = callbackUrl.endsWith("/v1/mcp-connections/oauth/callback") && await linkHas(encodeURIComponent(JSON.stringify([callbackUrl])));
     const scopesIncluded = (await Promise.all(presetScopes.map((scope) => linkHas(encodeURIComponent(`"${scope}"`))))).filter(Boolean).length;
     const mcpOn = await linkHas(encodeURIComponent('"is_mcp_enabled":true'));
     const botPieces = await linkHas("bot");
-    const ok = opensSlack && hasRedirect && presetScopes.length === 30 && scopesIncluded === presetScopes.length && mcpOn && !botPieces;
+    const ok = opensSlack && hasRedirect && defaultScopes.length === 11 && presetScopes.length === 30 && scopesIncluded === presetScopes.length && mcpOn && !botPieces;
     evidence.recordAssertionEvidence(
-      "The Slack link opens Create an app with this Den's redirect URL, the connector's user scopes and MCP on",
-      `opens api.slack.com/apps?new_app=1 with a manifest=${opensSlack}; redirect URL=${callbackUrl} (in manifest: ${hasRedirect}); user scopes in manifest=${scopesIncluded}/${presetScopes.length}; MCP on=${mcpOn}; bot pieces=${botPieces}`,
+      "After the explicit choice, the Slack link opens Create an app with this Den's redirect URL, all 30 user scopes and MCP on",
+      `opens api.slack.com/apps?new_app=1 with a manifest=${opensSlack}; redirect URL=${callbackUrl} (in manifest: ${hasRedirect}); user scopes in manifest=${scopesIncluded}/${presetScopes.length} (default ${defaultScopes.length} + opt-in ${presetScopes.length - defaultScopes.length}); MCP on=${mcpOn}; bot pieces=${botPieces}`,
       ok,
     );
     expect(ok).toBe(true);
@@ -69,7 +88,7 @@ test("an admin sets up Slack from one guided checklist: a prefilled Slack app, t
     await admin.see({ text: "Turn on Agents › MCP" });
     await admin.see({ text: "Not checked yet." });
     const states = { app: await status("slack-app"), mcp: await status("slack-mcp"), credentials: await status("sign-in-method"), signIn: await status("sign-in") };
-    const ok = states.app === "current" && states.mcp === "current" && states.credentials === "current" && states.signIn === "waiting";
+    const ok = (await status("slack-access")) === "done" && states.app === "current" && states.mcp === "current" && states.credentials === "current" && states.signIn === "waiting";
     evidence.recordAssertionEvidence("Nothing Den can't see is shown as done", `create app=${states.app}; MCP=${states.mcp}; client ID=${states.credentials}; sign in=${states.signIn}; Slack contacted=${world.discoveries() > 0 ? "fixture only" : "no"}`, ok);
     expect(ok).toBe(true);
     await admin.screenshot();

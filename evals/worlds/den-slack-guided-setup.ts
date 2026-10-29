@@ -10,7 +10,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * never reaches the real provider: an OAuth server that only accepts
  * pre-registered apps. It advertises a shorter scope list than the preset on
  * purpose, so a request that matches the Slack app manifest proves the
- * preset's own list won.
+ * admin's explicit choice won.
  */
 const SLACK_DISCOVERY = {
   status: "manual_action_required",

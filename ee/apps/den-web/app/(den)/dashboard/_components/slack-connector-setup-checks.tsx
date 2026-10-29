@@ -15,8 +15,10 @@ import {
   isSlackMcpUrl,
   SLACK_APPS_URL,
   type SlackSetupStep,
+  type SlackScopeChoice,
   slackAssistantStatus,
   slackCreateAppUrl,
+  slackScopesFor,
   slackSetupProgress,
   slackSetupSteps,
   slackUserOAuthManifest,
@@ -76,7 +78,57 @@ export type SlackSetupChecklistProps = {
   checking: boolean;
   /** Shared checks to show first, e.g. OpenWork could not reach Slack at all. */
   leading?: SetupCheck[];
+  scopeChoice: SlackScopeChoice | null;
+  onChooseScopes: (choice: SlackScopeChoice) => void;
 };
+
+const SCOPE_CHOICES: { value: SlackScopeChoice; title: string; recommended?: boolean; consent: string }[] = [
+  {
+    value: "read_and_act",
+    title: "Read and act",
+    recommended: true,
+    consent: "Searches and reads messages, files and canvases, and posts, reacts and creates channels as each person who signs in.",
+  },
+  {
+    value: "read_only",
+    title: "Read only",
+    consent: "Searches and reads messages, files and canvases as each person who signs in. Can't post or change anything in Slack.",
+  },
+];
+
+/** The explicit access choice: nothing preselected, one line of consent per option (P9). */
+function ScopeChoice({ value, onChange }: { value: SlackScopeChoice | null; onChange: (choice: SlackScopeChoice) => void }) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="What OpenWork can do in Slack" data-testid="slack-setup-scope-choice">
+      {SCOPE_CHOICES.map((option) => {
+        const selected = option.value === value;
+        return (
+          <label
+            key={option.value}
+            className={`flex cursor-pointer items-start gap-3 rounded-2xl border bg-white px-4 py-3.5 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-gray-200 ${selected ? "border-gray-400" : "border-gray-100 hover:border-gray-200"}`}
+          >
+            <input
+              type="radio"
+              name="slack-scope-choice"
+              value={option.value}
+              checked={selected}
+              onChange={() => onChange(option.value)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-gray-900"
+              data-testid={`slack-setup-scope-${option.value}`}
+            />
+            <span className="flex flex-col gap-0.5">
+              <span className="flex items-center gap-2 text-[14px] font-medium leading-5 text-gray-900">
+                {option.title}
+                {option.recommended ? <span className="text-[12px] font-normal text-gray-500">Recommended</span> : null}
+              </span>
+              <span className="text-[13px] leading-[18px] text-gray-500">{option.consent}</span>
+            </span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
 
 /** The one Slack setup list: each step reports what OpenWork knows and offers the next action. */
 export function SlackSetupChecklist({
@@ -90,11 +142,15 @@ export function SlackSetupChecklist({
   onCheckAgain,
   checking,
   leading = [],
+  scopeChoice,
+  onChooseScopes,
 }: SlackSetupChecklistProps) {
   const checks: SetupCheck[] = steps.map((step) => {
     const offers = new Set(step.offers);
     let action: ReactNode = null;
     const body: ReactNode[] = [];
+
+    if (offers.has("scope-choice")) body.push(<ScopeChoice key="scopes" value={scopeChoice} onChange={onChooseScopes} />);
 
     if (offers.has("create-app") && callbackUrl) {
       action = (
@@ -187,7 +243,7 @@ export function SlackSetupChecklist({
  * if the callback's own check hasn't landed), and whether the optional
  * @openwork assistant applies to this connection.
  */
-export function useSlackSetupState(setup: ReturnType<typeof useConnectorSetup>, target: ConnectorTarget | null) {
+export function useSlackSetupState(setup: ReturnType<typeof useConnectorSetup>, target: ConnectorTarget | null, scopeChoice: SlackScopeChoice | null) {
   const { orgContext } = useOrgDashboard();
   // Off: the Slack preset keeps the shared setup checks, exactly as before.
   const slack = orgFeatureEnabled(orgContext, "guidedSlackSetup") && Boolean(target?.preset && isSlackMcpUrl(target.url));
@@ -205,11 +261,14 @@ export function useSlackSetupState(setup: ReturnType<typeof useConnectorSetup>, 
     checkConnection.mutate(connection.id);
   }, [checkConnection, connection, readiness, setup.signedIn, slack]);
 
-  const scopes = target?.preset?.defaultOAuthScopes ?? [];
+  // The manifest and the new connection share one list: the admin's choice, nothing before it.
+  const scopes = slackScopesFor(scopeChoice, target?.preset);
   const callbackUrl = target?.preset?.oauthCallbackUrl ?? null;
   const steps = slackSetupSteps({
     callbackUrl,
+    scopeChoice,
     scopes,
+    savedScopeCount: connection ? connection.requestedScopes?.length ?? 0 : null,
     appSaved: connection !== null,
     mcpConfirmed,
     signedIn: setup.signedIn,

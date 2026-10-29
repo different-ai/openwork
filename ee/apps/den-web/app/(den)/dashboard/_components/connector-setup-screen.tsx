@@ -23,8 +23,8 @@ export function useConnectorTarget(catalogId: string): { target: ConnectorTarget
   const searchParams = useSearchParams();
   const presets = useMcpConnectionPresets();
   const { orgContext } = useOrgDashboard();
-  // A preset's own scopes win only with guided Slack setup, whose Slack app manifest lists them;
-  // off, setup requests what the server advertises, as before.
+  // With guided Slack setup, a preset's own minimum wins until the admin chooses more, and the
+  // optional list feeds that choice; off, setup requests what the server advertises, as before.
   const presetScopesWin = orgFeatureEnabled(orgContext, "guidedSlackSetup");
   const customUrl = searchParams.get("url");
   const customName = searchParams.get("name");
@@ -46,7 +46,7 @@ export function useConnectorTarget(catalogId: string): { target: ConnectorTarget
           authType: preset.authType,
           requiresOAuthClient: preset.requiresOAuthClient,
           defaultOAuthClientId: preset.defaultOAuthClientId,
-          ...(presetScopesWin ? { defaultOAuthScopes: preset.defaultOAuthScopes } : {}),
+          ...(presetScopesWin ? { defaultOAuthScopes: preset.defaultOAuthScopes, optionalOAuthScopes: preset.optionalOAuthScopes } : {}),
           oauthCallbackUrl: preset.oauthCallbackUrl,
         },
       },

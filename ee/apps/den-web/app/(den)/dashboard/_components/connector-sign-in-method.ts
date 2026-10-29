@@ -38,6 +38,14 @@ function oauthMethod(authentication: McpRequirementsDiscovery["authentication"])
   return methods.includes("dynamic") || methods.includes("client_metadata") ? "sign_in" : "oauth_app";
 }
 
+/** The fields a new OAuth connection saves for this setup target: the admin's explicit scope choice first. */
+export function oauthRequestFieldsForTarget(
+  discovery: DiscoveryAuthentication | null,
+  target: { preset?: Pick<ExternalMcpPreset, "defaultOAuthScopes"> | null; requestedScopes?: readonly string[] },
+): { authorizationServerIssuer?: string; requestedScopes: string[] } {
+  return oauthRequestFields(discovery, target.requestedScopes?.length ? { defaultOAuthScopes: [...target.requestedScopes] } : target.preset);
+}
+
 /** A client secret is optional unless every advertised token endpoint rejects public clients. */
 export function oauthClientSecretRequired(discovery: DiscoveryAuthentication | null): boolean {
   const servers = discovery?.authentication.authorizationServers ?? [];

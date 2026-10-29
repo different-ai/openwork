@@ -2,7 +2,7 @@
 
 import { Lock } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
 import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags } from "../../_lib/den-org";
@@ -23,6 +23,7 @@ import { usesMemberApiKey } from "./member-api-key";
 import { SetupChecks } from "./setup-checks";
 import { SLACK_ASSISTANT_SECTION_ID } from "./slack-assistant-setup";
 import { SlackSetupChecklist, useSlackSetupState } from "./slack-connector-setup-checks";
+import { type SlackScopeChoice, withSlackScopeChoice } from "./slack-connector-setup";
 import { WhoCanUseIt } from "./who-can-use-it";
 
 function SignInChoice({ name, value, onChange, disabled, kind = "oauth", sharedDescription }: {
@@ -79,7 +80,10 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const canShareWithEveryone = orgContext
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canShareWithEveryone
     : false;
-  const { target, loading, missing, failed } = useConnectorTarget(catalogId);
+  const { target: catalogTarget, loading, missing, failed } = useConnectorTarget(catalogId);
+  // Guided Slack setup: the admin's explicit access choice becomes the new connection's scopes.
+  const [slackScopeChoice, setSlackScopeChoice] = useState<SlackScopeChoice | null>(null);
+  const target = useMemo(() => withSlackScopeChoice(catalogTarget, slackScopeChoice), [catalogTarget, slackScopeChoice]);
   const updateConnection = useUpdateMcpConnection();
   const checkConnection = useCheckMcpConnection();
   const saveAccess = useSaveConnectionAccess();
@@ -110,7 +114,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
     },
   });
 
-  const slackSetup = useSlackSetupState(setup, target);
+  const slackSetup = useSlackSetupState(setup, target, slackScopeChoice);
   const [assistantNext, setAssistantNext] = useState(false);
 
   const name = target?.name ?? "";
@@ -294,6 +298,8 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
             onCheckAgain={slackSetup.checkAgain}
             checking={slackSetup.checking}
             leading={checks.filter((check) => check.id === "find" && check.status === "failed")}
+            scopeChoice={slackScopeChoice}
+            onChooseScopes={setSlackScopeChoice}
           />
         ) : <SetupChecks checks={checks} />}
         {setup.skipError ? <p className="text-[13px] text-red-600" role="alert">{setup.skipError}</p> : null}

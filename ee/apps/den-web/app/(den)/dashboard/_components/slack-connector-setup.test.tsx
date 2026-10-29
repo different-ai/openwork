@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { oauthRequestFields } from "./connector-sign-in-method";
+import type { ConnectorTarget } from "./connector-setup";
+import { oauthRequestFields, oauthRequestFieldsForTarget } from "./connector-sign-in-method";
 import { SlackSetupChecklist } from "./slack-connector-setup-checks";
 import {
   type SlackSetupInput,
@@ -9,16 +10,36 @@ import {
   slackAssistantStatus,
   slackCreateAppUrl,
   slackSetupProgress,
+  slackScopesFor,
   slackSetupSteps,
   slackUserOAuthManifest,
+  withSlackScopeChoice,
 } from "./slack-connector-setup";
 
 const CALLBACK = "https://api.den.example/v1/mcp-connections/oauth/callback";
 const SCOPES = ["search:read.public", "chat:write", "users:read"];
+// The Slack preset's shape: a minimum default and the rest of Slack's scopes as opt-in.
+const DEFAULT_SCOPES = ["search:read.public", "search:read.private", "search:read.im", "search:read.mpim", "search:read.files", "chat:write", "channels:history", "groups:history", "im:history", "mpim:history", "users:read"];
+const OPTIONAL_SCOPES = ["canvases:read", "canvases:write", "channels:read", "channels:write", "emoji:read", "files:read", "files:write", "groups:read", "groups:write", "im:read", "im:write", "lists:read", "lists:write", "mpim:read", "mpim:write", "reactions:read", "reactions:write", "search:read.users", "users:read.email"];
+const PRESET = { authType: "oauth" as const, requiresOAuthClient: true, defaultOAuthScopes: DEFAULT_SCOPES, optionalOAuthScopes: OPTIONAL_SCOPES };
+const SLACK_DISCOVERY = {
+  authentication: {
+    kind: "oauth" as const,
+    authorizationServers: [{ issuer: "https://mcp.slack.com", clientIdMetadataDocumentSupported: false }],
+    requiredScopes: [],
+    recommendedScopes: [...DEFAULT_SCOPES, ...OPTIONAL_SCOPES],
+    refreshSupport: "unknown" as const,
+    availableRegistrationMethods: ["pre_registered" as const],
+    recommendedRegistrationMethod: "pre_registered" as const,
+  },
+};
 
+// Most states below come after the admin chose "Read and act"; the first tests cover the choice itself.
 const fresh: SlackSetupInput = {
   callbackUrl: CALLBACK,
+  scopeChoice: "read_and_act",
   scopes: SCOPES,
+  savedScopeCount: null,
   appSaved: false,
   mcpConfirmed: false,
   signedIn: false,
@@ -48,6 +69,8 @@ function render(input: Partial<SlackSetupInput> = {}, mcpConfirmed = input.mcpCo
       onSignIn={() => undefined}
       onCheckAgain={() => undefined}
       checking={false}
+      scopeChoice={input.scopeChoice === undefined ? fresh.scopeChoice : input.scopeChoice}
+      onChooseScopes={() => undefined}
     />,
   );
 }
@@ -90,15 +113,63 @@ test("the Slack preset asks for exactly its own scopes, not everything the serve
   assert.equal(isSlackMcpUrl("https://mcp.notion.com/mcp"), false);
 });
 
-test("a fresh setup: create the app, confirm MCP, paste credentials; sign-in waits", () => {
+test("nothing is chosen for the admin: the app link, credentials and sign-in wait for an explicit access choice", () => {
+  const html = render({ scopeChoice: null, scopes: [] });
+  assert.equal(statusOf(html, "slack-access"), "current");
+  assert.match(html, /role="radiogroup" aria-label="What OpenWork can do in Slack"/);
+  assert.doesNotMatch(html, /checked=""/, "neither option is preselected");
+  assert.match(text(html), /Read and act Recommended/);
+  assert.match(text(html), /posts, reacts and creates channels as each person who signs in/);
+  assert.match(text(html), /Can't post or change anything in Slack/);
+  assert.equal(statusOf(html, "slack-app"), "waiting");
+  assert.equal(statusOf(html, "sign-in-method"), "waiting");
+  assert.equal(statusOf(html, "sign-in"), "waiting");
+  assert.doesNotMatch(html, /slack-setup-create-app|slack-setup-existing-app|setup-oauth-app|manifest_json/, "no manifest, link or credential fields before the choice");
+  assert.deepEqual(slackSetupProgress(slackSetupSteps({ ...fresh, scopeChoice: null, scopes: [] })), { step: 1, total: 5, done: false });
+});
+
+test("no scope beyond the preset's default is requested without the explicit choice", () => {
+  const target: ConnectorTarget = { name: "Slack", url: "https://mcp.slack.com/mcp", description: "", preset: PRESET };
+  assert.deepEqual(slackScopesFor(null, PRESET), []);
+  const unchosen = withSlackScopeChoice(target, null);
+  assert.equal(unchosen?.requestedScopes, undefined);
+  // E.g. "Add anyway" before choosing: the connection asks only for the preset's minimum, even though Slack advertises more.
+  assert.deepEqual(oauthRequestFieldsForTarget(SLACK_DISCOVERY, unchosen ?? target).requestedScopes, DEFAULT_SCOPES);
+  assert.equal(oauthRequestFieldsForTarget(SLACK_DISCOVERY, unchosen ?? target).requestedScopes.some((scope) => OPTIONAL_SCOPES.includes(scope)), false);
+  // A target without the guided optional list (flag off) is left alone.
+  const plain: ConnectorTarget = { name: "Slack", url: "https://mcp.slack.com/mcp", description: "", preset: { authType: "oauth" } };
+  assert.equal(withSlackScopeChoice(plain, "read_and_act"), plain);
+});
+
+test("Read and act asks for all 30 of Slack's scopes; Read only asks for no write scope; the manifest matches the request either way", () => {
+  const target: ConnectorTarget = { name: "Slack", url: "https://mcp.slack.com/mcp", description: "", preset: PRESET };
+  const readAndAct = slackScopesFor("read_and_act", PRESET);
+  assert.equal(readAndAct.length, 30);
+  assert.deepEqual([...readAndAct].sort(), [...DEFAULT_SCOPES, ...OPTIONAL_SCOPES].sort());
+  const readOnly = slackScopesFor("read_only", PRESET);
+  assert.equal(readOnly.some((scope) => scope.endsWith(":write")), false);
+  assert.equal(readOnly.length, 21);
+  assert.ok(readOnly.includes("search:read.public") && readOnly.includes("channels:history") && readOnly.includes("users:read.email"));
+  for (const choice of ["read_and_act", "read_only"] as const) {
+    const chosen = withSlackScopeChoice(target, choice);
+    assert.ok(chosen);
+    const requested = oauthRequestFieldsForTarget(SLACK_DISCOVERY, chosen).requestedScopes;
+    const manifest = slackUserOAuthManifest({ redirectUrl: CALLBACK, scopes: slackScopesFor(choice, PRESET) });
+    assert.deepEqual(requested, manifest.oauth_config.scopes.user, choice);
+  }
+});
+
+test("after the choice: create the app, confirm MCP, paste credentials; sign-in waits", () => {
   const html = render();
+  assert.equal(statusOf(html, "slack-access"), "done");
+  assert.match(text(html), /Reads and acts in Slack/);
   assert.equal(statusOf(html, "slack-app"), "current");
   assert.equal(statusOf(html, "slack-mcp"), "current");
   assert.equal(statusOf(html, "sign-in-method"), "current");
   assert.equal(statusOf(html, "sign-in"), "waiting");
   assert.equal(statusOf(html, "slack-assistant"), null, "the assistant step only shows when eligible");
   const order = [...html.matchAll(/data-testid="setup-check-([a-z-]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(order, ["slack-app", "slack-mcp", "sign-in-method", "sign-in"]);
+  assert.deepEqual(order, ["slack-access", "slack-app", "slack-mcp", "sign-in-method", "sign-in"]);
   assert.match(html, /<a [^>]*target="_blank" rel="noopener noreferrer" data-testid="slack-setup-create-app"/);
   assert.match(html, /href="https:\/\/api\.slack\.com\/apps\?new_app=1&amp;manifest_json=/);
   assert.match(html, /data-testid="slack-setup-existing-app"/);
@@ -107,7 +178,7 @@ test("a fresh setup: create the app, confirm MCP, paste credentials; sign-in wai
   assert.match(html, /data-testid="slack-setup-confirm-mcp"/);
   assert.match(html, /data-testid="setup-oauth-app"/);
   assert.doesNotMatch(html, /data-testid="slack-setup-sign-in"/);
-  assert.deepEqual(slackSetupProgress(slackSetupSteps(fresh)), { step: 1, total: 4, done: false });
+  assert.deepEqual(slackSetupProgress(slackSetupSteps(fresh)), { step: 2, total: 5, done: false });
 });
 
 test("without a public API address the app step is locked and says who can fix it", () => {
@@ -117,6 +188,13 @@ test("without a public API address the app step is locked and says who can fix i
   assert.deepEqual(app.offers, []);
   assert.equal(step({ callbackUrl: null }, "sign-in-method").status, "waiting");
   assert.doesNotMatch(render({ callbackUrl: null }), /slack-setup-create-app/);
+});
+
+test("once the connection exists the access step reports its saved scopes", () => {
+  const access = step({ appSaved: true, savedScopeCount: 30 }, "slack-access");
+  assert.equal(access.status, "done");
+  assert.equal(access.description, "30 Slack scopes saved. Change them in the connector's settings.");
+  assert.deepEqual(access.offers, []);
 });
 
 test("credentials saved but MCP not confirmed: sign-in still waits", () => {
@@ -141,7 +219,7 @@ test("after signing in the MCP step shows the real check: running, then ready", 
   assert.match(step(ready, "slack-mcp").description, /Slack answered/);
   assert.equal(step(ready, "sign-in").status, "done");
   assert.match(step(ready, "sign-in").description, /As U0SYNTH\. Ready\./);
-  assert.deepEqual(slackSetupProgress(slackSetupSteps({ ...fresh, ...ready })), { step: 4, total: 4, done: true });
+  assert.deepEqual(slackSetupProgress(slackSetupSteps({ ...fresh, ...ready })), { step: 5, total: 5, done: true });
 });
 
 test("Slack refusing MCP after a good sign-in fails the MCP step, with the fix and a re-check", () => {
@@ -190,5 +268,5 @@ test("the optional @openwork step appears only for an eligible connection and ne
   const locked = step({ appSaved: true, assistant: "unavailable" }, "slack-assistant");
   assert.equal(locked.status, "blocked");
   assert.match(locked.description, /Whoever runs it/);
-  assert.equal(slackSetupProgress(slackSetupSteps({ ...fresh, assistant: "waiting" })).total, 4);
+  assert.equal(slackSetupProgress(slackSetupSteps({ ...fresh, assistant: "waiting" })).total, 5);
 });
