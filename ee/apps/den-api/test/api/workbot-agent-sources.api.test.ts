@@ -119,8 +119,8 @@ test("an admin adds any MCP as a source by approving its tools; the agent calls 
   const tools = await space.owner("GET", `${proactive}/connections/${space.customId}/tools`)
   assert.equal(tools.status, 200, summary(tools))
   assert.deepEqual(list(field(tools.body, "tools")).map((tool) => [tool.name, tool.blocked, tool.readOnlyHint ?? null]), [
-    ["list_tickets", false, true], ["close_ticket", true, true], ["get_ticket", false, null],
-  ], "write-named tools are listed but blocked; the provider's hint is shown as given")
+    ["list_tickets", false, true], ["close_ticket", true, true], ["get_ticket", true, null],
+  ], "write-named tools and tools the provider doesn't mark read-only are listed but blocked; the provider's hint is shown as given")
   assert.equal((await space.call("GET", `${proactive}/connections/${space.customId}/tools`)).status, 403, "members can't list them")
 
   const listed = await space.owner("GET", proactive)
@@ -130,6 +130,7 @@ test("an admin adds any MCP as a source by approving its tools; the agent calls 
   const unapproved = await space.owner("PUT", proactive, { sources: { coreConnections: { email: [space.customId] } } })
   assert.equal(unapproved.status, 400, summary(unapproved))
   assert.equal((await space.owner("PUT", proactive, { sources: { readTools: { [space.customId]: ["close_ticket"] } } })).status, 400, "never a blocked tool")
+  assert.equal((await space.owner("PUT", proactive, { sources: { readTools: { [space.customId]: ["get_ticket"] } } })).status, 400, "never a tool its provider doesn't mark read-only")
   assert.equal((await space.owner("PUT", proactive, { sources: { readTools: { [space.customId]: ["no_such_tool"] } } })).status, 400, "only its real tools")
 
   const saved = await space.owner("PUT", proactive, { sources: { coreConnections: { email: [space.customId] }, otherConnections: [space.customId], connections: { [space.customId]: "everyone" }, readTools: { [space.customId]: ["list_tickets"] } } })
@@ -145,7 +146,7 @@ test("an admin adds any MCP as a source by approving its tools; the agent calls 
   const read = await den.callMcpTool(agent, "execute_capability", { name: capability("list_tickets") })
   assert.equal(read.isError, false, read.text)
   assert.match(read.text, /TICKET-7 is waiting on you/)
-  for (const [tool, why] of [["close_ticket", "its name says it writes"], ["get_ticket", "not approved"]] as const) {
+  for (const [tool, why] of [["close_ticket", "its name says it writes"], ["get_ticket", "not approved, and not marked read-only"]] as const) {
     const refused = await den.callMcpTool(agent, "execute_capability", { name: capability(tool) })
     assert.equal(refused.isError, true, `${why}: ${refused.text}`)
     assert.match(refused.text, /insufficient_mcp_scope/, why)

@@ -46,7 +46,8 @@ test("an admin chooses what agents read; a member turns sources on and steers th
     await owner.see({ text: "Tools agents may use in Support desk" }, { timeoutMs: 30_000 });
     await owner.see({ text: "Can change things" });
     await owner.screenshot();
-    await owner.click({ role: "button", label: "list_tickets" });
+    await owner.see({ text: "Not marked read-only by the provider" });
+    await owner.click({ testId: "workbot-source-tool-list_tickets" });
     await owner.click({ role: "button", label: "Approve 1 tool" });
     const policy = await ownerProbe.eventually(() => world.policy(), {
       within: 30_000,
