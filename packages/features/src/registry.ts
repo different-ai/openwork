@@ -657,6 +657,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  composerSubagentTracker: {
+    label: "Desktop: sub-agents above the composer",
+    description: "While a turn's sub-agents run on OpenCode v2, a compact Agents list sits on top of the composer and stays in view as the chat scrolls: each agent's name, whether it is working, needs permission, waits for an answer, is done, stopped or hit an error, with Open, Stop and Review. Turning it off leaves only the sub-agent rows in the chat.",
+    category: "experience",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/composer-subagent-tracker/README.md",
+    deployments: everywhere,
+    default: false,
+  },
 })
 
 export type FeatureKey = keyof typeof FEATURES

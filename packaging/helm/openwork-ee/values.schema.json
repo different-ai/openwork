@@ -571,6 +571,16 @@
               ],
               "description": "Desktop: connectors that need an organization app: In the desktop Library, Slack and GitHub no longer ask for an app's client ID and secret: members see them locked until an admin sets them up, admins open the setup in OpenWork Cloud, connectors the organization already has offer Sign in from Add a connector, and a sign-in that fails says why, with a link to the service's app settings when that is the fix. Renders DEN_FEATURE_LIBRARY_CONNECTOR_ORG_SETUP."
             },
+            "composerSubagentTracker": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: sub-agents above the composer: While a turn's sub-agents run on OpenCode v2, a compact Agents list sits on top of the composer and stays in view as the chat scrolls: each agent's name, whether it is working, needs permission, waits for an answer, is done, stopped or hit an error, with Open, Stop and Review. Turning it off leaves only the sub-agent rows in the chat. Renders DEN_FEATURE_COMPOSER_SUBAGENT_TRACKER."
+            },
             "gatewayDashboard": {
               "enum": [
                 "",

@@ -52,12 +52,74 @@ export function subagentRunActivity(input: {
   return "completed"
 }
 
-function agentName(slug: string): string {
+export function agentName(slug: string): string {
   const words = slug.split(/[-_.\s]+/).filter(Boolean)
   if (words.length === 0) return "Agent"
   return words
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ")
+}
+
+/** A task the person (or a Stop) interrupted reads as stopped, not failed (DESIGN.md C5). */
+export function isStoppedTaskError(errorText: string | undefined): boolean {
+  return /abort|interrupt|cancel/i.test(errorText ?? "")
+}
+
+/**
+ * Live state of one sub-agent task, from its tool part plus the child
+ * session's activity record and status. Shared by the transcript line and the
+ * composer's Agents list so both always agree.
+ */
+export function useSubagentRunState(part: TaskToolPart, parentActive: boolean, workspaceId: string, syncDegraded: boolean) {
+  const childSessionId = taskChildSessionId(part)
+  const child = useSessionActivityStore((state) => (
+    childSessionId
+      ? state.recordsByWorkspaceId[workspaceId]?.[childSessionId]
+      : undefined
+  ))
+  const childStatus = useQueryCacheState<SessionStatus | null>(
+    childSessionId ? statusKey(workspaceId, childSessionId) : null, null,
+  )
+  const permissionPending = (child?.waitingPermissionIds.length ?? 0) > 0
+  const questionPending = (child?.waitingQuestionIds.length ?? 0) > 0
+  const childRunning = child?.runActive === true || childStatus?.type === "busy" || childStatus?.type === "retry"
+  const inFlight = isToolPartInFlight(part) || childRunning
+  const isFailed = part.state === "output-error"
+  // Native start time survives reload; optimistic timing survives remounts.
+  const startedAt = childRunning && child && child.runStartedAt > 0 ? child.runStartedAt : getToolCallStartedAt(part)
+  const lastProgressAt = child?.lastProgressAt || startedAt || 0
+  const noNewActivity = hasNoNewActivity({
+    active: inFlight, lastProgressAt, now: Date.now(),
+  })
+  const activity = subagentRunActivity({
+    permissionPending, questionPending, retrying: childStatus?.type === "retry" || child?.retrying, noNewActivity,
+    timingUnknown: startedAt === null,
+    syncDegraded, inFlight, failed: isFailed,
+    childFailed: child?.errorActive,
+    resultPending: !childRunning && (Boolean(child && !child.runActive && child.runStatusAt > 0) || !parentActive),
+  })
+  const errorText = part.state === "output-error" ? part.errorText : undefined
+  return {
+    childSessionId, child, childRunning, inFlight, isFailed, permissionPending, questionPending,
+    startedAt, activity, stoppedByError: isFailed && isStoppedTaskError(errorText),
+  }
+}
+
+/** Whole seconds since `startedAt`, ticking only while the run is live and confirmed. */
+export function useElapsedSeconds(active: boolean, startedAt: number | null, syncDegraded: boolean, key?: string): number {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  useEffect(() => {
+    // While run liveness is unconfirmed the counter must not tick; the
+    // module-scoped anchor resumes the true elapsed time on recovery.
+    if (!active || startedAt === null || syncDegraded) return
+    const update = () => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)))
+    }
+    update()
+    const interval = window.setInterval(update, 1000)
+    return () => window.clearInterval(interval)
+  }, [active, startedAt, key, syncDegraded])
+  return elapsedSeconds
 }
 
 /**
@@ -74,50 +136,15 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
   const [stopping, setStopping] = useState(false)
   const [stopError, setStopError] = useState<string | null>(null)
   const stoppedByPerson = useRef(false)
-  const childSessionId = taskChildSessionId(part)
-  const child = useSessionActivityStore((state) => (
-    childSessionId
-      ? state.recordsByWorkspaceId[workspaceId]?.[childSessionId]
-      : undefined
-  ))
-  const childStatus = useQueryCacheState<SessionStatus | null>(
-    childSessionId ? statusKey(workspaceId, childSessionId) : null, null,
-  )
-  const permissionPending = (child?.waitingPermissionIds.length ?? 0) > 0
-  const questionPending = (child?.waitingQuestionIds.length ?? 0) > 0
-  const childRunning = child?.runActive === true || childStatus?.type === "busy" || childStatus?.type === "retry"
-  const inFlight = isToolPartInFlight(part) || childRunning
-  const isFailed = part.state === "output-error"
+  const {
+    childSessionId, child, childRunning, inFlight, isFailed, permissionPending, questionPending,
+    startedAt, activity, stoppedByError,
+  } = useSubagentRunState(part, parentActive, workspaceId, syncDegraded)
   const duration = trackToolCallDuration(part)
-  const [elapsedSeconds, setElapsedSeconds] = useState(0)
-  // Native start time survives reload; optimistic timing survives remounts.
-  const startedAt = childRunning && child && child.runStartedAt > 0 ? child.runStartedAt : getToolCallStartedAt(part)
-  const lastProgressAt = child?.lastProgressAt || startedAt || 0
-  const noNewActivity = hasNoNewActivity({
-    active: inFlight, lastProgressAt, now: Date.now(),
-  })
-  const activity = subagentRunActivity({
-    permissionPending, questionPending, retrying: childStatus?.type === "retry" || child?.retrying, noNewActivity,
-    timingUnknown: startedAt === null,
-    syncDegraded, inFlight, failed: isFailed,
-    childFailed: child?.errorActive,
-    resultPending: !childRunning && (Boolean(child && !child.runActive && child.runStatusAt > 0) || !parentActive),
-  })
-  useEffect(() => {
-    // While run liveness is unconfirmed the counter must not tick; the
-    // module-scoped anchor resumes the true elapsed time on recovery.
-    if (!inFlight || startedAt === null || syncDegraded) return
-    const update = () => {
-      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)))
-    }
-    update()
-    const interval = window.setInterval(update, 1000)
-    return () => window.clearInterval(interval)
-  }, [inFlight, startedAt, part.toolCallId, syncDegraded])
+  const elapsedSeconds = useElapsedSeconds(inFlight, startedAt, syncDegraded, part.toolCallId)
   const title = part.input?.description?.trim().slice(0, 160) || "Sub-agent task"
   // A helper the person stopped is not a failure (DESIGN.md C5): say "Stopped".
-  const errorText = part.state === "output-error" ? part.errorText : undefined
-  const stopped = stoppedByPerson.current || isFailed && /abort|interrupt|cancel/i.test(errorText ?? "")
+  const stopped = stoppedByPerson.current || stoppedByError
   const agent = agentName(part.input?.subagent_type ?? "")
   const status = stopping ? "Stopping…" : stopError ? "Could not stop — retry" : stopped && !childRunning ? "Stopped" : permissionPending
     ? t("session.subagent_permission_needed")

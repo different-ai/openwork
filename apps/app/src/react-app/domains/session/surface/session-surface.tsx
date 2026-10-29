@@ -120,6 +120,8 @@ import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permis
 import { ComputerRequestPanel } from "@/react-app/domains/session/computer/computer-request-panel";
 import { useComputerRequest, useComputerStore } from "@/react-app/domains/session/computer/computer-store";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
+import { ComposerSubagentTracker, currentTurnSubagentParts } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
 import { deriveOpenTargets, sameOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
@@ -549,6 +551,78 @@ function createSubagentActivityEvalMessages(sessionId: string, childSessionId?: 
     });
   }
   return messages;
+}
+
+type SubagentTrackerEvalAgent = {
+  agent: string;
+  description: string;
+  state: "working" | "permission" | "question" | "done" | "error" | "stopped";
+  childSessionId: string;
+};
+
+const SUBAGENT_TRACKER_EVAL_SCENARIOS = ["one", "mixed", "permission", "question", "done"] as const;
+type SubagentTrackerEvalScenario = (typeof SUBAGENT_TRACKER_EVAL_SCENARIOS)[number];
+
+function isSubagentTrackerEvalScenario(value: unknown): value is SubagentTrackerEvalScenario {
+  return SUBAGENT_TRACKER_EVAL_SCENARIOS.some((scenario) => scenario === value);
+}
+
+function subagentTrackerEvalAgents(sessionId: string, scenario: SubagentTrackerEvalScenario, permissionChildSessionId?: string): SubagentTrackerEvalAgent[] {
+  const child = (name: string) => `${sessionId}:eval-agent-${name}`;
+  const explore = { agent: "explore", description: "Map the billing service", state: "working" as const, childSessionId: child("explore") };
+  if (scenario === "one") return [explore];
+  if (scenario === "mixed") {
+    return [
+      explore,
+      { agent: "general", description: "Summarize last week's incidents", state: "done", childSessionId: child("general") },
+      { agent: "test-runner", description: "Run the invoice test suite", state: "error", childSessionId: child("tests") },
+      { agent: "docs-writer", description: "Draft the migration notes", state: "stopped", childSessionId: child("docs") },
+    ];
+  }
+  if (scenario === "permission") {
+    return [explore, {
+      agent: "general", description: "Investigate the deployment failure", state: "permission",
+      childSessionId: permissionChildSessionId ?? child("permission"),
+    }];
+  }
+  if (scenario === "question") {
+    return [explore, { agent: "planner", description: "Plan the data migration", state: "question", childSessionId: child("planner") }];
+  }
+  return [
+    { ...explore, state: "done" },
+    { agent: "general", description: "Summarize last week's incidents", state: "done", childSessionId: child("general") },
+    { agent: "reviewer", description: "Review the pricing copy", state: "done", childSessionId: child("reviewer") },
+  ];
+}
+
+function createSubagentTrackerEvalMessages(sessionId: string, scenario: SubagentTrackerEvalScenario, agents: readonly SubagentTrackerEvalAgent[]): UIMessage[] {
+  const now = Date.now();
+  return [
+    {
+      id: `${sessionId}:eval-tracker-user`,
+      role: "user",
+      parts: [{ type: "text", text: "Get the billing release ready." }],
+      metadata: { opencode: { created: now } },
+    },
+    {
+      id: `${sessionId}:eval-tracker-assistant`,
+      role: "assistant",
+      parts: agents.map((entry, index) => {
+        const base = {
+          type: "dynamic-tool" as const,
+          toolName: "task",
+          toolCallId: `eval-tracker-${scenario}-${index}`,
+          input: { description: entry.description, prompt: entry.description, subagent_type: entry.agent },
+          callProviderMetadata: { openwork: { childSessionId: entry.childSessionId } },
+        };
+        if (entry.state === "done") return { ...base, state: "output-available" as const, output: "Finished." };
+        if (entry.state === "error") return { ...base, state: "output-error" as const, errorText: "Task failed: 3 tests did not pass." };
+        if (entry.state === "stopped") return { ...base, state: "output-error" as const, errorText: "The operation was aborted." };
+        return { ...base, state: "input-available" as const };
+      }),
+      metadata: { opencode: { created: now + 1 } },
+    },
+  ];
 }
 
 function createChatLoadingEvalMessages(sessionId: string): UIMessage[] {
@@ -1921,6 +1995,51 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId, props.workspaceId]);
   useControlAction(props.isControlTarget ? seedSubagentActivityControlAction : null);
+  const seedSubagentTrackerControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.subagent_tracker.seed",
+      label: "Seed the composer's sub-agent list",
+      description: "Dev-only eval hook that renders one turn's sub-agents in a named state mix.",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      args: [
+        { name: "scenario", type: "string", description: "one, mixed, permission, question or done." },
+        { name: "permissionChildSessionId", type: "string", description: "Child session that already asks for approval (from eval.child_permission.seed)." },
+        { name: "parentIdle", type: "boolean", description: "Leave the parent turn finished instead of running." },
+      ],
+      execute: (args) => {
+        const scenario = args && typeof args === "object" ? Reflect.get(args, "scenario") : undefined;
+        if (!isSubagentTrackerEvalScenario(scenario)) return { ok: false, error: `Unknown scenario ${String(scenario)}` };
+        const rawPermissionChild = args && typeof args === "object" ? Reflect.get(args, "permissionChildSessionId") : undefined;
+        const permissionChild = typeof rawPermissionChild === "string" && rawPermissionChild.trim() ? rawPermissionChild.trim() : undefined;
+        const parentIdle = Boolean(args && typeof args === "object" && Reflect.get(args, "parentIdle") === true);
+        const agents = subagentTrackerEvalAgents(props.sessionId, scenario, permissionChild);
+        const store = useSessionActivityStore.getState();
+        for (const entry of agents) {
+          if (entry.state === "working" || entry.state === "permission" || entry.state === "question") {
+            // A pending ask is only kept while the child's run is active.
+            store.setRunStatus(props.workspaceId, entry.childSessionId, { type: "busy" });
+          } else {
+            // A child left running by an earlier scenario has finished now.
+            store.setRunStatus(props.workspaceId, entry.childSessionId, { type: "idle" });
+          }
+          if (entry.state === "permission" && !permissionChild) {
+            store.setWaitingRequest(props.workspaceId, entry.childSessionId, "permission", `${entry.childSessionId}:permission`, true);
+          }
+          if (entry.state === "question") {
+            store.setWaitingRequest(props.workspaceId, entry.childSessionId, "question", `${entry.childSessionId}:question`, true);
+          }
+        }
+        setEvalMarkdownMessages(createSubagentTrackerEvalMessages(props.sessionId, scenario, agents));
+        setEvalThreadStatus(parentIdle ? "ready" : "streaming");
+        store.setRunStatus(props.workspaceId, props.sessionId, parentIdle ? { type: "idle" } : { type: "busy" });
+        return { ok: true, scenario, childSessionIds: agents.map((entry) => entry.childSessionId) };
+      },
+    };
+  }, [props.sessionId, props.workspaceId]);
+  useControlAction(props.isControlTarget ? seedSubagentTrackerControlAction : null);
   const seedChatLoadingControlAction = useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
@@ -2064,6 +2183,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     return "ready";
   }, [admissionOutcome, admissionOutcomeUnresolved, autoSending, evalThreadStatus, liveStatus, queuedDrainState.phase.kind, sending]);
   const composerBusy = chatStreaming || status === "submitted";
+  // Sub-agents of the current turn, attached to the composer (OpenCode v2 only).
+  const subagentTrackerFeature = useOrgFeature("composerSubagentTracker");
+  const subagentTrackerParentActive = status === "streaming" || status === "retrying" || status === "submitted";
+  const subagentTrackerShown = useMemo(
+    () => subagentTrackerFeature && snapshotEngine === "v2" && currentTurnSubagentParts(visibleMessages).length > 0,
+    [subagentTrackerFeature, snapshotEngine, visibleMessages],
+  );
 
   useEffect(() => {
     if (!hasFullHistory || admissionOutcome !== "unresolved") {
@@ -3882,9 +4008,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         pastedText={pasteParts}
         onExpandPastedText={handleExpandPastedText}
         onRemovePastedText={handleRemovePastedText}
-          compactTopSpacing={Boolean(composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0)}
+          compactTopSpacing={Boolean(composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown)}
           topAccessory={
-            composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 ? (
+            composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown ? (
               <div>
                 {queuedItems.length > 0 ? (
                   <QueuedMessagesPanel
@@ -3897,7 +4023,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     sendingId={sendingQueuedId}
                   />
                 ) : null}
+                {subagentTrackerShown && !archived ? (
+                  <ComposerSubagentTracker
+                    messages={visibleMessages}
+                    workspaceId={props.workspaceId}
+                    parentActive={subagentTrackerParentActive}
+                    syncDegraded={runSyncHealth.degraded}
+                    onOpenSubagentSession={openChild}
+                    onStopSubagentSession={handleStopSubagentSession}
+                  />
+                ) : null}
                 {composerQuestion ? (
+                  <div data-composer-interaction="question">
                   <QuestionPanel
                     questions={composerQuestion.questions}
                     busy={props.questionReplyBusy ?? false}
@@ -3907,11 +4044,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       }
                     }}
                   />
+                  </div>
                 ) : (props.todos ?? []).some((todo) => todo.content.trim()) ? (
                   <TodoPanel todos={props.todos ?? []} />
                 ) : null}
                 {computerRequest ? <ComputerRequestPanel sessionId={props.sessionId} request={computerRequest} /> : null}
                 {props.activePermission ? (
+                  <div data-composer-interaction="permission">
                   <PermissionApprovalPanel
                     permission={props.activePermission}
                     sourceTitle={props.activePermissionSourceTitle ?? undefined}
@@ -3919,6 +4058,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     respondPermission={props.respondPermission}
                     safeStringify={props.safeStringify}
                   />
+                  </div>
                 ) : null}
               </div>
             ) : null
