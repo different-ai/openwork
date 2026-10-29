@@ -1,0 +1,68 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import { expect } from "vitest";
+import { spec } from "@openwork/testkit";
+import { historyRestoreProgress } from "../worlds/history-restore-progress.ts";
+
+const test = spec.world(historyRestoreProgress, {
+  timeout: 600_000,
+  needs: { commands: ["bun", "pnpm"], platform: "darwin", placement: "local" },
+  resources: { surfaces: ["desktop"], services: [], nativeReason: "Capture the actual isolated Electron migration dialog while its real worker restores native-converted synthetic history." },
+});
+
+test("the migration dialog reports real restoring progress instead of an indeterminate chat count", async ({ world, user, probe, step, evidence }) => {
+  await user.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
+  await user.reload();
+  await step("open the actual running migration through its progress control", async () => {
+    await user.see({ text: "Migrating chats to OpenCode v2" }, { timeoutMs: 60_000 });
+    // Dismiss transient first-launch surfaces using real keyboard controls, then
+    // activate the migration banner's button without coordinate/resize races.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const dialogs = (await probe.dom('[data-testid="engine-migration-progress"]')).elements.length;
+      if (!dialogs && !(await world.modelSearch())) break;
+      await user.press("Escape");
+    }
+    let opened = false;
+    for (let attempt = 0; attempt < 80; attempt++) {
+      const control = await world.activeControl();
+      if (control.button && control.label === "Show progress") {
+        await user.press("Enter");
+        opened = true;
+        break;
+      }
+      await user.press("Tab");
+    }
+    expect(opened).toBe(true);
+    await user.see({ role: "button", label: "Continue using OpenWork" });
+  });
+  await step("restoration is real, visible and bounded by its actual message total", async () => {
+    const initial = await world.counters();
+    await world.advance();
+    const counters = await probe.eventually(() => world.counters(), {
+      within: 30_000, label: "committed restoration work exists", until: value => value.done > 0 && value.done < value.total,
+    });
+    expect(counters.done).toBeGreaterThan(initial.done);
+    const status = await world.status();
+    expect(status?.state).toBe("running");
+    const label = await probe.eventually(async () => (await probe.dom('[data-testid="engine-migration-count"]')).elements[0]?.text ?? "", {
+      within: 30_000, label: "migration phase label", until: value => world.legacy ? value.includes("chats to copy") : value.includes("Restoring messages:"),
+    });
+    if (world.legacy) {
+      expect(status?.phase).toBe("starting");
+      expect(label).not.toContain("Restoring messages:");
+    } else {
+      expect(status?.phase).toBe("restoring");
+      expect(status?.restored).toBeGreaterThan(0);
+      expect(status?.restoreTotal).toBe(counters.total);
+      expect(label).toContain(new Intl.NumberFormat().format(counters.total));
+    }
+    const healthy = await probe.eventually(() => world.layoutHealthy(), {
+      within: 5_000, label: "one settled, unclipped migration dialog", until: value => value.healthy,
+    });
+    expect(healthy.healthy).toBe(true);
+    evidence.recordAssertionEvidence("The real worker and the dialog agree on the restoration phase", `phase=${String(status?.phase)}; committed messages=${counters.done}/${counters.total}; label=${label}`, true);
+    const shot = await user.screenshot();
+    const output = process.env.OPENWORK_HISTORY_SCREENSHOT_OUTPUT;
+    if (output) { await mkdir(dirname(output), { recursive: true }); await writeFile(output, shot.png); }
+  });
+});
