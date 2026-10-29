@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
-import { toWorkbotPageEvent, workbotOwner, workbotSessionId, workbotCellSessionId } from "@openwork-ee/workbot-server"
+import { toWorkbotPageEvent, workbotOwner, workbotSessionId, workbotCellSessionId, workbotSideChatSessionId } from "@openwork-ee/workbot-server"
 import { createHeadlessRunnerClient } from "@openwork-ee/headless-protocol"
 import { createDen, denSessionSchema } from "../src/server/den.js"
 import { loadConfig } from "../src/server/config.js"
@@ -161,6 +161,71 @@ test("Computer follows the member's existing session cell after chat storage mig
   assert.equal(response.status, 200)
   assert.ok(calls.includes(`/v1/sessions/${sessionId}/desktop/viewer`))
   assert.ok(!calls.some(path => path.includes(workbotSessionId("org", "cell_member"))))
+})
+
+test("In a side chat, Computer opens and acts on that chat's own computer, never the main chat's", async t => {
+  const chat = "sidechat0computer1"
+  const calls: { method: string; path: string; body: unknown }[] = []
+  let missing = new Set<string>()
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
+    const parsed = new URL(url instanceof Request ? url.url : url)
+    const method = init?.method ?? "GET"
+    calls.push({ method, path: parsed.pathname, body: typeof init?.body === "string" ? JSON.parse(init.body) : null })
+    if (parsed.pathname === "/v1/sessions") return Response.json({ sessions: [] })
+    if (parsed.pathname.endsWith("/abort")) return Response.json({ accepted: true })
+    if (parsed.pathname.endsWith("/desktop/viewer")) return Response.json({ state: "connected", url: "wss://viewer.example.test/vnc/synthetic", expiresAt: Date.now() + 60_000, paused: false })
+    if (parsed.pathname.endsWith("/desktop/action")) return Response.json({ ok: true })
+    if (method === "PUT") return Response.json({ id: parsed.pathname.split("/").at(-1) })
+    if (missing.has(parsed.pathname)) return Response.json({ error: "unknown_session" }, { status: 404 })
+    return Response.json({ turns: [], messages: [], finalAssistantText: "" })
+  })
+  let signed = member("side_alice")
+  signed.den.sideChats = true
+  const app = new Hono<AppEnv>()
+  registerWorkbotRoutes(app, {
+    config, den: { ...createDen({ apiUrl: config.denApiUrl, publicUrl: config.publicUrl }), session: async () => signed.den },
+    member: async (c, next) => { c.set("member", signed); await next() }, sameOrigin: async (_c, next) => next(),
+  })
+  const post = (operation: string, body: unknown, query = `?chat=${chat}`) =>
+    app.request(`/v1/workbot/computer/${operation}${query}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+  const side = `/v1/sessions/${workbotSideChatSessionId("org", "side_alice", chat)}`
+  const main = `/v1/sessions/${workbotSessionId("org", "side_alice")}`
+
+  assert.equal((await post("viewer", { view: "computer" })).status, 200)
+  assert.ok(calls.some(call => call.path === `${side}/desktop/viewer`))
+  assert.ok(!calls.some(call => call.path.startsWith(main)), "the main chat's computer is never touched")
+
+  // Taking control, pausing and rebuilding stop the side chat's own answer, then act on its computer.
+  calls.length = 0
+  assert.equal((await post("viewer", { view: "computer", control: true })).status, 200)
+  assert.ok(calls.findIndex(call => call.path === `${side}/abort`) < calls.findIndex(call => call.path === `${side}/desktop/viewer`))
+  calls.length = 0
+  assert.equal((await post("action", { action: "pause" })).status, 200)
+  const abort = calls.findIndex(call => call.path === `${side}/abort`)
+  const pause = calls.findIndex(call => call.path === `${side}/desktop/action`)
+  assert.ok(abort !== -1 && abort < pause)
+  assert.deepEqual(calls[pause]?.body, { action: "pause" })
+  assert.ok(!calls.some(call => call.path.startsWith(main)))
+
+  // A malformed chat, or side chats turned off, never reaches the runner.
+  calls.length = 0
+  assert.equal((await post("viewer", { view: "computer" }, "?chat=Not-A-Chat")).status, 400)
+  signed = member("side_alice")
+  assert.equal((await post("viewer", { view: "computer" })).status, 404)
+  assert.equal(calls.length, 0)
+
+  // A side chat with no session yet gets one, kept with its owner and ref, before its computer opens.
+  signed = member("side_bob")
+  signed.den.sideChats = true
+  const fresh = `/v1/sessions/${workbotSideChatSessionId("org", "side_bob", chat)}`
+  missing = new Set([fresh])
+  calls.length = 0
+  assert.equal((await post("viewer", { view: "browser" })).status, 200)
+  const created = calls.find(call => call.method === "PUT" && call.path === fresh)
+  const kept = created?.body as { ref?: string; owner?: string } | undefined
+  assert.equal(kept?.ref, chat)
+  assert.equal(kept?.owner, workbotOwner("org", "side_bob"))
+  assert.ok(calls.some(call => call.path === `${fresh}/desktop/viewer`))
 })
 
 test("Rebuilding the computer stops the running turn before the runner replaces the VM", async t => {

@@ -265,13 +265,16 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   /** One automatic rebuild per computer at a time: the Browser view and the chat's live glimpse can both find it outdated. */
   const autoRebuilds = new Map<string, Promise<{ ok: boolean; error: string }>>()
 
-  // No sandbox ids or preview credentials are accepted from the page: the member determines the computer.
+  // No sandbox ids or preview credentials are accepted from the page: the member and the chat (each side chat has its
+  // own computer) determine the computer.
   app.post("/v1/workbot/computer/:operation", async (c) => {
     const member = c.get("member")
     c.header("Cache-Control", "no-store")
     if (!member.den.enabled || !desktopViewsOf(member.den).length) return c.json({ error: "feature_disabled" }, 403)
     const operation = c.req.param("operation")
     if (operation !== "viewer" && operation !== "action") return c.json({ error: "not_found" }, 404)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
     const raw: unknown = await c.req.json().catch(() => null)
     const viewer = z.object({ view: z.enum(["browser", "computer"]), control: z.boolean().default(false), wake: z.boolean().default(false) }).strict().safeParse(raw)
     const action = z.object({ action: z.enum(["continue", "pause", "resume", "rebuild"]) }).strict().safeParse(raw)
@@ -290,9 +293,9 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       const views = await allowedViews()
       if (!views) return c.json({ error: "feature_disabled" }, 403)
       const workbot = workbotFor(member, views)
-      let sessionId = await workbot.sessionIdOf(actorOf(member))
+      let sessionId = await workbot.sessionIdOf(actorOf(member), scope.chat)
       const existing = await client.readSession(sessionId, { turns: 1, limit: 1, outputs: "none" })
-      if (!existing.ok && existing.status === 404) sessionId = await workbot.ensureComputer(actorOf(member))
+      if (!existing.ok && existing.status === 404) sessionId = await workbot.ensureComputer(actorOf(member), scope.chat)
       else {
         if (!existing.ok) return desktopFailure(c, operation, existing.error)
         const updated = await client.putSession(sessionId, { computer: true, desktop: true, desktopViews: views })
@@ -314,7 +317,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         const body = viewer
         if (!body.success) return c.json({ error: "invalid_request" }, 400)
         const { wake, ...view } = body.data
-        if (view.control) await workbot.stop(actorOf(member))
+        if (view.control) await workbot.stop(actorOf(member), scope.chat)
         const open = () => client.desktopViewer(sessionId, { ...view, origin: new URL(config.publicUrl).origin })
         let result = await open()
         // The runner can drop a request while its process is recycled; asking for a viewer again is harmless.
@@ -345,7 +348,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       if (!body.success) return c.json({ error: "invalid_request" }, 400)
       if (!await allowedViews()) return c.json({ error: "feature_disabled" }, 403)
       // Rebuilding deletes the VM under any running turn, so stop the turn first, as pausing does.
-      if (body.data.action === "pause" || body.data.action === "rebuild") await workbot.stop(actorOf(member))
+      if (body.data.action === "pause" || body.data.action === "rebuild") await workbot.stop(actorOf(member), scope.chat)
       let result = await client.desktopAction(sessionId, body.data.action)
       let rebuilt = body.data.action === "rebuild"
       if (!result.ok && result.error === "desktop_outdated" && body.data.action === "resume" && canRebuild) {

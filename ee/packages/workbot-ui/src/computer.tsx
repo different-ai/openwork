@@ -10,6 +10,7 @@ import type { WorkbotViewContext } from "@openwork/types/workbot-context";
 import { WorkbotTeaching } from "./teaching";
 import { addressFor, ScreencastViewer, type ScreencastPage } from "./screencast";
 import { computerViews, errorMessage, workbotHost } from "./host";
+import { inChat, useWorkbotChat } from "./data";
 
 const viewerSchema = z.union([z.object({ state: z.literal("paused") }), z.object({ state: z.literal("connected"), url: z.string().url(), expiresAt: z.number(), paused: z.boolean() })]);
 const button = "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-chip)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
@@ -37,6 +38,8 @@ export function openBrowserPage(id: string) {
  */
 export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onViewChange, onContextChange }: { onTeachingChange?(context: BrowserTeachingContext | undefined): void; onRun?(text: string): void | Promise<void>; canTeach?: boolean; onViewChange?(view: ComputerView): void; /** The tab in front of the Browser view, for the chat beside it; null when none is on screen. */ onContextChange?(context: WorkbotViewContext | null): void }) {
   const host = workbotHost();
+  // Each side chat has its own computer: this view and its controls are for the chat it opens in.
+  const chat = useWorkbotChat();
   const [teaching, setTeaching] = useState<BrowserTeachingContext>();
   const teachingChange = useCallback((context: BrowserTeachingContext | undefined) => { setTeaching(context); onTeachingChange?.(context); }, [onTeachingChange]);
   const recording = teaching !== undefined && teaching.phase !== "draft";
@@ -82,7 +85,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
     // Nobody watching a hidden tab, so stop streaming until it is shown again.
     if (!target || paused || away) return;
     setError(null); setConnected(false); setReconnecting(false); setUpdating(false); setLivePage(null); setStream(null);
-    return connectDesktopViewer(target, host, { view, control, wake: true, screencast: host.browserLiveView === true }, {
+    return connectDesktopViewer(target, host, { view, control, chat, wake: true, screencast: host.browserLiveView === true }, {
       paused: () => setPaused(true),
       agentPaused: setAgentPaused,
       connected: () => { setConnected(true); setReconnecting(false); setUpdating(false); setError(null); },
@@ -92,13 +95,13 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
       page: setLivePage,
       stream: setStream,
     });
-  }, [host, identity, view, control, paused, away, revision]);
+  }, [host, identity, chat, view, control, paused, away, revision]);
 
   const action = async (next: "pause" | "resume" | "continue" | "rebuild") => {
     if (changing) return false;
     setChanging(true); setError(null); setRebuilding(next === "rebuild");
     try {
-      const { response, payload } = await host.requestJson("/v1/workbot/computer/action", { method: "POST", body: JSON.stringify({ action: next }) }, 195_000);
+      const { response, payload } = await host.requestJson(inChat("/v1/workbot/computer/action", chat), { method: "POST", body: JSON.stringify({ action: next }) }, 195_000);
       if (!response.ok) throw new Error(errorMessage(payload, "Your computer didn't respond. Try again."));
       if (next === "continue" || next === "rebuild") { setControl(false); setAgentPaused(false); }
       setPaused(next === "pause");
@@ -158,12 +161,12 @@ type ViewerEvents = {
 };
 
 /**
- * Streams one view of the member's computer into `target`, renewing the connection before the computer closes it and
- * reconnecting a few times when it drops. Returns the function that closes it. With `screencast`, the browser view
+ * Streams one view of a chat's computer (`chat` null: the main chat's) into `target`, renewing the connection before
+ * the computer closes it and reconnecting a few times when it drops. Returns the function that closes it. With `screencast`, the browser view
  * uses the computer's page stream, for watching and for control; a computer whose image predates it refuses the stream,
  * and the view falls back to noVNC. With `wake`, a paused computer is resumed instead of reported as paused.
  */
-export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeof workbotHost>, options: { view: ComputerView; control: boolean; wake?: boolean; screencast?: boolean }, events: ViewerEvents) {
+export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeof workbotHost>, options: { view: ComputerView; control: boolean; chat?: string | null; wake?: boolean; screencast?: boolean }, events: ViewerEvents) {
   const { view, control } = options;
   let disposed = false;
   let screencastRefused = false;
@@ -183,7 +186,7 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
     controller.signal.addEventListener("abort", abort, { once: true });
     const timeout = setTimeout(abort, 195_000);
     try {
-      const { response, payload } = await host.requestJson("/v1/workbot/computer/viewer", {
+      const { response, payload } = await host.requestJson(inChat("/v1/workbot/computer/viewer", options.chat ?? null), {
         method: "POST", body: JSON.stringify({ view, control, ...(options.wake ? { wake: true } : {}) }), signal: request.signal,
       }, 195_000);
       if (disposed) return;
@@ -414,18 +417,23 @@ function BrowserFrame({ page, stream }: { page: ScreencastPage; stream: Screenca
 type GlimpseState = "connecting" | "live" | "unavailable";
 /** One view's connection, shared by the live views in the chat: a card that replaces another picks it up as it is. */
 type SharedGlimpse = { host: ReturnType<typeof workbotHost>; container: HTMLDivElement; state: GlimpseState; listeners: Set<(state: GlimpseState) => void>; users: number; close(): void; linger?: ReturnType<typeof setTimeout> };
-const sharedGlimpses = new Map<ComputerView, SharedGlimpse>();
+/** Keyed by chat and view: each chat has its own computer, so one chat's connection never stands in for another's. */
+const sharedGlimpses = new Map<string, SharedGlimpse>();
+function glimpseKey(chat: string | null, view: ComputerView) {
+  return `${chat ?? ""}:${view}`;
+}
 /** How long a view's connection outlives its last live view, so the next card of the same reply doesn't reconnect. */
 const GLIMPSE_LINGER_MS = 15_000;
 
-function watchGlimpse(host: ReturnType<typeof workbotHost>, view: ComputerView): SharedGlimpse {
-  const existing = sharedGlimpses.get(view);
+function watchGlimpse(host: ReturnType<typeof workbotHost>, chat: string | null, view: ComputerView): SharedGlimpse {
+  const key = glimpseKey(chat, view);
+  const existing = sharedGlimpses.get(key);
   if (existing && existing.host === host) {
     clearTimeout(existing.linger);
     existing.users += 1;
     return existing;
   }
-  if (existing) { sharedGlimpses.delete(view); existing.close(); }
+  if (existing) { sharedGlimpses.delete(key); existing.close(); }
   const container = document.createElement("div");
   container.style.cssText = "position:absolute;inset:0";
   const shared: SharedGlimpse = { host, container, state: "connecting", listeners: new Set(), users: 1, close: () => {} };
@@ -433,24 +441,24 @@ function watchGlimpse(host: ReturnType<typeof workbotHost>, view: ComputerView):
     shared.state = state;
     for (const listener of shared.listeners) listener(state);
     // A view that can't connect is dropped, so the next live view tries again.
-    if (state === "unavailable" && sharedGlimpses.get(view) === shared) { sharedGlimpses.delete(view); shared.close(); }
+    if (state === "unavailable" && sharedGlimpses.get(key) === shared) { sharedGlimpses.delete(key); shared.close(); }
   };
-  shared.close = connectDesktopViewer(container, host, { view, control: false }, {
+  shared.close = connectDesktopViewer(container, host, { view, control: false, chat }, {
     paused: () => set("unavailable"),
     agentPaused: () => {},
     connected: () => set("live"),
     reconnecting: () => set("connecting"),
     failed: () => set("unavailable"),
   });
-  sharedGlimpses.set(view, shared);
+  sharedGlimpses.set(key, shared);
   return shared;
 }
 
-function releaseGlimpse(view: ComputerView, shared: SharedGlimpse) {
+function releaseGlimpse(key: string, shared: SharedGlimpse) {
   shared.users -= 1;
   if (shared.users > 0) return;
   shared.linger = setTimeout(() => {
-    if (sharedGlimpses.get(view) === shared) sharedGlimpses.delete(view);
+    if (sharedGlimpses.get(key) === shared) sharedGlimpses.delete(key);
     shared.close();
   }, GLIMPSE_LINGER_MS);
 }
@@ -463,6 +471,7 @@ function releaseGlimpse(view: ComputerView, shared: SharedGlimpse) {
  */
 export function LiveGlimpse({ view, onOpen }: { view: ComputerView; onOpen?(): void }) {
   const host = workbotHost();
+  const chat = useWorkbotChat();
   const screen = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<GlimpseState>("connecting");
   // Once it has had a picture it stays, so a reconnect doesn't collapse it.
@@ -472,16 +481,16 @@ export function LiveGlimpse({ view, onOpen }: { view: ComputerView; onOpen?(): v
   useEffect(() => {
     const target = screen.current;
     if (!target || away) return;
-    const shared = watchGlimpse(host, view);
+    const shared = watchGlimpse(host, chat, view);
     target.append(shared.container);
     setState(shared.state);
     shared.listeners.add(setState);
     return () => {
       shared.listeners.delete(setState);
       if (shared.container.parentElement === target) shared.container.remove();
-      releaseGlimpse(view, shared);
+      releaseGlimpse(glimpseKey(chat, view), shared);
     };
-  }, [host, view, away]);
+  }, [host, chat, view, away]);
   if (state === "unavailable") return null;
   const label = view === "browser" ? "Workbot is browsing" : "Workbot is using its computer";
   return <button type="button" onClick={onOpen} disabled={!onOpen} aria-label={`${label}. Open the full view`}

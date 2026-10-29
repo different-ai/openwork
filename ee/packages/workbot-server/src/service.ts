@@ -691,7 +691,7 @@ export async function deleteWorkbotFile(actor: WorkbotActor, fileId: string, dep
 /** Workbot for one host: every operation, bound to its runner and scheduling check. `chat` null is the main chat. */
 export function createWorkbot(deps: WorkbotDeps) {
   return {
-    ensureComputer: (actor: WorkbotActor) => ensureSession(actor, "UTC", deps),
+    ensureComputer: (actor: WorkbotActor, chat: WorkbotChat = null) => ensureSession(actor, "UTC", deps, chat),
     readThread: (actor: WorkbotActor, input: { turns?: number; chat?: WorkbotChat } = {}) => readWorkbotThread(actor, input, deps),
     /** The runner session a chat lives under (for a host that talks to the runner directly, e.g. live sockets). */
     sessionIdOf: (actor: WorkbotActor, chat: WorkbotChat = null) => sessionOf(actor, chat, deps),
