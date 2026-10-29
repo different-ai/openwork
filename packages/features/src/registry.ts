@@ -613,6 +613,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  customConnectorRoutes: {
+    label: "Connect: choose how a custom MCP signs in",
+    description: "When an admin adds a custom MCP server by address, Den shows how it detected the server signs in (OAuth with automatic registration, your own OAuth app, API key or no sign-in), lets them pick another route, and add up to four request headers before the checks run. Turning it off returns to the checks-only flow; connections already added, and their headers, keep working.",
+    category: "connect",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/custom-connector-routes/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   analyticsDailyTrends: {
     label: "Analytics: daily trends",
     description: "Usage & adoption shows active users, sessions and tasks per day for the last 30 days, with a Daily / Weekly switch next to the project filter. Turning it off returns to the 12-week weekly charts.",

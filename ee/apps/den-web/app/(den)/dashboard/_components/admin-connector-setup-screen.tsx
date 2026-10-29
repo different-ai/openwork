@@ -5,7 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../_lib/den-org";
+import { markFeatureUsed } from "../../_lib/feature-usage";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessPeopleIds, peopleLabel } from "./access-summary";
 import type { ConnectorRoute } from "./connector-route";
@@ -96,7 +97,8 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const [confirmSwitch, setConfirmSwitch] = useState(false);
   const [showOAuthApp, setShowOAuthApp] = useState(false);
   // A custom connector first shows what OpenWork detected and lets the admin pick another route.
-  const isCustom = catalogId === "custom";
+  // Behind customConnectorRoutes; until the organization loads, nothing is created early.
+  const isCustom = catalogId === "custom" && (!orgContext || orgFeatureEnabled(orgContext, "customConnectorRoutes"));
   const initialConnectionId = searchParams.get("connection");
   const [route, setRoute] = useState<ConnectorRoute | null>(null);
   const [previousRoute, setPreviousRoute] = useState<ConnectorRoute | null>(null);
@@ -271,6 +273,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
         secretRequired={setup.secretRequired}
         onCancel={() => router.push(getAddConnectorRoute(orgSlug))}
         onContinue={(chosen, oauthApp) => {
+          markFeatureUsed("customConnectorRoutes");
           setRoute(chosen);
           setPendingOAuthApp(oauthApp);
         }}

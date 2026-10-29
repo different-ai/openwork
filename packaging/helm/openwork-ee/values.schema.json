@@ -531,6 +531,16 @@
               ],
               "description": "Connect: more MCP server presets: Admins see more reviewed official MCP servers (Airtable, Amplitude, Canva, Fireflies, Hugging Face, Lucid, Mural, Vercel, PostHog, monday.com, Honeycomb, Klaviyo, Semgrep, Cal.com, Tavily, Figma) to add with one click in Manage › Connectors. Each uses the same OAuth or API-key flow as the existing presets. Turning it off hides the new suggestions; existing connections stay. Renders DEN_FEATURE_EXPANDED_MCP_PRESETS."
             },
+            "customConnectorRoutes": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Connect: choose how a custom MCP signs in: When an admin adds a custom MCP server by address, Den shows how it detected the server signs in (OAuth with automatic registration, your own OAuth app, API key or no sign-in), lets them pick another route, and add up to four request headers before the checks run. Turning it off returns to the checks-only flow; connections already added, and their headers, keep working. Renders DEN_FEATURE_CUSTOM_CONNECTOR_ROUTES."
+            },
             "analyticsDailyTrends": {
               "enum": [
                 "",
