@@ -21,12 +21,37 @@ export const CALENDAR_TRIGGER_POLL_MS = 5 * MINUTE_MS
 /** Den reads this far either side of now, so every edge an offset can reach is in the last read. */
 export const CALENDAR_TRIGGER_READ_MARGIN_MS = AUTOMATION_CALENDAR_OFFSET_MAX_MINUTES * MINUTE_MS + CALENDAR_TRIGGER_GRACE_MS + CALENDAR_TRIGGER_POLL_MS
 
+/**
+ * Why a meeting does not start a run, earliest check first. These meetings are
+ * not misses (the owner declined, or the rule doesn't want them), so nothing is
+ * recorded on the Automation; Den logs the decision once per occurrence.
+ */
+export const CALENDAR_TRIGGER_SKIP_REASONS = [
+  "cancelled",
+  /** Focus time, out of office or a working location, not a meeting. */
+  "not_a_meeting",
+  "all_day",
+  /** Google gave no start or end time. */
+  "no_time",
+  "declined",
+  /** Nobody else is invited besides rooms. */
+  "no_one_else",
+  /** `rule.withExternalAttendees` and everyone is from the owner's domain. */
+  "rule_external_only",
+  /** `rule.titleIncludes` and the title doesn't contain it. */
+  "rule_title",
+] as const
+export type CalendarTriggerSkipReason = (typeof CALENDAR_TRIGGER_SKIP_REASONS)[number]
+
+export type CalendarTriggerDecision = { kind: "run" } | { kind: "skip"; reason: CalendarTriggerSkipReason }
+
 export type CalendarTriggerOccurrence = {
   /** Stable per meeting and edge: a moved meeting is a new occurrence, a changed offset is not. */
   key: string
   /** When the run is due. */
   at: number
   event: CalendarEventFacts
+  decision: CalendarTriggerDecision
 }
 
 const EVENT_ID_KEY_LIMIT = 200
@@ -43,19 +68,30 @@ function shortDigest(value: string): string {
 }
 
 /**
- * A meeting the trigger runs for: a real, timed meeting, not cancelled, that
- * the owner accepted or organizes, with someone else invited, matching the
- * rule.
+ * Whether a meeting starts a run: a real, timed meeting, not cancelled, that
+ * the owner hasn't declined, with someone else invited, matching the rule.
+ * Unanswered and tentative invites count: most people never answer internal
+ * ones.
  */
-export function calendarTriggerMatches(trigger: AutomationCalendarSchedule, event: CalendarEventFacts): boolean {
-  if (!event.meeting || event.allDay || event.status === "cancelled" || event.declined || !event.accepted) return false
-  if (event.start === null || event.end === null || event.others.length === 0) return false
-  if (trigger.rule.withExternalAttendees && !event.others.some((other) => other.external)) return false
+export function calendarTriggerDecision(trigger: AutomationCalendarSchedule, event: CalendarEventFacts): CalendarTriggerDecision {
+  const skip = (reason: CalendarTriggerSkipReason): CalendarTriggerDecision => ({ kind: "skip", reason })
+  if (event.status === "cancelled") return skip("cancelled")
+  if (!event.meeting) return skip("not_a_meeting")
+  if (event.allDay) return skip("all_day")
+  if (event.start === null || event.end === null) return skip("no_time")
+  if (event.response === "declined") return skip("declined")
+  if (event.others.length === 0) return skip("no_one_else")
+  if (trigger.rule.withExternalAttendees && !event.others.some((other) => other.external)) return skip("rule_external_only")
   const wanted = trigger.rule.titleIncludes?.toLocaleLowerCase()
-  return !wanted || (event.title?.toLocaleLowerCase().includes(wanted) ?? false)
+  if (wanted && !(event.title?.toLocaleLowerCase().includes(wanted) ?? false)) return skip("rule_title")
+  return { kind: "run" }
 }
 
-/** Every occurrence due in `[from, to)`, earliest first, one per key. */
+/**
+ * Every meeting moment due in `[from, to)`, earliest first, one per key, each
+ * with its decision. Events without times have no moment, so they never
+ * appear here.
+ */
 export function calendarTriggerOccurrences(input: {
   trigger: AutomationCalendarSchedule
   events: readonly CalendarEventFacts[]
@@ -64,14 +100,13 @@ export function calendarTriggerOccurrences(input: {
 }): CalendarTriggerOccurrence[] {
   const byKey = new Map<string, CalendarTriggerOccurrence>()
   for (const event of input.events) {
-    if (!calendarTriggerMatches(input.trigger, event)) continue
     const edgeAt = input.trigger.edge === "start" ? event.start : event.end
     if (edgeAt === null) continue
     const at = edgeAt + input.trigger.offsetMinutes * MINUTE_MS
     if (at < input.from || at >= input.to) continue
     const id = event.id.length <= EVENT_ID_KEY_LIMIT ? event.id : `h${shortDigest(event.id)}`
     const key = `meeting:${input.trigger.edge}:${edgeAt}:${id}`
-    if (!byKey.has(key)) byKey.set(key, { key, at, event })
+    if (!byKey.has(key)) byKey.set(key, { key, at, event, decision: calendarTriggerDecision(input.trigger, event) })
   }
   return [...byKey.values()].sort((left, right) => left.at - right.at || left.key.localeCompare(right.key))
 }

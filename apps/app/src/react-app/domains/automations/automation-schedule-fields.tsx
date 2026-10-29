@@ -222,7 +222,7 @@ export function AutomationScheduleFields(props: {
             />
             <Label htmlFor={id("meeting-external")}>Only meetings with people outside my organization</Label>
           </div>
-          <p className="text-xs text-muted-foreground">Uses meetings you accepted on your Google Calendar. Runs in OpenWork Cloud.</p>
+          <p className="text-xs text-muted-foreground">Uses meetings on your Google Calendar, except ones you declined. Runs in OpenWork Cloud.</p>
         </div>
       ) : null}
 

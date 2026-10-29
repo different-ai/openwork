@@ -15,16 +15,19 @@ meeting titled review, pull the latest numbers".
 ```
 
 `offsetMinutes` runs from the meeting's `edge` (negative is before), at most
-two hours either way. A meeting counts when it is timed (not all-day), not
-cancelled, accepted by the owner (or organized by them), and has someone else
-invited besides rooms. `rule.withExternalAttendees` keeps only meetings with
-someone from another email domain; `rule.titleIncludes` matches the title,
-ignoring case.
+two hours either way. A meeting counts when it is a real meeting (not focus
+time, out of office or a working location), timed (not all-day), not
+cancelled, not declined by the owner, and has someone else invited besides
+rooms. Unanswered and tentative invites count: most people never answer
+internal ones. `rule.withExternalAttendees` keeps only meetings with someone
+from another email domain; `rule.titleIncludes` matches the title, ignoring
+case.
 
 In the desktop Automation editor it is **Around my meetings**: when it runs
 (before a meeting starts or after it ends) and whether only meetings with
-people outside the organization count. Agents create one with
-`createCloudAutomation`, or propose one with `automation.propose`.
+people outside the organization count ("Uses meetings on your Google Calendar,
+except ones you declined."). Agents create one with `createCloudAutomation`,
+or propose one with `automation.propose`.
 
 ![The Automation editor with Around my meetings, 5 min after it ends](./around-my-meetings.png)
 
@@ -36,9 +39,16 @@ people outside the organization count. Agents create one with
   read the member's agent already uses) at most every 5 minutes per owner and
   only for owners with an active calendar-triggered Automation. The pure
   `calendarTriggerOccurrences` (`packages/automations`) turns the events into
-  occurrences with a stable key; each due one is claimed once, keyed by
+  occurrences with a stable key, each with `calendarTriggerDecision`: `run`,
+  or `skip` with one of `CALENDAR_TRIGGER_SKIP_REASONS` (`cancelled`,
+  `not_a_meeting`, `all_day`, `no_time`, `declined`, `no_one_else`,
+  `rule_external_only`, `rule_title`). Each due `run` is claimed once, keyed by
   Automation and that key. A moment more than 10 minutes old is never
   replayed, and meetings from before the trigger was saved never run.
+- The owner's answer comes from `CalendarEventFacts.response` (`organizer`,
+  `accepted`, `tentative`, `needsAction` or `declined`; an event with no entry
+  for them, such as a group invite, is `needsAction`). The member's agent reads
+  the same field and, as before, only skips `declined`.
 - The run gets the person's instructions plus facts Google or the owner
   control inside `<meeting>`: local start and end, invitee email domains
   (checked as hostnames, never addresses) and a Google Meet or Calendar link.
@@ -50,6 +60,27 @@ people outside the organization count. Agents create one with
 - Cloud placement only. If the owner's Google Calendar is not connected (or
   lacks the calendar scope) the Automation needs attention with "Connect
   Google Calendar…"; a Google API error is retried on the next read.
+
+## Why didn't it run?
+
+- Meetings the trigger isn't meant for (a `skip` decision) record nothing on
+  the Automation: they are not misses.
+- A meeting that should have run but came due while Google Calendar couldn't
+  be read, and is more than 10 minutes old once a read works again, gets a
+  `skipped` run on its Automation: `scheduledFor` is the meeting's moment,
+  `error.code` is `connect_access_unavailable`, the summary says so in a
+  sentence, and `triggerContext` keeps the meeting's times with no title. It
+  uses the same occurrence key as the run would have, so a meeting never has
+  both, and replicas never write it twice. A meeting still within 10 minutes
+  runs late instead. A Den restart during the outage forgets it began, so
+  meetings missed before the restart record nothing.
+- Every decision is logged once per occurrence and decision (not per poll) by
+  each replica: `component=automation_calendar_triggers`,
+  `message="calendar trigger decision"`, with `automation_id`,
+  `occurrence_key`, `due_at`, `meeting_start`, `meeting_end`,
+  `owner_response`, `decision`, `reason`, `missed`, `run_id` and
+  `skipped_run_recorded`. Never the title or anyone's address. Events without
+  times (all-day) have no moment, so they are never logged.
 
 ## Older desktops
 
@@ -67,9 +98,12 @@ back. New calendar triggers are refused with
 ## What to watch
 
 Proof: `evals/proofs/automation-schedule-triggers.proof.test.ts`; rules and the
-calendar source: `ee/apps/den-api/test/api/automation-calendar-triggers.api.test.ts`;
-which meetings and when: `packages/automations/src/calendar-trigger.test.ts`.
+calendar source: `ee/apps/den-api/test/api/automation-calendar-triggers.api.test.ts`
+and `ee/apps/den-api/test/automation-calendar-trigger-source.test.ts`; which
+meetings and when: `packages/automations/src/calendar-trigger.test.ts`.
 
-Logs from `automation_calendar_triggers` (read failures per owner), runs whose
-`scheduledFor` follows meetings, and Automations needing attention with
+Logs from `automation_calendar_triggers` (read failures per owner, and one
+`calendar trigger decision` per occurrence), runs whose `scheduledFor` follows
+meetings, skipped runs with `connect_access_unavailable` (meetings missed while
+the calendar couldn't be read), and Automations needing attention with
 `connect_access_unavailable`.
