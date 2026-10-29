@@ -1,4 +1,5 @@
 import type { Seed } from "@openwork/env";
+import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -7,7 +8,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * The shape of Slack's public MCP metadata, so the Slack preset's setup page
  * never reaches the real provider: an OAuth server that only accepts
- * pre-registered apps and advertises more scopes than the preset asks for.
+ * pre-registered apps. It advertises a shorter scope list than the preset on
+ * purpose, so a request that matches the Slack app manifest proves the
+ * preset's own list won.
  */
 const SLACK_DISCOVERY = {
   status: "manual_action_required",
@@ -34,7 +37,9 @@ const SLACK_DISCOVERY = {
 };
 
 /**
- * An organization admin on Manage › Connectors › Add connector › Slack.
+ * An organization admin on Manage › Connectors › Add connector › Slack, with
+ * `guidedSlackSetup` off as it ships; the proof turns it on through the
+ * platform-admin route /admin uses.
  * Den is real; only the browser's discovery request for Slack's address is
  * answered from the fixture above, through a second CDP connection on the
  * same page (no renderer JavaScript). Nobody signs in to real Slack.
@@ -84,6 +89,7 @@ export async function denSlackGuidedSetup(seed: Seed) {
     web,
     url: (path: string) => new URL(path, den.ref.webUrl).toString(),
     discoveries: () => discoveries,
+    enableGuidedSlackSetup: () => enableOrganizationCapabilities(seed, den.admin, { guidedSlackSetup: true }),
     async presets() {
       const result = await seed.api(den.admin, "/v1/mcp-connections/presets");
       return isRecord(result.body) && Array.isArray(result.body.presets) ? result.body.presets.filter(isRecord) : [];

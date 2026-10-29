@@ -4,6 +4,9 @@ import { ChevronRight, ExternalLink } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
+import { orgFeatureEnabled } from "../../_lib/den-org";
+import { markFeatureUsed } from "../../_lib/feature-usage";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import type { ConnectorTarget, useConnectorSetup } from "./connector-setup";
 import { useCheckMcpConnection } from "./mcp-connections-data";
 import { type SetupCheck, SetupChecks } from "./setup-checks";
@@ -102,6 +105,7 @@ export function SlackSetupChecklist({
           rel="noopener noreferrer"
           icon={ExternalLink}
           data-testid="slack-setup-create-app"
+          onClick={() => markFeatureUsed("guidedSlackSetup")}
         >
           Create app in Slack
         </DenButton>
@@ -145,7 +149,14 @@ export function SlackSetupChecklist({
     if (offers.has("oauth-app-fields")) body.push(<div key="fields">{oauthAppFields}</div>);
     if (offers.has("sign-in") || offers.has("sign-in-again")) {
       action = (
-        <DenButton size="sm" onClick={onSignIn} data-testid="slack-setup-sign-in">
+        <DenButton
+          size="sm"
+          onClick={() => {
+            markFeatureUsed("guidedSlackSetup");
+            onSignIn();
+          }}
+          data-testid="slack-setup-sign-in"
+        >
           {offers.has("sign-in-again") ? "Sign in again" : "Sign in with Slack"}
         </DenButton>
       );
@@ -177,7 +188,9 @@ export function SlackSetupChecklist({
  * @openwork assistant applies to this connection.
  */
 export function useSlackSetupState(setup: ReturnType<typeof useConnectorSetup>, target: ConnectorTarget | null) {
-  const slack = Boolean(target?.preset && isSlackMcpUrl(target.url));
+  const { orgContext } = useOrgDashboard();
+  // Off: the Slack preset keeps the shared setup checks, exactly as before.
+  const slack = orgFeatureEnabled(orgContext, "guidedSlackSetup") && Boolean(target?.preset && isSlackMcpUrl(target.url));
   const checkConnection = useCheckMcpConnection();
   const [mcpConfirmed, setMcpConfirmed] = useState(false);
   const requestedCheck = useRef<string | null>(null);

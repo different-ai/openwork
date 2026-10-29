@@ -28,7 +28,22 @@ test("an admin sets up Slack from one guided checklist: a prefilled Slack app, t
   let callbackUrl = "";
   let presetScopes: string[] = [];
 
+  await step("before: with guided Slack setup off, Add Slack shows the shared connector checks as it does today", async () => {
+    await admin.navigate(world.url("/dashboard/mcp-connections/new/slack"));
+    await admin.see({ testId: "setup-check-find" }, { timeoutMs: 90_000 });
+    await admin.see({ text: "Knows how you sign in" });
+    const guided = (await observed.dom('[data-testid="setup-check-slack-app"]')).elements.length
+      + (await observed.dom('[data-testid="slack-setup-create-app"]')).elements.length;
+    const shared = ["find", "sign-in-method", "sign-in", "tools"];
+    const present = (await Promise.all(shared.map(async (id) => (await observed.dom(`[data-testid="setup-check-${id}"]`)).elements.length === 1))).filter(Boolean).length;
+    const ok = guided === 0 && present === shared.length;
+    evidence.recordAssertionEvidence("With the flag off nothing changes: the four shared checks, no Slack app step", `shared checks shown=${present}/${shared.length}; guided Slack steps shown=${guided}`, ok);
+    expect(ok).toBe(true);
+    await admin.screenshot();
+  });
+
   await step("the checklist opens with Create app in Slack, prefilled with this Den's redirect URL and the connector's scopes", async () => {
+    await world.enableGuidedSlackSetup();
     const slack = (await world.presets()).find((preset) => preset.presetId === "slack");
     callbackUrl = typeof slack?.oauthCallbackUrl === "string" ? slack.oauthCallbackUrl : "";
     presetScopes = stringArray(slack?.defaultOAuthScopes);
@@ -40,7 +55,7 @@ test("an admin sets up Slack from one guided checklist: a prefilled Slack app, t
     const scopesIncluded = (await Promise.all(presetScopes.map((scope) => linkHas(encodeURIComponent(`"${scope}"`))))).filter(Boolean).length;
     const mcpOn = await linkHas(encodeURIComponent('"is_mcp_enabled":true'));
     const botPieces = await linkHas("bot");
-    const ok = opensSlack && hasRedirect && presetScopes.length > 0 && scopesIncluded === presetScopes.length && mcpOn && !botPieces;
+    const ok = opensSlack && hasRedirect && presetScopes.length === 30 && scopesIncluded === presetScopes.length && mcpOn && !botPieces;
     evidence.recordAssertionEvidence(
       "The Slack link opens Create an app with this Den's redirect URL, the connector's user scopes and MCP on",
       `opens api.slack.com/apps?new_app=1 with a manifest=${opensSlack}; redirect URL=${callbackUrl} (in manifest: ${hasRedirect}); user scopes in manifest=${scopesIncluded}/${presetScopes.length}; MCP on=${mcpOn}; bot pieces=${botPieces}`,
@@ -60,7 +75,7 @@ test("an admin sets up Slack from one guided checklist: a prefilled Slack app, t
     await admin.screenshot();
   });
 
-  await step("the admin pastes the client ID and secret; the connection asks Slack for exactly the app's scopes", async () => {
+  await step("the admin pastes the client ID and secret; the connection asks Slack for exactly the scopes in the app manifest", async () => {
     await admin.type({ placeholder: "Client ID" }, CLIENT_ID);
     await admin.type({ label: "Client secret" }, "synthetic-slack-client-secret");
     await admin.click({ role: "button", label: "Save changes" });
@@ -68,10 +83,12 @@ test("an admin sets up Slack from one guided checklist: a prefilled Slack app, t
     const saved = await probe.eventually(() => world.slackConnection(), { within: 20_000, label: "Slack connection saved", until: (row) => row?.oauthClientId === CLIENT_ID });
     const requested = stringArray(saved?.requestedScopes);
     const signIn = await status("sign-in");
-    const ok = saved?.oauthClientHasSecret === true && requested.join(" ") === presetScopes.join(" ") && signIn === "waiting";
+    const missing = presetScopes.filter((scope) => !requested.includes(scope));
+    const extra = requested.filter((scope) => !presetScopes.includes(scope));
+    const ok = saved?.oauthClientHasSecret === true && requested.length === 30 && missing.length === 0 && extra.length === 0 && signIn === "waiting";
     evidence.recordAssertionEvidence(
-      "The OAuth app is saved and requests only the scopes in the Slack app manifest",
-      `client ID saved=${saved?.oauthClientId === CLIENT_ID}; secret saved=${String(saved?.oauthClientHasSecret)}; requested=${requested.length} (manifest ${presetScopes.length}); extra=${requested.filter((scope) => !presetScopes.includes(scope)).join(",") || "none"}; sign in=${signIn}`,
+      "The OAuth app is saved and requests the same 30 scopes as the Slack app manifest",
+      `client ID saved=${saved?.oauthClientId === CLIENT_ID}; secret saved=${String(saved?.oauthClientHasSecret)}; requested=${requested.length} (manifest ${presetScopes.length}); missing from request=${missing.join(",") || "none"}; not in manifest=${extra.join(",") || "none"}; sign in=${signIn}`,
       ok,
     );
     expect(ok).toBe(true);

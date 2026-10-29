@@ -624,6 +624,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  guidedSlackSetup: {
+    label: "Connect: guided Slack setup",
+    description: "Manage › Connectors › Add Slack walks admins through one checklist: Create app in Slack (prefilled with OpenWork's redirect URL, scopes and MCP on), turn on Agents › MCP, paste the client ID and secret, sign in to test, and optionally add @openwork. The MCP step shows the real result after the test sign-in. Turning it off brings back the previous setup screen; existing connections stay.",
+    category: "connect",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/guided-slack-setup/README.md",
+    deployments: everywhere,
+    default: false,
+  },
 })
 
 export type FeatureKey = keyof typeof FEATURES

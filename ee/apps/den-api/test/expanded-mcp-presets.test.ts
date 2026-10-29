@@ -94,3 +94,16 @@ test("presets that need an OAuth app carry the redirect URL to register; others 
   assert.equal(externalMcpPresetForResponse(slack, { registrationStatus: "unknown" }).registrationStatus, undefined)
   assert.equal(externalMcpPresetForResponse(slack, { registrationStatus: "requires_client" }).registrationStatus, "requires_client")
 })
+
+test("the Slack preset asks for the full user-scope set Slack's MCP server advertises", () => {
+  const slack = EXTERNAL_MCP_PRESETS.find((preset) => preset.presetId === "slack")
+  assert.deepEqual([...(slack?.defaultOAuthScopes ?? [])].sort(), [
+    "canvases:read", "canvases:write", "channels:history", "channels:read", "channels:write", "chat:write",
+    "emoji:read", "files:read", "files:write", "groups:history", "groups:read", "groups:write",
+    "im:history", "im:read", "im:write", "lists:read", "lists:write", "mpim:history", "mpim:read", "mpim:write",
+    "reactions:read", "reactions:write", "search:read.files", "search:read.im", "search:read.mpim",
+    "search:read.private", "search:read.public", "search:read.users", "users:read", "users:read.email",
+  ])
+  // Only Slack carries an explicit list: every other preset keeps requesting what its server advertises.
+  assert.deepEqual(ALL_EXTERNAL_MCP_PRESETS.filter((preset) => preset.defaultOAuthScopes).map((preset) => preset.presetId), ["slack"])
+})

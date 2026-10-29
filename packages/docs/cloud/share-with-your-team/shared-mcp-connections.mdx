@@ -209,23 +209,25 @@ client secret out of chats and source control.
 
 ### Slack scopes
 
-Slack MCP uses user token scopes. Choose the smallest set that matches what
-your team wants the AI to do. The Slack connector asks for a starting set of
-search, history, `chat:write`, and `users:read` scopes. You can change them in
-the connector's **Settings** under **Requested OAuth scopes**. Every scope
-OpenWork asks for must also be added to the Slack app.
-
-For a useful read-first setup, start with:
+Slack MCP uses user token scopes. By default the Slack connector asks for every
+user scope Slack's MCP server offers, so the AI can use all of its tools. Add
+all of them to the Slack app's **User Token Scopes** (guided setup's
+**Create app in Slack** does this for you):
 
 ```text
-search:read.public search:read.private search:read.mpim search:read.im search:read.files search:read.users channels:history groups:history mpim:history im:history users:read users:read.email channels:read groups:read mpim:read
+canvases:read canvases:write channels:history channels:read channels:write chat:write emoji:read files:read files:write groups:history groups:read groups:write im:history im:read im:write lists:read lists:write mpim:history mpim:read mpim:write reactions:read reactions:write search:read.files search:read.im search:read.mpim search:read.private search:read.public search:read.users users:read users:read.email
 ```
 
-Add write scopes only if you want the AI to take action in Slack:
+Every scope OpenWork asks for must also be on the Slack app. Want the AI to
+read but not act in Slack? Open the connector's **Settings**, remove the write
+scopes from **Requested OAuth scopes**, and save:
 
 ```text
-chat:write reactions:write channels:write groups:write im:write mpim:write canvases:read canvases:write
+canvases:write channels:write chat:write files:write groups:write im:write lists:write mpim:write reactions:write
 ```
+
+The app can keep them; OpenWork only asks for what is listed in **Requested
+OAuth scopes**.
 
 | Slack MCP capability | User token scopes |
 | --- | --- |
@@ -241,6 +243,10 @@ chat:write reactions:write channels:write groups:write im:write mpim:write canva
 | Read and write canvases | `canvases:read`, `canvases:write` |
 | Read user profiles and email | `users:read`, `users:read.email` |
 | List channel members | `channels:read`, `groups:read`, `mpim:read` |
+
+The default set also includes `files:write`, `im:read`, `lists:read`,
+`lists:write` and `reactions:read`. Slack's MCP server offers them, so OpenWork
+asks for them too and any Slack tool that needs them works.
 
 ### Troubleshooting Slack
 
