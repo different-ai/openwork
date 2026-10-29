@@ -481,7 +481,6 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
   const location = readRecord(source, "location");
   const created = readNumber(time, "created") ?? readNumber(source, "created") ?? eventCreated ?? 0;
   const updated = readNumber(time, "updated") ?? readNumber(source, "updated") ?? created;
-  const archived = readNumber(time, "archived");
   const parentID = readString(source, "parentID");
   const model = readRecord(source, "model");
   const modelID = readString(model, "id") ?? readString(model, "modelID");
@@ -497,11 +496,9 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
     // Keep native untitled sessions eligible for compatibility title recovery.
     title: readString(source, "title") || `New session - ${new Date(created).toISOString()}`,
     version: readString(source, "version") ?? "v2",
-    time: {
-      created,
-      updated,
-      ...(archived === undefined ? {} : { archived }),
-    },
+    // OpenCode v2 cannot unarchive yet, so an archive time (only ever copied
+    // from v1 history) would lock the chat read-only forever. Show it as active.
+    time: { created, updated },
     ...(parentID ? { parentID } : {}),
     ...(providerID && modelID ? {
       model: { providerID, id: modelID, ...(variant ? { variant } : {}) },
