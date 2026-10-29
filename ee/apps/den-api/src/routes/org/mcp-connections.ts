@@ -17,11 +17,10 @@ import {
   selectRecoverableAuthorizationServerIssuer,
   validateMcpAuthorizationResponseIssuer,
 } from "@openwork/enterprise-mcp-client"
-import { and, desc, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,
   ConfigObjectTable,
-  ConfigObjectVersionTable,
   MemberTable,
   PluginConfigObjectTable,
   PluginTable,
@@ -35,6 +34,7 @@ import { attributeOAuthCallbackMember } from "../../audit/request-capture.js"
 import { DEN_MCP_OAUTH_RESOURCE } from "../../auth.js"
 import { connectionServerUrl } from "../../mcp/connection-server-tools.js"
 import { cache, type CachedOrgMember } from "../../cache.js"
+import { latestConfigObjectVersions } from "../../config-object-versions.js"
 import { db } from "../../db.js"
 import { requestReadFor } from "../../request-reads.js"
 import { env } from "../../env.js"
@@ -87,6 +87,7 @@ import {
   getExternalMcpConnectionByExternalKey,
   listActiveExternalMcpConnectionBindings,
   listDirectExternalMcpConnectionAccess,
+  listDirectExternalMcpConnectionAccessByConnection,
   listExternalMcpConnections,
   listRetiredPluginOwnedExternalMcpConnectionIds,
   listVisibleExternalMcpConnections,
@@ -112,7 +113,7 @@ import { listNativeProviderUsableEntries } from "../../capability-sources/native
 import { getNativeOAuthProvider } from "../../capability-sources/provider-registry.js"
 import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
 import { workbotConnectReturn, workbotCallbackReturn } from "../../workbot/connect-return.js"
-import { getConnectedAccount, getConnectedAccountForListing, getOrgOAuthClient, upsertOrgOAuthClient } from "../../capability-sources/oauth-credentials.js"
+import { getConnectedAccount, getConnectedAccountsForListing, getOrgOAuthClient, getOrgOAuthClients, upsertOrgOAuthClient, type ConnectedAccountRow, type OrgOAuthClientRow } from "../../capability-sources/oauth-credentials.js"
 import { assertPublicUrl, createGuardedFetch, createRealmSafeFetch } from "../../capability-sources/url-guard.js"
 import {
   externalMcpCallbackUrl,
@@ -158,7 +159,7 @@ import {
   externalMcpToolCallInspectionForError,
 } from "../../capability-sources/external-mcp-tool-inspection.js"
 import { ensureFreshPrivilegedSession } from "../../privileged-session.js"
-import { resolvePluginArchResourceRole, type PluginArchActorContext } from "./plugin-system/access.js"
+import { resolvePluginArchPluginRoles, type PluginArchActorContext } from "./plugin-system/access.js"
 import {
   getFreshPrivilegedSessionRequiredResponse,
   hasFreshPrivilegedSession,
@@ -955,22 +956,28 @@ function isConnectionConnected(row: ExternalMcpConnectionRow): boolean {
   return Boolean(row.accessToken || row.apiKey || (row.authType === "none" && row.connectedAt))
 }
 
-async function connectedAccountStateForConnection(input: {
+/** Whether any member holds a token for each connection, and the latest connection time among them. */
+async function connectedAccountStatesForConnections(input: {
   organizationId: DenTypeId<"organization">
-  providerId: DenTypeId<"externalMcpConnection">
-}): Promise<{ connected: boolean; connectedAt: Date | null }> {
+  providerIds: Array<DenTypeId<"externalMcpConnection">>
+}): Promise<Map<string, { connected: boolean; connectedAt: Date | null }>> {
+  const states = new Map<string, { connected: boolean; connectedAt: Date | null }>()
+  if (input.providerIds.length === 0) return states
   const rows = await db
-    .select({ hasAccessToken: sql<boolean>`${ConnectedAccountTable.accessToken} IS NOT NULL AND ${ConnectedAccountTable.accessToken} <> ''`, connectedAt: ConnectedAccountTable.connectedAt })
+    .select({ providerId: ConnectedAccountTable.providerId, hasAccessToken: sql<boolean>`${ConnectedAccountTable.accessToken} IS NOT NULL AND ${ConnectedAccountTable.accessToken} <> ''`, connectedAt: ConnectedAccountTable.connectedAt })
     .from(ConnectedAccountTable)
     .where(and(
       eq(ConnectedAccountTable.organizationId, input.organizationId),
-      eq(ConnectedAccountTable.providerId, input.providerId),
+      inArray(ConnectedAccountTable.providerId, input.providerIds),
     ))
-  const connectedRows = rows.filter((row) => Boolean(row.hasAccessToken))
-  const connectedAt = connectedRows
-    .map((row) => row.connectedAt)
-    .sort((left, right) => right.getTime() - left.getTime())[0] ?? null
-  return { connected: connectedRows.length > 0, connectedAt }
+  for (const providerId of input.providerIds) states.set(providerId, { connected: false, connectedAt: null })
+  for (const row of rows) {
+    const state = states.get(row.providerId)
+    if (!state || !row.hasAccessToken) continue
+    state.connected = true
+    if (!state.connectedAt || row.connectedAt.getTime() > state.connectedAt.getTime()) state.connectedAt = row.connectedAt
+  }
+  return states
 }
 
 type ExternalMcpToolCredentialContext =
@@ -1195,26 +1202,6 @@ function legacyExternalMcpConnectionIdsFromPayload(payload: Record<string, unkno
   return [...ids]
 }
 
-async function latestMcpVersions(input: {
-  configObjectIds: Array<DenTypeId<"configObject">>
-  organizationId: DenTypeId<"organization">
-}) {
-  if (input.configObjectIds.length === 0) return new Map<string, typeof ConfigObjectVersionTable.$inferSelect>()
-  const rows = await db
-    .select()
-    .from(ConfigObjectVersionTable)
-    .where(and(
-      eq(ConfigObjectVersionTable.organizationId, input.organizationId),
-      inArray(ConfigObjectVersionTable.configObjectId, input.configObjectIds),
-    ))
-    .orderBy(desc(ConfigObjectVersionTable.createdAt), desc(ConfigObjectVersionTable.id))
-  const versions = new Map<string, typeof ConfigObjectVersionTable.$inferSelect>()
-  for (const row of rows) {
-    if (!versions.has(row.configObjectId)) versions.set(row.configObjectId, row)
-  }
-  return versions
-}
-
 async function legacyRequiredByForConnections(input: {
   connectionIds: string[]
   organizationId: DenTypeId<"organization">
@@ -1241,10 +1228,7 @@ async function legacyRequiredByForConnections(input: {
       eq(PluginTable.status, "active"),
       isNull(PluginTable.deletedAt),
     ))
-  const versions = await latestMcpVersions({
-    configObjectIds: rows.map((row) => row.configObjectId),
-    organizationId: input.organizationId,
-  })
+  const versions = await latestConfigObjectVersions(rows.map((row) => row.configObjectId), input.organizationId)
   const requiredBy: Array<{ connectionId: string; pluginId: DenTypeId<"plugin">; pluginName: string }> = []
   for (const row of rows) {
     const version = versions.get(row.configObjectId)
@@ -1271,26 +1255,18 @@ async function requiredByForConnections(input: {
   if (connectionIds.length === 0) return { requiredBy: new Map(), identityManagedBy: new Map(), requiredAuthTypes: new Map() }
 
   const organizationId = input.context.organizationContext.organization.id
-  const bindingRows = await listActiveExternalMcpConnectionBindings({ organizationId, connectionIds })
-  const legacyRows = await legacyRequiredByForConnections({ connectionIds, organizationId })
+  const [bindingRows, legacyRows] = await Promise.all([
+    listActiveExternalMcpConnectionBindings({ organizationId, connectionIds }),
+    legacyRequiredByForConnections({ connectionIds, organizationId }),
+  ])
   const candidatePluginIds = new Set<DenTypeId<"plugin">>([
     ...bindingRows.map((row) => row.pluginId),
     ...legacyRows.map((row) => row.pluginId),
   ])
 
-  const visiblePluginIds = new Set<string>()
-  if (input.includeAllPluginNames) {
-    for (const pluginId of candidatePluginIds) visiblePluginIds.add(pluginId)
-  } else {
-    for (const pluginId of candidatePluginIds) {
-      const role = await resolvePluginArchResourceRole({
-        context: input.context,
-        resourceId: pluginId,
-        resourceKind: "plugin",
-      })
-      if (role) visiblePluginIds.add(pluginId)
-    }
-  }
+  const visiblePluginIds = new Set<string>(input.includeAllPluginNames
+    ? candidatePluginIds
+    : (await resolvePluginArchPluginRoles(input.context, [...candidatePluginIds])).keys())
 
   const grouped = new Map<string, Map<string, string>>()
   const identityManaged = new Map<string, Map<string, string>>()
@@ -1376,6 +1352,43 @@ async function callbackRedirectUri(connection: ExternalMcpConnectionRow) {
   return callbackRedirectUriWithClient(connection, oauthClient)
 }
 
+type ConnectionResponseReads = {
+  accounts: ReadonlyMap<string, ConnectedAccountRow | null>
+  accountStates: ReadonlyMap<string, { connected: boolean; connectedAt: Date | null }>
+  grants: ReadonlyMap<string, Awaited<ReturnType<typeof listDirectExternalMcpConnectionAccess>>>
+  oauthClients: ReadonlyMap<string, OrgOAuthClientRow | null>
+}
+
+/**
+ * What toConnectionResponse reads for these rows, one query per table for the
+ * whole list. `includeAccess` must match the option each row is rendered with.
+ */
+async function readConnectionResponses(input: {
+  callerOrgMembershipId: DenTypeId<"member">
+  includeAccess: (row: ExternalMcpConnectionRow) => boolean
+  organizationId: DenTypeId<"organization">
+  rows: ExternalMcpConnectionRow[]
+}): Promise<ConnectionResponseReads> {
+  const accessRows = input.rows.filter(input.includeAccess)
+  const [accounts, accountStates, grants, oauthClients] = await Promise.all([
+    getConnectedAccountsForListing({
+      organizationId: input.organizationId,
+      orgMembershipId: input.callerOrgMembershipId,
+      providerIds: input.rows.filter((row) => row.credentialMode === "per_member").map((row) => row.id),
+    }),
+    connectedAccountStatesForConnections({
+      organizationId: input.organizationId,
+      providerIds: accessRows.filter((row) => row.credentialMode === "per_member").map((row) => row.id),
+    }),
+    listDirectExternalMcpConnectionAccessByConnection({
+      organizationId: input.organizationId,
+      connectionIds: accessRows.map((row) => row.id),
+    }),
+    getOrgOAuthClients(input.organizationId, input.rows.filter((row) => row.authType === "oauth" || input.includeAccess(row)).map((row) => row.id)),
+  ])
+  return { accounts, accountStates, grants, oauthClients }
+}
+
 async function toConnectionResponse(
   row: ExternalMcpConnectionRow,
   options: {
@@ -1388,8 +1401,16 @@ async function toConnectionResponse(
     identityManagedBy: ConnectionRequiredBy[]
     requiredBy: ConnectionRequiredBy[]
     requiredAuthTypes: Set<"apikey" | "none" | "oauth">
+    /** Reads shared by a whole list; a single connection reads its own. */
+    reads?: ConnectionResponseReads
   },
 ) {
+  const reads = options.reads ?? await readConnectionResponses({
+    callerOrgMembershipId: options.callerOrgMembershipId,
+    includeAccess: () => options.includeAccess,
+    organizationId: row.organizationId,
+    rows: [row],
+  })
   let connected = isConnectionConnected(row)
   let connectedAt = row.connectedAt
   let connectedForMe = connected && row.credentialMode === "shared"
@@ -1399,11 +1420,7 @@ async function toConnectionResponse(
   let fingerprint = readinessFingerprint(row)
   let callerExternalAccountId: string | null = null
   if (row.credentialMode === "per_member") {
-    const account = await getConnectedAccountForListing({
-      organizationId: row.organizationId,
-      orgMembershipId: options.callerOrgMembershipId,
-      providerId: row.id,
-    })
+    const account = reads.accounts.get(row.id) ?? null
     connectedForMe = Boolean(account?.accessToken) && (!usesMemberApiKey(row) || account?.tokenType === "api_key")
     callerExternalAccountId = account?.accessToken ? account.externalAccountId : null
     callerCredentialHealth = account?.credentialHealth ?? null
@@ -1411,10 +1428,7 @@ async function toConnectionResponse(
     fingerprint = readinessFingerprint(row, account)
     grantedScopes = account?.scopes ?? []
     if (options.includeAccess) {
-      const accountState = await connectedAccountStateForConnection({
-        organizationId: row.organizationId,
-        providerId: row.id,
-      })
+      const accountState = reads.accountStates.get(row.id) ?? { connected: false, connectedAt: null }
       connected = accountState.connected
       connectedAt = accountState.connectedAt
     } else {
@@ -1425,10 +1439,7 @@ async function toConnectionResponse(
 
   let access: { orgWide: boolean; memberIds: string[]; teamIds: string[] } | null = null
   if (options.includeAccess) {
-    const grants = await listDirectExternalMcpConnectionAccess({
-      organizationId: row.organizationId,
-      connectionId: row.id,
-    })
+    const grants = reads.grants.get(row.id) ?? []
     access = {
       orgWide: grants.some((grant) => grant.orgWide),
       memberIds: grants.flatMap((grant) => (grant.orgMembershipId ? [grant.orgMembershipId] : [])),
@@ -1436,7 +1447,7 @@ async function toConnectionResponse(
     }
   }
   const oauthClient = row.authType === "oauth" || options.includeAccess
-    ? await getOrgOAuthClient(row.organizationId, row.id)
+    ? reads.oauthClients.get(row.id) ?? null
     : null
   const oauthRegistrationSource = oauthRegistrationSourceForClient(oauthClient)
   const callbackMode = row.oauthConfiguration?.callbackMode ?? null
@@ -1571,25 +1582,28 @@ async function loadMemberUsableConnectionFacts(input: {
     orgMembershipId: member.id,
     teamIds,
   })
-  const [provenance, members] = await Promise.all([
+  // The member who added a connection manages who can use it.
+  const includeAccess = (row: ExternalMcpConnectionRow) => row.createdByOrgMembershipId === member.id
+  const [provenance, members, reads, nativeEntries] = await Promise.all([
     requiredByForConnections({ context: input.context, includeAllPluginNames: false, rows }),
     organizationMembers(input.context.organizationContext),
+    readConnectionResponses({ callerOrgMembershipId: member.id, includeAccess, organizationId: organization.id, rows }),
+    listNativeProviderUsableEntries({
+      organizationId: organization.id,
+      orgMembershipId: member.id,
+      teamIds,
+    }),
   ])
   const connections = await Promise.all(rows.map((row) =>
     toConnectionResponse(row, {
       callerOrgMembershipId: member.id,
       createdByName: resolveCreatorName(members, row.createdByOrgMembershipId),
-      // The member who added a connection manages who can use it.
-      includeAccess: row.createdByOrgMembershipId === member.id,
+      includeAccess: includeAccess(row),
       requiredBy: provenance.requiredBy.get(row.id) ?? [],
       identityManagedBy: provenance.identityManagedBy.get(row.id) ?? [],
       requiredAuthTypes: provenance.requiredAuthTypes.get(row.id) ?? new Set(),
+      reads,
     })))
-  const nativeEntries = await listNativeProviderUsableEntries({
-    organizationId: organization.id,
-    orgMembershipId: member.id,
-    teamIds,
-  })
   return [...nativeEntries, ...connections]
 }
 
@@ -2887,9 +2901,10 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           connectionIds: allRows.map((row) => row.id),
         })
         const rows = allRows.filter((row) => !retiredIds.has(row.id))
-        const [provenance, members] = await Promise.all([
+        const [provenance, members, reads] = await Promise.all([
           requiredByForConnections({ context, includeAllPluginNames: true, rows }),
           organizationMembers(payload),
+          readConnectionResponses({ callerOrgMembershipId: payload.currentMember.id, includeAccess: () => true, organizationId: payload.organization.id, rows }),
         ])
         const canRemoveAnyConnection = await callerHasPermission(payload, "connections.delete")
         const connections = await Promise.all(rows.map((row) =>
@@ -2902,6 +2917,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             requiredBy: provenance.requiredBy.get(row.id) ?? [],
             identityManagedBy: provenance.identityManagedBy.get(row.id) ?? [],
             requiredAuthTypes: provenance.requiredAuthTypes.get(row.id) ?? new Set(),
+            reads,
           })))
         return c.json({ connections })
       }

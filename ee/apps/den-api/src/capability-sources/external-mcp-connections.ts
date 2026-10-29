@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util"
 import { randomUUID } from "node:crypto"
-import { and, asc, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   SlackAssistantInstallationTable,
   SlackAssistantIdentityTable,
@@ -31,6 +31,7 @@ import {
   TeamTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { latestConfigObjectVersions } from "../config-object-versions.js"
 import { db } from "../db.js"
 import { requestRead } from "../request-reads.js"
 import { env } from "../env.js"
@@ -131,26 +132,6 @@ function marketplaceMcpServerEntries(spec: Record<string, unknown>, fallbackName
     entries.push({ name: fallbackName, config: spec })
   }
   return entries
-}
-
-async function latestConfigObjectVersions(input: {
-  configObjectIds: ConfigObjectId[]
-  organizationId: OrganizationId
-}) {
-  if (input.configObjectIds.length === 0) return new Map<string, typeof ConfigObjectVersionTable.$inferSelect>()
-  const rows = await db
-    .select()
-    .from(ConfigObjectVersionTable)
-    .where(and(
-      eq(ConfigObjectVersionTable.organizationId, input.organizationId),
-      inArray(ConfigObjectVersionTable.configObjectId, input.configObjectIds),
-    ))
-    .orderBy(desc(ConfigObjectVersionTable.createdAt), desc(ConfigObjectVersionTable.id))
-  const versions = new Map<string, typeof ConfigObjectVersionTable.$inferSelect>()
-  for (const row of rows) {
-    if (!versions.has(row.configObjectId)) versions.set(row.configObjectId, row)
-  }
-  return versions
 }
 
 function grantFilter(input: { orgMembershipId: OrgMembershipId; teamIds: TeamId[] }) {
@@ -347,10 +328,7 @@ async function sourcedUsableExternalMcpConnections(input: {
     ))
   if (rows.length === 0) return []
 
-  const versions = await latestConfigObjectVersions({
-    configObjectIds: unique(rows.map((row) => row.binding.configObjectId)),
-    organizationId: input.organizationId,
-  })
+  const versions = await latestConfigObjectVersions(unique(rows.map((row) => row.binding.configObjectId)), input.organizationId)
   const accessibleBindingIds = await accessiblePluginMcpBindingKeys({
     bindings: rows.map((row) => ({
       configObjectId: row.binding.configObjectId,
@@ -838,6 +816,39 @@ export async function listDirectExternalMcpConnectionAccess(input: {
       eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, input.connectionId),
       isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
     ))
+}
+
+/**
+ * listDirectExternalMcpConnectionAccess for many connections in one query.
+ * Each connection's grants keep the order its single lookup returns them in,
+ * the (connection, member, source) index order.
+ */
+export async function listDirectExternalMcpConnectionAccessByConnection(input: {
+  organizationId: OrganizationId
+  connectionIds: ExternalMcpConnectionId[]
+}): Promise<Map<ExternalMcpConnectionId, ExternalMcpConnectionAccessGrantRow[]>> {
+  const grants = new Map<ExternalMcpConnectionId, ExternalMcpConnectionAccessGrantRow[]>()
+  if (input.connectionIds.length === 0) return grants
+  const rows = await db
+    .select()
+    .from(ExternalMcpConnectionAccessGrantTable)
+    .where(and(
+      eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.organizationId),
+      inArray(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, input.connectionIds),
+      isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
+    ))
+    .orderBy(
+      asc(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId),
+      asc(ExternalMcpConnectionAccessGrantTable.orgMembershipId),
+      asc(ExternalMcpConnectionAccessGrantTable.sourceKey),
+      asc(ExternalMcpConnectionAccessGrantTable.id),
+    )
+  for (const row of rows) {
+    const existing = grants.get(row.externalMcpConnectionId)
+    if (existing) existing.push(row)
+    else grants.set(row.externalMcpConnectionId, [row])
+  }
+  return grants
 }
 
 function accessGrantRows(input: {

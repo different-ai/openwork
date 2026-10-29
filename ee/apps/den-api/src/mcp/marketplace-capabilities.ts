@@ -27,7 +27,7 @@ import {
   type PluginMcpAuthType,
 } from "../capability-sources/external-mcp-auth-policy.js"
 import { ALL_EXTERNAL_MCP_PRESETS } from "../capability-sources/external-mcp-presets.js"
-import { getConnectedAccount, getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
+import { getConnectedAccount, getConnectedAccountsForListing, getOrgOAuthClient, getOrgOAuthClients } from "../capability-sources/oauth-credentials.js"
 import { db } from "../db.js"
 import { latestConfigObjectVersions } from "../config-object-versions.js"
 import { requestRead } from "../request-reads.js"
@@ -1306,40 +1306,77 @@ async function marketplacePluginMcpRequirementStatuses(input: {
   return byPlugin
 }
 
-async function resolveMcpReadinessConnections(input: {
+type MarketplaceReadinessReads = {
+  allConnections: ExternalMcpConnectionRow[]
+  bindings: Map<string, PluginMcpRequirementBindingRow>
+  connectedForMe: ReadonlyMap<string, boolean>
+  connections: UsableExternalMcpConnection[]
+  oauthClientConfigured: ReadonlyMap<string, boolean>
+}
+
+function matchMcpReadinessConnection(dependency: MarketplaceMcpDependency, reads: Pick<MarketplaceReadinessReads, "allConnections" | "bindings" | "connections">) {
+  const binding = reads.bindings.get(requirementKey(dependency))
+  const explicitConnectionId = binding?.externalMcpConnectionId ?? dependency.externalMcpConnectionId
+  return explicitConnectionId
+    ? reads.allConnections.find((connection) => connection.id === explicitConnectionId && comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(dependency.url))
+    : dependency.url
+      ? reads.connections.find((connection) => comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(dependency.url))
+      : null
+}
+
+function readinessNeedsOAuthClient(dependency: MarketplaceMcpDependency, matched: { authType: ExternalMcpConnectionRow["authType"] }) {
+  return dependency.requiredAuthType === "oauth" || matched.authType === "oauth"
+}
+
+/**
+ * Everything the readiness of these dependencies reads, once for a whole
+ * marketplace: their bindings, then each matched connection's sign-in state
+ * and OAuth client in one query each.
+ */
+async function readMcpReadiness(input: {
   allConnections: ExternalMcpConnectionRow[]
   connections: UsableExternalMcpConnection[]
   dependencies: MarketplaceMcpDependency[]
   member: McpMemberIdentity
   organizationId: OrganizationId
-}): Promise<MarketplaceCloudReadinessConnection[]> {
-  const connectedCache = new Map<string, boolean>()
-  const oauthClientConfiguredCache = new Map<string, boolean>()
-  const output: MarketplaceCloudReadinessConnection[] = []
+}): Promise<MarketplaceReadinessReads> {
   const bindings = bindingByRequirement(await listPluginMcpRequirementBindings({
     organizationId: input.organizationId,
     configObjectIds: unique(input.dependencies.map((dependency) => dependency.configObjectId)),
   }))
-
+  const matchedConnections = new Map<string, ExternalMcpConnectionRow | UsableExternalMcpConnection>()
+  const oauthConnectionIds = new Set<string>()
   for (const dependency of input.dependencies) {
-    const binding = bindings.get(requirementKey(dependency))
-    const explicitConnectionId = binding?.externalMcpConnectionId ?? dependency.externalMcpConnectionId
-    const matched = explicitConnectionId
-      ? input.allConnections.find((connection) => connection.id === explicitConnectionId && comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(dependency.url))
-      : dependency.url
-        ? input.connections.find((connection) => comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(dependency.url))
-        : null
+    const matched = matchMcpReadinessConnection(dependency, { ...input, bindings })
+    if (!matched) continue
+    matchedConnections.set(matched.id, matched)
+    if (readinessNeedsOAuthClient(dependency, matched)) oauthConnectionIds.add(matched.id)
+  }
+  const [accounts, oauthClients] = await Promise.all([
+    getConnectedAccountsForListing({
+      organizationId: input.organizationId,
+      orgMembershipId: input.member.orgMembershipId,
+      providerIds: [...matchedConnections.values()].filter((connection) => connection.credentialMode !== "shared").map((connection) => connection.id),
+    }),
+    getOrgOAuthClients(input.organizationId, [...oauthConnectionIds]),
+  ])
+  const connectedForMe = new Map([...matchedConnections.values()].map((connection) => [connection.id, connection.credentialMode === "shared"
+    ? isSharedConnectionReady(connection)
+    : Boolean(accounts.get(connection.id)?.accessToken)]))
+  const oauthClientConfigured = new Map([...oauthClients].map(([connectionId, client]) => [connectionId, Boolean(client)]))
+  return { allConnections: input.allConnections, bindings, connectedForMe, connections: input.connections, oauthClientConfigured }
+}
+
+function resolveMcpReadinessConnections(dependencies: MarketplaceMcpDependency[], reads: MarketplaceReadinessReads): MarketplaceCloudReadinessConnection[] {
+  const output: MarketplaceCloudReadinessConnection[] = []
+  for (const dependency of dependencies) {
+    const matched = matchMcpReadinessConnection(dependency, reads)
     if (!matched) {
       output.push({ configObjectId: dependency.configObjectId, id: null, name: dependency.name, serverName: dependency.serverName, url: dependency.url })
       continue
     }
 
-    let connectedForMe = connectedCache.get(matched.id)
-    if (connectedForMe === undefined) {
-      connectedForMe = await connectedForMember({ connection: matched, member: input.member })
-      connectedCache.set(matched.id, connectedForMe)
-    }
-    let oauthClientConfigured: boolean | undefined
+    const connectedForMe = reads.connectedForMe.get(matched.id) ?? false
     const authTypeMismatch = !existingPluginMcpAuthTypeCompatible({
       authType: matched.authType,
       requiredAuthType: dependency.requiredAuthType,
@@ -1348,13 +1385,7 @@ async function resolveMcpReadinessConnections(input: {
     // Execution and new setup use the stricter preset policy independently.
     const preset = ALL_EXTERNAL_MCP_PRESETS.find((candidate) => comparablePluginMcpRequirementUrl(candidate.url) === comparablePluginMcpRequirementUrl(matched.url))
     const oauthClientRequired = dependency.requiredAuthType === "oauth" && preset?.requiresOAuthClient === true
-    if (dependency.requiredAuthType === "oauth" || matched.authType === "oauth") {
-      oauthClientConfigured = oauthClientConfiguredCache.get(matched.id)
-      if (oauthClientConfigured === undefined) {
-        oauthClientConfigured = Boolean(await getOrgOAuthClient(input.organizationId, matched.id))
-        oauthClientConfiguredCache.set(matched.id, oauthClientConfigured)
-      }
-    }
+    const oauthClientConfigured = readinessNeedsOAuthClient(dependency, matched) ? reads.oauthClientConfigured.get(matched.id) ?? false : undefined
     output.push({
       authType: matched.authType,
       authTypeMismatch,
@@ -1367,7 +1398,7 @@ async function resolveMcpReadinessConnections(input: {
       connectedForMe,
       ...(oauthClientConfigured === undefined ? {} : { oauthClientConfigured }),
       ...(dependency.requiredAuthType ? { requiredAuthType: dependency.requiredAuthType } : {}),
-      ...(dependency.requiredAuthType === "oauth" || matched.authType === "oauth" ? { oauthClientRequired } : {}),
+      ...(readinessNeedsOAuthClient(dependency, matched) ? { oauthClientRequired } : {}),
     })
   }
 
@@ -1418,15 +1449,9 @@ export async function resolveMarketplacePluginCloudReadiness(input: {
 
   const objectsByPluginId = groupReadinessObjects(rows)
   const latestVersions = await latestVersionsForReadiness(input.organizationId, rows.map((row) => row.id))
-  const usableConnections = await listUsableExternalMcpConnections({
-    organizationId: input.organizationId,
-    orgMembershipId: input.member.orgMembershipId,
-    teamIds: input.member.teamIds,
-  })
-  const allConnections = (await listExternalMcpConnections(input.organizationId))
-    .filter((connection) => connection.kind === "external_mcp")
   const desktopManifestPluginIds = new Set(input.desktopManifestPluginIds ?? [])
 
+  const pending: Array<{ dependencies: MarketplaceMcpDependency[]; hasInstructional: boolean; pluginId: PluginId; requiredDependencies: MarketplaceMcpDependency[] }> = []
   for (const pluginId of pluginIds) {
     const objects = objectsByPluginId.get(pluginId) ?? []
     if (objects.length === 0) {
@@ -1458,14 +1483,34 @@ export async function resolveMarketplacePluginCloudReadiness(input: {
       const version = latestVersions.get(object.id)
       return version ? mcpDependenciesForObject({ object, version }) : []
     })
-    const connections = await resolveMcpReadinessConnections({ allConnections, connections: usableConnections, dependencies, member: input.member, organizationId: input.organizationId })
     // Optional connections are listed but do not hold the plugin back.
     const requiredDependencies = hasInstructional
       ? dependencies.filter((dependency) => dependency.optional !== true)
       : dependencies
+    pending.push({ dependencies, hasInstructional, pluginId, requiredDependencies })
+  }
+  if (pending.length === 0) return readiness
+
+  const [usableConnections, allConnections] = await Promise.all([
+    listUsableExternalMcpConnections({
+      organizationId: input.organizationId,
+      orgMembershipId: input.member.orgMembershipId,
+      teamIds: input.member.teamIds,
+    }),
+    listExternalMcpConnections(input.organizationId),
+  ])
+  const reads = await readMcpReadiness({
+    allConnections: allConnections.filter((connection) => connection.kind === "external_mcp"),
+    connections: usableConnections,
+    dependencies: pending.flatMap((plugin) => plugin.dependencies),
+    member: input.member,
+    organizationId: input.organizationId,
+  })
+  for (const { dependencies, hasInstructional, pluginId, requiredDependencies } of pending) {
+    const connections = resolveMcpReadinessConnections(dependencies, reads)
     const requiredConnections = requiredDependencies.length === dependencies.length
       ? connections
-      : await resolveMcpReadinessConnections({ allConnections, connections: usableConnections, dependencies: requiredDependencies, member: input.member, organizationId: input.organizationId })
+      : resolveMcpReadinessConnections(requiredDependencies, reads)
     const state = requiredConnections.some((connection) => connection.id === null
       || connection.authTypeMismatch === true
       || (connection.oauthClientRequired === true && connection.oauthClientConfigured === false)
