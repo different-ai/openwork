@@ -120,6 +120,20 @@ type ModernRouteSessionResolution =
 const ROUTE_REFRESH_STEP_TIMEOUT_MS = 15_000;
 const ROUTE_WORKSPACE_ACTIVATION_SETTLE_MS = 750;
 
+/**
+ * The timestamps a runtime session update carries. v2 archive events send only
+ * the ones that changed, so updates merge into the session's existing times.
+ */
+function runtimeSessionTimes(value: unknown): { created?: number; updated?: number; archived?: number } {
+  if (!value || typeof value !== "object") return {};
+  const times: { created?: number; updated?: number; archived?: number } = {};
+  for (const key of ["created", "updated", "archived"] as const) {
+    const time: unknown = Reflect.get(value, key);
+    if (typeof time === "number") times[key] = time;
+  }
+  return times;
+}
+
 function withRouteRefreshTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = window.setTimeout(
@@ -915,7 +929,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         const previousChange = changes?.get(update.sessionId);
         changes?.set(update.sessionId, (session) => {
           const current = previousChange ? previousChange(session) : session;
-          return current ? { ...current, ...info, id: update.sessionId } : undefined;
+          return current ? { ...current, ...info, time: { ...current.time, ...runtimeSessionTimes(info.time) }, id: update.sessionId } : undefined;
         });
         if (!isCurrent()) return;
         const loaded = sessionReferenceLoadsRef.current.get(workspaceId);
@@ -923,7 +937,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         const list = sessionsByWorkspaceIdRef.current[workspaceId] ?? [];
         const session = list.find((item) => item.id === update.sessionId);
         if (!session) return;
-        const nextSession = { ...session, ...info, id: update.sessionId };
+        const nextSession = { ...session, ...info, time: { ...session.time, ...runtimeSessionTimes(info.time) }, id: update.sessionId };
         if (JSON.stringify(session) === JSON.stringify(nextSession)) return;
         publish(mergeWorkspaceRouteSession(list, nextSession));
       },

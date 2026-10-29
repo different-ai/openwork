@@ -186,7 +186,7 @@ type SessionUpdateParameters = SessionParameters & {
 /** The app's event for a session's recorded Auto routing decisions (`properties: { sessionID, routes }`). */
 export const AUTO_ROUTES_EVENT = "openwork.auto-routes.updated";
 
-export const V2_SESSION_ARCHIVE_UNAVAILABLE = "Archiving and unarchiving are not available in the OpenCode v2 preview.";
+export const V2_SESSION_ARCHIVE_UNAVAILABLE = "Archiving needs a newer OpenWork on the computer that runs this workspace.";
 
 type PermissionReply = "once" | "always" | "reject";
 
@@ -471,7 +471,15 @@ function readMessageID(value: Record<string, unknown>): string {
   return readString(value, "assistantMessageID") ?? readString(value, "messageID") ?? readString(value, "messageId") ?? "";
 }
 
-function mapV2Session(value: unknown, directory: string | undefined, eventCreated?: number): Session | null {
+/** OpenCode 2.1 brought back unarchive (anomalyco/opencode#53759). */
+export function engineCanArchive(version: string | undefined): boolean {
+  const match = /^(\d+)\.(\d+)\./.exec(version ?? "");
+  if (!match) return false;
+  const major = Number(match[1]);
+  return major > 2 || (major === 2 && Number(match[2]) >= 1);
+}
+
+function mapV2Session(value: unknown, directory: string | undefined, eventCreated?: number, showArchived = false): Session | null {
   const data = responseData(value);
   if (!isRecord(data)) return null;
   const source = readRecord(data, "info") ?? data;
@@ -481,6 +489,7 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
   const location = readRecord(source, "location");
   const created = readNumber(time, "created") ?? readNumber(source, "created") ?? eventCreated ?? 0;
   const updated = readNumber(time, "updated") ?? readNumber(source, "updated") ?? created;
+  const archived = showArchived ? readNumber(time, "archived") : undefined;
   const parentID = readString(source, "parentID");
   const model = readRecord(source, "model");
   const modelID = readString(model, "id") ?? readString(model, "modelID");
@@ -496,9 +505,10 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
     // Keep native untitled sessions eligible for compatibility title recovery.
     title: readString(source, "title") || `New session - ${new Date(created).toISOString()}`,
     version: readString(source, "version") ?? "v2",
-    // OpenCode v2 cannot unarchive yet, so an archive time (only ever copied
-    // from v1 history) would lock the chat read-only forever. Show it as active.
-    time: { created, updated },
+    // Before 2.1 the engine cannot unarchive, so an archive time (only ever
+    // copied from v1 history) would lock the chat read-only forever. Callers
+    // show it only when the engine can restore it.
+    time: { created, updated, ...(archived === undefined ? {} : { archived }) },
     ...(parentID ? { parentID } : {}),
     ...(providerID && modelID ? {
       model: { providerID, id: modelID, ...(variant ? { variant } : {}) },
@@ -1907,6 +1917,14 @@ export function translateV2Event(
     return [{ type: "session.updated", properties: { info: { id: sessionID, title } } }];
   }
 
+  if (type === "session.archived" || type === "session.unarchived") {
+    // OpenCode 2.1+ stamps both times with the event; 0 means not archived.
+    const at = readNumber(value, "created");
+    if (!sessionID || at === undefined) return null;
+    const archived = type === "session.archived" ? at : 0;
+    return [{ type: "session.updated", properties: { info: { id: sessionID, time: { updated: at, archived } } } }];
+  }
+
   if (type === "session.revert.staged") {
     const revert = readRecord(properties, "revert");
     const messageID = revert && readString(revert, "messageID");
@@ -2251,6 +2269,9 @@ export type SetSessionModelParameters = {
   variant?: string | null;
 };
 
+/** Whether each engine (by base URL) can unarchive; see engineCanArchive. */
+const engineArchiveSupport = new Map<string, Promise<boolean>>();
+
 export function createClientV2(
   opencode2BaseUrl: string,
   directory: string | undefined,
@@ -2490,13 +2511,29 @@ export function createClientV2(
     return successfulResult(result, true);
   };
 
+  // Read once per engine; a failed read is retried rather than remembered.
+  const archiveSupported = (): Promise<boolean> => {
+    const known = engineArchiveSupport.get(baseUrl);
+    if (known) return known;
+    const forget = () => { engineArchiveSupport.delete(baseUrl); return false; };
+    const checked = request("GET", "/api/info", undefined).then(
+      (result) => result.response.ok ? engineCanArchive(readString(responseData(result.payload), "version")) : forget(),
+      forget,
+    );
+    engineArchiveSupport.set(baseUrl, checked);
+    return checked;
+  };
+
   const getSession = async (
     parameters: SessionParameters,
     options?: RequestOptions,
   ): Promise<FieldsResult<Session>> => {
-    const result = await request("GET", `/api/session/${encodeURIComponent(parameters.sessionID)}`, undefined, options?.signal);
+    const [result, showArchived] = await Promise.all([
+      request("GET", `/api/session/${encodeURIComponent(parameters.sessionID)}`, undefined, options?.signal),
+      archiveSupported(),
+    ]);
     if (!result.response.ok) return failedResult(result);
-    const session = mapV2Session(result.payload, directory);
+    const session = mapV2Session(result.payload, directory, undefined, showArchived);
     if (session) return successfulResult(result, session);
     return failedResult({ ...result, payload: { name: "InvalidV2SessionResponse" } });
   };
@@ -2533,14 +2570,17 @@ export function createClientV2(
       if (parameters.limit !== undefined) query.set("limit", String(parameters.limit));
       if (parameters.cursor !== undefined) query.set("cursor", parameters.cursor);
       const suffix = query.size ? `?${query.toString()}` : "";
-      const result = await request("GET", `/api/session${suffix}`, undefined, options?.signal);
+      const [result, showArchived] = await Promise.all([
+        request("GET", `/api/session${suffix}`, undefined, options?.signal),
+        archiveSupported(),
+      ]);
       if (!result.response.ok) return failedResult(result);
       const next = readRecord(result.payload, "cursor")?.next;
       if (!Array.isArray(responseData(result.payload)) || (next !== undefined && next !== null && typeof next !== "string")) {
         return failedResult({ ...result, payload: { name: "InvalidV2SessionListResponse" } });
       }
       const data = responseItems(result.payload).flatMap((item) => {
-        const mapped = mapV2Session(item, directory);
+        const mapped = mapV2Session(item, directory, undefined, showArchived);
         return mapped ? [mapped] : [];
       });
       return { ...successfulResult(result, data), nextCursor: next ?? null };
@@ -2772,22 +2812,55 @@ export function createClientV2(
       parameters: SessionUpdateParameters,
       options?: RequestOptions,
     ): Promise<FieldsResult<Session>> => {
-      // The native preview exposes archived state but no archive mutation.
-      // Reject the entire update before a rename or read can imply success.
-      if (parameters.time?.archived !== undefined) {
-        if (options?.throwOnError) throw new Error(V2_SESSION_ARCHIVE_UNAVAILABLE);
-        return unsupportedResult(baseUrl, "session.archive", V2_SESSION_ARCHIVE_UNAVAILABLE);
-      }
-      if (!parameters.title) return getSession(parameters, options);
+      // v1 callers archive by stamping `time.archived` (0 restores); v2 takes a boolean.
+      const archived = parameters.time?.archived;
+      if (!parameters.title && archived === undefined) return getSession(parameters, options);
       const result = await request(
         "PATCH",
         `/api/session/${encodeURIComponent(parameters.sessionID)}`,
-        { title: parameters.title },
+        {
+          ...(parameters.title ? { title: parameters.title } : {}),
+          ...(archived === undefined ? {} : { archived: archived > 0 }),
+        },
         options?.signal,
       );
       if (!result.response.ok) return failedResult(result);
-      const mapped = mapV2Session(result.payload, directory);
-      return mapped ? successfulResult(result, mapped) : getSession(parameters, options);
+      const mapped = mapV2Session(result.payload, directory, undefined, await archiveSupported());
+      const updated = mapped ? successfulResult(result, mapped) : await getSession(parameters, options);
+      // Engines before 2.1 accept `archived` but ignore it; never report that as archived.
+      if (archived !== undefined && updated.data && ((updated.data.time.archived ?? 0) > 0) !== (archived > 0)) {
+        if (options?.throwOnError) throw new Error(V2_SESSION_ARCHIVE_UNAVAILABLE);
+        return unsupportedResult(baseUrl, "session.archive", V2_SESSION_ARCHIVE_UNAVAILABLE);
+      }
+      return updated;
+    },
+    children: async (
+      parameters: SessionParameters,
+      options?: RequestOptions,
+    ): Promise<FieldsResult<Session[]>> => {
+      const children: Session[] = [];
+      const seen = new Set<string>();
+      let cursor: string | undefined;
+      while (true) {
+        const query = new URLSearchParams({ parentID: parameters.sessionID, limit: "100" });
+        if (cursor) query.set("cursor", cursor);
+        const result = await request("GET", `/api/session?${query.toString()}`, undefined, options?.signal);
+        if (!result.response.ok) return failedResult(result);
+        const next = readRecord(result.payload, "cursor")?.next;
+        if (!Array.isArray(responseData(result.payload)) || (next !== undefined && next !== null && typeof next !== "string")) {
+          return failedResult({ ...result, payload: { name: "InvalidV2SessionListResponse" } });
+        }
+        // Filter here too: an engine that ignores `parentID` returns every session.
+        children.push(...responseItems(result.payload).flatMap((item) => {
+          const session = mapV2Session(item, directory);
+          return session?.parentID === parameters.sessionID ? [session] : [];
+        }));
+        // Callers refuse trees past 256 sessions, so stop paging once that is certain.
+        if (typeof next !== "string" || !next || children.length > 256) return successfulResult(result, children);
+        if (seen.has(next)) return failedResult({ ...result, payload: { name: "InvalidV2SessionListResponse", message: "Session list pagination cursor did not advance." } });
+        seen.add(next);
+        cursor = next;
+      }
     },
     delete: async (
       parameters: SessionParameters,
