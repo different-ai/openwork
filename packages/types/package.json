@@ -393,7 +393,8 @@
         "default": "./src/opencode-config-error.ts"
       },
       "development": "./src/opencode-config-error.ts",
-      "default": "./src/opencode-config-error.ts"
+      "bun": "./src/opencode-config-error.ts",
+      "default": "./dist/opencode-config-error.js"
     },
     "./url": {
       "types": {
