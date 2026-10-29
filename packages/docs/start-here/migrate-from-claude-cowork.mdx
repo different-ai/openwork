@@ -29,9 +29,12 @@ You need an owner or admin account in your OpenWork organization to import plugi
 | MCP servers | Connectors and custom apps | Reconnect the server through OpenWork Connect or add its URL as a custom app. |
 | Claude models | Anthropic provider | Add an Anthropic API key, or provision Anthropic centrally through OpenWork Cloud. |
 | Scheduled tasks | Scheduled tasks | Recreate each schedule and verify its workspace, permissions, and output location. |
+| Projects | Workspaces and folders | Projects are not migrated automatically yet. Create a workspace for each project's folder and copy its instructions into workspace files or a skill. |
+| Claude Code sessions and Claude chats | Chats in your workspace | [Import them](/start-here/import-claude-history) from **Settings → Import**. |
+| Cowork tasks | Files and skills | Claude's export leaves Cowork tasks out. Download the files you need and keep repeated instructions as skills. |
 
 <Note>
-  Conversation history does not transfer automatically. Keep any important instructions in workspace files or skills rather than relying on an old thread.
+  Conversation history moves separately from plugins and skills. Follow [Import your Claude conversations](/start-here/import-claude-history) to bring Claude Code sessions and Claude chats across.
 </Note>
 
 ## 1. Install OpenWork and open the same work
@@ -110,6 +113,7 @@ See [Share skills and MCP servers with your team](/start-here/do-work-with-it/sh
 - [ ] Each connector or MCP server is authorized and tested.
 - [ ] Scheduled and browser tasks have been run manually once.
 - [ ] Team capabilities are published centrally instead of copied machine by machine.
+- [ ] Claude Code sessions and Claude chats you still need are imported.
 - [ ] Important Cowork instructions are saved in files or skills.
 - [ ] Cowork remains available until the representative workflow passes in OpenWork.
 

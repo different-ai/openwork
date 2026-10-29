@@ -37,7 +37,6 @@ import {
   getEveryoneAgentsRoute,
   getEveryoneBrowserRoute,
   getOrgAccessFlags,
-  orgFeatureEnabled,
   permissionLockReason,
   type DenOrgContext,
 } from "../../_lib/den-org";
@@ -52,7 +51,6 @@ import {
   type AgentPermissionScopeId,
 } from "./agent-permissions-data";
 import { useDenToast } from "./den-toast";
-import { ENTERPRISE_CONTACT_URL } from "./permissions-ui";
 
 // ---------------------------------------------------------------------------
 // Settings helpers
@@ -91,11 +89,11 @@ export function overrideSummary(policy: AgentPermissionPolicy | undefined): stri
 }
 
 // ---------------------------------------------------------------------------
-// Access: the feature flag and the viewer's permissions
+// Access: the viewer's permissions
 // ---------------------------------------------------------------------------
 
 export type AgentPermissionsAccess =
-  | { state: "checking" | "error" | "feature_off" | "no_access" }
+  | { state: "checking" | "error" | "no_access" }
   | { state: "ready"; orgId: string; orgSlug: string | null; canManage: boolean; memberCount: number };
 
 export function useAgentPermissionsAccess(): AgentPermissionsAccess {
@@ -103,40 +101,21 @@ export function useAgentPermissionsAccess(): AgentPermissionsAccess {
   // A background refresh keeps the organization on screen, so an unsaved draft
   // stays in place instead of being replaced by a loading state (DESIGN.md P11).
   if (!orgContext || !orgId || orgContext.organization.id !== orgId) return orgError && !orgBusy ? { state: "error" } : { state: "checking" };
-  if (!orgFeatureEnabled(orgContext, "agentPermissions")) return { state: "feature_off" };
+
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
   if (!access.canViewAgentPermissions) return { state: "no_access" };
   return { state: "ready", orgId, orgSlug, canManage: access.canManageAgentPermissions, memberCount: orgContext.members.length };
 }
 
-/**
- * Whether a page shows an Agents tab. With the feature on, people who can view
- * agent permissions see it. With it off, only people who could manage them see
- * it, locked as an Enterprise feature, the same rule as the sidebar (DESIGN.md P4).
- */
+/** Whether the viewer can read agent permissions on a team's Agents tab. */
 export function agentsTabVisible(orgContext: DenOrgContext | null): boolean {
   if (!orgContext) return false;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
-  return orgFeatureEnabled(orgContext, "agentPermissions") ? access.canViewAgentPermissions : access.canManageAgentPermissions;
-}
-
-/** Feature off: what it is and the next step, in a dashed box (DESIGN.md P4, C6). */
-export function AgentPermissionsFeatureOff() {
-  return (
-    <div className="flex flex-col items-center gap-1.5 rounded-2xl border border-dashed border-gray-200 bg-white px-6 py-10 text-center" data-testid="agent-permissions-feature-off">
-      <LockKeyhole className="mb-1 size-4 text-gray-500" aria-hidden="true" strokeWidth={1.5} />
-      <p className="text-[14px] font-medium text-gray-900">Agent permissions is an Enterprise feature</p>
-      <p className="text-[13px] text-gray-500">Contact us to turn it on for your organization.</p>
-      <a href={ENTERPRISE_CONTACT_URL} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary", size: "sm", className: "mt-2" })}>
-        Contact us
-      </a>
-    </div>
-  );
+  return access.canViewAgentPermissions;
 }
 
 export function AgentPermissionsAccessState({ access }: { access: AgentPermissionsAccess }) {
   const { refreshOrgData } = useOrgDashboard();
-  if (access.state === "feature_off") return <AgentPermissionsFeatureOff />;
   if (access.state === "no_access") return <DenNotice tone="neutral" icon={Lock} message={permissionLockReason("agent_permissions.view")} />;
   if (access.state === "error") {
     return <DenNotice tone="error" message="Couldn't verify workspace access." action={<DenButton variant="secondary" size="sm" onClick={() => void refreshOrgData()}>Try again</DenButton>} />;

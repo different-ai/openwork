@@ -1,7 +1,6 @@
 import { denFetch, signIn, type DenSession } from "@openwork/behaviors";
 import { selfHostServer } from "@openwork/env";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
-import { allocateFreePorts } from "@openwork/cdp";
+import { allocateFreePorts, type AttachedSurface } from "@openwork/cdp";
 import { defaultReuseAdmin, faultProxy, localMysqlIsRunning, localRedisIsRunning, needs, personDefaults, queryDenDatabase, SkipError, type Place, type Seed } from "@openwork/env";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -136,6 +135,17 @@ async function pinnedLocalFaultProxy(place: Place) {
   return { proxy, ports: { api: apiPort, web: webPort } };
 }
 
+/**
+ * The join pages draw an animated WebGL background. Headless Chrome on CI has
+ * no GPU, so every open join page rendered it in software on each frame and
+ * slowed every click in the journey several times over. Reduced motion draws
+ * the same background once; nothing the journey checks depends on the motion.
+ */
+async function stillBackground(surface: AttachedSurface): Promise<AttachedSurface> {
+  await surface.client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+  return surface;
+}
+
 export async function orgInvite(seed: Seed, { place }: { place: Place }) {
   const runId = `${Date.now().toString(36)}${process.pid.toString(36)}`;
   const identity = (key: string) => personDefaults(key, undefined, runId);
@@ -156,7 +166,6 @@ export async function orgInvite(seed: Seed, { place }: { place: Place }) {
   if (!createdOrganization.response.ok) throw new Error(`Organization: HTTP ${createdOrganization.response.status}`);
   const organization = record(record(createdOrganization.body).organization);
   // Signing up from this workspace's invite links verifies the invited email (OPE-82).
-  await enableOrganizationCapabilities(seed, owner, { inviteLinkVerifiesEmail: true }, text(organization.id));
   const createdOther = await seed.api(owner, "/v1/org", { method: "POST", body: JSON.stringify({ name: `Other workspace ${runId}` }) });
   if (!createdOther.response.ok) throw new Error(`Second organization: HTTP ${createdOther.response.status}`);
   const otherOrg = record(record(createdOther.body).organization);
@@ -168,15 +177,15 @@ export async function orgInvite(seed: Seed, { place }: { place: Place }) {
   // The same account in its own session, for a browser that signs out: signing
   // out revokes that session, and the witnesses keep using the owner's.
   const otherBrowser = await signIn(den.ref, defaultReuseAdmin());
-  const web = await seed.web({ den, startPath: "/", headless: true });
+  const web = await stillBackground(await seed.web({ den, startPath: "/", headless: true }));
   return {
     den, web, owner, other, otherBrowser, organization, otherOrg, identity, witnesses,
-    fresh: (startPath = "/", signedInAs?: DenSession) => seed.web({ den, startPath, signedInAs, headless: true }),
+    fresh: async (startPath = "/", signedInAs?: DenSession) => stillBackground(await seed.web({ den, startPath, signedInAs, headless: true })),
     /** A browser at startPath whose Den API calls go through a fault proxy the test controls. */
     async faultableWeb(startPath: string) {
-      if (pinned) return { proxy: pinned.proxy, surface: await seed.web({ den, startPath, headless: true }) };
+      if (pinned) return { proxy: pinned.proxy, surface: await stillBackground(await seed.web({ den, startPath, headless: true })) };
       const proxy = await seed.faultProxy(den);
-      return { proxy, surface: await seed.web({ den: { ...den, ref: proxy.ref }, startPath, headless: true }) };
+      return { proxy, surface: await stillBackground(await seed.web({ den: { ...den, ref: proxy.ref }, startPath, headless: true })) };
     },
     async [Symbol.asyncDispose]() {
       await pinned?.proxy[Symbol.asyncDispose]();

@@ -10,9 +10,10 @@ import { StatCard } from "./stat-card";
 import { TrendChart } from "./trend-chart";
 import { useAnalytics, useProjectOptions } from "./use-analytics";
 import { AnalyticsEmptyState, AnalyticsErrorState, AnalyticsLoading, AnalyticsPageHeader, analyticsPageClass, analyticsSurfaceClass } from "./analytics-layout";
-import { getMembersRoute } from "../../../_lib/den-org";
+import { getMembersRoute, orgFeatureEnabled } from "../../../_lib/den-org";
 import { DenButton } from "../../../_components/ui/button";
 import { DenNotice } from "../../../_components/ui/notice";
+import { DenSegmented } from "../../../_components/ui/segmented";
 
 /* ── Formatting ── */
 
@@ -39,11 +40,38 @@ function selectionShare(value: number, defaultCount: number, manualCount: number
   return total === 0 ? "No model sessions yet" : `${Math.round((value / total) * 100)}% of model sessions`;
 }
 
+type Granularity = "day" | "week";
+
+const granularityOptions = [
+  { value: "day", label: "Daily" },
+  { value: "week", label: "Weekly" },
+] as const;
+
+const trendCopy = {
+  day: {
+    range: "Last 30 days · UTC",
+    period: "last 30 days",
+    interval: "",
+    activeTitle: "Daily active users",
+    sessionsTitle: "Sessions per day",
+    tasksTitle: "Tasks per day",
+  },
+  week: {
+    range: "Trends over 12 weeks",
+    period: "last 12 weeks",
+    interval: "Week of",
+    activeTitle: "Weekly active users",
+    sessionsTitle: "Sessions per week",
+    tasksTitle: "Tasks per week",
+  },
+} as const;
+
 /* ── Main screen ── */
 
 export function AnalyticsScreen() {
   const { activeOrg, orgContext } = useOrgDashboard();
   const [projectValue, setProjectValue] = useState("");
+  const [granularity, setGranularity] = useState<Granularity>("day");
 
   // Server enforces the same gate with a 402 on /v1/telemetry/analytics
   // (entitlements.ts); this mirrors the SSO / desktop policies screens.
@@ -59,6 +87,13 @@ export function AnalyticsScreen() {
     && (data?.tasksCompleted30d ?? 0) + (data?.tasksFailed30d ?? 0) === 0
     && (data?.weekly ?? []).every((week) => week.activeMembers === 0 && week.sessions === 0);
   const weekly = data?.weekly ?? [];
+  // Daily trends arrive only when the organization has them on; otherwise stay weekly.
+  const dailyAvailable = orgFeatureEnabled(orgContext, "analyticsDailyTrends") && Array.isArray(data?.daily);
+  const activeGranularity: Granularity = dailyAvailable ? granularity : "week";
+  const trend = activeGranularity === "day"
+    ? (data?.daily ?? []).map((d) => ({ ...d, weekStart: d.day }))
+    : weekly;
+  const copy = trendCopy[activeGranularity];
   const tasks7d = (data?.tasksCompleted7d ?? 0) + (data?.tasksFailed7d ?? 0);
   const modelUsage = data?.models.usage30d ?? [];
   const defaultModelSessions = data?.models.selection30d.default ?? 0;
@@ -85,7 +120,12 @@ export function AnalyticsScreen() {
       {isError ? <DenNotice tone="neutral" presentation="inline" message="Could not refresh analytics. Showing the last available data." action={<DenButton variant="secondary" size="sm" disabled={isFetching} onClick={() => void refetch()}>Retry</DenButton>} /> : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
       <ProjectFilter options={projectOptions} value={projectValue} onValueChange={setProjectValue} />
-      <span className="text-xs text-[#637291]">Trends over 12 weeks</span>
+      <div className="flex items-center gap-3">
+        <span className="text-xs text-[#637291]">{copy.range}</span>
+        {dailyAvailable ? (
+          <DenSegmented aria-label="Trend interval" value={granularity} onChange={setGranularity} options={granularityOptions} optionTestId={(value) => `analytics-granularity-${value}`} />
+        ) : null}
+      </div>
       </div>
 
       {/* Summary cards */}
@@ -115,27 +155,30 @@ export function AnalyticsScreen() {
       {/* Trend charts */}
       <div className="grid gap-3.5 lg:grid-cols-2">
         <TrendChart isLoading={isLoading}
-          title="Weekly active users"
-          subtitle={projectScoped ? "Members with project-matched events, last 12 weeks" : "Members with at least one event, last 12 weeks"}
-          weeks={weekly}
-          series={[{ label: "Active users", values: weekly.map((w) => w.activeMembers) }]}
+          title={copy.activeTitle}
+          subtitle={projectScoped ? `Members with project-matched events, ${copy.period}` : `Members with at least one event, ${copy.period}`}
+          intervalLabel={copy.interval}
+          weeks={trend}
+          series={[{ label: "Active users", values: trend.map((w) => w.activeMembers) }]}
         />
         <TrendChart isLoading={isLoading}
-          title="Sessions per week"
-          subtitle="Distinct sessions, last 12 weeks"
-          weeks={weekly}
-          series={[{ label: "Sessions", values: weekly.map((w) => w.sessions) }]}
+          title={copy.sessionsTitle}
+          subtitle={`Distinct sessions, ${copy.period}`}
+          intervalLabel={copy.interval}
+          weeks={trend}
+          series={[{ label: "Sessions", values: trend.map((w) => w.sessions) }]}
         />
       </div>
 
       <div>
         <TrendChart isLoading={isLoading}
-          title="Tasks per week"
-          subtitle="Completed and failed task runs, last 12 weeks"
-          weeks={weekly}
+          title={copy.tasksTitle}
+          subtitle={`Completed and failed task runs, ${copy.period}`}
+          intervalLabel={copy.interval}
+          weeks={trend}
           series={[
-            { label: "Completed", values: weekly.map((w) => w.tasksCompleted) },
-            { label: "Failed", values: weekly.map((w) => w.tasksFailed) },
+            { label: "Completed", values: trend.map((w) => w.tasksCompleted) },
+            { label: "Failed", values: trend.map((w) => w.tasksFailed) },
           ]}
         />
       </div>

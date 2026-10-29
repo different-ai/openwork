@@ -22,6 +22,8 @@ export function stepLabel(name: string, input: Record<string, unknown> = {}) {
       return path ? `Reading ${path}` : "Reading notes"
     case "bash":
       return typeof input.description === "string" && input.description.trim() ? input.description.trim().slice(0, 80) : "Using my computer"
+    case "desktop":
+      return input.view === "browser" ? "Working in the browser" : "Using my computer"
     case "look":
       return "Looking at the results"
     case "browser_open":
@@ -29,6 +31,8 @@ export function stepLabel(name: string, input: Record<string, unknown> = {}) {
       return typeof input.url === "string" ? `Opening ${hostOf(input.url)}` : "Opening the browser"
     case "browser_observe":
       return "Looking at the page"
+    case "browser_extract":
+      return "Reading the page"
     case "browser_act":
       return "Working in the browser"
     case "browser_handoff":

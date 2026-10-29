@@ -255,7 +255,7 @@ async function handleMcpAppServerRequestUntimed(input: {
   const [member, home, organizationFeatures, catalog] = await Promise.all([
     resolveMcpMemberIdentity({ userId: principal.userId, organizationId }),
     appOrganizationForMember(input.appId, principal.userId),
-    getOrganizationFeatures(organizationId),
+    getOrganizationFeatures(organizationId, { userId: principal.userId }),
     getCatalog(input.app, context.env),
   ])
   if (!member) return refuse("not_a_member")

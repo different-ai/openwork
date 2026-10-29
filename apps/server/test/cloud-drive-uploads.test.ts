@@ -74,3 +74,35 @@ test("unsafe paths and malicious session URLs cannot send file bytes", async () 
   await assert.rejects(callOpenWorkCloudUploadAction(file.config, "drive_upload_file", { path: "video.mp4" }, {}, dependencies), /not a Google Drive session/);
   assert.equal(calls, 1);
 });
+
+test("Outlook drafts send selected workspace files and the draft fields to Cloud, never to the model", async () => {
+  await using file = await fixture();
+  const sent: Array<{ url: string; payload: unknown; files: string[] }> = [];
+  const dependencies: CloudUploadDependencies = { readCloudMcp: cloud, fetchImpl: async (url, init) => {
+    assert.ok(init?.body instanceof FormData);
+    assert.equal(new Headers(init.headers).get("authorization"), "Bearer cloud-member-fixture");
+    sent.push({ url, payload: JSON.parse(String(init.body.get("payload"))), files: init.body.getAll("file").map(entry => entry instanceof File ? entry.name : "") });
+    return Response.json({ ok: true, draft: { id: "draft-1" }, attachments: [{ name: "video.mp4", contentType: "video/mp4", size: 32 }] });
+  } };
+  await callOpenWorkCloudUploadAction(file.config, "outlook_create_draft_with_attachments", { to: ["blair@example.test"], subject: "Clip", body: "Attached.", paths: ["video.mp4"], connectionId: "microsoft-365" }, {}, dependencies);
+  await callOpenWorkCloudUploadAction(file.config, "outlook_create_draft_with_attachments", { replyToMessageId: "message-1", body: "Here it is.", paths: ["video.mp4"] }, {}, dependencies);
+  await callOpenWorkCloudUploadAction(file.config, "outlook_create_draft_with_attachments", { replyToMessageId: "message-1", body: "<p>Here.</p>", bodyContentType: "html", paths: ["video.mp4"] }, {}, dependencies);
+  assert.deepEqual(sent, [
+    { url: "https://cloud.test/v1/direct-uploads/microsoft-365/mail-drafts", payload: { to: ["blair@example.test"], subject: "Clip", body: "Attached.", connectionId: "microsoft-365" }, files: ["video.mp4"] },
+    { url: "https://cloud.test/v1/direct-uploads/microsoft-365/mail-drafts", payload: { replyToMessageId: "message-1", comment: "Here it is." }, files: ["video.mp4"] },
+    { url: "https://cloud.test/v1/direct-uploads/microsoft-365/mail-drafts", payload: { replyToMessageId: "message-1", comment: "<p>Here.</p>", bodyContentType: "html" }, files: ["video.mp4"] },
+  ]);
+});
+
+test("Outlook drafts refuse mixed reply fields, large files and a disabled rollout without creating a draft", async () => {
+  await using file = await fixture(3_000_001); let calls = 0;
+  await using small = await fixture();
+  const dependencies: CloudUploadDependencies = { readCloudMcp: cloud, fetchImpl: async () => { calls++; return Response.json({ error: "feature_disabled", feature: "outlookAttachments" }, { status: 404 }); } };
+  await assert.rejects(callOpenWorkCloudUploadAction(small.config, "outlook_create_draft_with_attachments", { replyToMessageId: "message-1", subject: "Re: Clip", body: "Here.", paths: ["video.mp4"] }, {}, dependencies), /keeps the original recipients/);
+  await assert.rejects(callOpenWorkCloudUploadAction(small.config, "outlook_create_draft_with_attachments", { body: "Here.", paths: ["video.mp4"] }, {}, dependencies), /needs to and subject/);
+  await assert.rejects(callOpenWorkCloudUploadAction(small.config, "outlook_create_draft_with_attachments", { to: ["blair@example.test"], subject: "Clip", body: "Here.", bodyContentType: "rtf", paths: ["video.mp4"] }, {}, dependencies), /bodyContentType must be text or html/);
+  await assert.rejects(callOpenWorkCloudUploadAction(file.config, "outlook_create_draft_with_attachments", { to: ["blair@example.test"], subject: "Clip", body: "Here.", paths: ["video.mp4"] }, {}, dependencies), /up to 3000000 bytes/);
+  assert.equal(calls, 0);
+  await assert.rejects(callOpenWorkCloudUploadAction(small.config, "outlook_create_draft_with_attachments", { to: ["blair@example.test"], subject: "Clip", body: "Here.", paths: ["video.mp4"] }, {}, dependencies), /not turned on for this organization/);
+  assert.equal(calls, 1);
+});

@@ -33,6 +33,7 @@ export function openworkPluginPath(name: string, here?: string): string {
 
 export const openworkExtensionsPreviewPluginPath = () => openworkPluginPath("openwork-extensions-preview");
 export const openworkChromeDevtoolsPluginPath = () => openworkPluginPath("openwork-chrome-devtools");
+export const openworkComputerUsePluginPath = () => openworkPluginPath("openwork-computer-use");
 export const openworkCapabilitiesKnowledgePluginPath = () => openworkPluginPath("openwork-capabilities-knowledge");
 export const openworkAnthropicAdaptiveThinkingPluginPath = () => openworkPluginPath("openwork-anthropic-adaptive-thinking");
 export const openworkAnthropicToolSchemaPluginPath = () => openworkPluginPath("openwork-anthropic-tool-schema");
@@ -42,8 +43,18 @@ export const openworkPdfAttachmentsPluginPath = () => openworkPluginPath("openwo
 export const openworkTitleRecoveryPluginPath = () => openworkPluginPath("openwork-title-recovery");
 export const openworkGatewayQuotaPluginPath = () => openworkPluginPath("openwork-gateway-quota");
 export const openworkGatewayQuotaV2PluginPath = () => openworkPluginPath("openwork-gateway-quota-v2");
+export const openworkProviderSyncV2PluginPath = () => {
+  const path = openworkPluginPath("openwork-provider-sync-v2");
+  // The provider-only entry belongs to the shared plugin package. Bundle it
+  // alongside server plugins for packaged apps; load its source in Bun dev.
+  return path.endsWith(".ts")
+    ? join(dirname(fileURLToPath(import.meta.url)), "../../../packages/opencode-plugin/server.ts")
+    : path;
+};
 export const openworkContextV2PluginPath = () => openworkPluginPath("openwork-context-v2");
 export const openworkProviderFiltersV2PluginPath = () => openworkPluginPath("openwork-provider-filters-v2");
 export const openworkMcpResultsV2PluginPath = () => openworkPluginPath("openwork-mcp-results-v2");
 export const openworkMcpReadinessV2PluginPath = () => openworkPluginPath("openwork-mcp-readiness-v2");
+export const openworkVisibleReasoningV2PluginPath = () => openworkPluginPath("openwork-visible-reasoning-v2");
+export const openworkAutoRouteV2PluginPath = () => openworkPluginPath("openwork-auto-route-v2");
 export const openworkAgentPermissionsV2PluginPath = () => openworkPluginPath("openwork-agent-permissions-v2");

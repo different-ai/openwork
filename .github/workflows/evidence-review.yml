@@ -44,7 +44,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.22.1
       - name: Update the commit-bound evidence check
         env:
           GH_TOKEN: ${{ github.token }}
@@ -61,6 +61,10 @@ jobs:
       ((github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
       (github.event_name == 'workflow_run' && github.event.action == 'completed' && github.event.workflow_run.name == 'PR change proof' && github.event.workflow_run.event == 'pull_request'))
     runs-on: ubuntu-latest
+    # The evidence storage token belongs to this environment; no deployment is recorded.
+    environment:
+      name: review-app
+      deployment: false
     timeout-minutes: 5
     permissions:
       contents: read
@@ -81,7 +85,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.22.1
       - uses: pnpm/action-setup@v4
       - name: Install trusted publisher dependencies
         run: |

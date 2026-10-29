@@ -112,6 +112,11 @@ export function createEnterpriseMcpRequestObserver(input: {
     lastFailedRequestPhase: () => lastFailedRequestPhase,
     lastRequestFailure: () => lastRequestFailure,
     fetch: async (rawUrl, init) => {
+      // Ending the session is cleanup after the operation: it must not replace
+      // the request phase or failure the operation recorded.
+      if (init?.method === "DELETE") {
+        return input.fetch(rawUrl, { ...init, signal: init.signal ? AbortSignal.any([init.signal, input.signal]) : input.signal })
+      }
       const url = rawUrl instanceof URL ? rawUrl : new URL(rawUrl)
       const requestPhase = classifyEnterpriseMcpRequest(url, init)
       lastRequestPhase = requestPhase

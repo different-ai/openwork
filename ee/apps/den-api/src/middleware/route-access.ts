@@ -229,7 +229,7 @@ export function orgPermissionRoute(key: PermissionKey): MiddlewareHandler<{ Vari
 /**
  * The permission check of orgPermissionRoute as a plain middleware (not a
  * route marker), for routes that must run another guard first, e.g.
- * `orgMemberRoute(), requireFeature("permissions"), requireOrgPermission(key)`
+ * `orgMemberRoute(), requireOrgPermission(key)`
  * so a disabled feature answers 404 before any 403 or reauth. Same responses
  * and sensitivity rule as orgPermissionRoute. Needs the organization context.
  */

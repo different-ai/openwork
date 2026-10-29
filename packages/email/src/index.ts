@@ -8,6 +8,16 @@ export {
 } from "./send-email.js"
 export { renderEmailHtml } from "./render-email.js"
 export {
+  emailSenderDomain,
+  RESEND_DOMAINS_URL,
+  verifyEmailTransport,
+  type EmailTransportCheck,
+  type EmailTransportOutcome,
+  type SmtpVerifyOptions,
+  type SmtpVerifyTransport,
+  type VerifyEmailTransportOptions,
+} from "./verify-email.js"
+export {
   emailSubjects,
   emailReplyTo,
   renderEmailTemplate,

@@ -1,10 +1,44 @@
 import { decodeFileContent, truncateText } from "./binary-content.js"
 
-const DEFAULT_GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
+export const DEFAULT_GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024
 const DEFAULT_MAX_JSON_RESPONSE_BYTES = 5_000_000
 const DEFAULT_MAX_CONTENT_CHARACTERS = 200_000
+/** Graph attaches a file in one request only below 3 MB; larger files need an attachment upload session. */
+export const MICROSOFT_MAIL_ATTACHMENT_MAX_BYTES = 3_000_000
+
+export type Microsoft365BodyContentType = "text" | "html"
+export type Microsoft365OnlineMeetingProvider = "teamsForBusiness" | "skypeForBusiness" | "skypeForConsumer"
+type OnlineMeetingInput = { isOnlineMeeting?: boolean; onlineMeetingProvider?: Microsoft365OnlineMeetingProvider }
+
+/** Graph's online-meeting fields; Teams unless another provider is named. Omitted entirely when no meeting is asked for. */
+function graphOnlineMeeting(input: OnlineMeetingInput) {
+  if (input.isOnlineMeeting === undefined) return {}
+  return input.isOnlineMeeting
+    ? { isOnlineMeeting: true, onlineMeetingProvider: input.onlineMeetingProvider ?? "teamsForBusiness" }
+    : { isOnlineMeeting: false }
+}
+
+/** Graph's itemBody; plain text unless HTML is asked for, so markup is never stored as literal text by accident of a default. */
+function graphItemBody(content: string, contentType: Microsoft365BodyContentType | undefined) {
+  return { contentType: contentType === "html" ? "HTML" : "Text", content }
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+}
+
+/** The member's HTML reply placed above the quoted original that createReply prepared. */
+export function htmlReplyBody(reply: string, quoted: string, quotedContentType: string): string {
+  const block = `<div>${reply}</div>`
+  if (!quoted) return block
+  if (quotedContentType.toLowerCase() !== "html") return `${block}<br>${escapeHtml(quoted).replace(/\r?\n/g, "<br>")}`
+  const bodyTag = /<body\b[^>]*>/i.exec(quoted)
+  if (!bodyTag) return `${block}${quoted}`
+  const at = bodyTag.index + bodyTag[0].length
+  return `${quoted.slice(0, at)}${block}${quoted.slice(at)}`
+}
 
 export type Microsoft365EmailAddress = {
   name: string
@@ -50,14 +84,58 @@ export type Microsoft365CalendarEvent = {
   onlineMeetingUrl: string | null
 }
 
+/** A file or folder in any drive: the member's OneDrive, someone else's, or a SharePoint library. Without driveId it is in the member's own OneDrive. */
+export type Microsoft365DriveRef = {
+  driveId?: string
+  itemId: string
+}
+
 export type Microsoft365DriveItem = {
   id: string
+  driveId: string
+  parentId: string
+  siteId: string
   name: string
   size: number | null
   modifiedTime: string
   webUrl: string
   mimeType: string
   kind: "file" | "folder" | "unknown"
+  eTag: string
+}
+
+export type Microsoft365Site = {
+  id: string
+  name: string
+  webUrl: string
+  description: string
+}
+
+export type Microsoft365Drive = {
+  id: string
+  name: string
+  webUrl: string
+  driveType: string
+}
+
+export type Microsoft365MailAttachment = {
+  id: string
+  name: string
+  contentType: string
+  size: number | null
+  isInline: boolean
+  /** Only file attachments have bytes; item and reference attachments are an Outlook item or a cloud link. */
+  kind: "file" | "item" | "reference" | "unknown"
+}
+
+export type Microsoft365MailAttachmentWithContent = Microsoft365MailAttachment & {
+  contentBase64: string | null
+  contentUnavailableReason: "not_a_file" | "file_too_large" | null
+}
+
+export type Microsoft365UploadSession = {
+  uploadUrl: string
+  expirationDateTime: string
 }
 
 export type Microsoft365DriveItemWithContent = Microsoft365DriveItem & {
@@ -85,6 +163,8 @@ export type Microsoft365TeamsMessage = {
   webUrl: string
 }
 
+type MutationStatus = 200 | 201 | 202 | 204
+
 type MicrosoftGraphClientOptions = {
   accessToken: string
   baseUrl?: string
@@ -94,6 +174,11 @@ type MicrosoftGraphClientOptions = {
   maxJsonResponseBytes?: number
   maxContentCharacters?: number
   signal?: AbortSignal
+  /**
+   * Without an all-files permission the token can still reach SharePoint
+   * through Sites.Read.All, so only the member's own OneDrive is allowed.
+   */
+  ownDriveOnly?: boolean
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -223,6 +308,32 @@ export function extractMicrosoftMailMessage(json: unknown): Microsoft365MailMess
   return extractMailMessage(json)
 }
 
+const CALENDAR_EVENT_SELECT = "id,subject,bodyPreview,start,end,isAllDay,location,organizer,attendees,webLink,onlineMeeting,onlineMeetingUrl"
+const MAIL_ATTACHMENT_SELECT = "id,name,contentType,size,isInline"
+
+function mailAttachmentKind(type: string): Microsoft365MailAttachment["kind"] {
+  if (type === "#microsoft.graph.fileAttachment") return "file"
+  if (type === "#microsoft.graph.itemAttachment") return "item"
+  if (type === "#microsoft.graph.referenceAttachment") return "reference"
+  return "unknown"
+}
+
+function extractMailAttachment(value: unknown): Microsoft365MailAttachment {
+  const attachment = isRecord(value) ? value : {}
+  return {
+    id: readString(attachment, "id"),
+    name: readString(attachment, "name"),
+    contentType: readString(attachment, "contentType"),
+    size: readNumber(attachment, "size"),
+    isInline: readBoolean(attachment, "isInline"),
+    kind: mailAttachmentKind(readString(attachment, "@odata.type")),
+  }
+}
+
+export function extractMicrosoftMailAttachments(json: unknown): Microsoft365MailAttachment[] {
+  return isRecord(json) ? readArray(json, "value").map(extractMailAttachment).filter((attachment) => attachment.id) : []
+}
+
 function readEventTime(event: Record<string, unknown>, key: string): { dateTime: string; timeZone: string } {
   const value = readRecord(event, key) ?? {}
   return {
@@ -266,18 +377,26 @@ export function extractMicrosoftCalendarEvents(json: unknown): Microsoft365Calen
     .filter((event) => Boolean(event.id))
 }
 
-function extractDriveItem(value: unknown): Microsoft365DriveItem {
+function extractDriveItem(value: unknown, fallbackId = ""): Microsoft365DriveItem {
   const item = isRecord(value) ? value : {}
-  const file = readRecord(item, "file")
-  const folder = readRecord(item, "folder")
+  // Shortcuts and shared entries in the member's own drive describe the real
+  // file in remoteItem, which lives in its owner's drive.
+  const target = readRecord(item, "remoteItem") ?? item
+  const parent = readRecord(target, "parentReference") ?? {}
+  const file = readRecord(target, "file") ?? readRecord(item, "file")
+  const folder = readRecord(target, "folder") ?? readRecord(item, "folder")
   return {
-    id: readString(item, "id"),
-    name: readString(item, "name"),
-    size: readNumber(item, "size"),
-    modifiedTime: readString(item, "lastModifiedDateTime"),
-    webUrl: readString(item, "webUrl"),
+    id: readString(target, "id") || readString(item, "id") || fallbackId,
+    driveId: readString(parent, "driveId"),
+    parentId: readString(parent, "id"),
+    siteId: readString(parent, "siteId"),
+    name: readString(item, "name") || readString(target, "name"),
+    size: readNumber(target, "size") ?? readNumber(item, "size"),
+    modifiedTime: readString(target, "lastModifiedDateTime") || readString(item, "lastModifiedDateTime"),
+    webUrl: readString(target, "webUrl") || readString(item, "webUrl"),
     mimeType: file ? readString(file, "mimeType") : "",
     kind: file ? "file" : folder ? "folder" : "unknown",
+    eTag: readString(target, "eTag") || readString(item, "eTag"),
   }
 }
 
@@ -293,6 +412,86 @@ export function extractMicrosoftDriveItems(json: unknown): Microsoft365DriveItem
 
 export function extractMicrosoftDriveItem(json: unknown): Microsoft365DriveItem {
   return extractDriveItem(json)
+}
+
+/** Microsoft Search hits for OneDrive and SharePoint files; `nextFrom` continues the same query. */
+export function extractMicrosoftSearchHits(json: unknown, from: number): { files: Microsoft365DriveItem[]; nextFrom: number | null } {
+  const root = isRecord(json) ? json : {}
+  const response = readArray(root, "value").find(isRecord) ?? {}
+  const container = readArray(response, "hitsContainers").find(isRecord) ?? {}
+  const hits = readArray(container, "hits").filter(isRecord)
+  const files: Microsoft365DriveItem[] = []
+  for (const hit of hits) {
+    const item = extractDriveItem(hit.resource, readString(hit, "hitId"))
+    if (item.id) files.push(item)
+  }
+  return { files, nextFrom: readBoolean(container, "moreResultsAvailable") && hits.length ? from + hits.length : null }
+}
+
+export function extractMicrosoftSites(json: unknown): Microsoft365Site[] {
+  const root = isRecord(json) ? json : {}
+  return readArray(root, "value").filter(isRecord).map((site) => ({
+    id: readString(site, "id"),
+    name: readString(site, "displayName") || readString(site, "name"),
+    webUrl: readString(site, "webUrl"),
+    description: readString(site, "description"),
+  })).filter((site) => Boolean(site.id))
+}
+
+export function extractMicrosoftDrives(json: unknown): Microsoft365Drive[] {
+  const root = isRecord(json) ? json : {}
+  return readArray(root, "value").filter(isRecord).map((drive) => ({
+    id: readString(drive, "id"),
+    name: readString(drive, "name"),
+    webUrl: readString(drive, "webUrl"),
+    driveType: readString(drive, "driveType"),
+  })).filter((drive) => Boolean(drive.id))
+}
+
+/** Graph pages lists with an @odata.nextLink; only its $skiptoken is handed back as a page token. */
+function nextSkipToken(json: unknown): string | null {
+  const next = isRecord(json) ? readString(json, "@odata.nextLink") : ""
+  if (!next) return null
+  try {
+    for (const [key, value] of new URL(next).searchParams) {
+      if (key.toLowerCase() === "$skiptoken" && value) return value
+    }
+  } catch {
+    // An unreadable link ends paging.
+  }
+  return null
+}
+
+const DRIVE_ITEM_SELECT = "id,name,size,lastModifiedDateTime,webUrl,file,folder,parentReference,eTag,remoteItem"
+const UPLOAD_HOST_SUFFIXES = [".sharepoint.com", ".sharepoint.us", ".sharepoint-mil.us", ".sharepoint.cn", ".sharepoint.de"]
+
+function driveItemPath(ref: Microsoft365DriveRef, suffix = ""): string {
+  const item = ref.driveId
+    ? `drives/${encodeURIComponent(ref.driveId)}/items/${encodeURIComponent(ref.itemId)}`
+    : `me/drive/items/${encodeURIComponent(ref.itemId)}`
+  return `${item}${suffix}`
+}
+
+function driveRootPath(driveId?: string): string {
+  return driveId ? `drives/${encodeURIComponent(driveId)}/root` : "me/drive/root"
+}
+
+/** Graph's sharing-link form: unpadded base64url of the URL after "u!". */
+export function encodeSharingUrl(value: string): string {
+  return `u!${Buffer.from(value, "utf8").toString("base64url")}`
+}
+
+/** An upload session URL is a bearer credential, so only Microsoft's upload hosts (or a test Graph's own origin) are accepted. */
+export function isMicrosoftUploadSessionUrl(value: string, graphBaseUrl = DEFAULT_GRAPH_BASE_URL): boolean {
+  try {
+    const url = new URL(value)
+    if (url.username || url.password || url.hash) return false
+    if (url.protocol === "https:" && UPLOAD_HOST_SUFFIXES.some((suffix) => url.hostname.endsWith(suffix))) return true
+    const base = new URL(graphBaseUrl)
+    return base.origin !== new URL(DEFAULT_GRAPH_BASE_URL).origin && url.origin === base.origin
+  } catch {
+    return false
+  }
 }
 
 function extractTeamsChat(value: unknown): Microsoft365TeamsChat {
@@ -317,7 +516,8 @@ function readChatMessageSender(message: Record<string, unknown>): Microsoft365Em
   const from = readRecord(message, "from")
   const user = from ? readRecord(from, "user") : null
   if (!user) return null
-  const address = readString(user, "userIdentityType") || readString(user, "id")
+  // Teams identifies senders by Entra user id; userIdentityType is the same "aadUser" for everyone.
+  const address = readString(user, "id")
   if (!address) return null
   return { name: readString(user, "displayName"), address }
 }
@@ -346,7 +546,8 @@ function escapeGraphSearch(value: string): string {
 }
 
 export function escapeOneDriveSearchPath(value: string): string {
-  return value.replace(/'/g, "''")
+  // OData doubles single quotes; percent-encoding keeps ?, # and % inside the path segment.
+  return encodeURIComponent(value.replace(/'/g, "''"))
 }
 
 export function encodeOneDrivePath(value: string): string {
@@ -368,6 +569,14 @@ export class MicrosoftGraphRequestError extends Error {
   }
 }
 
+/** A drive outside the member's own OneDrive, on a connection limited to that one. */
+export class MicrosoftGraphScopeError extends Error {
+  constructor() {
+    super("Files outside your own OneDrive need the Microsoft 365 permission to read all files the member can access (or full file access to save them). An admin can enable it on the Microsoft 365 connector in OpenWork Cloud -> Connectors; then reconnect your account.")
+    this.name = "MicrosoftGraphScopeError"
+  }
+}
+
 export class MicrosoftGraphMutationOutcomeUnknownError extends MicrosoftGraphRequestError {
   constructor(operation: string) {
     super(operation, 502, "The mutation outcome is unknown. Verify the current state before trying again; do not automatically retry.")
@@ -384,6 +593,8 @@ export class MicrosoftGraphClient {
   private readonly maxJsonResponseBytes: number
   private readonly maxContentCharacters: number
   private readonly signal?: AbortSignal
+  private readonly ownDriveOnly: boolean
+  private ownDriveId?: Promise<string>
 
   constructor(options: MicrosoftGraphClientOptions) {
     this.accessToken = options.accessToken
@@ -394,6 +605,7 @@ export class MicrosoftGraphClient {
     this.maxJsonResponseBytes = options.maxJsonResponseBytes ?? DEFAULT_MAX_JSON_RESPONSE_BYTES
     this.maxContentCharacters = options.maxContentCharacters ?? DEFAULT_MAX_CONTENT_CHARACTERS
     this.signal = options.signal
+    this.ownDriveOnly = options.ownDriveOnly ?? false
   }
 
   private url(path: string): URL {
@@ -437,24 +649,26 @@ export class MicrosoftGraphClient {
   private async requestMutation(
     operation: string,
     path: string,
-    method: "POST" | "PATCH" | "DELETE",
-    expectedStatus: 200 | 201 | 202 | 204,
+    method: "POST" | "PUT" | "PATCH" | "DELETE",
+    expectedStatus: MutationStatus | readonly MutationStatus[],
     body?: unknown,
   ): Promise<unknown> {
     // A lost response may follow a successful write. Never replay a mutation,
     // including redirects, and require Graph's operation-specific receipt.
+    // A string body is file content sent as UTF-8 text; anything else is JSON.
+    const expectedStatuses: readonly number[] = typeof expectedStatus === "number" ? [expectedStatus] : expectedStatus
     try {
       const response = await this.request(operation, this.url(path), {
         method,
         redirect: "error",
-        headers: body === undefined ? undefined : { "content-type": "application/json" },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        headers: body === undefined ? undefined : { "content-type": typeof body === "string" ? "text/plain; charset=utf-8" : "application/json" },
+        body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body),
       })
-      if (response.status !== expectedStatus) {
+      if (!expectedStatuses.includes(response.status)) {
         await response.body?.cancel()
         throw new MicrosoftGraphMutationOutcomeUnknownError(operation)
       }
-      if (expectedStatus === 202 || expectedStatus === 204) {
+      if (response.status === 202 || response.status === 204) {
         await response.body?.cancel()
         return null
       }
@@ -497,19 +711,15 @@ export class MicrosoftGraphClient {
     bcc?: string[]
     subject: string
     body: string
+    bodyContentType?: Microsoft365BodyContentType
   }): Promise<Microsoft365MailMessage> {
     const recipient = (address: string) => ({ emailAddress: { address } })
-    const url = this.url("me/messages")
-    return extractMicrosoftMailMessage(await this.requestJson("Microsoft 365 mail draft create", url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        subject: input.subject,
-        body: { contentType: "Text", content: input.body },
-        toRecipients: input.to.map(recipient),
-        ccRecipients: (input.cc ?? []).map(recipient),
-        bccRecipients: (input.bcc ?? []).map(recipient),
-      }),
+    return extractMicrosoftMailMessage(await this.requestMutation("Microsoft 365 mail draft create", "me/messages", "POST", 201, {
+      subject: input.subject,
+      body: graphItemBody(input.body, input.bodyContentType),
+      toRecipients: input.to.map(recipient),
+      ccRecipients: (input.cc ?? []).map(recipient),
+      bccRecipients: (input.bcc ?? []).map(recipient),
     }))
   }
 
@@ -519,7 +729,7 @@ export class MicrosoftGraphClient {
     url.searchParams.set("endDateTime", input.end)
     url.searchParams.set("$top", String(input.maxResults))
     url.searchParams.set("$orderby", "start/dateTime")
-    url.searchParams.set("$select", "id,subject,bodyPreview,start,end,isAllDay,location,organizer,attendees,webLink,onlineMeeting,onlineMeetingUrl")
+    url.searchParams.set("$select", CALENDAR_EVENT_SELECT)
     return extractMicrosoftCalendarEvents(await this.requestJson("Microsoft 365 calendar list", url))
   }
 
@@ -528,12 +738,66 @@ export class MicrosoftGraphClient {
     return { draftId: messageId, status: "accepted" }
   }
 
-  async createMailReplyDraft(messageId: string, comment: string): Promise<Microsoft365MailMessage> {
-    const draft = extractMicrosoftMailMessage(await this.requestMutation(
-      "Microsoft 365 mail reply draft create", `me/messages/${encodeURIComponent(messageId)}/createReply`, "POST", 201, { comment },
-    ))
+  async createMailReplyDraft(messageId: string, comment: string, bodyContentType: Microsoft365BodyContentType = "text"): Promise<Microsoft365MailMessage> {
+    const path = `me/messages/${encodeURIComponent(messageId)}/createReply`
+    if (bodyContentType === "text") {
+      const draft = extractMicrosoftMailMessage(await this.requestMutation("Microsoft 365 mail reply draft create", path, "POST", 201, { comment }))
+      if (!draft.isDraft) throw new MicrosoftGraphMutationOutcomeUnknownError("Microsoft 365 mail reply draft create")
+      return draft
+    }
+    // createReply's comment is always plain text. For HTML, create the reply
+    // without one, then write the comment above the quoted original in one
+    // body update, so the reply context Outlook built is kept.
+    const created = await this.requestMutation("Microsoft 365 mail reply draft create", path, "POST", 201, {})
+    const draft = extractMicrosoftMailMessage(created)
     if (!draft.isDraft) throw new MicrosoftGraphMutationOutcomeUnknownError("Microsoft 365 mail reply draft create")
-    return draft
+    try {
+      const quoted = (isRecord(created) ? readRecord(created, "body") : null) ?? {}
+      return extractMicrosoftMailMessage(await this.requestMutation(
+        "Microsoft 365 mail reply draft body update", `me/messages/${encodeURIComponent(draft.id)}`, "PATCH", 200,
+        { body: { contentType: "HTML", content: htmlReplyBody(comment, readString(quoted, "content"), readString(quoted, "contentType")) } },
+      ))
+    } catch (error) {
+      // Never leave a reply draft without the member's words in their Drafts folder.
+      await this.deleteMailDraft(draft.id).catch(() => undefined)
+      throw error
+    }
+  }
+
+  async listMailAttachments(messageId: string): Promise<Microsoft365MailAttachment[]> {
+    const url = this.url(`me/messages/${encodeURIComponent(messageId)}/attachments`)
+    url.searchParams.set("$select", MAIL_ATTACHMENT_SELECT)
+    return extractMicrosoftMailAttachments(await this.requestJson("Microsoft 365 mail attachment list", url))
+  }
+
+  /** A file attachment's bytes as base64, up to the download cap; checks the size Outlook reports before downloading. */
+  async getMailAttachment(messageId: string, attachmentId: string): Promise<Microsoft365MailAttachmentWithContent> {
+    const path = `me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`
+    const url = this.url(path)
+    url.searchParams.set("$select", MAIL_ATTACHMENT_SELECT)
+    const attachment = extractMailAttachment(await this.requestJson("Microsoft 365 mail attachment read", url))
+    if (attachment.kind !== "file") return { ...attachment, contentBase64: null, contentUnavailableReason: "not_a_file" }
+    if (attachment.size !== null && attachment.size > this.maxDownloadBytes) return { ...attachment, contentBase64: null, contentUnavailableReason: "file_too_large" }
+    const downloaded = await readBytesWithByteLimit(await this.request("Microsoft 365 mail attachment download", this.url(`${path}/$value`)), this.maxDownloadBytes)
+    if (downloaded.limitExceeded) return { ...attachment, contentBase64: null, contentUnavailableReason: "file_too_large" }
+    return { ...attachment, contentBase64: Buffer.from(downloaded.bytes).toString("base64"), contentUnavailableReason: null }
+  }
+
+  /** Attaches one file of up to MICROSOFT_MAIL_ATTACHMENT_MAX_BYTES, Graph's limit for a single request. */
+  async addMailAttachment(messageId: string, file: { name: string; contentType: string; content: Uint8Array }): Promise<Microsoft365MailAttachment> {
+    return extractMailAttachment(await this.requestMutation(
+      "Microsoft 365 mail attachment add", `me/messages/${encodeURIComponent(messageId)}/attachments`, "POST", 201, {
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        name: file.name,
+        contentType: file.contentType,
+        contentBytes: Buffer.from(file.content).toString("base64"),
+      },
+    ))
+  }
+
+  /** Moves a draft to Deleted Items, as Outlook does; never a permanent delete. */
+  async deleteMailDraft(messageId: string): Promise<void> {
+    await this.requestMutation("Microsoft 365 mail draft delete", `me/messages/${encodeURIComponent(messageId)}`, "DELETE", 204)
   }
 
   async updateMailMessage(messageId: string, input: { isRead?: boolean; categories?: string[] }): Promise<Microsoft365MailMessage> {
@@ -552,19 +816,38 @@ export class MicrosoftGraphClient {
   async updateCalendarEvent(eventId: string, input: {
     subject?: string
     body?: string
+    bodyContentType?: Microsoft365BodyContentType
     start?: string
     end?: string
     location?: string
-  }): Promise<Microsoft365CalendarEvent> {
-    return extractMicrosoftCalendarEvent(await this.requestMutation(
+  } & OnlineMeetingInput): Promise<Microsoft365CalendarEvent> {
+    return this.withJoinUrl(input, extractMicrosoftCalendarEvent(await this.requestMutation(
       "Microsoft 365 calendar event update", `me/events/${encodeURIComponent(eventId)}`, "PATCH", 200, {
         subject: input.subject,
-        body: input.body === undefined ? undefined : { contentType: "Text", content: input.body },
+        body: input.body === undefined ? undefined : graphItemBody(input.body, input.bodyContentType),
         start: input.start === undefined ? undefined : { dateTime: input.start, timeZone: "UTC" },
         end: input.end === undefined ? undefined : { dateTime: input.end, timeZone: "UTC" },
         location: input.location === undefined ? undefined : { displayName: input.location },
+        ...graphOnlineMeeting(input),
       },
-    ))
+    )))
+  }
+
+  /**
+   * Microsoft can attach the Teams meeting a moment after the event write, so
+   * an event that asked for one and came back without a join link is read once
+   * more. It never writes again: the event and any invitations already exist.
+   */
+  private async withJoinUrl(input: OnlineMeetingInput, event: Microsoft365CalendarEvent): Promise<Microsoft365CalendarEvent> {
+    if (input.isOnlineMeeting !== true || event.onlineMeetingUrl || !event.id) return event
+    try {
+      const url = this.url(`me/events/${encodeURIComponent(event.id)}`)
+      url.searchParams.set("$select", CALENDAR_EVENT_SELECT)
+      const reread = extractMicrosoftCalendarEvent(await this.requestJson("Microsoft 365 calendar event read", url))
+      return reread.id === event.id ? reread : event
+    } catch {
+      return event
+    }
   }
 
   async cancelCalendarEvent(eventId: string, comment?: string): Promise<{ eventId: string; status: "accepted" }> {
@@ -580,46 +863,140 @@ export class MicrosoftGraphClient {
   async createCalendarEvent(input: {
     subject: string
     body?: string
+    bodyContentType?: Microsoft365BodyContentType
     start: string
     end: string
     timeZone: string
     location?: string
     attendees?: string[]
-  }): Promise<Microsoft365CalendarEvent> {
-    const url = this.url("me/events")
-    return extractMicrosoftCalendarEvent(await this.requestJson("Microsoft 365 calendar event create", url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        subject: input.subject,
-        body: { contentType: "Text", content: input.body ?? "" },
-        start: { dateTime: input.start, timeZone: input.timeZone },
-        end: { dateTime: input.end, timeZone: input.timeZone },
-        location: { displayName: input.location ?? "" },
-        attendees: (input.attendees ?? []).map((address) => ({
-          emailAddress: { address },
-          type: "required",
-        })),
-      }),
-    }))
+  } & OnlineMeetingInput): Promise<Microsoft365CalendarEvent> {
+    return this.withJoinUrl(input, extractMicrosoftCalendarEvent(await this.requestMutation("Microsoft 365 calendar event create", "me/events", "POST", 201, {
+      subject: input.subject,
+      body: graphItemBody(input.body ?? "", input.bodyContentType),
+      start: { dateTime: input.start, timeZone: input.timeZone },
+      end: { dateTime: input.end, timeZone: input.timeZone },
+      location: { displayName: input.location ?? "" },
+      attendees: (input.attendees ?? []).map((address) => ({
+        emailAddress: { address },
+        type: "required",
+      })),
+      ...graphOnlineMeeting(input),
+    })))
   }
 
+  /** Refuses another drive on a connection limited to the member's own OneDrive. */
+  private async assertReachable(driveId: string | undefined) {
+    if (!this.ownDriveOnly || !driveId) return
+    if (!this.ownDriveId) {
+      const url = this.url("me/drive")
+      url.searchParams.set("$select", "id")
+      this.ownDriveId = this.requestJson("Microsoft 365 OneDrive lookup", url).then((json) => (isRecord(json) ? readString(json, "id") : ""))
+      this.ownDriveId.catch(() => { this.ownDriveId = undefined })
+    }
+    if ((await this.ownDriveId) !== driveId) throw new MicrosoftGraphScopeError()
+  }
+
+  /** The member's own OneDrive only; works with Files.Read. */
   async searchDriveItems(input: { query: string; maxResults: number }): Promise<Microsoft365DriveItem[]> {
     const escapedQuery = escapeOneDriveSearchPath(input.query)
     const url = this.url(`me/drive/root/search(q='${escapedQuery}')`)
     url.searchParams.set("$top", String(input.maxResults))
-    url.searchParams.set("$select", "id,name,size,lastModifiedDateTime,webUrl,file,folder")
+    url.searchParams.set("$select", DRIVE_ITEM_SELECT)
     return extractMicrosoftDriveItems(await this.requestJson("Microsoft 365 OneDrive search", url))
   }
 
-  async getDriveItem(itemId: string): Promise<Microsoft365DriveItem> {
-    const url = this.url(`me/drive/items/${encodeURIComponent(itemId)}`)
-    url.searchParams.set("$select", "id,name,size,lastModifiedDateTime,webUrl,file,folder")
+  /** Every OneDrive and SharePoint file the member can open, through Microsoft Search. Needs Files.Read.All. */
+  async searchFiles(input: { query: string; maxResults: number; from: number }): Promise<{ files: Microsoft365DriveItem[]; nextFrom: number | null }> {
+    if (this.ownDriveOnly) throw new MicrosoftGraphScopeError()
+    const json = await this.requestJson("Microsoft 365 file search", this.url("search/query"), {
+      method: "POST",
+      redirect: "error",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ requests: [{ entityTypes: ["driveItem"], query: { queryString: input.query }, from: input.from, size: input.maxResults }] }),
+    })
+    return extractMicrosoftSearchHits(json, input.from)
+  }
+
+  /** A folder's items, or a drive's top level when folderId is omitted. */
+  async listDriveChildren(input: { driveId?: string; folderId?: string; maxResults: number; pageToken?: string }): Promise<{ files: Microsoft365DriveItem[]; nextPageToken: string | null }> {
+    await this.assertReachable(input.driveId)
+    const path = input.folderId ? driveItemPath({ driveId: input.driveId, itemId: input.folderId }, "/children") : `${driveRootPath(input.driveId)}/children`
+    const url = this.url(path)
+    url.searchParams.set("$top", String(input.maxResults))
+    url.searchParams.set("$select", DRIVE_ITEM_SELECT)
+    if (input.pageToken) url.searchParams.set("$skiptoken", input.pageToken)
+    const json = await this.requestJson("Microsoft 365 folder list", url)
+    return { files: extractMicrosoftDriveItems(json), nextPageToken: nextSkipToken(json) }
+  }
+
+  /** Resolves a OneDrive, SharePoint or Teams file link to its drive item. */
+  async resolveSharingLink(link: string): Promise<Microsoft365DriveItem> {
+    if (this.ownDriveOnly) throw new MicrosoftGraphScopeError()
+    const url = this.url(`shares/${encodeSharingUrl(link)}/driveItem`)
+    url.searchParams.set("$select", DRIVE_ITEM_SELECT)
+    return extractMicrosoftDriveItem(await this.requestJson("Microsoft 365 link lookup", url))
+  }
+
+  async searchSites(input: { query: string; maxResults: number }): Promise<Microsoft365Site[]> {
+    const url = this.url("sites")
+    url.searchParams.set("search", input.query)
+    url.searchParams.set("$top", String(input.maxResults))
+    url.searchParams.set("$select", "id,displayName,name,webUrl,description")
+    return extractMicrosoftSites(await this.requestJson("Microsoft 365 SharePoint site search", url))
+  }
+
+  async listSiteDrives(siteId: string): Promise<Microsoft365Drive[]> {
+    // Site ids are "host,siteGuid,webGuid"; Graph expects the commas as written.
+    const url = this.url(`sites/${encodeURIComponent(siteId).replace(/%2C/gi, ",")}/drives`)
+    url.searchParams.set("$select", "id,name,webUrl,driveType")
+    return extractMicrosoftDrives(await this.requestJson("Microsoft 365 SharePoint library list", url))
+  }
+
+  async getDriveItem(ref: Microsoft365DriveRef): Promise<Microsoft365DriveItem> {
+    await this.assertReachable(ref.driveId)
+    const url = this.url(driveItemPath(ref))
+    url.searchParams.set("$select", DRIVE_ITEM_SELECT)
     return extractMicrosoftDriveItem(await this.requestJson("Microsoft 365 OneDrive item metadata", url))
   }
 
-  async getDriveItemWithContent(itemId: string): Promise<Microsoft365DriveItemWithContent> {
-    const item = await this.getDriveItem(itemId)
+  /** Streams a file's bytes (or a PDF conversion of an Office file); the caller bounds and closes the body. */
+  async downloadDriveContent(ref: Microsoft365DriveRef, input: { range?: string; format?: "pdf" } = {}): Promise<Response> {
+    await this.assertReachable(ref.driveId)
+    const url = this.url(driveItemPath(ref, "/content"))
+    if (input.format) url.searchParams.set("format", input.format)
+    return this.request("Microsoft 365 file download", url, input.range ? { headers: { range: input.range } } : undefined)
+  }
+
+  /**
+   * Prepares a resumable upload. Replacing names the eTag the copy was made
+   * from, so Graph refuses (412) when the file changed since. Never replayed.
+   */
+  async createDriveUploadSession(input:
+    | { replace: Microsoft365DriveRef; eTag: string }
+    | { parent: Microsoft365DriveRef; name: string; conflictBehavior: "fail" | "rename" },
+  ): Promise<Microsoft365UploadSession> {
+    const replacing = "replace" in input
+    await this.assertReachable(replacing ? input.replace.driveId : input.parent.driveId)
+    const path = replacing
+      ? driveItemPath(input.replace, "/createUploadSession")
+      : driveItemPath(input.parent, `:/${encodeURIComponent(input.name)}:/createUploadSession`)
+    const operation = "Microsoft 365 upload session create"
+    const json = await this.requestJson(operation, this.url(path), {
+      method: "POST",
+      redirect: "error",
+      headers: { "content-type": "application/json", ...(replacing ? { "if-match": input.eTag } : {}) },
+      body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": replacing ? "replace" : input.conflictBehavior } }),
+    })
+    const session = isRecord(json) ? json : {}
+    const uploadUrl = readString(session, "uploadUrl")
+    if (!isMicrosoftUploadSessionUrl(uploadUrl, this.baseUrl)) {
+      throw new MicrosoftGraphRequestError(operation, 502, "Microsoft returned an invalid upload session. No file bytes were sent; do not retry automatically.")
+    }
+    return { uploadUrl, expirationDateTime: readString(session, "expirationDateTime") }
+  }
+
+  async getDriveItemWithContent(ref: Microsoft365DriveRef): Promise<Microsoft365DriveItemWithContent> {
+    const item = await this.getDriveItem(ref)
     if (item.kind === "folder") {
       return { ...item, content: null, contentBase64: null, encoding: "none", contentType: null, truncated: false, contentUnavailableReason: "folder" }
     }
@@ -627,7 +1004,10 @@ export class MicrosoftGraphClient {
       return { ...item, content: null, contentBase64: null, encoding: "none", contentType: item.mimeType || null, truncated: false, contentUnavailableReason: "file_too_large" }
     }
 
-    const contentUrl = this.url(`me/drive/items/${encodeURIComponent(itemId)}/content`)
+    // A shortcut in the member's own drive points at a file in its owner's drive.
+    const target = !ref.driveId && item.id === ref.itemId ? ref : { driveId: item.driveId || ref.driveId, itemId: item.id }
+    await this.assertReachable(target.driveId)
+    const contentUrl = this.url(driveItemPath(target, "/content"))
     const response = await this.request("Microsoft 365 OneDrive item content", contentUrl)
     const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim() || item.mimeType || null
     const contentLength = Number(response.headers.get("content-length"))
@@ -668,28 +1048,29 @@ export class MicrosoftGraphClient {
     }
   }
 
-  async putDriveTextFile(input: { path: string; content: string }): Promise<Microsoft365DriveItem> {
+  async putDriveTextFile(input: { driveId?: string; path: string; content: string }): Promise<Microsoft365DriveItem> {
+    await this.assertReachable(input.driveId)
     const encodedPath = encodeOneDrivePath(input.path)
-    const url = this.url(`me/drive/root:/${encodedPath}:/content`)
-    return extractMicrosoftDriveItem(await this.requestJson("Microsoft 365 OneDrive file write", url, {
-      method: "PUT",
-      headers: { "content-type": "text/plain; charset=utf-8" },
-      body: input.content,
-    }))
+    // Graph answers 201 for a new file and 200 when it replaces an existing one.
+    return extractMicrosoftDriveItem(await this.requestMutation(
+      "Microsoft 365 OneDrive file write", `${driveRootPath(input.driveId)}:/${encodedPath}:/content`, "PUT", [200, 201], input.content,
+    ))
   }
 
-  async updateDriveItem(itemId: string, input: { name?: string; parentId?: string }): Promise<Microsoft365DriveItem> {
+  async updateDriveItem(ref: Microsoft365DriveRef, input: { name?: string; parentId?: string }): Promise<Microsoft365DriveItem> {
+    await this.assertReachable(ref.driveId)
     return extractMicrosoftDriveItem(await this.requestMutation(
-      "Microsoft 365 OneDrive item rename or move", `me/drive/items/${encodeURIComponent(itemId)}`, "PATCH", 200, {
+      "Microsoft 365 OneDrive item rename or move", driveItemPath(ref), "PATCH", 200, {
         name: input.name,
         parentReference: input.parentId === undefined ? undefined : { id: input.parentId },
       },
     ))
   }
 
-  async createDriveFolder(input: { parentId: string; name: string }): Promise<Microsoft365DriveItem> {
+  async createDriveFolder(input: { driveId?: string; parentId: string; name: string }): Promise<Microsoft365DriveItem> {
+    await this.assertReachable(input.driveId)
     return extractMicrosoftDriveItem(await this.requestMutation(
-      "Microsoft 365 OneDrive folder create", `me/drive/items/${encodeURIComponent(input.parentId)}/children`, "POST", 201,
+      "Microsoft 365 OneDrive folder create", driveItemPath({ driveId: input.driveId, itemId: input.parentId }, "/children"), "POST", 201,
       { name: input.name, folder: {}, "@microsoft.graph.conflictBehavior": "fail" },
     ))
   }
@@ -708,11 +1089,8 @@ export class MicrosoftGraphClient {
   }
 
   async sendTeamsMessage(chatId: string, content: string): Promise<Microsoft365TeamsMessage> {
-    const url = this.url(`chats/${encodeURIComponent(chatId)}/messages`)
-    return extractMicrosoftTeamsMessage(await this.requestJson("Microsoft 365 Teams message send", url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ body: { contentType: "text", content } }),
-    }))
+    return extractMicrosoftTeamsMessage(await this.requestMutation(
+      "Microsoft 365 Teams message send", `chats/${encodeURIComponent(chatId)}/messages`, "POST", 201, { body: { contentType: "text", content } },
+    ))
   }
 }

@@ -11,8 +11,8 @@ import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./
 import { agentPermissionDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
 
 const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
-/** Org-managed providers: Den-imported (lpr_), Gateway (ipr_) and hosted OpenWork Models. */
-const MANAGED_PROVIDER = /^(?:lpr_|ipr_)|^openwork$/i;
+/** Org-managed providers: Den-imported (lpr_), Gateway (ipr_), hosted OpenWork Models and the Auto Router. */
+const MANAGED_PROVIDER = /^(?:lpr_|ipr_)|^openwork(?:-auto)?$/i;
 /** One member's sign-in: another member of the same organization has another token. */
 function sessionKey(session: CloudProviderDenSession) { return `${session.baseUrl}\n${session.orgId}\n${session.token}`; }
 // The first cold read previously had 10s; keep two reads under the 15s plugin budget and one read under the 10s session-install budget.
@@ -188,7 +188,10 @@ class ManagedDesktopPolicy {
       if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) {
         // Never block on Den: keep the last policy verified for this sign-in, or none.
         console.warn("[openwork:model-access] Den unreachable; using the last known model access");
-        return this.lastKnown?.key === sessionKey(session) ? this.lastKnown.policy : null;
+        // Model access/permissions keep their offline policy. A rollout is
+        // different: a newly started engine must not resurrect live sync from
+        // a stale grant after its kill switch changed while disconnected.
+        return this.lastKnown?.key === sessionKey(session) ? { ...this.lastKnown.policy, liveProviderSync: false, nativeAffordanceCodeMode: false } : null;
       }
       throw new ApiError(403, "policy_unavailable", "Your organization's policy could not be verified. Try again when connected.");
     }
@@ -304,6 +307,22 @@ class ManagedDesktopPolicy {
     const denial = agentPermissionDenial(rules, action, [name]);
     if (denial) throw new ApiError(403, "organization_policy_denied", denial);
   }
+  /** Remote computers require the signed-in organization's verified rollout. */
+  async remoteComputersEnabled(): Promise<boolean> {
+    const session = this.session;
+    const generation = this.generation;
+    if (!session) return false;
+    try {
+      const payload = await this.readDenJson(session, "/v1/org", generation);
+      this.identityChanged(generation);
+      const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
+      return features.computerUse === true && features.remoteComputers === true;
+    } catch {
+      // Missing, unreachable, signed-out or changed identity never grants access.
+      return false;
+    }
+  }
+
   /**
    * The member's website rules for the built-in browser, read by the desktop
    * process itself rather than taken from the app window. Den is asked first
@@ -322,6 +341,10 @@ class ManagedDesktopPolicy {
       ? agentPermissionRulesOf(policy)
       : agentPermissionRulesOf((await readGlobalRuntimeOpencodeConfig(this.config)).managedPolicy);
     return rules.filter((rule) => rule.action === "webfetch");
+  }
+  /** The desktop config verified for this sign-in, without waiting on Den. Null signed out or before Den first answered. */
+  known(): DesktopConfig | null {
+    return this.knownPolicy();
   }
   /** The policy to enforce now: verified for this sign-in, else the last one verified for it; never waits on Den. */
   private knownPolicy(): DesktopConfig | null {

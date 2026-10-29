@@ -1,3 +1,4 @@
+import { deriveConnectionState } from "@openwork/types/den/connection-state"
 import { and, asc, count, desc, eq, inArray, isNull, notExists, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
@@ -76,6 +77,7 @@ import {
 import { cache, type CachedOrgMember } from "../../../cache.js"
 import { db } from "../../../db.js"
 import { requestReadFor } from "../../../request-reads.js"
+import { latestConfigObjectVersions } from "../../../config-object-versions.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "../../../list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "../../../organization-team-roles.js"
 import { resolveMemberPermissions, resolvePermissionsForMember } from "../../../permissions/resolve.js"
@@ -775,24 +777,7 @@ function pageItems<TItem extends { id: string }>(items: TItem[], cursor: string 
 }
 
 async function getLatestVersions(configObjectIds: ConfigObjectId[]) {
-  if (configObjectIds.length === 0) {
-    return new Map<string, ConfigObjectVersionRow>()
-  }
-
-  const rows = await db
-    .select()
-    .from(ConfigObjectVersionTable)
-    .where(inArray(ConfigObjectVersionTable.configObjectId, configObjectIds))
-    .orderBy(desc(ConfigObjectVersionTable.createdAt), desc(ConfigObjectVersionTable.id))
-
-  const latestByObjectId = new Map<string, ConfigObjectVersionRow>()
-  for (const row of rows) {
-    if (!latestByObjectId.has(row.configObjectId)) {
-      latestByObjectId.set(row.configObjectId, row)
-    }
-  }
-
-  return latestByObjectId
+  return latestConfigObjectVersions(configObjectIds)
 }
 
 function serializeVersion(row: ConfigObjectVersionRow) {
@@ -856,14 +841,14 @@ const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = [
     icon: { src: "/openwork-mark.svg" },
     composer: { prompt: "Use the OpenWork Browser extension to " },
     setup: { instructions: "OpenWork Browser is ready by default in desktop workspaces." },
-    resources: [{ type: "opencode-plugin", id: "opencode-chrome-devtools", packageName: "opencode-chrome-devtools", required: true }],
+    resources: [{ type: "opencode-plugin", id: "openwork-chrome-devtools", label: "OpenWork browser tools", required: true }],
     contributions: [
       { type: "settings-panel", ref: "openwork.browser.settings", location: "settings-detail" },
       { type: "session-side-panel", ref: "openwork.browser.panel", location: "session-right-pane" },
       { type: "composer-prompt", prompt: "Use the OpenWork Browser extension to ", location: "composer" },
     ],
     enablement: [{ type: "toggle-enabled", ref: "openwork-browser", label: "Enabled" }],
-    lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:opencode-chrome-devtools"] },
+    lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:openwork-chrome-devtools"] },
     defaultEnabled: true,
   },
   {
@@ -2500,27 +2485,6 @@ export async function listMeLibraryPluginItems(input: { context: PluginArchActor
   }))
 }
 
-function memberConnectionState(connection: MemberUsableConnectionFacts) {
-  if (
-    connection.setupRequired
-    || connection.issuerReviewRequired
-    || connection.reconnectActionOwner === "organization_admin"
-    || connection.authPolicyConfirmed === false
-    || connection.authTypeMismatch
-    || (connection.oauthClientRequired && !connection.oauthClientConfigured)
-    || (connection.credentialMode === "shared" && !connection.connectedForMe)
-  ) {
-    return "needs_admin_setup"
-  }
-  if (connection.credentialMode === "per_member" && (!connection.connectedForMe || connection.needsReconnect)) {
-    return "needs_signin"
-  }
-  if (connection.connectedForMe || (connection.credentialMode === "shared" && connection.connected)) {
-    return "connected"
-  }
-  return "available"
-}
-
 export async function listMeLibraryConnectionItems(input: {
   connections: MemberUsableConnectionFacts[]
   context: PluginArchActorContext
@@ -2596,7 +2560,7 @@ export async function listMeLibraryConnectionItems(input: {
       description: null,
       transport: connection.nativeProviderKey !== null ? "native" : "mcp",
       provider: connection.nativeProviderKey,
-      state: memberConnectionState(connection),
+      state: deriveConnectionState(connection).member,
       connectedAt: connection.connectedAt,
       edges,
     }
@@ -6030,7 +5994,7 @@ export async function configureMarketplacePluginMcpRequirement(input: {
   oauthClient?: { clientId: string; clientSecret?: string }
   pluginId: PluginId
   serverName: string
-  /** Secure keys in chat: set up a shared API-key connection now; a person adds the key next. */
+  /** Set up a shared API-key connection now; a person adds the key in a private field next. */
   awaitKey?: boolean
 }) {
   const awaitingKey = input.awaitKey === true && input.authType === "apikey" && !normalizedPluginMcpApiKey(input.apiKey)
@@ -6732,13 +6696,10 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
     throw new PluginArchRouteFailure(404, "organization_not_found", "Organization not found for connector instance.")
   }
 
-  const [member, features] = await Promise.all([
-    resolveOrganizationMemberAuthority({
-      organizationId: input.connectorInstance.organizationId,
-      memberId: input.connectorInstance.createdByOrgMembershipId,
-    }),
-    getOrganizationFeatures(organization.id),
-  ])
+  const member = await resolveOrganizationMemberAuthority({
+    organizationId: input.connectorInstance.organizationId,
+    memberId: input.connectorInstance.createdByOrgMembershipId,
+  })
   if (!member) {
     throw new PluginArchRouteFailure(404, "member_not_found", "Connector creator member not found.")
   }
@@ -6746,12 +6707,12 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
   if (!member.userId) {
     throw new PluginArchRouteFailure(404, "member_not_joined", "Connector creator member has not joined the organization.")
   }
+  const features = await getOrganizationFeatures(organization.id, { userId: member.userId })
 
   // The automation acts with the connector creator's own permissions.
   const memberPermissions = await resolvePermissionsForMember({
     organizationId: organization.id,
     memberId: member.id,
-    featureEnabled: features.permissions,
   })
 
   return {

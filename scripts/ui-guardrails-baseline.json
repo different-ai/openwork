@@ -14,12 +14,6 @@
       "count": 1
     },
     {
-      "file": "apps/app/src/components/model-select.tsx",
-      "rule": "tiny-text",
-      "fingerprint": "e85d3e9f173807f6",
-      "count": 2
-    },
-    {
       "file": "apps/app/src/react-app/design-system/extension-detail-modal.tsx",
       "rule": "tiny-text",
       "fingerprint": "e85d3e9f173807f6",
@@ -29,12 +23,6 @@
       "file": "apps/app/src/react-app/domains/automations/automation-editor.tsx",
       "rule": "tiny-text",
       "fingerprint": "e85d3e9f173807f6",
-      "count": 1
-    },
-    {
-      "file": "apps/app/src/react-app/domains/automations/automation-schedule-fields.tsx",
-      "rule": "raw-control",
-      "fingerprint": "05c8328b6997c82d",
       "count": 1
     },
     {

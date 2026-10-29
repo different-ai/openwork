@@ -35,8 +35,15 @@ mock_provider "aws" {
 
 mock_provider "random" {}
 
+override_resource {
+  target = aws_lambda_invocation.migrate
+  values = { result = "{\"exitCode\":0,\"image\":\"ghcr.io/different-ai/openwork-den-api@sha256:0942e02a8e2033151e982f51b24926fe5090807b7f7480d77f2c4fc5b806737e\"}" }
+}
+
 variables {
-  openwork_version    = "0.0.0-test"
+  openwork_version    = "0.18.58"
+  write_only_secrets  = false # exercise preserved legacy state path
+  database_ca_bundle  = "-----BEGIN CERTIFICATE-----test"
   vpc_id              = "vpc-123"
   alb_subnet_ids      = ["subnet-a", "subnet-b"]
   service_subnet_ids  = ["subnet-a", "subnet-b"]

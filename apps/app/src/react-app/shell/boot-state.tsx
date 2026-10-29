@@ -10,6 +10,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { failStartup, markStartupStep } from "../../app/lib/startup-diagnostics";
+
 export type BootPhaseId =
   | "idle"
   | "bootstrapping-workspaces"
@@ -88,6 +90,8 @@ export function BootStateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setError = useCallback((message: string | null) => {
+    // Boot errors come from the desktop runtime boot: the engine did not start.
+    if (message) failStartup("engine", "engine_failed");
     setSnapshot((current) => ({
       ...current,
       error: message,
@@ -97,6 +101,7 @@ export function BootStateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const markReady = useCallback(() => {
+    markStartupStep("engine");
     setSnapshot((current) => ({
       ...current,
       phase: "ready",

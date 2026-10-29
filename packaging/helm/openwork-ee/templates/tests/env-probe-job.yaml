@@ -73,6 +73,11 @@ spec:
               ];
               const secretPattern = /(SECRET|PASSWORD|PRIVATE|TOKEN|KEY|DATABASE_URL|BOOTSTRAP_CODE|SHA256)/;
               const failures = [];
+              console.log(`Node.js runtime: ${process.version} (${process.platform}/${process.arch})`);
+              const nodeVersion = /^24\.(\d+)\.(\d+)$/.exec(process.versions.node);
+              if (!nodeVersion || !(Number(nodeVersion[1]) > 22 || (Number(nodeVersion[1]) === 22 && Number(nodeVersion[2]) >= 1))) {
+                failures.push(`Node.js: expected stable 24.x >=24.22.1, actual ${process.version}; deploy a new OpenWork application image release built with the patched runtime`);
+              }
 
               function compactPem(value) {
                 return value.replace(/\s+/g, "");

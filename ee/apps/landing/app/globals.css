@@ -112,6 +112,25 @@ button:focus-visible {
   font-size: 14px;
 }
 
+/* Governance editorial pages share the landing palette and control system. */
+.governance-hero { padding-top: 64px; padding-bottom: 12px; }
+.governance-title { font-size: clamp(2.4rem, 5.3vw, 4.5rem); font-weight: 500; line-height: 1.06; letter-spacing: -0.045em; text-wrap: balance; }
+.governance-heading { font-size: clamp(1.8rem, 3.1vw, 2.65rem); font-weight: 500; line-height: 1.16; letter-spacing: -0.035em; text-wrap: balance; }
+.governance-label { font-size: 14px; line-height: 1.5; color: var(--lp-muted); }
+.governance-section { margin-top: 88px; border-top: 1px solid var(--lp-border); padding-top: 32px; }
+.governance-split { display: grid; gap: 28px; }
+.governance-prose { font-size: 16px; line-height: 1.75; color: var(--lp-body); }
+.governance-prose > * + * { margin-top: 20px; }
+.governance-prose strong { color: var(--lp-ink); font-weight: 500; }
+.governance-link, .governance-prose a { color: var(--lp-ink); text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; }
+.governance-link:hover, .governance-prose a:hover { text-decoration-thickness: 2px; }
+summary:focus-visible { outline: 2px solid var(--lp-ink); outline-offset: 4px; border-radius: 4px; }
+@media (min-width: 768px) {
+  .governance-hero { padding-top: 88px; }
+  .governance-section { margin-top: 112px; padding-top: 40px; }
+  .governance-split { grid-template-columns: minmax(0, 1fr) minmax(0, 1.65fr); gap: 80px; }
+}
+
 .mono {
   font-family: var(--font-mono), ui-monospace, SFMono-Regular, SFMono-Regular,
     Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;

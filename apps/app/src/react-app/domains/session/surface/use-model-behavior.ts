@@ -4,7 +4,7 @@
 // the model picker's lazy option loader until that moves into its own hook.
 import { useEffect, useMemo, useState } from "react";
 
-import { getModelBehaviorSummary } from "@/app/lib/model-behavior";
+import { getModelBehaviorSummary, sanitizeModelBehaviorValue } from "@/app/lib/model-behavior";
 import type { ModelRef, ProviderListItem } from "@/app/types";
 import { t } from "@/i18n";
 
@@ -50,7 +50,12 @@ export function useModelBehavior(input: UseModelBehaviorInput) {
       };
     }
     const model = providerCatalog[defaultModel.providerID]?.[defaultModel.modelID];
-    const summary = getModelBehaviorSummary(defaultModel.providerID, model, variant);
+    // The global default model and setting are stored separately, so they can
+    // drift apart (for example a GPT-only Fast setting paired with a Claude
+    // default). Never present or send a setting the listed model does not
+    // offer; the stored preference is left untouched.
+    const summary = getModelBehaviorSummary(defaultModel.providerID, model,
+      model ? sanitizeModelBehaviorValue(defaultModel.providerID, model, variant) : variant);
     return {
       modelVariantLabel: summary.label,
       modelBehaviorOptions: summary.options,

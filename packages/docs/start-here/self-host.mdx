@@ -19,9 +19,22 @@ Want hosted workspaces, team Collections, or shared providers without running in
 | Helm on Amazon EKS | Production on AWS with Amazon RDS for MySQL | [Deploy on AWS](/self-host/deploy-to-your-cloud/aws) |
 | Helm on Azure AKS | Production on Azure with Azure Database for MySQL | [Deploy on Azure](/self-host/deploy-to-your-cloud/azure) |
 | Helm on Google GKE | Production on Google Cloud with Cloud SQL for MySQL | [Deploy on Google Cloud](/self-host/deploy-to-your-cloud/google-cloud) |
-| Another container platform (for example, Amazon ECS/Fargate) | Teams that do not run Kubernetes | Use the published images and the service boundaries below |
+| Terraform modules (beta) | Core Den web/API on ECS Fargate, Cloud Run, or Container Apps; all three modules on `dev` | [Terraform options and support](/self-host/deploy-to-your-cloud/overview#terraform-modules-beta) |
+| Another container platform | Teams maintaining their own infrastructure code | Use the published images and the service boundaries below |
 
-The tested production path is the published Helm chart on managed Kubernetes. The repository does not ship Terraform modules or ECS task definitions. If you run on ECS/Fargate or another container platform, deploy the published `openwork-den-web`, `openwork-den-api`, and optional `openwork-inference` images from GHCR with your own infrastructure code, and mirror what the chart does: Den web on port `3005`, Den API on port `8788`, database migrations before Den API receives traffic, a MySQL 8-compatible database, and HTTPS in front of both hostnames. See [Deploy to your cloud](/self-host/deploy-to-your-cloud/overview) for the common architecture and the [Docker packaging](https://github.com/different-ai/openwork/tree/dev/packaging/docker) for image details.
+The published Helm chart on managed Kubernetes remains the production deployment
+path described in these guides. The repository also includes Terraform modules
+for AWS ECS Fargate, Google Cloud Run, and Azure Container Apps on `dev`.
+All three Terraform options are **beta**, not equivalent to full Helm feature
+coverage. Check [Deploy to your cloud](/self-host/deploy-to-your-cloud/overview#terraform-modules-beta)
+for source links, availability, support, and tested-scope limitations.
+
+If you maintain your own container deployment, use the published
+`openwork-den-web`, `openwork-den-api`, and optional `openwork-inference` images
+from GHCR: Den web on port `3005`, Den API on port `8788`, database migrations
+before Den API receives traffic, a MySQL 8-compatible database, and HTTPS in front
+of both hostnames. See the [Docker packaging](https://github.com/different-ai/openwork/tree/dev/packaging/docker)
+for image details.
 
 ## What you deploy
 
@@ -172,7 +185,11 @@ You can check the [**Enterprise**](/cloud/enterprise) page or [book a 30-minute 
     The desktop app is free and open source, and self-hosting the full platform is free for organizations with up to 5 users under the EE License; larger organizations need a plan. Shared keys, skills, and SSO need the Team plan, and SCIM and desktop policies need Enterprise; plans cost the same on Cloud and self-hosted. See [Pricing and licensing](/start-here/pricing-and-licensing).
   </Accordion>
   <Accordion title="Is there a Terraform module or an ECS deployment?">
-    Not in the repository today. The supported production path is Helm on EKS, AKS, or GKE. You can run the published images on ECS/Fargate with your own infrastructure code by following the service boundaries in [Deployment options](#deployment-options).
+    Yes: the repository includes Terraform modules for AWS ECS Fargate,
+    Google Cloud Run, and Azure Container Apps on `dev`. All three are **beta**.
+    Check the [Terraform options](/self-host/deploy-to-your-cloud/overview#terraform-modules-beta)
+    for each cloud's availability, source, tested scenarios, and support limits.
+    Helm on EKS, AKS, or GKE remains the production path described in these guides.
   </Accordion>
   <Accordion title="Which database does self-hosted OpenWork need?">
     A MySQL 8-compatible database, such as Amazon RDS for MySQL, Azure Database for MySQL, Cloud SQL for MySQL, or PlanetScale. Postgres is not required.

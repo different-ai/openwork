@@ -111,7 +111,7 @@ function WorkPreview({ step }: { step: SetupStep }) {
  * claim codes, connection links): no stepper, no eyebrows, and the story column
  * shows who is asking through `aside` instead of the product preview.
  */
-export function SetupFrame({ step, title, description, children, aside, panelVisual, embedded = false, compactHeader = false, simplified }: {
+export function SetupFrame({ step, title, description, children, aside, panelVisual, embedded = false, compactHeader = false, simplified, workbot = false }: {
   step?: SetupStep;
   title: string;
   description: string;
@@ -123,6 +123,8 @@ export function SetupFrame({ step, title, description, children, aside, panelVis
   compactHeader?: boolean;
   /** Shared onboarding steps use the simplified layout unless a caller opts out (single-organization mode). */
   simplified?: boolean;
+  /** First-party Workbot sign-in: one compact panel, no Cloud story or setup steps. */
+  workbot?: boolean;
 }) {
   const sharedStep = step === "account" || step === "space" || step === "people";
   const useSimplifiedSteps = sharedStep && (simplified ?? true);
@@ -148,7 +150,17 @@ export function SetupFrame({ step, title, description, children, aside, panelVis
       ))}</ol>
     </nav>
   );
-  const brand = <div className={styles.brand}><img src="/openwork-mark.svg" alt="" width={25} height={25} /><span>OpenWork<span className={styles.cloud}> / Cloud</span></span></div>;
+  const brand = <div className={styles.brand}><img src="/openwork-mark.svg" alt="" width={25} height={25} /><span>{workbot ? "Workbot" : <>OpenWork<span className={styles.cloud}> / Cloud</span></>}</span></div>;
+  if (workbot) {
+    return (
+      <section className={`${styles.frame} ${styles.simplified}`} data-testid="workbot-sign-in-frame">
+        <div className={styles.simpleBody}>
+          {brand}
+          <div className={styles.panel}>{children}</div>
+        </div>
+      </section>
+    );
+  }
   return (
     <section className={`${styles.frame} ${embedded ? styles.embedded : ""} ${plain ? styles.plain : ""} ${useSimplifiedSteps ? styles.simplified : ""}`} data-testid="setup-frame" data-step={step ?? "none"}>
       {useSimplifiedSteps ? (

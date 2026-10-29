@@ -18,8 +18,8 @@ import {
   getAutomationsRoute,
   getOrgAccessFlags,
   getPluginRoute,
-  orgFeatureEnabled,
 } from "../../../_lib/den-org";
+import { myAgentAvailable } from "../my-agent-availability";
 import { useDenFlow } from "../../../_providers/den-flow-provider";
 import {
   buildDashboardNavSections,
@@ -55,6 +55,8 @@ type PaletteEntry = {
 type DenCommandPaletteProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Returns true when it handled the navigation itself (the Workbot entry while Workbot has no AI provider). */
+  interceptNavigation?: (href: string) => boolean;
 };
 
 function matchesQuery(entry: PaletteEntry, query: string): boolean {
@@ -112,7 +114,7 @@ function PaletteGroup({
   );
 }
 
-export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps) {
+export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: DenCommandPaletteProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
@@ -125,9 +127,7 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
     orgContext?.currentMember.permissions,
   ), [orgContext?.currentMember.role, orgContext?.currentMember.isOwner, orgContext?.currentMember.permissions]);
   const capabilities = orgContext?.capabilities ?? EMPTY_CAPABILITIES;
-  const permissionsEnabled = orgFeatureEnabled(orgContext, "permissions");
-  const teamRoles = orgFeatureEnabled(orgContext, "teamRoles");
-  const workbotSettings = capabilities.workbot === true;
+
   // Plugin results open the admin plugin page, which needs `sharing.manage_all`.
   const pluginsQuery = usePluginSummaries({ enabled: open && access.canManageAllShared });
   const automationsQuery = useAutomations({ enabled: open && capabilities.workflows });
@@ -159,10 +159,10 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
       capabilities,
       orgMode: runtimeConfig.orgMode,
       runtimeConfigLoaded,
-      permissionsEnabled,
-      teamRoles,
-      workbotSettings,
+
       desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),
+      canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
+      myBot: myAgentAvailable(orgContext),
     });
     return flattenNavigationForSearch(sections)
       .filter((entry) => entry.href !== "#")
@@ -172,9 +172,6 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
     activeOrg?.slug,
     orgContext,
     capabilities,
-    permissionsEnabled,
-    teamRoles,
-    workbotSettings,
     runtimeConfig.orgMode,
     runtimeConfigLoaded,
   ]);
@@ -250,6 +247,7 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
       // Navigation should still work when browser storage is unavailable.
     }
     onOpenChange(false);
+    if (interceptNavigation?.(entry.href)) return;
     if (/^https?:\/\//.test(entry.href)) {
       window.open(entry.href, "_blank", "noopener,noreferrer");
       return;

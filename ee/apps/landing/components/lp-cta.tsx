@@ -3,6 +3,7 @@ import { DownloadLink } from "./download-link";
 type CtaLink = {
   label: string;
   href: string;
+  external?: boolean;
 };
 
 type LpCtaProps = {
@@ -37,7 +38,11 @@ export function LpCta({
           ) : (
             <a href={primary.href} className="lp-pill-primary">{primary.label}</a>
           )}
-          <a href={secondary.href} className="lp-pill-secondary">
+          <a
+            href={secondary.href}
+            className="lp-pill-secondary"
+            {...(secondary.external ? { target: "_blank", rel: "noreferrer" } : {})}
+          >
             {secondary.label}
           </a>
         </div>

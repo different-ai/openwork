@@ -14,6 +14,27 @@ export const GENERATED_MCP_APP_ENTRY = `
   let disposed = false;
   let input = {};
   let result;
+  // The document owns the canvas and inherited styles. Applying the theme only
+  // inside GeneratedApp can leave dark text tokens over a light iframe canvas.
+  const applyTheme = (context) => {
+    const documentRoot = document.documentElement;
+    const variables = context?.styles?.variables ?? {};
+    for (const [name, value] of Object.entries(variables)) {
+      if (name.startsWith("--") && typeof value === "string") {
+        documentRoot.style.setProperty(name, value);
+      }
+    }
+    if (context?.theme === "light" || context?.theme === "dark") {
+      documentRoot.dataset.theme = context.theme;
+      documentRoot.style.colorScheme = context.theme;
+    } else {
+      delete documentRoot.dataset.theme;
+      documentRoot.style.colorScheme = "light dark";
+    }
+    documentRoot.style.color = "var(--color-text-primary, CanvasText)";
+    documentRoot.style.backgroundColor = "var(--color-background-primary, Canvas)";
+    documentRoot.style.fontFamily = "var(--font-sans, system-ui, sans-serif)";
+  };
   // A render that failed before launch data arrived recovers once toolinput or
   // toolresult is delivered; healthy trees keep their state across updates.
   let renderRevision = 0;
@@ -37,11 +58,13 @@ export const GENERATED_MCP_APP_ENTRY = `
   const render = () => {
     if (!initialized || disposed) return;
     try {
+      const hostContext = app.getHostContext();
+      applyTheme(hostContext);
       if (!mount) throw new Error("The generated App mount element is missing.");
       root ||= createRoot(mount);
       root.render(React.createElement(GeneratedAppErrorBoundary, { revision: renderRevision },
         React.createElement(React.Suspense, { fallback: null },
-          React.createElement(GeneratedApp, { app, input, result, hostContext: app.getHostContext() }))));
+          React.createElement(GeneratedApp, { app, input, result, hostContext }))));
     } catch {
       reportRuntimeError("react-mount");
       if (mount) mount.textContent = "This App could not render. Reopen it to try again.";

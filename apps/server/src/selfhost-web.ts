@@ -3,13 +3,14 @@
  * one origin, with a server-managed OpenCode engine. This is the self-host
  * path (`npm i -g openwork-server && openwork-server web`).
  */
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { openworkServerDataDir } from "@openwork/paths";
+import { startupPhase, startupPhaseSync } from "./startup-phase.js";
 
 export const OPENCODE_GITHUB_REPO = "anomalyco/opencode";
 const NPM_PACKAGE = "openwork-server";
@@ -85,6 +86,10 @@ export function opencodeReleaseUrl(version: string, asset: string, repo = OPENCO
 }
 
 export function readBinaryVersion(bin: string): string | null {
+  return startupPhaseSync("engine.version-probe", () => readBinaryVersionInner(bin));
+}
+
+function readBinaryVersionInner(bin: string): string | null {
   try {
     const result = spawnSync(bin, ["--version"], { encoding: "utf8", timeout: 10_000 });
     if (result.status !== 0 || !result.stdout) return null;
@@ -125,16 +130,46 @@ function tarCommand(): string {
   return existsSync(bsdtar) ? bsdtar : "tar";
 }
 
-function extractArchive(archive: string, asset: string, destination: string): void {
+export async function extractArchive(
+  archive: string,
+  asset: string,
+  destination: string,
+  options: {
+    spawnImpl?: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
+    timeoutMs?: number;
+  } = {},
+): Promise<void> {
   const useUnzip = asset.endsWith(".zip") && process.platform !== "win32";
   const command = useUnzip ? "unzip" : tarCommand();
   // Relative paths keep drive letters out of tar's archive argument.
   const cwd = dirname(archive);
   const target = relative(cwd, destination) || ".";
   const args = useUnzip ? ["-q", archive, "-d", destination] : ["-xf", basename(archive), "-C", target];
-  const result = spawnSync(command, args, { cwd, stdio: "inherit" });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`${command} exited with ${result.status} while extracting ${asset}`);
+  await new Promise<void>((resolve, reject) => {
+    // Extraction can take minutes on machines scanning every small file. Keep
+    // Electron's main loop free while still waiting before the engine starts.
+    const child = (options.spawnImpl ?? spawn)(command, args, {
+      cwd, windowsHide: true, stdio: ["ignore", "ignore", "inherit"],
+    });
+    const timeoutMs = options.timeoutMs ?? 5 * 60_000;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("close", (code, signal) => {
+      clearTimeout(timer);
+      // Wait for close even after killing: no extraction writes may outlive
+      // staging cleanup or race OpenCode's fallback dependency installation.
+      if (timedOut) reject(new Error(`${command} timed out after ${timeoutMs} ms while extracting ${asset}`));
+      else if (code !== 0) reject(new Error(`${command} exited with ${code ?? signal} while extracting ${asset}`));
+      else resolve();
+    });
+  });
 }
 
 const RENAME_RETRY_CODES = new Set(["EBUSY", "EPERM", "EACCES"]);
@@ -225,7 +260,7 @@ export async function ensureManagedEngine(input: {
     await writeFile(archive, new Uint8Array(await response.arrayBuffer()));
     const extractDir = join(stagingDir, "extract");
     await mkdir(extractDir, { recursive: true });
-    extractArchive(archive, asset, extractDir);
+    await extractArchive(archive, asset, extractDir);
     const extracted = await findFile(extractDir, binaryName);
     if (!extracted) throw new Error(`Archive ${asset} did not contain ${binaryName}`);
     await mkdir(dirname(bin), { recursive: true });
@@ -275,6 +310,14 @@ export async function seedOpencodePluginDeps(input: {
   configDir: string;
   now?: () => number;
 }): Promise<PluginDepsSeedResult> {
+  return startupPhase("plugin-deps.seed", () => seedOpencodePluginDepsInner(input));
+}
+
+async function seedOpencodePluginDepsInner(input: {
+  archive: string;
+  configDir: string;
+  now?: () => number;
+}): Promise<PluginDepsSeedResult> {
   const now = input.now ?? Date.now;
   const startedAt = now();
   if (!await isFile(input.archive)) return { seeded: false, reason: "no-archive" };
@@ -285,7 +328,8 @@ export async function seedOpencodePluginDeps(input: {
   try {
     await mkdir(input.configDir, { recursive: true });
     staging = await mkdtemp(join(input.configDir, ".openwork-plugin-deps-"));
-    extractArchive(input.archive, basename(input.archive), staging);
+    const destination = staging;
+    await startupPhase("plugin-deps.extract", () => extractArchive(input.archive, basename(input.archive), destination));
     // node_modules first: if this stops part-way, OpenCode sees an
     // incomplete lockfile and runs its own install, as it would have.
     for (const name of OPENCODE_INSTALL_STATE) {
@@ -297,6 +341,39 @@ export async function seedOpencodePluginDeps(input: {
   } finally {
     if (staging) await rm(staging, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+/**
+ * Seed the standard config folders used by a fresh managed desktop engine,
+ * not only its global one. Ancestor project configs keep their normal installs.
+ * Project/home discovery folders are opt-in: never create `.opencode` for a
+ * workspace that did not already have one. Existing install state and user
+ * config files remain owned by OpenCode; a missing/broken bundle falls back
+ * to its normal dependency install.
+ */
+export async function seedManagedOpencodePluginDeps(input: {
+  archive: string;
+  cwd: string;
+  workspaceDirs?: readonly string[];
+  env: NodeJS.ProcessEnv;
+}): Promise<Array<{ configDir: string; result: PluginDepsSeedResult }>> {
+  if (!await isFile(input.archive)) return [];
+  const home = input.env.HOME?.trim() || homedir();
+  const discoveryHome = input.env.OPENCODE_TEST_HOME ?? home;
+  const configDirs = new Set([
+    resolve(input.cwd, opencodeGlobalConfigDir(input.env, home)),
+  ]);
+  const explicit = input.env.OPENCODE_CONFIG_DIR;
+  if (explicit) configDirs.add(resolve(input.cwd, explicit));
+  for (const directory of [input.cwd, ...(input.workspaceDirs ?? []), discoveryHome]) {
+    const configDir = resolve(input.cwd, directory, ".opencode");
+    if (await isDirectory(configDir)) configDirs.add(configDir);
+  }
+  const results: Array<{ configDir: string; result: PluginDepsSeedResult }> = [];
+  for (const configDir of configDirs) {
+    results.push({ configDir, result: await seedOpencodePluginDeps({ archive: input.archive, configDir }) });
+  }
+  return results;
 }
 
 type PersistedTokens = { token: string; hostToken: string };

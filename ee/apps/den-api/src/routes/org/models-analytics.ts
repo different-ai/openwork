@@ -1,62 +1,17 @@
-import { and, desc, eq, gte, inArray, sql } from "@openwork-ee/den-db/drizzle"
-import { ModelsAnalyticsEventTable as Event, ModelsAnalyticsSettingsTable as Settings } from "@openwork-ee/den-db/schema"
-import {
-  appendModelsAnalyticsEvents, readModelsAnalyticsSettings, modelsAnalyticsActivitySchema,
-  modelsAnalyticsChoiceSchema, modelsAnalyticsQuerySchema, modelsAnalyticsRecordSchema,
-  modelsAnalyticsSettingsSchema, modelsConsumptionSchema, modelsTaskBatchSchema,
-} from "@openwork-ee/telemetry"
+import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
+import { ModelsAnalyticsEventTable as Event } from "@openwork-ee/den-db/schema"
+import { appendModelsAnalyticsEvents, readModelsAnalyticsSettings, modelsTaskBatchSchema } from "@openwork-ee/telemetry"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { db } from "../../db.js"
-import { requireFeature } from "../../features.js"
-import { jsonValidator, orgMemberRoute, orgPermissionRoute, queryValidator } from "../../middleware/index.js"
-import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { jsonValidator, orgMemberRoute } from "../../middleware/index.js"
+import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { z } from "zod"
 import type { OrgRouteVariables } from "./shared.js"
 
-// OpenAPI-only view of the shared contract: den-web and the desktop app parse
-// responses with the shared schema, so the `date-time` format is declared here.
-const modelsAnalyticsSettingsDocumentSchema = modelsAnalyticsSettingsSchema.extend({
-  consentedAt: z.string().datetime().nullable(),
-})
-
 export function registerModelsAnalyticsRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
-  app.get("/v1/inference/analytics/settings", describeRoute({
-    tags: ["Inference"], summary: "Read the OpenWork Models task analytics choice",
-    description: "Returns the organization's task analytics state for OpenWork Models: whether the feature is available and the organization has an active Models subscription, whether collection is enabled and when it was consented to, and whether export to a configured Langfuse host is on. Any member can read it.",
-    responses: { 200: jsonResponse("Task analytics settings", modelsAnalyticsSettingsDocumentSchema),
-      404: jsonResponse("Task analytics surface is disabled.", notFoundSchema) },
-  }), orgMemberRoute(), requireFeature("taskAnalyticsUi"), async (c) => {
-    const context = c.get("organizationContext")
-    return c.json(await readModelsAnalyticsSettings(db, context.organization.id))
-  })
-
-  app.patch("/v1/inference/analytics/settings", describeRoute({
-    tags: ["Inference"], summary: "Choose whether to collect task analytics included with OpenWork Models",
-    description: "Turns task analytics collection on or off for the organization. Requires the Manage task analytics permission. Enabling requires the feature, an active OpenWork Models subscription, and consentVersion 1 (403 models_analytics_unavailable otherwise); repeating an already enabled choice keeps the original consent time as the collection cutoff, and disabling also switches export off.",
-    responses: { 200: jsonResponse("Updated task analytics choice", modelsAnalyticsSettingsDocumentSchema),
-      404: jsonResponse("Task analytics surface is disabled.", notFoundSchema) },
-  }), orgPermissionRoute("analytics.manage"), requireFeature("taskAnalyticsUi"), jsonValidator(modelsAnalyticsChoiceSchema), async (c) => {
-    const context = c.get("organizationContext")
-    const orgId = context.organization.id
-    const choice = c.req.valid("json")
-    const settings = await readModelsAnalyticsSettings(db, orgId)
-    if (choice.enabled && (!settings.available || !settings.subscribed || !settings.modelsEnabled)) {
-      return c.json({ error: "models_analytics_unavailable", message: "Task analytics requires access to this feature and an active OpenWork Models subscription." }, 403)
-    }
-    // Repeating the same choice must not move the collection cutoff forward.
-    const consentedAt = choice.enabled && settings.enabled && settings.consentedAt ? new Date(settings.consentedAt) : new Date()
-    const values = {
-      enabled: choice.enabled, consented_at: consentedAt,
-      consented_by: context.currentMember.id, consent_version: 1,
-      ...(!choice.enabled ? { export_enabled: false } : {}),
-    }
-    await db.insert(Settings).values({ org_id: orgId, ...values }).onDuplicateKeyUpdate({ set: values })
-    return c.json(await readModelsAnalyticsSettings(db, orgId))
-  })
-
-  // Runtime collection is deliberately independent of the UI rollout. Hiding
-  // dashboards must not revoke consent or interrupt existing event exports.
+  // Runtime collection outlives the retired Models and Task analytics screens:
+  // removing them must not revoke stored consent or interrupt existing exports.
   app.post("/v1/inference/analytics/events", describeRoute({
     tags: ["Inference"], summary: "Report task analytics events for the calling member's OpenWork Models calls",
     description: "Accepts runtime metadata for tasks the member actually ran through OpenWork Models; events for other members' tasks or BYOK calls are dropped. Answers 204 when the organization has not opted into task analytics.",
@@ -82,55 +37,5 @@ export function registerModelsAnalyticsRoutes<T extends { Variables: OrgRouteVar
     const matched = events.filter((event) => calls.some((call) => call.taskId === event.taskId && call.sessionId === event.sessionId))
     await appendModelsAnalyticsEvents(db, { orgId, memberId, source: "app", events: matched })
     return c.json({ acceptedIds: matched.map((event) => event.id) }, 202)
-  })
-
-  app.get("/v1/inference/analytics/activity", describeRoute({
-    tags: ["Inference"], summary: "Read task activity collected after the analytics choice",
-    description: "Returns the task analytics events recorded for the organization over the last `days` days (default 30, max 90), newest first, 200 per page with a `next` cursor made of before + beforeId. Filter by memberId, taskId, or sessionId. Requires the View task analytics permission; answers 403 models_analytics_unavailable while collection is disabled.",
-    responses: { 200: jsonResponse("Task activity", modelsAnalyticsActivitySchema),
-      404: jsonResponse("Task analytics surface is disabled.", notFoundSchema) },
-  }), orgPermissionRoute("analytics.view"), requireFeature("taskAnalyticsUi"), queryValidator(modelsAnalyticsQuerySchema), async (c) => {
-    const orgId = c.get("organizationContext").organization.id
-    if (!(await readModelsAnalyticsSettings(db, orgId)).enabled) return c.json({ error: "models_analytics_unavailable" }, 403)
-    const query = c.req.valid("query")
-    const conditions = [eq(Event.org_id, orgId), gte(Event.timestamp, new Date(Date.now() - query.days * 86_400_000))]
-    if (query.memberId) conditions.push(sql`${Event.member_id} = ${query.memberId}`)
-    if (query.taskId) conditions.push(eq(Event.task_id, query.taskId))
-    if (query.sessionId) conditions.push(eq(Event.session_id, query.sessionId))
-    if (query.before && query.beforeId) conditions.push(sql`(${Event.timestamp}, ${Event.id}) < (${new Date(query.before)}, ${query.beforeId})`)
-    const rows = await db.select().from(Event).where(and(...conditions)).orderBy(desc(Event.timestamp), desc(Event.id)).limit(201)
-    const page = rows.slice(0, 200)
-    const last = page.at(-1)
-    return c.json({
-      events: page.map((row) => modelsAnalyticsRecordSchema.parse({ ...row.payload, memberId: row.member_id, source: row.source })),
-      next: rows.length > 200 && last ? { before: last.timestamp.toISOString(), beforeId: last.id } : null,
-    })
-  })
-
-  app.get("/v1/inference/analytics/consumption", describeRoute({
-    tags: ["Inference"], summary: "Read provider-reported consumption for OpenWork Models",
-    description: "Aggregates provider-reported OpenWork Models calls per model, provider, member, and day over the last `days` days (default 30, max 90): call counts, failed and incomplete calls, input, output, and cache-read tokens, and cost in USD. Optionally filter by memberId. Requires the View task analytics permission; answers 403 models_analytics_unavailable while collection is disabled and 400 narrow_date_range when the range would produce more than 10,000 groups.",
-    responses: { 200: jsonResponse("Model consumption", modelsConsumptionSchema),
-      404: jsonResponse("Task analytics surface is disabled.", notFoundSchema) },
-  }), orgPermissionRoute("analytics.view"), requireFeature("taskAnalyticsUi"), queryValidator(modelsAnalyticsQuerySchema), async (c) => {
-    const orgId = c.get("organizationContext").organization.id
-    if (!(await readModelsAnalyticsSettings(db, orgId)).enabled) return c.json({ error: "models_analytics_unavailable" }, 403)
-    const query = c.req.valid("query")
-    const conditions = [eq(Event.org_id, orgId), eq(Event.type, "model.call"), eq(Event.source, "inference"), gte(Event.timestamp, new Date(Date.now() - query.days * 86_400_000))]
-    if (query.memberId) conditions.push(sql`${Event.member_id} = ${query.memberId}`)
-    const day = sql<string>`date_format(${Event.timestamp}, '%Y-%m-%d')`
-    const rows = await db.select({
-      model: Event.model, provider: Event.provider, memberId: Event.member_id, day,
-      calls: sql<number>`count(*)`,
-      failedCalls: sql<number>`sum(json_unquote(json_extract(${Event.payload}, '$.status')) = 'failed')`,
-      incompleteCalls: sql<number>`sum(${Event.usage_complete} is null or ${Event.usage_complete} = false)`,
-      inputTokens: sql<number | null>`sum(${Event.input_tokens})`, outputTokens: sql<number | null>`sum(${Event.output_tokens})`,
-      cacheReadTokens: sql<number | null>`sum(${Event.cache_read_tokens})`, costUsd: sql<number | null>`sum(${Event.cost_usd})`,
-    }).from(Event).where(and(...conditions)).groupBy(Event.model, Event.provider, Event.member_id, day).orderBy(desc(day)).limit(10_001)
-    if (rows.length > 10_000) return c.json({ error: "narrow_date_range", message: "Choose a shorter date range to see consumption." }, 400)
-    return c.json({ groups: rows.map((row) => ({ ...row, calls: Number(row.calls), failedCalls: Number(row.failedCalls), incompleteCalls: Number(row.incompleteCalls),
-      inputTokens: row.inputTokens === null ? null : Number(row.inputTokens), outputTokens: row.outputTokens === null ? null : Number(row.outputTokens),
-      cacheReadTokens: row.cacheReadTokens === null ? null : Number(row.cacheReadTokens), costUsd: row.costUsd === null ? null : Number(row.costUsd),
-    })) })
   })
 }

@@ -4,12 +4,11 @@ import { isOpencodeV2BaseUrl } from "../../../app/lib/opencode-v2-adapter";
 
 /**
  * The model the member's organization (or one of their teams) wants new chats
- * to start with, from the desktop config (feature `orgDefaultModel`).
+ * to start with, from the desktop config.
  *
  * Only the OpenCode v2 engine applies it: on v1, or before the workspace's
- * engine is known, this is null and new chats start exactly as before. Den
- * sends it only while the feature is on, so a missing value means "no
- * organization default". It sits under a model the member picked for the
+ * engine is known, this is null. A missing value means "no organization
+ * default". It sits under a model the member picked for the
  * workspace and above the app's own default, so members can still change the
  * model for a new chat and in each chat.
  */

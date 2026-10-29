@@ -117,7 +117,11 @@ async function main() {
   await mkdir('alert-state', { recursive: true });
   if (!process.env.SLACK_BOT_TOKEN || !process.env.SLACK_TEST_ALERT_CHANNEL_ID) {
     await appendFile(process.env.GITHUB_STEP_SUMMARY, '## Slack setup required\n\nSet the SLACK_BOT_TOKEN secret and SLACK_TEST_ALERT_CHANNEL_ID variable, and invite the bot to that channel. No Slack message was sent.\n');
-    throw new Error('Slack notification credentials are not configured');
+    // Healthy runs have nothing to send, so missing credentials only fail a run that needed to alert.
+    const { state, message } = notification(previous, run, report);
+    if (message) throw new Error('Slack notification credentials are not configured');
+    await writeFile('alert-state/state.json', JSON.stringify(state));
+    return;
   }
   const state = await deliver(previous, run, report, { token: process.env.SLACK_BOT_TOKEN, channel: process.env.SLACK_TEST_ALERT_CHANNEL_ID, teamId: process.env.SLACK_TEST_ALERT_TEAM_ID });
   await writeFile('alert-state/state.json', JSON.stringify(state));

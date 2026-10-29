@@ -9,6 +9,7 @@ import {
   readCachedOrgMcpConnections,
   readCloudInventoryScope,
 } from "./cloud-inventory-cache";
+import { connectPollOutcome, type ConnectionSignInProblem } from "./connection-sign-in-problem";
 import { connectionNeedsReconnect, isNativeProviderConnectionId } from "./native-provider-connections";
 import { openMemberApiKeyDialog } from "./member-api-key-dialog";
 
@@ -57,6 +58,18 @@ async function disconnectMemberAccount(
   }
   await client.disconnectMyMcpConnectionAccount(orgId, connection.id);
 }
+
+export type OrgMcpConnectOptions = {
+  forceFreshAuthorization?: boolean;
+  /**
+   * Stop waiting as soon as Den records that this member's sign-in came back
+   * but did not connect, and say why (libraryConnectorOrgSetup).
+   */
+  reportReadinessFailure?: boolean;
+};
+
+/** A sign-in that came back to Den but did not connect, with Den's reason. */
+export type OrgMcpConnectFailureDetail = ConnectionSignInProblem & { connectionId: string };
 
 export type OrgMcpConnectionCardState = {
   connected: boolean;
@@ -150,6 +163,7 @@ export function useOrgMcpConnections() {
   const [error, setError] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
+  const [connectFailure, setConnectFailure] = useState<OrgMcpConnectFailureDetail | null>(null);
   const pollRef = useRef<number | null>(null);
   const pollGenerationRef = useRef(0);
   const refreshRunRef = useRef(0);
@@ -216,7 +230,7 @@ export function useOrgMcpConnections() {
     }
   }, [isActionScopeCurrent, setConnections]);
 
-  const connect = useCallback(async (connectionId: string, options?: { forceFreshAuthorization?: boolean }) => {
+  const connect = useCallback(async (connectionId: string, options?: OrgMcpConnectOptions) => {
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
@@ -227,6 +241,7 @@ export function useOrgMcpConnections() {
 
     const previous = connectionsRef.current.find((entry) => entry.id === connectionId);
     const previousConnectedAt = previous?.connectedAt ?? null;
+    const attempt = { startedAt: Date.now(), previousCheckedAt: previous?.readiness?.checkedAt ?? null };
 
     if (previous?.authType === "apikey" && previous.credentialMode === "per_member") {
       await openMemberApiKeyDialog(connectionId, { connectionName: previous.name, replacing: previous.connectedForMe === true });
@@ -242,6 +257,7 @@ export function useOrgMcpConnections() {
     setDisconnectingId(null);
     setConnectingId(connectionId);
     setError(null);
+    setConnectFailure(null);
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       if (options?.forceFreshAuthorization === true && previous?.connectedForMe) {
@@ -295,11 +311,18 @@ export function useOrgMcpConnections() {
           if (!isActionScopeCurrent(pollScope)) return;
           setConnections(polled);
           const match = polled.find((entry) => entry.id === connectionId);
-          const fresh = Boolean(match && match.connectedForMe && !connectionNeedsReconnect(match)
-            && typeof match.connectedAt === "string" && match.connectedAt.length > 0
-            && match.connectedAt !== previousConnectedAt);
-          if (fresh) {
+          const outcome = connectPollOutcome(match, attempt, {
+            previousConnectedAt,
+            reconnectPending: match ? connectionNeedsReconnect(match) : false,
+            reportFailure: options?.reportReadinessFailure === true,
+          });
+          if (outcome.kind === "connected") {
             stopPolling();
+            setConnectingId(null);
+          } else if (outcome.kind === "failed") {
+            stopPolling();
+            setError(outcome.problem.reason);
+            setConnectFailure({ ...outcome.problem, connectionId });
             setConnectingId(null);
           }
         } catch {
@@ -327,6 +350,7 @@ export function useOrgMcpConnections() {
     setConnectingId(null);
     setDisconnectingId(connectionId);
     setError(null);
+    setConnectFailure(null);
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       const connection = connectionsRef.current.find((entry) => entry.id === connectionId);
@@ -351,6 +375,7 @@ export function useOrgMcpConnections() {
       setLoaded(false);
       setConnectingId(null);
       setDisconnectingId(null);
+      setConnectFailure(null);
       void refresh();
     };
     window.addEventListener(denSettingsChangedEvent, handleSettingsChanged);
@@ -361,5 +386,5 @@ export function useOrgMcpConnections() {
     };
   }, [refresh, setConnections, stopPolling]);
 
-  return { connections, loading, loaded, error, connectingId, disconnectingId, refresh, connect, disconnect };
+  return { connections, loading, loaded, error, connectFailure, connectingId, disconnectingId, refresh, connect, disconnect };
 }

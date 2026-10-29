@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MIN_NODE_VERSION } from "../bin/platform.mjs";
 
 // Dependencies the Node bundle leaves external (see build:npm-bundle); npm
 // installs them next to the package.
@@ -77,7 +76,7 @@ export async function stageNpmPackage(packageRoot, outputRoot = resolve(packageR
         description: sourcePackage.description,
         type: sourcePackage.type,
         bin: sourcePackage.bin,
-        engines: { node: `>=${MIN_NODE_VERSION}` },
+        engines: sourcePackage.engines,
         dependencies,
         repository: sourcePackage.repository,
         homepage: sourcePackage.homepage,

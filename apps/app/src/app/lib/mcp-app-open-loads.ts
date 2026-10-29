@@ -32,9 +32,24 @@ function keep(key: string, result: CallToolResult) {
  */
 export function createMcpAppOpenLoads(openKey: string | undefined) {
   const current = new Map<string, Promise<{ result: CallToolResult; reused: boolean }>>();
+  // Loads that have answered; a refresh lets these run again.
+  const settled = new Set<string>();
   const callKey = (call: Call) => JSON.stringify([call.serverName, call.resourceUri, call.name, canonicalMcpAppArguments(call.args)]);
   const keptKey = (key: string) => openKey === undefined ? undefined : JSON.stringify([openKey, key]);
   return {
+    /**
+     * The host refreshed the open App, such as a dashboard delivering a new
+     * launch result: each load that has answered may run once more. A load
+     * still running is that refresh already, so a repeat joins it.
+     */
+    refresh() {
+      for (const key of settled) {
+        current.delete(key);
+        const reuseKey = keptKey(key);
+        if (reuseKey) kept.delete(reuseKey);
+      }
+      settled.clear();
+    },
     async load(call: Call, run: () => Promise<CallToolResult>, recheck: (result: CallToolResult) => Promise<boolean>) {
       const key = callKey(call);
       const existing = current.get(key);
@@ -54,6 +69,8 @@ export function createMcpAppOpenLoads(openKey: string | undefined) {
         return { result, reused: false };
       })();
       current.set(key, pending);
+      const answered = () => { if (current.get(key) === pending) settled.add(key); };
+      void pending.then(answered, answered);
       return await pending;
     },
     /**
@@ -65,6 +82,7 @@ export function createMcpAppOpenLoads(openKey: string | undefined) {
       const key = callKey(call);
       if (result.isError || result._meta?.[READ_ONLY_RESULT_META] !== true) return this.failed(call);
       current.set(key, Promise.resolve({ result, reused: false }));
+      settled.add(key);
       const reuseKey = keptKey(key);
       if (reuseKey) keep(reuseKey, result);
     },

@@ -38,6 +38,74 @@ export function foregroundTabEmulationCommands() {
   ];
 }
 
+/**
+ * Sizes a tab lays out at while the agent controls it. Resizing the panel then
+ * only rescales the page, so the agent's view of it stays the same. `panel`
+ * keeps the size the page already has on screen (`lockedAgentViewport`), so
+ * nothing rescales when a turn starts or ends; its size here is the fallback
+ * for a page that is off screen.
+ */
+export const AGENT_VIEWPORTS = Object.freeze({
+  panel: Object.freeze({ label: "Panel", width: BACKGROUND_TAB_VIEWPORT.width, height: BACKGROUND_TAB_VIEWPORT.height, mobile: false, fitsPanel: true }),
+  desktop: Object.freeze({ label: "Desktop", width: BACKGROUND_TAB_VIEWPORT.width, height: BACKGROUND_TAB_VIEWPORT.height, mobile: false }),
+  tablet: Object.freeze({ label: "Tablet", width: 820, height: 1180, mobile: false }),
+  phone: Object.freeze({ label: "Phone", width: 390, height: 844, mobile: true }),
+});
+
+export const DEFAULT_AGENT_VIEWPORT = "panel";
+
+/** @param {unknown} key */
+export function agentViewportFor(key) {
+  return typeof key === "string" && Object.hasOwn(AGENT_VIEWPORTS, key) ? AGENT_VIEWPORTS[key] : AGENT_VIEWPORTS[DEFAULT_AGENT_VIEWPORT];
+}
+
+/**
+ * The size a tab locks to when the agent takes it: the chosen size, or for
+ * `panel` the page's on-screen `bounds` (the fallback size when it has none).
+ */
+export function lockedAgentViewport(key, bounds) {
+  const viewport = agentViewportFor(key);
+  if (!viewport.fitsPanel || !bounds) return viewport;
+  return Object.freeze({ ...viewport, width: bounds.width, height: bounds.height });
+}
+
+/**
+ * Where a fixed viewport sits inside the panel, like Chrome's device mode:
+ * scaled down (never up) to fit, centered horizontally, at the top.
+ */
+export function fitAgentViewport(viewport, bounds) {
+  const scale = Math.min(1, bounds.width / viewport.width, bounds.height / viewport.height);
+  const width = Math.max(1, Math.round(viewport.width * scale));
+  const height = Math.max(1, Math.round(viewport.height * scale));
+  return { scale, bounds: { x: bounds.x + Math.floor((bounds.width - width) / 2), y: bounds.y, width, height } };
+}
+
+/** A phone browser's user agent for this Chromium, so sites serve their mobile pages. */
+export function mobileUserAgentOverride(chromeVersion) {
+  const major = String(chromeVersion).split(".")[0];
+  return {
+    userAgent: `Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Mobile Safari/537.36`,
+    userAgentMetadata: { brands: [{ brand: "Chromium", version: major }], platform: "Android", platformVersion: "10.0.0", architecture: "", model: "K", mobile: true },
+  };
+}
+
+/**
+ * Render a tab at `viewport`, drawn at `scale` inside a native view sized to
+ * match (`fitAgentViewport`). Chromium maps real input through the scale; CDP
+ * input is in view pixels, so callers multiply page coordinates by `scale`.
+ * A phone also gets touch and a mobile user agent; the others clear them.
+ */
+export function agentViewportEmulationCommands(viewport, scale, chromeVersion) {
+  return [
+    {
+      method: "Emulation.setDeviceMetricsOverride",
+      params: { width: viewport.width, height: viewport.height, deviceScaleFactor: 0, mobile: viewport.mobile, scale, dontSetVisibleSize: true },
+    },
+    { method: "Emulation.setTouchEmulationEnabled", params: viewport.mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false } },
+    { method: "Emulation.setUserAgentOverride", params: viewport.mobile ? mobileUserAgentOverride(chromeVersion) : { userAgent: "" } },
+  ];
+}
+
 function ownerKey(ownerSessionId) {
   return ownerSessionId ?? SHARED_OWNER_KEY;
 }

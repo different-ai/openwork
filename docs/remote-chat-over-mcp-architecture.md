@@ -391,17 +391,18 @@ pulls. Therefore:
   request-scoped (cloud wake-and-poll, <2 min) or edge-pull (the desktop
   runner cannot be an engine worker behind NAT — the claim/lease protocol
   stays bespoke regardless). Den's durability model is already crash-safe
-  state machines in Postgres (worker status as cross-replica mutex, claimable
+  state machines in MySQL (worker status as cross-replica mutex, claimable
   rows + deadline sweeps, durable receipts), so an engine would be a
   re-platform, not an enhancement — and it adds a second source of truth
   beside the receipt tables users read, plus heavy self-host burden for OSS
   deployers (own cluster/datastore for Temporal; second runtime for
   Inngest) and Temporal's determinism/versioning tax. Rejected for this
-  design. Escalation path if pressure appears: (1) Postgres-native queue
-  (pg-boss / graphile-worker) — no new vendor, ships with the existing DB;
-  (2) only if the Workflows product ever needs true sagas, an internal
-  orchestration seam with Postgres as the default implementation and an
-  engine as an optional adapter, so self-deploy stays vanilla Postgres.
+  design. Escalation path if pressure appears: (1) a queue on the existing
+  database — no new vendor (pg-boss / graphile-worker are Postgres-only, so
+  they don't fit Den's MySQL as-is); (2) only if the Workflows product ever
+  needs true sagas, an internal orchestration seam with the existing database
+  as the default implementation and an engine as an optional adapter, so
+  self-deploy stays vanilla MySQL.
 - **A separate MCP server hosted by OpenWork Web.** There is no web MCP
   server today (den-web is dashboard-only); building one duplicates auth,
   policy, and exposure logic the gateway already owns. Rejected.

@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto"
 import { createRequire } from "node:module"
+import { fileURLToPath } from "node:url"
 import { Worker } from "node:worker_threads"
-import { build, transform, type Message, type Plugin } from "esbuild"
+import { build, transform, type ImportKind, type Message, type Plugin, type PluginBuild } from "esbuild"
 import React from "react"
+import { MCP_APP_MAX_HTML_BYTES } from "@openwork/types/mcp-app"
+import { GENERATED_APP_LIBRARY_IMPORTS, generatedAppLibrary } from "./generated-app-libraries.js"
 import { GENERATED_MCP_APP_ENTRY } from "./generated-mcp-app-runtime.js"
 import type {
   GeneratedArtifactViewBuildDiagnostic,
@@ -11,10 +14,14 @@ import type {
 
 const MAX_SOURCE_BYTES = 200_000
 const MAX_CSS_BYTES = 100_000
-// Keep provider output within the desktop MCP Apps host's resources/read limit.
-const MAX_HTML_BYTES = 768 * 1024
+// Artifact views and Apps without libraries keep the budget every desktop
+// host reads. The larger bound needs libraries and an updated host.
+const LEGACY_MAX_HTML_BYTES = 768 * 1024
 const BUILD_TIMEOUT_MS = 2_000
 const require = createRequire(import.meta.url)
+// Library imports resolve from den-api's own pinned dependencies, never the
+// authored source, the working directory or a CDN.
+const serverModuleDir = fileURLToPath(new URL(".", import.meta.url))
 // The browser-ready entry retains the stable MCP Apps client while avoiding
 // rebundling the SDK's validation dependencies into every immutable view.
 const extAppsEntry = require.resolve("@modelcontextprotocol/ext-apps/app-with-deps")
@@ -24,7 +31,7 @@ const reactDomPackageRoot = require.resolve("react-dom/package.json").replace(/\
 export const GENERATED_ARTIFACT_VIEW_COMPILER = "openwork-react-view"
 export const GENERATED_ARTIFACT_VIEW_COMPILER_VERSION = "3"
 export const GENERATED_MCP_APP_COMPILER = "openwork-react-mcp-app"
-export const GENERATED_MCP_APP_COMPILER_VERSION = "1"
+export const GENERATED_MCP_APP_COMPILER_VERSION = "2"
 export const GENERATED_ARTIFACT_VIEW_CSP: GeneratedArtifactViewCsp = {
   connectDomains: [],
   resourceDomains: [],
@@ -117,8 +124,58 @@ const ARTIFACT_MODULE_PATTERN = /\b(?:import|require)\s*(?:\(|["'{])/u
 // "to import." or data.import still builds.
 const AUTHORED_MODULE_PATTERN = /\bimport\s*(?:\(|["'{*]|\.\s*meta\b)|\bimport\s+(?:type\s+)?(?:[\w$]+\s*,\s*[{*]|[\w$]+\s+from\s*["']|\{[^}]*\}\s*from\s*["']|\*\s*as\s+[\w$]+\s+from\s*["'])|\brequire\s*\(|\bexport\s*(?:type\s+)?(?:\*|\{[^}]*\})\s*(?:as\s+[\w$]+\s*)?from\s*["']/u
 const SAFE_REACT_FACTORY = "__openworkSafeReact"
+// One static declaration importing a built-in library: named, default or
+// namespace bindings, or a bare import. Only these leave the module check,
+// never import(), import.meta, require() or reexports. The check runs on both
+// the authored TSX (including erased type imports) and esbuild's normalized,
+// scope-aware output, where group 1 holds the bindings and group 3 the library.
+const LIBRARY_STATIC_IMPORT_PATTERN = new RegExp(
+  `\\bimport\\s+(?:((?:type\\s+)?(?:[\\w$]+(?:\\s*,\\s*(?:\\{[^{}]*\\}|\\*\\s+as\\s+[\\w$]+))?|\\{[^{}]*\\}|\\*\\s+as\\s+[\\w$]+))\\s+from\\s*)?(["'])(${
+    GENERATED_APP_LIBRARY_IMPORTS.map((specifier) => specifier.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&")).join("|")
+  })\\2`,
+  "gu",
+)
+const FIRST_IMPORTED_SPECIFIER = /\bimport\s*(?:[^"'();]*?\bfrom\s*)?["']([^"']+)["']/u
+// With libraries on, Apps draw with SVG and animate with requestAnimationFrame,
+// which pauses while the App is hidden. These SVG elements stay refused: they
+// load other documents or images, embed HTML, or rewrite attributes over time.
+const LIBRARY_HOST_GLOBALS = new Set(["requestAnimationFrame", "cancelAnimationFrame"])
+const BLOCKED_ELEMENTS = ["script", "iframe", "object", "embed", "form", "base", "link", "meta", "style", "math"]
+const BLOCKED_SVG_ELEMENTS = ["use", "image", "feImage", "set", "animate", "animateMotion", "animateTransform", "discard", "foreignObject"]
 
-async function sourcePolicyDiagnostic(reactSource: string, cssSource: string, runtime: "artifact" | "mcp-app"): Promise<GeneratedArtifactViewBuildDiagnostic | null> {
+function modulePolicySource(source: string, allowLibraries: boolean): string {
+  return allowLibraries ? source.replace(LIBRARY_STATIC_IMPORT_PATTERN, "") : source
+}
+
+// Names the import to change, so the author can fix it in one try.
+function moduleImportDiagnostic(subject: string, source: string, allowLibraries: boolean): GeneratedArtifactViewBuildDiagnostic {
+  const specifier = FIRST_IMPORTED_SPECIFIER.exec(modulePolicySource(source, allowLibraries))?.[1]
+  if (specifier && !allowLibraries && generatedAppLibrary(specifier)) {
+    return diagnostic(`Generated ${subject} cannot import "${specifier}": built-in libraries are not on for you. React is injected; use no imports.`)
+  }
+  if (specifier && allowLibraries) {
+    return diagnostic(`Generated ${subject} cannot import "${specifier}". Import only the built-in libraries: ${GENERATED_APP_LIBRARY_IMPORTS.join(", ")}.`)
+  }
+  return diagnostic(`Generated ${subject} cannot use module imports or reexports. Use component props and React rendering only.`)
+}
+
+// Refuses library bindings that would bundle a whole package; esbuild itself
+// refuses names a library does not export.
+function libraryImportDiagnostic(subject: string, normalizedSource: string): GeneratedArtifactViewBuildDiagnostic | null {
+  for (const [, bindings = "", , specifier = ""] of normalizedSource.matchAll(LIBRARY_STATIC_IMPORT_PATTERN)) {
+    const library = generatedAppLibrary(specifier)
+    if (!library) continue
+    if (library.namespaceImport === false && /\*\s*as\b/u.test(bindings)) {
+      return diagnostic(`Generated ${subject} cannot import all of "${specifier}" at once. ${library.hint ?? "Import what the App uses by name."}`)
+    }
+    const names = /\{([^{}]*)\}/u.exec(bindings)?.[1]?.split(",").map((binding) => binding.trim().split(/\s+as\s+/u)[0]?.replace(/^type\s+/u, "")) ?? []
+    const blocked = names.find((name) => name && library.blockedExports?.includes(name))
+    if (blocked) return diagnostic(`Generated ${subject} cannot import ${blocked} from "${specifier}". ${library.hint ?? ""}`.trim())
+  }
+  return null
+}
+
+async function sourcePolicyDiagnostic(reactSource: string, cssSource: string, runtime: "artifact" | "mcp-app", allowLibraries: boolean): Promise<GeneratedArtifactViewBuildDiagnostic | null> {
   const sourceBytes = Buffer.byteLength(reactSource)
   const cssBytes = Buffer.byteLength(cssSource)
   if (sourceBytes > MAX_SOURCE_BYTES) return diagnostic(`React source exceeds ${MAX_SOURCE_BYTES} bytes.`)
@@ -146,10 +203,13 @@ async function sourcePolicyDiagnostic(reactSource: string, cssSource: string, ru
       : /<[A-Za-z][^<>]*\b(?:href|src|srcSet|action|formAction|poster|ping|cite|xlinkHref|data)\s*=/u, label: "URL-bearing attributes" },
     { pattern: /<[A-Za-z][^<>]*\bstyle\s*=\s*\{\{[^<>]*?(?:url\s*\(|@import)/u, label: "styles that reference external resources" },
     { pattern: mcpApp
-      ? /<\/?(?:script|iframe|object|embed|form|base|link|meta|style|svg|math)\b/u
+      ? new RegExp(`<\\/?(?:${[...BLOCKED_ELEMENTS, ...(allowLibraries ? BLOCKED_SVG_ELEMENTS : ["svg"])].join("|")})\\b`, "u")
       : /<\/?(?:script|iframe|object|embed|form|base|link|meta|style|svg|math)\b/iu, label: "unsafe HTML elements" },
   ]
-  const blocked = forbidden.find(({ pattern }) => pattern.test(reactSource))
+  const blocked = forbidden.find(({ pattern, label }) => pattern.test(
+    mcpApp && label === "module imports or reexports" ? modulePolicySource(reactSource, allowLibraries) : reactSource,
+  ))
+  if (blocked?.label === "module imports or reexports") return moduleImportDiagnostic(subject, reactSource, allowLibraries)
   if (blocked) {
     return diagnostic(`Generated ${subject} cannot use ${blocked.label}. ${mcpApp ? "Use component props" : "Use props.data"} and React rendering only.`)
   }
@@ -172,14 +232,17 @@ async function sourcePolicyDiagnostic(reactSource: string, cssSource: string, ru
   } catch (error) {
     return diagnosticsFrom(error)[0] ?? diagnostic("React view build failed.")
   }
-  if (mcpApp && AUTHORED_MODULE_PATTERN.test(scopeAnalyzedSource)) {
-    return diagnostic(`Generated ${subject} cannot use module imports or reexports.`)
+  if (mcpApp && AUTHORED_MODULE_PATTERN.test(modulePolicySource(scopeAnalyzedSource, allowLibraries))) {
+    return moduleImportDiagnostic(subject, scopeAnalyzedSource, allowLibraries)
   }
+  const libraryImport = mcpApp && allowLibraries ? libraryImportDiagnostic(subject, scopeAnalyzedSource) : null
+  if (libraryImport) return libraryImport
   if (mcpApp && scopeAnalyzedSource.includes(SAFE_REACT_FACTORY)) {
     return diagnostic(`Generated ${subject} cannot use reserved compiler bindings.`)
   }
-  const hostGlobal = HOST_GLOBAL_NAMES.find((_, index) =>
+  const hostGlobal = HOST_GLOBAL_NAMES.find((name, index) =>
     (mcpApp || index < ARTIFACT_HOST_GLOBAL_COUNT)
+    && !(mcpApp && allowLibraries && LIBRARY_HOST_GLOBALS.has(name))
     && scopeAnalyzedSource.includes(`__openwork_forbidden_host_global_${index}__`))
   if (hostGlobal) {
     return diagnostic(`Generated ${subject} cannot use the browser host global "${hostGlobal}". Use component props and React rendering only.`)
@@ -202,16 +265,19 @@ async function sourcePolicyDiagnostic(reactSource: string, cssSource: string, ru
   return null
 }
 
-function safeReactPreamble(mcpApp: boolean): string {
+// With libraries on (`drawing`), SVG renders, minus elements that load or
+// rewrite content, and cloned elements pass the same check as created ones.
+function safeReactPreamble(mcpApp: boolean, drawing = false): string {
+  const blockedElements = [...BLOCKED_ELEMENTS, ...(drawing ? BLOCKED_SVG_ELEMENTS : ["svg"])].map((name) => name.toLowerCase())
   return `
-const blockedArtifactElementNames = new Set(["script", "iframe", "object", "embed", "form", "base", "link", "meta", "style", "svg", "math"]);
+const blockedArtifactElementNames = new Set(${JSON.stringify(blockedElements)});
 const blockedArtifactPropNames = new Set(["dangerouslysetinnerhtml", "href", "src", "srcset", "action", "formaction", "poster", "ping", "cite", "data", "xlinkhref"]);
 function assertSafeArtifactElement(type, props) {
   if (typeof type !== "string") return;
   if (blockedArtifactElementNames.has(type.toLowerCase())) throw new Error("Generated Artifact views cannot render unsafe HTML elements.");
   if (!props || typeof props !== "object") return;
   for (const key of Object.keys(props)) {
-    if (blockedArtifactPropNames.has(key.toLowerCase())) throw new Error("Generated Artifact views cannot render URL-bearing or HTML-injection attributes.");
+    if (blockedArtifactPropNames.has(${drawing ? 'key.toLowerCase().replace(/[^a-z]/gu, "")' : "key.toLowerCase()"})) throw new Error("Generated Artifact views cannot render URL-bearing or HTML-injection attributes.");
   }
   if (props.style && typeof props.style === "object" && Object.values(props.style).some((value) => typeof value === "string" && /(?:url\\s*\\(|@import)/iu.test(value))) {
     throw new Error("Generated Artifact views cannot render styles that reference external resources.");
@@ -222,22 +288,82 @@ function createSafeArtifactReact(baseReact) {
     createElement(type, props, ...children) {
       assertSafeArtifactElement(type, props);
       return baseReact.createElement(type, props, ...children);
-    },
+    },${drawing ? `
+    cloneElement(element, props, ...children) {
+      assertSafeArtifactElement(element?.type, props);
+      return baseReact.cloneElement(element, props, ...children);
+    },` : ""}
   });
   return ${mcpApp ? "Object.freeze(safeReact)" : "safeReact"};
 }
 `
 }
 
-function generatedArtifactPlugin(reactSource: string, runtime: "artifact" | "mcp-app"): Plugin {
+// Library code reaches React through these modules, so an element a library
+// renders passes the same check as authored JSX. React DOM and React itself
+// keep the real module.
+const LIBRARY_REACT_NAMESPACE = "generated-library-react"
+const REACT_INTERNAL_IMPORTER = /[\\/]node_modules[\\/](?:react|react-dom|scheduler)[\\/]/u
+const NODE_MODULES_IMPORTER = /[\\/]node_modules[\\/]/u
+
+export function libraryReactModule(specifier: string): string {
+  if (specifier === "react") {
+    return `const BaseReact = require("react");\n${safeReactPreamble(true, true)}\nmodule.exports = createSafeArtifactReact(BaseReact);`
+  }
+  return `const runtime = require(${JSON.stringify(specifier)});
+${safeReactPreamble(true, true)}
+const checked = (create) => create && ((type, props, ...rest) => {
+  assertSafeArtifactElement(type, props);
+  return create(type, props, ...rest);
+});
+module.exports = Object.freeze({ Fragment: runtime.Fragment, jsx: checked(runtime.jsx), jsxs: checked(runtime.jsxs), jsxDEV: checked(runtime.jsxDEV) });`
+}
+
+function libraryPlugin(pluginBuild: PluginBuild) {
+  const resolveFromServer = async (specifier: string, kind: ImportKind) => {
+    const resolved = await pluginBuild.resolve(specifier, { kind, resolveDir: serverModuleDir })
+    return resolved.errors.length ? { errors: resolved.errors } : { path: resolved.path, sideEffects: resolved.sideEffects }
+  }
+  // Authored source never resolves react here; its import is refused below.
+  pluginBuild.onResolve({ filter: /^react(?:\/jsx-(?:dev-)?runtime)?$/ }, (args) => {
+    if (args.namespace === "generated-artifact") return undefined
+    return args.namespace === "file" && NODE_MODULES_IMPORTER.test(args.importer) && !REACT_INTERNAL_IMPORTER.test(args.importer)
+      ? { path: args.path, namespace: LIBRARY_REACT_NAMESPACE }
+      : { path: require.resolve(args.path) }
+  })
+  pluginBuild.onLoad({ filter: /.*/, namespace: LIBRARY_REACT_NAMESPACE }, (args) => ({
+    contents: libraryReactModule(args.path),
+    loader: "js",
+    resolveDir: serverModuleDir,
+  }))
+  // A library's own imports of a redirected entry, such as OrbitControls
+  // importing "three", share the copy authored imports resolve to.
+  const entries = new Map(GENERATED_APP_LIBRARY_IMPORTS.flatMap((specifier) => {
+    const entry = generatedAppLibrary(specifier)?.entries?.[specifier]
+    return entry ? [[specifier, entry] as const] : []
+  }))
+  if (entries.size) {
+    const filter = new RegExp(`^(?:${[...entries.keys()].map((specifier) => specifier.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&")).join("|")})$`)
+    pluginBuild.onResolve({ filter, namespace: "file" }, (args) => resolveFromServer(entries.get(args.path) ?? args.path, args.kind))
+  }
+  return (specifier: string, kind: ImportKind) => {
+    const library = generatedAppLibrary(specifier)
+    return library ? resolveFromServer(library.entries?.[specifier] ?? specifier, kind) : null
+  }
+}
+
+function generatedArtifactPlugin(reactSource: string, runtime: "artifact" | "mcp-app", allowLibraries: boolean): Plugin {
   const mcpApp = runtime === "mcp-app"
   return {
     name: "generated-artifact-view",
     setup(pluginBuild) {
+      const resolveLibrary = mcpApp && allowLibraries ? libraryPlugin(pluginBuild) : null
       if (mcpApp) pluginBuild.onResolve({ filter: /.*/, namespace: "generated-artifact" }, (args) => {
         if (args.path === "artifact:safe-react" && args.kind === "import-statement") {
           return { path: args.path, namespace: "generated-artifact-runtime" }
         }
+        const library = args.kind === "import-statement" ? resolveLibrary?.(args.path, args.kind) : null
+        if (library) return library
         return { errors: [{ text: "Generated source cannot use module imports or reexports." }] }
       })
       if (!mcpApp) pluginBuild.onResolve({ filter: /^artifact:safe-react$/ }, () => ({ path: "artifact:safe-react", namespace: "generated-artifact-runtime" }))
@@ -250,7 +376,7 @@ function generatedArtifactPlugin(reactSource: string, runtime: "artifact" | "mcp
         resolveDir: process.cwd(),
       }))
       pluginBuild.onLoad({ filter: /.*/, namespace: "generated-artifact-runtime" }, () => ({
-        contents: `import BaseReact from "react";\n${safeReactPreamble(mcpApp)}\nexport default createSafeArtifactReact(BaseReact);`,
+        contents: `import BaseReact from "react";\n${safeReactPreamble(mcpApp, mcpApp && allowLibraries)}\nexport default createSafeArtifactReact(BaseReact);`,
         loader: "js",
         resolveDir: process.cwd(),
       }))
@@ -280,7 +406,7 @@ const GENERATED_ARTIFACT_RUNTIME_REPORTER = `
 })();
 `.trim().replace(/<\/script/giu, "<\\/script")
 
-async function buildClientBundle(reactSource: string, runtime: "artifact" | "mcp-app"): Promise<string> {
+async function buildClientBundle(reactSource: string, runtime: "artifact" | "mcp-app", allowLibraries: boolean): Promise<string> {
   const entry = runtime === "mcp-app" ? GENERATED_MCP_APP_ENTRY : `
     import React from "react";
     import { createRoot } from "react-dom/client";
@@ -344,12 +470,14 @@ async function buildClientBundle(reactSource: string, runtime: "artifact" | "mcp
     minify: true,
     legalComments: "none",
     define: { "process.env.NODE_ENV": '"production"' },
+    // With libraries, the plugin resolves react itself: esbuild applies an
+    // alias before any plugin could route library imports to checked React.
     alias: {
       "@modelcontextprotocol/ext-apps": extAppsEntry,
-      react: reactPackageRoot,
+      ...(allowLibraries ? {} : { react: reactPackageRoot }),
       "react-dom": reactDomPackageRoot,
     },
-    plugins: [generatedArtifactPlugin(reactSource, runtime)],
+    plugins: [generatedArtifactPlugin(reactSource, runtime, allowLibraries)],
   })
   const javascript = result.outputFiles[0]?.text
   if (!javascript) throw new Error("The React client bundle was empty.")
@@ -367,9 +495,16 @@ export type GeneratedArtifactViewBuildInput = GeneratedMcpAppBuildInput & {
   outputSchema: unknown
 }
 
-export type GeneratedArtifactViewCompilerInput =
+// Internal server policy, never an authored or stored App field: the caller
+// resolves the editor's mcpAppLibraries feature before turning it on.
+export type GeneratedMcpAppCompileOptions = {
+  allowLibraries?: boolean
+}
+
+export type GeneratedArtifactViewCompilerInput = GeneratedMcpAppCompileOptions & (
   | (GeneratedArtifactViewBuildInput & { runtime?: "artifact" })
   | (GeneratedMcpAppBuildInput & { runtime: "mcp-app" })
+)
 
 function buildMetadata(input: GeneratedArtifactViewCompilerInput) {
   const reactSource = input.reactSource.trim()
@@ -390,18 +525,20 @@ export async function buildGeneratedArtifactViewInWorker(input: GeneratedArtifac
   const reactSource = input.reactSource.trim()
   const cssSource = input.cssSource?.trim() ?? ""
   const runtime = input.runtime ?? "artifact"
+  const allowLibraries = runtime === "mcp-app" && input.allowLibraries === true
   const shared = buildMetadata(input)
-  const policyFailure = await sourcePolicyDiagnostic(reactSource, cssSource, runtime)
+  const policyFailure = await sourcePolicyDiagnostic(reactSource, cssSource, runtime, allowLibraries)
   if (policyFailure) return { ok: false, ...shared, diagnostics: [policyFailure] }
 
   try {
-    const javascript = await buildClientBundle(reactSource, runtime)
+    const javascript = await buildClientBundle(reactSource, runtime, allowLibraries)
     const scripts = runtime === "mcp-app" ? [javascript] : [GENERATED_ARTIFACT_RUNTIME_REPORTER, javascript]
     const scriptPolicy = scripts.map((script) => `'sha256-${createHash("sha256").update(script).digest("base64")}'`).join(" ")
     const rootId = runtime === "mcp-app" ? "openwork-mcp-app-root" : "openwork-artifact-view-root"
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src ${scriptPolicy}; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'none'"><title>${input.title.replace(/[<&>]/gu, "")}</title><style>${cssSource}</style></head><body><div id="${rootId}"></div>${scripts.map((script) => `<script>${script}</script>`).join("")}</body></html>`
     const htmlBytes = Buffer.byteLength(html)
-    if (htmlBytes > MAX_HTML_BYTES) throw new Error(`Compiled MCP App exceeds ${MAX_HTML_BYTES} bytes.`)
+    const maxHtmlBytes = allowLibraries ? MCP_APP_MAX_HTML_BYTES : LEGACY_MAX_HTML_BYTES
+    if (htmlBytes > maxHtmlBytes) throw new Error(`Compiled MCP App exceeds ${maxHtmlBytes} bytes.${allowLibraries ? ` Compiled size: ${htmlBytes} bytes.` : ""}`)
     return {
       ok: true,
       ...shared,
@@ -416,11 +553,11 @@ export async function buildGeneratedArtifactViewInWorker(input: GeneratedArtifac
 }
 
 export async function buildGeneratedArtifactView(input: GeneratedArtifactViewBuildInput): Promise<GeneratedArtifactViewBuildResult> {
-  return buildGeneratedView({ ...input, runtime: "artifact" })
+  return buildGeneratedView({ ...input, allowLibraries: false, runtime: "artifact" })
 }
 
-export async function buildGeneratedMcpApp(input: GeneratedMcpAppBuildInput): Promise<GeneratedArtifactViewBuildResult> {
-  return buildGeneratedView({ ...input, runtime: "mcp-app" })
+export async function buildGeneratedMcpApp(input: GeneratedMcpAppBuildInput, options: GeneratedMcpAppCompileOptions = {}): Promise<GeneratedArtifactViewBuildResult> {
+  return buildGeneratedView({ ...input, allowLibraries: options.allowLibraries === true, runtime: "mcp-app" })
 }
 
 async function buildGeneratedView(input: GeneratedArtifactViewCompilerInput): Promise<GeneratedArtifactViewBuildResult> {

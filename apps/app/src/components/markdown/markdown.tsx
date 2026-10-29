@@ -26,6 +26,7 @@ import {
 } from "./markdown-primitive";
 import { LinkActionMenu } from "./link-action-menu";
 import { useMermaidEnhancer } from "./mermaid";
+import { MermaidZoomPortals } from "./mermaid-zoom-viewport";
 import { useSelectionStableValue } from "./selection-stability";
 import { enhanceNearViewport } from "./near-viewport";
 
@@ -206,7 +207,7 @@ function MarkdownBlockInner({
     };
   }, [isEmpty, rendered.kind, streaming, text, resolveReference]);
 
-  useMermaidEnhancer(rootRef, rendered, !streaming);
+  const mermaidDiagrams = useMermaidEnhancer(rootRef, rendered, !streaming);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -473,6 +474,7 @@ function MarkdownBlockInner({
           onClose={() => setLinkMenu(null)}
         />
       ) : null}
+      <MermaidZoomPortals diagrams={mermaidDiagrams} />
       <Dialog
         open={imagePreview !== null}
         onOpenChange={(open) => {

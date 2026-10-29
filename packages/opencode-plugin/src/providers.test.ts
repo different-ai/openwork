@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { fetchGatewayInventory, providerPackage, reasoningVariants, toProviderRecord } from "./providers.ts"
+import { FAST_DEFAULT_VARIANT, fetchGatewayInventory, providerPackage, reasoningVariants, toProviderRecord } from "./providers.ts"
 import { API, createFakeDen, GATEWAY_KEY, MODEL_ID, PROVIDER_ID, SESSION_TOKEN } from "./test-den.ts"
 
 const session = { apiBaseUrl: API, token: SESSION_TOKEN, orgId: "org_01m2" }
@@ -14,6 +14,44 @@ test("fetches usable gateway providers and the member's gateway key, like the de
     "GET /v1/inference-providers?scope=usable",
     `GET /v1/inference-providers/${PROVIDER_ID}/connect`,
   ])
+})
+
+test("desktop inventory accepts only a dummy credential, never a reusable Gateway key", async () => {
+  const den = createFakeDen()
+  const rejected = await fetchGatewayInventory(den.fetch, session, undefined, "desktop")
+  assert.equal(rejected.apiKey, null)
+  assert.deepEqual(rejected.providers, [])
+  const accepted = await fetchGatewayInventory(async (url, init) => {
+    const response = await den.fetch(url, init)
+    return new Response((await response.text()).replaceAll(GATEWAY_KEY, "ow_local_catalog"), { status: response.status, headers: response.headers })
+  }, session, undefined, "desktop")
+  assert.equal(accepted.apiKey, "ow_local_catalog")
+  assert.deepEqual(accepted.providers.map(provider => provider.id), [PROVIDER_ID])
+})
+
+test("a connect 403 refetches the list and removes a provider whose access changed", async () => {
+  const den = createFakeDen()
+  let lists = 0
+  const inventory = await fetchGatewayInventory(async (url, init) => {
+    if (url.includes("?scope=usable") && ++lists > 1) return Response.json({ inferenceProviders: [] })
+    if (url.endsWith("/connect")) return Response.json({ error: "forbidden" }, { status: 403 })
+    return den.fetch(url, init)
+  }, session)
+  assert.equal(lists, 2)
+  assert.deepEqual(inventory.providers, [])
+  assert.equal(inventory.apiKey, null)
+})
+
+test("a persistent connect 403 is bounded and never returns denied provider credentials", async () => {
+  const den = createFakeDen()
+  let lists = 0
+  const inventory = await fetchGatewayInventory(async (url, init) => {
+    if (url.includes("?scope=usable")) lists++
+    if (url.endsWith("/connect")) return Response.json({ error: "forbidden" }, { status: 403 })
+    return den.fetch(url, init)
+  }, session)
+  assert.equal(lists, 2)
+  assert.deepEqual(inventory.providers, [])
 })
 
 test("maps a gateway provider to a V2 provider with the gateway key and native package", async () => {
@@ -95,4 +133,30 @@ test("skips providers without usable models and reports why", async () => {
   const inventory = await fetchGatewayInventory(fetcher, session)
   assert.deepEqual(inventory.providers, [])
   assert.deepEqual(inventory.skipped, [{ id: "ipr_y", name: "OpenAI", reason: "member_auth_required" }])
+})
+
+test("OpenAI catalog models with priority processing keep Fast mode, like the managed engine config", () => {
+  const fastConfig = {
+    reasoning_options: [{ type: "effort", values: ["low", "high"] }],
+    experimental: { modes: { fast: { provider: { body: { service_tier: "priority" } } } } },
+  }
+  const provider = (npm: string, config: Record<string, unknown>) => ({
+    id: "ipr_fast", providerId: "openai", name: "OpenAI", credentialStatus: "ready",
+    providerConfig: { npm, api: "https://gw/api/v1/providers/ipr_fast" },
+    models: [{ id: "gwm_fast", name: "GPT Fast", config, upstreamModelId: "gpt-6", modelGroupName: null, credentialSetName: null }],
+  })
+  const ids = (npm: string, config: Record<string, unknown>) =>
+    toProviderRecord(provider(npm, config), GATEWAY_KEY).models[0]?.variants.map((variant) => variant.id)
+
+  assert.deepEqual(ids("@ai-sdk/openai", fastConfig), [
+    "low", "high", FAST_DEFAULT_VARIANT, "__openwork_fast_v1/variant/low", "__openwork_fast_v1/variant/high",
+  ])
+  const fastHigh = toProviderRecord(provider("@ai-sdk/openai", fastConfig), GATEWAY_KEY).models[0]?.variants
+    .find((variant) => variant.id === "__openwork_fast_v1/variant/high")
+  assert.equal(fastHigh?.settings?.serviceTier, "priority")
+  assert.equal(fastHigh?.settings?.reasoningEffort, "high")
+
+  assert.deepEqual(ids("@ai-sdk/openai", { reasoning_options: fastConfig.reasoning_options }), ["low", "high"], "no Fast without the catalog's priority mode")
+  assert.deepEqual(ids("@ai-sdk/openai-compatible", fastConfig), ["low", "high"], "Fast is OpenAI-only")
+  assert.deepEqual(ids("@ai-sdk/openai", { ...fastConfig, experimental: { modes: { fast: { provider: { body: { service_tier: "flex" } } } } } }), ["low", "high"])
 })

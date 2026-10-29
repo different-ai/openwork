@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
@@ -18,7 +18,6 @@ const setupSchema = z.object({
   installed: z.boolean(),
   hasSigningSecret: z.boolean(),
   eligible: z.boolean(),
-  rolloutEnabled: z.boolean(),
   runnerAvailable: z.boolean(),
   shadowMode: z.boolean(),
   dailyLimit: z.number(),
@@ -40,6 +39,26 @@ const setupSchema = z.object({
   }),
   manifest: z.unknown(),
 });
+export const slackAssistantQueryKey = (orgId: string | null | undefined, connectionId: string) => ["slack-assistant", orgId, connectionId];
+
+/** The connection's OpenWork in Slack setup: eligibility, runner, install state. */
+export function useSlackAssistantSetupQuery(connectionId: string | null, enabled: boolean) {
+  const { orgContext } = useOrgDashboard();
+  const orgId = orgContext?.organization.id;
+  return useQuery({
+    queryKey: slackAssistantQueryKey(orgId, connectionId ?? ""),
+    enabled: enabled && Boolean(orgId) && Boolean(connectionId),
+    queryFn: async () => {
+      const { response, payload } = await requestJson(`/v1/mcp-connections/${connectionId}/slack-assistant`, { headers: { "x-openwork-org-id": orgId ?? "" } });
+      if (!response.ok) throw getRequestError(payload, response, "Slack setup request failed.");
+      return setupSchema.parse(payload);
+    },
+  });
+}
+
+/** Deep link into this section from Slack connector setup. */
+export const SLACK_ASSISTANT_SECTION_ID = "slack-assistant";
+
 export function SlackAssistantSetup({ connection }: { connection: ExternalMcpConnection }) {
   const { orgContext, orgSlug, runReauthableAction } = useOrgDashboard();
   const client = useQueryClient();
@@ -57,13 +76,15 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
     }
   })();
   const path = `/v1/mcp-connections/${connection.id}/slack-assistant`;
-  const queryKey = ["slack-assistant", orgId, connection.id];
+  const queryKey = slackAssistantQueryKey(orgId, connection.id);
   const headers = { "x-openwork-org-id": orgId ?? "" };
-  const query = useQuery({
-    queryKey,
-    enabled: isSlack && Boolean(orgId),
-    queryFn: async () => setupSchema.parse(await request(path, { headers })),
-  });
+  const query = useSlackAssistantSetupQuery(connection.id, isSlack);
+  const loaded = Boolean(query.data);
+  useEffect(() => {
+    // Arriving from Slack setup's "Set up @openwork next": bring this section into view once it has loaded.
+    if (!loaded || window.location.hash !== `#${SLACK_ASSISTANT_SECTION_ID}`) return;
+    document.getElementById(SLACK_ASSISTANT_SECTION_ID)?.scrollIntoView({ block: "start" });
+  }, [loaded]);
   async function request(url: string, init: RequestInit) {
     const { response, payload } = await requestJson(url, init);
     if (!response.ok) throw getRequestError(payload, response, "Slack setup request failed.");
@@ -120,7 +141,7 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
     }
   }
   return (
-    <section className="mt-10 flex flex-col gap-4 rounded-2xl border border-gray-100 bg-white p-5" aria-label="OpenWork in Slack" data-testid="slack-assistant-setup">
+    <section id={SLACK_ASSISTANT_SECTION_ID} className="mt-10 flex scroll-mt-6 flex-col gap-4 rounded-2xl border border-gray-100 bg-white p-5" aria-label="OpenWork in Slack" data-testid="slack-assistant-setup">
       <div>
         <h2 className="text-base font-semibold">OpenWork in Slack</h2>
         <p className="mt-1 text-sm text-gray-500">
@@ -131,11 +152,6 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
       {query.isPending ? <p role="status">Loading Slack setup…</p> : null}
       {query.error ? <p role="alert">Could not load Slack setup.</p> : null}
       {data && !data.eligible ? <p>Choose Individual accounts mode before enabling the assistant.</p> : null}
-      {data && !data.rolloutEnabled ? (
-        <p className="text-sm text-gray-500">
-          Ask a platform admin to enable Slack Assistant for this workspace in /admin.
-        </p>
-      ) : null}
       {data && !data.runnerAvailable ? (
         <p className="text-sm text-gray-500" role="status">
           Not available on this deployment: the Slack assistant runs on OpenWork&apos;s cloud runner, which isn&apos;t set up
@@ -170,7 +186,7 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
             <span>Enable @openwork in Slack</span>
             <DenSwitch
               checked={data.enabled}
-              disabled={busy || (!data.enabled && (!data.rolloutEnabled || !data.runnerAvailable || (!data.hasSigningSecret && !secret)))}
+              disabled={busy || (!data.enabled && (!data.runnerAvailable || (!data.hasSigningSecret && !secret)))}
               aria-label="Enable @openwork in Slack"
               testId="slack-assistant-enabled"
               onChange={(checked) => void save(checked)}
@@ -186,7 +202,6 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
               onChange={setSecret}
               saved={data.hasSigningSecret}
               placeholder="Paste from Slack app settings"
-              savedPlaceholder="Saved securely"
               replaceTestId="slack-assistant-replace-signing-secret"
             />
           </label>

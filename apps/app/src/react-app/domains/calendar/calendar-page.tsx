@@ -13,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils"
 import { CloudSignInBanner, CloudSignInBannerIcon } from "@/react-app/domains/cloud/cloud-sign-in-banner"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
+import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature"
 import { automationExecutionThreadRoute } from "@/react-app/domains/automations/automation-cloud-thread"
 import {
   describeAutomationError,
@@ -52,7 +53,6 @@ import { CalendarMonthGrid, CalendarTimeGrid, type CalendarSelection } from "./c
 import {
   calendarProviderPresence,
   useAutomationRunsInRange,
-  useCalendarFeature,
   useCalendarDefaultModelName,
   useCalendarMeetings,
   useCalendarTransport,
@@ -182,7 +182,7 @@ export function CalendarPage(props: {
 
   const { year, month, day } = anchor
   const range = useMemo(() => calendarRange(view, { year, month, day }, timeZone, WEEK_STARTS_ON), [day, month, timeZone, view, year])
-  const feature = useCalendarFeature(denContext)
+  const feature = useOrgFeatureState("automationCalendar")
   const enabled = feature.data === true
   const organizationDefaultName = useCalendarDefaultModelName(denContext, enabled).data
   const listQuery = useAutomationListQuery(denContext)

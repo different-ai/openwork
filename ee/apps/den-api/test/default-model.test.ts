@@ -101,17 +101,16 @@ test("the model list keeps the other sources when the AI Gateway fails, ordered 
   assert.deepEqual(all.unavailableSources, [])
 })
 
-test("with the feature off, the desktop config carries no default model and the saved choices are not read", async () => {
+test("the desktop config always resolves the saved default model", async () => {
   let reads = 0
   const read = async () => {
     reads += 1
     return { providerID: opus.providerId, modelID: opus.modelId, source: "organization" as const }
   }
-  assert.equal(await desktopConfigDefaultModel({ organizationId: orgId, memberId, featureOn: false }, read), null)
-  assert.equal(reads, 0)
-  assert.deepEqual(await desktopConfigDefaultModel({ organizationId: orgId, memberId, featureOn: true }, read), { providerID: opus.providerId, modelID: opus.modelId, source: "organization" })
+  assert.deepEqual(await desktopConfigDefaultModel({ organizationId: orgId, memberId }, read), { providerID: opus.providerId, modelID: opus.modelId, source: "organization" })
+  assert.equal(reads, 1)
   // A failed lookup leaves desktops on their own default instead of failing the config.
-  assert.equal(await desktopConfigDefaultModel({ organizationId: orgId, memberId, featureOn: true }, async () => { throw new Error("db") }), null)
+  assert.equal(await desktopConfigDefaultModel({ organizationId: orgId, memberId }, async () => { throw new Error("db") }), null)
 })
 
 test("desktops parse the default model from their config, and ignore a malformed one", () => {

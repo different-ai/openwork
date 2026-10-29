@@ -1,6 +1,7 @@
 import os from "node:os"
 import { readFileSync } from "node:fs"
 import path from "node:path"
+import { CLIENT_IP_SECRET_MIN_LENGTH } from "@openwork-ee/utils/client-ip-signature"
 import { denUrls } from "@openwork-ee/utils/den-urls"
 import { parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
@@ -9,6 +10,7 @@ import { resolveDenServiceVersion } from "./service-version.js"
 import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
 import { readFreeInferenceConfig } from "@openwork/types/den/inference"
+import { DEFAULT_ENTERPRISE_PLAN_UNIT_AMOUNT } from "@openwork/types/den/billing-plans"
 import { parseFeatureEnvironment } from "@openwork/features"
 
 export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
@@ -36,6 +38,8 @@ const EnvSchema = z.object({
   DEN_AUTH_COOKIE_PREFIX: z.string().regex(/^openwork-den(-[a-z0-9]{1,32})?$/).optional(),
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional(),
   DEN_TRUSTED_PROXIES: z.string().optional(),
+  /** Shared with Den Web, which signs the person's address with it when it forwards a request. */
+  DEN_WEB_CLIENT_IP_SECRET: z.string().optional(),
   DEN_WEB_APP_HOSTS: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
@@ -53,6 +57,7 @@ const EnvSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
+  EMAIL_SUPPORT_ADDRESS: z.string().optional(),
   DEN_ORG_MODE: z.string().optional(),
   DEN_SINGLE_ORG_NAME: z.string().optional(),
   DEN_SINGLE_ORG_SLUG: z.string().optional(),
@@ -78,6 +83,8 @@ const EnvSchema = z.object({
   DEN_DIAGNOSTICS_ORIGIN: z.string().optional(),
   DEN_DIAGNOSTICS_BEARER_TOKEN: z.string().optional(),
   DEN_MAINTENANCE_TOKEN: z.string().optional(),
+  DEN_HEADLESS_RUNNER_TOKEN: z.string().optional(),
+  DEN_HEADLESS_RUNNER_CALLBACK_TOKEN: z.string().optional(),
   DEN_GATEWAY_KEY: z.string().optional(),
   DEN_GATEWAY_ORIGIN: z.string().optional(),
   DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
@@ -91,6 +98,11 @@ const EnvSchema = z.object({
   CORS_ORIGINS: z.string().optional(),
   DEN_CORS_HANDLED_BY_EDGE: z.string().optional(),
   DEN_API_PUBLIC_URL: z.string().optional(),
+  DEN_DOCUMENTS_COLLABORA_URL: z.string().url().optional(),
+  DEN_DOCUMENTS_HOST_ORIGIN: z.string().url().optional(),
+  DEN_DOCUMENTS_CALLBACK_BASE_URL: z.string().url().optional(),
+  DEN_DOCUMENTS_EDITOR: z.enum(["fixed", "cloud-worker"]).optional(),
+  DEN_DOCUMENTS_WORKER_EDITOR_PORT: z.string().optional(),
   DEN_API_VERSION: z.string().optional(),
   RENDER_GIT_COMMIT: z.string().optional(),
   OPENWORK_INSTALLER_ARTIFACTS_DIR: z.string().optional(),
@@ -123,6 +135,15 @@ const EnvSchema = z.object({
   WORKER_URL_TEMPLATE: z.string().optional(),
   WORKER_ACTIVITY_BASE_URL: z.string().optional(),
   DEN_AUTOMATIONS_ENABLED: z.string().optional(),
+  // Sandbox organizations: the fictional workplace service their connectors use,
+  // and the AI Gateway provider each sandbox gets (the key is a secret).
+  DEN_SANDBOX_WORKPLACE_URL: z.string().optional(),
+  DEN_SANDBOX_GATEWAY_PROVIDER: z.string().optional(),
+  DEN_SANDBOX_GATEWAY_MODELS: z.string().optional(),
+  DEN_SANDBOX_GATEWAY_API_KEY: z.string().optional(),
+  // With DEN_SANDBOX_GATEWAY_PROVIDER=openrouter and no shared key, each sandbox gets its own OpenRouter key
+  // (minted with OPENROUTER_MANAGEMENT_API_KEY) capped at this many US dollars unless the admin picks another cap.
+  DEN_SANDBOX_CREDIT_USD: z.string().optional(),
   DEN_DASHBOARDS_ENABLED: z.string().optional(),
   // Default-on deployment kill switches.
   DEN_AUDIT_CAPTURE_ENABLED: z.enum(["true", "false"]).default("true"),
@@ -165,16 +186,24 @@ const EnvSchema = z.object({
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
   LIFECYCLE_EMAILS_ENABLED: z.string().optional(),
   LIFECYCLE_EMAILS_INTERVAL_MS: z.string().optional(),
+  ADMIN_METRICS_REFRESH_ENABLED: z.string().optional(),
+  ADMIN_METRICS_FAST_INTERVAL_MS: z.string().optional(),
+  ADMIN_METRICS_HEAVY_INTERVAL_MS: z.string().optional(),
+  MCP_REGISTRATION_PROBE_ENABLED: z.string().optional(),
+  MCP_REGISTRATION_PROBE_TRY_REGISTRATION: z.string().optional(),
+  MCP_REGISTRATION_PROBE_INTERVAL_MS: z.string().optional(),
   DAYTONA_API_URL: z.string().optional(),
   DAYTONA_API_KEY: z.string().optional(),
   DAYTONA_TARGET: z.string().optional(),
   DAYTONA_SNAPSHOT: z.string().optional(),
+  DAYTONA_SANDBOX_CLASS: z.enum(["container", "linux-vm"]).default("container"),
   DAYTONA_SANDBOX_IMAGE: z.string().optional(),
   DAYTONA_SANDBOX_CPU: z.string().optional(),
   DAYTONA_SANDBOX_MEMORY: z.string().optional(),
   DAYTONA_SANDBOX_DISK: z.string().optional(),
   DAYTONA_SANDBOX_PUBLIC: z.string().optional(),
   DAYTONA_SANDBOX_AUTO_STOP_INTERVAL: z.string().optional(),
+  DAYTONA_SANDBOX_AUTO_PAUSE_INTERVAL: z.coerce.number().int().min(1).max(1440).default(5),
   DAYTONA_SANDBOX_AUTO_ARCHIVE_INTERVAL: z.string().optional(),
   DAYTONA_SANDBOX_AUTO_DELETE_INTERVAL: z.string().optional(),
   DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS: z.string().optional(),
@@ -201,7 +230,10 @@ const EnvSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_INFERENCE_PRICE_ID: z.string().optional(),
   STRIPE_SEAT_PRICE_ID: z.string().optional(),
+  STRIPE_ENTERPRISE_PRICE_ID: z.string().optional(),
+  DEN_ENTERPRISE_UNIT_AMOUNT: z.string().optional(),
   STRIPE_OPENWORK_WEB_PRICE_ID: z.string().optional(),
+  STRIPE_ENTERPRISE_PRODUCT_ID: z.string().optional(),
   STRIPE_BILLING_SUCCESS_URL: z.string().optional(),
   STRIPE_BILLING_CANCEL_URL: z.string().optional(),
 }).superRefine((value, ctx) => {
@@ -236,6 +268,7 @@ const EnvSchema = z.object({
   }
 
   if ((value.CLOUD_RUNTIME_PROVIDER ?? value.PROVISIONER_MODE) === "daytona") {
+    if (value.DAYTONA_SANDBOX_CLASS === "linux-vm" && !value.DAYTONA_SNAPSHOT) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Daytona microVMs require a prepared Linux VM DAYTONA_SNAPSHOT", path: ["DAYTONA_SNAPSHOT"] })
     for (const key of ["DAYTONA_API_KEY"] as const) {
       if (!value[key]) {
         ctx.addIssue({
@@ -276,6 +309,13 @@ function automationTuning(value: string | undefined, fallback: number) {
 function optionalString(value: string | undefined) {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
+}
+
+// A malformed or non-positive amount keeps the planned price rather than
+// quoting $0 or NaN to a buyer.
+function parseEnterpriseUnitAmount(value: string | undefined) {
+  const amount = Number(value)
+  return value !== undefined && Number.isSafeInteger(amount) && amount > 0 ? amount : DEFAULT_ENTERPRISE_PLAN_UNIT_AMOUNT
 }
 
 function readOptionalSecretFile(envName: string, pathValue: string | undefined) {
@@ -519,10 +559,10 @@ const generatedArtifactViewsEnabled =
 // behavior: no App servers, writable Workflow-bound views.
 const appMcpServersEnabled = parseBooleanFlag(optionalString(parsed.DEN_APP_MCP_SERVERS_ENABLED) ?? "true")
 
-// Desktop availability stays fail-closed, while an entirely unconfigured
-// server preserves the published-client runtime. An explicit availability
-// value also supplies the runtime default, so DEN_AUTOMATIONS_ENABLED=false is
-// a complete shutdown unless a mixed-version deployment explicitly keeps the
+// Automations are on by default. Organizations turn Desktop or Cloud
+// Automations off in their organization settings. An explicit
+// DEN_AUTOMATIONS_ENABLED=false remains the operator's complete
+// shutdown unless a mixed-version deployment explicitly keeps the
 // compatibility runtime on. A disabled runtime always forces availability off.
 const automationsRuntimeEnabled = parseBooleanFlag(
   parsed.DEN_AUTOMATIONS_RUNTIME_ENABLED
@@ -530,7 +570,7 @@ const automationsRuntimeEnabled = parseBooleanFlag(
     ?? "true",
 )
 const automationsEnabled = automationsRuntimeEnabled
-  && parseBooleanFlag(parsed.DEN_AUTOMATIONS_ENABLED ?? "false")
+  && parseBooleanFlag(parsed.DEN_AUTOMATIONS_ENABLED ?? "true")
 const dashboardsEnabled = parseBooleanFlag(parsed.DEN_DASHBOARDS_ENABLED ?? "false")
 
 // Which product this install is (DEN_DEPLOYMENT, default self_hosted so a
@@ -564,6 +604,20 @@ if (diagnosticsBearerToken && diagnosticsBearerToken.length < 24) {
 const maintenanceToken = optionalString(parsed.DEN_MAINTENANCE_TOKEN)
 if (maintenanceToken && maintenanceToken.length < 24) {
   throw new Error("DEN_MAINTENANCE_TOKEN must contain at least 24 characters.")
+}
+// Bearer token the headless runner presents to exchange a resume grant (POST /v1/headless/resume-token). Unset hides
+// that route (404). Must differ from DEN_HEADLESS_RUNNER_TOKEN, which Den presents to the runner.
+const headlessRunnerCallbackToken = optionalString(parsed.DEN_HEADLESS_RUNNER_CALLBACK_TOKEN)
+if (headlessRunnerCallbackToken && headlessRunnerCallbackToken.length < 32) {
+  throw new Error("DEN_HEADLESS_RUNNER_CALLBACK_TOKEN must contain at least 32 characters.")
+}
+if (headlessRunnerCallbackToken && headlessRunnerCallbackToken === optionalString(parsed.DEN_HEADLESS_RUNNER_TOKEN)) {
+  throw new Error("DEN_HEADLESS_RUNNER_CALLBACK_TOKEN must differ from DEN_HEADLESS_RUNNER_TOKEN.")
+}
+// Unset: a forwarded address from Den Web is never trusted, and addresses come from the proxy chain alone.
+const webClientIpSecret = optionalString(parsed.DEN_WEB_CLIENT_IP_SECRET)
+if (webClientIpSecret && webClientIpSecret.length < CLIENT_IP_SECRET_MIN_LENGTH) {
+  throw new Error(`DEN_WEB_CLIENT_IP_SECRET must contain at least ${CLIENT_IP_SECRET_MIN_LENGTH} characters.`)
 }
 const derivedDenApiPublicUrl = configuredDenUrls && devMode && denBaseUrlIsLoopback(configuredDenUrls.web)
   ? `http://127.0.0.1:${port}`
@@ -652,6 +706,18 @@ const planetscaleCredentials =
       }
     : null
 
+// OpenWork Cloud's sandboxes use OpenWork's public workshop service unless configured otherwise.
+const sandboxWorkplaceUrl = optionalString(parsed.DEN_SANDBOX_WORKPLACE_URL)
+  ?? (featureEnvironment.deployment === "cloud" ? "https://open-workplace-workshop.onrender.com" : null)
+const sandboxGatewayApiKey = optionalString(parsed.DEN_SANDBOX_GATEWAY_API_KEY)
+const sandboxGatewayProvider = optionalString(parsed.DEN_SANDBOX_GATEWAY_PROVIDER) ?? (sandboxGatewayApiKey ? "openai" : "openrouter")
+// One OpenRouter key per sandbox, capped, instead of one shared key: needs a management key and no shared key.
+const sandboxMintsOpenRouterKeys = !sandboxGatewayApiKey && sandboxGatewayProvider === "openrouter" && Boolean(optionalString(parsed.OPENROUTER_MANAGEMENT_API_KEY))
+const sandboxDefaultModels = sandboxGatewayProvider === "openrouter"
+  ? "anthropic/claude-sonnet-5.5,openai/gpt-5.5,google/gemini-3.8-flash"
+  : "gpt-6-luna"
+const sandboxCreditUsd = Number.parseInt(optionalString(parsed.DEN_SANDBOX_CREDIT_USD) ?? "50", 10)
+
 export const env = {
   databaseUrl: parsed.DATABASE_URL,
   dbEncryptionKey: optionalString(parsed.DEN_DB_ENCRYPTION_KEY),
@@ -662,6 +728,7 @@ export const env = {
   betterAuthCookieDomain,
   authCookiePrefix: parsed.DEN_AUTH_COOKIE_PREFIX ?? "openwork-den",
   trustedProxies: splitCsv(parsed.DEN_TRUSTED_PROXIES),
+  webClientIpSecret,
   webUrl: normalizePublicWebOrigin(betterAuthUrl),
   // SECURITY: `redis://` carries cached auth-session material in plaintext.
   // Non-local redis:// is rejected by default. Hosted platforms such as Render
@@ -692,6 +759,7 @@ export const env = {
     bearerToken: diagnosticsBearerToken,
   },
   maintenanceToken,
+  headlessRunnerCallbackToken,
   gatewayKey: optionalString(parsed.DEN_GATEWAY_KEY),
   gatewayOrigin: normalizeOptionalHttpsOrigin("DEN_GATEWAY_ORIGIN", parsed.DEN_GATEWAY_ORIGIN),
   planGatingEnabled,
@@ -703,6 +771,21 @@ export const env = {
   lifecycleEmails: {
     enabled: parsed.LIFECYCLE_EMAILS_ENABLED?.trim() === "1",
     intervalMs: Number(parsed.LIFECYCLE_EMAILS_INTERVAL_MS ?? "900000"),
+  },
+  // Admin Control Center snapshots (admin-metrics/worker.ts): today's and 7-day KPIs on the fast tier,
+  // cohorts, sharing, revenue and accounts on the heavy tier. ADMIN_METRICS_REFRESH_ENABLED=0 turns it off.
+  adminMetrics: {
+    enabled: parsed.ADMIN_METRICS_REFRESH_ENABLED?.trim() !== "0",
+    fastIntervalMs: Math.max(60_000, Number(parsed.ADMIN_METRICS_FAST_INTERVAL_MS ?? "300000") || 300_000),
+    heavyIntervalMs: Math.max(300_000, Number(parsed.ADMIN_METRICS_HEAVY_INTERVAL_MS ?? "1800000") || 1_800_000),
+  },
+  // Scheduled check of which preset MCP providers let OpenWork register (mcp-registration/probe.ts). Off unless
+  // MCP_REGISTRATION_PROBE_ENABLED=1; registering a test client with providers is a further opt-in, so self-hosted
+  // installs never create registrations with third parties on their own.
+  mcpRegistrationProbe: {
+    enabled: parsed.MCP_REGISTRATION_PROBE_ENABLED?.trim() === "1",
+    tryRegistration: parsed.MCP_REGISTRATION_PROBE_TRY_REGISTRATION?.trim() === "1",
+    intervalMs: Math.max(3_600_000, Number(parsed.MCP_REGISTRATION_PROBE_INTERVAL_MS ?? "86400000") || 86_400_000),
   },
   requireEmailVerification,
   passwordBreachScreeningEnabled,
@@ -731,6 +814,9 @@ export const env = {
   },
   email: {
     from: optionalString(parsed.EMAIL_FROM),
+    // Where invitation replies and abuse reports go. OpenWork Cloud falls back
+    // to the OpenWork team; self-hosted installs fall back to the inviter.
+    supportAddress: optionalString(parsed.EMAIL_SUPPORT_ADDRESS),
   },
   resend: {
     apiKey: optionalString(parsed.RESEND_API_KEY),
@@ -762,6 +848,15 @@ export const env = {
   },
   port,
   corsOrigins,
+  documentsOffice: {
+    // `fixed` uses one operator-run editor; `cloud-worker` runs it in each
+    // member's Cloud worker. Unset keeps the fixed editor when one is configured.
+    mode: parsed.DEN_DOCUMENTS_EDITOR ?? (optionalString(parsed.DEN_DOCUMENTS_COLLABORA_URL) ? "fixed" : null),
+    workerPort: Number(parsed.DEN_DOCUMENTS_WORKER_EDITOR_PORT ?? "9980"),
+    serverUrl: optionalString(parsed.DEN_DOCUMENTS_COLLABORA_URL),
+    hostOrigin: optionalString(parsed.DEN_DOCUMENTS_HOST_ORIGIN),
+    callbackBaseUrl: optionalString(parsed.DEN_DOCUMENTS_CALLBACK_BASE_URL) ?? apiPublicUrl,
+  },
   apiPublicUrl,
   serviceVersion: resolveDenServiceVersion({
     configuredVersion: parsed.DEN_API_VERSION,
@@ -838,6 +933,19 @@ export const env = {
     runnerClaimDeadlineMs: automationTuning(parsed.DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS, 900_000),
   },
   dashboardsEnabled,
+  sandbox: {
+    workplaceUrl: sandboxWorkplaceUrl,
+    gateway: sandboxGatewayApiKey || sandboxMintsOpenRouterKeys
+      ? {
+          providerId: sandboxGatewayProvider,
+          modelIds: (optionalString(parsed.DEN_SANDBOX_GATEWAY_MODELS) ?? sandboxDefaultModels).split(",").map(value => value.trim()).filter(Boolean),
+          /** The key every sandbox shares, or null when each sandbox gets its own capped OpenRouter key. */
+          apiKey: sandboxGatewayApiKey ?? null,
+          /** Default cap for a sandbox's own key; null with a shared key. */
+          creditUsd: sandboxMintsOpenRouterKeys ? (Number.isFinite(sandboxCreditUsd) && sandboxCreditUsd > 0 ? sandboxCreditUsd : 50) : null,
+        }
+      : null,
+  },
   features: { deployment: featureEnvironment.deployment, locks: featureEnvironment.locks },
   auditCaptureEnabled: parsed.DEN_AUDIT_CAPTURE_ENABLED === "true",
   auditVisibilityEnabled: parsed.DEN_AUDIT_VISIBILITY_ENABLED === "true",
@@ -859,7 +967,14 @@ export const env = {
     webhookSecret: optionalString(parsed.STRIPE_WEBHOOK_SECRET),
     inferencePriceId: optionalString(parsed.STRIPE_INFERENCE_PRICE_ID),
     seatPriceId: optionalString(parsed.STRIPE_SEAT_PRICE_ID),
+    // Self-serve Enterprise (per person). Without it Enterprise is not sold by card.
+    enterprisePriceId: optionalString(parsed.STRIPE_ENTERPRISE_PRICE_ID),
+    // Planned per-person Enterprise price in cents, for quotes and display only;
+    // Stripe charges the configured price.
+    enterpriseUnitAmount: parseEnterpriseUnitAmount(optionalString(parsed.DEN_ENTERPRISE_UNIT_AMOUNT)),
     openworkWebPriceId: optionalString(parsed.STRIPE_OPENWORK_WEB_PRICE_ID),
+    // Enterprise prices are custom per customer, so subscriptions are matched by product.
+    enterpriseProductId: optionalString(parsed.STRIPE_ENTERPRISE_PRODUCT_ID),
     billingSuccessUrl: optionalString(parsed.STRIPE_BILLING_SUCCESS_URL),
     billingCancelUrl: optionalString(parsed.STRIPE_BILLING_CANCEL_URL),
   },
@@ -900,7 +1015,8 @@ export const env = {
     apiKey: optionalString(parsed.DAYTONA_API_KEY),
     target: optionalString(parsed.DAYTONA_TARGET),
     snapshot: optionalString(parsed.DAYTONA_SNAPSHOT),
-    image: optionalString(parsed.DAYTONA_SANDBOX_IMAGE) ?? "node:20-bookworm",
+    sandboxClass: parsed.DAYTONA_SANDBOX_CLASS,
+    image: optionalString(parsed.DAYTONA_SANDBOX_IMAGE) ?? "node:24.22.1-bookworm",
     resources: {
       cpu: Number(parsed.DAYTONA_SANDBOX_CPU ?? "2"),
       memory: Number(parsed.DAYTONA_SANDBOX_MEMORY ?? "4"),
@@ -908,6 +1024,7 @@ export const env = {
     },
     public: daytonaSandboxPublic,
     autoStopInterval: Number(parsed.DAYTONA_SANDBOX_AUTO_STOP_INTERVAL ?? "0"),
+    autoPauseInterval: parsed.DAYTONA_SANDBOX_AUTO_PAUSE_INTERVAL,
     autoArchiveInterval: Number(
       parsed.DAYTONA_SANDBOX_AUTO_ARCHIVE_INTERVAL ?? "10080",
     ),

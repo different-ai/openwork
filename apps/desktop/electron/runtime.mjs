@@ -1,3 +1,4 @@
+import { startupPhase, withStartupPhase } from "./startup-log.mjs";
 import { randomUUID, X509Certificate } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -9,11 +10,15 @@ import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 import {
+  deleteEnv,
   desktopBootstrapPath,
+  envKey,
+  mergeEnv,
   normalizeWorkspaceRootPath,
   openworkEnvStorePath,
   openworkServerConfigPath,
   resolveWorkspaceOpencodeConfigPath,
+  setEnv,
 } from "@openwork/paths";
 import {
   dedupeCertificates,
@@ -281,8 +286,17 @@ export function openworkInstallMarkerPaths({ userDataDir, serverConfigPath, env 
 }
 
 /**
- * New installs start on OpenCode v2; updates keep the engine they had. An
- * explicit OPENWORK_ENGINE_V2_PREVIEW (dev, evals) always wins.
+ * Migrate existing v1 installs in the background by default, independently of
+ * Den rollout policy. Explicit local engine/migration overrides always win.
+ * @returns {boolean | undefined}
+ */
+export function resolveDesktopEngineAutoUpgrade(env = process.env) {
+  if (env.OPENWORK_ENGINE_V2_PREVIEW?.trim() || env.OPENWORK_ENGINE_AUTO_UPGRADE !== undefined) return undefined;
+  return true;
+}
+
+/**
+ * Fresh installs can select v2 immediately; existing profiles migrate safely.
  * @param {{ markerPaths: string[], exists?: (filePath: string) => boolean, env?: NodeJS.ProcessEnv }} input
  * @returns {"v2" | undefined}
  */
@@ -308,31 +322,33 @@ export function resolveEvalLocalServerDelayMs(env = process.env) {
   return Number.isFinite(delayMs) && delayMs > 0 ? delayMs : 0;
 }
 
+// Saved variables never replace inherited ones. On Windows a saved `PATH` is
+// the inherited `Path`, so names compare case-insensitively there.
 export function reconcileInjectedUserEnv({
   processEnv,
   inheritedEnv,
   userEnv,
   previouslyInjectedKeys = new Set(),
+  platform = process.platform,
 }) {
+  const opts = { platform };
+  const inheritedKey = (key) => envKey(inheritedEnv, key, opts);
   for (const key of previouslyInjectedKeys) {
-    if (Object.prototype.hasOwnProperty.call(userEnv, key)) continue;
-    if (Object.prototype.hasOwnProperty.call(inheritedEnv, key)) {
-      processEnv[key] = inheritedEnv[key];
+    if (envKey(userEnv, key, opts) !== undefined) continue;
+    const inherited = inheritedKey(key);
+    if (inherited !== undefined) {
+      setEnv(processEnv, key, inheritedEnv[inherited], opts);
     } else {
-      delete processEnv[key];
+      deleteEnv(processEnv, key, opts);
     }
   }
 
   for (const [key, value] of Object.entries(userEnv)) {
-    if (Object.prototype.hasOwnProperty.call(inheritedEnv, key)) continue;
-    processEnv[key] = value;
+    if (inheritedKey(key) !== undefined) continue;
+    setEnv(processEnv, key, value, opts);
   }
 
-  return new Set(
-    Object.keys(userEnv).filter(
-      (key) => !Object.prototype.hasOwnProperty.call(inheritedEnv, key),
-    ),
-  );
+  return new Set(Object.keys(userEnv).filter((key) => inheritedKey(key) === undefined));
 }
 
 export function commandMatchesPackagedSidecar(command, sidecarDirs = []) {
@@ -571,26 +587,41 @@ async function readJsonFile(targetPath, fallback) {
   }
 }
 
-function targetTriple() {
-  if (process.platform === "darwin") {
-    return process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+function targetTriple(platform = process.platform, arch = process.arch) {
+  if (platform === "darwin") {
+    return arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
   }
-  if (process.platform === "linux") {
-    return process.arch === "arm64" ? "aarch64-unknown-linux-gnu" : "x86_64-unknown-linux-gnu";
+  if (platform === "linux") {
+    return arch === "arm64" ? "aarch64-unknown-linux-gnu" : "x86_64-unknown-linux-gnu";
   }
-  if (process.platform === "win32") {
-    return process.arch === "arm64" ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc";
+  if (platform === "win32") {
+    return arch === "arm64" ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc";
   }
   return null;
 }
 
-function binaryFileNames(baseName) {
-  const ext = process.platform === "win32" ? ".exe" : "";
-  const triple = targetTriple();
+function binaryFileNames(baseName, platform = process.platform, arch = process.arch) {
+  const ext = platform === "win32" ? ".exe" : "";
+  const triple = targetTriple(platform, arch);
   return [
-    triple ? `${baseName}-${triple}${ext}` : null,
     `${baseName}${ext}`,
+    triple ? `${baseName}-${triple}${ext}` : null,
   ].filter(Boolean);
+}
+
+export function bundledEngineEnv(sidecarDirs, { required = false, platform = process.platform, arch = process.arch } = {}) {
+  /** @type {NodeJS.ProcessEnv} */
+  const env = {};
+  for (const [base, key] of [["opencode", "OPENWORK_OPENCODE_BIN"], ["opencode2", "OPENWORK_OPENCODE2_BIN"]]) {
+    const candidates = sidecarDirs.flatMap((directory) =>
+      binaryFileNames(base, platform, arch).map((name) => path.resolve(directory, name)));
+    const binary = candidates.find((candidate) => {
+      try { return statSync(candidate).isFile(); } catch { return false; }
+    });
+    if (binary) env[key] = binary;
+    else if (required) throw new Error(`Missing packaged engine ${base}. Checked: ${candidates.join(", ")}`);
+  }
+  return env;
 }
 
 function isDirectory(targetPath) {
@@ -746,6 +777,13 @@ export function resolveUserEnvFilePath(env = process.env) {
 const USER_ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const USER_ENV_RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"];
 
+// Windows reads `opencode_config` as OPENCODE_CONFIG, so reserved prefixes
+// match case-insensitively there.
+export function isReservedUserEnvKey(key, platform = process.platform) {
+  const name = platform === "win32" ? key.toUpperCase() : key;
+  return USER_ENV_RESERVED_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
 // Synchronous, best-effort; absent or malformed returns {}. Reserved prefixes
 // are stripped so a tampered file can never shadow OPENWORK_* / OPENCODE_*.
 function loadUserEnvFile(env = process.env) {
@@ -759,7 +797,7 @@ function loadUserEnvFile(env = process.env) {
       const { key, value } = entry;
       if (typeof key !== "string" || typeof value !== "string") continue;
       if (!USER_ENV_KEY_PATTERN.test(key)) continue;
-      if (USER_ENV_RESERVED_PREFIXES.some((p) => key.startsWith(p))) continue;
+      if (isReservedUserEnvKey(key)) continue;
       out[key] = value;
     }
     return out;
@@ -1378,14 +1416,16 @@ export async function resolveSystemCaEnv(options) {
  * @param {NodeJS.ProcessEnv} [baseEnv]
  * @param {NodeJS.ProcessEnv} [caEnv]
  * @param {NodeJS.ProcessEnv} [extra]
+ * @param {NodeJS.Platform} [platform]
  * @returns {NodeJS.ProcessEnv}
  */
-export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
-  return {
-    ...baseEnv,
-    ...(Object.prototype.hasOwnProperty.call(baseEnv, "NODE_EXTRA_CA_CERTS") ? {} : caEnv),
-    ...extra,
-  };
+export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}, platform = process.platform) {
+  const opts = { platform };
+  return mergeEnv([
+    baseEnv,
+    envKey(baseEnv, "NODE_EXTRA_CA_CERTS", opts) === undefined ? caEnv : {},
+    extra,
+  ], opts);
 }
 
 export function createRuntimeManager({
@@ -1442,11 +1482,11 @@ export function createRuntimeManager({
   let systemCaPromise = null;
 
   function systemCa() {
-    systemCaPromise ??= resolveSystemCa({
+    systemCaPromise ??= withStartupPhase("ca.bundle", () => resolveSystemCa({
       tlsModule: tls,
       userDataDir,
-      parentEnv: { ...loadUserEnvFile(process.env), ...process.env },
-    });
+      parentEnv: mergeEnv([loadUserEnvFile(process.env), process.env]),
+    }));
     return systemCaPromise;
   }
 
@@ -1577,12 +1617,11 @@ export function createRuntimeManager({
       ? await ensureDevModePaths()
       : null;
     const userEnvPathEnv = devPaths
-      ? {
-          ...process.env,
+      ? mergeEnv([process.env, {
           HOME: devPaths.homeDir,
           USERPROFILE: devPaths.homeDir,
           XDG_CONFIG_HOME: devPaths.xdgConfigHome,
-        }
+        }])
       : process.env;
     const userEnv = loadUserEnvFile(userEnvPathEnv);
     injectedUserEnvKeys = reconcileInjectedUserEnv({
@@ -1591,36 +1630,30 @@ export function createRuntimeManager({
       userEnv,
       previouslyInjectedKeys: injectedUserEnvKeys,
     });
-    const baseEnv = {
-      ...userEnv,
-      ...process.env,
-      BUN_CONFIG_DNS_RESULT_ORDER: "verbatim",
-    };
-    const caEnv = Object.prototype.hasOwnProperty.call(baseEnv, "NODE_EXTRA_CA_CERTS") ? {} : (await systemCa()).childEnv;
+    // mergeEnv keeps one entry per Windows name, so a child never sees both a
+    // saved `PATH` and the inherited `Path` and picks one by spelling.
+    const baseEnv = mergeEnv([userEnv, process.env, { BUN_CONFIG_DNS_RESULT_ORDER: "verbatim" }]);
+    const caEnv = envKey(baseEnv, "NODE_EXTRA_CA_CERTS") === undefined ? (await systemCa()).childEnv : {};
     // Bun honors Node's NODE_EXTRA_CA_CERTS, so bundled Bun sidecars inherit
     // the exported OS trust store through the same child env variable.
     const env = mergeSystemCaChildEnv(baseEnv, caEnv, extra);
-    const pathKey =
-      Object.prototype.hasOwnProperty.call(env, "PATH") ||
-      !Object.prototype.hasOwnProperty.call(env, "Path")
-        ? "PATH"
-        : "Path";
+    const pathKey = envKey(env, "PATH") ?? "PATH";
     const pathEnv = enrichedPath(sidecarDirs, env[pathKey]);
     if (pathEnv) {
       env[pathKey] = pathEnv;
     }
-    if (devPaths) {
-      env.OPENWORK_DEV_MODE = "1";
-      env.HOME = devPaths.homeDir;
-      env.USERPROFILE = devPaths.homeDir;
-      env.XDG_CONFIG_HOME = devPaths.xdgConfigHome;
-      env.XDG_DATA_HOME = devPaths.xdgDataHome;
-      env.XDG_CACHE_HOME = devPaths.xdgCacheHome;
-      env.XDG_STATE_HOME = devPaths.xdgStateHome;
-      env.OPENCODE_CONFIG_DIR = devPaths.opencodeConfigDir;
-      env.OPENCODE_TEST_HOME = devPaths.homeDir;
-    }
-    return env;
+    if (!devPaths) return env;
+    return mergeEnv([env, {
+      OPENWORK_DEV_MODE: "1",
+      HOME: devPaths.homeDir,
+      USERPROFILE: devPaths.homeDir,
+      XDG_CONFIG_HOME: devPaths.xdgConfigHome,
+      XDG_DATA_HOME: devPaths.xdgDataHome,
+      XDG_CACHE_HOME: devPaths.xdgCacheHome,
+      XDG_STATE_HOME: devPaths.xdgStateHome,
+      OPENCODE_CONFIG_DIR: devPaths.opencodeConfigDir,
+      OPENCODE_TEST_HOME: devPaths.homeDir,
+    }]);
   }
 
   function resolveBinaryInfo(baseName, extraPaths = []) {
@@ -1666,6 +1699,12 @@ export function createRuntimeManager({
   }
 
   function resolveOpencodeBinary(opencodeBinPath) {
+    const end = startupPhase("engine.v1.resolve");
+    try { const result = resolveOpencodeBinaryInner(opencodeBinPath); end(); return result; }
+    catch (error) { end(true); throw error; }
+  }
+
+  function resolveOpencodeBinaryInner(opencodeBinPath) {
     const explicitPath = typeof opencodeBinPath === "string" ? opencodeBinPath.trim() : "";
     return explicitPath ? { path: explicitPath, source: "custom" } : resolveBinaryInfo("opencode");
   }
@@ -1857,7 +1896,7 @@ export function createRuntimeManager({
     // The inner start stops any previous runtime before mutating state, so a
     // throw below always happens with nothing left running.
     try {
-      return await startOpenworkServerInner(options);
+      return await withStartupPhase("server.start", () => startOpenworkServerInner(options));
     } catch (error) {
       resetRuntimeStatesAfterFailedServerStart(openworkServerState, engineState, options);
       throw error;
@@ -1887,8 +1926,12 @@ export function createRuntimeManager({
       engineState.opencodeBinSource = managedOpencode?.source ?? null;
     }
 
-    // Inject user env vars so the server and managed OpenCode inherit them.
-    const serverEnv = await buildChildEnv({});
+    // The embedded server resolves v2 independently of v1. Give both engines
+    // absolute bundled paths before loading it, never a PATH/cache download.
+    // Keep triple-name support for dev and older packaged layouts.
+    const engineEnv = bundledEngineEnv(sidecarDirs, { required: app.isPackaged });
+    if (managedOpencode) engineEnv.OPENWORK_OPENCODE_BIN = managedOpencode.path;
+    const serverEnv = await buildChildEnv(engineEnv);
     Object.assign(process.env, serverEnv);
 
     // Once the embedded server has a persisted registry, it is the source of
@@ -1950,6 +1993,7 @@ export function createRuntimeManager({
       localManagedMcpVaultKey,
       anonymousInference,
       freshInstallEngine,
+      engineAutoUpgrade: resolveDesktopEngineAutoUpgrade(),
     });
     inProcessServer = handle;
     openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;
@@ -2183,6 +2227,10 @@ export function createRuntimeManager({
   }
 
   async function engineRestart(options = {}) {
+    return withStartupPhase("engine.restart.requested", () => engineRestartInner(options), options.diagnosticsCause ?? "requested");
+  }
+
+  async function engineRestartInner(options = {}) {
     const projectDir = engineState.projectDir;
     if (!projectDir) {
       throw new Error("OpenCode is not configured for a local workspace");
@@ -2216,6 +2264,10 @@ export function createRuntimeManager({
   }
 
   async function openworkServerRestart(options = {}) {
+    return withStartupPhase("server.restart.requested", () => openworkServerRestartInner(options), options.diagnosticsCause ?? "requested");
+  }
+
+  async function openworkServerRestartInner(options = {}) {
     const workspacePaths = prioritizeWorkspacePaths(engineState.projectDir, await listLocalWorkspacePaths(), {
       platform: workspacePlatform,
     });

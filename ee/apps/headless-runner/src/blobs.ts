@@ -1,22 +1,27 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, join, resolve, sep } from "node:path"
 import { AwsClient } from "aws4fetch"
 
 /**
  * Where saved files' bytes live. The runner keeps each file's name, type and owner in SQLite and only the
- * bytes here, so any backend works: a folder on the runner's disk, any S3-compatible bucket (AWS S3,
- * Cloudflare R2, MinIO, Tigris, Backblaze B2, Google Cloud Storage's XML API), or a private Vercel Blob store.
+ * bytes here: a folder on the runner's disk (development and single-disk installs), or any S3-compatible bucket
+ * (AWS S3, Cloudflare R2, MinIO, Tigris, Backblaze B2, Google Cloud Storage's XML API), which every host can share.
  * Files are optional: with no store configured, the file routes and tools are simply not offered.
  *
  * Keys are `sessions/<sessionId>/<fileId>` (plus `.preview/...` for page images); the runner only ever reads a
  * key it recorded for that session, so one conversation can never name another's bytes.
  */
 export type BlobStore = {
-  kind: "disk" | "s3" | "vercel"
+  kind: "disk" | "s3"
   put(key: string, bytes: Uint8Array<ArrayBuffer>, contentType: string): Promise<void>
   /** Null when the object does not exist. */
   get(key: string): Promise<Uint8Array<ArrayBuffer> | null>
   delete(key: string): Promise<void>
+  /**
+   * Every object under a prefix, with when it was last written (epoch ms): for orphan cleanup of sealed segments and
+   * large bodies (storage/), which deletes only old objects nothing references. Optional for test stores.
+   */
+  list?(prefix: string): Promise<Array<{ key: string; lastModified: number }>>
 }
 
 /** Keys are runner-generated (`sessions/<id>/<fileId>`); this only guards against a key escaping the folder. */
@@ -49,6 +54,24 @@ export function diskBlobStore(directory: string): BlobStore {
     },
     async delete(key) {
       await rm(pathOf(key), { force: true })
+    },
+    async list(prefix) {
+      const folder = prefix.endsWith("/") ? prefix.slice(0, -1) : dirname(prefix)
+      const found: Array<{ key: string; lastModified: number }> = []
+      let entries: string[]
+      try {
+        entries = await readdir(pathOf(folder), { recursive: true })
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return []
+        throw error
+      }
+      for (const entry of entries) {
+        const key = `${folder}/${entry.split(sep).join("/")}`
+        if (!key.startsWith(prefix)) continue
+        const info = await stat(pathOf(key)).catch(() => null)
+        if (info?.isFile()) found.push({ key, lastModified: info.mtimeMs })
+      }
+      return found
     },
   }
 }
@@ -114,44 +137,34 @@ export function s3BlobStore(options: S3Options): BlobStore {
       if (!response.ok && response.status !== 404) throw await fail("delete", response)
       await response.body?.cancel()
     },
+    // ListObjectsV2, page by page.
+    async list(prefix) {
+      safeKey(prefix.replace(/\/$/, ""))
+      const bucketUrl = options.forcePathStyle ? `${base.origin}/${encodeURIComponent(options.bucket)}` : `${base.protocol}//${options.bucket}.${base.host}/`
+      const found: Array<{ key: string; lastModified: number }> = []
+      let token: string | null = null
+      for (let page = 0; page < 1_000; page += 1) {
+        const url = new URL(bucketUrl)
+        url.searchParams.set("list-type", "2")
+        url.searchParams.set("prefix", prefix)
+        if (token) url.searchParams.set("continuation-token", token)
+        const request = await client.sign(url.toString(), { method: "GET" })
+        const response = await (options.fetch ?? fetch)(request, { signal: AbortSignal.timeout(S3_TIMEOUT_MS) })
+        if (!response.ok) throw await fail("list", response)
+        const xml = await response.text()
+        for (const match of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+          const key = xmlText(/<Key>([\s\S]*?)<\/Key>/.exec(match[1] ?? "")?.[1])
+          const modified = Date.parse(xmlText(/<LastModified>([\s\S]*?)<\/LastModified>/.exec(match[1] ?? "")?.[1]))
+          if (key) found.push({ key, lastModified: Number.isFinite(modified) ? modified : 0 })
+        }
+        token = /<IsTruncated>true<\/IsTruncated>/.test(xml) ? xmlText(/<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(xml)?.[1]) || null : null
+        if (!token) break
+      }
+      return found
+    },
   }
 }
 
-const VERCEL_BLOB_TIMEOUT_MS = 120_000
-/** Larger uploads go in parallel parts, as Vercel recommends for big files. */
-const VERCEL_MULTIPART_BYTES = 64 * 1024 * 1024
-
-/**
- * A private Vercel Blob store (`HEADLESS_FILES=vercel`): every read and write needs its read-write token, which is
- * scoped to that one store. The token is always passed explicitly, so the SDK never falls back to whatever
- * BLOB_READ_WRITE_TOKEN or OIDC credentials happen to be in the environment. Reads skip the CDN cache so a file
- * revised in place is never served stale. The SDK is loaded only when this store is configured.
- */
-export async function vercelBlobStore(options: { token: string }): Promise<BlobStore> {
-  const { del, get, put } = await import("@vercel/blob")
-  const { token } = options
-  const signal = () => AbortSignal.timeout(VERCEL_BLOB_TIMEOUT_MS)
-  return {
-    kind: "vercel",
-    async put(key, bytes, contentType) {
-      await put(safeKey(key), Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), {
-        access: "private",
-        token,
-        contentType,
-        addRandomSuffix: false,
-        allowOverwrite: true,
-        multipart: bytes.byteLength > VERCEL_MULTIPART_BYTES,
-        abortSignal: signal(),
-      })
-    },
-    async get(key) {
-      const result = await get(safeKey(key), { access: "private", token, useCache: false, abortSignal: signal() })
-      if (!result || result.statusCode !== 200 || !result.stream) return null
-      return new Uint8Array(await new Response(result.stream).arrayBuffer())
-    },
-    async delete(key) {
-      // Succeeds when the blob is already gone.
-      await del(safeKey(key), { token, abortSignal: signal() })
-    },
-  }
+function xmlText(value: string | undefined) {
+  return (value ?? "").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&amp;", "&")
 }

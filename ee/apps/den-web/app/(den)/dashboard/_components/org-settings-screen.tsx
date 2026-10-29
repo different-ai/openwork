@@ -19,7 +19,8 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 import { OrgWebOriginsSection } from "./org-web-origins-section";
 import { OrgDefaultModelSection } from "./default-model-section";
-import { useDefaultModelFeatureOn } from "./default-model-data";
+import { OrgAutomationSettingsSection } from "./org-automation-settings-section";
+import { SettingsToggle } from "./settings-toggle";
 import {
   allPublishedDesktopVersionsAllowed,
   compareDesktopVersions,
@@ -50,44 +51,6 @@ function toggleAllowedDesktopVersion(
   }
 
   return current.filter((entry) => entry !== version);
-}
-
-function SettingsToggle({
-  label,
-  checked,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (nextValue: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={[
-        "relative inline-flex h-7 w-12 items-center rounded-full border transition-colors",
-        checked
-          ? "border-[#0f172a] bg-[#0f172a]"
-          : "border-gray-200 bg-gray-200",
-        disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
-      ].join(" ")}
-    >
-      <span
-        aria-hidden="true"
-        className={[
-          "inline-block h-5 w-5 rounded-full bg-white transition-transform",
-          checked ? "translate-x-6" : "translate-x-1",
-        ].join(" ")}
-      />
-    </button>
-  );
 }
 
 function DeleteOrganizationDialog({
@@ -238,8 +201,8 @@ export function OrgSettingsScreen() {
     orgContext?.currentMember.permissions,
   );
   const canManageSettings = access.canManageSettings;
-  // orgDefaultModel: admins choose the model new desktop chats start with.
-  const defaultModelOn = useDefaultModelFeatureOn();
+  // admins choose the model new desktop chats start with.
+
   const canManageDesktopVersions = access.canManageSettings;
   const canDeleteOrganization = access.canDeleteOrganization;
   const draftAllowedDomains = useMemo(
@@ -700,6 +663,8 @@ export function OrgSettingsScreen() {
           </div>
         </DenCard>
 
+        <OrgAutomationSettingsSection canManage={canManageSettings} />
+
         <DenCard size="spacious" className="grid gap-6">
           <div className="grid gap-2">
             <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
@@ -816,7 +781,7 @@ export function OrgSettingsScreen() {
         </div>
       </form>
 
-      {defaultModelOn && access.canViewModelsSettings ? (
+      {access.canViewModelsSettings ? (
         <OrgDefaultModelSection canManage={access.canManageModelsSettings} />
       ) : null}
 

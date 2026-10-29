@@ -21,6 +21,7 @@ const { auth } = await import("../src/auth.js")
 await auth.$context
 bootstrapSelect.mock.restore()
 const { cache, setCacheDependenciesForTest } = await import("../src/cache.js")
+const { sealSessionTokenDigest, sessionTokenDigest } = await import("../src/session-token.js")
 
 /** In-memory Redis with the Lua tombstone check; `refuseWrites` mimics a full Redis that still accepts deletes. */
 function fakeRedis() {
@@ -103,13 +104,51 @@ test("revoking a session clears its cache entry even when Redis refuses the tomb
   const restore = setCacheDependenciesForTest({ redis, authSessionLoader: async () => sessionRow(token) })
   try {
     assert.ok(await cache.auth.session(token))
-    assert.ok(redis.values.has(`cache:auth:session:${token}`))
+    assert.ok(redis.values.has(`cache:auth:session:${sessionTokenDigest(token)}`))
 
     redis.refuseWrites = true
     await cache.auth.revokeSession(token)
-    assert.equal(redis.values.has(`cache:auth:session:${token}`), false)
+    assert.equal(redis.values.has(`cache:auth:session:${sessionTokenDigest(token)}`), false)
   } finally {
     restore()
+  }
+})
+
+test("the session cache is keyed by the token's hash and never holds the token", async () => {
+  const token = "CacheKeyT0kenCacheKeyT0kenCacheK"
+  const redis = fakeRedis()
+  let loads = 0
+  const restore = setCacheDependenciesForTest({ redis, authSessionLoader: async (presented) => {
+    loads += 1
+    return presented === token ? sessionRow(token) : null
+  } })
+  try {
+    assert.equal((await cache.auth.session(token))?.session.token, token)
+    assert.deepEqual([...redis.values.keys()], [`cache:auth:session:${sessionTokenDigest(token)}`])
+    assert.equal([...redis.values.values()].some((value) => value.includes(token)), false)
+
+    // A hit comes back with the caller's token; the hash is just another unknown token.
+    assert.equal((await cache.auth.session(token))?.session.token, token)
+    assert.equal(loads, 1)
+    assert.equal(await cache.auth.session(sessionTokenDigest(token)), null)
+  } finally {
+    restore()
+  }
+})
+
+test("revoking by the stored hash or a sealed reference clears the caller's cache entry", async () => {
+  const token = "StoredF0rmT0kenStoredF0rmT0kenSt"
+  for (const form of [sessionTokenDigest(token), sealSessionTokenDigest("unit-secret", sessionTokenDigest(token))]) {
+    const redis = fakeRedis()
+    const restore = setCacheDependenciesForTest({ redis, authSessionLoader: async () => sessionRow(token) })
+    try {
+      assert.ok(await cache.auth.session(token))
+      await cache.auth.revokeSession(form)
+      assert.equal(redis.values.has(`cache:auth:session:${sessionTokenDigest(token)}`), false)
+      assert.equal(await cache.auth.session(token), null)
+    } finally {
+      restore()
+    }
   }
 })
 

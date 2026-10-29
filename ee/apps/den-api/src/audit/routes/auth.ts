@@ -71,7 +71,7 @@ function tenant(method: AuditRouteMethod, path: string, cls: AuditRouteClass, ac
   return declare(method, path, cls, action, kind, type, idParam, "handler", extra)
 }
 
-const ORG_READ = "hooks.before (audit/better-auth.ts): org = query organizationId (get-full-organization: organizationSlug lookup), else the session's activeOrganizationId, used only once the cookie session user's active membership in it is confirmed; actor = session user + memberId."
+const ORG_READ = "hooks.before (audit/better-auth.ts): org = query organizationId (get-full-organization and get-organization: organizationSlug lookup), else the session's activeOrganizationId, used only once the cookie session user's active membership in it is confirmed; actor = session user + memberId."
 const SCIM_READ = "hooks.before: the organization part of the SCIM bearer only selects the organization lookup; for an existing organization the token is verified through resolveScimProviderFromBearerToken -> provider.organizationId (must match); actor service scim:<providerId>. Invalid tokens stay unattributed (platform store)."
 const SSO_CALLBACK = "hooks.after, phase after, only when ctx.context.newSession exists: org = sso_provider.organizationId of the :providerId that validated the assertion; actor = newSession user (+ member id once JIT provisioning made one). Failed callbacks stay platform (provider id is caller-controlled until validated). The created session also records session.created (method sso) through databaseHooks.session.create.after in the session's own activeOrganizationId (its own operation; may differ from the provider's organization)."
 const OAUTH_TOKENS = "audit/domain/oauth-tokens.ts"
@@ -139,6 +139,8 @@ export const authAuditRoutes: readonly AuditRouteDeclaration[] = [
   platform("GET", "/oauth2/userinfo", "auth.oauth.userinfo.read", "platform.oauth", "user", null, "Bearer-authenticated user info."),
   platform("POST", "/oauth2/userinfo", "auth.oauth.userinfo.read_post", "platform.oauth", "user", null, "Bearer-authenticated user info (POST variant)."),
   userScoped("GET", "/oauth2/end-session", "auth.oauth.session.end", "platform.oauth", "session", null, SESSIONS, `${SESSION_REVOKE} RP-initiated logout. The id_token_hint carries no organization claim (customAccessTokenClaims only shapes access tokens), so the request stays platform evidence; the ended session records session.revoked (reasonCode end_session) through databaseHooks.session.delete.after in its own organization (or every active membership).`),
+  userScoped("POST", "/oauth2/end-session", "auth.oauth.session.end", "platform.oauth", "session", null, SESSIONS, `${SESSION_REVOKE} Form-post variant of GET /oauth2/end-session (RP-initiated logout); same attribution and session.revoked evidence.`),
+  userScoped("POST", "/oauth2/end-session/confirm", "auth.oauth.session.end_confirm", "platform.oauth", "session", null, SESSIONS, `${SESSION_REVOKE} Submits the logout confirmation page that end-session shows; the ended session records session.revoked (reasonCode end_session) through databaseHooks.session.delete.after, as for end-session.`),
   readOnly("/oauth2/public-client", "auth.oauth.public_client.read", "platform.oauth", "oauth_client", null, ANONYMOUS),
   platform("POST", "/oauth2/public-client-prelogin", "auth.oauth.public_client.prelogin_read", "platform.oauth", "oauth_client", null, ANONYMOUS),
   platform("POST", "/oauth2/create-client", "auth.oauth.client.create", "platform.oauth", "oauth_client", null, `${TOKEN} ${USER_ONLY} Alternate client creation path to POST /api/auth/oauth2/register.`),
@@ -157,8 +159,8 @@ export const authAuditRoutes: readonly AuditRouteDeclaration[] = [
   platform("GET", "/device", "auth.device.verify", "platform.device", "device_code", null, ANONYMOUS),
   platform("POST", "/device/code", "auth.device.code.issue", "platform.device", "device_code", null, ANONYMOUS),
   userScoped("POST", "/device/token", "auth.device.token.issue", "platform.device", "device_code", null, SESSIONS, `${TOKEN} Session org is staged from the Den decision (stageDeviceSessionOrganization); the poller has no verified tenant actor, so request evidence stays platform. ${SESSION_CREATED} (method device)`),
-  platform("POST", "/device/approve", "auth.device.approve", "platform.device", "device_code", null, `${TOKEN} ${USER_ONLY} Kept platform: the raw endpoint stages no organization (it writes status/userId only; device_code.organizationId is set solely by Den POST /v1/auth/device/decision, which is already attributed to the chosen member's organization before the code is decided). A code decided through Den is no longer pending, so this endpoint cannot act on a staged organization.`),
-  platform("POST", "/device/deny", "auth.device.deny", "platform.device", "device_code", null, `${USER_ONLY} Kept platform: denial binds no organization (Den POST /v1/auth/device/decision is the org-aware path).`),
+  refused("/device/approve", "auth.device.approve", "device_code", "Den POST /v1/auth/device/decision (the /device page, after showing the requesting client)"),
+  refused("/device/deny", "auth.device.deny", "device_code", "Den POST /v1/auth/device/decision"),
   // Organization plugin: user-scoped
   platform("POST", "/organization/create", "auth.organization.create", "platform.organization", "organization", null, "Creates a new org that has no audit policy yet; alternate route to POST /v1/org."),
   readOnly("/organization/list", "auth.organization.list", "platform.organization", "organization", null, USER_ONLY),
@@ -176,6 +178,7 @@ export const authAuditRoutes: readonly AuditRouteDeclaration[] = [
   }),
   tenant("POST", "/organization/set-active", "tenant_change", "auth.organization.active.set", "organization.session", "organization", null, { changeEvidence: SESSIONS, notes: "Alternate route to POST /v1/me/active-organization. hooks.before attributes once the session user's active membership in body.organizationId (or organizationSlug) is confirmed; clearing the active organization (null) is not attributed. On success hooks.after appends session.organization_entered (via active_organization) in the destination organization only, inside the request operation when it is captured; the previous organization is never recorded and an unchanged organization records nothing." }),
   tenant("GET", "/organization/get-full-organization", "tenant_read", "auth.organization.read", "organization.read", "organization", null, { notes: ORG_READ }),
+  tenant("GET", "/organization/get-organization", "tenant_read", "auth.organization.read", "organization.read", "organization", null, { notes: ORG_READ }),
   tenant("GET", "/organization/list-members", "tenant_read", "auth.organization.member.list", "organization.read", "member", null, { notes: ORG_READ }),
   tenant("GET", "/organization/list-invitations", "tenant_read", "auth.organization.invitation.list", "organization.read", "invitation", null, { notes: ORG_READ }),
   tenant("GET", "/organization/get-active-member", "tenant_read", "auth.organization.active_member.read", "organization.read", "member", null, { notes: ORG_READ }),

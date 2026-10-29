@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM node:22-bookworm-slim
+FROM node:24.22.1-bookworm-slim
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends g++ make python3 \
@@ -34,6 +34,7 @@ COPY packages/mcp-apps/package.json /app/packages/mcp-apps/package.json
 # for workspace resolution.
 COPY packages/paths/package.json /app/packages/paths/package.json
 COPY packages/browser-tabs/package.json /app/packages/browser-tabs/package.json
+COPY packages/computer-use/package.json /app/packages/computer-use/package.json
 # The root workspace declares the shared evaluator helpers as dev dependencies.
 # Their manifests must be present even though the Den API image does not build
 # or ship their source.
@@ -46,9 +47,12 @@ COPY ee/packages/headless-protocol/package.json /app/ee/packages/headless-protoc
 COPY ee/packages/cloud-runtime/package.json /app/ee/packages/cloud-runtime/package.json
 COPY packages/sandbox/package.json /app/packages/sandbox/package.json
 COPY packages/sandbox-daytona/package.json /app/packages/sandbox-daytona/package.json
+COPY packages/sandbox-freestyle/package.json /app/packages/sandbox-freestyle/package.json
 COPY ee/packages/den-db/package.json /app/ee/packages/den-db/package.json
 COPY ee/packages/telemetry-contracts/package.json /app/ee/packages/telemetry-contracts/package.json
 COPY ee/packages/telemetry/package.json /app/ee/packages/telemetry/package.json
+COPY packages/workbook/package.json /app/packages/workbook/package.json
+COPY packages/documents/package.json /app/packages/documents/package.json
 COPY ee/apps/den-api/package.json /app/ee/apps/den-api/package.json
 
 RUN pnpm install --frozen-lockfile --trust-lockfile
@@ -68,6 +72,7 @@ COPY packages/remote-sessions /app/packages/remote-sessions
 COPY packages/mcp-apps /app/packages/mcp-apps
 COPY packages/paths /app/packages/paths
 COPY packages/browser-tabs /app/packages/browser-tabs
+COPY packages/computer-use /app/packages/computer-use
 COPY ee/packages/utils /app/ee/packages/utils
 COPY ee/packages/headless-protocol /app/ee/packages/headless-protocol
 COPY ee/packages/cloud-runtime /app/ee/packages/cloud-runtime
@@ -76,6 +81,8 @@ COPY packages/sandbox-daytona /app/packages/sandbox-daytona
 COPY ee/packages/den-db /app/ee/packages/den-db
 COPY ee/packages/telemetry-contracts /app/ee/packages/telemetry-contracts
 COPY ee/packages/telemetry /app/ee/packages/telemetry
+COPY packages/workbook /app/packages/workbook
+COPY packages/documents /app/packages/documents
 COPY ee/apps/den-api /app/ee/apps/den-api
 COPY apps/desktop/package.json /app/apps/desktop/package.json
 
@@ -104,6 +111,10 @@ RUN --mount=type=secret,id=sentry_auth_token,required=false \
     : "$DEN_SENTRY_UPLOAD_BUILD_ID"; \
   fi; \
   pnpm --dir /app/ee/apps/den-api run build
+
+# Load the workspace exports the built service imports, the way production starts. Its own step: it runs those
+# modules' code, so no build secrets are mounted here.
+RUN pnpm --dir /app/ee/apps/den-api run check:runtime-imports
 
 EXPOSE 8788
 

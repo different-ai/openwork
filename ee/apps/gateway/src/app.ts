@@ -61,6 +61,13 @@ if (env.corsOrigins.length > 0) {
 
 app.get("/health", (c) => c.json({ ok: true, service: "gateway" }));
 
+// Auto Model Routing readiness for Den: whether this gateway has its TypeSafe
+// (Jev) key. A boolean only; the key itself never leaves the gateway.
+app.get("/auto-router/status", (c) => {
+  c.header("cache-control", "no-store");
+  return c.json({ routingConfigured: Boolean(env.autoRouter.typesafeApiKey) });
+});
+
 app.get("/ready", async (c) => {
   try {
     await db.execute(sql`select 1`);

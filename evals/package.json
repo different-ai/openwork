@@ -13,6 +13,7 @@
     "evidence:judge": "node packages/test-evidence/bin/test-evidence-judge.mjs",
     "design:review": "node packages/test-evidence/bin/test-evidence-design-review.mjs",
     "provision:org-connector-two-members": "node scripts/provision-org-connector-two-members.ts",
+    "agent:replay": "node scripts/agent-replay.ts",
     "lint:layers": "depcruise --config .dependency-cruiser.cjs --ignore-known .dependency-cruiser-known-violations.json packages core proofs worlds bin docs-shots runner scripts ../scenarios",
     "check": "pnpm run check:browser && pnpm run lint:layers && pnpm run lint:specs",
     "lint:specs": "node scripts/spec-lint/cli.ts",
@@ -38,13 +39,13 @@
     "@openwork/world": "link:../packages/world"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "dependency-cruiser": "18.1.0",
     "typescript": "^5.9.3",
-    "vite": "^6.4.3",
-    "vitest": "^4.1.11",
+    "vite": "^6.4.4",
+    "vitest": "^4.1.12",
     "xml-crypto": "6.1.2",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "packageManager": "pnpm@11.4.0"
 }

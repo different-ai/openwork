@@ -340,7 +340,7 @@ function spawnDetached(command: string, args: string[], { cwd, env, logPath }: S
   return { child, pid: child.pid, exit };
 }
 
-function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headless: boolean, mouse: boolean): string[] {
+function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headless: boolean, mouse: boolean, hostRules?: string): string[] {
   const args = [
     `--remote-debugging-port=${cdpPort}`,
     `--user-data-dir=${profileDir}`,
@@ -352,6 +352,10 @@ function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headl
     // Avoid the Daytona preview h2 stall when ~28 dev chunks multiplex; h1.1 loads them, while plain-http local Den never negotiates h2.
     "--disable-http2",
     ...(mouse ? [MOUSE_POINTER_CHROME_ARG] : []),
+    ...(hostRules ? [`--host-resolver-rules=${hostRules}`] : []),
+    // Recordings: a real 2x display, so screencast frames carry device pixels (an emulated
+    // deviceScaleFactor alone still yields 1x screencast frames).
+    ...(/^[1-4]$/.test(process.env.OPENWORK_EVAL_CHROME_SCALE ?? "") ? [`--force-device-scale-factor=${process.env.OPENWORK_EVAL_CHROME_SCALE}`] : []),
     startUrl,
   ];
   // Match Linux/Windows' classic gutter on headless macOS too, without changing
@@ -411,8 +415,9 @@ async function prepareSharedElectronResources(repoRoot: string, log: (message: s
     prepareSharedResourcesPromise = (async () => {
       const desktopRoot = join(repoRoot, "apps", "desktop");
       const scriptsRoot = join(desktopRoot, "scripts");
-      log("Preparing shared Electron sidecars once for local eval surfaces...");
+      log("Preparing shared Electron sidecars/helpers once for local eval surfaces...");
       await runPrepareScript(join(scriptsRoot, "prepare-sidecar.mjs"), join(desktopRoot, "resources", "sidecars"), desktopRoot);
+      await runPrepareScript(join(scriptsRoot, "prepare-computer-use-helper.mjs"), join(desktopRoot, "resources", "helpers"), desktopRoot);
     })();
   }
   await prepareSharedResourcesPromise;
@@ -533,6 +538,9 @@ export function electronSurfaceEnv(
     OPENWORK_DEV_MODE: "1",
     OPENWORK_ENV_STORE: paths.envStorePath,
     OPENCODE_CONFIG_DIR: paths.opencodeConfigDir,
+    // The bundled engine resolves its discovery home separately from HOME.
+    // Do not read/install into the runner's or developer's real ~/.opencode.
+    OPENCODE_TEST_HOME: paths.homeDir,
     VITE_DISABLE_OPENWORK_MODELS: "1",
     OPENWORK_ELECTRON_APP_IDENTIFIER: options.appIdentifier,
     OPENWORK_ELECTRON_APP_NAME: options.appName,
@@ -990,10 +998,14 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
     },
 
     async spawnChrome(name: string, opts: ChromeSurfaceOptions = {}): Promise<SurfaceHandle> {
-      await pruneStaleSurfaceProfiles(rootDir, { live: liveProfileRoots, log });
-      const profileRoot = resolve(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
-      registerLiveProfileRoot(profileRoot);
-      const profileDir = join(profileRoot, "chrome-profile");
+      if (opts.profileDir !== undefined && !opts.profileDir.trim()) {
+        throw new Error("Chrome profileDir must not be empty.");
+      }
+      const callerOwnedProfile = opts.profileDir !== undefined;
+      if (!callerOwnedProfile) await pruneStaleSurfaceProfiles(rootDir, { live: liveProfileRoots, log });
+      const profileRoot = opts.profileDir ?? resolve(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
+      if (!callerOwnedProfile) registerLiveProfileRoot(profileRoot);
+      const profileDir = opts.profileDir ?? join(profileRoot, "chrome-profile");
       await mkdir(profileDir, { recursive: true });
       const cdpPort = await allocateFreePort();
       const binary = resolveChromeBinary(process.env, process.platform);
@@ -1006,7 +1018,7 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
           await mkdir(join(profileDir, "Default"), { recursive: true });
           await writeFile(join(profileDir, "Default", "Preferences"), JSON.stringify({ intl: { accept_languages: "en-US,en", selected_languages: "en-US,en" } }), "utf8");
         }
-        const spawned = spawnDetached(binary, chromeArgs(cdpPort, profileDir, startUrl, headless, opts.mouse === true), { cwd: profileRoot, env, logPath });
+        const spawned = spawnDetached(binary, chromeArgs(cdpPort, profileDir, startUrl, headless, opts.mouse === true, opts.hostRules), { cwd: profileRoot, env, logPath });
         await writeFile(join(profileDir, "openwork-eval-chrome.pid"), `${spawned.pid}\n`, "utf8");
         try {
           await waitForCdpOrExit("Chrome", cdpUrl, spawned, logPath);
@@ -1033,7 +1045,7 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
         cdpUrl,
         pid: spawned.pid,
         profileDir,
-        meta: { cdpPort: String(cdpPort), log: logPath, profileRoot },
+        meta: { cdpPort: String(cdpPort), log: logPath, profileRoot, profileOwner: callerOwnedProfile ? "caller" : "host" },
       };
       spawnedSurfaces.add(handle);
       return handle;

@@ -1,12 +1,12 @@
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 
-import { classifyOpenTarget, isOpenableFileTarget, openTargetFromUrl, type OpenTarget } from "./open-target";
+import { classifyOpenTarget, filePathFromLinkHref, isOpenableFileTarget, openTargetFromUrl, type OpenTarget } from "./open-target";
 
 export function openTargetForHref(href: string, targets: OpenTarget[], root?: string): OpenTarget | null {
   const url = openTargetFromUrl(href);
   if (url) return url;
   if (!href.trim() || href.trim().startsWith("#")) return null;
-  const value = href.trim().replace(/^\.\//, "");
+  const value = filePathFromLinkHref(href).replace(/^\.\//, "");
   const path = localArtifactPath(root, value);
   if (!path && !localArtifactPath("/", value)) return null;
   const exact = targets.find((target) => target.kind === "file"
@@ -54,13 +54,14 @@ export function localArtifactPath(root: string | null | undefined, value: string
   if (!path || !isLocal(path)) return null;
   if (isAbsolute(path)) return path;
   // Validate decoded components without changing the literal filesystem name.
+  let decoded = path;
   try {
-    const decoded = decodeURIComponent(path);
-    if (!isLocal(decoded) || isAbsolute(decoded)
-      || decoded.split(/[/\\]/).some((segment) => !segment || /^\.{1,2}\s*$/.test(segment))) return null;
+    decoded = decodeURIComponent(path);
   } catch {
-    return null;
+    // A literal percent sign is part of the name (`50% off.pdf`).
   }
+  if (!isLocal(decoded) || isAbsolute(decoded)
+    || decoded.split(/[/\\]/).some((segment) => !segment || /^\.{1,2}\s*$/.test(segment))) return null;
   const base = root?.trim();
   if (!base || !isAbsolute(base) || !isLocal(base) || path.startsWith("~")) return null;
   return `${base.replace(/[/\\]+$/, "")}/${path}`;
@@ -109,9 +110,10 @@ export async function resolveCollectibleOpenTarget(
   client: ArtifactTargetResolver,
   workspaceId: string,
   target: OpenTarget,
+  sessionId?: string | null,
 ): Promise<OpenTarget | null> {
   if (target.kind !== "file") return null;
 
-  const response = await client.resolveArtifacts(workspaceId, [target]);
+  const response = await client.resolveArtifacts(workspaceId, [target], { sessionId: sessionId ?? undefined });
   return response.items.find(isWorkspaceContainedArtifactTarget) ?? null;
 }

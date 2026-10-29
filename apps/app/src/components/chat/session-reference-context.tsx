@@ -3,15 +3,22 @@ import { currentLocale } from "@/i18n";
 import {
   createSessionReferenceIndex,
   type SessionReference,
+  type SessionReferenceCandidate,
   type SessionReferenceIdentity,
   type SessionReferenceInventory,
 } from "./session-reference";
 
-export type { SessionReference, SessionReferenceIdentity, SessionReferenceInventory } from "./session-reference";
+export type { SessionReference, SessionReferenceCandidate, SessionReferenceIdentity, SessionReferenceInventory } from "./session-reference";
 
 export type SessionReferences = {
   resolve: (rawHrefOrId: string) => SessionReference | undefined;
   openReference: (reference: SessionReferenceIdentity) => void;
+  /**
+   * Tasks the person can refer to right now, read when called so the `#`
+   * picker sees fresh titles without re-rendering every message on each
+   * session event. Only tasks that also resolve as links are returned.
+   */
+  candidates: () => readonly SessionReferenceCandidate[];
 };
 
 export type SessionReferenceProviderProps = {
@@ -34,10 +41,10 @@ export function SessionReferenceProvider({
   const retainedIndex = React.useRef(nextIndex);
   if (retainedIndex.current.revision !== nextIndex.revision) retainedIndex.current = nextIndex;
   const index = retainedIndex.current;
-  const latest = React.useRef({ index, isReferenceCurrent, onOpenReference });
+  const latest = React.useRef({ index, freshIndex: nextIndex, isReferenceCurrent, onOpenReference });
   React.useLayoutEffect(() => {
-    latest.current = { index, isReferenceCurrent, onOpenReference };
-  }, [index, isReferenceCurrent, onOpenReference]);
+    latest.current = { index, freshIndex: nextIndex, isReferenceCurrent, onOpenReference };
+  }, [index, nextIndex, isReferenceCurrent, onOpenReference]);
   React.useLayoutEffect(() => () => {
     latest.current = { ...latest.current, isReferenceCurrent: () => false };
   }, []);
@@ -47,13 +54,20 @@ export function SessionReferenceProvider({
     if (!resolved || (current.isReferenceCurrent && !current.isReferenceCurrent(resolved))) return;
     current.onOpenReference(resolved);
   }, []);
+  const candidates = React.useCallback(() => {
+    const current = latest.current;
+    const all = current.freshIndex.candidates();
+    const isCurrent = current.isReferenceCurrent;
+    return isCurrent ? all.filter((candidate) => isCurrent(candidate)) : all;
+  }, []);
   const value = React.useMemo<SessionReferences>(() => ({
     resolve: (rawHrefOrId) => {
       const reference = index.resolve(rawHrefOrId);
       return reference && (!isReferenceCurrent || isReferenceCurrent(reference)) ? reference : undefined;
     },
     openReference,
-  }), [index, isReferenceCurrent, openReference]);
+    candidates,
+  }), [index, isReferenceCurrent, openReference, candidates]);
   return <SessionReferenceContext.Provider value={value}>{children}</SessionReferenceContext.Provider>;
 }
 

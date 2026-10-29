@@ -26,13 +26,92 @@ The OpenWork chart manages Deployments, Services, ConfigMaps, Secret references,
 
 For exact CLI commands, values, DNS/TLS choices, migration troubleshooting, verification, and cleanup, follow the [AWS EKS operator runbook](https://github.com/different-ai/openwork/blob/dev/docs/aws-eks-helm.md).
 
-## ECS Fargate with Terraform (draft)
+## ECS Fargate with Terraform
 
-If you run containers on ECS Fargate rather than Kubernetes, a draft Terraform module deploys the same two services without a cluster: Den API and Den web as Fargate services behind an HTTPS Application Load Balancer (a new one, or your existing ALB or HTTPS listener), RDS for MySQL, optional ElastiCache for Redis, and secrets in AWS Secrets Manager. Database migrations run before Den API starts on each deploy.
+These instructions and historical contract-v1 live results apply to **direct
+Terraform users**. The managed AWS installer now consumes the same module with
+explicit legacy state-backed secrets, a maintenance-first runner fence and
+separate customer IAM re-approval. It does not silently convert existing keys to
+write-only mode. Its real version-increasing Update/fresh-install/destroy proof
+is a separate gate, not certified by the direct-user results below. See the
+[managed installer upgrade notes](https://github.com/different-ai/openwork/blob/dev/infra/managed-deployments/README.md#aws-shared-module-adoption).
+
+### What it deploys
+
+If you run containers on ECS Fargate rather than Kubernetes, the Terraform module creates an ECS cluster (or uses yours), Den API and Den web as Fargate services behind an HTTPS Application Load Balancer, private RDS for MySQL, optional ElastiCache for Redis, and AWS Secrets Manager references. One standalone migration task must finish with exit 0 before API or web rollout. Application replicas do not run migrations. A small native Lambda invocation starts the task and observes completion; no local-exec provisioner is required.
+
+API defaults to 1 vCPU / 2 GiB and web to 0.5 vCPU / 1 GiB. Managed RDS deletion protection defaults on. The 0.18.57/0.18.58 API/web defaults are digest-pinned; other versions and enabled optional services require digest-pinned image overrides. Database TLS verifies the certificate chain using the public regional RDS CA bundle, loaded before Node starts. The application's current MySQL parser does not enable mysql2's separate hostname identity check; full hostname verification remains an application follow-up, not a claim of this module.
+
+### Tested scenarios
+
+| Scenario | Tools / release | Result | Date |
+| --- | --- | --- | --- |
+| Offline module defaults, secrets, TLS and existing infrastructure | Terraform 1.16.5; OpenTofu 1.11.14 | Passed: 37 tests per tool | 2026-10-15 |
+| Controller single-task, timeout/rejection, and failed migration completion gate | Local testkit; both tools | Passed: 2 tests | 2026-10-15 |
+| Legacy per-task migrator, two API replicas, fresh install and release-to-dev upgrade | 0.18.58 → dev | Failed: concurrent peers; eventual ECS replacement masked failures | 2026-10-14 |
+| Contract-v1 live release-to-dev upgrade, two API tasks, one successful migrator per image | 0.18.58 → dev ef455ca; Terraform 1.16.5 / AWS 6.69.1 | Passed | 2026-10-15 |
+| Same-version reapply; secret fingerprints and the pre-apply session unchanged | 0.18.58 | Passed: plan exit 0, no changes | 2026-10-15 |
+| Core secret values absent from actual state after release, reapply and upgrade | Write-only mode | Passed | 2026-10-15 |
+| Fresh browser and isolated native desktop sign-in on the preserved database | dev ef455ca | Passed | 2026-10-15 |
+| Destroy with protection explicitly disabled; independent absence and snapshot cleanup | Disposable contract-v1 stack | Passed | 2026-10-15 |
+
+### Support level
 
 <Warning>
-  The module is an early draft. It has been applied end to end in a test account, but inputs may change. Pin it to a commit, and open an issue or pull request for anything that fails in your environment.
+  OpenWork's Terraform modules are **beta**. If you hit an issue:
+
+  - **Customers with a support agreement:** contact your OpenWork team through your usual support channel.
+  - **Everyone else:** [open a GitHub issue](https://github.com/different-ai/openwork/issues/new/choose).
+  - **Security issues:** report them privately ([SECURITY.md](https://github.com/different-ai/openwork/blob/dev/SECURITY.md)).
 </Warning>
+
+The table records the tested core only, not production load, backup restoration,
+legacy handover, or every optional component. Complete your review before pinning a source commit.
+The [module](https://github.com/different-ai/openwork/tree/dev/infra/terraform/modules/openwork-aws-ecs)
+and its deployment-contract improvements are available on `dev` in **beta**;
+the managed installer has separate approval and live-verification gates.
+See the [shared module contract](https://github.com/different-ai/openwork/blob/dev/infra/terraform/MODULE_CONTRACT.md)
+for baseline checks and known limits.
+
+### Upgrade notes
+
+**Database sizing default: `db.t4g.micro` → `db.t4g.small` (2 GiB memory).**
+Existing direct Terraform users who omitted `database.instance_class` will see an
+**in-place instance-class change** in their next plan. Apply schedules it for
+the next RDS maintenance window by default (`apply_immediately = false`); the
+class change restarts the database and interrupts connections when performed.
+With `apply_immediately = true`, it restarts during apply instead. Review pending
+modifications and arrange maintenance before applying.
+[AWS documents modification timing here](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.DBInstance.Modifying.html).
+
+Estimated Single-AZ MySQL instance cost in **us-east-1** rises from **$11.68 to
+$23.36/month (+$11.68)** at 730 hours ($0.016 → $0.032/hour, public list prices
+checked 2026-10-19). This excludes storage, CPU credits, backups, networking,
+taxes and discounts; see [RDS pricing](https://aws.amazon.com/rds/mysql/pricing/).
+To keep the old size, add this to the module call **before upgrading**, merging
+it into your existing `database` object without dropping other settings:
+
+```hcl
+database = { instance_class = "db.t4g.micro" }
+```
+
+Micro retains its low-memory risk. API/web defaults and managed installer size
+pins are unchanged. See the [Small / trial table](/self-host/deploy-to-your-cloud/overview#small--trial-sizing)
+for the cross-cloud baseline; it is not a user-capacity guarantee.
+
+The first upgrade from a per-task migration module requires maintenance: freeze independent deployers and retries, scale the **old** API to zero, disable replacement/autoscaling and manual legacy launches, wait for all old tasks and DB sessions/in-flight DDL to terminate, and fence legacy DDL credentials where feasible. Only then apply the new module with the target replica count. Reducing to one task alone is not an exclusion barrier. Do not restore a legacy migration-capable task definition during rollback. This orders deployments; it does not add the application-level migration lock, dirty marker or schema compatibility protocol.
+
+Existing inputs remain, including the deprecated nested `database.deletion_protection` alias. Floating image tags are now rejected: pin the current digests before upgrading. Use one state/release coordinator per physical database. Migration failure or an unknown outcome blocks rollout and requires inspection, not automatic SQL retry. See the [module upgrade notes](https://github.com/different-ai/openwork/tree/dev/infra/terraform/modules/openwork-aws-ecs#upgrade-notes) for the full fence and secret-conversion procedure.
+
+### State guidance
+
+Use Terraform or OpenTofu **>= 1.11, < 2.0** with encrypted, access-controlled remote state. An S3 root backend should set `encrypt = true` and `use_lockfile = true`; do not create a new DynamoDB locking table. The reusable module configures neither a provider nor a backend and ships no cross-registry lock file. Generate and retain the root lock with your chosen tool. This direct-user module uses the live-tested AWS `~> 6.69` provider line and random `~> 3.9`; the previous cross-major compatibility exception is no longer needed. The managed AWS root now locks AWS 6.69.1 and random 3.9.1 and explicitly retains legacy state-backed secrets/current strict SecretVersion. Its updated bootstrap grants only deployment-scoped migration Lambda, role and log permissions and requires customer re-approval plus a maintenance window. The runner drains old tasks before migration and verifies completed strict deployments; retained legacy revisions must never be started manually. Synthetic state tests do not replace a real provider-upgrade proof or managed-deployments owner review.
+
+For new installs, use `write_only_secrets = true` with persistent core values supplied through the ephemeral `secret_values_wo` input: RDS and Secrets Manager write-only fields keep those values out of new state snapshots. Write-only mode is the new default. Existing installations must explicitly set `write_only_secrets = false` before upgrading to retain their current keys/state, or securely preserve and supply the **exact existing** keys and DB password before converting. Missing ephemeral values fail validation before changes, rather than silently regenerating auth/encryption keys. Never regenerate an encryption key during an infrastructure upgrade. Optional integration secrets retain their state-backed compatibility path; restrict state history accordingly. Secret settings belong in `extra_secrets`, not plain `extra_environment`.
+
+### Cost notes
+
+Costs depend on region, replica count and egress: Fargate API/web, RDS, ALB, optional NAT/Redis, image pulls for the standalone migrator, and brief Lambda duration. A two-API-task lab with one NAT costs more than the one-task defaults. Stop disposable stacks promptly and disable deletion protection explicitly only for those tests.
 
 You provide a VPC, two hostnames (the web host and `api.` plus the web host), and an ACM certificate or a Route 53 zone the module can use to create one. HTTPS is required: Den API does not start with a plain-HTTP public URL. Email is optional for setup and sign-in, but member invites and password reset need SMTP or Resend.
 

@@ -8,10 +8,32 @@ FROM daytonaio/sandbox:0.6.0
 USER root
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg \
+  && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg xz-utils \
   && rm -rf /var/lib/apt/lists/*
 
-RUN /usr/local/share/nvm/current/bin/npm install -g pnpm@10.27.0 bun
+# Replace the inherited Node default, preserving Daytona's NVM current/bin launcher path.
+# Official checksums: https://nodejs.org/dist/v24.22.1/SHASUMS256.txt
+RUN set -eu; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) node_arch=x64; node_sha256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6 ;; \
+      arm64) node_arch=arm64; node_sha256=dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e ;; \
+      *) echo "Unsupported Node architecture" >&2; exit 1 ;; \
+    esac; \
+    node_tmp=$(mktemp -d); \
+    curl -fsSL -o "$node_tmp/node.tar.xz" "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-$node_arch.tar.xz"; \
+    echo "$node_sha256  $node_tmp/node.tar.xz" | sha256sum -c -; \
+    node_prefix=/usr/local/share/nvm/versions/node/v24.22.1; \
+    mkdir -p "$node_prefix" /usr/local/share/nvm/alias; \
+    tar -xJf "$node_tmp/node.tar.xz" -C "$node_prefix" --strip-components=1 --no-same-owner; \
+    rm -rf "$node_tmp" /usr/local/share/nvm/current; \
+    ln -s "$node_prefix" /usr/local/share/nvm/current; \
+    echo v24.22.1 > /usr/local/share/nvm/alias/default; \
+    chown -R daytona:daytona "$node_prefix"; \
+    test "$(/usr/local/share/nvm/current/bin/node --version)" = v24.22.1
+
+ENV PATH="/usr/local/share/nvm/current/bin:$PATH"
+RUN test "$(node --version)" = v24.22.1 \
+  && /usr/local/share/nvm/current/bin/npm install -g pnpm@10.27.0 bun
 
 WORKDIR /workspace
 
@@ -27,3 +49,4 @@ RUN git clone --depth 1 --branch dev https://github.com/different-ai/openwork.gi
 RUN chown -R daytona:daytona /workspace
 
 USER daytona
+RUN test "$(node --version)" = v24.22.1

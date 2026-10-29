@@ -1,0 +1,106 @@
+name: Warden quick review
+
+# Fast, advisory security feedback on every push to a same-repository PR.
+# Re-reviews only the files whose own changes moved since the newest complete
+# Warden review of this PR (full or quick); findings for the other files carry
+# over. It never approves, posts no check of its own, and leaves clearance to
+# the full Warden review. See .warden/README.md.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# Reading earlier Warden runs and their artifacts needs actions: read.
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: warden-quick-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  quick:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Full history (blobs on demand) to fingerprint earlier reviewed commits.
+      - name: Checkout source for analysis
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      # Only the immutable base supplies executable code, policy and skills.
+      - name: Checkout trusted policy and script
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .warden-policy
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            .warden
+
+      # Same override as warden.yml, applied to the trusted copy.
+      - name: Apply model variable
+        if: vars.WARDEN_MODEL != ''
+        env:
+          MODEL: ${{ vars.WARDEN_MODEL }}
+        run: |
+          if ! printf '%s' "$MODEL" | grep -Eq '^[a-z0-9-]+/[A-Za-z0-9._-]+$'; then
+            echo "::error::WARDEN_MODEL must be provider/model-id, got: $MODEL"
+            exit 1
+          fi
+          sed -i -E "s|^model = \".*\"$|model = \"$MODEL\"|" .warden-policy/warden.toml
+
+      # The CLI loads skills from the analyzed checkout, so replace the PR's
+      # copies with the trusted ones. The PR's diff is read from git objects,
+      # so its own .warden/ changes are still reviewed, as data.
+      - name: Use the trusted policy in the analyzed checkout
+        run: |
+          rm -rf pr/.warden pr/warden.toml
+          cp -R .warden-policy/.warden pr/.warden
+          cp .warden-policy/warden.toml pr/warden.toml
+
+      # Installed in an empty directory so no .npmrc or workspace file from the
+      # PR can change where it comes from; install scripts are not needed.
+      - name: Install the pinned Warden CLI outside the PR
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir warden-cli && cd warden-cli
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund --no-save --ignore-scripts @sentry/warden@0.43.0
+
+      - name: Review what moved
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          RUN_ID: ${{ github.run_id }}
+          PR_DIR: ${{ github.workspace }}/pr
+          OUT_DIR: ${{ runner.temp }}/warden-quick
+          POLICY_PATH: ${{ github.workspace }}/.warden-policy/warden.toml
+          WARDEN_BIN: ${{ runner.temp }}/warden-cli/node_modules/@sentry/warden/bin/warden.js
+          PI_CODING_AGENT_DIR: ${{ github.workspace }}/.warden-policy/.warden/pi
+          WARDEN_OPENAI_API_KEY: ${{ secrets.WARDEN_OPENAI_API_KEY }}
+        run: node .warden-policy/.github/scripts/warden-fast.mjs ci
+
+      # Security findings only (never confidentiality text or paths), bound to
+      # this run and commit. The next push uses it as its baseline. Absent when
+      # the review was incomplete or nothing ran.
+      - name: Save the reviewed state for the next push
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: warden-quick-baseline
+          path: ${{ runner.temp }}/warden-quick/warden-quick-baseline.json
+          retention-days: 14
+          if-no-files-found: ignore

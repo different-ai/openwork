@@ -9,6 +9,6 @@ export const metadata = withSocialMetadata({
   }
 });
 
-export default function PrivacyPage() {
-  return <LegalPage file="privacy/privacy-policy.md" />;
+export default async function PrivacyPage() {
+  return await LegalPage({ file: "privacy/privacy-policy.md" });
 }

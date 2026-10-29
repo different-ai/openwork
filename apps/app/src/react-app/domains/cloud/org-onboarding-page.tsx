@@ -20,8 +20,8 @@ import {
   readDenBootstrapConfig,
   readDenSettings,
   resolveDenBaseUrls,
+  selectDenActiveOrganization,
   setDenBootstrapConfig,
-  writeDenSettings,
   type DenDesktopConfig,
   type DenOrgLlmProvider,
   type DenOrgMarketplace,
@@ -40,12 +40,14 @@ import {
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { parseManualAuthInput } from "@/app/lib/manual-auth-input";
 import { clearOrgSelectionPending, readOrgSelectionPending } from "@/app/lib/den-sign-in-intent";
+import { completeSignInReturn } from "./sign-in-return";
 import { usePlatform } from "../../kernel/platform";
 import { useBootState } from "../../shell/boot-state";
 import { resolveModelDisplayName, resolveProviderDisplayName } from "@/app/utils";
 import { ProviderIcon } from "../../design-system/provider-icon";
 import { writeStoredDefaultModel } from "../../kernel/model-config";
 import { orgOnboardingVisibilityEvent } from "../../shell/reload-coordinator";
+import { setOrgOnboardingOnScreen } from "../../shell/org-onboarding-visibility";
 import {
   Page,
   PageBackground,
@@ -79,6 +81,8 @@ import {
   RadioGroupItem,
 } from "@/components/ui/radio-group"
 import { useOrgListWindow } from "./use-org-list-window";
+import { initialOrgOnboardingSelectionState, resolveOrgOnboardingPostListStep } from "./org-onboarding-selection";
+export { initialOrgOnboardingSelectionState, resolveOrgOnboardingPostListStep } from "./org-onboarding-selection";
 import { useDesktopConfig } from "./desktop-config-provider";
 import {
   hasWorkspaceBranding,
@@ -369,55 +373,6 @@ function markProvidersSeen(providers: ReadonlyArray<{ id: string }>) {
   } catch {}
 }
 
-type OrgOnboardingInitialSelectionState = {
-  hasSelectedOrganization: boolean;
-  autoContinueResources: boolean;
-};
-
-export function initialOrgOnboardingSelectionState(): OrgOnboardingInitialSelectionState {
-  return {
-    hasSelectedOrganization: false,
-    autoContinueResources: false,
-  };
-}
-
-type OrgOnboardingPostListStep =
-  | { kind: "auto-select-single-org"; organization: DenOrgSummary }
-  | { kind: "choose-org"; defaultOrganization: DenOrgSummary }
-  | { kind: "resources"; autoContinue: boolean };
-
-export function resolveOrgOnboardingPostListStep({
-  orgs,
-  activeOrgId,
-  hasSelectedOrganization,
-  autoContinueResources,
-  autoSelectFailedOrgId,
-}: {
-  orgs: DenOrgSummary[];
-  activeOrgId: string;
-  hasSelectedOrganization: boolean;
-  autoContinueResources: boolean;
-  autoSelectFailedOrgId: string | null;
-}): OrgOnboardingPostListStep {
-  const singleOrg = orgs.length === 1 ? orgs[0] : null;
-
-  if (orgs.length > 0 && !hasSelectedOrganization) {
-    if (singleOrg && autoSelectFailedOrgId !== singleOrg.id) {
-      return { kind: "auto-select-single-org", organization: singleOrg };
-    }
-
-    return {
-      kind: "choose-org",
-      defaultOrganization: orgs.find((org) => org.id === activeOrgId) ?? orgs[0],
-    };
-  }
-
-  return {
-    kind: "resources",
-    autoContinue: autoContinueResources || orgs.length <= 1,
-  };
-}
-
 /**
  * Full-screen onboarding page shown after sign-in + org selection.
  * Fetches all org resources (providers, marketplaces, skills)
@@ -428,6 +383,8 @@ export function resolveOrgOnboardingPostListStep({
 export function OrgOnboardingPage() {
   const navigate = useNavigate();
   const { authToken, denClient, orgId, settings } = useDenClient();
+  // The organization this visit started in; finishing in another one is a switch.
+  const [startingOrgId] = useState(orgId);
   const { markRouteReady } = useBootState();
   const prepared = usePreparedBootstrap();
   const initialSelectionState = initialOrgOnboardingSelectionState();
@@ -442,10 +399,18 @@ export function OrgOnboardingPage() {
   // A desktop-initiated sign-in parks the exchange-reported org here instead
   // of committing it; the chooser pre-highlights it as its default.
   const [suggestedOrgId] = useState(() => readOrgSelectionPending().suggestion?.id ?? "");
+  const cancelSwitch = orgId && readOrgSelectionPending().pending
+    ? () => {
+        clearOrgSelectionPending();
+        navigate("/settings/cloud-account", { replace: true });
+      }
+    : undefined;
 
   useEffect(() => {
+    setOrgOnboardingOnScreen(true);
     window.dispatchEvent(new CustomEvent(orgOnboardingVisibilityEvent, { detail: { visible: true } }));
     return () => {
+      setOrgOnboardingOnScreen(false);
       window.dispatchEvent(new CustomEvent(orgOnboardingVisibilityEvent, { detail: { visible: false } }));
     };
   }, []);
@@ -461,7 +426,7 @@ export function OrgOnboardingPage() {
   }, [authToken, navigate, prepared]);
 
   useEffect(() => {
-    if (authToken && orgId && prepared) {
+    if (authToken && orgId && prepared && !readOrgSelectionPending().pending) {
       navigate("/session", { replace: true });
     }
   }, [authToken, navigate, orgId, prepared]);
@@ -473,9 +438,13 @@ export function OrgOnboardingPage() {
     navigate("/session", { replace: true });
   }, [authToken, navigate, orgId]);
 
-  const { data, error, isPending } = useQuery({
+  const { data, error, isPending, isFetchedAfterMount, refetch } = useQuery({
     queryKey: ["den-org-onboarding", settings.baseUrl, "orgs"],
     enabled: Boolean(authToken),
+    refetchOnMount: "always",
+    // A request that timed out while the app was busy starting recovers by
+    // itself; Retry stays on screen meanwhile.
+    refetchInterval: (query) => (query.state.status === "error" ? 10_000 : false),
     queryFn: () => denClient.listOrgs(),
   });
   const orgs = data?.orgs ?? [];
@@ -483,8 +452,13 @@ export function OrgOnboardingPage() {
     orgs,
     activeOrgId: orgId || suggestedOrgId,
     hasSelectedOrganization,
+    committedOrgId: orgId,
+    orgSelectionPending: readOrgSelectionPending().pending,
     autoContinueResources,
     autoSelectFailedOrgId,
+    // An explicit switch must never auto-commit stale cached single-org data
+    // before the directory refetch discovers newly available organizations.
+    allowAutoSelect: !cancelSwitch && isFetchedAfterMount && !error,
   });
   const autoSelectOrg = postListStep.kind === "auto-select-single-org"
     ? postListStep.organization
@@ -496,18 +470,9 @@ export function OrgOnboardingPage() {
 
     let cancelled = false;
     autoSelectingOrgIdRef.current = autoSelectOrg.id;
-    void denClient
-      .setActiveOrganization({ organizationId: autoSelectOrg.id })
+    void selectDenActiveOrganization(autoSelectOrg, settings)
       .then(() => {
         if (cancelled) return;
-        clearOrgSelectionPending();
-        writeDenSettings({
-          ...settings,
-          authToken: authToken || null,
-          activeOrgId: autoSelectOrg.id,
-          activeOrgSlug: autoSelectOrg.slug,
-          activeOrgName: autoSelectOrg.name,
-        });
         setAutoContinueResources(true);
         setHasSelectedOrganization(true);
       })
@@ -523,13 +488,13 @@ export function OrgOnboardingPage() {
     return () => {
       cancelled = true;
     };
-  }, [authToken, autoSelectOrg, denClient, settings]);
+  }, [authToken, autoSelectOrg, settings]);
 
   if (!authToken) {
     return prepared ? <PreparedWorkspacePage prepared={prepared} /> : null;
   }
 
-  if (isPending) {
+  if (isPending || (!isFetchedAfterMount && !error)) {
     return (
       <Page>
         <PageBackground />
@@ -544,6 +509,11 @@ export function OrgOnboardingPage() {
               <PageLoadingDescription>Loading organizations...</PageLoadingDescription>
             </PageLoading>
           </PageContent>
+          {cancelSwitch ? (
+            <PageFooter>
+              <Button type="button" variant="ghost" onClick={cancelSwitch}>Cancel</Button>
+            </PageFooter>
+          ) : null}
         </PageContainer>
       </Page>
     );
@@ -564,6 +534,12 @@ export function OrgOnboardingPage() {
               </AlertDescription>
             </Alert>
           </PageHeader>
+          <PageFooter>
+            <Button type="button" onClick={() => void refetch()}>Retry</Button>
+            {cancelSwitch ? (
+              <Button type="button" variant="ghost" onClick={cancelSwitch}>Cancel</Button>
+            ) : null}
+          </PageFooter>
         </PageContainer>
       </Page>
     );
@@ -594,6 +570,7 @@ export function OrgOnboardingPage() {
       <OrganizationSelectionPage
         orgs={orgs}
         defaultOrganization={postListStep.defaultOrganization}
+        onCancel={cancelSwitch}
         onContinue={() => {
           setAutoContinueResources(false);
           setHasSelectedOrganization(true);
@@ -605,11 +582,15 @@ export function OrgOnboardingPage() {
   return (
     <ResourceSelectionPage
       autoContinue={postListStep.autoContinue}
+      previousOrgId={startingOrgId}
     />
   );
 }
 
-export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?: boolean }) {
+export function ResourceSelectionPage({ autoContinue = false, previousOrgId = "" }: {
+  autoContinue?: boolean;
+  previousOrgId?: string;
+}) {
   const navigate = useNavigate();
   const platform = usePlatform();
   const { markRouteReady } = useBootState();
@@ -684,8 +665,12 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
         window.localStorage.setItem(RELOAD_AFTER_ONBOARDING_KEY, "1");
       } catch {}
     }
-    navigate("/session", { replace: true });
-  }, [gatewayProviders, navigate, providers, selectedDefault]);
+    // A sign-in started from a conversation returns there.
+    if (!completeSignInReturn(navigate)) navigate("/session", { replace: true });
+    // Stores and caches across the app still hold the previous organization's
+    // providers, skills and connections. Start over at the route above.
+    if (previousOrgId && previousOrgId !== orgId) window.location.reload();
+  }, [gatewayProviders, navigate, orgId, previousOrgId, providers, selectedDefault]);
 
   const handleContinue = useCallback(async (optionsArg?: { requestReload?: boolean }) => {
     if (!window.__OPENWORK_ELECTRON__?.shell?.relaunch) {
@@ -1202,32 +1187,20 @@ interface OrganizationSelectionPageProps {
   orgs: DenOrgSummary[];
   defaultOrganization: DenOrgSummary;
   onContinue: () => void;
+  onCancel?: () => void;
 }
 
 function OrganizationSelectionPage({
   orgs,
   defaultOrganization,
   onContinue,
+  onCancel,
 }: OrganizationSelectionPageProps) {
-  const { authToken, denClient, settings } = useDenClient();
+  const { settings } = useDenClient();
   const [selected, setSelected] = useState(defaultOrganization);
   const { error, isPending, mutate } = useMutation({
-    mutationFn: async (nextOrg: DenOrgSummary) => {
-      await denClient.setActiveOrganization({ organizationId: nextOrg.id });
-      return nextOrg;
-    },
-    onSuccess: (nextOrg) => {
-      clearOrgSelectionPending();
-      writeDenSettings({
-        ...settings,
-        authToken: authToken || null,
-        activeOrgId: nextOrg.id,
-        activeOrgSlug: nextOrg.slug,
-        activeOrgName: nextOrg.name,
-      });
-
-      onContinue();
-    },
+    mutationFn: (nextOrg: DenOrgSummary) => selectDenActiveOrganization(nextOrg, settings),
+    onSuccess: () => onContinue(),
   });
 
   return (
@@ -1270,6 +1243,16 @@ function OrganizationSelectionPage({
             {isPending ? "Connecting..." : "Continue with organization"}
             <ArrowRight data-icon="inline-end" />
           </Button>
+          {onCancel ? (
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={isPending}
+              onClick={onCancel}
+            >
+              Cancel
+            </Button>
+          ) : null}
         </PageFooter>
       </PageContainer>
     </Page>

@@ -1,3 +1,4 @@
+import type { BillingPlanTier } from "@openwork/types/den/billing-plans";
 import { parseDeploymentCapabilities, type DeploymentCapabilities } from "@openwork/types/den/deployment-capabilities";
 import { mapFeatures, type FeatureMap } from "@openwork/features";
 import { PERMISSION_KEYS, getPermissionDefinition, isPermissionKey, isPermissionOwnerOnlyByDefault, permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions";
@@ -12,6 +13,9 @@ export type DenOrgSummary = {
   orgMemberId: string;
   membershipId: string;
   memberCount: number;
+  /** Null when an older server does not report the plan; never inferred from the member's role. */
+  planTier: BillingPlanTier | null;
+  isSandbox: boolean;
   createdAt: string | null;
   updatedAt: string | null;
   isActive: boolean;
@@ -134,6 +138,10 @@ export type DenOrgAccessFlags = {
   canViewAgentPermissions: boolean;
   /** `agent_permissions.manage`: change what agents can do on members' computers. */
   canManageAgentPermissions: boolean;
+  /** `prompts.view`: see the system prompts that steer members' agents. */
+  canViewPrompts: boolean;
+  /** `prompts.manage`: change the system prompts that steer members' agents. */
+  canManagePrompts: boolean;
   /** `api_keys.view` */
   canViewApiKeys: boolean;
   /** `api_keys.manage` */
@@ -336,6 +344,8 @@ export type DenOrgContext = {
   /** Effective on/off per registry feature (packages/features/src/registry.ts). Missing from older servers means off. */
   features: FeatureMap;
   deploymentCapabilities: DeploymentCapabilities;
+  /** Server-verified installation operator capability; never inferred from organization role. */
+  canManageDeploymentServices: boolean;
 };
 
 export type DenOrgAuthMethods = {
@@ -349,6 +359,8 @@ export type DenOrgEntitlements = {
   orgControls: boolean;
   analytics: boolean;
   auditLogs: boolean;
+  /** SCIM provisioning (Enterprise). */
+  scim: boolean;
 };
 
 /** Server-advertised and per-org capabilities; optional fields default to off. */
@@ -593,6 +605,8 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
     canManagePermissions: can("permissions.manage"),
     canViewAgentPermissions: can("agent_permissions.view"),
     canManageAgentPermissions: can("agent_permissions.manage"),
+    canViewPrompts: can("prompts.view"),
+    canManagePrompts: can("prompts.manage"),
     canViewApiKeys: can("api_keys.view"),
     canManageApiKeys: can("api_keys.manage"),
     canViewScim: can("scim.view"),
@@ -684,10 +698,6 @@ export function getAuditLogsRoute(orgSlug?: string | null): string {
 
 export function getAnalyticsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/analytics`;
-}
-
-export function getModelsAnalyticsRoute(orgSlug?: string | null): string {
-  return `${getAnalyticsRoute(orgSlug)}/models`;
 }
 
 export function getLibraryUsageRoute(orgSlug?: string | null): string {
@@ -807,6 +817,10 @@ export function getAiGatewayRoute(orgSlug?: string | null): string {
 
 export function getAiGatewayProvidersRoute(orgSlug?: string | null): string {
   return `${getAiGatewayRoute(orgSlug)}?tab=ai-providers`;
+}
+
+export function getAiGatewayAutoRouterRoute(orgSlug?: string | null): string {
+  return `${getAiGatewayRoute(orgSlug)}?tab=auto-router`;
 }
 
 export function getNewAiGatewayProviderRoute(orgSlug?: string | null, providerId?: string): string {
@@ -959,12 +973,22 @@ export function getLibraryPluginRoute(orgSlug: string | null | undefined, plugin
   return `${getLibraryRoute(orgSlug)}/plugins/${encodeURIComponent(pluginId)}`;
 }
 
+/** A skill inside a plugin, viewed from My Library (no admin area needed). */
+export function getLibraryPluginSkillRoute(orgSlug: string | null | undefined, pluginId: string, skillId: string): string {
+  return `${getLibraryPluginRoute(orgSlug, pluginId)}/skills/${encodeURIComponent(skillId)}`;
+}
+
 export function getLibraryPluginShareRoute(orgSlug: string | null | undefined, pluginId: string): string {
   return `${getLibraryPluginRoute(orgSlug, pluginId)}/share`;
 }
 
 export function getLibraryNewPluginRoute(orgSlug?: string | null, start?: "skill"): string {
   return `${getLibraryRoute(orgSlug)}/plugins/new${start ? `?start=${start}` : ""}`;
+}
+
+/** The member's own agent (My bot), in the sidebar's Work section. */
+export function getLibraryMyAgentRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/my-bot`;
 }
 
 export function getLibraryModelsRoute(orgSlug?: string | null): string {
@@ -1035,6 +1059,8 @@ export function parseOrgListPayload(payload: unknown): {
         orgMemberId,
         membershipId,
         memberCount: typeof entry.memberCount === "number" ? entry.memberCount : 0,
+        planTier: entry.planTier === "free" || entry.planTier === "team" || entry.planTier === "enterprise" ? entry.planTier : null,
+        isSandbox: asBoolean(entry.isSandbox),
         createdAt: asIsoString(entry.createdAt),
         updatedAt: asIsoString(entry.updatedAt),
         isActive: asBoolean(entry.isActive),
@@ -1224,6 +1250,7 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
     capabilities: parseOrgCapabilities(payload.capabilities),
     features: parseOrgFeatures(payload.features),
     deploymentCapabilities: parseDeploymentCapabilities(payload.deploymentCapabilities),
+    canManageDeploymentServices: payload.canManageDeploymentServices === true,
   };
 }
 
@@ -1270,7 +1297,7 @@ function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
 
 function parseOrgEntitlements(value: unknown): DenOrgEntitlements {
   if (!isRecord(value)) {
-    return { sso: true, desktopPolicies: true, orgControls: true, analytics: true, auditLogs: false };
+    return { sso: true, desktopPolicies: true, orgControls: true, analytics: true, auditLogs: false, scim: true };
   }
 
   return {
@@ -1279,6 +1306,7 @@ function parseOrgEntitlements(value: unknown): DenOrgEntitlements {
     orgControls: value.orgControls !== false,
     analytics: value.analytics !== false,
     auditLogs: value.auditLogs === true,
+    scim: value.scim !== false,
   };
 }
 

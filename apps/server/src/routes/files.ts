@@ -266,10 +266,29 @@ function normalizeUrlTarget(value: string): string | null {
   }
 }
 
-export async function resolveWorkspaceArtifactTargets(workspaceRoot: string, input: unknown): Promise<Array<Record<string, unknown>>> {
+/** `path` relative to `root`, or null when it is outside it. */
+function pathInside(root: string | null, path: string): string | null {
+  if (!root) return null;
+  const fromRoot = relative(resolve(root), resolve(path));
+  if (!fromRoot || fromRoot === ".." || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) return null;
+  return fromRoot;
+}
+
+/**
+ * `conversationDirectory` names the folder the conversation runs in when it moved
+ * into a worktree. Files missing from the workspace are also looked up there.
+ */
+export async function resolveWorkspaceArtifactTargets(
+  workspaceRoot: string,
+  input: unknown,
+  options: { conversationDirectory?: () => Promise<string | null> } = {},
+): Promise<Array<Record<string, unknown>>> {
   const targets = Array.isArray(input) ? input.slice(0, 80) : [];
   const results = new Map<string, Record<string, unknown>>();
   const workspaceResolved = resolve(workspaceRoot);
+  // Looked up once, and only when a target is missing from the workspace.
+  let conversationLookup: Promise<string | null> | null = null;
+  const conversationDirectory = () => (conversationLookup ??= options.conversationDirectory?.() ?? Promise.resolve(null));
 
   for (const item of targets) {
     if (!item || typeof item !== "object") continue;
@@ -302,12 +321,11 @@ export async function resolveWorkspaceArtifactTargets(workspaceRoot: string, inp
     let relativePath: string;
     try {
       if (isAbsolute(rawValue)) {
-        const absolutePath = resolve(rawValue);
-        const pathFromWorkspace = relative(workspaceResolved, absolutePath);
-        if (!pathFromWorkspace || pathFromWorkspace === ".." || pathFromWorkspace.startsWith(`..${sep}`) || isAbsolute(pathFromWorkspace)) {
-          continue;
-        }
-        relativePath = normalizeWorkspaceRelativePath(pathFromWorkspace, { allowSubdirs: true });
+        // An absolute path may also name a file in the folder the conversation runs in.
+        const pathFromRoot = pathInside(workspaceResolved, rawValue)
+          ?? pathInside(await conversationDirectory(), rawValue);
+        if (!pathFromRoot) continue;
+        relativePath = normalizeWorkspaceRelativePath(pathFromRoot, { allowSubdirs: true });
       } else {
         relativePath = normalizeWorkspaceRelativePath(rawValue, { allowSubdirs: true });
       }
@@ -315,7 +333,12 @@ export async function resolveWorkspaceArtifactTargets(workspaceRoot: string, inp
       continue;
     }
     const key = `file:${relativePath.toLowerCase()}`;
-    const absPath = resolveSafeChildPath(workspaceRoot, relativePath);
+    let absPath = resolveSafeChildPath(workspaceRoot, relativePath);
+    if (!(await exists(absPath))) {
+      const directory = await conversationDirectory();
+      const conversationPath = directory ? resolveSafeChildPath(directory, relativePath) : null;
+      if (conversationPath && await exists(conversationPath)) absPath = conversationPath;
+    }
     let existsFile = false;
     let size: number | undefined;
     let updatedAt: number | undefined;
@@ -552,6 +575,25 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
   } = options;
   const fileSessions = new FileSessionStore();
 
+  // A conversation that moved into a worktree writes its files there, and its
+  // replies name them relative to that folder.
+  const conversationDirectory = async (workspace: WorkspaceInfo, sessionId: unknown): Promise<string | null> => {
+    const id = typeof sessionId === "string" ? sessionId.trim() : "";
+    if (!id || !resolveSessionDirectory) return null;
+    const directory = await resolveSessionDirectory(workspace, id);
+    return directory && resolve(directory) !== resolve(workspace.path) ? directory : null;
+  };
+
+  // The workspace copy wins; a file only the conversation's folder has is read
+  // and saved there, so editing it never leaves a second copy in the workspace.
+  const resolveConversationFilePath = async (workspace: WorkspaceInfo, relativePath: string, sessionId: unknown): Promise<string> => {
+    const workspacePath = resolveSafeChildPath(workspace.path, relativePath);
+    if (await exists(workspacePath)) return workspacePath;
+    const directory = await conversationDirectory(workspace, sessionId);
+    const conversationPath = directory ? resolveSafeChildPath(directory, relativePath) : null;
+    return conversationPath && await exists(conversationPath) ? conversationPath : workspacePath;
+  };
+
   const serializeFileSession = (session: {
     id: string;
     workspaceId: string;
@@ -716,7 +758,9 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
   addRoute(routes, "POST", "/workspace/:id/artifacts/resolve", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
-    const items = await resolveWorkspaceArtifactTargets(workspace.path, body.targets);
+    const items = await resolveWorkspaceArtifactTargets(workspace.path, body.targets, {
+      conversationDirectory: () => conversationDirectory(workspace, body.sessionId),
+    });
     return jsonResponse({ items });
   });
 
@@ -885,7 +929,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
       throw new ApiError(400, "invalid_path", "Only supported text artifact files can be read inline");
     }
 
-    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    const absPath = await resolveConversationFilePath(workspace, relativePath, ctx.url.searchParams.get("session"));
     if (!(await exists(absPath))) {
       throw new ApiError(404, "file_not_found", "File not found");
     }
@@ -926,21 +970,9 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const requested = ctx.url.searchParams.get("path") ?? "";
     const relativePath = normalizeWorkspaceRelativePath(requested, { allowSubdirs: true });
-    let absPath = resolveSafeChildPath(workspace.path, relativePath);
+    const absPath = await resolveConversationFilePath(workspace, relativePath, ctx.url.searchParams.get("session"));
     if (!(await exists(absPath))) {
-      // A conversation that moved into a worktree writes its files there, and
-      // its replies name them relative to that folder.
-      const sessionId = ctx.url.searchParams.get("session")?.trim();
-      const sessionDirectory = sessionId && resolveSessionDirectory
-        ? await resolveSessionDirectory(workspace, sessionId)
-        : null;
-      const sessionPath = sessionDirectory && resolve(sessionDirectory) !== resolve(workspace.path)
-        ? resolveSafeChildPath(sessionDirectory, relativePath)
-        : null;
-      if (!sessionPath || !(await exists(sessionPath))) {
-        throw new ApiError(404, "file_not_found", "File not found");
-      }
-      absPath = sessionPath;
+      throw new ApiError(404, "file_not_found", "File not found");
     }
     const info = await stat(absPath);
     if (!info.isFile()) {
@@ -980,7 +1012,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const baseUpdatedAt =
       typeof baseUpdatedAtRaw === "number" && Number.isFinite(baseUpdatedAtRaw) ? baseUpdatedAtRaw : null;
     const force = body.force === true;
-    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    const absPath = await resolveConversationFilePath(workspace, relativePath, body.sessionId);
     const before = (await exists(absPath)) ? await stat(absPath) : null;
     if (before && !before.isFile()) {
       throw new ApiError(400, "invalid_path", "Path must point to a file");
@@ -1043,7 +1075,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
       typeof baseUpdatedAtRaw === "number" && Number.isFinite(baseUpdatedAtRaw) ? baseUpdatedAtRaw : null;
     const force = body.force === true;
 
-    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    const absPath = await resolveConversationFilePath(workspace, relativePath, body.sessionId);
 
     const before = (await exists(absPath)) ? await stat(absPath) : null;
     if (before && !before.isFile()) {

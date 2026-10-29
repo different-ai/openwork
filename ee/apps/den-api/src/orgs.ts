@@ -16,6 +16,7 @@ import {
   MemberTable,
   OrganizationTable,
   PluginAccessGrantTable,
+  SandboxOrganizationTable,
   ScimGroupMemberTable,
   ScimProviderTable,
   ScimUserTombstoneTable,
@@ -35,7 +36,8 @@ import { revokeUpstreamCredentials, revokeInferenceCredentialsForMembers } from 
 import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
-import { getOrganizationFeatures, readOrganizationWithPermissions, type FeatureMap } from "./features.js"
+import { parseOrganizationPlan, type PlanTier } from "./entitlements.js"
+import { getOrganizationFeatures, readOrganizationForAuthorization, type FeatureMap } from "./features.js"
 import {
   getRoleValueAfterOwnershipTransfer,
   roleIncludesAdmin,
@@ -191,6 +193,8 @@ export type UserOrgSummary = {
   orgMemberId: string
   membershipId: string
   memberCount: number
+  planTier: PlanTier
+  isSandbox: boolean
   createdAt: Date
   updatedAt: Date
 }
@@ -529,6 +533,7 @@ async function insertMemberIfMissing(input: {
     return null
   }
 
+  let inserted = false
   try {
     await db.insert(MemberTable).values({
       id: createDenTypeId("member"),
@@ -537,6 +542,7 @@ async function insertMemberIfMissing(input: {
       role: input.role,
       joinedAt: new Date(),
     })
+    inserted = true
     // Joining an org changes both the aggregate list and this user's membership cache.
     await cache.org.deleteMemberList(input.organizationId)
     await cache.org.deleteMembership({ organizationId: input.organizationId, userId: input.userId })
@@ -551,7 +557,13 @@ async function insertMemberIfMissing(input: {
   if (!created[0]) {
     throw new Error("failed_to_create_member")
   }
-  await ensureMemberGatewayKey({ organizationId: input.organizationId, memberId: created[0].id })
+  if (inserted) {
+    // A new member changes billing like any other join (and issues the
+    // member's gateway key through the same hooks).
+    await runPostOrganizationMemberChangeHooks({ organizationId: input.organizationId, memberId: created[0].id, change: "added" })
+  } else {
+    await ensureMemberGatewayKey({ organizationId: input.organizationId, memberId: created[0].id })
+  }
   return created[0]
 }
 
@@ -663,7 +675,24 @@ export async function reconcilePendingInvitationsForUser(userId: UserId) {
   return acceptedCount
 }
 
+/**
+ * Accepts an invitation, then runs the member-change hooks (billing and model
+ * access) when it turned into a new membership. Every acceptance path goes
+ * through here: the accept endpoint, bootstrap sign-in and reconciliation.
+ */
 async function acceptInvitation(invitation: InvitationRow, userId: UserId, options?: { fallbackRole?: string }) {
+  const accepted = await acceptInvitationRecord(invitation, userId, options)
+  if (accepted?.status === "accepted" && accepted.newlyAccepted) {
+    await runPostOrganizationMemberChangeHooks({
+      organizationId: accepted.invitation.organizationId,
+      memberId: accepted.member.id,
+      change: "added",
+    })
+  }
+  return accepted
+}
+
+async function acceptInvitationRecord(invitation: InvitationRow, userId: UserId, options?: { fallbackRole?: string }) {
   const scimConnections = await db
     .select({ id: ScimProviderTable.id })
     .from(ScimProviderTable)
@@ -972,13 +1001,6 @@ export async function acceptInvitationForUser(input: {
   }
   if (accepted.status === "scim_deprovisioned") {
     return accepted
-  }
-  if (accepted.newlyAccepted) {
-    await runPostOrganizationMemberChangeHooks({
-      organizationId: accepted.invitation.organizationId,
-      memberId: accepted.member.id,
-      change: "added",
-    })
   }
   return {
     status: "accepted",
@@ -1427,6 +1449,7 @@ export async function listUserOrgs(userId: UserId) {
     .select({
       membershipId: MemberTable.id,
       role: MemberTable.role,
+      sandboxOrganizationId: SandboxOrganizationTable.organizationId,
       organization: {
         id: OrganizationTable.id,
         name: OrganizationTable.name,
@@ -1440,6 +1463,7 @@ export async function listUserOrgs(userId: UserId) {
     })
     .from(MemberTable)
     .innerJoin(OrganizationTable, eq(MemberTable.organizationId, OrganizationTable.id))
+    .leftJoin(SandboxOrganizationTable, eq(SandboxOrganizationTable.organizationId, OrganizationTable.id))
     .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
     .orderBy(asc(MemberTable.createdAt))
 
@@ -1474,6 +1498,8 @@ export async function listUserOrgs(userId: UserId) {
       orgMemberId: row.membershipId,
       membershipId: row.membershipId,
       memberCount: memberCounts.get(row.organization.id) ?? 0,
+      planTier: parseOrganizationPlan(row.organization.metadata).tier,
+      isSandbox: row.sandboxOrganizationId !== null,
       createdAt: row.organization.createdAt,
       updatedAt: row.organization.updatedAt,
     } satisfies UserOrgSummary
@@ -1522,8 +1548,7 @@ export async function getOrganizationContextForUser(input: {
   userId: UserId
   organizationId: OrgId
 }) {
-  // The live permissions flag comes back with the organization row.
-  const organizationRead = await readOrganizationWithPermissions(input.organizationId)
+  const organizationRead = await readOrganizationForAuthorization(input.organizationId)
   if (!organizationRead) {
     return null
   }
@@ -1538,7 +1563,7 @@ export async function getOrganizationContextForUser(input: {
       .from(MemberTable)
       .where(and(eq(MemberTable.organizationId, organization.id), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
       .limit(1),
-    getOrganizationFeatures(organization.id, { permissions: organizationRead.permissions }),
+    getOrganizationFeatures(organization.id, { userId: input.userId }),
   ])
 
   const currentMember = currentMemberRows[0]
@@ -2042,7 +2067,7 @@ export async function removeOrganizationMember(input: {
 
     if (actorPermissions) {
       const targetIsDirectAdmin = organizationRoleValueIncludes(member.role, ORGANIZATION_ADMIN_ROLE)
-      const targetIsAdminViaTeam = !targetIsDirectAdmin && actorPermissions.featureEnabled && !actorPermissions.isOwner && !actorPermissions.isAdmin
+      const targetIsAdminViaTeam = !targetIsDirectAdmin && !actorPermissions.isOwner && !actorPermissions.isAdmin
         && (await listAuthoritativeTeamMemberships(tx, { organizationId: input.organizationId, memberId: member.id, adminTeamsOnly: true, lock: "share" })).length > 0
       const adminRemovalDenial = decideMemberRemoval({
         actor: actorPermissions,

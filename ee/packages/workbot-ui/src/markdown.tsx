@@ -1,6 +1,8 @@
 "use client";
 
-import { Fragment, type ReactNode } from "react";
+import { Fragment, memo, type ReactNode } from "react";
+import { googleDriveFileId } from "@openwork/types/workbot-context";
+import { WorkspaceLink } from "./workspace";
 import { Lexer, type MarkedToken, type Token } from "marked";
 
 /**
@@ -47,9 +49,9 @@ function inlineToken(token: Token): ReactNode {
     case "link": {
       const href = safeHref(token.href);
       return href ? (
-        <a href={href} target="_blank" rel="noreferrer noopener" className="underline decoration-[var(--wb-disabled)] underline-offset-2 hover:decoration-current">
+        <WorkspaceLink href={href}>
           {inline(token.tokens)}
-        </a>
+        </WorkspaceLink>
       ) : inline(token.tokens);
     }
     case "image":
@@ -148,7 +150,29 @@ function block(token: Token, index: number): ReactNode {
   }
 }
 
-export function WorkbotMarkdown({ text }: { text: string }) {
+/** Google Drive files a reply links to, in order and once each, labelled with the reply's own link text. */
+export function documentLinks(text: string): Array<{ fileId: string; label: string }> {
+  const found = new Map<string, string>();
+  const visit = (value: unknown) => {
+    if (Array.isArray(value)) return value.forEach(visit);
+    if (typeof value !== "object" || value === null) return;
+    const token = value as { type?: unknown; href?: unknown; text?: unknown; tokens?: unknown; items?: unknown };
+    if (token.type === "link" && typeof token.href === "string") {
+      const href = safeHref(token.href);
+      const fileId = href ? googleDriveFileId(href) : null;
+      const label = typeof token.text === "string" ? token.text.trim() : "";
+      if (fileId && label && !found.has(fileId)) found.set(fileId, label);
+      return;
+    }
+    visit(token.tokens);
+    visit(token.items);
+  };
+  visit(Lexer.lex(text, { gfm: true, breaks: true }));
+  return [...found].map(([fileId, label]) => ({ fileId, label }));
+}
+
+/** Re-rendered only when its text changes: each streamed word re-reads the bubble it lands in, not every answer above. */
+export const WorkbotMarkdown = memo(function WorkbotMarkdown({ text }: { text: string }) {
   const tokens = Lexer.lex(text, { gfm: true, breaks: true });
   return <div className="flex flex-col gap-3 break-words text-[15px] leading-6 text-[var(--wb-text)]">{tokens.map(block)}</div>;
-}
+});

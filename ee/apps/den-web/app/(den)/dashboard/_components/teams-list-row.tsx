@@ -11,21 +11,18 @@ import { IconTile } from "./access-rows";
  * permissions and Members lanes the organization has, then a 28px action lane.
  * Literal classes, so Tailwind generates each combination.
  */
-export function teamsListColumns({ role, agentPermissions }: { role: boolean; agentPermissions: boolean }): string {
-  if (role && agentPermissions) return "lg:grid-cols-[minmax(0,1fr)_150px_130px_88px_28px]";
-  if (role) return "lg:grid-cols-[minmax(0,1fr)_150px_88px_28px]";
-  if (agentPermissions) return "lg:grid-cols-[minmax(0,1fr)_130px_88px_28px]";
-  return "lg:grid-cols-[minmax(0,1fr)_88px_28px]";
+export function teamsListColumns({ agentPermissions }: { agentPermissions: boolean }): string {
+  return agentPermissions ? "lg:grid-cols-[minmax(0,1fr)_150px_130px_88px_28px]" : "lg:grid-cols-[minmax(0,1fr)_150px_88px_28px]";
 }
 
 const ROW = "grid grid-cols-[minmax(0,1fr)_28px] items-center gap-4 px-5";
 
 /** Column titles over the list, aligned with the row lanes. */
-export function TeamsListHeader({ columns, role, agentPermissions }: { columns: string; role: boolean; agentPermissions: boolean }) {
+export function TeamsListHeader({ columns, agentPermissions }: { columns: string; agentPermissions: boolean }) {
   return (
     <div className={`${ROW} border-b border-gray-100 py-2.5 text-[12px] font-medium leading-4 text-gray-500 ${columns}`}>
       <span>Team</span>
-      {role ? <span className="hidden lg:block">Role</span> : null}
+      <span className="hidden lg:block">Role</span>
       {agentPermissions ? <span className="hidden lg:block">Agent permissions</span> : null}
       <span className="hidden lg:block">Members</span>
       <span aria-hidden />
@@ -50,7 +47,7 @@ export function TeamsListLane({ children, title, testId, tone = "default" }: { c
  * One row of Members › Teams, the same anatomy for Everyone and each team: a
  * 32px tile, a one-line name and subtitle, the fixed lanes, and an action lane.
  */
-export function TeamsListRow({ columns, icon, name, href, badge, subtitle, lanes, action, extra, testId }: {
+export function TeamsListRow({ columns, icon, name, href, badge, subtitle, lanes, action, testId }: {
   columns: string;
   icon: LucideIcon;
   name: string;
@@ -59,8 +56,6 @@ export function TeamsListRow({ columns, icon, name, href, badge, subtitle, lanes
   subtitle: string;
   lanes: ReactNode;
   action: ReactNode;
-  /** Legacy controls under the name (the Admin checkbox without Team roles). */
-  extra?: ReactNode;
   testId: string;
 }) {
   const nameClass = "min-w-0 truncate text-[14px] font-medium leading-5 text-gray-900";
@@ -80,7 +75,6 @@ export function TeamsListRow({ columns, icon, name, href, badge, subtitle, lanes
             {badge}
           </span>
           <span title={subtitle} data-testid="team-row-subtitle" className="truncate text-[13px] leading-[18px] text-gray-500">{subtitle}</span>
-          {extra}
         </div>
       </div>
       {lanes}

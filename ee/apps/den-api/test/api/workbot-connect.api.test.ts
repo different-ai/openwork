@@ -1,0 +1,147 @@
+import assert from "node:assert/strict"
+import { randomUUID } from "node:crypto"
+import { after, test } from "node:test"
+import { bootDen, field, list, startFakeHttpServer, startFakeOAuthMcpServer, summary, text } from "./harness.js"
+
+let tokenRequests = 0
+let incomplete = false
+const provider = await startFakeHttpServer((request, body, response) => {
+  response.setHeader("content-type", "application/json")
+  if (request.url === "/token") {
+    tokenRequests++
+    const code = new URLSearchParams(body).get("code")
+    return void response.end(JSON.stringify({ access_token: `fixture-${code}`, token_type: "Bearer", expires_in: 3600, scope: incomplete ? "openid" : "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/drive.readonly" }))
+  }
+  if (request.url === "/userinfo") return void response.end(JSON.stringify({ sub: "fixture-account" }))
+  response.statusCode = 404
+  response.end("{}")
+})
+const external = await startFakeOAuthMcpServer({ responseIssuer: true })
+const den = await bootDen({ env: { DEN_WORKBOT_URL: "http://127.0.0.1:3017", DEN_GOOGLE_OAUTH_AUTHORIZE_URL: `${provider.url}/authorize`, DEN_GOOGLE_OAUTH_TOKEN_URL: `${provider.url}/token`, DEN_GOOGLE_OAUTH_USERINFO_URL: `${provider.url}/userinfo` } })
+after(async () => { await den.close(); await provider.close(); await external.close() })
+
+const body = () => ({ requestId: randomUUID(), returnPath: "/documents?chat=sidechat000000001" })
+const route = (id: string) => `/v1/workbot/connections/${id}/connect/start`
+
+test("a Workbot grant connects only its own organization; scope, grants and permissions remain enforced", async () => {
+  const { owner, orgId } = await den.createOrg(await den.signUp("Owner Example"), "Connect workspace")
+  const member = await den.newMember(owner, orgId, "Member Example")
+  const other = await den.createOrg(await den.signUp("Other Example"), "Other workspace")
+  const token = await den.mintMcpToken(member, orgId)
+  const call = den.as(owner, orgId)
+  assert.equal((await den.request(null, "POST", route("google-workspace"), { body: body() })).status, 401)
+  assert.equal((await den.request(member.token, "POST", route("google-workspace"), { orgId, body: body() })).status, 401)
+  const readGrant = await den.request(member.token, "POST", "/v1/mcp/token", { orgId, body: { scopes: ["mcp:read"] } })
+  assert.equal((await den.request(text(field(readGrant.body, "token"), "read token"), "POST", route("google-workspace"), { body: body() })).status, 403)
+  for (const returnPath of ["https://other.example.test/", "//other.example.test/", "/\\other.example.test/", "/\nother"]) {
+    assert.equal((await den.request(token, "POST", route("google-workspace"), { body: { ...body(), returnPath } })).status, 400)
+  }
+  const missing = await den.request(token, "POST", route("google-workspace"), { body: body() })
+  assert.equal(missing.status, 404, summary(missing))
+  const restricted = await call("POST", "/v1/mcp-connections", { name: "Restricted calendar", url: external.mcpUrl, authType: "oauth", credentialMode: "per_member", access: { orgWide: false } })
+  assert.equal(restricted.status, 200, summary(restricted))
+  const restrictedId = text(field(restricted.body, "id"), "restricted id")
+  assert.equal((await den.request(token, "POST", route(restrictedId), { body: body() })).status, 403)
+  const shared = await call("POST", "/v1/mcp-connections", { name: "Shared calendar", url: external.mcpUrl, authType: "oauth", credentialMode: "shared", access: { orgWide: true } })
+  assert.equal(shared.status, 200, summary(shared))
+  assert.equal((await den.request(token, "POST", route(text(field(shared.body, "id"), "shared id")), { body: body() })).status, 403)
+  const foreign = await den.as(other.owner, other.orgId)("POST", "/v1/mcp-connections", { name: "Other calendar", url: external.mcpUrl, authType: "oauth", credentialMode: "per_member", access: { orgWide: true } })
+  assert.equal(foreign.status, 200, summary(foreign))
+  assert.equal((await den.request(token, "POST", route(text(field(foreign.body, "id"), "foreign id")), { orgId: other.orgId, body: body() })).status, 404)
+  assert.equal((await call("POST", "/v1/oauth-providers/google-workspace/client", { clientId: "fixture-client", clientSecret: "fixture-secret", features: ["driveRead"] })).status, 200)
+  const start = await den.request(token, "POST", route("google-workspace"), { orgId: other.orgId, body: body() })
+  assert.equal(start.status, 200, summary(start))
+  const authorization = new URL(text(field(start.body, "authorizeUrl"), "authorize URL"))
+  const callback = new URL(text(authorization.searchParams.get("redirect_uri"), "redirect URI"))
+  callback.searchParams.set("state", text(authorization.searchParams.get("state"), "state"))
+  callback.searchParams.set("code", "member")
+  const complete = await den.request(null, "GET", callback.pathname + callback.search)
+  assert.equal(complete.status, 200, summary(complete))
+  assert.ok(complete.text.includes('"ok":true'))
+  assert.ok(complete.text.includes(" — Workbot</title>"))
+  assert.ok(complete.text.includes("Return to Workbot to verify the connection."))
+  assert.equal(complete.text.includes("is connected to OpenWork"), false)
+  assert.equal(complete.text.includes("You're connected"), false)
+  assert.ok(complete.text.includes('"http://127.0.0.1:3017"'))
+  assert.equal(complete.text.includes("other.example.test"), false)
+  assert.equal(tokenRequests, 1)
+  const own = await den.request(token, "GET", "/v1/workbot/connections")
+  assert.ok(list(field(own.body, "connections")).some(connection => connection.ready === true))
+  const ownerToken = await den.mintMcpToken(owner, orgId)
+  const ownerList = await den.request(ownerToken, "GET", "/v1/workbot/connections")
+  assert.equal(list(field(ownerList.body, "connections")).some(connection => connection.ready === true), false)
+})
+
+test("denied, forged, expired, incomplete and reconnect callbacks never claim an unverified connection", async () => {
+  const { owner, orgId } = await den.createOrg(await den.signUp("Connect Example"), "Recovery workspace")
+  const token = await den.mintMcpToken(owner, orgId)
+  await den.as(owner, orgId)("POST", "/v1/oauth-providers/google-workspace/client", { clientId: "fixture-client", clientSecret: "fixture-secret", features: ["driveRead"] })
+  const begin = async () => {
+    const started = await den.request(token, "POST", route("google-workspace"), { body: body() })
+    assert.equal(started.status, 200, summary(started))
+    const authorization = new URL(text(field(started.body, "authorizeUrl"), "authorize URL"))
+    const callback = new URL(text(authorization.searchParams.get("redirect_uri"), "redirect URI"))
+    callback.searchParams.set("state", text(authorization.searchParams.get("state"), "state"))
+    return callback
+  }
+  const denied = await begin()
+  denied.searchParams.set("error", "access_denied")
+  const before = tokenRequests
+  const decline = await den.request(null, "GET", denied.pathname + denied.search)
+  assert.equal(decline.status, 400, summary(decline))
+  assert.ok(decline.text.includes('"ok":false'))
+  assert.equal(tokenRequests, before)
+  const forged = await begin()
+  forged.searchParams.set("state", "forged.expired")
+  forged.searchParams.set("code", "forged")
+  assert.equal((await den.request(null, "GET", forged.pathname + forged.search)).status, 400)
+  assert.equal(tokenRequests, before)
+  const { createOAuthStateToken } = await import("../../src/capability-sources/generic-oauth.js")
+  const { normalizeDenTypeId } = await import("@openwork-ee/utils/typeid")
+  const expired = await begin()
+  expired.searchParams.set("state", createOAuthStateToken({ organizationId: normalizeDenTypeId("organization", orgId), orgMembershipId: normalizeDenTypeId("member", owner.memberId), providerId: "google-workspace", binding: "google-workspace", secret: "den-api-test-better-auth-secret-not-for-production!!", ttlSeconds: -1 }))
+  expired.searchParams.set("code", "expired")
+  assert.equal((await den.request(null, "GET", expired.pathname + expired.search)).status, 400)
+  assert.equal(tokenRequests, before)
+  incomplete = true
+  const partial = await begin()
+  partial.searchParams.set("code", "partial")
+  const partialResult = await den.request(null, "GET", partial.pathname + partial.search)
+  assert.equal(partialResult.status, 200, summary(partialResult))
+  assert.ok(partialResult.text.includes('"ok":false'))
+  const notReady = await den.request(token, "GET", "/v1/workbot/connections")
+  assert.equal(list(field(notReady.body, "connections")).some(connection => connection.ready === true), false)
+  incomplete = false
+  const reconnect = await begin()
+  reconnect.searchParams.set("code", "reconnected")
+  assert.equal((await den.request(null, "GET", reconnect.pathname + reconnect.search)).status, 200)
+  const ready = await den.request(token, "GET", "/v1/workbot/connections")
+  assert.ok(list(field(ready.body, "connections")).some(connection => connection.ready === true))
+})
+
+test("external member OAuth preserves issuer, replay and Workbot return binding", async () => {
+  const { owner, orgId } = await den.createOrg(await den.signUp("External Example"), "External workspace")
+  const member = await den.newMember(owner, orgId, "External Member")
+  const token = await den.mintMcpToken(member, orgId)
+  const created = await den.as(owner, orgId)("POST", "/v1/mcp-connections", { name: "Google Calendar", url: external.mcpUrl, authType: "oauth", credentialMode: "per_member", access: { orgWide: true } })
+  assert.equal(created.status, 200, summary(created))
+  const id = text(field(created.body, "id"), "external connection")
+  const request = body()
+  const started = await den.request(token, "POST", route(id), { body: request })
+  assert.equal(started.status, 200, summary(started))
+  const authorize = await fetch(text(field(started.body, "authorizeUrl"), "authorize URL"), { redirect: "manual" })
+  assert.equal(authorize.status, 302)
+  const callback = new URL(text(authorize.headers.get("location"), "callback"))
+  const complete = await den.request(null, "GET", callback.pathname + callback.search)
+  assert.equal(complete.status, 200, summary(complete))
+  assert.ok(complete.text.includes(request.requestId))
+  assert.ok(complete.text.includes(`"connectionId":"${id}"`))
+  assert.ok(complete.text.includes('"ok":true'))
+  assert.ok(complete.text.includes(" — Workbot</title>"))
+  assert.ok(complete.text.includes("Return to Workbot to verify the connection."))
+  assert.equal(complete.text.includes("is connected to OpenWork"), false)
+  assert.equal(complete.text.includes("You're connected"), false)
+  const before = external.tokenRequests()
+  assert.equal((await den.request(null, "GET", callback.pathname + callback.search)).status, 400)
+  assert.equal(external.tokenRequests(), before)
+})

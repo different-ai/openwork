@@ -18,6 +18,8 @@ import { refreshProviderListQueries } from "@/react-app/infra/provider-list-quer
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import type { RouteWorkspace } from "./route-workspaces";
 import { toast } from "@/components/ui/sonner";
+import { useLiveProviderSync } from "@/react-app/domains/connections/provider-auth/use-live-provider-sync";
+import { shouldRefreshProvidersForReloadEvent } from "@/react-app/domains/connections/provider-auth/live-provider-sync";
 
 const reloadAfterOrgOnboardingKey = "openwork.reloadAfterOrgOnboarding";
 
@@ -50,6 +52,7 @@ export function useEngineReload(input: UseEngineReloadInput) {
     refreshRouteState,
   } = input;
   const reloadCoordinator = useReloadCoordinator();
+  const liveProviderSync = useLiveProviderSync(client, opencodeBaseUrl);
   const [engineReloadVersion, setEngineReloadVersion] = useState(0);
   const [routeEngineInfo, setRouteEngineInfo] = useState<EngineInfo | null>(null);
   const [engineRolloverAvailable, setEngineRolloverAvailable] = useState(false);
@@ -167,7 +170,9 @@ export function useEngineReload(input: UseEngineReloadInput) {
           // visible catalog without scheduling the legacy engine disposal.
           if (isOpencodeV2BaseUrl(opencodeBaseUrl)
             && (event.reason === "skills" || event.reason === "mcp" || event.reason === "config")) {
-            await refreshProviderListQueries(getReactQueryClient());
+            // Native provider/model events drive live sync; the 3s reload-event poll
+            // must not become a second provider refresh loop.
+            if (shouldRefreshProvidersForReloadEvent(liveProviderSync)) await refreshProviderListQueries(getReactQueryClient());
             continue;
           }
           reloadCoordinator.markReloadRequired(event.reason, event.trigger);
@@ -184,7 +189,7 @@ export function useEngineReload(input: UseEngineReloadInput) {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [client, endpointForWorkspace, opencodeBaseUrl, reloadCoordinator, workspace, workspaceId]);
+  }, [client, endpointForWorkspace, liveProviderSync, opencodeBaseUrl, reloadCoordinator, workspace, workspaceId]);
 
   useEffect(() => {
     if (!isDesktopRuntime()) return;

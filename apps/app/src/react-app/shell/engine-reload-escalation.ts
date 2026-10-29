@@ -64,7 +64,7 @@ export async function reloadEngineWithDesktopFallback(
   workspaceId: string,
   options?: ReloadEngineFallbackOptions,
 ): Promise<ReloadEngineFallbackResult> {
-  const restartEngine = options?.restartEngine ?? (() => engineRestart({}));
+  const restartEngine = options?.restartEngine ?? (() => engineRestart({ diagnosticsCause: "reload-escalation" }));
   const isDesktop = options?.isDesktop ?? isDesktopRuntime;
   try {
     await client.reloadEngine(workspaceId);

@@ -34,6 +34,9 @@ data:
   DEN_AUDIT_CAPTURE_ENABLED: {{ .Values.config.audit.captureEnabled | quote }}
   DEN_AUDIT_VISIBILITY_ENABLED: {{ .Values.config.audit.visibilityEnabled | quote }}
   DEN_PASSWORD_BREACH_SCREENING_ENABLED: {{ .Values.config.auth.passwordBreachScreeningEnabled | quote }}
+  {{- with (.Values.config.email).supportAddress }}
+  EMAIL_SUPPORT_ADDRESS: {{ . | quote }}
+  {{- end }}
   GITHUB_CONNECTOR_APP_ID: {{ .Values.config.githubConnector.appId | quote }}
   GITHUB_CONNECTOR_APP_CLIENT_ID: {{ .Values.config.githubConnector.clientId | quote }}
   DEN_BASE_URL: {{ .Values.config.public.webOrigin | quote }}
@@ -104,6 +107,7 @@ data:
   {{ with .Values.config.daytona.target }}
   DAYTONA_TARGET: {{ . | quote }}
   {{ end }}
+  DAYTONA_SANDBOX_CLASS: {{ .Values.config.daytona.sandboxClass | default "container" | quote }}
   {{ with .Values.config.daytona.snapshot }}
   DAYTONA_SNAPSHOT: {{ . | quote }}
   {{ end }}
@@ -124,6 +128,9 @@ data:
   {{ end }}
   {{ with .Values.config.daytona.sandboxAutoStopInterval }}
   DAYTONA_SANDBOX_AUTO_STOP_INTERVAL: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.daytona.sandboxAutoPauseInterval }}
+  DAYTONA_SANDBOX_AUTO_PAUSE_INTERVAL: {{ . | quote }}
   {{ end }}
   {{ with .Values.config.daytona.sandboxAutoArchiveInterval }}
   DAYTONA_SANDBOX_AUTO_ARCHIVE_INTERVAL: {{ . | quote }}

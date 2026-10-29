@@ -1,0 +1,153 @@
+name: Terraform modules
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - "infra/terraform/modules/**"
+      - ".github/workflows/terraform-modules.yml"
+      - "infra/terraform/.trivyignore.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-modules-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      modules: ${{ steps.diff.outputs.modules }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select changed modules against PR base
+        id: diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          modules = ["openwork-aws-ecs", "openwork-gcp-cloud-run", "openwork-azure-container-apps"]
+          paths = subprocess.check_output([
+              "git", "diff", "--name-only", "--no-renames", "-z", os.environ["BASE_SHA"] + "..." + os.environ["HEAD_SHA"]
+          ]).decode().split("\0")
+          shared = {".github/workflows/terraform-modules.yml", "infra/terraform/.trivyignore.yaml"}
+          selected = [m for m in modules if shared.intersection(paths) or any(
+              p.startswith("infra/terraform/modules/" + m + "/") for p in paths
+          )]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("modules=" + json.dumps(selected) + "\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write("## Changed Terraform modules\n" + "\n".join("- " + m for m in selected) + "\n")
+          PY
+
+  verify:
+    needs: changes
+    if: needs.changes.outputs.modules != '[]'
+    name: Verify ${{ matrix.module }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(needs.changes.outputs.modules) }}
+    env:
+      MODULE: ${{ matrix.module }}
+      TF_IN_AUTOMATION: "true"
+      CHECKPOINT_DISABLE: "1"
+      AWS_EC2_METADATA_DISABLED: "true"
+      TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform-plugin-cache
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Start module timer
+        run: echo "MODULE_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Cache providers (separate registry namespaces)
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .terraform-plugin-cache
+          key: terraform-providers-${{ runner.os }}-${{ runner.arch }}-${{ matrix.module }}-${{ hashFiles(format('infra/terraform/modules/{0}/**/*.tf', matrix.module), format('infra/terraform/modules/{0}/**/.terraform.lock.hcl', matrix.module)) }}
+          restore-keys: |
+            terraform-providers-${{ runner.os }}-${{ runner.arch }}-${{ matrix.module }}-
+      - name: Install verified Terraform and OpenTofu
+        run: |
+          curl -fsSLo /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.16.5/terraform_1.16.5_linux_amd64.zip
+          echo '2bc2fcfff033265c9e02ca0351f01794eb122f62a9b2a49a3294b9e49eaab5e4  /tmp/terraform.zip' | sha256sum -c -
+          unzip -q /tmp/terraform.zip -d /tmp/terraform-bin
+          echo /tmp/terraform-bin >> "$GITHUB_PATH"
+          curl -fsSLo /tmp/tofu.zip https://github.com/opentofu/opentofu/releases/download/v1.11.14/tofu_1.11.14_linux_amd64.zip
+          echo '8279a6c6d4044899ae77190fc50c40c147615a76aca13ea605d68320c424c2a6  /tmp/tofu.zip' | sha256sum -c -
+          mkdir -p /tmp/tofu-bin "$TF_PLUGIN_CACHE_DIR"
+          unzip -q /tmp/tofu.zip -d /tmp/tofu-bin
+          echo /tmp/tofu-bin >> "$GITHUB_PATH"
+      - name: Format, initialize, validate and mocked tests with both tools
+        working-directory: infra/terraform/modules/${{ matrix.module }}
+        run: |
+          for tool in terraform tofu; do
+            "$tool" fmt -check -recursive
+            # A lock belongs to one registry. Regenerate explicitly when switching tools.
+            if [[ "$tool" == tofu ]]; then
+              rm -f .terraform.lock.hcl examples/complete/.terraform.lock.hcl
+            fi
+            # Reusable modules ship no locks; preserve a future committed lock if present.
+            if [[ ! -f .terraform.lock.hcl ]]; then
+              "$tool" init -backend=false -input=false
+            fi
+            "$tool" init -backend=false -input=false -lockfile=readonly
+            # Azure's required caller alias is validated via examples/complete plus mocked tests, not bare-root validate.
+            if [[ "$MODULE" != openwork-azure-container-apps ]]; then
+              "$tool" validate
+            fi
+            "$tool" test
+            (
+              cd examples/complete
+              if [[ ! -f .terraform.lock.hcl ]]; then
+                "$tool" init -backend=false -input=false
+              fi
+              "$tool" init -backend=false -input=false -lockfile=readonly
+              "$tool" validate
+            )
+          done
+      - name: Install verified Trivy
+        id: trivy-install
+        if: ${{ !cancelled() }}
+        run: |
+          curl -fsSLo /tmp/trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.75.0/trivy_0.75.0_Linux-64bit.tar.gz
+          echo 'c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f  /tmp/trivy.tar.gz' | sha256sum -c -
+          mkdir -p /tmp/trivy-bin
+          tar -xzf /tmp/trivy.tar.gz -C /tmp/trivy-bin trivy
+          echo /tmp/trivy-bin >> "$GITHUB_PATH"
+      - name: Report all IaC findings and gate unaccepted HIGH/CRITICAL
+        if: ${{ !cancelled() && steps.trivy-install.outcome == 'success' }}
+        id: scan
+        env:
+          # Fetched from the OCI mirror by immutable digest, not the mutable :2 tag.
+          TRIVY_CHECKS_BUNDLE_REPOSITORY: mirror.gcr.io/aquasec/trivy-checks@sha256:b591e9190cff4aa4e385b1a25bccfd9ecf178d3c77fd194e1410b7ce7e1df058
+          TRIVY_DISABLE_TELEMETRY: "true"
+          TRIVY_SKIP_VERSION_CHECK: "true"
+        run: |
+          target="infra/terraform/modules/$MODULE"
+          # Run from repository root; ignore paths are relative to the scanned module.
+          trivy config --misconfig-scanners=terraform --ignorefile '' --format table --output "$RUNNER_TEMP/trivy-all.txt" "$target"
+          {
+            echo '## Trivy: all findings (including accepted risks, all severities)'
+            echo '```text'
+            cat "$RUNNER_TEMP/trivy-all.txt"
+            echo '```'
+            echo '### Reviewed exceptions (file-scoped; not fixes)'
+            echo '```yaml'
+            cat infra/terraform/.trivyignore.yaml
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          trivy config --misconfig-scanners=terraform --ignorefile infra/terraform/.trivyignore.yaml --severity HIGH,CRITICAL --exit-code 1 "$target"
+      - name: Module wall time
+        if: always()
+        run: echo "Module $MODULE wall time (cache restore, tool installation, validation, tests and scan; excludes checkout) = $(( $(date +%s) - MODULE_STARTED )) seconds" >> "$GITHUB_STEP_SUMMARY"

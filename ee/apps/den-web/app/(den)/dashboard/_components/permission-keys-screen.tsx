@@ -5,9 +5,8 @@ import { ChevronRight } from "lucide-react";
 import { getPermissionDefinition, isPermissionKey } from "@openwork/types/den/permissions";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
-import { getMembersRoute, getPermissionKeyRoute, getPermissionKeysRoute, getPermissionSetRoute, getPermissionsRoute, orgFeatureEnabled } from "../../_lib/den-org";
-import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { PermissionsRequestError, usePermissionKeyStatus, useSharedRolesOn } from "./permissions-data";
+import { getMembersRoute, getPermissionKeyRoute, getPermissionKeysRoute, getPermissionSetRoute } from "../../_lib/den-org";
+import { PermissionsRequestError, usePermissionKeyStatus } from "./permissions-data";
 import { roleKindLabel, roleName } from "./team-roles";
 import {
   PermissionAreaSection,
@@ -21,22 +20,14 @@ import {
 
 const rowClass = "group flex min-h-11 items-center gap-3 py-2 transition-colors hover:bg-gray-50/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400";
 
-/** teamRoles: these pages sit under Members › Roles and name roles, not permission sets. */
-function useTeamRolesOn(): boolean {
-  const { orgContext } = useOrgDashboard();
-  return orgContext ? orgFeatureEnabled(orgContext, "teamRoles") : false;
-}
-
 /** Every permission by area; each opens its status across sets. */
 export function PermissionKeysScreen() {
   const permissions = usePermissionsAccess();
-  const teamRoles = useTeamRolesOn();
+
   if (permissions.state !== "ready") {
     return <PermissionsPage title="By permission" testId="permission-keys"><PermissionsAccessState access={permissions} /></PermissionsPage>;
   }
-  const back = teamRoles
-    ? { href: `${getMembersRoute(permissions.orgSlug)}?tab=roles`, label: "Roles" }
-    : { href: getPermissionsRoute(permissions.orgSlug), label: "Permissions" };
+  const back = { href: `${getMembersRoute(permissions.orgSlug)}?tab=roles`, label: "Roles" };
   return (
     <PermissionsPage title="By permission" back={back} testId="permission-keys">
       <div className="flex flex-col gap-6">
@@ -66,8 +57,7 @@ const SET_KIND_ORDER = { member_default: 0, admin_default: 1, team: 2 } as const
 /** One permission's status in Member, Admin and every team's permissions. */
 export function PermissionKeyScreen({ permissionKey }: { permissionKey: string }) {
   const permissions = usePermissionsAccess();
-  const teamRoles = useTeamRolesOn();
-  const sharedRoles = useSharedRolesOn();
+
   const ready = permissions.state === "ready" ? permissions : null;
   const query = usePermissionKeyStatus(ready?.orgId ?? null, permissionKey);
   const title = isPermissionKey(permissionKey) ? getPermissionDefinition(permissionKey).label : "Permission";
@@ -103,19 +93,14 @@ export function PermissionKeyScreen({ permissionKey }: { permissionKey: string }
       ) : !query.data ? (
         <PermissionRowsSkeleton rows={3} />
       ) : (
-        <PermissionAreaSection label={teamRoles ? "Roles" : "Where it's allowed"} testId="permission-key-sets">
+        <PermissionAreaSection label="Roles" testId="permission-key-sets">
           {sets.map((set) => (
             <Link key={set.id} href={getPermissionSetRoute(ready.orgSlug, set.id)} className={rowClass} data-testid="permission-key-set-row" data-status={set.status}>
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                {teamRoles ? (
+                {(
                   <>
-                    <span className="truncate text-[13px] font-medium text-gray-900">{roleName(set, { shared: sharedRoles })}</span>
+                    <span className="truncate text-[13px] font-medium text-gray-900">{roleName(set)}</span>
                     <span className="truncate text-[12px] text-gray-500">{roleKindLabel(set)}</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="truncate text-[13px] font-medium text-gray-900">{set.name}</span>
-                    {set.kind === "team" ? <span className="truncate text-[12px] text-gray-500">{set.team?.name ?? "A deleted team"} team</span> : null}
                   </>
                 )}
               </span>

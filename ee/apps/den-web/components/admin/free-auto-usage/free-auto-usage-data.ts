@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { requestAdmin, type AdminResult } from "../admin-request";
+import { requestAdmin, withStoredBearer, type AdminResult } from "../admin-request";
+import { useAdminSessionCookie } from "../admin-shell";
 
 /** Mirrors `GET /v1/admin/free-auto/usage`. Amounts are micro-USD; days are UTC. */
 export type FreeAutoUsage = {
@@ -77,24 +78,34 @@ export type FreeAutoUsageState =
 
 /** Loads the report for a range; keeps the last report on screen while a new range or refresh loads. */
 export function useFreeAutoUsage(days: FreeAutoRange) {
-  const [state, setState] = useState<FreeAutoUsageState>({ status: "loading", report: null });
+  const hasSessionCookie = useAdminSessionCookie();
+  const [state, setState] = useState<FreeAutoUsageState>(() => hasSessionCookie ? { status: "loading", report: null }
+    : { status: "signed-out", message: "", report: null });
   const [nonce, setNonce] = useState(0);
   const last = useRef<FreeAutoUsageReport | null>(null);
   useEffect(() => {
     const controller = new AbortController();
+    if (nonce === 0 && !hasSessionCookie && !withStoredBearer({}).Authorization) {
+      last.current = null;
+      setState({ status: "signed-out", message: "", report: null });
+      return () => controller.abort();
+    }
     setState({ status: "loading", report: last.current });
     requestAdmin(`/v1/admin/free-auto/usage?days=${days}`, parseFreeAutoUsageReport, controller.signal)
       .then((result) => {
         if (controller.signal.aborted) return;
         if (result.access === "ready") { last.current = result.data; setState({ status: "ready", report: result.data }); }
-        else setState({ status: result.access, message: result.message, report: last.current });
+        else {
+          if (result.access !== "error") last.current = null;
+          setState({ status: result.access, message: result.message, report: last.current });
+        }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         setState({ status: "error", message: error instanceof Error ? error.message : "The request failed.", report: last.current });
       });
     return () => controller.abort();
-  }, [days, nonce]);
+  }, [days, hasSessionCookie, nonce]);
   const refresh = useCallback(() => setNonce((value) => value + 1), []);
   return { state, refresh };
 }

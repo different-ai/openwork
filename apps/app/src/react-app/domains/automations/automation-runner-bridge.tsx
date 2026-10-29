@@ -17,7 +17,7 @@ import { denSettingsChangedEvent } from "@/app/lib/den-session-events"
 import { isDesktopRuntime } from "@/app/utils"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { useEnterpriseActivationRequired } from "@/react-app/domains/cloud/enterprise-activation-gate"
-import { useAutomationDeploymentEnabled } from "./automation-availability"
+import { useDesktopAutomationsEnabled } from "./automation-availability"
 import { createAutomationRunnerConnectCoordinator } from "./automation-runner-connect-coordinator"
 import { organizationRunnerId } from "./automation-runner-identity"
 
@@ -45,7 +45,7 @@ export function AutomationRunnerBridge() {
 
 function ActivatedAutomationRunnerBridge() {
   const { status } = useDenAuth()
-  const deploymentEnabled = useAutomationDeploymentEnabled()
+  const deploymentEnabled = useDesktopAutomationsEnabled()
 
   useEffect(() => {
     if (!isDesktopRuntime() || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return

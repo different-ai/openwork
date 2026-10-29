@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 
 // Journeys live in evals/core (maintained) or
 // evals/proofs (one-off agent proofs); a file can move between them and keeps
@@ -44,16 +44,29 @@ const journeyPath = name => ["core", "specs", "proofs"].map(folder => `evals/${f
 export const CORE_SPECS = [journeyPath("core-chat.e2e.test.ts")];
 const docsOnlyFile = path => path.startsWith("packages/docs/") || path.endsWith(".md");
 
-// Every E2E spec the PR added or changed is a proof of its work, plus the core
-// journeys unless the PR only touches docs.
-export function selectProof(files) {
+// Every core journey runs on each PR that changes more than docs, once, in this
+// workflow. Packaged journeys need packaged binaries: app-smoke runs in packaged
+// smoke on every PR, and packaged-update-install (macOS) only when it changes.
+const PACKAGED_ONLY = /^(packaged-[^/]+|app-smoke)\.e2e\.test\.ts$/;
+// Too slow for every push (it relaunches the desktop app twice, ~8.5 min).
+// The nightly Core journeys workflow still runs it, and so does any PR that changes it.
+export const NIGHTLY_ONLY = new Set(["thread-continues-after-restart.e2e.test.ts"]);
+export function everyCoreJourney(root = repoRoot) {
+  const directory = new URL("evals/core/", root);
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory).filter(name => name.endsWith(".e2e.test.ts") && !PACKAGED_ONLY.test(name) && !NIGHTLY_ONLY.has(name)).map(name => `evals/core/${name}`);
+}
+
+// Every E2E spec the PR added or changed is a proof of its work, plus every
+// core journey unless the PR only touches docs.
+export function selectProof(files, coreJourneys = everyCoreJourney()) {
   if (!Array.isArray(files) || files.some(file => !safePath(file.filename) || (file.previous_filename !== undefined && !safePath(file.previous_filename))))
     throw new Error("Missing or unsafe changed-file listing; proof selection is unavailable.");
   if (new Set(files.map(file => file.filename)).size !== files.length) throw new Error("Duplicate changed files; proof selection is unavailable.");
   const changed = files
     .filter(file => ["added", "modified", "renamed", "changed", "copied"].includes(file.status) && SPEC.test(file.filename))
     .map(file => file.filename);
-  const core = files.some(file => !docsOnlyFile(file.filename)) ? CORE_SPECS : [];
+  const core = files.some(file => !docsOnlyFile(file.filename)) ? [...new Set([...CORE_SPECS, ...coreJourneys])] : [];
   const specs = [...new Set([...changed, ...core])].sort();
   return { specs };
 }

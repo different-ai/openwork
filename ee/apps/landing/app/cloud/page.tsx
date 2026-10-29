@@ -72,7 +72,7 @@ export default async function CloudPage() {
                 <a href={CLOUD_SIGNUP_URL} className="lp-pill-primary">Get started free</a>
                 <a href={callHref} className="lp-pill-secondary">Talk to sales</a>
               </div>
-              <span className="text-[13.5px] text-[var(--lp-body)] sm:ml-2">First 5 seats free</span>
+              <span className="text-[13.5px] text-[var(--lp-body)] sm:ml-2">Free plan for up to 5 users</span>
             </div>
           </section>
 
@@ -132,10 +132,10 @@ export default async function CloudPage() {
           <div className="mt-[120px]">
             <LpCta
               heading="Run your org on OpenWork Cloud."
-              sub="Providers, skills, MCPs, and web access — managed in one place, exposed through one gateway. Your first 5 seats are free."
+              sub="Providers, skills, MCPs, and web access — managed in one place, exposed through one gateway. The Free plan covers up to 5 users."
               primary={{ label: "Get started free", href: CLOUD_SIGNUP_URL }}
               secondary={{ label: "Talk to sales", href: callHref }}
-              trust="First 5 seats free · MCP Gateway included · Desktop, web, and any MCP client"
+              trust="Free plan for up to 5 users · MCP Gateway included · Desktop, web, and any MCP client"
             />
           </div>
           <div className="mt-16"><SiteFooter /></div>

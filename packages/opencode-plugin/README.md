@@ -134,10 +134,76 @@ The runner advertises only the directory where this plugin instance is loaded, w
 
 The published package bundles the shared remote-session core and has no runtime dependencies. Git source installs need both sparse-checkout directories shown above for remote sessions. An older sparse checkout still supports sign-in, models, and MCP while remote sessions are off; an opt-in missing the shared package reports an unavailable status in plugin storage at `remoteSessions/status` and logs recovery instructions without disabling those ordinary features.
 
+## Desktop-managed providers (internal host integration)
+
+The desktop server can load the same `server.ts` source entry (or the built
+`dist/server.js`, keeping its adjacent chunks) with these plugin options:
+
+```json
+{
+  "desktopSession": "http://127.0.0.1:1234/provider-session",
+  "liveProviderSync": true
+}
+```
+
+`liveProviderSync` must be the server's resolved registry feature value. Choose
+one provider owner for the engine's entire lifetime; do not start the legacy
+writer alongside a running plugin when the rollout is killed. Restarting the
+engine can choose the legacy owner again.
+
+The managed child receives a one-shot anonymous pipe on fd 3 containing JSON
+`{endpoint, token}`. Only a nonsecret fd marker (`OPENWORK_PROVIDER_SESSION_FD=3`)
+is in its environment: the capability is never in initial process environment,
+arguments, files, plugin options, or config. The trusted plugin entrypoint consumes
+and closes the pipe before setup, including flag-off boot. A frozen native CJS
+broker shares the capability across Location-scoped ESM/source graphs and reloads,
+with the credential retained only in its module closure; it signs requests only to
+the bound endpoint. `OPENWORK_PROVIDER_SESSION_BROKER` contains only the absolute
+path to that credential-free broker code (not a credential/config file). Thus late rollout activation needs no still-open credential descriptor.
+The capability is scoped to catalog transport and ephemeral local inference, not
+a Den session or reusable Gateway credential. `desktopSession` returns only
+`{apiBaseUrl, identity, orgId, inferenceOrigin, inferenceKey}` or JSON `null` while
+signed out. The opaque identity hash is stable across engine ports/capabilities
+and changes with the account, org, or Den credential. **Both the Den bearer and
+raw member `ow_gw_` key stay exclusively in the OpenWork server**, never in the
+engine, including its other project plugins. Inventory connects return only the
+`ow_local_catalog` placeholder. Public cached catalogs are rebound on publication
+to the current loopback inference origin and identity-bound ephemeral `ow_local_`
+key; neither loopback endpoints nor ephemeral keys are persisted in that cache.
+
+The bridge accepts only GET usable-provider-list, per-provider-connect, and
+inventory-event requests, each bound to the expected identity. For inference it
+accepts only POST chat/completions, responses, messages, and Gemini generateContent
+or streamGenerateContent routes (including v1/v1beta prefixes). It resolves the
+current authorized provider connection for each inference request and supplies
+the real Gateway bearer server-side. Old-identity/old-engine keys cannot authorize
+another identity or bridge. Caller auth/org/cookie/Host headers are not forwarded;
+semantic protocol headers and quota markers are preserved. Real inference JSON/SSE
+is streamed with credential redaction across chunk boundaries; inventory SSE is
+canonicalized to invalidations/heartbeats. Admin, MCP, arbitrary URLs, other
+mutations, redirects and WebSocket upgrades are unsupported. This transport
+supports HTTP inference only; native WebSocket routes must use HTTP fallback.
+Only literal HTTP loopback addresses are accepted for the engine-facing endpoint.
+
+This mode registers only providers: no MCP, standalone login, remote sessions,
+or Den sign-out. It checks the local handoff every second and fetches Den
+inventory on session changes, stream connection/reconnection, and
+`inventory.changed` events. Account/org/token changes cancel and fence old
+requests. Startup cache is scoped by a hash of the API URL, org, and session;
+only public gateway inventory and a dummy credential are cached, never reusable
+Den/Gateway keys, ephemeral inference keys, or the loopback capability. A feature-disabled stream `404` stops reconnection for that
+session while preserving its last snapshot. Heartbeat stalls and transient
+failures reconnect with bounded backoff. Locations in one engine share a single
+session-scoped stream with reference-counted fanout; unloading one Location never
+aborts the others. Failed inventory reconciliations retry with bounded backoff
+until they converge, then stop (no inventory polling). Stream 401/403 and whole
+inventory-list 403 clear that session's providers/cache and fence late requests;
+an individual provider's connect 403 first refetches the inventory.
+
 ## How it works
 
 - Sign-in uses OpenWork's device authorization. OpenCode stores the session in its own credential store (`~/.local/share/opencode/opencode.db`).
-- On start, the plugin publishes the last known models and servers straight away, then refreshes from OpenWork in the background and every five minutes.
+- On start, the plugin publishes the same account's last known models and servers, then refreshes from OpenWork in the background and every five minutes. When `GET /v1/org` resolves `features.liveProviderSync` true, it also subscribes to authenticated inventory events; each event/reconnect bypasses the 30-second shared cache. The rollout defaults off; standalone sign-in and periodic MCP refresh remain unchanged.
 - AI Gateway models talk to `gateway.openworklabs.com` with your personal gateway key. MCP servers talk to OpenWork's MCP gateway (`/mcp/agent`) with a 7-day token that is renewed automatically.
 
 Built for OpenCode 2 (`@opencode/plugin` 2.0.26).

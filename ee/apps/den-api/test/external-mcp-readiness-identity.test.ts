@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { fingerprintReadinessIdentity, visibleReadiness, type ReadinessIdentity } from "../src/capability-sources/external-mcp-readiness-identity.js"
+import { fingerprintOrganizationReadinessIdentity, fingerprintReadinessIdentity, latestMemberReady, visibleReadiness, type ReadinessIdentity } from "../src/capability-sources/external-mcp-readiness-identity.js"
 
 const connection = {
   url: "https://notes.example.test/mcp", authType: "oauth", credentialMode: "shared",
@@ -41,5 +41,44 @@ test("no check or a mismatched identity never yields Ready and internal binding 
   const check = { status: "ready", checkedAt, lastSuccessfulAt: checkedAt, reason: null, fingerprint: fingerprint(connection) } satisfies Parameters<typeof visibleReadiness>[0]
   assert.equal(visibleReadiness(null, check.fingerprint), null)
   assert.equal(visibleReadiness(check, "different-identity"), null)
-  assert.deepEqual(visibleReadiness(check, check.fingerprint), { status: "ready", checkedAt, lastSuccessfulAt: checkedAt, reason: null })
+  assert.deepEqual(visibleReadiness(check, check.fingerprint), { status: "ready", checkedAt, lastSuccessfulAt: checkedAt, reason: null, failure: null })
+})
+
+test("a failed check keeps why it failed so a rejected sign-in is not confused with an outage", () => {
+  const checkedAt = "2026-10-22T12:00:00.000Z"
+  const base = { status: "could_not_verify", checkedAt, lastSuccessfulAt: null, fingerprint: fingerprint(connection) } as const
+  assert.equal(visibleReadiness({ ...base, reason: "rejected", failure: "sign_in_rejected" }, base.fingerprint)?.failure, "sign_in_rejected")
+  assert.equal(visibleReadiness({ ...base, reason: "down", failure: "unavailable" }, base.fingerprint)?.failure, "unavailable")
+})
+
+test("a per-member connector's own status depends only on its settings, never on anyone's sign-in", () => {
+  const personal: ReadinessIdentity = { ...connection, credentialMode: "per_member", accessToken: null }
+  const organization = fingerprintOrganizationReadinessIdentity(personal)
+  assert.equal(fingerprintOrganizationReadinessIdentity({ ...personal, readinessCredentialBinding: "anything" }), organization)
+  assert.notEqual(fingerprintOrganizationReadinessIdentity({ ...personal, url: "https://other.example.test/mcp" }), organization)
+  // Never equal to any member's own fingerprint, so neither can stand in for the other.
+  assert.notEqual(organization, fingerprintReadinessIdentity(personal, null))
+  assert.notEqual(organization, fingerprintReadinessIdentity(personal, { accessToken: "t", externalAccountId: "a", readinessCredentialBinding: "b" }))
+})
+
+test("only a member's Ready check that still matches their sign-in and the settings is copied to the connector", () => {
+  const personal: ReadinessIdentity = { ...connection, credentialMode: "per_member", accessToken: null }
+  const sam = { accessToken: "sam-token", externalAccountId: "sam@example.test", readinessCredentialBinding: "sam-grant" }
+  const riley = { accessToken: "riley-token", externalAccountId: "riley@example.test", readinessCredentialBinding: "riley-grant" }
+  const check = (account: typeof sam, status: "ready" | "could_not_verify", checkedAt: string) => ({
+    status, checkedAt, lastSuccessfulAt: status === "ready" ? checkedAt : null, reason: null, fingerprint: fingerprintReadinessIdentity(personal, account),
+  })
+
+  assert.equal(latestMemberReady(personal, []), null, "never checked")
+  assert.equal(latestMemberReady(personal, [{ ...sam, readinessCheck: check(sam, "could_not_verify", "2026-10-22T10:00:00.000Z") }]), null, "a failure is never copied")
+  assert.equal(latestMemberReady(personal, [{ ...sam, readinessCheck: { ...check(sam, "ready", "2026-10-22T10:00:00.000Z"), fingerprint: "old" } }]), null, "a stale check is never copied")
+  assert.equal(latestMemberReady(personal, [{ ...sam, accessToken: null, readinessCheck: check(sam, "ready", "2026-10-22T10:00:00.000Z") }]), null, "a signed-out member is never copied")
+  assert.equal(latestMemberReady({ ...personal, url: "https://moved.example.test/mcp" }, [{ ...sam, readinessCheck: check(sam, "ready", "2026-10-22T10:00:00.000Z") }]), null, "settings changed since")
+
+  const latest = latestMemberReady(personal, [
+    { ...sam, readinessCheck: check(sam, "ready", "2026-10-22T10:00:00.000Z") },
+    { ...riley, readinessCheck: check(riley, "ready", "2026-10-22T11:00:00.000Z") },
+  ])
+  assert.equal(latest?.checkedAt, "2026-10-22T11:00:00.000Z")
+  assert.equal(latest?.status, "ready")
 })

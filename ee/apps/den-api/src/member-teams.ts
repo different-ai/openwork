@@ -2,23 +2,16 @@ import { and, asc, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, OrganizationTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { db } from "./db.js"
 import { cache } from "./cache.js"
-import { organizationFeatureEnabled } from "./features.js"
 
 /**
  * Cache the team join, never the revision or member-liveness check. Each hit is
  * bound to the revision committed with team changes, so even Redis rollback
  * cannot restore revoked access. Reads inside mutation transactions stay raw.
- *
- * Pass `teamMembershipCache` when the request already resolved its features
- * (organization context, MCP request), so the flag is not read a second time.
  */
-export function listTeamsForMember(input: Parameters<typeof loadMemberTeams>[0] & { teamMembershipCache?: boolean }) {
-  const { teamMembershipCache, ...member } = input
+export function listTeamsForMember(member: Parameters<typeof loadMemberTeams>[0]) {
   return cache.org.memberTeams({
     ...member,
-    enabled: teamMembershipCache === undefined
-      ? () => organizationFeatureEnabled(member.organizationId, "teamMembershipCache")
-      : async () => teamMembershipCache,
+    enabled: async () => true,
     revision: async () => {
       const [row] = await db.select({ revision: OrganizationTable.teamMembershipRevision })
         .from(MemberTable)

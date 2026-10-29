@@ -75,7 +75,6 @@ export function SharedTeamRolePanel({ team }: { team: DenOrgTeam }) {
   const abilities: TeamRoleAbilities = {
     canManageAdminTeams: access?.canManageAdminTeams ?? false,
     canManagePermissions: access?.canManagePermissions ?? false,
-    permissionsFeature: true,
   };
 
   return (

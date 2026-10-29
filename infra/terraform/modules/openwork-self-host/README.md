@@ -47,7 +47,7 @@ The module deploys the app only. Before `terraform apply`, you need:
 | `ingress.web_host` | `"openwork.example.com"` (when ingress is enabled) |
 
 Everything else has a private-deployment default: public signup is off,
-single-org mode, Automations and Dashboards are off. See `variables.tf`.
+single-org mode, Automations on and Dashboards off. See `variables.tf`.
 
 ## Usage
 

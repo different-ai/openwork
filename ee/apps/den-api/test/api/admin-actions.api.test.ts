@@ -79,8 +79,6 @@ test("removing SCIM provisioning revokes the identity provider's bearer: it can 
 test("a member without Manage OpenWork Models cannot change the organization default model", async () => {
   const { orgId, owner } = await den.createOrg(await den.signUp("Mo Owner"), "Default model org")
   const maya = await den.newMember(owner, orgId, "Maya Modeler")
-  const enabled = await den.setFeature(orgId, "orgDefaultModel", true)
-  assert.equal(enabled.status, 200, summary(enabled))
   const provider = await den.as(owner, orgId)("POST", "/v1/llm-providers", {
     name: "Anthropic",
     source: "custom",

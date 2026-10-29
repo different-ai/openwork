@@ -1,5 +1,5 @@
 import { OAuthClientInformationFullSchema, OAuthClientInformationSchema, OAuthTokensSchema } from "@modelcontextprotocol/core"
-import { checkResourceAllowed, discoverAuthorizationServerMetadata, IssuerMismatchError } from "@modelcontextprotocol/client"
+import { checkResourceAllowed, discoverAuthorizationServerMetadata } from "@modelcontextprotocol/client"
 import type {
   AuthorizationServerMetadata,
   OAuthClientInformationContext,
@@ -22,6 +22,7 @@ import type {
 } from "./contracts.js"
 import { EnterpriseMcpOAuthContractError } from "./errors.js"
 import { isAuthorizationServerDiscoveryBound } from "./oauth-discovery-binding.js"
+import { manualOAuthState } from "./manual-oauth.js"
 
 type OAuthFlowContext =
   | { kind: "connect"; authorizationId?: string }
@@ -65,6 +66,17 @@ function tokenExpiration(tokens: StoredOAuthTokens, now: number): number | undef
   return assertFiniteEpoch(now + tokens.expires_in * 1_000, "token expiration")
 }
 
+// Google does not advertise `offline_access` and issues a refresh token only for
+// `access_type=offline` on a fresh consent. Values a configured sign-in address
+// already sets are kept.
+function withGoogleOfflineAccess(authorizationUrl: URL): URL {
+  if (authorizationUrl.hostname !== "accounts.google.com") return authorizationUrl
+  const url = new URL(authorizationUrl)
+  if (!url.searchParams.has("access_type")) url.searchParams.set("access_type", "offline")
+  if (!url.searchParams.has("prompt")) url.searchParams.set("prompt", "consent")
+  return url
+}
+
 export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   private readonly redirectUri: string
   private readonly connectionId: string
@@ -83,6 +95,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   private loadedClient: EnterpriseMcpOAuthClientRegistration | undefined
   private loadedCredential: EnterpriseMcpOAuthCredential | undefined
   private committedRefreshAccessToken: string | undefined
+  private readonly manualState: OAuthDiscoveryState | undefined
   private loadedDiscovery: OAuthDiscoveryState | undefined
   private verifiedAuthorizationServerMetadata: AuthorizationServerMetadata | undefined
   private authorizationHandle: EnterpriseMcpOAuthAuthorizationHandle | undefined
@@ -96,6 +109,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
 
   constructor(input: {
     redirectUri: string
+    serverUrl: string
     connectionId: string
     persistence: EnterpriseMcpOAuthPersistence
     flow: OAuthFlowContext
@@ -118,7 +132,10 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     this.expirationSkewMs = input.expirationSkewMs
     this.applicationType = input.oauthConfiguration?.applicationType ?? "web"
     this.clientMetadataUrl = input.oauthConfiguration?.clientMetadataUrl
-    this.authorizationServerIssuer = input.oauthConfiguration?.authorizationServerIssuer
+    this.manualState = input.oauthConfiguration?.manualOAuthEndpoints
+      ? manualOAuthState(input.oauthConfiguration.manualOAuthEndpoints, input.serverUrl)
+      : undefined
+    this.authorizationServerIssuer = this.manualState?.authorizationServerUrl ?? input.oauthConfiguration?.authorizationServerIssuer
     this.requestedScopes = [...new Set(input.oauthConfiguration?.requestedScopes ?? [])]
     this.fetch = input.fetch
   }
@@ -243,18 +260,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
       return this.verifiedAuthorizationServerMetadata
     }
 
-    let metadata: AuthorizationServerMetadata | undefined
-    try {
-      metadata = await discoverAuthorizationServerMetadata(selectedIssuer, { fetchFn: this.fetch })
-    } catch (error) {
-      if (error instanceof IssuerMismatchError) {
-        throw new EnterpriseMcpOAuthContractError(
-          "MCP_OAUTH_ISSUER_MISMATCH",
-          "The selected OAuth issuer could not be verified against its canonical metadata.",
-        )
-      }
-      throw error
-    }
+    const metadata = await discoverAuthorizationServerMetadata(selectedIssuer, { fetchFn: this.fetch })
     if (!metadata) {
       throw new Error(`No OAuth metadata was found for the selected issuer ${selectedIssuer}.`)
     }
@@ -299,6 +305,10 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
+    if (this.manualState) {
+      this.loadedDiscovery = this.manualState
+      return this.manualState
+    }
     const persistedState = await this.persistence.discovery?.load(this.context())
     const state = await this.normalizeDiscoveryState(persistedState)
     if (state) {
@@ -314,6 +324,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
+    if (this.manualState) throw new EnterpriseMcpOAuthContractError("MCP_OAUTH_CONFIGURATION_CHANGED", "Static sign-in settings cannot be replaced by discovery.")
     let normalizedState: OAuthDiscoveryState | undefined
     try {
       normalizedState = await this.normalizeDiscoveryState(state)
@@ -521,7 +532,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   }
 
   redirectToAuthorization(authorizationUrl: URL): void {
-    this.authorizeUrl = authorizationUrl.toString()
+    this.authorizeUrl = withGoogleOfflineAccess(authorizationUrl).toString()
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {

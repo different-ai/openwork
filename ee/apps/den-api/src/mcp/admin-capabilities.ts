@@ -3,8 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { CapabilityMatch } from "./search.js"
 import { scoreText, tokenize } from "./search.js"
-import type { PlatformAdminAuditActor } from "../audit/mcp-service-audit.js"
-import { DEN_ADMIN_MCP_VERSION, registerAdminMcpTools } from "./admin-tools.js"
+import { DEN_ADMIN_MCP_VERSION, registerAdminMcpTools, type AdminToolCaller } from "./admin-tools.js"
 import { normalizeToolRecord } from "./invoke.js"
 
 export const ADMIN_CAPABILITY_PREFIX = "admin:"
@@ -16,7 +15,7 @@ type AdminToolResult = {
   content: { type: "text"; text: string }[]
 }
 
-async function withAdminClient<T>(admin: PlatformAdminAuditActor | null, run: (client: Client) => Promise<T>): Promise<T> {
+async function withAdminClient<T>(admin: AdminToolCaller | null, run: (client: Client) => Promise<T>): Promise<T> {
   const server = new McpServer({ name: "den-admin-agent-bridge", version: DEN_ADMIN_MCP_VERSION })
   registerAdminMcpTools(server, admin)
   const client = new Client({ name: "openwork-agent", version: "1.0.0" })
@@ -106,8 +105,8 @@ function resultIsError(result: unknown): boolean {
   return typeof result === "object" && result !== null && "isError" in result && result.isError === true
 }
 
-/** `admin` is the verified platform admin; org-mutating tools are audited for it. */
-export async function executeAdminCapability(name: string, body: unknown, admin: PlatformAdminAuditActor): Promise<AdminToolResult | null> {
+/** `admin` is the verified platform admin; org-mutating tools are audited for it and need its mcp:write scope. */
+export async function executeAdminCapability(name: string, body: unknown, admin: AdminToolCaller): Promise<AdminToolResult | null> {
   const toolName = parseAdminCapabilityName(name)
   if (!toolName) return null
 
@@ -125,7 +124,7 @@ export async function executeAvailableAdminCapability(
   platformAdmin: boolean,
   name: string,
   body: unknown,
-  admin: PlatformAdminAuditActor,
+  admin: AdminToolCaller,
 ): Promise<AdminToolResult | null> {
   if (!parseAdminCapabilityName(name)) return null
   if (!platformAdmin) {

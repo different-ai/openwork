@@ -28,8 +28,6 @@ async function world(label: string) {
   const promoted = await ownerCall("POST", `/v1/members/${adam.memberId}/role`, { role: "admin" })
   assert.equal(promoted.status, 200, summary(promoted))
   const editors = await den.createTeam(owner, orgId, "Permission editors", [tess.memberId])
-  const enabled = await den.setFeature(orgId, "permissions", true)
-  assert.equal(enabled.status, 200, summary(enabled))
 
   async function grantTeam(teamId: string, keys: string[]): Promise<string> {
     const created = await ownerCall("POST", "/v1/permissions/sets", { teamId, permissions: keys.map((key) => ({ key, status: "allow" })) })

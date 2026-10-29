@@ -1,11 +1,13 @@
 import type { UIMessage } from "ai";
 import { autoAccessWallFromError, autoAccessWallSchema, autoWallCopy, type AutoAccessWall } from "@/app/lib/inference-access";
 import { parseGatewayUsageError, gatewayUsageErrorEvidenceSchema, type GatewayUsageErrorEvidence } from "../../cloud/gateway-usage-state";
+import { openWorkModelsLimitSchema, parseOpenWorkModelsLimitError, type OpenWorkModelsLimit } from "../../cloud/usage-limit-state";
 
+import { describeOpencodeConfigError } from "@openwork/types/opencode-config-error";
 import { safeStringify } from "../../../../app/utils";
 import { normalizeErrorText } from "../../../../lib/error-text";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "provider-unavailable" | "provider-access-denied" | "provider-credentials" | "rate-limited" | "conversation-too-long" | "output-invalid" | "output-limit" | "attachment-unsupported" | "network-unavailable" | "provider-unreachable" | "provider-connection-dropped" | "model-unavailable" | "workspace-unavailable" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "gateway-selection-required" | "session-group-assignment" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "provider-unavailable" | "provider-access-denied" | "provider-credentials" | "rate-limited" | "conversation-too-long" | "output-invalid" | "output-limit" | "attachment-unsupported" | "network-unavailable" | "provider-unreachable" | "provider-connection-dropped" | "model-unavailable" | "workspace-unavailable" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "gateway-provider-authentication-failed" | "gateway-provider-permission-denied" | "gateway-selection-required" | "session-group-assignment" | "config-invalid" | "generic";
 
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
@@ -20,6 +22,8 @@ export type OpencodeSessionErrorPresentation = {
    */
   connectUrl?: string | null;
   gatewayUsage?: GatewayUsageErrorEvidence;
+  /** The organization used its OpenWork Models allowance: a limit until a reset, not a rate limit. Additive. */
+  openworkModelsLimit?: OpenWorkModelsLimit;
   autoAccessWall?: AutoAccessWall;
   providerId?: string | null;
 };
@@ -76,6 +80,7 @@ function sessionErrorKind(
   status: number | null,
 ): OpencodeSessionErrorKind {
   if (name === "SessionGroupAssignmentError") return "session-group-assignment";
+  if (name === "ConfigInvalidError" || name === "ConfigJsonError" || code === "opencode_config_invalid") return "config-invalid";
   const searchable = [name, message, code, responseBody].filter(Boolean).join(" ");
   if (searchable.includes("gateway_selection_required")) return "gateway-selection-required";
   if (searchable.includes("openwork:desktop") && /\bECONNREFUSED\b/.test(searchable)
@@ -142,6 +147,7 @@ function sessionErrorKind(
 
 function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
   if (kind === "session-group-assignment") return "Couldn’t assign this conversation to its group";
+  if (kind === "config-invalid") return "OpenCode can’t use a config file";
   if (kind === "disk-full") return "Storage error reported";
   if (kind === "database-error") return "OpenWork couldn’t access its saved data";
   if (kind === "aborted") return "Task interrupted";
@@ -162,6 +168,8 @@ function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
   if (kind === "model-unavailable") return "This model isn’t available";
   if (kind === "free-model-limit") return "The free starter model is busy right now";
   if (kind === "gateway-auth-required") return GATEWAY_AUTH_REQUIRED_TITLE;
+  if (kind === "gateway-provider-authentication-failed") return "The provider rejected its credential";
+  if (kind === "gateway-provider-permission-denied") return "The provider denied access";
   if (kind === "gateway-selection-required") return "Choose a Gateway model group and credential set";
   return fallback;
 }
@@ -238,6 +246,31 @@ function detectGatewayAuthRequired(error: unknown, fields: { message: string | n
   };
 }
 
+type GatewayProviderAuthFailure = {
+  kind: "gateway-provider-authentication-failed" | "gateway-provider-permission-denied";
+  message: string | null;
+};
+
+function detectGatewayProviderAuthFailure(fields: ReturnType<typeof sessionErrorFields>): GatewayProviderAuthFailure | null {
+  for (const candidate of [fields.responseBody, fields.message]) {
+    if (!candidate || candidate.length > 16_384) continue;
+    const start = candidate.indexOf("{");
+    if (start < 0) continue;
+    try {
+      const parsed: unknown = JSON.parse(candidate.slice(start));
+      const body = recordValue(parsed, "error");
+      if (recordValue(body, "source") !== "openwork_gateway") continue;
+      const code = recordValue(body, "code");
+      if (code !== "provider_authentication_failed" && code !== "provider_permission_denied") continue;
+      return {
+        kind: code === "provider_authentication_failed" ? "gateway-provider-authentication-failed" : "gateway-provider-permission-denied",
+        message: firstStringValue([body], ["message"]),
+      };
+    } catch { /* Ignore malformed or non-gateway error bodies. */ }
+  }
+  return null;
+}
+
 function errorRecoveryPrompt(kind: OpencodeSessionErrorKind) {
   return kind === "aborted" || kind === "provider-timeout" || kind === "provider-incomplete" || kind === "provider-unavailable" || kind === "network-unavailable" || kind === "provider-unreachable" || kind === "provider-connection-dropped" || kind === "model-unavailable" || kind === "rate-limited" || kind === "output-invalid"
     ? interruptedTaskRecoveryPrompt
@@ -258,6 +291,36 @@ function normalizeSessionError(text: string) {
   return normalizeErrorText(withOpenAiTokenRefreshHint(withAttachmentRecoveryHint(text)), { cap: 500 }).display;
 }
 
+function safeRequestId(value: unknown) {
+  return typeof value === "string" && /^[a-zA-Z0-9._:-]{1,128}$/.test(value) ? value : null;
+}
+
+function firstGatewayRequestId(records: unknown[]) {
+  for (const record of records) {
+    const body = firstStringValue([record], ["responseBody", "message", "body"]);
+    if (typeof body === "string" && body.length <= 16_384) {
+      try {
+        const parsed: unknown = JSON.parse(body);
+        const error = recordValue(parsed, "error");
+        const requestId = safeRequestId(recordValue(error, "request_id"));
+        if (requestId) return requestId;
+      } catch { /* The response body is not JSON. */ }
+    }
+    const headers = recordValue(record, "responseHeaders");
+    if (headers instanceof Headers) {
+      const requestId = safeRequestId(headers.get("x-openwork-request-id"));
+      if (requestId) return requestId;
+    } else if (headers && typeof headers === "object") {
+      for (const [name, value] of Object.entries(headers)) {
+        if (name.toLowerCase() !== "x-openwork-request-id") continue;
+        const requestId = safeRequestId(value);
+        if (requestId) return requestId;
+      }
+    }
+  }
+  return null;
+}
+
 function sessionErrorFields(error: unknown, fallback: string) {
   if (typeof error === "string") {
     return {
@@ -268,6 +331,7 @@ function sessionErrorFields(error: unknown, fallback: string) {
       code: null,
       retries: null,
       responseBody: null,
+      requestId: null,
     };
   }
   if (!error || typeof error !== "object") {
@@ -279,6 +343,7 @@ function sessionErrorFields(error: unknown, fallback: string) {
       code: null,
       retries: null,
       responseBody: null,
+      requestId: null,
     };
   }
 
@@ -294,6 +359,7 @@ function sessionErrorFields(error: unknown, fallback: string) {
     code: firstStringValue(records, ["code", "errorCode"]),
     retries: firstNumberValue(records, ["retries", "retryCount"]),
     responseBody: firstStringValue(records, ["responseBody", "body", "response"]),
+    requestId: firstGatewayRequestId(records),
   };
 }
 
@@ -326,6 +392,23 @@ function providerCredentialCopy(fields: ReturnType<typeof sessionErrorFields>) {
   return null;
 }
 
+/** Inference authentication evidence only; access policy, quotas and Gateway
+ * member sign-in failures must not poison an upstream provider's key status. */
+export function isProviderCredentialRejection(error: unknown): boolean {
+  const fields = sessionErrorFields(error, "");
+  const presentation = presentOpencodeSessionError(error);
+  const credentialSignal = providerCredentialCopy(fields) !== null;
+  if (presentation.kind !== "provider-credentials" && presentation.kind !== "generic" && !(presentation.kind === "provider-access-denied" && credentialSignal)) return false;
+  if (presentation.autoAccessWall || presentation.gatewayUsage || presentation.openworkModelsLimit) return false;
+  // Gateway authentication is a client/session problem, not evidence that
+  // the organization's upstream provider rejected its credential.
+  if (/\bOpenWork (?:Gateway|Models) (?:API )?key\b/i.test([fields.message, fields.responseBody].filter(Boolean).join(" "))) return false;
+  if (fields.status === 429 || (fields.status !== null && fields.status >= 500)) return false;
+  return (fields.name === "APIError" && fields.status === 401)
+    || /Provider request failed with HTTP 401\b/i.test(fields.message ?? "")
+    || credentialSignal;
+}
+
 function technicalErrorDetails(error: unknown, fallback: string, fields: ReturnType<typeof sessionErrorFields>) {
   const lines: string[] = [];
   if (fields.name) lines.push(`Error type: ${fields.name}`);
@@ -337,6 +420,7 @@ function technicalErrorDetails(error: unknown, fallback: string, fields: ReturnT
   if (fields.responseBody && fields.responseBody !== fields.message) {
     lines.push(`Response: ${normalizeErrorText(fields.responseBody, { cap: 500 }).display}`);
   }
+  if (fields.requestId) lines.push(`Request ID: ${fields.requestId}`);
   if (lines.length > 0) {
     return normalizeErrorText(lines.join("\n"), { cap: 1_500 }).display;
   }
@@ -353,20 +437,41 @@ export function presentOpencodeSessionError(error: unknown, fallback = "Session 
   }
   const fields = sessionErrorFields(error, fallback);
   const gatewayAuth = detectGatewayAuthRequired(error, fields);
+  const gatewayProviderAuth = detectGatewayProviderAuthFailure(fields);
   const gatewaySelection = safeStringify(error)?.includes("gateway_selection_required") === true;
   const gatewayUsage = parseGatewayUsageError(error);
-  const kind = gatewayAuth ? "gateway-auth-required" : gatewaySelection ? "gateway-selection-required" : sessionErrorKind(fields.name, fields.message, fields.code, fields.responseBody, fields.status);
+  const openworkModelsLimit = gatewayUsage ? null : parseOpenWorkModelsLimitError(error);
+  const kind = gatewayProviderAuth?.kind ?? (gatewayAuth ? "gateway-auth-required" : gatewaySelection ? "gateway-selection-required" : openworkModelsLimit ? "generic" : sessionErrorKind(fields.name, fields.message, fields.code, fields.responseBody, fields.status));
   const fallbackTitle = normalizeSessionError(fields.message ?? defaultErrorMessage(fields.name, fallback));
   const credentialCopy = kind === "provider-credentials" ? providerCredentialCopy(fields) : null;
   return {
     kind,
-    title: credentialCopy?.title ?? errorTitle(kind, fallbackTitle),
-    description: credentialCopy?.description ?? errorDescription(kind, gatewayAuth),
+    title: openworkModelsLimit ? "Your workspace used its OpenWork Models allowance" : credentialCopy?.title ?? errorTitle(kind, fallbackTitle),
+    description: gatewayProviderAuth?.message ?? credentialCopy?.description
+      ?? (kind === "config-invalid" ? describeOpencodeConfigError(error) ?? fields.message : null)
+      ?? errorDescription(kind, gatewayAuth),
     technicalDetails: kind === "gateway-selection-required" ? "Error code: gateway_selection_required\nStatus: 409" : gatewayAuth ? "Error code: openwork_auth_required\nStatus: 401" : technicalErrorDetails(error, fallback, fields),
     recoveryPrompt: errorRecoveryPrompt(kind),
     ...(gatewayAuth ? { connectUrl: gatewayAuth.connectUrl } : {}),
     ...(gatewayUsage ? { gatewayUsage, providerId: fields.provider } : {}),
+    ...(openworkModelsLimit ? { openworkModelsLimit } : {}),
   };
+}
+
+export function gatewayProviderAuthPresentationForFeature(
+  presentation: OpencodeSessionErrorPresentation,
+  enabled: boolean,
+): OpencodeSessionErrorPresentation {
+  const gatewayFailure = presentation.kind === "gateway-provider-authentication-failed"
+    || presentation.kind === "gateway-provider-permission-denied"
+  if (!gatewayFailure || enabled) return presentation
+  return {
+    ...presentation,
+    kind: "provider-credentials",
+    title: "Check your model connection",
+    description: "Update your connection in model settings.",
+    technicalDetails: presentation.technicalDetails.split("\n").filter((line) => !line.startsWith("Request ID:")).join("\n"),
+  }
 }
 
 export function describeOpencodeSessionError(error: unknown, fallback = "Session failed") {
@@ -398,6 +503,7 @@ export function sessionErrorPresentationFromUIMessage(message: UIMessage): Openc
   }
   if (candidate.autoAccessWall !== undefined && !autoAccessWallSchema.safeParse(candidate.autoAccessWall).success) return null;
   if (candidate.gatewayUsage !== undefined && !gatewayUsageErrorEvidenceSchema.safeParse(candidate.gatewayUsage).success) return null;
+  if (candidate.openworkModelsLimit !== undefined && !openWorkModelsLimitSchema.safeParse(candidate.openworkModelsLimit).success) return null;
   if (candidate.providerId !== undefined && candidate.providerId !== null && typeof candidate.providerId !== "string") return null;
   return candidate as OpencodeSessionErrorPresentation;
 }

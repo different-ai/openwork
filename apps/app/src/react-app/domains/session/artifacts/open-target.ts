@@ -147,8 +147,33 @@ function textWithoutRedundantMarkdownLinkLabels(text: string) {
   return text.replace(MARKDOWN_LINK_PATTERN, (match, label: string, href: string) => {
     const cleanLabel = label.trim();
     const cleanHref = href.trim();
-    return cleanLabel === basename(cleanHref) ? `[](${cleanHref})` : match;
+    return cleanLabel === basename(filePathFromLinkHref(cleanHref)) ? `[](${cleanHref})` : match;
   });
+}
+
+/**
+ * Markdown link destinations are URLs, so a reply that links `Acme%20Quote.pdf`
+ * or `file:///…/Acme%20Quote.pdf` names the file `Acme Quote.pdf`. Decode the
+ * destination once so it matches the file on disk. A `file://` URL with a host
+ * stays as written (network shares are never opened), and a name that is not
+ * valid percent-encoding stays literal.
+ */
+export function filePathFromLinkHref(href: string): string {
+  const value = href.trim();
+  if (/^file:/i.test(value)) {
+    try {
+      const url = new URL(value);
+      if (url.hostname || url.search || url.hash) return value;
+    } catch {
+      return value;
+    }
+    return filePathFromFileUrl(value) ?? value;
+  }
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 /**
@@ -247,7 +272,7 @@ function scanText(
     if (/^(?:https?|wss?):\/\//i.test(href)) {
       addTarget(map, targetFromUrl(href, confidence, reason));
     } else if (options.includeFiles) {
-      addTarget(map, targetFromFile(href, confidence, reason));
+      addTarget(map, targetFromFile(filePathFromLinkHref(href), confidence, reason));
     }
   }
 

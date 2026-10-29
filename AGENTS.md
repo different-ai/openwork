@@ -22,10 +22,16 @@ The app consumes OpenWork server surfaces (self-hosted or hosted) rather than
 inventing parallel behavior. Anything OpenCode can do is available in OpenWork,
 even before a dedicated UI exists.
 
+OpenCode v2 is the default. Hosts automatically back up and migrate existing v1
+history when idle, without a Den feature flag or Helm setting. Respect explicit
+manual engine choices and local support/test overrides; never restore the retired
+`engineV2ForceUpgrade` gate. See `docs/opencode-engine-migration.md`.
+
 Customer-cloud managed installation architecture lives in
 `infra/managed-deployments/README.md` and `docs/managed-deployments.md`. AWS
 uses CloudFormation/CodeBuild; GCP uses customer-approved Cloud Shell and
-impersonated Terraform behind `managedDeploymentsGcp` (cloud only, off).
+impersonated Terraform behind `managedDeployments` (cloud only, off), the same
+switch as AWS and the deployment agent tools.
 Installer publication/configuration is an operator action, not CLI sign-in or a
 feature rollout. Never fake readiness; local tests do not prove a live install.
 Killing a rollout blocks launches without deleting customer resources or
@@ -39,20 +45,22 @@ escalate any leak instead of rewriting history.
 
 ## Generated API contracts
 
-After changing Den routes, their shared schemas, or the feature registry, run
-`pnpm den:contract` (also run by `pnpm features:sync`) and
-include `packages/docs/openapi.json` and `packages/sdk/src/gen/**` in the same
-commit. The command builds once and generates both outputs from one snapshot. It
-prepares and removes a disposable local MySQL database automatically; start
-MySQL with `pnpm dev:den:mysql`. It never uses `DATABASE_URL`; use
-`OPENWORK_CONTRACT_MYSQL_URL` only for alternate localhost credentials.
-After merging/rebasing `dev`, regenerate rather than choosing ours/theirs for
-conflicted generated files. Never hand-edit them or regenerate a Drizzle migration
-snapshot to resolve an API conflict.
+Den route metadata and shared schemas are the source of truth. OpenAPI and
+`packages/sdk/src/gen/**` are ignored build artifacts: never commit or hand-edit
+them. CI generates, lints and typechecks them from the PR source and uploads
+an artifact. Hosted docs read the normalized deployed contract at
+`/openapi.json?public=1`; the raw `/openapi.json` remains available.
 
-Optional: `pnpm hooks:install` enables a pre-commit hook that skips unrelated
-commits and regenerates/stages only contract outputs for API changes. It refuses
-unstaged/untracked contract inputs or outputs, so finish partial staging first.
+`pnpm sdk:build` and SDK typechecks generate missing or stale artifacts first.
+`pnpm den:contract` forces a clean generation and prepares/removes a disposable
+local MySQL database. Start MySQL with `pnpm dev:den:mysql`; only
+`OPENWORK_CONTRACT_MYSQL_URL` can select alternate localhost credentials.
+`DATABASE_URL` is never used for generation. After a merge/rebase regenerate
+locally when needed; generated files do not enter the merge. Never regenerate
+a Drizzle migration snapshot to resolve an API conflict.
+
+Optional: `pnpm hooks:install` enables source validation before commits. It
+refuses unstaged/untracked contract inputs and never stages generated outputs.
 Hooks never commit, push, or change CI/Warden policy; CI remains authoritative.
 
 ## Coding
@@ -61,9 +69,11 @@ Hooks never commit, push, or change CI/Warden policy; CI remains authoritative.
   100% necessary or instructed.
 * Prefer Tailwind, React, shadcn/ui (Base UI), TanStack Query, Zustand, Zod,
   Drizzle, Better-Auth. Reuse `@/components`; end users are non-technical.
-* New feature or a change users would notice? Declare it, off, in
-  `packages/features/src/registry.ts` before writing the code, make it safe
-  to turn off, then roll it out from `/admin`. Follow
+* Put any change to product behavior that users can see behind a feature
+  flag, so it can be turned off without a deploy: new or changed flows,
+  screens, options and defaults. Ship directly only what users won't notice
+  as a behavior change: fixes that restore intended behavior, polish,
+  refactors, tests and `/admin` tooling. When unsure, flag. Follow
   `.opencode/skills/add-a-feature`.
 * Any user-facing UI (desktop app, Den web, MCP Apps, artifact views) follows
   `DESIGN.md`: read it before designing, cite its rule ids in PRs, and attach

@@ -19,6 +19,8 @@ export type OpenworkReadTransport = {
   /** Read-only access to the other engine while both run; sessions created there stay findable. */
   other?: OpenworkEngineReader;
   post(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
+  /** Writes the host allows on this transport; absent means read-only. */
+  send?(method: "POST" | "PATCH" | "DELETE", path: string, body?: Record<string, unknown>): Promise<unknown>;
 };
 
 export const openworkReadTransport = new AsyncLocalStorage<OpenworkReadTransport>();

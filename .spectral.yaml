@@ -1,9 +1,9 @@
 # Spectral ruleset for the Den API OpenAPI document (packages/docs/openapi.json).
 #
 # This is the single API-quality gate: `pnpm api:lint` regenerates nothing, it
-# lints the committed snapshot; CI regenerates first (drift check) and then
-# lints. Errors fail the build; warnings are ratcheted against
-# .spectral-baseline.json and may not increase.
+# lints the document `pnpm den:contract` generated from route source; CI
+# generates first and then lints. Errors fail the build; warnings are
+# ratcheted against .spectral-baseline.json and may not increase.
 #
 # Rule intent, exemptions and the protocol-adapter boundary are documented in
 # docs/api-style.md. Keep the two files in sync.
@@ -280,5 +280,17 @@ overrides:
       ow-list-pagination: "off"
   - files:
       - "**/*.json#/components/schemas/AutomationDesktopTarget/properties/lastSeenAt"
+    rules:
+      ow-timestamps-date-time: "off"
+  # A plan's end date is a calendar date (YYYY-MM-DD) a platform admin picks,
+  # display only; a time of day would be invented precision.
+  - files:
+      - "**/*.json#/components/schemas/OrganizationPlanState/properties/endsAt"
+    rules:
+      ow-timestamps-date-time: "off"
+  # Remote-session status uses the desktop protocol's Unix milliseconds,
+  # including its nullable observation time; preserve that numeric contract.
+  - files:
+      - "**/*.json#/components/schemas/RemoteSessionStatusResult/properties/threads/items/oneOf/0/properties/observedAt"
     rules:
       ow-timestamps-date-time: "off"

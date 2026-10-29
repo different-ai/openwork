@@ -10,7 +10,7 @@ import { latestUserMessageId, type RemoteTranscriptPage } from "@/lib/remote-ses
 import { cn } from "@/lib/utils"
 import type { RemoteThreadPanelTab } from "../panel/panel-tab-store"
 import { readRemoteThread, sendRemoteFollowUp, stopRemoteThread } from "./remote-thread-actions"
-import { useFollowRemoteThread, useRemoteThread, useRemoteThreadsEnabled, type RemoteThreadEntry } from "./remote-thread-store"
+import { useFollowRemoteThread, useRemoteThread, useRemoteThreadsEnabled, useRemoteThreadViewEnabled, type RemoteThreadEntry } from "./remote-thread-store"
 import { remoteThreadView } from "./remote-thread-view"
 
 /**
@@ -29,11 +29,16 @@ const READ_GAP_MS = 4_000
 
 export function RemoteThreadPanel({ tab }: { tab: RemoteThreadPanelTab }) {
   const enabled = useRemoteThreadsEnabled()
+  const threadView = useRemoteThreadViewEnabled()
   const entry = useRemoteThread(tab.threadKey)
   // The open panel keeps the task followed, like its row.
   useFollowRemoteThread(entry?.start ?? null, tab.owner, null)
-  if (!enabled) {
-    return <div className="p-4 text-sm text-muted-foreground" data-remote-thread-disabled>{t("session.remote_task_disabled")}</div>
+  if (!threadView) {
+    return (
+      <div className="p-4 text-sm text-muted-foreground" data-remote-thread-disabled>
+        {t(enabled ? "session.remote_task_thread_view_disabled" : "session.remote_task_disabled")}
+      </div>
+    )
   }
   if (!entry) {
     return <div className="p-4 text-sm text-muted-foreground">{t("session.remote_task_read_failed")}</div>

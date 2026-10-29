@@ -44,7 +44,6 @@ import {
 } from "../../audit/domain/permissions.js"
 import { auditChangeCapture } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
-import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { keysetAfter, keysetCursorQuerySchema, keysetPage, nextCursorSchema, type KeysetCursor } from "../../list-pagination.js"
 import { jsonValidator, orgMemberRoute, paramValidator, queryValidator, requireOrgPermission } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -71,13 +70,12 @@ import { hasPermission, idParamSchema, memberPermissionsForRequest, permissionDe
 
 /**
  * Permissions management endpoints (docs/permissions/overview.md, section 10).
- * Everything except the catalog needs the `permissions` feature, plus
- * permissions.view to read or permissions.manage to write. A member may
+ * Everything except the catalog needs permissions.view to read or
+ * permissions.manage to write. A member may
  * always read their own effective permissions.
  *
- * Guard order: orgMemberRoute() (marker), requireFeature("permissions"), then
- * requireOrgPermission(key), so a disabled feature answers 404
- * feature_disabled before any 403 or reauth.
+ * Guard order: orgMemberRoute() (marker), then
+ * requireOrgPermission(key).
  */
 
 type OrganizationId = typeof PermissionSetTable.$inferSelect.organizationId
@@ -704,10 +702,10 @@ async function assignTeamsToSet(tx: TeamMutationTransaction, input: {
 async function teamRoleChangeEvents(tx: TeamMutationTransaction, organizationId: OrganizationId, changes: TeamRoleChanges, before: ReadonlyMap<PermissionSetId, TeamLink[]>, options: { skip?: PermissionSetId } = {}) {
   const setIds = [...changes.keys()].filter((setId) => setId !== options.skip)
   if (setIds.length === 0) return []
-  const [after, sets] = await Promise.all([
-    readTeamLinks(tx, organizationId, setIds),
-    tx.select().from(PermissionSetTable).where(and(eq(PermissionSetTable.organizationId, organizationId), inArray(PermissionSetTable.id, setIds))),
-  ])
+  // Sequential on purpose: a PlanetScale transaction runs one query at a time, and
+  // overlapping queries fail with "transaction ... in use" (an intermittent 500).
+  const after = await readTeamLinks(tx, organizationId, setIds)
+  const sets = await tx.select().from(PermissionSetTable).where(and(eq(PermissionSetTable.organizationId, organizationId), inArray(PermissionSetTable.id, setIds)))
   const events = []
   for (const set of sets) {
     const change = changes.get(set.id)
@@ -787,7 +785,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Permissions"],
       summary: "List permission sets",
-      description: "Lists Member permissions, Admin permissions and every active team permission set, with the linked team, how many permissions each allows and who it applies to. Creates the Member and Admin sets if they don't exist yet. Requires permissions.view and the Permissions feature.",
+      description: "Lists Member permissions, Admin permissions and every active team permission set, with the linked team, how many permissions each allows and who it applies to. Creates the Member and Admin sets if they don't exist yet. Requires permissions.view.",
       responses: {
         200: jsonResponse("Permission sets returned successfully.", permissionSetListResponseSchema),
         401: unauthorizedResponse,
@@ -796,7 +794,6 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
-    requireFeature("permissions"),
     requireOrgPermission("permissions.view"),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -842,7 +839,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       tags: ["Permissions"],
       "x-mcp": false,
       summary: "Create team permissions",
-      description: "Creates the permission set for one team, named \"<team name> Permissions\" (fixed from then on), links it to the team and stores its initial permissions. A team can have one active set. With Shared roles on, send name (and optionally teamIds) instead of teamId to create a named role that can be given to any number of teams; each listed team's current custom role is replaced. You can only turn on permissions you have yourself. Requires permissions.manage (only the owner has it by default), a recent sign-in, and the Permissions feature.",
+      description: "Creates the permission set for one team, named \"<team name> Permissions\" (fixed from then on), links it to the team and stores its initial permissions. A team can have one active set. Send name (and optionally teamIds) instead of teamId to create a named role that can be given to any number of teams; each listed team's current custom role is replaced. You can only turn on permissions you have yourself. Requires permissions.manage (only the owner has it by default), and a recent sign-in.",
       responses: {
         201: jsonResponse("Team permission set created.", permissionSetResponseSchema),
         400: jsonResponse("The body was invalid or named an unknown or repeated permission.", z.union([invalidRequestSchema, permissionEditErrorSchema])),
@@ -853,7 +850,6 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
-    requireFeature("permissions"),
     requireOrgPermission("permissions.manage"),
     jsonValidator(createPermissionSetBodySchema),
     async (c) => {
@@ -871,10 +867,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       const allowed = plan.changes.map((change) => change.key)
 
       if (!body.teamId) {
-        // Shared roles: a named role, given to zero or more teams now.
-        if (!(await organizationFeatureEnabled(organizationId, "sharedRoles"))) {
-          return c.json({ error: "invalid_request" as const, message: "Choose the team these permissions are for.", details: [] }, 400)
-        }
+        // A named role, given to zero or more teams now.
         const name = body.name
         if (!name) return c.json({ error: "invalid_request" as const, message: "Name the role.", details: [] }, 400)
         const teamIds = [...new Set((body.teamIds ?? []).map((value) => normalizeDenTypeId("team", value)))]
@@ -1046,7 +1039,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Permissions"],
       summary: "Get a permission set",
-      description: "Returns one permission set with the status of every catalog permission (allow or deny, whether it is locked on, and who last changed it) and who it applies to: everyone (Member permissions), members with the admin role and Admin teams (Admin permissions), or the linked team and its members. The names and emails of those people, and the email of whoever last changed each permission, are only included when the caller also holds teams.view; otherwise only the counts (and the changer's name) are. Archived team sets are still readable. Requires permissions.view and the Permissions feature.",
+      description: "Returns one permission set with the status of every catalog permission (allow or deny, whether it is locked on, and who last changed it) and who it applies to: everyone (Member permissions), members with the admin role and Admin teams (Admin permissions), or the linked team and its members. The names and emails of those people, and the email of whoever last changed each permission, are only included when the caller also holds teams.view; otherwise only the counts (and the changer's name) are. Archived team sets are still readable. Requires permissions.view.",
       responses: {
         200: jsonResponse("Permission set returned successfully.", permissionSetResponseSchema),
         400: jsonResponse("The permission set id was invalid.", invalidRequestSchema),
@@ -1056,7 +1049,6 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
-    requireFeature("permissions"),
     requireOrgPermission("permissions.view"),
     paramValidator(permissionSetParamsSchema),
     async (c) => {
@@ -1076,7 +1068,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       tags: ["Permissions"],
       "x-mcp": false,
       summary: "Rename a role",
-      description: "Renames a team permission set (a custom role). Member and Admin permissions keep their names, and archived sets can't be changed. Requires permissions.manage (only the owner has it by default), a recent sign-in, and the Permissions and Shared roles features.",
+      description: "Renames a team permission set (a custom role). Member and Admin permissions keep their names, and archived sets can't be changed. Requires permissions.manage (only the owner has it by default), a recent sign-in.",
       responses: {
         200: jsonResponse("Role renamed; its current state is returned.", permissionSetResponseSchema),
         400: jsonResponse("The body or id was invalid, or the set is Member or Admin permissions.", z.union([invalidRequestSchema, defaultPermissionSetErrorSchema])),
@@ -1087,8 +1079,6 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
-    requireFeature("permissions"),
-    requireFeature("sharedRoles"),
     requireOrgPermission("permissions.manage"),
     paramValidator(permissionSetParamsSchema),
     jsonValidator(renamePermissionSetBodySchema),
@@ -1145,7 +1135,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       tags: ["Permissions"],
       "x-mcp": false,
       summary: "Set a team's custom role",
-      description: "Gives a team one custom role (a team permission set), replacing its current one, or none with permissionSetId null. The same role can be given to any number of teams; a role left with no team is kept until it is deleted. You can only give a role whose permissions you all have yourself. Whether the team is an Admin team is changed separately (PATCH /v1/teams/:teamId). Requires permissions.manage (only the owner has it by default), a recent sign-in, and the Permissions and Shared roles features.",
+      description: "Gives a team one custom role (a team permission set), replacing its current one, or none with permissionSetId null. The same role can be given to any number of teams; a role left with no team is kept until it is deleted. You can only give a role whose permissions you all have yourself. Whether the team is an Admin team is changed separately (PATCH /v1/teams/:teamId). Requires permissions.manage (only the owner has it by default), a recent sign-in.",
       responses: {
         200: jsonResponse("The team's custom role was set; the role's current state is returned, or null when the team has none.", z.object({ set: permissionSetDetailSchema.nullable() }).meta({ ref: "TeamPermissionSetResponse" })),
         400: jsonResponse("The body or id was invalid, or the set is Member or Admin permissions.", z.union([invalidRequestSchema, defaultPermissionSetErrorSchema])),
@@ -1156,8 +1146,6 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
-    requireFeature("permissions"),
-    requireFeature("sharedRoles"),
     requireOrgPermission("permissions.manage"),
     paramValidator(teamParamsSchema),
     jsonValidator(teamPermissionSetBodySchema),
@@ -1231,7 +1219,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       tags: ["Permissions"],
       "x-mcp": false,
       summary: "Change permissions in a set",
-      description: "Turns permissions on (allow) or off (deny) in one set. Only keys whose status actually changes are recorded; every change is kept in the set's history. Only the owner and admins can change Admin permissions. Permissions locked on for admins can't be turned off in Admin permissions, you can only turn on permissions you have yourself (except turning a permission back on in Member or Admin permissions where it is on by default), and archived sets can't be changed. The linked team can't be changed. Returns the set's new state. Requires permissions.manage (only the owner has it by default), a recent sign-in, and the Permissions feature.",
+      description: "Turns permissions on (allow) or off (deny) in one set. Only keys whose status actually changes are recorded; every change is kept in the set's history. Only the owner and admins can change Admin permissions. Permissions locked on for admins can't be turned off in Admin permissions, you can only turn on permissions you have yourself (except turning a permission back on in Member or Admin permissions where it is on by default), and archived sets can't be changed. The linked team can't be changed. Returns the set's new state. Requires permissions.manage (only the owner has it by default), and a recent sign-in.",
       responses: {
         200: jsonResponse("Permissions updated; the set's current state is returned.", permissionSetResponseSchema),
         400: jsonResponse("The body was invalid, named an unknown or repeated permission, or tried to turn off a locked permission.", z.union([invalidRequestSchema, permissionEditErrorSchema])),
@@ -1242,7 +1230,6 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
-    requireFeature("permissions"),
     requireOrgPermission("permissions.manage"),
     paramValidator(permissionSetParamsSchema),
     jsonValidator(updatePermissionSetBodySchema),
@@ -1341,7 +1328,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Permissions"],
       summary: "List permission set history",
-      description: "Lists every recorded change to a set's permissions, newest first: the permission, the status it was set to, where the change came from (user, seed, reconcile, migration) and who made it. The person's email is only included when the caller also holds teams.view; their name always is. Paginated with cursor and limit. Requires permissions.view and the Permissions feature.",
+      description: "Lists every recorded change to a set's permissions, newest first: the permission, the status it was set to, where the change came from (user, seed, reconcile, migration) and who made it. The person's email is only included when the caller also holds teams.view; their name always is. Paginated with cursor and limit. Requires permissions.view.",
       responses: {
         200: jsonResponse("History page returned successfully.", permissionHistoryResponseSchema),
         400: jsonResponse("The permission set id, cursor or limit was invalid.", invalidRequestSchema),
@@ -1351,7 +1338,6 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
-    requireFeature("permissions"),
     requireOrgPermission("permissions.view"),
     paramValidator(permissionSetParamsSchema),
     queryValidator(historyQuerySchema),
@@ -1390,7 +1376,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       tags: ["Permissions"],
       "x-mcp": false,
       summary: "Delete team permissions",
-      description: "Archives a team permission set and unlinks it from its team, so its permissions stop applying to the team's members. The set and its history are kept. Member and Admin permissions can't be deleted. Requires permissions.manage (only the owner has it by default), a recent sign-in, and the Permissions feature.",
+      description: "Archives a team permission set and unlinks it from its team, so its permissions stop applying to the team's members. The set and its history are kept. Member and Admin permissions can't be deleted. Requires permissions.manage (only the owner has it by default), and a recent sign-in.",
       responses: {
         204: emptyResponse("The team permission set was archived."),
         400: jsonResponse("The id was invalid, or the set is Member or Admin permissions.", z.union([invalidRequestSchema, defaultPermissionSetErrorSchema])),
@@ -1401,7 +1387,6 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
-    requireFeature("permissions"),
     requireOrgPermission("permissions.manage"),
     paramValidator(permissionSetParamsSchema),
     async (c) => {
@@ -1471,7 +1456,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Permissions"],
       summary: "Get one permission across sets",
-      description: "Returns one catalog permission and its current status in every active set: Member permissions, Admin permissions and each team set. Requires permissions.view and the Permissions feature.",
+      description: "Returns one catalog permission and its current status in every active set: Member permissions, Admin permissions and each team set. Requires permissions.view.",
       responses: {
         200: jsonResponse("Permission status returned successfully.", permissionKeyResponseSchema),
         400: jsonResponse("The permission key was invalid.", invalidRequestSchema),
@@ -1481,7 +1466,6 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
-    requireFeature("permissions"),
     requireOrgPermission("permissions.view"),
     paramValidator(permissionKeyParamsSchema),
     async (c) => {
@@ -1522,7 +1506,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Permissions"],
       summary: "Get a member's effective permissions",
-      description: "Lists the permissions one member has and, for each, every source that grants it, e.g. \"Admin permissions (admin role)\" or \"Support Permissions (via Support team)\". Members can always read their own; reading someone else's requires permissions.view. Requires the Permissions feature.",
+      description: "Lists the permissions one member has and, for each, every source that grants it, e.g. \"Admin permissions (admin role)\" or \"Support Permissions (via Support team)\". Members can always read their own; reading someone else's requires permissions.view.",
       responses: {
         200: jsonResponse("Effective permissions returned successfully.", memberPermissionsResponseSchema),
         400: jsonResponse("The member id was invalid.", invalidRequestSchema),
@@ -1532,7 +1516,6 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
-    requireFeature("permissions"),
     paramValidator(memberParamsSchema),
     async (c) => {
       const payload = organizationContext(c)

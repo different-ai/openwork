@@ -14,8 +14,8 @@ companies (managed deployment, skill development, MCP consulting).
 
 | Plan | Price | Includes |
 |---|---|---|
-| Free | $0 | Open-source desktop app, BYO keys; first 5 Cloud seats |
-| Team | $10 / seat / month | Unlimited seats, SSO/SAML, API access, marketplace/plugin management, distributed keys |
+| Free | $0 | Open-source desktop app, BYO keys; Cloud limited to 5 users |
+| Team | $10 / user / month | Unlimited users, SSO/SAML, API access, marketplace/plugin management, distributed keys |
 | Enterprise | Custom | Everything in Team, plus: SCIM, Desktop policies & version controls, enforced SSO (`requireSso`), analytics, audit log, managed deployment (self-hosted or hosted by us), custom skill development, MCP consulting, rollout support, custom commercial terms |
 
 SSO/SAML is a Team feature: the `sso` entitlement is granted to the `team` and
@@ -45,6 +45,14 @@ Gated (return HTTP 402 without the entitlement):
   policies and assignments (`routes/org/desktop-policies.ts`)
 - Enterprise: `PATCH /v1/org` **only when the patch touches** `requireSso` or
   `allowedDesktopVersions` (`routes/org/core.ts` → `orgs.ts:updateOrganizationSettings`)
+- Enterprise (`scim`): `POST /v1/scim/token` and SCIM user creation
+  (`POST /api/auth/scim/v2/Users`).
+- Team or Enterprise (`sso`): automatic sign-up through SSO, and joining by
+  signing in with an email on the organization's verified SSO domain
+  (`identity-provisioning.ts`). Outside Enterprise these also respect the Free
+  plan user limit, like invitations. Invited people can always sign in with SSO.
+- `DEN_PLAN_GATING_ENABLED` is a den-api environment variable; den-web only
+  reads the resulting `entitlements` from `GET /v1/org`.
 
 Never gated:
 
@@ -55,7 +63,7 @@ Never gated:
 - All `GET` endpoints (admins can always see their config).
 - All `DELETE` endpoints (`DELETE /v1/sso`, `DELETE /v1/desktop-policies/:id`)
   — downgrading/removing must always be possible.
-- SCIM token usage for an already-provisioned connection.
+- SCIM deprovisioning and updates for an already-provisioned connection.
 
 This guarantees zero breakage: nothing that runs today stops running. The only
 new friction is on *changing* enterprise config without a plan.
@@ -132,9 +140,9 @@ Rollout order (each step independently safe):
    first adopt SSO/policies *between* the migration and the flag flip are not
    grandfathered (acceptable — gating only blocks edits, never breaks what
    they configured; ship a follow-up data migration if the gap grows long).
-4. Manual plan assignment for new enterprise customers via existing instance
-   admin surface (`routes/admin/index.ts`) until Stripe enterprise products
-   exist; later, optionally a third `OrgSubscriptionTable.type = "enterprise"`.
+4. Manual plan assignment via the instance admin surface
+   (`routes/admin/index.ts`) still works; Stripe-billed Enterprise is described
+   under "Enterprise plan billing" below.
 
 ## UX when gated
 
@@ -161,11 +169,75 @@ marketing story is:
 This is reflected on `/pricing` and `/enterprise` as "Desktop policies &
 version controls".
 
+## One place for an organization's plan and users
+
+A platform admin sets an organization's plan in `/admin` › organization ›
+**Billing** (`PATCH /v1/admin/organizations/:id/plan`, or the admin MCP tool
+`den_update_org_plan`; both call `setOrganizationPlanByAdmin`): Free, Team or
+Enterprise, how many users it allows, and for Team and Enterprise an optional
+end date. Stored in `organization.metadata.plan` (`tier`, `source`, `seats`,
+`endsAt`, `grantedAt`, `grandfatheredAt`); `limits.members` mirrors the number
+for one release. On Free the number is stored as `seatsFreeAdditional` above 5.
+
+One pure rule (`ee/apps/den-api/src/organization-plan.ts`) decides how many
+users an organization may have, counting pending invitations, for every way
+people join: email invitations, SSO sign-up and verified-domain joins, and
+SCIM. No feature flag takes part.
+
+- An active paid Stripe plan (Team seat subscription active or trialing; a
+  sales-led Enterprise subscription active, trialing or past due): no limit.
+- Otherwise a Team or Enterprise plan a platform admin set, or grandfathered:
+  its seats, never fewer than 5.
+- Otherwise Free: 5 plus any extra free users.
+
+Limits apply only where seat billing gates members (hosted multi-organization
+deployments with Stripe seat billing configured). A full Free workspace gets
+the 402 Team upgrade; a full plan OpenWork set gets `409 org_limit_reached`
+("Your Enterprise plan includes N users… Ask your OpenWork contact to add
+seats."), never the Team upgrade. The end date is display only: `/admin` and
+the customer Billing page show "Ended <date>", and nothing changes.
+
+## Enterprise plan billing (sales-led)
+
+A plain `/admin` control (no feature flag). Enterprise is sold by us and billed
+through Stripe, not bought at checkout.
+
+- **Stripe setup:** one Enterprise product (`STRIPE_ENTERPRISE_PRODUCT_ID` on
+  den-api). Each customer gets their own recurring per-user price on that
+  product, so subscriptions are recognised by product, not price.
+- **Starting it:** a platform admin opens the organization's Billing tab in
+  `/admin`, expands "Bill an Enterprise contract through Stripe" and enters the
+  contract price, the committed minimum users, the billing email and the
+  invoice terms (`POST /v1/admin/organizations/:id/enterprise-subscription`).
+  Den creates a `send_invoice` subscription with `subscription_type:
+  enterprise` and `minimum_users` in its metadata. A Team plan (seat)
+  subscription is canceled with a prorated credit, and an admin-set or
+  grandfathered plan is handed over to Stripe
+  (`plan: { tier: "enterprise", source: "stripe" }`).
+- **Quantity:** every user (the same count as Team, Models and Web), never
+  below the committed minimum, at least 1. It follows member and invitation
+  changes like the other subscriptions. The minimum is changed with
+  `PATCH .../enterprise-subscription` (stored in Stripe metadata and mirrored to
+  `org_subscriptions.minimum_quantity`).
+- **Plan:** while the Enterprise subscription is active, trialing or past due
+  the organization is Enterprise from Stripe; it outranks Team. When it ends the
+  organization falls back to Team if it still pays for Team, otherwise Free.
+  Admin-set and grandfathered plans are never changed by Stripe.
+- **User limit:** an active Enterprise subscription has no user limit (Stripe
+  bills every user); see the rule above.
+- **Billing page:** organizations with an Enterprise subscription see an
+  Enterprise plan card (users billed, minimum, next invoice, invoices in the
+  Stripe portal) instead of the Team plan card. OpenWork Models and OpenWork
+  Web stay separate subscriptions.
+
 ## Open questions
 
-- Do we gate SCIM token *generation* too? (Suggested: yes, same entitlement as
-  SSO, since it's part of identity provisioning.)
-- Enterprise self-serve checkout vs. sales-led only (suggested: sales-led
-  first; the CTA is already a Cal.com booking).
-- Stripe billing does not yet set `plan.tier = "team"` for paid Team orgs. Set it
-  before enabling `DEN_PLAN_GATING_ENABLED`, or Team orgs lose SSO management.
+- Enterprise self-serve checkout: not built; sales-led only for now.
+- Stripe billing sets `plan: { tier: "team", source: "stripe" }` while an
+  organization's Team plan (seat) subscription is active, trialing or past due,
+  and returns it to Free when it ends. Migration
+  `0155_enterprise_plan_subscriptions` applies the same rule once to every
+  environment.
+- Moving the existing admin-set and grandfathered Enterprise organizations onto
+  Stripe Enterprise subscriptions is a sales decision, made one organization at
+  a time from `/admin`.

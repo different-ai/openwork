@@ -16,8 +16,8 @@ import {
 
 /** Effective permissions for one member in one organization. */
 export type MemberPermissions = {
-  /** Whether the organization's Permissions feature is on (database) or off (code defaults). */
-  featureEnabled: boolean
+  /** Compatibility field for older clients; permissions are always enabled. */
+  featureEnabled: true
   isOwner: boolean
   /** Effective admin: direct admin role (or legacy super-admin) or a member of an Admin team. */
   isAdmin: boolean
@@ -57,7 +57,7 @@ export function ownerPermissionGrants(): PermissionGrant[] {
   return [{ source: { kind: "owner" }, keys: new Set(PERMISSION_KEYS) }]
 }
 
-/** Feature off (or a database fallback): Member code defaults, plus Admin code defaults for admins. */
+/** Database fallback: Member code defaults, plus Admin code defaults for admins. */
 export function codeDefaultPermissionGrants(input: { isAdmin: boolean }): PermissionGrant[] {
   const grants: PermissionGrant[] = [{ source: { kind: "code_default", set: "member" }, keys: new Set(permissionDefaultKeys("member")) }]
   if (input.isAdmin) grants.push({ source: { kind: "code_default", set: "admin" }, keys: new Set(permissionDefaultKeys("admin")) })
@@ -75,14 +75,13 @@ export function missingDefaultSetsPermissionGrants(input: { isAdmin: boolean; tr
 }
 
 export function createMemberPermissions(input: {
-  featureEnabled: boolean
   isOwner: boolean
   isAdmin: boolean
   keys: Iterable<PermissionKey>
 }): MemberPermissions {
   const keys: ReadonlySet<PermissionKey> = new Set(input.isOwner ? PERMISSION_KEYS : input.keys)
   return {
-    featureEnabled: input.featureEnabled,
+    featureEnabled: true,
     isOwner: input.isOwner,
     isAdmin: input.isAdmin,
     keys,
@@ -92,7 +91,6 @@ export function createMemberPermissions(input: {
 
 /** Union of grants: a permission is allowed when any grant allows it. */
 export function memberPermissionsFromGrants(input: {
-  featureEnabled: boolean
   isOwner: boolean
   isAdmin: boolean
   grants: readonly PermissionGrant[]

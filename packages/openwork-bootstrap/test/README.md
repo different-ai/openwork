@@ -1,12 +1,25 @@
-# Device login tests
+# Bootstrap CLI tests
 
-Run the CLI protocol tests:
+Run on a supported stable Node.js 24.x release (24.22.1 or newer within that
+major). The CLI now rejects older releases before executing commands.
+
+Run the CLI tests:
 
 ```sh
 pnpm --filter openwork-bootstrap test
 ```
 
-These tests run the shipped CLI script in a child process. Each test has a separate HOME and credentials file. The fixture replaces network requests. It controls the clock. It records request times, not codes or tokens.
+`node-runtime.test.mjs` checks the version floor, the Node 24-only upper bound,
+prerelease/malformed version rejection, early command rejection, and `doctor`.
+Its fixture substitutes version strings only inside test subprocesses.
+`installer-runtime.test.mjs` executes the actual served POSIX shell installer
+with isolated downloads and runtimes. It covers supported system Node reuse,
+private Node fallback, the exact official 24.22.1 distribution URL and filename,
+mirror overrides, checksum failures, and rejection of unsupported private Node.
+It requires POSIX shell and tar and is skipped on Windows; no test downloads a
+real runtime or changes the user's installation.
+
+The device-login tests run the shipped CLI script in a child process. Each test has a separate HOME and credentials file. The fixture replaces network requests. It controls the clock. It records request times, not codes or tokens.
 
 The tests check these conditions:
 
