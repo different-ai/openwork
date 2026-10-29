@@ -1,16 +1,27 @@
 // The Feed view of the sidebar: every workspace's sessions in one list, newest
-// activity first, with sessions waiting on the person on top and settled ones
-// in a shelf at the bottom.
+// first, with sessions waiting on the person on top and settled ones in a shelf
+// at the bottom.
 import type { WorkspaceSessionGroup } from "../../../../app/types";
-import type { FeedFolder, SessionSettleEntry, WorkspaceGroupState } from "./session-management-store";
-import { filterSettledSessions, sessionActivityAt } from "./session-settle";
-import { getRootSessions, isNeedsAttentionSessionStatus, partitionArchivedSessions, type SessionListItem } from "./utils";
+import type { FeedFolder, FeedGroupBy, FeedSortBy, SessionSettleEntry, WorkspaceGroupState } from "./session-management-store";
+import { filterSettledSessions, sessionActivityAt, sessionCreatedAt } from "./session-settle";
+import {
+  getRootSessions,
+  isActiveWorkSessionStatus,
+  isNeedsAttentionSessionStatus,
+  partitionArchivedSessions,
+  type SessionListItem,
+} from "./utils";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export type FeedEntry = { group: WorkspaceSessionGroup; session: SessionListItem };
-export type FeedDay = "today" | "yesterday" | "earlier";
-const DAY_ORDER: FeedDay[] = ["today", "yesterday", "earlier"];
+/** `all` is the single, unlabeled section when the Feed is not grouped. */
+export type FeedSection = "today" | "yesterday" | "earlier" | "active" | "inactive" | "all";
+const SECTION_ORDER: Record<FeedGroupBy, FeedSection[]> = {
+  day: ["today", "yesterday", "earlier"],
+  activity: ["active", "inactive"],
+  none: ["all"],
+};
 
 export type FeedFolderShelf = FeedFolder & {
   label: string;
@@ -22,7 +33,7 @@ export type FeedFolderShelf = FeedFolder & {
 export type SessionFeed = {
   folders: FeedFolderShelf[];
   needsYou: FeedEntry[];
-  days: { day: FeedDay; entries: FeedEntry[] }[];
+  sections: { section: FeedSection; entries: FeedEntry[] }[];
   settled: FeedEntry[];
 };
 
@@ -37,6 +48,8 @@ export type SessionFeedContext = {
   now: number;
   feedFolders: readonly FeedFolder[];
   groupsByWorkspace: Readonly<Record<string, WorkspaceGroupState>>;
+  groupBy: FeedGroupBy;
+  sortBy: FeedSortBy;
 };
 
 /** Pinned sessions stay in the Pinned section, so the feed leaves them out. */
@@ -73,7 +86,8 @@ export function buildSessionFeed(groups: readonly WorkspaceSessionGroup[], conte
       : new Set<string>();
     for (const session of roots) (settledIds.has(session.id) ? settled : active).push({ group, session });
   }
-  const newestFirst = (a: FeedEntry, b: FeedEntry) => sessionActivityAt(b.session) - sessionActivityAt(a.session);
+  const timeOf = context.sortBy === "created" ? sessionCreatedAt : sessionActivityAt;
+  const newestFirst = (a: FeedEntry, b: FeedEntry) => timeOf(b.session) - timeOf(a.session);
   active.sort(newestFirst);
   settled.sort(newestFirst);
   for (const folder of folders) {
@@ -87,18 +101,26 @@ export function buildSessionFeed(groups: readonly WorkspaceSessionGroup[], conte
   const midnight = new Date(context.now);
   midnight.setHours(0, 0, 0, 0);
   const today = midnight.getTime();
+  // Active: the agent is working, or it finished with a result not read yet.
+  const sectionOf = ({ session }: FeedEntry): FeedSection => {
+    if (context.groupBy === "none") return "all";
+    if (context.groupBy === "activity") {
+      return isActiveWorkSessionStatus(context.statusById?.[session.id]) || context.unreadIds.has(session.id) ? "active" : "inactive";
+    }
+    const at = timeOf(session);
+    return at >= today ? "today" : at >= today - DAY_MS ? "yesterday" : "earlier";
+  };
   const needsYou: FeedEntry[] = [];
-  const byDay: Record<FeedDay, FeedEntry[]> = { today: [], yesterday: [], earlier: [] };
+  const bySection = new Map(SECTION_ORDER[context.groupBy].map((section): [FeedSection, FeedEntry[]] => [section, []]));
   for (const entry of active) {
     if (isNeedsAttentionSessionStatus(context.statusById?.[entry.session.id])) {
       needsYou.push(entry);
       continue;
     }
-    const at = sessionActivityAt(entry.session);
-    byDay[at >= today ? "today" : at >= today - DAY_MS ? "yesterday" : "earlier"].push(entry);
+    bySection.get(sectionOf(entry))?.push(entry);
   }
-  const days = DAY_ORDER
-    .filter((day) => byDay[day].length > 0)
-    .map((day) => ({ day, entries: byDay[day] }));
-  return { folders, needsYou, days, settled };
+  const sections = [...bySection]
+    .filter(([, entries]) => entries.length > 0)
+    .map(([section, entries]) => ({ section, entries }));
+  return { folders, needsYou, sections, settled };
 }

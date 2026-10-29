@@ -1,8 +1,46 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatPlanDate, planEnded, planEndLabel, planUsageLabel } from "./plan-display";
+import { parseOrgListPayload } from "./den-org";
+import { formatPlanDate, organizationPlanLabel, planEnded, planEndLabel, planUsageLabel } from "./plan-display";
 
 const now = new Date("2026-10-26T12:00:00Z");
+
+function organization(fields: Record<string, unknown> = {}) {
+  const result = parseOrgListPayload({ orgs: [{
+    id: "org-example", name: "Example workspace", slug: "example-workspace", role: "owner",
+    orgMemberId: "member-example", membershipId: "member-example", memberCount: 3,
+    ...fields,
+  }] }).orgs[0];
+  assert.ok(result);
+  return result;
+}
+
+test("sandbox workspaces say Sandbox for owners, admins and members, regardless of billing tier", () => {
+  for (const role of ["owner", "admin", "member"]) {
+    for (const planTier of ["free", "team", "enterprise"]) {
+      const org = organization({ role, planTier, isSandbox: true });
+      assert.equal(organizationPlanLabel(org), "Sandbox");
+      assert.equal(org.memberCount, 3);
+    }
+  }
+});
+
+test("ordinary workspaces show their real plan for every role, never a Creator plan", () => {
+  for (const role of ["owner", "admin", "member"]) {
+    for (const [planTier, label] of [["free", "Free plan"], ["team", "Team plan"], ["enterprise", "Enterprise plan"]]) {
+      assert.equal(organizationPlanLabel(organization({ role, planTier, isSandbox: false })), label);
+    }
+  }
+});
+
+test("older or malformed directory responses never turn a role into a guessed plan", () => {
+  for (const planTier of [undefined, null, "creator", "unknown", {}]) {
+    const org = organization({ planTier, isSandbox: "true" });
+    assert.equal(org.planTier, null);
+    assert.equal(org.isSandbox, false);
+    assert.equal(organizationPlanLabel(org), null);
+  }
+});
 
 test("a plan OpenWork set reads as users of its limit, with its end date", () => {
   const plan = { tier: "enterprise", source: "manual", people: 7, userLimit: 20, endsAt: "2026-11-22" } as const;

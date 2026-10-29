@@ -23,10 +23,17 @@ type SessionTimes = {
   time?: { created?: number | null; updated?: number | null; archived?: number | null };
 };
 
-/** Last activity in milliseconds. Engines report session times in seconds or milliseconds. */
+// Engines report session times in seconds or milliseconds.
+const toMs = (raw: number) => raw > 0 && raw < 1_000_000_000_000 ? raw * 1000 : raw;
+
+/** Last activity in milliseconds. */
 export function sessionActivityAt(session: SessionTimes): number {
-  const raw = session.time?.updated ?? session.time?.created ?? 0;
-  return raw > 0 && raw < 1_000_000_000_000 ? raw * 1000 : raw;
+  return toMs(session.time?.updated ?? session.time?.created ?? 0);
+}
+
+/** When the session was created, in milliseconds. */
+export function sessionCreatedAt(session: SessionTimes): number {
+  return toMs(session.time?.created ?? session.time?.updated ?? 0);
 }
 
 /** Working sessions and sessions waiting on the person stay in view. */

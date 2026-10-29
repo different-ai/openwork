@@ -1,6 +1,7 @@
 import { and, eq, gt, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthUserTable, InvitationTable, MemberTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { BILLING_PLAN_TIERS } from "@openwork/types/den/billing-plans"
 import { desktopConfigSchema } from "@openwork/types/den/desktop-policies"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
@@ -38,6 +39,8 @@ const meResponseSchema = z.object({
 const meOrganizationsResponseSchema = z.object({
   orgs: z.array(z.object({
     id: denTypeIdSchema("organization"),
+    planTier: z.enum(BILLING_PLAN_TIERS),
+    isSandbox: z.boolean(),
     isActive: z.boolean(),
   }).passthrough()),
   activeOrgId: denTypeIdSchema("organization").nullable(),
