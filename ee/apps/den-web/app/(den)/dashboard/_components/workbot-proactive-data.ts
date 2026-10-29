@@ -9,6 +9,7 @@ import {
   type WorkbotProactiveView,
 } from "@openwork/types/den/workbot-proactive";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -105,6 +106,31 @@ export function useWorkbotProactiveHealth(orgId: string, enabled: boolean) {
       const parsed = workbotProactiveHealthSchema.safeParse(payload);
       if (!parsed.success) throw new Error("Agent health returned an unexpected response.");
       return parsed.data;
+    },
+  });
+}
+
+const sourceToolsSchema = z.object({
+  tools: z.array(z.object({ name: z.string(), description: z.string().optional(), readOnlyHint: z.boolean().optional(), blocked: z.boolean() })),
+});
+export type WorkbotSourceTool = z.infer<typeof sourceToolsSchema>["tools"][number];
+
+/** An MCP connection's tools, for choosing which ones members' agents may call. Only while the picker is open. */
+export function useWorkbotSourceTools(orgId: string, connectionId: string | null) {
+  return useQuery({
+    queryKey: ["org-workbot-proactive-source-tools", orgId, connectionId],
+    enabled: Boolean(orgId && connectionId),
+    retry: false,
+    queryFn: async ({ signal }): Promise<WorkbotSourceTool[]> => {
+      const { response, payload } = await requestJson(
+        `${proactivePath}/connections/${encodeURIComponent(connectionId ?? "")}/tools`,
+        { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId }, cache: "no-store", signal },
+        20000,
+      );
+      if (!response.ok) throw new Error(getErrorMessage(payload, `Couldn't load this connection's tools (${response.status}).`));
+      const parsed = sourceToolsSchema.safeParse(payload);
+      if (!parsed.success) throw new Error("The connection's tools came back in an unexpected shape.");
+      return parsed.data.tools;
     },
   });
 }
