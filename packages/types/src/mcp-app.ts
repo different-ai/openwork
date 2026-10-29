@@ -30,12 +30,16 @@ export const mcpAppToolNameSchema = z.string()
  * A tool the App's MCP server exposes under a clear name. It runs one exact
  * capability from search_capabilities as the person using the App. `live`
  * runs a saved Workflow read-only with server-supplied time inputs.
+ * `loadOnOpen` is the author's judgment that the tool only reads data the
+ * person asked for, so it may run without a click even when its provider does
+ * not mark it read-only. Den refuses it for anything known to write.
  */
 export const mcpAppToolDeclarationSchema = z.object({
   name: mcpAppToolNameSchema,
   description: z.string().trim().min(1).max(1_000),
   capability: z.string().trim().min(1).max(512),
   mode: z.enum(["input", "live"]).optional(),
+  loadOnOpen: z.boolean().optional(),
 }).strict()
 
 const toolDeclarationsSchema = z.array(mcpAppToolDeclarationSchema).max(MCP_APP_MAX_TOOLS)
@@ -48,8 +52,8 @@ const jsonSchemaObject = z.record(z.string(), z.json())
 
 /**
  * A declared tool resolved when the revision was published: how its arguments
- * reach the capability, the schema it advertises, and whether Den verified it
- * as read-only.
+ * reach the capability, the schema it advertises, whether Den verified it
+ * as read-only, and whether its author chose to load it on open.
  */
 export const mcpAppToolBindingSchema = z.object({
   name: mcpAppToolNameSchema,
@@ -59,6 +63,7 @@ export const mcpAppToolBindingSchema = z.object({
   mode: z.enum(["input", "live"]),
   inputSchema: jsonSchemaObject,
   readOnly: z.boolean(),
+  loadOnOpen: z.boolean().optional(),
   schemaDigest: digestSchema.optional(),
 }).strict()
 
@@ -124,6 +129,7 @@ export const mcpAppToolSummarySchema = z.object({
   capability: z.string(),
   mode: z.enum(["input", "live"]),
   readOnly: z.boolean(),
+  loadOnOpen: z.boolean().optional(),
 }).strict()
 
 export const mcpAppSummarySchema = z.object({
@@ -225,6 +231,7 @@ export function summarizeMcpAppRevision(input: {
       capability: tool.capability,
       mode: tool.mode,
       readOnly: tool.readOnly,
+      ...(tool.loadOnOpen ? { loadOnOpen: true } : {}),
     })),
   }
 }

@@ -130,6 +130,8 @@ export type CapabilityExecuteInput = {
   requireSchemaMatch?: boolean
   /** Refuse an external tool that its provider no longer marks read-only for this caller. */
   requireReadOnly?: boolean
+  /** Refuse an external tool that its provider now marks destructive for this caller. */
+  refuseDestructive?: boolean
   /** One object matching the search match's `inputSchema`; wins over path/query/body. */
   arguments?: unknown
   path?: unknown
@@ -656,6 +658,7 @@ const externalMcpSource: CapabilitySource = {
       schemaDigest: input.schemaDigest,
       ...(input.requireSchemaMatch ? { requireSchemaMatch: true } : {}),
       ...(input.requireReadOnly ? { requireReadOnly: true } : {}),
+      ...(input.refuseDestructive ? { refuseDestructive: true } : {}),
       redirectUriBase: ctx.redirectUriBase,
       usageSource: ctx.usageSource,
     })
