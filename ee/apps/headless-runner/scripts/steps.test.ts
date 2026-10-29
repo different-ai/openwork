@@ -392,6 +392,44 @@ test("a step that keeps dying is retried at once, then after 30 s and 2 minutes,
   assert.ok(reports.some((report) => report.code === "step_crash_loop" && report.kind === "turn_failed"), JSON.stringify(reports))
 })
 
+test("the alarm isn't kept set for a step still running here: only its next step, once it ends", async () => {
+  using temp = tempDir()
+  let release = () => {}
+  const held = new Promise<void>((resolve) => (release = resolve))
+  let calls = 0
+  const model: ModelClient = {
+    async complete(request) {
+      calls += 1
+      if (calls === 1) {
+        await held
+        return { text: "Noting it.", toolCalls: [{ id: "call_note", name: "write_file", input: { path: "a.md", content: "a" } }], usage }
+      }
+      return { text: `Answer to ${promptOf(request)}`, toolCalls: [], usage }
+    },
+  }
+  const { store, runner } = world(temp.directory, { model, alarm: true })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "m1", prompt: "Hi", credentials: {}, execution: "steps" })
+  const first = runner.nextStepAt()
+  assert.ok(first !== null && first <= Date.now(), "the first step is due")
+  const alarm = runner.runDueSteps()
+  await until(() => calls === 1, "the first model call")
+  const row = store.stepRow(session.id, "m1")
+  assert.ok(row && row !== "invalid" && row.dueAt <= Date.now(), "due again at once, for a process that dies in the step")
+  // An alarm for it would only find it running and set itself again; celld starts that alarm during a long one.
+  assert.equal(runner.nextStepAt(), null)
+  await runner.runDueSteps()
+  assert.equal(calls, 1, "an alarm during the step doesn't start it again")
+  release()
+  await alarm
+  const next = runner.nextStepAt()
+  assert.ok(next !== null && next <= Date.now(), "its end sets the next step")
+  await drain(runner, store)
+  assert.equal(store.getTurn(session.id, "m1")?.status, "completed")
+  assert.equal(calls, 2)
+  assert.equal(runner.nextStepAt(), null)
+})
+
 test("an exception in one lane's step fails that turn only: other lanes and the alarm keep going", async () => {
   using temp = tempDir()
   const model: ModelClient = {

@@ -1130,6 +1130,17 @@ export class Store {
       })
   }
 
+  /** Every step-mode turn's next step and when it is due, earliest first. */
+  scheduledSteps(): Array<{ sessionId: string; messageId: string; dueAt: number }> {
+    return this.db
+      .prepare("SELECT session_id, message_id, due_at FROM step_schedule ORDER BY due_at, rowid")
+      .all()
+      .flatMap((row) => {
+        const value = z.object({ session_id: z.string(), message_id: z.string(), due_at: z.number() }).safeParse(row)
+        return value.success ? [{ sessionId: value.data.session_id, messageId: value.data.message_id, dueAt: value.data.due_at }] : []
+      })
+  }
+
   /** When the earliest next step is due, or null without step-mode turns. */
   nextStepAt(): number | null {
     const row = this.db.prepare("SELECT MIN(due_at) AS n FROM step_schedule").get()

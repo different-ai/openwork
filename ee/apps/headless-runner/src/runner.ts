@@ -275,8 +275,10 @@ type TurnSetup = {
   toolSpecs: ToolSpec[]
 }
 
+/** A held step-mode run whose due step the alarm may start now: not mid-step, and not over. */
+const runsStepNow = (running: Running) => running.steps !== undefined && !running.steps.inStep && !running.steps.finished
 /** The conversation is one lane (messages, then reports, in order); each background task runs in its own. */
-const laneOf = (job: { sessionId: string; messageId: string; kind: JobKind }) => (job.kind === "task" ? `${job.sessionId}#${job.messageId}` : job.sessionId)
+const laneOf =(job: { sessionId: string; messageId: string; kind: JobKind }) => (job.kind === "task" ? `${job.sessionId}#${job.messageId}` : job.sessionId)
 const MAX_MESSAGE_ID_LENGTH = 128
 /** A step that couldn't reach the owner's memory runs again after this long. */
 const MEMORY_RETRY_MS = 15_000
@@ -1399,20 +1401,33 @@ export class Runner {
     }
     const steps: Array<Promise<StepResult>> = []
     for (const { sessionId, messageId } of due) {
-      const running = [...this.controllers.values()].find((entry) => entry.sessionId === sessionId && entry.messageId === messageId) ?? this.adoptStepTurn(sessionId, messageId)
-      if (!running?.steps || running.steps.inStep || running.steps.finished) continue
+      const running = this.heldRun(sessionId, messageId) ?? this.adoptStepTurn(sessionId, messageId)
+      if (!running || !runsStepNow(running)) continue
       steps.push(this.stepOnce(running))
     }
     await Promise.allSettled(steps)
   }
 
-  /** When the earliest step is due, for the host's alarm; null without step-mode turns. */
+  /**
+   * When the earliest step is due, for the host's alarm; null without one to run. A step already running here is left
+   * out: its row is due at once only for a process that dies in it, and runDueSteps skips it, so an alarm for it would
+   * only find it running and set itself again, over and over (celld starts the next alarm while a long one still runs).
+   * The step's end sets its next step.
+   */
   nextStepAt(): number | null {
     try {
-      return this.options.store.nextStepAt()
+      for (const step of this.options.store.scheduledSteps()) {
+        const running = this.heldRun(step.sessionId, step.messageId)
+        if (!running || runsStepNow(running)) return step.dueAt
+      }
+      return null
     } catch {
       return null
     }
+  }
+
+  private heldRun(sessionId: string, messageId: string): Running | undefined {
+    return [...this.controllers.values()].find((entry) => entry.sessionId === sessionId && entry.messageId === messageId)
   }
 
   /**
