@@ -635,6 +635,28 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  guidedSlackSetup: {
+    label: "Connect: guided Slack setup",
+    description: "Manage › Connectors › Add Slack walks admins through one checklist: choose Read and act or Read only (nothing preselected; the choice sets the scopes OpenWork asks Slack for), Create app in Slack (prefilled with OpenWork's redirect URL, those scopes and MCP on), turn on Agents › MCP, paste the client ID and secret, sign in to test, and optionally add @openwork. The MCP step shows the real result after the test sign-in. Turning it off brings back the previous setup screen; existing connections stay.",
+    category: "connect",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/guided-slack-setup/README.md",
+    deployments: everywhere,
+    default: false,
+  },
+  libraryConnectorOrgSetup: {
+    label: "Desktop: connectors that need an organization app",
+    description: "In the desktop Library, Slack and GitHub no longer ask for an app's client ID and secret: members see them locked until an admin sets them up, admins open the setup in OpenWork Cloud, connectors the organization already has offer Sign in from Add a connector, and a sign-in that fails says why, with a link to the service's app settings when that is the fix.",
+    category: "connect",
+    added: "2026-10-28",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/library-connector-org-setup/README.md",
+    deployments: everywhere,
+    default: false,
+  },
 })
 
 export type FeatureKey = keyof typeof FEATURES

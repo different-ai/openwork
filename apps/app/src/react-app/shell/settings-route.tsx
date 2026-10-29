@@ -2411,8 +2411,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 removeCloudPlugin={(pluginId) => { void extensionsStore.removeCloudOrgPlugin(pluginId); }}
                 hasLocalPluginCopy={(pluginId) => Boolean(extensionsSnapshot.importedCloudPlugins[pluginId])}
                 orgMcpConnectingId={orgMcpConnections.connectingId}
-                connectOrgMcp={(connectionId) => { void orgMcpConnections.connect(connectionId); }}
-                reconnectOrgMcp={(connectionId) => { void orgMcpConnections.connect(connectionId, { forceFreshAuthorization: true }); }}
+                connectOrgMcp={(connectionId, options) => { void orgMcpConnections.connect(connectionId, options); }}
+                reconnectOrgMcp={(connectionId, options) => { void orgMcpConnections.connect(connectionId, { ...options, forceFreshAuthorization: true }); }}
                 orgMcpDisconnectingId={orgMcpConnections.disconnectingId}
                 disconnectOrgMcp={(connectionId) => { void orgMcpConnections.disconnect(connectionId); }}
                 readSkill={readLibrarySkill}
