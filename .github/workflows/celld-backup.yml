@@ -74,7 +74,10 @@ jobs:
             exit 1
           fi
           [ "$gone" -gt 0 ] && echo "$gone object(s) were deleted by celld while copying and are not in this snapshot (expected)"
-          source_count="$(aws s3 ls "s3://$SOURCE_BUCKET" --recursive --endpoint-url "$S3_ENDPOINT" | grep -vc ' ci/' || true)"
+          # One key per line, outside ci/; the ownership check below reads it too, so a failed listing fails here.
+          aws s3 ls "s3://$SOURCE_BUCKET" --recursive --endpoint-url "$S3_ENDPOINT" > "$RUNNER_TEMP/source-listing.txt"
+          awk '{ print $4 }' "$RUNNER_TEMP/source-listing.txt" | { grep -v '^ci/' || true; } > "$RUNNER_TEMP/source-keys.txt"
+          source_count="$(wc -l < "$RUNNER_TEMP/source-keys.txt" | tr -d ' ')"
           copied_count="$(aws s3 ls "$target/" --recursive --endpoint-url "$S3_ENDPOINT" | wc -l | tr -d ' ')"
           echo "Snapshot $stamp: $copied_count objects copied ($source_count in the source, outside ci/)"
           # Objects written while copying can make the source slightly larger; far fewer copies means the copy failed.
@@ -84,3 +87,22 @@ jobs:
           fi
           printf '{"snapshot":"%s","objects":%s,"source_objects":%s,"commit":"%s"}\n' "$stamp" "$copied_count" "$source_count" "$GITHUB_SHA" \
             | aws s3 cp - "$target/_snapshot.json" --endpoint-url "$S3_ENDPOINT" --content-type application/json --only-show-errors
+
+      # A cell whose change data is in the bucket but whose ownership record (fleet/cells/<cell>/own.json) is gone: celld
+      # ≥ 0.6.3 refuses it, so its conversation fails until the record is restored, and older nodes start it empty.
+      # celld never deletes the record, so this means something else did (a lifecycle rule, a script). The snapshot above
+      # is kept either way. Restoring: OWNER-CELLS.md ("A lost ownership record").
+      - name: Check every cell still has its ownership record
+        if: steps.configured.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          lost="$(sed -n -E 's#^fleet/cells/([^/]+)/(ltx/.+|own\.json)$#\1 \2#p' "$RUNNER_TEMP/source-keys.txt" \
+            | awk '{ if ($2 == "own.json") own[$1] = 1; else data[$1] = 1 } END { for (cell in data) if (!(cell in own)) print cell }' \
+            | sort)"
+          if [ -n "$lost" ]; then
+            echo "Cells with change data and no ownership record:"
+            printf '%s\n' "$lost" | head -50
+            echo "::error title=celld ownership record lost::$(printf '%s\n' "$lost" | wc -l | tr -d ' ') cell(s) have LTX under fleet/cells/<cell>/ltx/ but no own.json; see OWNER-CELLS.md (\"A lost ownership record\")"
+            exit 1
+          fi
+          echo "Every cell with change data has its ownership record ($(grep -c '^fleet/cells/[^/]*/own\.json$' "$RUNNER_TEMP/source-keys.txt" || true) records)."

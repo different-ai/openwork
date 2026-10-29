@@ -234,6 +234,23 @@ A snapshot is copied from a running fleet, so it is consistent per object, not a
 
 Rehearse a restore into a throwaway bucket prefix before relying on it.
 
+### A lost ownership record
+
+Each cell's ownership record, `fleet/cells/<cell>/own.json`, must stay in the bucket for the life of the cell; celld
+never deletes it. If it is gone while the cell's LTX remains, celld ≥ 0.6.3 refuses the cell (requests for it fail and
+nodes log `celld ownership record lost`) instead of starting it with an empty database. The daily backup fails with
+"celld ownership record lost" and lists such cells. Find what deleted the record (a lifecycle rule, a script) and stop
+it first. Then restore each cell as celld's guarantees describe ("The ownership record"):
+
+1. Stop every node that served the cell with SIGTERM (restart the service), never `POST /shutdown?handoff=preserve`.
+2. Wait until each stopped process's node log is recovered: its `fleet/nodes/<node>.json` is gone, has no `log`
+   object, or shows `"state": "sealed"`.
+3. Write `{"node": "", "epoch": <N>}` to `fleet/cells/<cell>/own.json`, where `<N>` is the highest `e<N>` under
+   `fleet/cells/<cell>/ltx/`. Within 10 seconds the next request acquires the cell and restores it from the bucket.
+
+A record written before step 2 can lose acknowledged writes, and one written while a node still serves the cell makes a
+second writer.
+
 ## Long conversations on celld
 
 Sealed segments and large bodies (README "Sealed history and large outputs") live under `sessions/<id>/segments/` and
