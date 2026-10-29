@@ -208,8 +208,8 @@ async function registerBetterAuthSsoProvider(input: OrganizationSsoRegistrationI
           spMetadata: {
             entityID: audience,
           },
+          // Better Auth always takes the SAML subject from the NameID.
           mapping: {
-            id: "nameID",
             email: "email",
             name: "displayName",
             extraFields: SSO_IDENTITY_EXTRA_FIELDS,
@@ -233,8 +233,8 @@ async function registerBetterAuthSsoProvider(input: OrganizationSsoRegistrationI
         ...oidcEndpoints,
         scopes: input.scopes ?? ["openid", "email", "profile"],
         pkce: true,
+        // Better Auth always takes the OIDC subject from `sub`.
         mapping: {
-          id: "sub",
           email: "email",
           emailVerified: "email_verified",
           name: "name",

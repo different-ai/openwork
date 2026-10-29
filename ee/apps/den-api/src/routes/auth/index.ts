@@ -386,6 +386,19 @@ function oauthRegistrationError(status: number, error: string, errorDescription:
   })
 }
 
+function hasLoopbackRedirectUri(redirectUris: unknown): boolean {
+  if (!Array.isArray(redirectUris)) return false
+  return redirectUris.some((uri) => {
+    if (typeof uri !== "string") return false
+    try {
+      const { hostname } = new URL(uri)
+      return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]"
+    } catch {
+      return false
+    }
+  })
+}
+
 async function rewriteMcpClientRegistrationRequest(request: Request, path: string) {
   const url = new URL(request.url)
   url.pathname = path
@@ -423,6 +436,13 @@ async function rewriteMcpClientRegistrationRequest(request: Request, path: strin
   const normalizedScope = normalizeMcpOAuthClientScope(body.scope)
   if (normalizedScope) {
     body.scope = normalizedScope
+  }
+
+  // Local MCP clients (Claude Code, Cursor, the MCP SDKs) register loopback
+  // redirects without sending application_type. Better Auth defaults that to
+  // "web", which refuses loopback, so declare them native (RFC 8252 §7.3).
+  if (body.application_type === undefined && hasLoopbackRedirectUri(body.redirect_uris)) {
+    body.application_type = "native"
   }
 
   headers.set("content-type", "application/json")

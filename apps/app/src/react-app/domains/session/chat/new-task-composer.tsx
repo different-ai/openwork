@@ -34,7 +34,7 @@ import {
 import { connectPluginsForComposer, EMPTY_CONNECT_CAPABILITY_INVENTORY } from "@/react-app/domains/session/surface/connect-capability-inventory";
 import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
 import type { NewSessionDestination } from "./new-session-destination";
-import { draftWorkspaceChangeBlocked, newSessionDraftSlot } from "./new-session-destination";
+import { draftHasWorkspaceFiles, draftWorkspaceChangeBlocked, newSessionDraftSlot } from "./new-session-destination";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import { NewTaskDestinationMenu } from "./new-task-destination-menu";
 import { clearSessionDraft, saveSessionDraft } from "../sync/draft-store";
@@ -526,8 +526,9 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       contextControl={context?.destination?.workspaceId && context.workspaceOptions ? <NewTaskDestinationMenu
         destination={context.destination}
         workspaces={context.workspaceOptions}
-        groups={groupsByWorkspace[context.destination.workspaceId]?.groups ?? []}
+        groupsByWorkspace={Object.fromEntries(context.workspaceOptions.map((workspace) => [workspace.id, groupsByWorkspace[workspace.id]?.groups ?? []]))}
         hasDraft={Boolean(props.draft || attachments.length)}
+        workspaceChangeBlocked={draftHasWorkspaceFiles({ draft: props.draft, attachments, mentions })}
         disabled={pendingSubmission !== null || failedSubmission !== null}
         onChange={changeDestination}
         onDiscard={() => {

@@ -39,7 +39,7 @@ type UpdateDownloadProgressProps = {
   totalBytes: number | null;
 };
 
-function UpdateDownloadProgress(props: UpdateDownloadProgressProps) {
+export function UpdateDownloadProgress(props: UpdateDownloadProgressProps) {
   const downloadedBytes = props.downloadedBytes ?? 0;
   const progressPercent =
     props.totalBytes != null && props.totalBytes > 0 ? Math.min(100, Math.round((downloadedBytes / props.totalBytes) * 100)) : 0;

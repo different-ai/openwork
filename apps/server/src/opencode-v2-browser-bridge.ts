@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { serve } from "./serve-node.js";
 import { server as browserTools } from "./opencode-plugins/openwork-chrome-devtools.js";
-import { server as computerTools } from "./opencode-plugins/openwork-computer-use.js";
+import { computerToolsOffered, server as computerTools } from "./opencode-plugins/openwork-computer-use.js";
 
 const requestSchema = z.object({
   name: z.string().min(1),
@@ -18,6 +18,8 @@ export async function createV2BrowserBridge() {
   const tools = { ...(await browserTools()).tool, ...(await computerTools()).tool };
   const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
     if (request.headers.get("authorization") !== `Bearer ${token}`) return new Response(null, { status: 401 });
+    // The engine offers the computer tools only while the desktop has the feature on.
+    if (request.method === "GET" && new URL(request.url).pathname === "/computer") return Response.json({ offered: await computerToolsOffered() });
     if (request.method !== "POST" || new URL(request.url).pathname !== "/browser") return new Response(null, { status: 404 });
     try {
       const text = await request.text();

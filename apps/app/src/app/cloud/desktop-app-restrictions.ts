@@ -27,6 +27,19 @@ export function checkDesktopAppRestriction(input: {
   return desktopPolicyKeyEnforced(input.restriction) && input.config?.[input.restriction] === false;
 }
 
+const RETIRED_OPENCODE_ZEN_TERMS = "opencode zen big pickle free";
+
+/**
+ * Whether Connect a provider shows OpenCode Zen as retired where it used to be
+ * listed: only while Zen itself is missing from the list, and for an empty
+ * search or one a person looking for Zen would type.
+ */
+export function showsRetiredOpencodeZen(input: { providerIds: readonly string[]; query: string }) {
+  if (input.providerIds.some((id) => id.trim().toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID)) return false;
+  const query = input.query.trim().toLowerCase();
+  return !query || RETIRED_OPENCODE_ZEN_TERMS.includes(query);
+}
+
 /** Catalog copy explaining why the organization blocked a capability. */
 export function desktopRestrictionNotice(restriction: DesktopAppRestrictionKey) {
   return desktopPolicyUserNotices[restriction];

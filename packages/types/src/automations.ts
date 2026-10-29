@@ -213,6 +213,21 @@ export function isAutomationCloudDefaultModel(model: { providerId: string; model
   return model.providerId === AUTOMATION_CLOUD_DEFAULT_MODEL.providerId && model.modelId === AUTOMATION_CLOUD_DEFAULT_MODEL.modelId
 }
 
+/**
+ * Providers Den itself authorizes for an Automation: its own provider records
+ * (`lpr_…`), OpenWork Models, the cloud default and the retired OpenCode Zen.
+ * Every other provider (one connected on the desktop, or an AI Gateway `ipr_…`
+ * provider the desktop syncs for its member) exists only in the runtime that
+ * runs the Automation, so only a Desktop Automation can use it and the desktop
+ * runtime checks it before each run.
+ */
+export function isDenAuthorizedAutomationProvider(providerId: string): boolean {
+  return /^lpr_/i.test(providerId)
+    || providerId === "openwork"
+    || providerId === AUTOMATION_FREE_MODEL.providerId
+    || providerId === AUTOMATION_CLOUD_DEFAULT_MODEL.providerId
+}
+
 export const automationNeedsAttentionReasonSchema = z.object({
   code: z.enum([
     "owner_membership_lost",

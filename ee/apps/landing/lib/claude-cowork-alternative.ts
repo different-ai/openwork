@@ -31,7 +31,7 @@ export const alternativeCards: CompareCard[] = [
   {
     icon: "users",
     title: "Share skills and MCP servers with everyone",
-    link: { label: "Desktop policies", href: "/docs/cloud/share-with-your-team/desktop-policies" }
+    link: { label: "Share with your team", href: "/docs/cloud/share-with-your-team/shared-mcp-connections" }
   }
 ];
 
@@ -59,7 +59,7 @@ export const claudeCoworkAlternativeFaq: FaqEntry[] = [
   {
     question: "How do I migrate from Claude Cowork?",
     answer:
-      "Open the same folder in OpenWork and connect a model; SKILL.md skills, plugins, and MCP servers use the same formats. The migration guide covers each step."
+      "Open the same folder in OpenWork and connect a model; SKILL.md skills, plugins, and MCP servers use the same formats. Import your Claude chats and Claude Code sessions from Settings, and ask your agent to follow openworklabs.com/migrate.md to bring over your Cowork plugins and skills. The migration guide covers each step."
   }
 ];
 

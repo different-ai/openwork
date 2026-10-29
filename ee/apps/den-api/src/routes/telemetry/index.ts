@@ -6,12 +6,15 @@ import {
   InvitationTable,
 } from "@openwork-ee/den-db/schema"
 import {
+  ANALYTICS_TREND_DAYS,
   ANALYTICS_TREND_WEEKS,
   buildSessionDimensionUpsert,
+  dailyTrendStart,
   isKnownTelemetryEventType,
   isKnownTelemetrySource,
   normalizeTelemetrySource,
   queryWindowMetrics,
+  selectDailyActivity,
   selectModelDimensionUsage,
   selectWeeklyActiveMembers,
   selectWeeklyActivity,
@@ -31,6 +34,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
+import { organizationFeatureEnabled } from "../../features.js"
 import { jsonValidator, orgMemberRoute, orgPermissionRoute, queryValidator } from "../../middleware/index.js"
 import { enterprisePlanRequiredSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema, emptyResponse } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
@@ -243,7 +247,7 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
     describeRoute({
       tags: ["Telemetry"],
       summary: "Get usage analytics",
-      description: "Returns Layer 1 (who is using AI) and Layer 2 (how often) analytics for the active org: member counts, active members, session and task volume in 7d/30d windows, average task duration, model usage and selection in 30d, and a 12-week trend of active members, sessions, and tasks.",
+      description: "Returns Layer 1 (who is using AI) and Layer 2 (how often) analytics for the active org: member counts, active members, session and task volume in 7d/30d windows, average task duration, model usage and selection in 30d, and a 12-week trend of active members, sessions, and tasks. When daily trends are on for the organization, `daily` adds the same counts per UTC day for the last 30 days, today included.",
       responses: {
         200: jsonResponse("Analytics returned.", telemetryAnalyticsResponseSchema),
         400: jsonResponse("Invalid analytics query.", invalidRequestSchema),
@@ -290,8 +294,10 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       const sevenDaysAgo = new Date(now - 7 * DAY_MS)
       const thirtyDaysAgo = new Date(now - 30 * DAY_MS)
       const trendStart = new Date(now - ANALYTICS_TREND_WEEKS * 7 * DAY_MS)
+      const dayStart = dailyTrendStart(now)
+      const dailyEnabled = await organizationFeatureEnabled(orgId, "analyticsDailyTrends", { userId: orgContext?.currentMember.userId })
 
-      const [memberRows, inviteRows, window7d, window30d, weeklyRows, modelDimensionRows] = await Promise.all([
+      const [memberRows, inviteRows, window7d, window30d, weeklyRows, modelDimensionRows, dailyRows] = await Promise.all([
         db
           .select({ count: sql<number>`count(*)` })
           .from(MemberTable)
@@ -304,6 +310,7 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
         queryWindowMetrics(db, orgId, thirtyDaysAgo, dimensionFilter),
         selectWeeklyActivity(db, orgId, trendStart, dimensionFilter),
         selectModelDimensionUsage(db, orgId, thirtyDaysAgo, dimensionFilter),
+        dailyEnabled ? selectDailyActivity(db, orgId, dayStart, dimensionFilter) : null,
       ])
 
       const weekly = Array.from({ length: ANALYTICS_TREND_WEEKS }, (_, i) => {
@@ -316,6 +323,19 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
           tasksFailed: Number(row?.tasksFailed ?? 0),
         }
       })
+
+      const daily = dailyRows
+        ? Array.from({ length: ANALYTICS_TREND_DAYS }, (_, i) => {
+          const row = dailyRows.find((r) => Number(r.day) === i)
+          return {
+            day: new Date(dayStart.getTime() + i * DAY_MS).toISOString().slice(0, 10),
+            activeMembers: Number(row?.activeMembers ?? 0),
+            sessions: Number(row?.sessions ?? 0),
+            tasksCompleted: Number(row?.tasksCompleted ?? 0),
+            tasksFailed: Number(row?.tasksFailed ?? 0),
+          }
+        })
+        : undefined
 
       const selectionSessions = (value: "default" | "manual") => Number(
         modelDimensionRows.find((row) => row.type === "model_selection" && row.value === value)?.sessions ?? 0,
@@ -334,6 +354,7 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
         tasksFailed30d: window30d.tasksFailed,
         avgTaskDurationMs30d: window30d.avgTaskDurationMs,
         weekly,
+        ...(daily ? { daily } : {}),
         models: {
           usage30d: modelDimensionRows
             .filter((row) => row.type === "model")

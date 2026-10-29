@@ -264,7 +264,7 @@ export async function writeGatewayGroup(tx: GatewayTx, provider: GatewayProvider
   return id
 }
 
-function normalizeCredential(input: GatewayCredentialSetPatch, provider: GatewayProvider, existing?: Credential): CredentialInput | null {
+export function normalizeCredential(input: GatewayCredentialSetPatch, provider: GatewayProvider, existing?: Credential): CredentialInput | null {
   const envNames = readProviderEnvNames(provider.provider_config)
   let credential = input.credential ?? null
   if (input.apiKeys) {

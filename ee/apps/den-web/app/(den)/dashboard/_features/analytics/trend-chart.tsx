@@ -57,7 +57,7 @@ export function TrendChart({ title, subtitle, weeks, series, intervalLabel = "We
                 return (
                   <div
                     key={s.label}
-                    title={`${intervalLabel} ${formatWeekLabel(week.weekStart)} — ${s.label}: ${value}`}
+                    title={`${intervalLabel ? `${intervalLabel} ` : ""}${formatWeekLabel(week.weekStart)} — ${s.label}: ${value}`}
                     className="w-full max-w-[24px] rounded-t-[4px] transition-[height]"
                     style={{
                       height: `${height}%`,

@@ -143,6 +143,22 @@ clear both token env aliases so `envFrom` cannot accidentally turn them on.
 Shared deployment flags, origins, database keys, and tokens must not be overridden
 through per-app `env` when enabled; Helm rejects conflicting configuration.
 
+Auto Model Routing (feature `autoRouter`) asks Jev, through TypeSafe's API,
+which of the organization's models should answer each Auto request. Give the
+gateway a TypeSafe API key; without one, Auto always uses its fallback model:
+
+```yaml
+secret:
+  keys:
+    typesafeApiKey: TYPESAFE_API_KEY # key name in the Secret
+  values:
+    typesafeApiKey: "<TypeSafe API key>" # or add it to secret.existingSecret
+```
+
+The gateway reads it as `TYPESAFE_API_KEY` (optional). `AUTO_ROUTER_JEV_MODEL`
+and `AUTO_ROUTER_JEV_TIMEOUT_MS` can be set through `gateway.env`. The feature
+is cloud-only, so it also needs `config.deployment: cloud`.
+
 Retention is separate from member Automations and remains opt-in after the
 accounting migration:
 

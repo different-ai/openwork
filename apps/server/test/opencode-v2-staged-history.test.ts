@@ -63,6 +63,46 @@ async function digest(path: string) {
   return hash.digest("hex");
 }
 
+// OpenCode v1.18.33 adds project.time_archived, which the pinned v2 target may
+// not have (#6548). An archived v1 chat must still arrive unlocked (#6367).
+test("v1 history with project archiving and archived chats copies as active v2 chats", { skip: !bin, timeout: 60_000 }, async () => {
+  if (!bin) return;
+  const directory = await mkdtemp(join(tmpdir(), "openwork-project-schema-"));
+  const rootDir = join(directory, "v2");
+  let engine: Awaited<ReturnType<typeof createManagedOpencodeV2Server>> | undefined;
+  try {
+    const source = await fixture(directory, 0);
+    const original = await openHistoryDatabase(source);
+    try {
+      original.exec("ALTER TABLE project ADD COLUMN time_archived integer");
+      original.prepare("INSERT INTO migration (id, time_completed) VALUES ('20261010180456_project_time_archived', 1767225600000)").run();
+      original.prepare("INSERT INTO project (id, worktree, time_created, time_updated, sandboxes, time_archived) VALUES (?, ?, 1, 1, '[]', 123)")
+        .run("archived-project", join(directory, "archived"));
+      original.prepare("UPDATE session SET time_archived = 456 WHERE id = ?").run(sessionId);
+    } finally { original.close(); }
+    const before = await digest(source);
+    engine = await createManagedOpencodeV2Server({ bin, rootDir, env: { OPENCODE_DISABLE_MODELS_FETCH: "1" } });
+    await engine.close(); engine = undefined;
+    let status: EngineV2MigrationStatus | undefined;
+    await migrateOpencodeV1History({ bin, source, storageDir: join(directory, "copy"), targetDatabase: join(rootDir, "opencode.db"),
+      progress: next => { status = next; } });
+    assert.equal(status?.state, "completed", status?.error);
+    const target = await openHistoryDatabase(join(rootDir, "opencode.db"));
+    try {
+      assert.equal(numberField(target.prepare("SELECT count(*) AS n FROM project WHERE id = 'archived-project'").get(), "n"), 1);
+      // A target engine that knows project archiving keeps the value.
+      if (target.prepare("SELECT 1 FROM pragma_table_info('project') WHERE name = 'time_archived'").get()) {
+        assert.equal(numberField(target.prepare("SELECT time_archived AS n FROM project WHERE id = 'archived-project'").get(), "n"), 123);
+      }
+      assert.equal(numberField(target.prepare("SELECT count(*) AS n FROM session_v2 WHERE id = ? AND time_archived IS NULL").get(sessionId), "n"), 1);
+      assert.equal(numberField(target.prepare("SELECT json_extract(data, '$.time_archived') AS n FROM openwork_v1_session WHERE id = ?").get(sessionId), "n"), 456);
+    } finally { target.close(); }
+    assert.equal(await digest(source), before);
+    engine = await createManagedOpencodeV2Server({ bin, rootDir, env: { OPENCODE_DISABLE_MODELS_FETCH: "1" } });
+    assert.equal((await engine.fetchJson("/api/session/active")).status, 200);
+  } finally { await engine?.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
 test("a complete large-thread copy resumes committed batches and repeated runs preserve v2 messages", { skip: !bin, timeout: 300_000 }, async () => {
   if (!bin) return;
   const directory = await mkdtemp(join(tmpdir(), "openwork-staged-history-"));

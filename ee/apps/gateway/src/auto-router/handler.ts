@@ -1,11 +1,15 @@
 // Auto (feature `autoRouter`): a desktop sends an OpenAI chat request with
 // model `openwork-auto`. The gateway asks Jev which of the organization's
-// routes and thinking levels fits the latest prompt, rewrites the request for
-// that model's protocol under the member's own Gateway alias, and hands it to
+// routes fits the latest prompt (each runs at its own thinking level),
+// rewrites the request for that model's protocol under the member's own
+// Gateway alias, and hands it to
 // the normal Gateway pipeline, which authorizes, meters and forwards it as if
 // the member had picked that model. Responses go back as Chat Completions.
+import { createHash } from "node:crypto"
 import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import {
+  AUTO_ROUTER_THINKING_LABELS,
+  autoRouterThinkingLevels,
   AUTO_ROUTER_RESPONSE_MODEL_HEADER,
   AUTO_ROUTER_RESPONSE_MODEL_NAME_HEADER,
   AUTO_ROUTER_RESPONSE_PROVIDER_HEADER,
@@ -27,7 +31,7 @@ import { openAiResponsesTranslator } from "./openai-responses.js"
 import { chatToolCallIds, type AutoTranslator, type TranslateResponseInput } from "./protocol.js"
 import type { ReasoningStore } from "./reasoning-store.js"
 import type { AutoRouterConfig, AutoRouterConfigRoute } from "./config.js"
-import { decideAutoRoute, type AutoCandidate } from "./decide.js"
+import { decideAutoRoute, type AutoCandidate, type SharedTurnChoices } from "./decide.js"
 import type { AskJev } from "./jev.js"
 
 
@@ -46,6 +50,8 @@ export type AutoRouterDependencies = {
   catalog: ProviderCatalog
   askJev: AskJev
   reasoningStore: ReasoningStore
+  /** False when this gateway has no TypeSafe key: Auto is then off, as Den reports to admins. */
+  routingConfigured: boolean
   /** The normal Gateway pipeline for a rewritten request. */
   forward: (target: AutoTarget) => Promise<Response>
   onJevError?: (error: unknown) => void
@@ -122,7 +128,7 @@ export function autoCandidates(config: AutoRouterConfig, rows: GatewayMemberAcce
       routeId: route.id,
       modelName: modelName(row),
       prompt: route.prompt,
-      thinkingLevels: route.thinkingLevels,
+      thinkingLevel: route.thinkingLevel,
       route,
       row,
       family,
@@ -155,6 +161,60 @@ export function withRouteHeaders(response: Response, route: AutoRouteInfo, body:
   return new Response(body, { status: response.status, statusText: response.statusText, headers })
 }
 
+/** The turn's chosen route in the shared reasoning store, keyed by a hash of the turn. */
+function sharedTurns(store: ReasoningStore, organizationId: string): SharedTurnChoices {
+  const key = (turnKey: string) => `turn:${createHash("sha256").update(turnKey).digest("base64url")}`
+  return {
+    async recall(turnKey) {
+      const id = key(turnKey)
+      const found = (await store.recall(organizationId, [id])).get(id)
+      const routeId = found?.kind === "turn" ? found.blocks[0]?.routeId : undefined
+      return typeof routeId === "string" ? routeId : null
+    },
+    remember: (turnKey, routeId) => store.remember(organizationId, [key(turnKey)], { kind: "turn", blocks: [{ routeId }] }),
+  }
+}
+
+/** "Auto chose Claude Opus 5.5 · Medium thinking", so every error names the model that was asked. */
+export function autoRouteNote(route: AutoRouteInfo) {
+  const name = route.name ?? route.model
+  return route.thinking === "default" ? `Auto chose ${name}.` : `Auto chose ${name} · ${AUTO_ROUTER_THINKING_LABELS[route.thinking]} thinking.`
+}
+
+export function annotateChatError(body: JsonObject, route: AutoRouteInfo): JsonObject {
+  if (!isJsonObject(body.error)) return body
+  const message = typeof body.error.message === "string" && body.error.message ? body.error.message : "The provider failed."
+  return { ...body, error: { ...body.error, message: `${message} (${autoRouteNote(route)})` }, openwork_route: route }
+}
+
+/** Appends the routed model to every error event of a Chat Completions SSE stream. */
+export function annotateChatStreamErrors(body: ReadableStream<Uint8Array>, route: AutoRouteInfo): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  let buffer = ""
+  const rewrite = (line: string) => {
+    if (!line.startsWith("data:") || !line.includes("\"error\"")) return line
+    try {
+      const parsed: unknown = JSON.parse(line.slice(5).trim())
+      return isJsonObject(parsed) && isJsonObject(parsed.error) ? `data: ${JSON.stringify(annotateChatError(parsed, route))}` : line
+    } catch {
+      return line
+    }
+  }
+  return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      buffer += decoder.decode(chunk, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+      if (lines.length) controller.enqueue(encoder.encode(`${lines.map(rewrite).join("\n")}\n`))
+    },
+    flush(controller) {
+      buffer += decoder.decode()
+      if (buffer) controller.enqueue(encoder.encode(rewrite(buffer)))
+    },
+  }))
+}
+
 async function readJson(response: Response): Promise<unknown> {
   return response.json().catch(() => null)
 }
@@ -164,16 +224,16 @@ async function translateResponse(response: Response, translator: AutoTranslator,
   const { route } = input
   if (!response.ok) {
     const body = isJsonContentType(contentType) ? await readJson(response) : (await response.body?.cancel().catch(() => {}), null)
-    return withRouteHeaders(response, route, JSON.stringify(translator.errorToChat(body, response.status)), "application/json")
+    return withRouteHeaders(response, route, JSON.stringify(annotateChatError(translator.errorToChat(body, response.status), route)), "application/json")
   }
   if (response.body && (isEventStreamContentType(contentType) || isAwsEventStreamContentType(contentType) || (input.stream && !isJsonContentType(contentType)))) {
-    return withRouteHeaders(response, route, translator.streamToChat(response.body, input), "text/event-stream; charset=utf-8")
+    return withRouteHeaders(response, route, annotateChatStreamErrors(translator.streamToChat(response.body, input), route), "text/event-stream; charset=utf-8")
   }
   if (isJsonContentType(contentType)) {
     const body = await readJson(response)
     // Google streams a JSON array without alt=sse; translators accept it as a body.
     if (input.stream && Array.isArray(body)) {
-      return withRouteHeaders(response, route, translator.streamToChat(new Response(`data: ${body.map((item) => JSON.stringify(item)).join("\n\ndata: ")}\n\n`).body ?? new ReadableStream(), input), "text/event-stream; charset=utf-8")
+      return withRouteHeaders(response, route, annotateChatStreamErrors(translator.streamToChat(new Response(`data: ${body.map((item) => JSON.stringify(item)).join("\n\ndata: ")}\n\n`).body ?? new ReadableStream(), input), route), "text/event-stream; charset=utf-8")
     }
     return withRouteHeaders(response, route, JSON.stringify(translator.jsonToChat(body, input)), "application/json")
   }
@@ -187,6 +247,9 @@ export async function handleAutoRequest(input: {
   dependencies: AutoRouterDependencies
 }): Promise<Response> {
   const { request, body, identity, dependencies } = input
+  if (!dependencies.routingConfigured) {
+    return autoError(404, "auto_router_not_configured", "Auto isn't available yet: the AI Gateway is missing its routing key. Ask your administrator, or choose another model.")
+  }
   const config = await dependencies.loadConfig({ organizationId: identity.organizationId })
   if (!config) return autoError(404, "auto_router_unavailable", "Auto isn't set up for your organization. Choose another model.")
   const candidates = autoCandidates(config, await dependencies.loadMemberGatewayAccess(identity), dependencies.catalog)
@@ -203,6 +266,7 @@ export async function handleAutoRequest(input: {
     askJev: dependencies.askJev,
     signal: request.signal,
     onJevError: dependencies.onJevError,
+    shared: sharedTurns(dependencies.reasoningStore, identity.organizationId),
   })
   const chosen = decision ? candidates.find((candidate) => candidate.routeId === decision.candidate.routeId) : undefined
   if (!decision || !chosen?.row.model) return autoError(503, "auto_router_no_decision", "Auto couldn't choose a model. Try again, or choose a model yourself.")
@@ -221,6 +285,7 @@ export async function handleAutoRequest(input: {
     model: alias,
     upstreamModel: chosen.row.model.model_id,
     thinkingLevel: decision.thinkingLevel,
+    thinkingLevels: autoRouterThinkingLevels(chosen.row.model.model_id, chosen.row.model.model_config),
     maxOutputTokens: maxOutputTokens(chosen.row),
     reasoning,
   })

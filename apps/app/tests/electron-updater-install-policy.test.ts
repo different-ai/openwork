@@ -105,6 +105,13 @@ describe("install re-validates the organization's desktop version policy", () =>
     expect(updater.updateStatus).toMatchObject({ state: "ready", version: downloadedVersion });
   });
 
+  test("keeps the download staged when the restart is called off before install", async () => {
+    await act(async () => { await updater.installUpdateAndRestart(() => false); });
+
+    expect(installs).toBe(0);
+    expect(updater.updateStatus).toMatchObject({ state: "ready", version: downloadedVersion });
+  });
+
   test("refuses to install a version revoked between download and install", async () => {
     refreshResult = async () => ({ allowedDesktopVersions: [installedVersion] });
 

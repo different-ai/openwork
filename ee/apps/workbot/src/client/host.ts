@@ -11,6 +11,7 @@ export const meSchema = z.object({
   organizationName: z.string(),
   enabled: z.boolean(),
   computer: z.boolean().default(false),
+  browser: z.boolean().default(false),
   browserDemonstrations: z.boolean().default(false),
   browserLiveView: z.boolean().default(false),
   /** Workbot's Calendar tab (on while Workbot is on); older servers omit it. */
@@ -38,9 +39,20 @@ export function signIn() {
   window.location.assign(`/auth/login?return=${encodeURIComponent(back)}`)
 }
 
+declare global {
+  interface Window { __workbotMe?: Promise<Response | null> }
+}
+
+/** The answer index.html started fetching before this script loaded; given out once, so later reads are fresh. */
+function takeEarlyMe() {
+  const early = window.__workbotMe
+  window.__workbotMe = undefined
+  return early
+}
+
 /** The signed-in person, or null when nobody is (the caller sends them to sign in). */
 export async function fetchMe(): Promise<Me | null> {
-  const response = await fetch("/v1/workbot/me", { credentials: "same-origin", headers: { accept: "application/json" } })
+  const response = (await takeEarlyMe()) ?? await fetch("/v1/workbot/me", { credentials: "same-origin", headers: { accept: "application/json" } })
   if (response.status === 401) return null
   if (!response.ok) throw new Error("Workbot couldn't reach OpenWork. Try again in a minute.")
   return meSchema.parse(await response.json())
@@ -89,6 +101,7 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     calendar: me.calendar,
     documents: me.documents,
     computer: me.computer,
+    browser: me.browser,
     browserDemonstrations: me.browserDemonstrations,
     browserLiveView: me.browserLiveView,
     documentEditing: me.documents && me.documentEditing,

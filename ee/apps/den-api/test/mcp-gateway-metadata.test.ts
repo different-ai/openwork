@@ -6,7 +6,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { z } from "zod"
 
-import { createAgentMcpServer, AGENT_MCP_GUIDANCE_URI, AGENT_MCP_INSTRUCTIONS, LEGACY_AGENT_MCP_INSTRUCTIONS } from "../src/mcp/agent-server.js"
+import type { ConnectToolView } from "../src/mcp/connect-tool-view.js"
+import { createAgentMcpServer, AGENT_MCP_GUIDANCE_URI, AGENT_MCP_INSTRUCTIONS, LEGACY_AGENT_MCP_INSTRUCTIONS, MY_AGENT_INSTRUCTIONS } from "../src/mcp/agent-server.js"
 
 for (const toolShapes of [undefined, false, true]) {
   for (const appServers of [true, false]) {
@@ -124,5 +125,30 @@ test("an output schema cannot describe a proxy's optional structured content wit
   } finally {
     await client.close()
     await server.close()
+  }
+})
+
+test("with My agent on, chat is told to change Your agent with putMeAgent and to answer \"why so quiet?\" from its checks; off, nothing is said", async () => {
+  async function instructions(options: Parameters<typeof createAgentMcpServer>[0]) {
+    const server = createAgentMcpServer(options)
+    const client = new Client({ name: "my-agent-guidance-test", version: "1" })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await server.connect(serverTransport)
+    try {
+      await client.connect(clientTransport)
+      return client.getInstructions() ?? ""
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  }
+  assert.equal(MY_AGENT_INSTRUCTIONS, "To change what Your agent tells the user, use putMeAgent; to explain why it was quiet, read the user's agent checks.")
+  const on = await instructions({ myAgent: true })
+  assert.ok(on.endsWith(MY_AGENT_INSTRUCTIONS))
+  assert.doesNotMatch(await instructions({}), /putMeAgent/)
+  const views: ConnectToolView[] = ["search", "full"]
+  for (const toolView of views) {
+    const everything = await instructions({ myAgent: true, remoteSessionStatus: true, slackSendAsBot: true, toolView, toolShapes: true })
+    assert.ok(Buffer.byteLength(everything, "utf8") <= 2048, `${toolView}: ${Buffer.byteLength(everything, "utf8")} bytes`)
   }
 })

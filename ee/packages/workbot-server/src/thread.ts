@@ -68,6 +68,8 @@ export type WorkbotStep = {
    * line needs no live view. Absent while it works on the screen (the desktop tool) and from older servers.
    */
   background?: true
+  /** Whether Workbot put this screen work in front of the person (the desktop tool's `show`): the last value it gave. */
+  shown?: boolean
   /** The web pages it opened in the browser, oldest first, so the person can open them too. */
   pages?: WorkbotPage[]
 }
@@ -342,6 +344,7 @@ function addComputerStep(parts: WorkbotPart[], name: string, input: Record<strin
           ...(background ? { background: true as const } : {}),
         }
   if (doing && step.updates.at(-1) !== doing) step.updates.push(doing)
+  if (!background && typeof input.show === "boolean") step.shown = input.show
   const args = typeof input.args === "object" && input.args !== null ? (input.args as Record<string, unknown>) : {}
   const url = browser && (input.operation === "open" || input.operation === "navigate") ? webAddress(args.url) : null
   if (url) {

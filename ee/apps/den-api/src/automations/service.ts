@@ -22,6 +22,7 @@ import type {
   UpdateAutomation,
 } from "@openwork/types/automations"
 import { env } from "../env.js"
+import { markFeaturesUsed, type MarkFeaturesUsed } from "../feature-usage.js"
 import { isActiveAutomationOwner, resolveAutomationModelAccess } from "./authority.js"
 import { shouldApplyAutomationModelAccessFailure } from "./model-attention-rollout.js"
 import { automationRepository, runWorkspaceId } from "./repository.js"
@@ -159,6 +160,15 @@ export type AutomationServiceOptions = {
   calendarTriggersEnabled?: CalendarTriggerSourceDeps["enabled"]
   /** Reads an owner's primary Google Calendar around now. */
   readCalendar?: CalendarTriggerSourceDeps["read"]
+  /** Records that the owner used a schedule feature, for /admin › Features. */
+  markFeaturesUsed?: MarkFeaturesUsed
+}
+
+/** The feature a schedule kind needs; the clock's daily, weekly and once schedules need none. */
+function scheduleFeature(schedule: AutomationSchedule): "automationIntervalSchedules" | "automationCalendarTriggers" | null {
+  if (schedule.kind === "interval") return "automationIntervalSchedules"
+  if (schedule.kind === "calendar") return "automationCalendarTriggers"
+  return null
 }
 
 async function readOwnerCalendar(input: Parameters<CalendarTriggerSourceDeps["read"]>[0]) {
@@ -178,6 +188,7 @@ export class AutomationService {
   private readonly cloudRuntime: (organizationId: string) => Promise<CloudAutomationRuntime>
   private readonly intervalSchedulesEnabled: (owner: { organizationId: string; ownerMemberId: string }) => Promise<boolean>
   private readonly calendarTriggers: CalendarTriggerSource
+  private readonly markFeaturesUsed: MarkFeaturesUsed
   private runnerPruneDueAt = 0
 
   constructor(options: AutomationServiceOptions = {}) {
@@ -185,6 +196,7 @@ export class AutomationService {
     this.cloudRuntime = options.cloudRuntime ?? cloudAutomationRuntime
     this.intervalSchedulesEnabled = options.intervalSchedulesEnabled
       ?? ((owner) => ownerScheduleFeatureEnabled(owner, "automationIntervalSchedules"))
+    this.markFeaturesUsed = options.markFeaturesUsed ?? markFeaturesUsed
     this.calendarTriggers = new CalendarTriggerSource({
       list: (limit) => automationRepository.listActiveCalendarTriggers({ limit }),
       enabled: options.calendarTriggersEnabled ?? ((owner) => ownerScheduleFeatureEnabled(owner, "automationCalendarTriggers")),
@@ -354,13 +366,15 @@ export class AutomationService {
     const page = { ...listed, items: listed.items.filter((item) => readableBy(scope, item.revision.schedule)) }
     const modelAccessBySelection = new Map<string, ReturnType<typeof resolveAutomationModelAccess>>()
     const resolveModelAccess = (item: AutomationListItem) => {
-      const key = JSON.stringify([item.revision.model.providerId, item.revision.model.modelId])
+      const executionTarget = item.revision.executionTarget ?? "desktop"
+      const key = JSON.stringify([item.revision.model.providerId, item.revision.model.modelId, executionTarget])
       const existing = modelAccessBySelection.get(key)
       if (existing) return existing
       const access = resolveAutomationModelAccess({
         organizationId: item.automation.organizationId,
         ownerMemberId: item.automation.ownerMemberId,
         ...item.revision.model,
+        executionTarget,
       })
       modelAccessBySelection.set(key, access)
       return access
@@ -501,7 +515,7 @@ export class AutomationService {
     if (current.revision.action?.kind === "saved_script") {
       if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
     } else if (!blocked) {
-      const access = await resolveAutomationModelAccess({ ...scope, ...current.revision.model })
+      const access = await resolveAutomationModelAccess({ ...scope, ...current.revision.model, executionTarget: target })
       if (!access.ok && shouldApplyAutomationModelAccessFailure({
         model: current.revision.model,
         failure: access,
@@ -511,7 +525,8 @@ export class AutomationService {
     }
     if (blocked) {
       const now = Date.now()
-      await automationRepository.markNeedsAttention({
+      // A desktop-only model blocks one run in the cloud, not the Automation's own schedule.
+      if (ownPlacement(current.revision, target)) await automationRepository.markNeedsAttention({
         automationId: current.automation.id,
         expectedRevisionId: current.revision.id,
         reason: { ...blocked, occurredAt: now },
@@ -618,6 +633,7 @@ export class AutomationService {
           organizationId: item.automation.organizationId,
           ownerMemberId: item.automation.ownerMemberId,
           ...item.revision.model,
+          executionTarget: item.revision.executionTarget ?? "desktop",
         })
     let claim: AutomationClaimResult
     try {
@@ -646,6 +662,9 @@ export class AutomationService {
       await this.skipRun({ runId: claim.run.id, code: "execution_runtime_unavailable", message: "Every-few-hours schedules are turned off for this organization.", now })
       return null
     }
+    // No request marks background work: an occurrence of a schedule feature, while it is on, is the owner using it.
+    const feature = scheduleFeature(item.revision.schedule)
+    if (feature) this.markFeaturesUsed({ organizationId: item.automation.organizationId, memberId: item.automation.ownerMemberId, keys: [feature] })
     const target = item.revision.executionTarget ?? "desktop"
     if (!await automationTargetAllowed(item.automation.organizationId, target)) {
       // The organization turned this kind off: the occurrence is recorded as skipped and the schedule advances.
@@ -754,6 +773,7 @@ export class AutomationService {
       organizationId: scope.organizationId,
       ownerMemberId: scope.ownerMemberId,
       ...claimed.revision.model,
+      executionTarget: "desktop",
     })
     if (!access.ok && shouldApplyAutomationModelAccessFailure({
       model: claimed.revision.model,
@@ -869,7 +889,7 @@ export class AutomationService {
       error.name = "model_access_lost"
       throw error
     }
-    const result = await resolveAutomationModelAccess({ ...scope, ...model })
+    const result = await resolveAutomationModelAccess({ ...scope, ...model, executionTarget: target })
     if (!result.ok && shouldApplyAutomationModelAccessFailure({
       model,
       failure: result,
@@ -889,6 +909,7 @@ export class AutomationService {
       organizationId: item.automation.organizationId,
       ownerMemberId: item.automation.ownerMemberId,
       ...item.revision.model,
+      executionTarget: item.revision.executionTarget ?? "desktop",
     }),
   ): Promise<AutomationListItem> {
     if (item.automation.state !== "active" || item.revision.action?.kind === "saved_script") return item

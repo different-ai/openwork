@@ -9,8 +9,7 @@ export type BrowserShownMode = "floating" | "side";
 /**
  * How one conversation shows its built-in browser. `side` is the docked side
  * panel; `returnMode` is the person's last floating/side choice, used when
- * leaving full screen, reopening from the header and placing a page the agent
- * opened. In memory only: a restart starts hidden.
+ * leaving full screen. In memory only: a restart starts hidden.
  */
 export type BrowserPresentation = {
   mode: BrowserPresentationMode;
@@ -29,7 +28,7 @@ type BrowserPresentationStore = {
 export const DEFAULT_BROWSER_PRESENTATION: BrowserPresentation = {
   mode: "hidden",
   snap: "middle",
-  returnMode: "floating",
+  returnMode: "side",
 };
 
 function update(

@@ -10,6 +10,10 @@ export type SidebarContextValue = {
   developerMode: boolean;
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
+  /** Workspaces on OpenCode v2, the only engine settling ships for. */
+  settleWorkspaceIds?: ReadonlySet<string>;
+  /** The Feed view and its pinned folders ship with `settledSessions`. */
+  feedEnabled?: boolean;
   /** Why a row needs the person when a delegated child, not the session itself, is asking. */
   sessionAttentionLabelById?: Record<string, string>;
   sessionAttentionSourceById?: Record<string, "child" | "descendant">;

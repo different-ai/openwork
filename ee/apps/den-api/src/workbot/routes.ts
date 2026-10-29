@@ -58,10 +58,15 @@ const sessionSchema = z.object({
   enabled: z.boolean(),
   /** Workbot may set up recurring work: the organization runs Automations on the headless runner. */
   canSchedule: z.boolean(),
+  /** Workbot may use the native apps on its cloud computer. */
   computer: z.boolean().optional(),
+  /** Workbot may use the browser on its cloud computer; off on older Dens, which gave the browser with `computer`. */
+  browser: z.boolean().optional(),
   browserDemonstrations: z.boolean().optional(),
   /** The Browser view streams the page with Chromium's screencast; off on older Dens. */
   browserLiveView: z.boolean().optional(),
+  /** Workbot's computers run through the runner's sandbox gateway instead of its own provider; off on older Dens. */
+  sandboxGateway: z.boolean().optional(),
   /** Workbot shows its Calendar tab: Workbot is on. Older Dens omit it. */
   calendar: z.boolean().optional(),
   /** Connected document browsing; off on older Dens. */
@@ -388,9 +393,12 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         organization: { id: organization.id, name: organization.name, brandAppName: readBrandAppName(organization.metadata) },
         memberId,
         enabled: true,
+        // Workbot's browser and its other desktop apps share one cloud computer but are rolled out separately.
         computer: features.computerUse && features.remoteComputers,
-        browserDemonstrations: features.browserDemonstrations && features.computerUse && features.remoteComputers,
-        browserLiveView: features.browserLiveView && features.computerUse && features.remoteComputers,
+        browser: features.browserUse && features.remoteComputers,
+        browserDemonstrations: features.browserDemonstrations && features.browserUse && features.remoteComputers,
+        browserLiveView: features.browserLiveView && features.browserUse && features.remoteComputers,
+        sandboxGateway: features.sandboxGateway,
         canSchedule,
         calendar: true,
         documents: features.workbotDocuments,
@@ -620,10 +628,10 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       const auditBlocked = await attributeWorkbot(c, resolved)
       if (auditBlocked) return auditBlocked
       const inner = c.req.path.slice("/v1/workbot/documents".length)
-      const editor = /^\/v1\/documents\/google-drive\/files\/[A-Za-z0-9_-]{1,512}\/(editor|content|metadata)$/.exec(inner)
+      const editor = /^\/v1\/documents\/(?:google-drive|microsoft-365)\/files\/[A-Za-z0-9_-]{1,512}\/(editor|content|metadata)$/.exec(inner)
       const office = /^\/v1\/documents\/google-drive\/files\/[A-Za-z0-9_-]{1,512}\/office(?:\/[0-9a-f-]{36}(?:\/(save|close))?)?$/.exec(inner)
       const read = c.req.method === "GET"
-      if (!(read && inner === "/v1/capabilities/google-workspace/drive-files") && !(editor && (read || editor[1] === "editor")) && !(office && (read ? !office[1] && /\/[0-9a-f-]{36}$/.test(inner) : inner.endsWith("/office") || !!office[1]))) return c.json({ error: "not_found" }, 404)
+      if (!(read && (inner === "/v1/capabilities/google-workspace/drive-files" || inner === "/v1/documents/microsoft-365/files")) && !(editor && (read || editor[1] === "editor")) && !(office && (read ? !office[1] && /\/[0-9a-f-]{36}$/.test(inner) : inner.endsWith("/office") || !!office[1]))) return c.json({ error: "not_found" }, 404)
       const features = await getOrganizationFeatures(resolved.organization.id, { userId: resolved.user.id })
       if (editor?.[1] === "metadata" && !features.workbotWorkspaceAssistant) return c.json({ error: "feature_disabled", message: "Opening document links is off for this workspace." }, 403)
       if (!features.workbotDocuments) return c.json({ error: "workbot_documents_not_enabled", message: "Documents is off for this workspace." }, 403)

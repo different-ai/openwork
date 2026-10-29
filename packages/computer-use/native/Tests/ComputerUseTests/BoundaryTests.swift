@@ -10,6 +10,12 @@ final class BoundaryTests: XCTestCase {
         XCTAssertFalse(HostTrust.embeddedHostIsTrusted())
     }
 
+    func testHostIdentityCannotWidenTheSigningRequirement() {
+        // The test runner's Apple-signed parent would satisfy "anchor apple".
+        XCTAssertFalse(HostTrust.process(getppid(), isSignedAs: "x\" or anchor apple or identifier \"y", team: "F5DJWB4CCV"))
+        XCTAssertFalse(HostTrust.process(getppid(), isSignedAs: HostTrust.desktopIdentifier, team: "F5DJWB4CCV"))
+    }
+
     func testOffWindowAndPartiallyClippedAccessibilityTextCannotBeExposed() throws {
         let window = CGRect(x: 100, y: 100, width: 320, height: 240)
         let frames = [CGRect(x: 0, y: 0, width: 80, height: 40),
@@ -160,6 +166,7 @@ final class BoundaryTests: XCTestCase {
         let text = String(repeating: "café 日本語 e\u{301} ", count: 10)
         XCTAssertEqual(try InputDispatch.chunks(text).joined(), text)
         XCTAssertTrue(try InputDispatch.chunks(text).allSatisfy { $0.utf16.count <= 16 })
+        let firstChunk = try InputDispatch.chunks(text)[0].map(String.init)
         for changedFocus in [false, true] {
             var changed = false
             var posted: [String] = []
@@ -175,7 +182,8 @@ final class BoundaryTests: XCTestCase {
             } catch let error as UseError {
                 XCTAssertEqual(error.code, changedFocus ? "focus_changed" : "session_paused")
             }
-            XCTAssertEqual(posted.count, 1)
+            // One character per event; a focus change stops typing at the next chunk.
+            XCTAssertEqual(posted, changedFocus ? firstChunk : ["c"])
             XCTAssertEqual(validations, changedFocus ? 2 : 1)
         }
         var cancelledPosts = 0
@@ -273,12 +281,17 @@ final class BoundaryTests: XCTestCase {
         }
         XCTAssertThrowsError(try access.captureDigest(state([record("bad", frame: CGRect(x: 0, y: 0, width: Double.nan, height: 10))])))
         var time: TimeInterval = 100
-        let budget = AXReadBudget(seconds: 0.1, clock: { time })
-        XCTAssertEqual(try budget.timeout(), 0.05, accuracy: 0.0001)
-        time = 100.08
-        XCTAssertEqual(try budget.timeout(), 0.02, accuracy: 0.0001)
-        time = 100.1
-        XCTAssertThrowsError(try budget.timeout())
+        // One accessibility call may use the read's whole remaining time, never more.
+        let budget = AXReadBudget(seconds: 2, clock: { time })
+        XCTAssertEqual(try budget.timeout(), 2, accuracy: 0.0001)
+        time = 101.5
+        XCTAssertEqual(try budget.timeout(), 0.5, accuracy: 0.0001)
+        time = 101.9995
+        XCTAssertThrowsError(try budget.timeout()) { error in
+            XCTAssertEqual((error as? UseError)?.code, "accessibility_timeout")
+        }
+        time = 102
+        XCTAssertThrowsError(try budget.check())
     }
 
     func testHostAppsAndPermissionSurfacesCannotBeControlled() {

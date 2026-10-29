@@ -8,6 +8,8 @@ export type OpenCodeContext = {
   worktree?: string;
   workspaceId?: string;
   workspaceID?: string;
+  /** The engine's permission prompt in the calling chat; resolves only once the person allows. */
+  ask?: (request: { permission: string; patterns: string[]; always: string[]; metadata: Record<string, unknown> }) => Promise<void>;
 };
 
 export type OpenWorkExtensionConnectState = {

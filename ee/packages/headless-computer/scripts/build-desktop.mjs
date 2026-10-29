@@ -1,7 +1,9 @@
 import { build } from "esbuild";
-import { copyFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { desktopIdentity, GUEST_OPTIONAL_PACKAGES } from "./desktop-identity.mjs";
+import { gzipSync } from "node:zlib";
+import { guestIdentity, imageIdentity, GUEST_OPTIONAL_PACKAGES } from "./desktop-identity.mjs";
 
 const guest = await build({
   absWorkingDir: fileURLToPath(new URL("..", import.meta.url)),
@@ -13,13 +15,16 @@ const guest = await build({
 });
 await copyFile(new URL("../../../apps/den-worker-runtime/scripts/cloud-desktop.sh", import.meta.url), new URL("../dist/cloud-desktop.sh", import.meta.url));
 
-// Compatibility follows what the guest bundles and the image installs, not the rest of the lockfile or code the guest
-// never loads (see desktop-identity.mjs).
-const identity = await desktopIdentity({
-  root: fileURLToPath(new URL("../../../../", import.meta.url)),
-  workingDirectory: fileURLToPath(new URL("..", import.meta.url)),
-  inputs: Object.keys(guest.metafile.inputs),
-});
-await writeFile(new URL("../dist/desktop-guest.version", import.meta.url), identity);
-// Keep the same identity in bundled Workers, which have no package asset files.
+// Compatibility follows what the image installs and what the guest bundles, not the rest of the lockfile or code the
+// guest never loads (see desktop-identity.mjs).
+const root = fileURLToPath(new URL("../../../../", import.meta.url));
+const image = await imageIdentity({ root });
+const guestVersion = await guestIdentity({ root, workingDirectory: fileURLToPath(new URL("..", import.meta.url)), inputs: Object.keys(guest.metafile.inputs) });
+await writeFile(new URL("../dist/desktop-image.version", import.meta.url), image);
+await writeFile(new URL("../dist/desktop-guest.version", import.meta.url), guestVersion);
+// The runner installs this guest into computers built from the same image, so bundled Workers, which have no package
+// asset files, carry the identities and the compressed guest itself.
+const bundle = await readFile(new URL("../dist/desktop-guest.mjs", import.meta.url));
+const identity = { image, guest: guestVersion, bundleSha256: createHash("sha256").update(bundle).digest("hex") };
 await writeFile(new URL("../dist/desktop-identity.mjs", import.meta.url), `export default ${JSON.stringify(identity)};\n`);
+await writeFile(new URL("../dist/desktop-guest-bundle.mjs", import.meta.url), `export default ${JSON.stringify(gzipSync(bundle, { level: 9 }).toString("base64"))};\n`);

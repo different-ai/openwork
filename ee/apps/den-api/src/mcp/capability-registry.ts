@@ -10,7 +10,7 @@ import { AuditUnavailableError, auditUnavailableToolResult, runMcpServiceAction,
 import type { AuditServiceActionName } from "../audit/service-actions.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
-import { catalogOperationAvailableToCapabilities } from "./catalog-availability.js"
+import { catalogOperationAvailableToCapabilities, nativeOperationAvailableToCapabilities } from "./catalog-availability.js"
 import type { McpToolOperation } from "./catalog.js"
 import {
   executeAdminCapability,
@@ -90,6 +90,7 @@ import {
   type CapabilityMatch,
   type SearchCapabilityType,
 } from "./search.js"
+import { ENGINE_LISTED_SOURCE_KINDS, unlistedCapabilityMatches } from "./engine-tool-view.js"
 import { externalToolContent } from "./tool-content.js"
 import { capabilityCallInput, capabilityToolMatch, type CapabilityToolMatch } from "./capability-tool.js"
 
@@ -169,7 +170,7 @@ export type CapabilityRegistryContextInput = {
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   /** Effective features of the organization (see features.ts). */
-  organizationFeatures: Partial<Pick<FeatureMap, "remoteSessionSubagents" | "managedDeployments" | "slackSendAsBot">>
+  organizationFeatures: Partial<Pick<FeatureMap, "remoteSessionSubagents" | "managedDeployments" | "slackSendAsBot" | "outlookAttachments">>
   /** MCP transports pass the verified caller; route and Automation contexts omit it (their route records the request). */
   audit?: McpAuditPrincipal | null
   /**
@@ -199,7 +200,9 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     env: input.env,
     // All capability paths (search, Code Mode, execution, saved Workflows) use this catalog.
     // The route also checks the current rollout so a cached tool cannot bypass a kill switch.
-    catalog: input.catalog,
+    catalog: input.catalog.filter((operation) => nativeOperationAvailableToCapabilities({
+      outlookAttachmentsEnabled: input.organizationFeatures.outlookAttachments === true,
+    }, operation)),
     principal: input.principal,
     organizationId: input.organizationId,
     member: input.member,
@@ -565,6 +568,7 @@ const nativeSource: CapabilitySource = {
       catalog: ctx.catalog,
       limit,
       namespaceContext: await ctx.resolveNamespaceContext(),
+      scopes: ctx.principal.scopes,
     })
   },
   enumerate: async (ctx) => leavesFromBuilt(await buildNativeProviderToolTree({
@@ -606,6 +610,7 @@ const externalMcpSource: CapabilitySource = {
       limit,
       namespaceContext: await ctx.resolveNamespaceContext(),
       reportCoverage: (coverage) => ctx.reportExternalCoverage(externalMcpSearchCoverageHint(coverage)),
+      scopes: ctx.principal.scopes,
     })
   },
   enumerate: async (ctx) => {
@@ -810,7 +815,7 @@ const slackSendAsBotSource: CapabilitySource = {
     const run = () => executeSlackSendAsBot({
       organizationId: ctx.organizationId,
       userId: ctx.principal.userId,
-      member: ctx.member !== null,
+      memberId: ctx.member?.orgMembershipId ?? null,
       hasWriteScope: ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE),
       body: input.body,
     })
@@ -882,7 +887,13 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
   return {
     search: async (
       ctx: CapabilityRegistryContext,
-      input: { query: string; limit: number; type?: SearchCapabilityType },
+      input: {
+        query: string
+        limit: number
+        type?: SearchCapabilityType
+        /** Only what has no tool of its own in the full view (engine-tool-view.ts). */
+        unlistedOnly?: boolean
+      },
     ): Promise<{ matches: CapabilityMatch[]; externalCoverageHint?: string }> => {
       let externalCoverageHint: string | undefined
       const sourceFilter = searchCapabilitySourceFilter(input.type)
@@ -894,10 +905,13 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
           externalCoverageHint = hint
         },
       }
-      const sourceMatches = await Promise.all(CAPABILITY_SOURCE_KINDS.map((kind) => (
+      const kinds = input.unlistedOnly
+        ? CAPABILITY_SOURCE_KINDS.filter((kind) => !ENGINE_LISTED_SOURCE_KINDS.has(kind))
+        : CAPABILITY_SOURCE_KINDS
+      const sourceMatches = (await Promise.all(kinds.map((kind) => (
         sources[kind].search(searchContext, input.query, input.limit)
-      )))
-      const matches = sourceMatches.flat()
+      )))).flat()
+      const matches = (input.unlistedOnly ? unlistedCapabilityMatches(sourceMatches) : sourceMatches)
         .sort(compareCapabilityMatches)
         .slice(0, input.limit)
       return {

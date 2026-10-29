@@ -137,6 +137,8 @@ export const idTypesMapNameToPrefix = {
   orgPrompt: "osp",
   orgPromptAccess: "ospa",
   sandboxOrganization: "sbx",
+  mcpRegistrationStatus: "mrs",
+  mcpRegistrationEvent: "mre",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

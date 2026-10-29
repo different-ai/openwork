@@ -29,6 +29,9 @@ import type { AnalyticsObserver, beginModelAnalytics } from "./task-analytics.js
 import { respondBeforeUpstream } from "./early-response.js"
 import { completeChatResponse, inferenceError, readResponseJson, relayChatStream, upstreamError } from "./chat-response.js"
 import { gatewayModelEndpoints, gatewayModelsPath, registerGatewayRoutes } from "./gateway.js"
+import { createGcpServiceAccountTokenMinter } from "./credentials/gcp-service-account.js"
+import { loadProviderCatalogFromFile } from "./provider-catalog.js"
+import { gatewayProviderTestPath, registerProviderTestRoute } from "./provider-test.js"
 import type { GatewayDependencies } from "./gateway.js"
 import { isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./relay.js"
 import { createRequestLogRecorder, insertRequestLogIntoDb, REQUEST_LOG_UNAVAILABLE_MESSAGE } from "./request-log.js"
@@ -895,9 +898,16 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
 
   const authenticateModels = inferenceAuth({ findActiveInferenceKey: dependencies.findActiveInferenceKey })
   const authenticateGateway = gatewayAuth({ findActiveGatewayKey: dependencies.findActiveGatewayKey ?? (async (key) => (await import("./keys.js")).findActiveGatewayKey(key)) })
-  api.use("/api/v1/*", createMiddleware<InferenceAuthEnv>((c, next) => c.req.path.startsWith("/api/v1/providers/") || isSharedGatewayRequest(c.req.raw, c.req.path)
+  api.use("/api/v1/*", createMiddleware<InferenceAuthEnv>((c, next) => c.req.path.startsWith("/api/v1/providers/") || c.req.path === gatewayProviderTestPath || isSharedGatewayRequest(c.req.raw, c.req.path)
     ? authenticateGateway(c, next) : authenticateModels(c, next)))
   api.use("/api/v1/*", orgContext({ loadOrganization: dependencies.loadOrganization ?? loadOrganizationFromDb }))
+  registerProviderTestRoute(api, {
+    fetch: dependencies.fetch,
+    signingSecret: env.dbEncryptionKey,
+    catalog: dependencies.gateway?.catalog ?? loadProviderCatalogFromFile(),
+    mintGcpAccessToken: dependencies.gateway?.mintGcpAccessToken ?? createGcpServiceAccountTokenMinter(),
+    now: dependencies.gateway?.now ?? (() => new Date()),
+  })
   registerGatewayRoutes(api, { fetch: dependencies.fetch, insertRequestLog, updateRequestLog: dependencies.updateRequestLog, reporter, ...dependencies.gateway })
   for (const path of ["/api/v1", "/api/v1/*"]) {
     api.all(path, handleApiRequest)

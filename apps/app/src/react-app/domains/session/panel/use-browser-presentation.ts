@@ -29,6 +29,7 @@ export type BrowserPresentationController = {
   status: string;
   needsYou: boolean;
   present: (mode: BrowserPresentationMode) => void;
+  /** The side rail's Browser button: opens or closes the browser beside the chat. */
   toggle: () => void;
   exitFullscreen: () => void;
   setSnap: (snap: BrowserFloatingSnap) => void;
@@ -137,13 +138,10 @@ export function useBrowserPresentationController({
     present(current.presentation.returnMode);
   }, [present]);
 
+  // Only the browser's own Pop out control floats the page; this button docks
+  // a floating page back beside the chat rather than hiding it.
   const toggle = React.useCallback(() => {
-    const current = latest.current;
-    if (current.mode !== "hidden") {
-      present("hidden");
-      return;
-    }
-    present(current.presentation.returnMode === "floating" && current.tab ? "floating" : "side");
+    present(latest.current.mode === "side" ? "hidden" : "side");
   }, [present]);
 
   const setSnap = React.useCallback((snap: BrowserFloatingSnap) => {

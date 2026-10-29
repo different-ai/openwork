@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Check, Copy, Lock, Plus, X } from "lucide-react";
 import {
+  SANDBOX_MAX_CREDIT_USD,
   SANDBOX_MAX_DAYS,
   SANDBOX_MAX_MEMBERS,
   sandboxCreatedSchema,
@@ -25,8 +26,10 @@ const parseList = (value: unknown) => { const result = sandboxListSchema.safePar
 const date = (value: string) => new Date(value).toLocaleDateString(undefined, { dateStyle: "medium" });
 const stateLabel = { open: "Open", expired: "Ended", closed: "Closed" } as const;
 
-type Draft = { name: string; connectorBaseUrl: string; days: string; memberLimit: string; domains: string; joinRole: SandboxJoinRole };
-const freshDraft = (workplaceUrl: string | null | undefined): Draft => ({ name: "", connectorBaseUrl: workplaceUrl ?? "", days: "14", memberLimit: "50", domains: "", joinRole: "admin" });
+type Draft = { name: string; connectorBaseUrl: string; days: string; memberLimit: string; domains: string; joinRole: SandboxJoinRole; creditUsd: string };
+const freshDraft = (defaults: SandboxList["defaults"]): Draft => ({ name: "", connectorBaseUrl: defaults?.workplaceUrl ?? "", days: "14", memberLimit: "50", domains: "", joinRole: "admin", creditUsd: defaults?.creditUsd ? String(defaults.creditUsd) : "" });
+const dollars = (value: number) => `$${value.toFixed(value % 1 === 0 ? 0 : 2)}`;
+const CREDIT_STEP_USD = 25;
 const roleLabel: Record<SandboxJoinRole, string> = { member: "Members", admin: "Admins" };
 
 export function SandboxOrgsPage() {
@@ -84,6 +87,7 @@ export function SandboxOrgsPage() {
       memberLimit: Number(draft.memberLimit),
       allowedEmailDomains: draft.domains.split(/[\s,]+/).map(value => value.trim().toLowerCase()).filter(Boolean),
       joinRole: draft.joinRole,
+      ...(draft.creditUsd ? { creditUsd: Number(draft.creditUsd) } : {}),
     };
     if (await mutate(base, body, `Created ${body.name}. Copy its join link below.`)) setDraft(null);
   }
@@ -105,9 +109,9 @@ export function SandboxOrgsPage() {
   return <section className="min-w-0 text-[color:var(--dls-text-primary)]" data-testid="admin-sandbox-orgs" aria-busy={busy}>
     <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
       <h1 className="text-base font-medium">Sandbox organizations</h1>
-      <DenButton size="sm" icon={Plus} disabled={busy || draft !== null} onClick={() => { setDraft(freshDraft(data.defaults?.workplaceUrl)); setError(null); setNotice(""); }} data-testid="admin-sandbox-new">New sandbox</DenButton>
+      <DenButton size="sm" icon={Plus} disabled={busy || draft !== null} onClick={() => { setDraft(freshDraft(data.defaults)); setError(null); setNotice(""); }} data-testid="admin-sandbox-new">New sandbox</DenButton>
     </div>
-    <p className="mb-5 max-w-2xl text-sm text-[color:var(--dls-text-secondary)]">Try-it-out organizations on this deployment. People join with the link as members, use included models, and connect their own copy of the sample work apps. Separate from Daytona demos.</p>
+    <p className="mb-5 max-w-2xl text-sm text-[color:var(--dls-text-secondary)]">Try-it-out Enterprise organizations on this deployment. People join with the link, use the sandbox's models, and connect their own copy of the sample work apps. Separate from Daytona demos.</p>
     {error ? <p role="alert" className="mb-4 text-sm text-[color:var(--ow-danger)]">{error}</p> : null}
     <p role="status" aria-live="polite" data-testid="admin-sandbox-status" className="mb-4 text-sm text-[color:var(--dls-text-secondary)] empty:hidden">{notice}</p>
 
@@ -117,6 +121,7 @@ export function SandboxOrgsPage() {
           : data.sandboxes.map(sandbox => <SandboxRow key={sandbox.id} sandbox={sandbox} busy={busy}
             onRotate={() => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/rotate-link`, undefined, "New link ready. The old link no longer works.")}
             onJoinRole={(joinRole) => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/join-role`, { joinRole }, `People who join ${sandbox.name} now become ${joinRole === "admin" ? "admins" : "members"}. People who already joined keep their role.`)}
+            onAddCredit={(limitUsd) => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/credit`, { creditUsd: limitUsd + CREDIT_STEP_USD }, `${sandbox.name} can now spend up to ${dollars(limitUsd + CREDIT_STEP_USD)} on models.`)}
             onExtend={() => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/extend`, { days: 7 }, `${sandbox.name} is open for 7 more days.`)}
             onClose={() => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/close`, undefined, `${sandbox.name} is closed. Members and data are kept.`)} />)}
       </div>
@@ -130,9 +135,11 @@ export function SandboxOrgsPage() {
           <div className="grid gap-1 text-xs" data-testid="admin-sandbox-models">
             <span>Models</span>
             <span className="text-[color:var(--dls-text-secondary)]">{data.defaults?.gatewayModels.length
-              ? `Included models, plus ${data.defaults.gatewayModels.join(", ")} through AI Gateway (${data.defaults.gatewayProviderId ?? "provider"}) for everyone.`
-              : "Included models only. Add DEN_SANDBOX_GATEWAY_API_KEY on this deployment to give every sandbox an AI Gateway provider."}</span>
+              ? `Included models, plus ${data.defaults.gatewayModels.join(", ")} through AI Gateway (${data.defaults.gatewayProviderId ?? "provider"}) for everyone${data.defaults.creditUsd ? ", on the sandbox's own key" : ""}.`
+              : "Included models only. Add OPENROUTER_MANAGEMENT_API_KEY (one capped key per sandbox) or DEN_SANDBOX_GATEWAY_API_KEY (one shared key) on this deployment to give every sandbox an AI Gateway provider."}</span>
           </div>
+          {data.defaults?.creditUsd ? <label className="grid gap-2 text-xs">Model credit (USD)<DenInput aria-label="Model credit in US dollars" type="number" required min={1} max={SANDBOX_MAX_CREDIT_USD} step={1} value={draft.creditUsd} disabled={saving} onChange={event => setDraft({ ...draft, creditUsd: event.target.value })} />
+            <span className="text-[color:var(--dls-text-secondary)]">The sandbox's models stop when this is spent. You can add more later.</span></label> : null}
           <div className="grid grid-cols-2 gap-3">
             <label className="grid gap-2 text-xs">Open for (days)<DenInput aria-label="Days open" type="number" required min={1} max={SANDBOX_MAX_DAYS} step={1} value={draft.days} disabled={saving} onChange={event => setDraft({ ...draft, days: event.target.value })} /></label>
             <label className="grid gap-2 text-xs">Seats<DenInput aria-label="Seats" type="number" required min={1} max={SANDBOX_MAX_MEMBERS} step={1} value={draft.memberLimit} disabled={saving} onChange={event => setDraft({ ...draft, memberLimit: event.target.value })} /></label>
@@ -141,7 +148,7 @@ export function SandboxOrgsPage() {
             <span className="text-[color:var(--dls-text-secondary)]">Admins can try everything: connectors, members and settings.</span></label>
           <label className="grid gap-2 text-xs">Who can join<DenInput aria-label="Allowed email domains" placeholder="Anyone with the link" value={draft.domains} disabled={saving} onChange={event => setDraft({ ...draft, domains: event.target.value })} />
             <span className="text-[color:var(--dls-text-secondary)]">Optional. Email domains separated by commas, such as example.com.</span></label>
-          <div className="grid gap-1 rounded-md bg-[var(--dls-hover)] p-3 text-xs"><span className="font-medium">You become the owner.</span><span className="text-[color:var(--dls-text-secondary)]">People who join become {draft.joinRole === "admin" ? "admins" : "members"}, never owners. When the sandbox ends, the link and Free Auto stop; members and data stay.</span></div>
+          <div className="grid gap-1 rounded-md bg-[var(--dls-hover)] p-3 text-xs"><span className="font-medium">You become the owner of an Enterprise organization.</span><span className="text-[color:var(--dls-text-secondary)]">People who join become {draft.joinRole === "admin" ? "admins" : "members"}, never owners. When the sandbox ends, the link, Free Auto and its models stop; members and data stay.</span></div>
           <div className="flex flex-wrap justify-end gap-2"><DenButton type="button" variant="secondary" size="sm" disabled={saving} onClick={() => setDraft(null)}>Cancel</DenButton><DenButton type="submit" size="sm" disabled={busy} loading={saving} data-testid="admin-sandbox-create-submit">Create sandbox</DenButton></div>
         </form>
       </section> : null}
@@ -149,7 +156,8 @@ export function SandboxOrgsPage() {
   </section>;
 }
 
-function SandboxRow({ sandbox, busy, onRotate, onExtend, onClose, onJoinRole }: { sandbox: Sandbox; busy: boolean; onRotate: () => void; onExtend: () => void; onClose: () => void; onJoinRole: (joinRole: SandboxJoinRole) => void }) {
+function SandboxRow({ sandbox, busy, onRotate, onExtend, onClose, onJoinRole, onAddCredit }: { sandbox: Sandbox; busy: boolean; onRotate: () => void; onExtend: () => void; onClose: () => void; onJoinRole: (joinRole: SandboxJoinRole) => void; onAddCredit: (currentLimitUsd: number) => void }) {
+  const credit = sandbox.modelCredit ?? null;
   const [copied, setCopied] = useState(false);
   async function copy() {
     await navigator.clipboard.writeText(sandbox.joinLink);
@@ -165,13 +173,16 @@ function SandboxRow({ sandbox, busy, onRotate, onExtend, onClose, onJoinRole }: 
           {" · "}{sandbox.state === "open" ? `Ends ${date(sandbox.expiresAt)}` : sandbox.closedAt ? `Closed ${date(sandbox.closedAt)}` : `Ended ${date(sandbox.expiresAt)}`}
           {" · "}<span className="tabular-nums">{sandbox.memberCount} / {sandbox.memberLimit} seats</span>
           {" · "}{sandbox.connectorCount ? `${sandbox.connectorCount} sample apps` : "No connectors"}
-          {sandbox.modelProviderCount ? ` · ${sandbox.modelProviderCount} AI Gateway provider${sandbox.modelProviderCount === 1 ? "" : "s"}` : ""}
+          {sandbox.planTier === "enterprise" ? " · Enterprise" : ""}
+          {credit ? <>{" · "}<span className="tabular-nums" data-testid="admin-sandbox-credit">{credit.remainingUsd === null ? `${dollars(credit.limitUsd)} model credit` : `${dollars(credit.remainingUsd)} of ${dollars(credit.limitUsd)} left`}</span></>
+            : sandbox.modelProviderCount ? ` · ${sandbox.modelProviderCount} AI Gateway provider${sandbox.modelProviderCount === 1 ? "" : "s"}` : ""}
           {" · "}<span data-testid="admin-sandbox-join-role">Joins as {roleLabel[sandbox.joinRole].toLowerCase()}</span>
           {sandbox.allowedEmailDomains.length ? ` · ${sandbox.allowedEmailDomains.join(", ")} only` : ""}
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
         <DenSelect aria-label={`${sandbox.name}: people who join become`} value={sandbox.joinRole} disabled={busy} onChange={event => { const parsed = sandboxJoinRoleSchema.safeParse(event.target.value); if (parsed.success && parsed.data !== sandbox.joinRole) onJoinRole(parsed.data); }}><option value="member">Join as members</option><option value="admin">Join as admins</option></DenSelect>
+        {credit ? <DenButton variant="secondary" size="sm" disabled={busy || credit.limitUsd + CREDIT_STEP_USD > SANDBOX_MAX_CREDIT_USD} onClick={() => onAddCredit(credit.limitUsd)}>Add {dollars(CREDIT_STEP_USD)}</DenButton> : null}
         <DenButton variant="secondary" size="sm" disabled={busy} onClick={onExtend}>{sandbox.state === "open" ? "Add 7 days" : "Reopen for 7 days"}</DenButton>
         {sandbox.state === "open" ? <DenButton variant="secondary" size="sm" disabled={busy} onClick={onClose}>Close</DenButton> : null}
       </div>

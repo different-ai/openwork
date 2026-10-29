@@ -4,6 +4,7 @@
 
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
+import { describeOpencodeConfigError } from "@openwork/types/opencode-config-error";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import { deleteNativeSession } from "@/app/lib/opencode-session-native";
@@ -93,6 +94,12 @@ export async function deleteRouteSession(endpoint: ResolvedWorkspaceEndpoint, se
   return deleteNativeSession(await routeSessionEndpoint(endpoint), sessionId);
 }
 
+/** The OpenWork server's own `opencode_config_invalid` answer already says which file and field. */
+function openworkConfigErrorMessage(error: unknown): string | null {
+  if (!error || typeof error !== "object" || !("code" in error) || error.code !== "opencode_config_invalid") return null;
+  return "message" in error && typeof error.message === "string" && error.message.trim() ? error.message : null;
+}
+
 export async function listRouteSessions(
   endpoint: ResolvedWorkspaceEndpoint,
   transport: RouteSessionListTransport = nativeRouteSessionList,
@@ -106,10 +113,16 @@ export async function listRouteSessions(
     let items: RouteSession[];
     try {
       items = unwrap(result);
-    } catch (error) {
+    } catch (thrown) {
+      // A folder whose OpenCode config is invalid lists nothing. Say why,
+      // instead of an empty list that looks like lost chats.
+      const configMessage = describeOpencodeConfigError(result.error) ?? openworkConfigErrorMessage(result.error);
+      const error = configMessage
+        ? Object.assign(new Error(configMessage), { code: "opencode_config_invalid" })
+        : thrown;
       if (error instanceof Error) {
         Object.assign(error, { status: result.response.status });
-        if (result.error && typeof result.error === "object" && "code" in result.error && typeof result.error.code === "string") {
+        if (!configMessage && result.error && typeof result.error === "object" && "code" in result.error && typeof result.error.code === "string") {
           Object.assign(error, { code: result.error.code });
         }
       }

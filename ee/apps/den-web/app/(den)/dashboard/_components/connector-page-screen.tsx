@@ -2,11 +2,12 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, MessageSquare, UserPlus } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { getLibraryConnectorShareRoute, getLibraryRoute, getMcpConnectionRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { connectorReturnToAgent } from "./my-agent-connector-navigation";
 import { ownedAccessStatus } from "./access-summary";
 import { connectorChatDeepLink, connectorChatPrompt } from "./connector-catalog";
 import { connectorAccountReady } from "./connector-detail";
@@ -81,6 +82,7 @@ export function ChatButton({ name }: { name: string }) {
 /** A6: a connector in My Library. */
 export function LibraryConnectorScreen({ connectionId }: { connectionId: string }) {
   const router = useRouter();
+  const params = useSearchParams();
   const queryClient = useQueryClient();
   const toast = useDenToast();
   const { orgSlug, orgContext } = useOrgDashboard();
@@ -96,7 +98,7 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
   const tools = useMcpConnectionTools(connectionId, signedIn);
   const viewerId = orgContext?.currentMember.id ?? null;
   const mine = Boolean(connection?.access) || Boolean(item && isOwnedByViewer(item, viewerId, new Set()));
-  const back = { href: getLibraryRoute(orgSlug), label: "My Library" };
+  const back = connectorReturnToAgent(orgSlug, params.get("from")) ?? { href: getLibraryRoute(orgSlug), label: "My Library" };
   const memberAccess = orgContext
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
     : null;

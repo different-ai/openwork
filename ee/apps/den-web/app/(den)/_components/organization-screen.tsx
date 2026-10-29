@@ -6,6 +6,7 @@ import { ChevronRight, LogOut, Settings } from "lucide-react";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import { type DenOrgSummary, formatRoleLabel, getJoinOrgRoute, getOnboardingPeopleRoute, getOrgDashboardRoute, parseOrgListPayload } from "../_lib/den-org";
 import { useOrgListWindow } from "../_lib/use-org-list-window";
+import { countLabel, organizationPlanLabel } from "../_lib/plan-display";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
 import { SetupFrame } from "./setup-frame";
@@ -393,7 +394,7 @@ export function OrganizationScreen() {
                         <div className="min-w-0">
                           <h2 className="truncate text-[15px] font-semibold text-gray-950">{org.name}</h2>
                           <p className="mt-1 text-xs text-gray-500">
-                            {org.role === "owner" ? "Creator plan" : "Free plan"} • {formatRoleLabel(org.role)}
+                            {[organizationPlanLabel(org), formatRoleLabel(org.role)].filter(Boolean).join(" • ")}
                           </p>
                         </div>
                         {org.isActive ? (
@@ -437,7 +438,7 @@ export function OrganizationScreen() {
                             <td className="px-6 py-4">
                               <div className="font-medium text-gray-900">{org.name}</div>
                               <div className="mt-1 text-xs text-gray-500">
-                                {org.role === "owner" ? "Creator plan" : "Free plan"} • 1 member
+                                {[organizationPlanLabel(org), countLabel(org.memberCount, "member")].filter(Boolean).join(" • ")}
                               </div>
                             </td>
                             <td className="px-6 py-4">
