@@ -45,6 +45,7 @@ import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provi
 import type { GatewayCredential, GatewayProvider, LoadProviderCredential, ResolvedUpstreamCredential } from "./provider-credentials.js"
 import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBody, RequestBodyLimitError, upstreamLifetime } from "./relay.js"
 import { env } from "./env.js"
+import { gatewayLog } from "./log.js"
 import { respondBeforeUpstream } from "./early-response.js"
 import type { EarlyStreamProtocol } from "./early-response.js"
 import { createRequestLogRecorder, REQUEST_LOG_UNAVAILABLE_MESSAGE } from "./request-log.js"
@@ -669,7 +670,11 @@ function relayStreamResponse(upstream: Response, protocol: GatewayRequestProtoco
       finish(upstreamOutcome(upstream))
     },
     fail() {
-      finish(lifetime.signal.aborted && !lifetime.timedOut ? "client_aborted" : "upstream_error")
+      const outcome = lifetime.signal.aborted && !lifetime.timedOut ? "client_aborted" : "upstream_error"
+      if (outcome === "client_aborted") gatewayLog.debug("inference response cancelled", {
+        component: "relay", request_id: headers.get("x-openwork-request-id") ?? undefined, http_status_code: upstream.status,
+      })
+      finish(outcome)
     },
   }, lifetime)
   return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers })
