@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { after, test } from "node:test"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable } from "@openwork-ee/den-db/schema"
+import { sessionTokenDigest } from "../../src/session-token.js"
 import { bootDen, field, list, summary } from "./harness.js"
 
 const den = await bootDen()
@@ -35,9 +36,10 @@ test("Workbot has no link-only sharing while real invitations keep their access 
   assert.equal(outbox.status, 200, summary(outbox))
   assert.equal(list(field(outbox.body, "emails")).filter(message => message.to === email).length, 1)
 
-  // Arrangement changes only this throwaway database's real session timestamp.
+  // Arrangement changes only this throwaway database's real session timestamp; tokens are hashed at rest.
   const { db } = await import("../../src/db.js")
-  await db.update(AuthSessionTable).set({ createdAt: new Date(Date.now() - 3 * 60 * 60_000) }).where(eq(AuthSessionTable.token, owner.token))
+  const [aged] = await db.update(AuthSessionTable).set({ createdAt: new Date(Date.now() - 3 * 60 * 60_000) }).where(eq(AuthSessionTable.token, sessionTokenDigest(owner.token)))
+  assert.equal(aged.affectedRows, 1, "the owner's actual session must be stale before testing fresh-auth denial")
   const stale = await den.as(owner, orgId)("POST", "/v1/invitations", { email: `other+${den.stamp}@example.test`, role: "member" })
   assert.equal(stale.status, 403, summary(stale))
   assert.equal(field(stale.body, "reason"), "fresh_auth_required")
