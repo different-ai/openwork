@@ -11,7 +11,8 @@ type QueuedLaunch = {
 
 const PRIORITY_AGING_MS = 30_000;
 
-export function createDashboardLaunchScheduler(limit = 2) {
+// Four, matching the App startup queue, so a dashboard launches four tiles together.
+export function createDashboardLaunchScheduler(limit = 4) {
   if (!Number.isInteger(limit) || limit < 1) {
     throw new RangeError("Dashboard launch limit must be a positive integer");
   }

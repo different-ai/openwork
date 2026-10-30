@@ -2127,6 +2127,10 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       const url = new URL(`${baseUrl}/mcp-apps/sandbox.html`);
       if (url.origin === hostOrigin && url.hostname === "localhost") url.hostname = "127.0.0.1";
       else if (url.origin === hostOrigin && url.hostname === "127.0.0.1") url.hostname = "localhost";
+      // A server with this exact page lets the browser keep it, so later Apps
+      // start without fetching it again. Any other server ignores the version.
+      const version = String(import.meta.env.VITE_OPENWORK_MCP_APP_SANDBOX_VERSION ?? "").trim();
+      if (version) url.searchParams.set("v", version);
       url.searchParams.set("csp", JSON.stringify(app.csp));
       url.searchParams.set("hostOrigin", messageOrigin);
       // Hosted Web serves the trusted proxy on its own origin. Keep that frame
