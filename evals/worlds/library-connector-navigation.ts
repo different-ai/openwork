@@ -90,10 +90,10 @@ export async function libraryConnectorNavigation(seed: Seed) {
     async restorePluginReads() {
       await web.client.send("Network.setBlockedURLs", { urls: ["https://www.google.com/s2/favicons*"] });
     },
-    async pluginReads() {
+    async pluginReads(id = pluginId) {
       // Read Chromium's actual resource timings, without proxying the auth or web origins.
       return evaluate(web.client, browserScript((path) => performance.getEntriesByType("resource")
-        .filter(entry => new URL(entry.name).pathname.endsWith(path)).length, [`/v1/plugins/${pluginId}`]));
+        .filter(entry => new URL(entry.name).pathname.endsWith(path)).length, [`/v1/plugins/${id}`]));
     },
     async tokenFingerprints() {
       return [...new Set((await den.mocks.connector.requests()).filter(request => request.grantType === "authorization_code" && request.status === 200).flatMap(request => request.tokenId ? [request.tokenId] : []))];

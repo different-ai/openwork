@@ -23,11 +23,11 @@ uses the existing caller-scoped disconnect, separate from **Sign everyone out**.
 Once signed out, the page no longer lists the tools the person could use before;
 it says they show up after signing in.
 
-Skills expand inline in plugin pages and My Library. My Library shows the skill
-count (**2 skills**) when the summary knows it. A plugin that is a single skill
-opens straight to **Steps**, without listing itself again. Steps longer than
-eight lines open with **Show all steps**. Library previews load the existing
-authorized plugin query only when expanded; skill source is shown as text.
+The My Library list stays compact: no inline skill previews, nested skill lists,
+or disclosure controls beneath a row. Open a plugin or skill to read its detail
+page. Skill instructions expand inline on that detail page, and instructions
+longer than eight lines offer **Show all steps**. Content uses the existing
+authorized plugin query; skill source is shown as text.
 
 ## Try it
 
@@ -39,9 +39,10 @@ An unassigned connector offers no Library link.
 As a member: open a connector you added in My Library. Share and Remove are
 there; **Manage** is not.
 
-In My Library, expand a plugin's skill count, then a skill. Expand a one-skill
-plugin's **Steps** and use **Show all steps**. Check keyboard disclosure,
-narrow windows, and a failed preview with **Try again**.
+In My Library, verify that plugin and skill rows have no inline previews. Open a
+row, then expand a skill's instructions on its detail page and use **Show all
+steps** for a long body. Check keyboard disclosure, narrow windows, and detail
+loading failures and recovery.
 
 ## Availability
 
@@ -59,8 +60,8 @@ Published skill steps expanded in the Library plugin detail:
 
 ![Expanded skill steps in a Library plugin](plugin-skill-steps.png)
 
-My Library: a one-skill plugin opens to its steps with **Show all steps**, and a
-plugin shows its skill count:
+Historical list-style skill disclosures, no longer part of the compact Library
+list (open the detail page instead):
 
 ![One-skill steps and a skill count in My Library](library-skills.png)
 

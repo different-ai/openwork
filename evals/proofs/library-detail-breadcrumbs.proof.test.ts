@@ -15,8 +15,13 @@ test("a member follows a skill's breadcrumbs back to its category or parent plug
   await step("by default a skill shows Library, Skills and its current name", async () => {
     await user.navigate(`${library}/skills`);
     await user.click({ text: /^review-notes$/ });
-    await user.see({ role: "button", label: /^Skills$/ }, { timeoutMs: 60_000 });
-    expect((await probe.dom(`${crumbs} [aria-current="page"]`)).elements[0]?.text).toBe("review-notes");
+    // The category button also exists on the list we are leaving. Wait for the
+    // detail's actual current-page breadcrumb, not that background list control.
+    const current = await probe.eventually(async () => (await probe.dom(`${crumbs} [aria-current="page"]`)).elements.map(element => element.text), {
+      within: 60_000, label: "the skill detail marks review-notes as its current breadcrumb", until: value => value.length === 1 && value[0] === "review-notes",
+    });
+    expect(current).toEqual(["review-notes"]);
+    await user.see({ role: "button", label: /^Skills$/ });
     const trail = (await probe.dom(crumbs)).elements[0]?.text ?? "";
     evidence.recordAssertionEvidence("The skill's category and current page are visible", trail, trail.includes("Library") && trail.includes("Skills") && trail.includes("review-notes"));
     expect(trail).toContain("Skills");
@@ -50,6 +55,10 @@ test("a member follows a skill's breadcrumbs back to its category or parent plug
     await user.navigate(`${library}/${encodeURIComponent(`plugin:${world.pluginId}`)}`);
     await user.see({ role: "heading", label: "Review toolkit" }, { timeoutMs: 60_000 });
     await user.click({ text: /^plan-a-review$/ });
+    const current = await probe.eventually(async () => (await probe.dom(`${crumbs} [aria-current="page"]`)).elements.map(element => element.text), {
+      within: 30_000, label: "the nested skill becomes the current breadcrumb", until: value => value.length === 1 && value[0] === "plan-a-review",
+    });
+    expect(current).toEqual(["plan-a-review"]);
     await user.see({ role: "button", label: /^Review toolkit$/ });
     const trail = (await probe.dom(crumbs)).elements[0]?.text ?? "";
     evidence.recordAssertionEvidence("Opening the nested skill keeps its actual parent", trail, trail.includes("Review toolkit") && trail.includes("plan-a-review"));
