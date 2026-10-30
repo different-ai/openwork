@@ -29,8 +29,14 @@ enum MenuRules {
     static let maxEntries = 250
     static let blockedMenus: Set<String> = ["Window"]
     static let blockedPrefixes = ["Quit", "Close", "Hide", "Minimize", "Services", "Copy", "Cut", "Paste", "Log Out"]
-    /// Lists of the person's own documents, not commands: never listed, still pressable by path.
-    static let unlistedSubmenus: Set<String> = ["Open Recent"]
+    /// Recent documents need file approval, including when the caller supplies a path.
+    static let blockedSubmenus: Set<String> = ["Open Recent", "Recent Files", "Recent Documents"]
+
+    static func validatePath(_ path: [String]) throws {
+        guard !path.contains(where: { title in blockedSubmenus.contains(where: { same(title, $0) }) }) else {
+            throw UseError("blocked_menu_item", "Recent documents require file approval and cannot be opened through a menu path.", next: "observe")
+        }
+    }
 
     /// The chord a menu item's key equivalent sends, in computer_discover's names.
     /// AX modifier bits: 1 shift, 2 option, 4 control, 8 means no Command.
@@ -48,6 +54,7 @@ enum MenuRules {
     }
 
     static func blocked(title: String, shortcut: (key: String, flags: CGEventFlags)?) -> Bool {
+        if blockedSubmenus.contains(where: { same(title, $0) }) { return true }
         if let shortcut, NativeKey.isBlocked(shortcut.key, shortcut.flags) { return true }
         return blockedPrefixes.contains { title.hasPrefix($0) }
     }
@@ -114,7 +121,7 @@ extension MacAccessibility {
                 guard let facts = menuItemFacts(item), !facts.title.isEmpty, !MenuRules.blocked(title: facts.title, shortcut: facts.shortcut) else { continue }
                 if let child = facts.submenu {
                     // Disabled submenus hold nothing runnable; recent documents are not commands.
-                    if facts.enabled, path.count + 1 < MenuRules.maxDepth, !MenuRules.unlistedSubmenus.contains(facts.title) { walk(child, path + [facts.title]) }
+                    if facts.enabled, path.count + 1 < MenuRules.maxDepth { walk(child, path + [facts.title]) }
                 } else if facts.enabled {
                     entries.append(MenuEntry(path: path + [facts.title], shortcut: facts.shortcut.map { NativeKey.chord($0.key, $0.flags) }))
                 }
@@ -130,6 +137,7 @@ extension MacAccessibility {
 
     /// Finds a command by its titles in the live menu bar, applying the same rules as the catalog.
     func menuTarget(_ path: [String], app: AppIdentity) throws -> MenuTarget {
+        try MenuRules.validatePath(path)
         guard let first = path.first, let top = offeredMenus(app).first(where: { MenuRules.same($0.title, first) }) else {
             throw UseError("menu_item_unavailable", "That menu is not offered. Use a path from the observation's menus.", next: "observe")
         }

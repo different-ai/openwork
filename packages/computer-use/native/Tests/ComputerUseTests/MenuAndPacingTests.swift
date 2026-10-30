@@ -60,6 +60,22 @@ final class MenuAndPacingTests: XCTestCase {
         XCTAssertThrowsError(try Action(["type": "menu", "path": ["Format", "Bold"]], policy: .desktop))
     }
 
+    func testRecentDocumentsCannotBypassFileApprovalWithAMenuPath() throws {
+        for title in ["Open Recent", "open recent", " Open Recent ", "\u{200E}Open Recent", "Recent Files", "Recent Documents"] {
+            XCTAssertTrue(MenuRules.blocked(title: title, shortcut: nil), "recent-document submenus must not be listed")
+            for path in [["File", title], ["File", title, "Private Example.txt"], ["File", "History", title, "Private Example.txt"]] {
+                XCTAssertThrowsError(try Action(["type": "menu", "path": path], policy: .embedded)) { error in
+                    XCTAssertEqual((error as? UseError)?.code, "blocked_menu_item")
+                }
+                // The live resolver applies this check too, even for an action
+                // constructed directly rather than parsed from tool arguments.
+                XCTAssertThrowsError(try MenuRules.validatePath(path))
+            }
+        }
+        XCTAssertNoThrow(try Action(["type": "menu", "path": ["File", "New"]], policy: .embedded))
+        XCTAssertNoThrow(try Action(["type": "menu", "path": ["Format", "Font", "Bold"]], policy: .embedded))
+    }
+
     func testPacingDefaultsToFastAndBoundsItsRetry() throws {
         XCTAssertEqual(try BatchPacing([:]), .fast)
         XCTAssertEqual(try BatchPacing(["pacing": "wait"]).mode, .wait)

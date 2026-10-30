@@ -175,6 +175,7 @@ enum Action {
                   path.allSatisfy({ !$0.trimmingCharacters(in: .whitespaces).isEmpty && $0.count <= 200 }) else {
                 throw UseError("invalid_arguments", "path names a menu and its command: 2–4 titles, such as [\"Format\", \"Font\", \"Bold\"].")
             }
+            try MenuRules.validatePath(path)
             self = .menu(path)
         case "move":
             try a.only(["type", "x", "y"]); self = .move(try Self.point(values))

@@ -183,6 +183,7 @@ test("a single title outside the window fails at once with a code the program ca
     catch (error) { return error.message; }
   ` }, f.host, new AbortController().signal);
   assert.equal(result.ok, true);
+  assert.ok(typeof result.value === "string");
   assert.match(result.value, /^menu_not_in_window: "Format" is not a control in the selected window/);
   assert.deepEqual(f.actions, []);
 });
