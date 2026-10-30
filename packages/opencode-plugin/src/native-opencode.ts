@@ -3,11 +3,13 @@ import { createHash } from "node:crypto"
 import { realpath } from "node:fs/promises"
 import { basename } from "node:path"
 import {
+  pendingPermission,
   SessionRunnerError,
   sessionIdForCommand,
   type HarnessAdapter,
   type InventoryWorkspace,
   type Model,
+  type Pending,
   type Progress,
   type Receipt,
   type SessionError,
@@ -81,6 +83,8 @@ export function createNativeOpenCodeAdapter(input: {
 }): HarnessAdapter {
   const { ctx, directory, workspaceId } = input
   const now = input.now ?? Date.now
+  const reply = ctx.permission.reply
+  const answers = typeof reply === "function"
   const markerKey = (sessionId: string) => `${input.storagePrefix}/native/${digest(sessionId)}`
   const load = async (receipt: Receipt) => admission(await ctx.storage.get(markerKey(receipt.sessionId)))
   const save = (receipt: Receipt, value: Admission) => ctx.storage.set(markerKey(receipt.sessionId), { ...value })
@@ -122,6 +126,11 @@ export function createNativeOpenCodeAdapter(input: {
     const assistant = assistantIndex > turnBoundary ? messages[assistantIndex] : undefined
     const nativeError = assistant?.type === "assistant" ? errorOf(assistant.error) : null
     const status = waitingFor ? "waiting" : running ? "running" : info.outcome === "failed" ? "error" : "idle"
+    // Only a permission can be answered from here: the 2.0.26 plugin host has no question (form) reply.
+    const first = permissions[0]
+    const waitingOn: Pending | null = waitingFor === "permission" && first && answers
+      ? pendingPermission({ requestId: first.id, action: first.action ?? "permission", resources: first.resources ?? [], metadata: first.metadata })
+      : null
     const finalText = !running && !waitingFor && assistant?.type === "assistant"
       ? clipped(assistant.content.filter(part => part.type === "text").map(part => part.text).join("\n"), 20_000) : ""
     const progress: Progress = {
@@ -130,6 +139,7 @@ export function createNativeOpenCodeAdapter(input: {
       // Count native context entries, including durable idle markers: a failed/interrupted turn
       // can settle without an assistant. This is not a promised count of historical user/assistant messages.
       messageCount: messages.length,
+      ...(answers ? { pending: waitingOn } : {}),
       observedAt: now(),
     }
     return { info, messages, latestUser, progress }
@@ -217,10 +227,27 @@ export function createNativeOpenCodeAdapter(input: {
         historyScope: "context",
         messageCount: transcript.length, from: page.from, messages: selected,
         nextCursor: more && anchor ? `oc2:${page.from}:${epoch}:${digest(anchor.id)}` : null,
+        ...(progress.pending === undefined ? {} : { pending: progress.pending }),
       }
     },
   }
-  return adapter
+  if (!reply) return adapter
+  return {
+    ...adapter,
+    async answer(receipt, answer, signal) {
+      if (answer.kind !== "permission") {
+        throw new SessionRunnerError("answer_unsupported", "OpenCode can't take answers to its questions from here yet. Answer it on that computer.")
+      }
+      await owned(receipt, signal)
+      const permissions = await ctx.permission.list({ sessionID: receipt.sessionId }, { signal })
+      signal.throwIfAborted()
+      // Reply only to a request that is still pending for this very session.
+      if (!permissions.some(permission => permission.id === answer.requestId && permission.sessionID === receipt.sessionId)) {
+        throw new SessionRunnerError("stale_request", "That permission is no longer pending. Read the task again.")
+      }
+      await reply.call(ctx.permission, { sessionID: receipt.sessionId, requestID: answer.requestId, decision: answer.decision }, { signal })
+    },
+  }
 }
 
 function toolCall(part: Extract<NativeAssistantContent, { type: "tool" }>): TranscriptToolCall {

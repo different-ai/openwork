@@ -353,3 +353,28 @@ export function parseJournal(value: unknown): Journal {
   }
   return journal
 }
+
+const PERMISSION_TITLES: Record<string, string> = {
+  bash: "Run a command", edit: "Edit files", write: "Write files", read: "Read files", webfetch: "Fetch a web page",
+  websearch: "Search the web", external_directory: "Use a folder outside the workspace", task: "Start a helper",
+  doom_loop: "Keep repeating the same step",
+}
+function words(value: string): string {
+  const spaced = value.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_\-.]+/g, " ").trim().toLowerCase()
+  return spaced ? `${spaced[0]?.toUpperCase()}${spaced.slice(1)}` : "Use a tool"
+}
+/**
+ * A native permission request (v1 permission/patterns or v2 action/resources) as
+ * plain text the person can decide on: a title in words, what it applies to, and
+ * a command when it runs one. Never the raw tool id as the title.
+ */
+export function pendingPermission(input: { requestId: string; action: string; resources: readonly string[]; metadata?: unknown }): Pending {
+  const metadata = isObject(input.metadata) ? input.metadata : {}
+  const described = typeof metadata.description === "string" ? metadata.description.trim() : ""
+  const command = typeof metadata.command === "string" && metadata.command.trim() ? metadata.command.trim()
+    : input.action === "bash" && input.resources[0]?.trim() ? input.resources[0].trim() : undefined
+  const title = (PERMISSION_TITLES[input.action] ?? words(input.action)).slice(0, 240)
+  const detail = (described || input.resources.filter(item => item !== command).join(", ")).slice(0, 2000)
+  return parsePending({ kind: "permission", requestId: input.requestId.slice(0, 240), title, detail,
+    ...(command ? { command: command.slice(0, 2000) } : {}) })
+}

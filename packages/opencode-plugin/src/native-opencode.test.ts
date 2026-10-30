@@ -178,3 +178,30 @@ test("inventory uses native location-scoped model list/default and public model 
   await assert.rejects(async () => { await Reflect.apply(host.ctx.model.list, undefined, [{ location: host.ctx.location.directory }]) }, /LocationQuery/)
   await assert.rejects(async () => { await Reflect.apply(host.ctx.model.default, undefined, [{ location: host.ctx.location.directory }]) }, /LocationQuery/)
 })
+
+test("a pending permission is reported as plain text and the person's decision goes through the native reply once", async () => {
+  const host = createNativeHost(process.cwd(), { permissionReply: true })
+  const adapter = createNativeOpenCodeAdapter({ ctx: host.ctx, directory: await realpath(host.ctx.location.directory), workspaceId: "opaque_workspace", storagePrefix: "account/native", now: () => 5000 })
+  const receipt = await adapter.create(command, signal())
+  await adapter.send(receipt, { prompt: "Review", messageId: "msg_stable1", model: null }, signal())
+  host.pendingPermissions = true
+  const pending = { kind: "permission", requestId: "perm_example", title: "Run a command", detail: "Run the tests", command: "pnpm test" }
+  assert.deepEqual((await adapter.observe(receipt, signal())).pending, pending)
+  assert.deepEqual((await adapter.read(receipt, { from: "end", cursor: null, limit: 10 }, signal())).pending, pending)
+  assert.ok(adapter.answer)
+  await assert.rejects(adapter.answer(receipt, { kind: "permission", requestId: "perm_other", decision: "once" }, signal()), { code: "stale_request" })
+  await assert.rejects(adapter.answer(receipt, { kind: "question", requestId: "que_1", answers: [["Yes"]] }, signal()), { code: "answer_unsupported" })
+  await adapter.answer(receipt, { kind: "permission", requestId: "perm_example", decision: "once" }, signal())
+  assert.deepEqual(host.calls.filter(call => call.method === "permission.reply").map(call => call.input),
+    [{ sessionID: receipt.sessionId, requestID: "perm_example", decision: "once" }])
+  await assert.rejects(adapter.answer(receipt, { kind: "permission", requestId: "perm_example", decision: "once" }, signal()), { code: "stale_request" })
+})
+
+test("a host without a native permission reply offers no answers and reports no pending payload", async () => {
+  const { host, adapter } = await fixture()
+  const receipt = await adapter.create(command, signal())
+  await adapter.send(receipt, { prompt: "Review", messageId: "msg_stable1", model: null }, signal())
+  host.pendingPermissions = true
+  assert.equal(adapter.answer, undefined)
+  assert.equal((await adapter.observe(receipt, signal())).pending, undefined)
+})
