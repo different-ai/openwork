@@ -4,9 +4,8 @@
  * and every way people join enforces that number with no feature flag:
  * invitations, and SCIM (the same check SSO sign-up uses). A full plan set by
  * OpenWork answers org_limit_reached, never the Team upgrade; a Free workspace
- * still gets the 402 Team flow. Only platform admins reach the Stripe
- * Enterprise subscription routes, which are refused while Stripe Enterprise
- * billing is not configured.
+ * still gets the 402 Team flow. Enterprise is never linked to Stripe: the
+ * old Stripe Enterprise subscription routes are gone.
  *
  * Stripe seat billing is configured with placeholder keys so the user limit is
  * enforced; no request here reaches Stripe because no organization has a
@@ -20,7 +19,6 @@ const den = await bootDen({
   env: {
     STRIPE_SECRET_KEY: "sk_test_placeholder_never_called",
     STRIPE_SEAT_PRICE_ID: "price_seat_placeholder",
-    STRIPE_ENTERPRISE_PRODUCT_ID: "",
     DEN_DEPLOYMENT: "cloud",
   },
 })
@@ -30,7 +28,6 @@ const platformAdmin = await den.signUp("Platform Admin", `platform-admin+${den.s
 const adminToken = platformAdmin.token
 const enterprisePath = (orgId: string) => `/v1/admin/organizations/${orgId}/enterprise-subscription`
 const planPath = (orgId: string) => `/v1/admin/organizations/${orgId}/plan`
-const startBody = { priceId: "price_enterpriseContract", minimumUsers: 25, billingEmail: "billing@example.test", daysUntilDue: 30 }
 const SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
 const API_ORIGIN = "http://127.0.0.1:8790"
 
@@ -45,34 +42,20 @@ async function inviteUpTo(owner: Member, orgId: string, users: number, label: st
   }
 }
 
-test("only a platform administrator can read or start an Enterprise subscription or set a plan", async () => {
+test("only a platform administrator can set a plan", async () => {
   const { orgId, owner } = await den.createOrg(await den.signUp("Erin Owner"), "Enterprise access org")
   for (const token of [null, owner.token]) {
-    for (const method of ["GET", "POST", "PATCH"] as const) {
-      const result = await den.request(token, method, enterprisePath(orgId), { body: method === "GET" ? undefined : method === "POST" ? startBody : { minimumUsers: 10 } })
-      assert.equal(result.status, token ? 403 : 401, summary(result))
-    }
     const plan = await den.request(token, "PATCH", planPath(orgId), { body: { tier: "enterprise", seatLimit: 20 } })
     assert.equal(plan.status, token ? 403 : 401, summary(plan))
   }
 })
 
-test("starting Enterprise in Stripe needs no feature flag, only Stripe Enterprise billing configured", async () => {
+test("Enterprise is not linked to Stripe: the old Stripe Enterprise subscription routes are gone", async () => {
   const { orgId } = await den.createOrg(await den.signUp("Eli Owner"), "Enterprise start org")
-  const state = await den.request(adminToken, "GET", enterprisePath(orgId))
-  assert.equal(state.status, 200, summary(state))
-  assert.equal(field(state.body, "enterprise", "featureEnabled"), undefined, "the section has no feature lock")
-  assert.equal(field(state.body, "enterprise", "configured"), false)
-  assert.equal(field(state.body, "enterprise", "subscription"), null)
-  assert.equal(field(state.body, "enterprise", "users"), 1)
-
-  const invalid = await den.request(adminToken, "POST", enterprisePath(orgId), { body: { ...startBody, priceId: "not-a-price" } })
-  assert.equal(invalid.status, 400, summary(invalid))
-  const unconfigured = await den.request(adminToken, "POST", enterprisePath(orgId), { body: startBody })
-  assert.equal(unconfigured.status, 503, summary(unconfigured))
-  assert.equal(field(unconfigured.body, "error"), "enterprise_product_not_configured")
-  const noSubscription = await den.request(adminToken, "PATCH", enterprisePath(orgId), { body: { minimumUsers: 10 } })
-  assert.equal(noSubscription.status, 503, summary(noSubscription))
+  for (const method of ["GET", "POST", "PATCH"] as const) {
+    const result = await den.request(adminToken, method, enterprisePath(orgId), { body: method === "GET" ? undefined : { minimumUsers: 10 } })
+    assert.equal(result.status, 404, `${method}: ${summary(result)}`)
+  }
 })
 
 test("a Free workspace is refused its sixth user with the Team upgrade", async () => {

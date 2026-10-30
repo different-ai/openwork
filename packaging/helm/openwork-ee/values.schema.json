@@ -461,26 +461,6 @@
               ],
               "description": "Connect: a tool for each action in OpenWork's engine: OpenWork Desktop, Web and automation runs get each connected action, Workflow and App as its own tool, found with their engine's Code Mode search; capability search stays for OpenWork's own operations and skills. Other clients are unaffected. Turning this off restores capability search. Renders DEN_FEATURE_CONNECT_ENGINE_TOOLS."
             },
-            "teamPlan": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Team plan checkout: Going past 5 people moves the workspace to the Team plan at $10 per person per month, and paying sets the plan. Renders DEN_FEATURE_TEAM_PLAN."
-            },
-            "selfServeEnterprise": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Self-serve Enterprise: Owners can buy Enterprise by card at the planned per-person price. Renders DEN_FEATURE_SELF_SERVE_ENTERPRISE."
-            },
             "gatewayProviderAuthErrors": {
               "enum": [
                 "",
@@ -1472,6 +1452,26 @@
               "description": "Retired: no longer a feature switch. Ignored."
             },
             "organizationGrants": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "teamPlan": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "selfServeEnterprise": {
               "enum": [
                 "",
                 "true",

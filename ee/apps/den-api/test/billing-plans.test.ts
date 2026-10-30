@@ -55,16 +55,13 @@ test("return parameters are added to a dashboard page without losing its query",
 test("a plan costs every counted person at its per-person price", () => {
   assert.deepEqual(quotePlan({ plan: "team", people: 6 }), { people: 6, unitAmount: 1000, monthlyTotal: 6000 })
   assert.deepEqual(quotePlan({ plan: "team", people: 5, addPeople: 1 }), { people: 6, unitAmount: 1000, monthlyTotal: 6000 })
-  assert.deepEqual(quotePlan({ plan: "enterprise", people: 6 }), { people: 6, unitAmount: 2000, monthlyTotal: 12000 })
-  assert.deepEqual(quotePlan({ plan: "enterprise", people: 6, enterpriseUnitAmount: 2500 }), { people: 6, unitAmount: 2500, monthlyTotal: 15000 })
   assert.equal(quotePlan({ plan: "team", people: 0 }).people, 1, "never fewer than one person")
   assert.equal(quotePlan({ plan: "team", people: 3, addPeople: 500 }).people, 53, "at most 50 people are added")
   assert.equal(quotePlan({ plan: "team", people: Number.NaN, addPeople: -4 }).people, 1)
-  assert.equal(quotePlan({ plan: "enterprise", people: 2, enterpriseUnitAmount: 0 }).unitAmount, 2000, "a zero price keeps the planned price")
 })
 
-test("a seat subscription names its plan; seat subscriptions from before plans are Team", () => {
-  assert.equal(planTierFromSubscriptionMetadata({ plan_tier: "enterprise" }), "enterprise")
+test("a seat subscription pays for Team, whatever plan it names; Enterprise is never bought by card", () => {
+  assert.equal(planTierFromSubscriptionMetadata({ plan_tier: "enterprise" }), "team")
   assert.equal(planTierFromSubscriptionMetadata({ plan_tier: "team" }), "team")
   assert.equal(planTierFromSubscriptionMetadata({ subscription_type: "seat" }), "team")
   assert.equal(planTierFromSubscriptionMetadata({ plan_tier: "free" }), "team")
@@ -86,24 +83,21 @@ test("paying sets the plan, Stripe giving up returns it to Free, and manual gran
   for (const status of ["active", "trialing", "past_due"]) {
     assert.deepEqual(reconcileOrganizationPlan({ current: free, status, tier: "team" }), stripeTeam, status)
   }
-  assert.deepEqual(reconcileOrganizationPlan({ current: free, status: "active", tier: "enterprise" }), stripeEnterprise)
-  assert.deepEqual(reconcileOrganizationPlan({ current: stripeTeam, status: "active", tier: "enterprise" }), stripeEnterprise, "Team to Enterprise")
-  assert.deepEqual(reconcileOrganizationPlan({ current: stripeEnterprise, status: "active", tier: "team" }), stripeTeam, "Enterprise to Team")
+  assert.deepEqual(reconcileOrganizationPlan({ current: stripeEnterprise, status: "active", tier: "team" }), stripeTeam, "an old Stripe-set Enterprise follows its Team subscription")
   assert.equal(reconcileOrganizationPlan({ current: stripeTeam, status: "active", tier: "team" }), null, "unchanged plans never write")
 
   // Manual and grandfathered grants at the same or a higher tier stay.
   assert.equal(reconcileOrganizationPlan({ current: manualEnterprise, status: "active", tier: "team" }), null)
   assert.equal(reconcileOrganizationPlan({ current: manualTeam, status: "active", tier: "team" }), null)
-  assert.equal(reconcileOrganizationPlan({ current: grandfatheredEnterprise, status: "active", tier: "enterprise" }), null)
-  assert.deepEqual(reconcileOrganizationPlan({ current: manualTeam, status: "active", tier: "enterprise" }), stripeEnterprise, "paying for more than the grant raises it")
+  assert.equal(reconcileOrganizationPlan({ current: grandfatheredEnterprise, status: "active", tier: "team" }), null)
   assert.deepEqual(reconcileOrganizationPlan({ current: { tier: "free", source: "manual" }, status: "active", tier: "team" }), stripeTeam)
 
   // Stripe stopped collecting: only a Stripe-sourced plan returns to Free.
   for (const status of ["canceled", "unpaid", "incomplete_expired", "expired", "paused"]) {
     assert.deepEqual(reconcileOrganizationPlan({ current: stripeTeam, status, tier: "team" }), free, status)
-    assert.deepEqual(reconcileOrganizationPlan({ current: stripeEnterprise, status, tier: "enterprise" }), free, status)
+    assert.deepEqual(reconcileOrganizationPlan({ current: stripeEnterprise, status, tier: "team" }), free, status)
     assert.equal(reconcileOrganizationPlan({ current: manualTeam, status, tier: "team" }), null, `manual survives ${status}`)
-    assert.equal(reconcileOrganizationPlan({ current: grandfatheredEnterprise, status, tier: "enterprise" }), null, `grandfathered survives ${status}`)
+    assert.equal(reconcileOrganizationPlan({ current: grandfatheredEnterprise, status, tier: "team" }), null, `grandfathered survives ${status}`)
     assert.equal(reconcileOrganizationPlan({ current: free, status, tier: "team" }), null)
   }
 
@@ -113,16 +107,16 @@ test("paying sets the plan, Stripe giving up returns it to Free, and manual gran
   assert.equal(reconcileOrganizationPlan({ current: stripeTeam, status: "something_new", tier: "team" }), null, "unknown statuses change nothing")
 })
 
-test("an incomplete initial payment never grants Team or Enterprise, and payment completion does", () => {
+test("an incomplete initial payment never grants Team, and payment completion does", () => {
   const free = { tier: "free", source: "default" } as const
-  for (const tier of ["team", "enterprise"] as const) {
-    assert.equal(reconcileOrganizationPlan({ current: free, status: "incomplete", tier }), null, `${tier} awaits payment`)
-    assert.deepEqual(reconcileOrganizationPlan({ current: { tier, source: "stripe" }, status: "incomplete", tier }), free, "remove any premature Stripe grant")
-    for (const source of ["manual", "grandfathered"] as const) {
-      assert.equal(reconcileOrganizationPlan({ current: { tier, source }, status: "incomplete", tier }), null, `${source} survives`)
-    }
-    assert.deepEqual(reconcileOrganizationPlan({ current: free, status: "active", tier }), { tier, source: "stripe" })
+  const tier = "team"
+  assert.equal(reconcileOrganizationPlan({ current: free, status: "incomplete", tier }), null, "Team awaits payment")
+  assert.deepEqual(reconcileOrganizationPlan({ current: { tier, source: "stripe" }, status: "incomplete", tier }), free, "remove any premature Stripe grant")
+  for (const source of ["manual", "grandfathered"] as const) {
+    assert.equal(reconcileOrganizationPlan({ current: { tier, source }, status: "incomplete", tier }), null, `${source} survives`)
+    assert.equal(reconcileOrganizationPlan({ current: { tier: "enterprise", source }, status: "incomplete", tier }), null, `${source} Enterprise survives`)
   }
+  assert.deepEqual(reconcileOrganizationPlan({ current: free, status: "active", tier }), { tier, source: "stripe" })
 })
 
 test("without returnTo a checkout keeps its existing return pages", () => {
@@ -154,9 +148,8 @@ test("configuration failures name the product that is not sold; other failures s
   assert.equal(billingNotConfiguredProductForError(new Error("stripe_inference_price_id_missing"), "inference"), "inference")
   assert.equal(billingNotConfiguredProductForError(new Error("stripe_seat_price_id_missing"), "team"), "team")
   assert.equal(billingNotConfiguredProductForError(new Error("stripe_seat_price_id_missing"), "seat"), "seat")
-  assert.equal(billingNotConfiguredProductForError(new Error("stripe_enterprise_price_id_missing"), "enterprise"), "enterprise")
   assert.equal(billingNotConfiguredProductForError(new Error("stripe_openwork_web_price_contract_invalid"), "web"), "web")
-  assert.equal(billingNotConfiguredProductForError(new BillingNotConfiguredError("enterprise"), "team"), "enterprise")
+  assert.equal(billingNotConfiguredProductForError(new BillingNotConfiguredError("web"), "team"), "web")
   assert.equal(billingNotConfiguredProductForError(new Error("card_declined"), "inference"), null)
   assert.equal(billingNotConfiguredProductForError("stripe_secret_key_missing", "inference"), null)
   assert.equal(billingNotConfiguredMessage("inference"), "OpenWork Models isn't sold on this deployment.")

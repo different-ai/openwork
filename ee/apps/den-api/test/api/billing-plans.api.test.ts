@@ -7,14 +7,13 @@ import { redirectStripeSdk, startFakeStripe } from "../../../../../evals/package
 
 const SECRET = "sk_test_den_api_billing_plans_fixture_not_real"
 const WEBHOOK_SECRET = "whsec_den_api_billing_plans_fixture_not_real"
-const PRICES = { seat: "price_test_team_seat", inference: "price_test_models", enterprise: "price_test_enterprise" }
+const PRICES = { seat: "price_test_team_seat", inference: "price_test_models" }
 
 const stripe = await startFakeStripe({
   secretKey: SECRET,
   prices: [
     { id: PRICES.seat, unitAmount: 1000, nickname: "Team plan" },
     { id: PRICES.inference, unitAmount: 1000, nickname: "OpenWork Models" },
-    { id: PRICES.enterprise, unitAmount: 2000, nickname: "Enterprise plan" },
   ],
 })
 // Send the Stripe SDK's transport (not any Den function) to the fake.
@@ -27,7 +26,6 @@ const den = await bootDen({
     STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET,
     STRIPE_SEAT_PRICE_ID: PRICES.seat,
     STRIPE_INFERENCE_PRICE_ID: PRICES.inference,
-    STRIPE_ENTERPRISE_PRICE_ID: PRICES.enterprise,
   },
 })
 after(async () => {
@@ -70,22 +68,19 @@ test("the sixth invitation is refused with a Team quote for the whole workspace"
   assert.equal(field(refused.body, "freeSeatCount"), 5)
   assert.equal(typeof field(refused.body, "billingUrl"), "string")
   assert.deepEqual(field(refused.body, "quote"), {
-    plan: "team", people: 6, joined: 5, invited: 0, unitAmount: 1000, monthlyTotal: 6000, currency: "usd", interval: "month", available: false,
-  })
-
-  assert.equal((await den.setFeature(acme.orgId, "teamPlan", true)).status, 200)
-  const quoted = await acme.call("POST", "/v1/invitations", { email: `jordan+${den.stamp}@acme.example`, role: "member" })
-  assert.equal(quoted.status, 402, summary(quoted))
-  assert.equal(field(quoted.body, "quote", "available"), true, "Team checkout is offered once the feature is on")
+    plan: "team", people: 6, joined: 5, invited: 0, unitAmount: 1000, monthlyTotal: 6000, currency: "usd", interval: "month", available: true,
+  }, "Team checkout is offered wherever Stripe seat billing is set up, with no flag")
 })
 
-test("Team checkout is offered only to organizations with the feature on", async () => {
+test("Enterprise is never bought by card: it is set in /admin", async () => {
   const other = await fivePersonWorkspace("Other")
-  const refused = await other.call("POST", "/v1/billing/stripe/checkout", { type: "plan", plan: "team", addPeople: 1 })
-  assert.equal(refused.status, 404, summary(refused))
-  assert.deepEqual(refused.body, { error: "feature_disabled", feature: "teamPlan" })
+  const refused = await other.call("POST", "/v1/billing/stripe/checkout", { type: "plan", plan: "enterprise" })
+  assert.equal(refused.status, 400, summary(refused))
+  assert.equal(field(refused.body, "error"), "invalid_request")
   assert.equal(sessionFor(other.orgId), null, "no Checkout was started")
   assert.deepEqual((await orgPlan(other.owner, other.orgId)).plan, { tier: "free", source: "default" })
+  const billing = await other.call("GET", "/v1/billing")
+  assert.deepEqual(field(billing.body, "billing", "plans"), { team: { available: true, unitAmount: 1000, currency: "usd", interval: "month" } })
 })
 
 test("paying for Team for six people sets the plan and unlocks Team features, without OpenWork Models", async () => {
@@ -141,44 +136,6 @@ test("buying the plan the organization already has is refused", async () => {
   assert.equal(field(again.body, "error"), "stripe_subscription_exists")
 })
 
-test("Team moves to Enterprise on the same subscription and the plan follows immediately", async () => {
-  const refused = await acme.call("POST", "/v1/billing/stripe/checkout", { type: "plan", plan: "enterprise" })
-  assert.equal(refused.status, 404, summary(refused))
-  assert.deepEqual(refused.body, { error: "feature_disabled", feature: "selfServeEnterprise" })
-
-  assert.equal((await den.setFeature(acme.orgId, "selfServeEnterprise", true)).status, 200)
-  const sessionsBefore = stripe.state().sessions.length
-  const teamSubscription = stripe.state().subscriptions.find((entry) => entry.metadata.org_id === acme.orgId)
-  assert.ok(teamSubscription)
-  stripe.setSubscriptionPaymentDeclined(teamSubscription.id, true)
-  const declined = await acme.call("POST", "/v1/billing/stripe/checkout", { type: "plan", plan: "enterprise" })
-  assert.equal(declined.status, 409, summary(declined))
-  assert.equal(field(declined.body, "error"), "stripe_subscription_exists")
-  assert.equal(teamSubscription.metadata.plan_tier, "team", "Stripe must not save an unpaid tier")
-  assert.equal(teamSubscription.items.data[0]?.price.id, PRICES.seat, "the paid Team price remains")
-  assert.deepEqual((await orgPlan(acme.owner, acme.orgId)).plan, { tier: "team", source: "stripe" })
-  assert.equal((await postStripeEvent("customer.subscription.updated", teamSubscription)).status, 200)
-  assert.deepEqual((await orgPlan(acme.owner, acme.orgId)).plan, { tier: "team", source: "stripe" }, "a later webhook cannot grant the unpaid upgrade")
-  const update = stripe.state().requests.filter((entry) => entry.method === "POST" && entry.path === `/v1/subscriptions/${teamSubscription.id}`).at(-1)
-  assert.equal(update?.form?.proration_behavior, "always_invoice", "collect upgrade prorations now, not next month")
-  assert.equal(update?.form?.payment_behavior, "error_if_incomplete", "only save the new tier after collection succeeds")
-
-  stripe.setSubscriptionPaymentDeclined(teamSubscription.id, false)
-  const moved = await acme.call("POST", "/v1/billing/stripe/checkout", { type: "plan", plan: "enterprise", returnTo: "/dashboard/sso" })
-  assert.equal(moved.status, 200, summary(moved))
-  assert.equal(field(moved.body, "completed"), true)
-  assert.match(text(field(moved.body, "url"), "return page"), /\/dashboard\/billing\/stripe\/checking\?return=plan&returnTo=%2Fdashboard%2Fsso$/)
-  assert.equal(stripe.state().sessions.length, sessionsBefore, "no second payment page")
-  const subscriptions = stripe.state().subscriptions.filter((entry) => entry.metadata.org_id === acme.orgId)
-  assert.equal(subscriptions.length, 1)
-  assert.equal(subscriptions[0]?.items.data[0]?.price.id, PRICES.enterprise)
-  assert.equal(subscriptions[0]?.items.data[0]?.quantity, 6)
-  assert.equal(subscriptions[0]?.metadata.plan_tier, "enterprise")
-  assert.deepEqual((await orgPlan(acme.owner, acme.orgId)).plan, { tier: "enterprise", source: "stripe" })
-  const billing = await acme.call("GET", "/v1/billing")
-  assert.equal(field(billing.body, "billing", "plans", "enterprise", "available"), true)
-})
-
 test("when Stripe cancels a Stripe-paid plan the organization returns to Free", async () => {
   const subscription = stripe.state().subscriptions.find((entry) => entry.metadata.org_id === acme.orgId)
   assert.ok(subscription)
@@ -190,9 +147,7 @@ test("when Stripe cancels a Stripe-paid plan the organization returns to Free", 
 
 test("a manual Enterprise grant is never lowered by buying or cancelling Team", async () => {
   const granted = await fivePersonWorkspace("Granted")
-  assert.equal((await den.setFeature(granted.orgId, "teamPlan", true)).status, 200)
-  const platform = await den.signIn(`platform-admin+${den.stamp}@example.test`)
-  const adminToken = text(field(platform.body, "token"), "platform admin session")
+  const adminToken = (await den.signUp("Platform Admin", `platform-admin+${den.stamp}@example.test`)).token
   const grant = await den.request(adminToken, "PATCH", `/v1/admin/organizations/${granted.orgId}/plan`, { body: { tier: "enterprise", seatLimit: 50 } })
   assert.equal(grant.status, 200, summary(grant))
   assert.equal(field(await orgPlan(granted.owner, granted.orgId), "plan", "source"), "manual")
@@ -218,10 +173,9 @@ test("a manual Enterprise grant is never lowered by buying or cancelling Team", 
 })
 
 test("incomplete initial payments do not unlock paid plans through webhooks or checkout sync", async () => {
-  for (const plan of ["team", "enterprise"] as const) {
+  for (const plan of ["team"] as const) {
     const pending = await den.createOrg(await den.signUp(`Pending ${plan} Owner`), `Pending ${plan} workspace`)
     const call = den.as(pending.owner, pending.orgId)
-    assert.equal((await den.setFeature(pending.orgId, plan === "team" ? "teamPlan" : "selfServeEnterprise", true)).status, 200)
     const started = await call("POST", "/v1/billing/stripe/checkout", { type: "plan", plan })
     assert.equal(started.status, 200, summary(started))
     const session = sessionFor(pending.orgId)

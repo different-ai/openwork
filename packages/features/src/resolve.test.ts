@@ -279,3 +279,15 @@ test("member overrides cannot bypass deployment restrictions, operator locks or 
   assert.equal(resolveFeature(key, { ...context, rollouts: { [key]: { enabled: true, killed: true } } }).enabled, false)
   assert.equal(resolveFeature("managedDeployments", { ...base, deployment: "self_hosted", memberOverrides: { managedDeployments: true } }).enabled, false)
 })
+
+test("billing has no plan flags: Team checkout and self-serve Enterprise keys are retired", () => {
+  for (const key of ["teamPlan", "selfServeEnterprise"]) {
+    assert.equal(featureKeySchema.safeParse(key).success, false, key)
+    assert.equal(Object.hasOwn(resolveFeatures(base), key), false, key)
+    assert.ok(RETIRED_FEATURE_KEYS.some((retiredKey) => retiredKey === key), key)
+  }
+  const parsed = parseFeatureEnvironment({ DEN_FEATURE_TEAM_PLAN: "false", DEN_FEATURE_SELF_SERVE_ENTERPRISE: "true" })
+  assert.deepEqual(parsed.locks, {})
+  assert.equal(parsed.problems.length, 2)
+  assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
+})

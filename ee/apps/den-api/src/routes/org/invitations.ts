@@ -505,7 +505,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       const quote = await getSeatPlanQuote({
         organizationId: payload.organization.id,
         currentCount: seatEligibility.currentCount,
-        teamPlanEnabled: payload.features.teamPlan,
       })
       return c.json({
         error: "payment_required",

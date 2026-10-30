@@ -45,7 +45,7 @@ function Coverage({ totals }: { totals: AdminOrganizationUsageTotals }) {
 function planSummary(organization: Organization) {
   const plan = organization.plan;
   if (!plan) return planName(organization.planTier === "team" || organization.planTier === "enterprise" ? organization.planTier : "free");
-  if (plan.paidBy !== "none") return `${planName(plan.paidBy === "stripe_enterprise" ? "enterprise" : "team")} · paid in Stripe`;
+  if (plan.paidBy !== "none") return `${planName("team")} · paid in Stripe`;
   if (plan.tier === "free") return "Free";
   return `${planName(plan.tier)} · ${plan.source === "grandfathered" ? "grandfathered" : "set by admin"}`;
 }

@@ -1,5 +1,4 @@
 import type { Seed } from "@openwork/env";
-import { PLAN_CHECKOUT_TIERS } from "@openwork/types/den/billing-plans";
 import { sandboxCreatedSchema } from "@openwork/types/den/sandbox-organizations";
 import { createOrganization, setActiveOrganization, setPlan, type DenCall } from "./plan-shapes.ts";
 
@@ -18,7 +17,7 @@ export async function workspacePlanLabelsWorld(seed: Seed) {
     const result = await seed.api(den.admin, path, init);
     return { status: result.response.status, ok: result.response.ok, body: result.body };
   };
-  for (const tier of PLAN_CHECKOUT_TIERS) {
+  for (const tier of ["team", "enterprise"] as const) {
     const id = await createOrganization(call, tier === "team" ? "Team workspace" : "Enterprise workspace");
     await setPlan(call, id, { tier, seatLimit: 10 });
   }

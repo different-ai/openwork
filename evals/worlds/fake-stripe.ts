@@ -14,7 +14,6 @@
  *   export async function myWorld(seed: Seed, { place }: { place: Place }) {
  *     const stripe = await fakeStripe(seed, { place });
  *     const den = await seed.den({ web: true, env: { ...stripe.denEnv, DEN_PLAN_GATING_ENABLED: "true" }, org: { name: "Acme" } });
- *     await enableOrganizationCapabilities(seed, den.admin, { teamPlan: true });   // ./organization-capabilities.ts
  *     const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/billing", headless: true });
  *     // Return the handle so the fixture stack closes the fake when the world is disposed:
  *     return { den, web, stripe, async [Symbol.asyncDispose]() { await stripe[Symbol.asyncDispose](); } };
@@ -32,12 +31,12 @@
  * `denEnv` sets: DEN_DEPLOYMENT=cloud (plans are cloud-only features),
  * DEN_ORG_MODE=multi_org, STRIPE_SECRET_KEY (synthetic sk_test_*),
  * STRIPE_WEBHOOK_SECRET, STRIPE_SEAT_PRICE_ID, STRIPE_INFERENCE_PRICE_ID,
- * STRIPE_ENTERPRISE_PRICE_ID, empty STRIPE_BILLING_SUCCESS/CANCEL_URL (Den
+ * empty STRIPE_BILLING_SUCCESS/CANCEL_URL (Den
  * builds return URLs from its own origin), MODELS_STRIPE_PORT,
  * MODELS_STRIPE_KEY, MODELS_EGRESS_FILE and the NODE_OPTIONS preload. Spread
  * your own keys after it to override (for example DEN_PLAN_GATING_ENABLED).
- * Prices: seat (Team) $10, OpenWork Models $10, Enterprise $20 per person per
- * month, see FAKE_STRIPE_PRICES.
+ * Prices: seat (Team) $10 and OpenWork Models $10 per person per month, see
+ * FAKE_STRIPE_PRICES. Enterprise is never sold by card.
  */
 import { readFile } from "node:fs/promises";
 import type { Place, Seed } from "@openwork/env";
@@ -48,7 +47,6 @@ export const FAKE_STRIPE_WEBHOOK_SECRET = "whsec_openwork_eval_fake_stripe_not_r
 export const FAKE_STRIPE_PRICES = {
   seat: { id: "price_test_team_per_person", unitAmount: 1000, nickname: "Team plan" },
   inference: { id: "price_test_openwork_models", unitAmount: 1000, nickname: "OpenWork Models" },
-  enterprise: { id: "price_test_enterprise_per_person", unitAmount: 2000, nickname: "Enterprise plan" },
 } as const;
 
 export type FakeStripeWorld = AsyncDisposable & {
@@ -82,7 +80,6 @@ export async function startFakeStripeForDen(egressFile: string, options: { place
       STRIPE_WEBHOOK_SECRET: FAKE_STRIPE_WEBHOOK_SECRET,
       STRIPE_SEAT_PRICE_ID: FAKE_STRIPE_PRICES.seat.id,
       STRIPE_INFERENCE_PRICE_ID: FAKE_STRIPE_PRICES.inference.id,
-      STRIPE_ENTERPRISE_PRICE_ID: FAKE_STRIPE_PRICES.enterprise.id,
       STRIPE_OPENWORK_WEB_PRICE_ID: "",
       STRIPE_BILLING_SUCCESS_URL: "",
       STRIPE_BILLING_CANCEL_URL: "",

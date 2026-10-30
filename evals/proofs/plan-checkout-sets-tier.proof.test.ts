@@ -86,20 +86,20 @@ test("an owner of a five-person workspace pays for Team for six people and the p
     );
   });
 
-  await step("a workspace without Team checkout sees no plan purchase, cannot start one, and stays on Free", async () => {
-    await sandbox.see({ testId: "billing-summary-card" }, { timeoutMs: 90_000 });
-    await sandbox.notSee({ testId: "billing-plan-card" });
-    const refused = await world.startSandboxTeamCheckout();
-    expect(refused.status).toBe(404);
-    expect(refused.body).toEqual({ error: "feature_disabled", feature: "teamPlan" });
+  await step("another workspace is offered Team with no feature flag, cannot buy Enterprise by card, and stays on Free", async () => {
+    await sandbox.see({ testId: "billing-plan-card" }, { timeoutMs: 90_000 });
+    await sandbox.see({ testId: "billing-plan-team-offer" });
+    const refused = await world.startSandboxEnterpriseCheckout();
+    expect(refused.status).toBe(400);
+    expect(field(refused.body, "error")).toBe("invalid_request");
     const plan = await world.orgPlan(world.sandboxOwner, world.sandboxId);
     const sessions = (await world.stripe.state()).sessions.filter((entry) => entry.metadata.org_id === world.sandboxId);
     expect(plan.plan).toEqual({ tier: "free", source: "default" });
     expect(sessions).toHaveLength(0);
     evidence.recordAssertionEvidence(
-      "Team checkout stays off for a workspace without the feature",
-      `POST checkout {type:"plan",plan:"team"} → ${refused.status} ${JSON.stringify(refused.body)}; plan ${JSON.stringify(plan.plan)}; Checkout sessions for it: ${sessions.length}`,
-      refused.status === 404 && plan.plan.tier === "free" && sessions.length === 0,
+      "Team is offered without a flag; Enterprise is never sold by card",
+      `Team offer visible on Billing; POST checkout {type:"plan",plan:"enterprise"} → ${refused.status} ${String(field(refused.body, "error"))}; plan ${JSON.stringify(plan.plan)}; Checkout sessions for it: ${sessions.length}`,
+      refused.status === 400 && plan.plan.tier === "free" && sessions.length === 0,
     );
     await sandbox.screenshot();
   });

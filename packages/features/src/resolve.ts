@@ -77,6 +77,9 @@ export const RETIRED_FEATURE_KEYS = [
   // Removed (2026-10): an organization's plan and seats are set in one place in /admin (Billing);
   // Stripe-billed Enterprise is a plain /admin control and organization grants are gone.
   "enterprisePlan", "organizationGrants",
+  // Billing without flags (2026-10): Team checkout is always sold where Stripe seat billing is set up,
+  // and Enterprise is only set in /admin (no card purchase, no Stripe Enterprise subscriptions).
+  "teamPlan", "selfServeEnterprise",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

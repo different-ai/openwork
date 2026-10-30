@@ -7,8 +7,7 @@
  * Users are joined members plus unexpired pending invitations
  * (billing-users.ts). The limit:
  *
- * - An active paid Stripe plan (Team seat subscription active or trialing; a
- *   sales-led Enterprise subscription active, trialing or past due): no
+ * - An active Team seat subscription in Stripe (active or trialing): no
  *   limit, Stripe bills every user.
  * - Otherwise a Team or Enterprise plan a platform admin set (manual) or that
  *   was grandfathered: its seats, never fewer than the Free plan's 5.
@@ -29,8 +28,6 @@ export const MAX_PLAN_USERS = 100_000
 
 /** Seat (Team plan) subscriptions grant the plan while Stripe bills normally. */
 export const SEAT_PLAN_PAID_STATUSES: ReadonlySet<string> = new Set(["active", "trialing"])
-/** Sales-led Enterprise stays unlocked while Stripe is still collecting a failed renewal. */
-export const ENTERPRISE_PLAN_PAID_STATUSES: ReadonlySet<string> = new Set(["active", "trialing", "past_due"])
 
 type MetadataRecord = Record<string, unknown>
 
@@ -87,18 +84,13 @@ export function readStoredPlanDetails(metadata: MetadataRecord) {
   }
 }
 
-/** Who pays for the plan, from the organization's stored Team (seat) and Enterprise subscriptions. */
-export function planPaidBy(input: {
-  seat: { status: string; stripePriceId: string | null } | null
-  enterprise: { status: string } | null
-  enterprisePriceId: string | undefined
-}): PlanPaidBy {
-  if (input.enterprise && ENTERPRISE_PLAN_PAID_STATUSES.has(input.enterprise.status)) return "stripe_enterprise"
-  if (input.seat && SEAT_PLAN_PAID_STATUSES.has(input.seat.status)) {
-    // Self-serve Enterprise is bought on the seat subscription with the Enterprise price.
-    return input.enterprisePriceId && input.seat.stripePriceId === input.enterprisePriceId ? "stripe_enterprise" : "stripe_team"
-  }
-  return "none"
+/**
+ * Who pays for the plan, from the organization's stored Team (seat)
+ * subscription. Enterprise is never paid through Stripe: a platform admin
+ * sets it and OpenWork invoices it, so it reads "none".
+ */
+export function planPaidBy(input: { seat: { status: string } | null }): PlanPaidBy {
+  return input.seat && SEAT_PLAN_PAID_STATUSES.has(input.seat.status) ? "stripe_team" : "none"
 }
 
 export type OrganizationPlanInput = {

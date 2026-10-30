@@ -10,7 +10,6 @@ import { resolveDenServiceVersion } from "./service-version.js"
 import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
 import { readFreeInferenceConfig } from "@openwork/types/den/inference"
-import { DEFAULT_ENTERPRISE_PLAN_UNIT_AMOUNT } from "@openwork/types/den/billing-plans"
 import { parseFeatureEnvironment } from "@openwork/features"
 
 export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
@@ -230,10 +229,7 @@ const EnvSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_INFERENCE_PRICE_ID: z.string().optional(),
   STRIPE_SEAT_PRICE_ID: z.string().optional(),
-  STRIPE_ENTERPRISE_PRICE_ID: z.string().optional(),
-  DEN_ENTERPRISE_UNIT_AMOUNT: z.string().optional(),
   STRIPE_OPENWORK_WEB_PRICE_ID: z.string().optional(),
-  STRIPE_ENTERPRISE_PRODUCT_ID: z.string().optional(),
   STRIPE_BILLING_SUCCESS_URL: z.string().optional(),
   STRIPE_BILLING_CANCEL_URL: z.string().optional(),
 }).superRefine((value, ctx) => {
@@ -309,13 +305,6 @@ function automationTuning(value: string | undefined, fallback: number) {
 function optionalString(value: string | undefined) {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
-}
-
-// A malformed or non-positive amount keeps the planned price rather than
-// quoting $0 or NaN to a buyer.
-function parseEnterpriseUnitAmount(value: string | undefined) {
-  const amount = Number(value)
-  return value !== undefined && Number.isSafeInteger(amount) && amount > 0 ? amount : DEFAULT_ENTERPRISE_PLAN_UNIT_AMOUNT
 }
 
 function readOptionalSecretFile(envName: string, pathValue: string | undefined) {
@@ -967,14 +956,7 @@ export const env = {
     webhookSecret: optionalString(parsed.STRIPE_WEBHOOK_SECRET),
     inferencePriceId: optionalString(parsed.STRIPE_INFERENCE_PRICE_ID),
     seatPriceId: optionalString(parsed.STRIPE_SEAT_PRICE_ID),
-    // Self-serve Enterprise (per person). Without it Enterprise is not sold by card.
-    enterprisePriceId: optionalString(parsed.STRIPE_ENTERPRISE_PRICE_ID),
-    // Planned per-person Enterprise price in cents, for quotes and display only;
-    // Stripe charges the configured price.
-    enterpriseUnitAmount: parseEnterpriseUnitAmount(optionalString(parsed.DEN_ENTERPRISE_UNIT_AMOUNT)),
     openworkWebPriceId: optionalString(parsed.STRIPE_OPENWORK_WEB_PRICE_ID),
-    // Enterprise prices are custom per customer, so subscriptions are matched by product.
-    enterpriseProductId: optionalString(parsed.STRIPE_ENTERPRISE_PRODUCT_ID),
     billingSuccessUrl: optionalString(parsed.STRIPE_BILLING_SUCCESS_URL),
     billingCancelUrl: optionalString(parsed.STRIPE_BILLING_CANCEL_URL),
   },
