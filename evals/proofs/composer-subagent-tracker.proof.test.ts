@@ -44,17 +44,17 @@ test("a member running several sub-agents on OpenCode v2 keeps track of them fro
     await seedAgents("mixed");
     const line = await probe.eventually(summary, { within: 15_000, intervalMs: 200, label: "the counts", until: (text) => text.includes("done") });
     const folded = (await probe.dom(`${TRACKER}[data-subagent-tracker-expanded="false"]`)).elements.length === 1;
-    evidence.recordAssertionEvidence("Folded, with working, error and done counted", `"${line}", folded: ${folded}`, folded && line === "1 working, 1 with an error, 2 done");
-    expect(line).toBe("1 working, 1 with an error, 2 done");
+    evidence.recordAssertionEvidence("Folded, with working, failed and done counted", `"${line}", folded: ${folded}`, folded && line === "1 working, 1 failed, 2 done");
+    expect(line).toBe("1 working, 1 failed, 2 done");
     expect(folded).toBe(true);
     await user.screenshot();
   });
 
-  await step("opening the list shows Done, Error and Stopped as plain words, one per agent", async () => {
+  await step("opening the list shows Done, Failed and Stopped as plain words, one per agent", async () => {
     await user.click({ testId: "subagent-tracker-toggle" });
     await user.see({ text: "Stopped" });
     const words = await rowText();
-    const expected = ["Done", "Error", "Stopped"];
+    const expected = ["Done", "Failed", "Stopped"];
     const ok = /^Working \d+s$/.test(words[0] ?? "") && expected.every((word, index) => words[index + 1] === word);
     evidence.recordAssertionEvidence("Each agent's state is one word", words.join(" | "), ok);
     expect(ok).toBe(true);
