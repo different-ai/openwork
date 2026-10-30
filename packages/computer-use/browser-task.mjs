@@ -296,11 +296,13 @@ function observePage(id, options = {}) {
     registry.last = { mode, items: current };
   }
   const focused = registry.byElement.get(document.activeElement);
-  // A card field shows its digits in an image. While a password or code field is on screen,
-  // page script can copy what was typed or autofilled into visible text, even after clearing it.
+  // A card field shows its digits in an image. Page script can copy a typed or autofilled
+  // password or code into visible text, then clear, hide or remove the field: no image while
+  // the document has such a field anywhere, or after the agent filled one in it.
   const onScreen = (element) => { const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; };
   const payment = [...candidates].some((element) => element instanceof HTMLElement && isPayment(element) && onScreen(element));
-  const credential = [...candidates].some((element) => element instanceof HTMLElement && isCredential(element) && onScreen(element));
+  const credential = globalThis.__openworkCredentialEntered === true
+    || [...candidates].some((element) => element instanceof HTMLElement && isCredential(element));
   const page = { viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, hasPaymentField: payment, hasCredentialField: credential };
   if (!interactive) {
     return { truncated, scrollRegions, title: text(document.title, 300), ...(includeText ? { text: text(document.body?.innerText, 16000) } : {}), elements,
@@ -414,6 +416,9 @@ function applyFormAction(action) {
   if (!element?.isConnected) throw new Error("stale_element");
   if (registry.identities.get(element) !== registry.identify(element, registry.describe(element))) throw new Error("stale_element");
   if (registry.snapshots.get(element) !== JSON.stringify(registry.describe(element, true))) throw new Error("stale_observation");
+  // Once a password or code was filled in this document, it takes no more images.
+  if (action.type === "fill" && (element.matches('input[type="password"]') || (element.getAttribute("autocomplete") || "").toLowerCase()
+    .split(/\s+/).some((token) => ["current-password", "new-password", "one-time-code"].includes(token)))) globalThis.__openworkCredentialEntered = true;
   // The agent may read back exactly what it entered.
   if (action.type === "fill" || action.type === "select") globalThis.__openworkAgentEntered?.set(element, action.type === "select"
     ? JSON.stringify([...element.options].filter(option => action.values.includes(registry.optionRefs.get(option)?.ref)).map(option => option.value))
@@ -734,7 +739,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     let image, digest;
     if (includeImage) {
       if (page.hasPaymentField) fail("payment_required", "This page shows payment card fields. Take over and complete them directly in the browser, then resume.");
-      if (page.hasCredentialField) fail("credential_on_screen", "This page shows a password or code field, so no image was taken. Work from its controls without an image.");
+      if (page.hasCredentialField) fail("credential_on_screen", "This page has a password or code field, or one was filled on it, so no image was taken. Work from its controls without an image.");
       const png = await captureObservation(tab.view.webContents, page.viewport, (viewport) => capture(tab, viewport));
       digest = imageDigest(png);
       image = { mimeType: "image/png", data: png.toString("base64"), width: page.viewport.width, height: page.viewport.height };

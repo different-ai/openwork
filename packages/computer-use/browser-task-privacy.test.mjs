@@ -75,8 +75,9 @@ test("a given password is filled only on the site the person confirms, and never
     select() {}
   }
   const field = new Input();
+  let fields = [field];
   const document = { title: "Sign in", body: { innerText: "Password" }, activeElement: null,
-    getElementById: () => null, elementFromPoint: () => field, querySelectorAll: () => [field] };
+    getElementById: () => null, elementFromPoint: () => field, querySelectorAll: () => fields };
   const context = vm.createContext({ document, HTMLElement: Input, HTMLInputElement: Input,
     HTMLSelectElement: class {}, HTMLTextAreaElement: class {}, HTMLLabelElement: class {},
     getComputedStyle: () => ({ visibility: "visible", display: "block", overflowX: "visible", overflowY: "visible" }),
@@ -120,6 +121,12 @@ test("a given password is filled only on the site the person confirms, and never
   assert.equal(after.elements[0].filled, true);
   assert.ok(!JSON.stringify(after).includes(given));
   assert.equal((await observe(host, { includeImage: true })).code, "credential_on_screen");
+  // A page can copy the value into visible text and then hide or remove the field.
+  field.getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 });
+  assert.equal((await observe(host, { includeImage: true })).code, "credential_on_screen", "A hidden credential field still blocks images");
+  fields = [];
+  assert.equal((await observe(host, { includeImage: true })).code, "credential_on_screen", "After a fill, the document takes no more images");
+  fields = [field]; delete field.getBoundingClientRect;
   // A text field the page marks as a password is a credential field too.
   field.type = "text"; field.value = ""; field.attributes.autocomplete = "current-password";
   confirm = false;
@@ -131,7 +138,8 @@ test("a given password is filled only on the site the person confirms, and never
   const code = await observe(host, { includeImage: true });
   assert.equal(code.code, "credential_on_screen");
   assert.ok(!JSON.stringify(code).includes("123456"));
-  delete field.attributes.autocomplete; field.value = "";
+  // An ordinary field in a new document (no credential filled yet) can be pictured.
+  delete field.attributes.autocomplete; field.value = ""; delete context.__openworkCredentialEntered;
   assert.equal((await observe(host, { includeImage: true })).ok, true);
 });
 
