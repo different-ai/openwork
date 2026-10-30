@@ -13,24 +13,20 @@ import { cn } from "@/lib/utils"
  * reserved slot after it. Rows sit in containers that space parts 8px apart;
  * pulling each row 4px in keeps consecutive steps on a 26px rhythm.
  *
- * With `textActivityRail` on, the rail is text-first: no leading lane (a
- * brand mark sits inline before its sentence), the chevron trails the text,
+ * With `textActivityRail` on, the rail is text-first: no leading lane, every
+ * line starts on the reply text's left edge, a brand mark sits inline after
+ * the verb ("Searched [mark] your connections…"), the chevron trails the text,
  * and there is no duration lane. Each primitive below switches itself, so
  * callers render the same tree either way and the flag-off rail is unchanged.
  */
 export const RAIL_ROW = "group/step -my-1 min-w-0"
 export const RAIL_LINE = "flex min-h-6.5 min-w-0 items-center gap-2 text-sm text-muted-foreground"
 
-function hasContent(children: React.ReactNode): boolean {
-  return children !== null && children !== undefined && children !== false && children !== ""
-}
-
 export function LeadingLane({ children, className }: { children?: React.ReactNode; className?: string }) {
   const text = useTextActivityRail()
-  if (text) {
-    // Text-first: no reserved lane. A real brand mark stays inline before the sentence.
-    return hasContent(children) ? <span aria-hidden="true" data-text-rail-mark="" className="inline-flex shrink-0 items-center">{children}</span> : null
-  }
+  // Text-first: no lane at all, so every line starts on the reply's left
+  // edge. Brand marks move into the sentence (`TextSentenceLine` `mark`).
+  if (text) return null
   return <span aria-hidden="true" className={cn("flex size-5 shrink-0 items-center justify-center", className)}>{children}</span>
 }
 
@@ -78,9 +74,11 @@ export function RailMeta({ children, className }: { children: React.ReactNode; c
  * one line, truncated. Failed verbs are red; waiting is amber; the running
  * step shimmers (V6, reduced motion respected).
  */
-export function TextSentenceLine({ verb, object, title, tone = "normal", className }: {
+export function TextSentenceLine({ verb, object, mark, title, tone = "normal", className }: {
   verb: string
   object?: string
+  /** A real brand mark, inline between the verb and its object. */
+  mark?: React.ReactNode
   title?: string
   tone?: "normal" | "running" | "failed" | "waiting"
   className?: string
@@ -94,6 +92,7 @@ export function TextSentenceLine({ verb, object, title, tone = "normal", classNa
     >
       {/* The shimmer paints through the text, so a running step's parts keep no colour of their own. */}
       <span className={cn(tone === "failed" ? "text-red-11" : tone === "waiting" ? "text-amber-11" : tone === "running" ? null : "text-muted-foreground")}>{verb}</span>
+      {mark ? <span data-text-rail-mark="" className="ms-1 inline-flex align-[-0.2em]">{mark}</span> : null}
       {object ? <span className={cn(tone !== "running" && "text-slate-9")}>{` ${object}`}</span> : null}
     </span>
   )

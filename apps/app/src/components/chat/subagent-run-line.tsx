@@ -13,6 +13,7 @@ import { taskChildSessionId, type TaskToolPart } from "@/lib/build-in-tools"
 import { isToolPartInFlight } from "@/lib/tool-activity"
 import { formatElapsedSeconds, getToolCallStartedAt, trackToolCallDuration } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
+import { useTextActivityRail } from "@/components/chat/text-activity-rail-store"
 import { t } from "@/i18n"
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store"
 import { hasNoNewActivity } from "@/react-app/domains/session/status/session-progress"
@@ -132,6 +133,7 @@ export function useElapsedSeconds(active: boolean, startedAt: number | null, syn
  */
 export function SubagentRunLine({ part, className, parentActive = true }: SubagentRunLineProps) {
   const [open, setOpen] = useState(false)
+  const textRail = useTextActivityRail()
   const { onOpenSubagentSession, onStopSubagentSession, composerSubagentToolCallIds, syncDegraded, workspaceId } = useMessageList()
   const [stopping, setStopping] = useState(false)
   const [stopError, setStopError] = useState<string | null>(null)
@@ -169,7 +171,7 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
           {title}
           <span className="text-muted-foreground/70"> · {agent} agent</span>
         </span>
-        {permissionPending ? (
+        {permissionPending && !textRail ? (
           <ShieldAlert
             data-subagent-permission-icon
             aria-label={t("session.subagent_permission_needed")}
@@ -214,7 +216,9 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
             data-subagent-stop=""
             disabled={stopping}
             aria-label={stopping ? `${title}. Stopping sub-agent` : `${title}. Stop sub-agent`}
-            className="mt-0.5 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-50"
+            className={textRail
+              ? "mt-0.5 shrink-0 cursor-pointer rounded-md px-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-50"
+              : "mt-0.5 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-50"}
             onClick={() => {
               setStopError(null)
               setStopping(true)
@@ -223,7 +227,7 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
               }).finally(() => setStopping(false))
             }}
           >
-            <Square className="size-2.5 fill-current" aria-hidden="true" />
+            {textRail ? t("text_activity.stop") : <Square className="size-2.5 fill-current" aria-hidden="true" />}
           </button>
         ) : null}
       </div>

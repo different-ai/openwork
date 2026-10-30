@@ -21,8 +21,15 @@ icon rail:
 - A failed step's verb is red (`Couldn't run …`); other failures open a
   quiet Technical details box. Waiting on the person reads `Waiting for you`
   in amber. Only the running step shimmers.
-- OpenWork and connected services keep their real mark inline before the
-  sentence; no spinner.
+- Every line (thoughts, summaries, steps, opened cards, sub-agent rows)
+  starts on the reply text's left edge. There is no leading icon or chevron
+  column; chevrons trail the text.
+- OpenWork and connected services keep their real mark inline after the
+  verb (`Looked up [mark] people in your organization`); no spinner. The
+  OpenWork mark is drawn in the text's ink, so it is white on dark.
+- The composer's Agents list (`composerSubagentTracker`) reads as text too:
+  no status dot or check column, the status word carries the state, and
+  `Review`, `Stop` and `Open` are words.
 - GitHub pull request and issue links in replies show the GitHub glyph
   (neutral; the app does not fetch their state).
 
@@ -35,6 +42,13 @@ Opened steps with the flag on: a command card, an edit's change and a failed
 command.
 
 ![Flag on, opened steps](on-open.png)
+
+Dark, with the composer's Agents list on (designed as if
+`composerSubagentTracker` is on for everyone):
+
+| Off | On |
+| --- | --- |
+| ![Flag off, dark, Agents list](off-dark-agents.png) | ![Flag on, dark, Agents list](on-dark-agents.png) |
 
 Screenshots: the real `MessageList` in headless Chrome against this
 checkout's Vite dev server, with a seeded turn (the same fixture as the

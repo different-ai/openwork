@@ -195,8 +195,7 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
           <LaneChevron open={open} />
           {textRail ? (
             <>
-              <LeadingLane>{groupMark ? <ConnectorMark connector={groupMark} /> : null}</LeadingLane>
-              <TextSentenceLine {...splitSentence(label)} tone={running && !current ? "running" : "normal"} />
+              <TextSentenceLine {...splitSentence(label)} mark={groupMark ? <ConnectorMark connector={groupMark} /> : null} tone={running && !current ? "running" : "normal"} />
             </>
           ) : (
             <span className={cn("min-w-0 truncate", running && !current && "ow-text-shimmer motion-reduce:animate-none")}>{label}</span>
@@ -213,7 +212,7 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
       {detailsOpen ? <TechnicalDetailsPanel part={part} /> : null}
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-180 ease-out data-starting-style:h-0 data-ending-style:h-0 motion-reduce:transition-none [&[hidden]:not([hidden='until-found'])]:hidden">
         {/* Flat, not boxed (S1): the group's steps indent under its label. */}
-        <div className={cn("mt-2 flex flex-col gap-2", textRail ? "ps-4" : "ps-7")}>
+        <div className={cn("mt-2 flex flex-col gap-2", !textRail && "ps-7")}>
           {rows.map(({ call, repeat }) => (
             <CapabilityCallLine
               key={call.toolCallId}

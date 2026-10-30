@@ -128,3 +128,54 @@ test("flag on: one text-first summary, steps as sentences, a red failure, a time
   expect(link?.querySelector('svg[data-github-reference-glyph="pull"]')).not.toBeNull()
   expect(link?.textContent).toContain("#5212 feat(server): add a web command")
 })
+
+/** The same turn plus an OpenWork capability call, for the one-left-edge rules. */
+function turnWithCapability(): UIMessage[] {
+  const [user, reply] = turn()
+  if (!user || !reply) throw new Error("fixture")
+  const parts = [...reply.parts]
+  parts.splice(parts.length - 1, 0, tool("call_org", "openwork-cloud_execute_capability", { name: "getOrg" }, JSON.stringify({ members: 2 })))
+  return [user, { ...reply, parts }]
+}
+
+test("flag on: every rail line starts on the reply's left edge, chevrons trail, marks sit after the verb", async () => {
+  const container = await render(turnWithCapability(), true)
+
+  // No leading lane anywhere: no reserved 20px slot and no indented step list.
+  expect(container.querySelector('span.size-5[aria-hidden="true"]')).toBeNull()
+  const indented = [...container.querySelectorAll("[data-tool-aggregate] *, [data-capability-call] *")]
+    .filter((element) => /(?:^|\s)(?:ps|pl)-\d/.test(element.getAttribute("class") ?? ""))
+  expect(indented).toEqual([])
+
+  // The reply's text is not pushed right by an empty lane.
+  const prose = container.querySelector(".prose")?.parentElement
+  expect(prose?.firstElementChild?.classList.contains("prose")).toBe(true)
+
+  // The group summary's chevron is its last element, never its first.
+  const summary = container.querySelector("[data-text-group-summary]")?.closest("button")
+  expect(summary?.lastElementChild?.hasAttribute("data-text-rail-chevron")).toBe(true)
+  expect(summary?.firstElementChild?.hasAttribute("data-text-rail-chevron")).toBe(false)
+  await click(summary)
+  for (const row of container.querySelectorAll("[data-text-step-row] > button")) {
+    expect(row.firstElementChild?.hasAttribute("data-text-step")).toBe(true)
+  }
+
+  // An OpenWork step leads with its verb; the mark follows it, drawn in the text colour.
+  const capability = container.querySelector("[data-capability-call]")
+  const sentence = capability?.querySelector("[data-text-step]")
+  expect(sentence?.parentElement?.firstElementChild).toBe(sentence ?? null)
+  const mark = sentence?.querySelector("[data-text-rail-mark]")
+  expect(mark?.previousElementSibling?.textContent?.length).toBeGreaterThan(0)
+  expect(mark?.querySelector("[data-openwork-mark]")?.className).toContain("bg-current")
+  expect(capability?.querySelector("img")).toBeNull()
+})
+
+test("the OpenWork mark is recognised however the identity reaches the row", async () => {
+  const { isOpenWorkIdentity, OPENWORK_IDENTITY } = await import("../src/components/chat/capability-call-line")
+  const base = { name: "OpenWork", toolNamespace: null, connectionId: null }
+  expect(isOpenWorkIdentity(OPENWORK_IDENTITY)).toBe(true)
+  expect(isOpenWorkIdentity({ ...base, id: "connection:c1", iconUrl: "https://www.google.com/s2/favicons?sz=64&domain=openworklabs.com", serviceUrl: "https://api.openworklabs.com/mcp/agent" })).toBe(true)
+  expect(isOpenWorkIdentity({ ...base, id: "mcp:x", iconUrl: "/openwork-sidebar-mark.svg", serviceUrl: null })).toBe(true)
+  expect(isOpenWorkIdentity({ ...base, id: "connection:slack", name: "Slack", iconUrl: "https://cdn.simpleicons.org/slack", serviceUrl: "https://mcp.slack.com" })).toBe(false)
+  expect(isOpenWorkIdentity({ ...base, id: "connection:evil", iconUrl: null, serviceUrl: "https://openworklabs.com.evil.example" })).toBe(false)
+})

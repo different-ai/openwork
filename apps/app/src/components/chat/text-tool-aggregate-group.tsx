@@ -203,7 +203,7 @@ export function TextToolAggregateGroup({ parts, messageId, thoughts = [], classN
       </button>
 
       {expanded ? (
-        <div className="mt-2 flex flex-col gap-2 ps-4">
+        <div className="mt-2 flex flex-col gap-2">
           {visibleRows.map((row) => (
             <Fragment key={row.part.toolCallId}>
               {thoughtsAt(row.index).map((thought) => thoughtRow(thought, String(row.index)))}

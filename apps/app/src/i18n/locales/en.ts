@@ -1360,6 +1360,8 @@ export default {
   "text_activity.thought_for": "Thought {duration}",
   "text_activity.waiting_for_you": "Waiting for you",
   "text_activity.technical_details": "Technical details",
+  "text_activity.stop": "Stop",
+  "text_activity.open": "Open",
   "text_activity.show_more": "Show more",
   "text_activity.show_less": "Show less",
   "text_activity.show_more_steps": "Show {count} more",

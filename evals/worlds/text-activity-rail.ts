@@ -21,7 +21,9 @@ function script(code: string) {
  * OpenWork Cloud capability through Code Mode, a thought, and an answer that
  * links a GitHub pull request. Text-first activity (`textActivityRail`)
  * starts off for the organization so the same turn shows before and after;
- * `setTextRail` flips it through the platform-admin route /admin uses.
+ * `setTextRail` flips it through the platform-admin route /admin uses. The
+ * composer's Agents list (`composerSubagentTracker`) stays on throughout:
+ * the text-first rail is designed for the world where it ships to everyone.
  */
 export async function textActivityRailWorld(seed: Seed) {
   const engine = "v2";
@@ -71,7 +73,7 @@ export async function textActivityRailWorld(seed: Seed) {
   const session = await seed.session(app, { title: "Pricing notes" });
   const setTextRail = async (enabled: boolean) => {
     const result = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
-      method: "PUT", body: JSON.stringify({ capabilities: { textActivityRail: enabled } }),
+      method: "PUT", body: JSON.stringify({ capabilities: { textActivityRail: enabled, composerSubagentTracker: true } }),
     });
     if (!result.response.ok) throw new Error(`Switching text-first activity failed: HTTP ${result.response.status}`);
   };

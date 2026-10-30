@@ -57,18 +57,60 @@ export const OPENWORK_IDENTITY: ConnectorToolIdentity = {
   connectionId: null,
 }
 
+const OPENWORK_MARK_SRC = resolveExtensionIconSrc("/openwork-sidebar-mark.svg")
+
+/**
+ * Is this identity OpenWork's own (our skills, or the Connect/Cloud server
+ * reached as a connection)? Matched by id, by our mark asset, or by an
+ * OpenWork host, since connection identities carry their own ids.
+ */
+export function isOpenWorkIdentity(connector: ConnectorToolIdentity): boolean {
+  if (connector.id === OPENWORK_IDENTITY.id) return true
+  const icon = connector.iconUrl ?? ""
+  if (/\/openwork-(?:sidebar-)?mark\.svg(?:$|[?#])/.test(icon)) return true
+  const host = (value: string | null | undefined) => {
+    if (!value) return ""
+    try { return new URL(value).hostname } catch { return "" }
+  }
+  return [host(connector.serviceUrl), host(connector.iconUrl)].some((name) => /(?:^|\.)openworklabs\.com$/.test(name))
+}
+
+/**
+ * The OpenWork mark drawn in the current text colour (a mask, not an image),
+ * so it reads on light and dark and dims with the sentence around it.
+ */
+export function OpenWorkMark({ className }: { className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-openwork-mark=""
+      className={cn("inline-block shrink-0 bg-current", className)}
+      style={{ maskImage: `url("${OPENWORK_MARK_SRC}")`, maskSize: "contain", maskRepeat: "no-repeat", maskPosition: "center", WebkitMaskImage: `url("${OPENWORK_MARK_SRC}")`, WebkitMaskSize: "contain", WebkitMaskRepeat: "no-repeat", WebkitMaskPosition: "center" }}
+    />
+  )
+}
+
 export function ConnectorMark({ connector }: { connector: ConnectorToolIdentity }) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null)
   // Text-first: the mark sits inline in the sentence at the text's size.
   const inline = useTextActivityRail()
+  const openwork = isOpenWorkIdentity(connector)
   const showImage = Boolean(connector.iconUrl && failedUrl !== connector.iconUrl)
+  if (inline && openwork) {
+    return (
+      <span data-connector-icon={connector.id} data-connector-name={connector.name} title={connector.name} aria-hidden="true" className="inline-flex size-3.5 shrink-0 items-center justify-center">
+        {/* Full ink, not the sentence's muted tone: white on dark, ink on light. */}
+        <OpenWorkMark className="size-3.5 text-foreground" />
+      </span>
+    )
+  }
   return (
     <span
       data-connector-icon={connector.id}
       data-connector-name={connector.name}
       className={cn(
         "flex shrink-0 items-center justify-center overflow-hidden rounded-md",
-        inline ? "size-4" : "size-5",
+        inline ? "size-3.5" : "size-5",
         // The muted chip only exists to make the single-letter fallback read
         // as an avatar; real brand icons render without a background.
         !showImage && "bg-muted text-[10px] font-semibold text-foreground",
@@ -80,7 +122,8 @@ export function ConnectorMark({ connector }: { connector: ConnectorToolIdentity 
         <img
           src={connector.iconUrl}
           alt=""
-          className={cn("size-4 object-contain", connector.id === OPENWORK_IDENTITY.id && "dark:invert")}
+          // Our mark is drawn in ink (#011627); invert it on dark wherever it shows.
+          className={cn(inline ? "size-3.5" : "size-4", "object-contain", openwork && "dark:invert")}
           loading="lazy"
           decoding="async"
           onError={() => setFailedUrl(connector.iconUrl)}
@@ -328,7 +371,7 @@ export function CapabilityCallLine({
         <div className={RAIL_LINE}>
           <LeadingLane>{mark ? <ConnectorMark connector={mark} /> : null}</LeadingLane>
           {textRail
-            ? <TextSentenceLine {...splitSentence(label)} tone="failed" />
+            ? <TextSentenceLine {...splitSentence(label)} mark={mark ? <ConnectorMark connector={mark} /> : null} tone="failed" />
             : <span className="min-w-0 flex-1 truncate">{label}</span>}
           <RailDuration value={duration} />
           <DetailsToggle open={open} onToggle={() => setOpen(!open)} label={label} alwaysVisible />
@@ -354,7 +397,7 @@ export function CapabilityCallLine({
         <div className="flex min-h-6.5 min-w-0 items-center gap-2 text-sm">
           <LeadingLane>{mark ? <ConnectorMark connector={mark} /> : null}</LeadingLane>
           {textRail
-            ? <TextSentenceLine {...splitSentence(failureLabel)} tone="failed" />
+            ? <TextSentenceLine {...splitSentence(failureLabel)} mark={mark ? <ConnectorMark connector={mark} /> : null} tone="failed" />
             : <span className="min-w-0 flex-1 truncate text-destructive">{failureLabel}</span>}
           <RailDuration value={duration} />
           <DetailsToggle open={open} onToggle={() => setOpen(!open)} label={failureLabel} alwaysVisible />
@@ -410,7 +453,7 @@ export function CapabilityCallLine({
           ) : null}
         </LeadingLane>
         {textRail
-          ? <TextSentenceLine {...splitSentence(line)} tone={shimmer && inFlight ? "running" : "normal"} />
+          ? <TextSentenceLine {...splitSentence(line)} mark={mark ? <ConnectorMark connector={mark} /> : null} tone={shimmer && inFlight ? "running" : "normal"} />
           : <span className={cn("min-w-0 flex-1 truncate", shimmer && inFlight && "ow-text-shimmer motion-reduce:animate-none")}>{line}</span>}
         {repeat > 1 ? <span className="shrink-0 text-xs text-muted-foreground">{repeat} times</span> : null}
         <RailDuration value={duration} />
