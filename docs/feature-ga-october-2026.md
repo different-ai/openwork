@@ -115,3 +115,7 @@ releases before October 23 cannot read hashed session tokens, so a self-hosted
 rolling upgrade from one of them would sign people out while old replicas are
 still serving. Operators turn it on once every replica runs a release that reads
 both forms.
+
+`remoteSessionAnswers` (added in #6753) is off by default, matching its API test
+and production. It lets an agent answer a remote task's permission prompt, so it
+rolls out per organization first.

@@ -528,7 +528,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/remote-session-answers/README.md",
     deployments: everywhere,
-    default: true,
+    default: false,
   },
   activationChecklist: {
     label: "Get set up checklist",
