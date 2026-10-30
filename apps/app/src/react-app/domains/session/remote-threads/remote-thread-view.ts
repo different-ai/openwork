@@ -99,10 +99,10 @@ export function remoteThreadSentence(start: RemoteThreadStart, view: RemoteThrea
   return { tone, lead, title: view.title, detail: detail ? [detail, view.lastChecked].filter(Boolean).join(" · ") : view.lastChecked }
 }
 
-/** The sidebar's word for a task under its chat (DESIGN.md: a word, not a dot). */
-export function remoteThreadStatusWord(state: RemoteSessionThreadState): string {
+/** The word for a task in the Agents list and the sidebar (DESIGN.md: a word, not a dot). */
+export function remoteThreadStatusWord(state: RemoteSessionThreadState, stopped: boolean): string {
   return state === "waiting" ? t("session.remote_task_status_needs_you")
     : state === "idle" ? t("session.remote_task_status_done")
-    : state === "error" ? t("session.remote_task_status_stopped")
+    : state === "error" ? t(stopped ? "session.remote_task_status_stopped" : "session.remote_task_status_failed")
     : t("session.remote_task_status_working")
 }

@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useState } from "react"
+import { ChevronRight } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { t } from "@/i18n"
+import { cn } from "@/lib/utils"
 import { childOrigin, prepareChildReturn, registerChildDraftPersistence } from "@/lib/child-navigation"
 import { remoteSessionRouteId } from "@/lib/remote-session-route"
 import { openRemoteThreadPanel } from "@/components/chat/remote-thread-run-line"
@@ -59,16 +61,16 @@ export function RemoteSessionHeader({ threadKey, navigation }: { threadKey: stri
   return (
     <div className="flex min-w-0 items-center gap-2 text-[13px]" data-remote-session-header={threadKey}>
       <nav className="flex min-w-0 items-center gap-1" aria-label={view.title}>
-        <Button
-          variant="ghost"
-          size="xs"
-          className="max-w-48 shrink-0 truncate text-muted-foreground titlebar-no-drag"
+        {/* Plain text, no button padding: the breadcrumb starts on the header's own left edge. */}
+        <button
+          type="button"
+          className="max-w-48 shrink-0 cursor-pointer truncate rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none titlebar-no-drag"
           aria-label={t("session.remote_task_back_to", { title: parentTitle })}
           data-remote-session-parent={origin.owner.sessionId}
           onClick={returnToParent}
         >
-          <span className="truncate">{parentTitle}</span>
-        </Button>
+          {parentTitle}
+        </button>
         <span aria-hidden="true" className="text-muted-foreground/60">/</span>
         <h1 className="min-w-0 truncate font-medium text-foreground" data-session-header-title>{view.title}</h1>
       </nav>
@@ -125,6 +127,7 @@ function RemoteSessionConversation({ entry, origin, navigation }: { entry: Remot
   const { view } = conversation
   const returnToParent = useReturnToParent(threadKey, origin, navigation)
   const brief = entry.start.prompt?.trim() ?? ""
+  const [briefOpen, setBriefOpen] = useState(false)
 
   // Leaving by any path (Esc, breadcrumb, sidebar) keeps the draft for next time.
   const { draftRef } = conversation
@@ -152,9 +155,11 @@ function RemoteSessionConversation({ entry, origin, navigation }: { entry: Remot
     <div className="flex h-full min-h-0 flex-col" data-remote-session-surface={threadKey} data-remote-thread-state={view.state}>
       <RemoteThreadTranscriptBody entry={entry} conversation={conversation}>
         {brief ? (
-          <Collapsible defaultOpen={false} className="mx-auto w-full max-w-3xl px-2 text-sm text-muted-foreground md:px-10" data-remote-session-brief="">
-            <CollapsibleTrigger className="block w-full min-w-0 cursor-pointer truncate text-start hover:text-foreground">
-              {t("session.remote_task_brief", { brief })}
+          <Collapsible open={briefOpen} onOpenChange={setBriefOpen} className="mx-auto w-full max-w-3xl px-2 text-sm text-muted-foreground md:px-10" data-remote-session-brief="">
+            {/* Text first, chevron after it (one left edge with the replies below). */}
+            <CollapsibleTrigger className="flex max-w-full min-w-0 cursor-pointer items-center gap-1 text-start hover:text-foreground">
+              <span className="min-w-0 truncate">{t("session.remote_task_brief", { brief })}</span>
+              <ChevronRight aria-hidden="true" className={cn("size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ease-out motion-reduce:transition-none", briefOpen && "rotate-90")} />
             </CollapsibleTrigger>
             <CollapsibleContent className="pt-2 whitespace-pre-wrap text-foreground">{brief}</CollapsibleContent>
           </Collapsible>

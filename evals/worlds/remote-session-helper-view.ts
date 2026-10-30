@@ -1,4 +1,5 @@
 import { mkdir, realpath } from "node:fs/promises";
+import { addInitScript } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 import {
   createRemoteSessionTransport,
@@ -160,13 +161,14 @@ async function startRunner(seed: Seed, input: { apiUrl: string; member: Paramete
 
 /**
  * A member whose chat hands a task to their other computer, with the task
- * opening like a helper (`remoteSessionHelperView`): the chat's agent calls remote-session:create
- * (answered with the real Den receipt), Den hands the command to a registered
- * runner, and the panel reads that runner's ordered transcript.
+ * opening like a helper (`remoteSessionHelperView`) and the composer's Agents
+ * list on (`composerSubagentTracker`), in dark mode: the chat's agent calls
+ * remote-session:create (answered with the real Den receipt), Den hands the
+ * command to a registered runner, and the task reads that runner's transcript.
  */
 export async function remoteSessionHelperViewWorld(seed: Seed) {
   const { den, webPort } = await denForAppWeb(seed, { web: false, org: { name: "Launch team", admin: { name: "Launch Owner" } } });
-  const orgId = await enableOrganizationCapabilities(seed, den.admin, { remoteSessionSubagents: true, remoteSessionThreadView: true, remoteSessionHelperView: true });
+  const orgId = await enableOrganizationCapabilities(seed, den.admin, { remoteSessionSubagents: true, remoteSessionThreadView: true, remoteSessionHelperView: true, composerSubagentTracker: true });
 
   const runner = await startRunner(seed, { apiUrl: den.ref.apiUrl, member: den.admin, orgId });
   try {
@@ -229,6 +231,8 @@ async function withRunner(
     den, webPort, engine, name: "remote-session-helper-view", workspacePath, mocks: { agent: mock },
     env: process.env.OPENWORK_OPENCODE2_BIN ? { OPENWORK_OPENCODE2_BIN: process.env.OPENWORK_OPENCODE2_BIN } : {},
   });
+  // Dark, whatever the host's appearance: the screens are checked in dark mode.
+  await addInitScript(app.client, () => { localStorage.setItem("openwork.react.settings.theme-mode", "dark"); });
   const witness = app.mocks.agent;
   if (!witness) throw new Error("The chat model witness did not start");
   await configureProvider(seed, app, workspace.workspaceId, "remote-helper-proof", "remote-helper-agent", {

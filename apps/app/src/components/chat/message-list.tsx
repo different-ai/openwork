@@ -119,6 +119,7 @@ import { credentialPromptCall } from "@/components/chat/credential-prompt"
 import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
 import { isReservedConnectionQuestion, type ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
+import { codeModeCallsWithResults, remoteThreadStartsInParts } from "@/lib/remote-thread-starts"
 import { dedupeRenderedTurnErrors } from "@/react-app/domains/session/sync/transcript-reconcile"
 import { builtMcpAppId, hasPreservedMcpAppResult, isNativeConnectionAppLaunch, McpAppFrame } from "@/components/chat/mcp-app-frame"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
@@ -1528,28 +1529,13 @@ function isMcpAppFramePart(part: UIMessage["parts"][number]): part is DynamicToo
     && !isNativeConnectionAppLaunch(part)
 }
 
-/**
- * A script's calls with their results. A one-call script whose call kept no
- * result of its own returned that call's result, as its row already shows.
- */
-function codeModeCallsWithResults(part: DynamicToolUIPart): DynamicToolUIPart[] | null {
-  const calls = codeModeToolCalls(part)
-  const only = calls?.length === 1 ? calls[0] : undefined
-  if (!only || only.state !== "output-available" || only.output !== undefined || part.state !== "output-available") return calls
-  return [{ ...only, output: part.output }]
-}
-
 /** Tasks a group's steps started on other computers, directly or from a script. */
 function collectRemoteThreadStarts(items: UIMessageWithIndex[]) {
   const starts = new Map<string, { start: RemoteThreadStart; part: DynamicToolUIPart }>()
   for (const item of items) {
     if (item.message.role !== "assistant" || isSessionErrorMessage(item.message)) continue
-    for (const part of item.message.parts) {
-      if (part.type !== "dynamic-tool") continue
-      for (const call of codeModeCallsWithResults(part) ?? [part]) {
-        const start = remoteThreadFromToolPart(call)
-        if (start && !starts.has(start.key)) starts.set(start.key, { start, part: call })
-      }
+    for (const found of remoteThreadStartsInParts(item.message.parts)) {
+      if (!starts.has(found.start.key)) starts.set(found.start.key, found)
     }
   }
   return [...starts.values()]

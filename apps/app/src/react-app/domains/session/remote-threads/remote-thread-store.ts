@@ -331,20 +331,6 @@ export function useRemoteThreadHelperViewEnabled(): boolean {
   return useRemoteThreadStore((state) => state.enabled && state.threadView && state.helperView)
 }
 
-/** Tasks a chat started, as a string that only changes when their rows would. */
-export function useRemoteThreadChildrenKey(sessionId: string, enabled: boolean): string {
-  return useRemoteThreadStore((state) => {
-    if (!enabled || !state.enabled || !state.threadView || !state.helperView) return "[]"
-    const rows: string[][] = []
-    for (const entry of Object.values(state.threads)) {
-      if (!Object.values(entry.owners).some((owner) => owner.sessionId === sessionId)) continue
-      const title = entry.status?.title && entry.status.title !== "Remote session" ? entry.status.title : entry.start.title
-      rows.push([entry.start.key, title, entry.status?.state ?? "starting"])
-    }
-    return JSON.stringify(rows.sort((left, right) => (left[0] ?? "").localeCompare(right[0] ?? "")))
-  })
-}
-
 export function useRemoteThread(key: string | null): RemoteThreadEntry | null {
   return useRemoteThreadStore((state) => key ? state.threads[key] ?? null : null)
 }
