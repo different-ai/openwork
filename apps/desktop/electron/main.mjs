@@ -1218,6 +1218,8 @@ const nativeContextMenus = createNativeContextMenus({ Menu, clipboard, getWindow
 browserPanel = createBrowserPanel({
   // A page gets files only after the person approves them in the chat, like a native file panel.
   approveFiles: (sessionId, request, signal) => computerControl.approveFiles({ sessionId, app: request.app, files: request.files }, { signal }),
+  // A password or code is typed only on a site the person confirmed in the chat.
+  approveCredential: (sessionId, request, signal) => computerControl.approveCredential({ sessionId, site: request.site }, { signal }),
   showNativeContextMenu: nativeContextMenus.show,
   closeNativeContextMenu: nativeContextMenus.close,
   remoteDebugPort,

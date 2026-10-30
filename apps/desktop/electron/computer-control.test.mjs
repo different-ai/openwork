@@ -820,6 +820,31 @@ test("always allowing files in a chat stops asking there", async (t) => {
   assert.equal(await other, false);
 });
 
+test("the browser types a password only on a site the person confirmed, with computer use off", async (t) => {
+  const f = fixture(); t.after(() => f.control.reset(true));
+  const credentialCards = () => f.requests.filter((request) => request?.reason === "credential");
+  const answerSite = async (site, answer) => {
+    const before = credentialCards().length;
+    for (let waited = 0; credentialCards().length === before && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+    const card = credentialCards().at(-1);
+    assert.deepEqual(card.credential, { site });
+    await f.control.answerRequest({ sessionId: "chat", answer, id: card.id });
+  };
+  const declined = f.control.approveCredential({ sessionId: "chat", site: "https://example.com" });
+  await answerSite("https://example.com", "dismiss");
+  assert.equal(await declined, false);
+  const always = f.control.approveCredential({ sessionId: "chat", site: "https://example.com" });
+  await answerSite("https://example.com", "always");
+  assert.equal(await always, true);
+  const asked = credentialCards().length;
+  assert.equal(await f.control.approveCredential({ sessionId: "chat", site: "https://example.com" }), true);
+  assert.equal(credentialCards().length, asked, "Always covers that exact site in this chat");
+  // Another origin, even a lookalike or the same host over http, asks again.
+  const other = f.control.approveCredential({ sessionId: "chat", site: "http://example.com" });
+  await answerSite("http://example.com", "dismiss");
+  assert.equal(await other, false);
+});
+
 test("allowing a file panel to be browsed never becomes a standing approval", async (t) => {
   const f = filePanelFixture({ browsing: true }); t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);

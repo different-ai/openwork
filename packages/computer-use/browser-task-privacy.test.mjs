@@ -61,12 +61,13 @@ test("withheld field values cannot escape through accessible labels", async () =
   assert.equal(protectedImage.code, "payment_required", "Payment fields must block capture even without a password field");
 });
 
-test("the agent fills a password it was given and never reads it back", async () => {
+test("a given password is filled only on the site the person confirms, and never read back", async () => {
   class Input {
     tagName = "INPUT"; parentElement = null; labels = []; isConnected = true; type = "password"; value = "";
-    getAttribute(name) { return name === "aria-label" ? "Password" : null; }
+    attributes = { "aria-label": "Password" };
+    getAttribute(name) { return this.attributes[name] ?? null; }
     hasAttribute() { return false; }
-    matches(selector) { return selector.includes('input[type="password"]'); }
+    matches(selector) { return this.type === "password" && selector.includes('input[type="password"]'); }
     closest() { return null; }
     contains(element) { return element === this; }
     getBoundingClientRect() { return { x: 10, y: 10, left: 10, top: 10, right: 210, bottom: 50, width: 200, height: 40 }; }
@@ -84,16 +85,31 @@ test("the agent fills a password it was given and never reads it back", async ()
     getURL: () => "https://example.com/login", insertText: async text => { field.value = text; },
     captureObservation: async () => Buffer.from("png"),
     executeJavaScriptInIsolatedWorld: async (_world, scripts) => vm.runInContext(scripts[0].code, context) } } };
-  const host = createBrowserTaskHost({ getTab: () => tab, tabsFor: () => [tab], ownerOf: () => "chat", activeFor: () => "tab",
-    enabled: () => true, allowed: async () => true, changed: () => {}, isVisible: () => true });
-  const observe = (args = {}) => host.request({ sessionId: "chat", operation: "observe", args: { tabId: "tab", ...args } });
-  const pictured = await observe({ includeImage: true });
+  const asked = [];
+  let confirm = true;
+  const hostWith = approveCredential => createBrowserTaskHost({ getTab: () => tab, tabsFor: () => [tab], ownerOf: () => "chat", activeFor: () => "tab",
+    enabled: () => true, allowed: async () => true, changed: () => {}, isVisible: () => true, approveCredential });
+  const host = hostWith(async (sessionId, request) => { asked.push([sessionId, request.site]); return confirm; });
+  const observe = (target = host, args = {}) => target.request({ sessionId: "chat", operation: "observe", args: { tabId: "tab", ...args } });
+  const fill = async (target, text) => {
+    const seen = await observe(target);
+    return target.request({ sessionId: "chat", operation: "act", args: { tabId: "tab", observationId: seen.observationId,
+      action: { type: "fill", ref: seen.elements[0].ref, text } } });
+  };
+  const pictured = await observe(host, { includeImage: true });
   assert.equal(pictured.ok, true, "A sign-in page can be seen: the browser masks the password itself");
   assert.ok(pictured.image);
   const given = "given-password-123";
-  const filled = await host.request({ sessionId: "chat", operation: "act", args: { tabId: "tab", observationId: pictured.observationId,
-    action: { type: "fill", ref: pictured.elements[0].ref, text: given } } });
+  confirm = false;
+  const declined = await fill(host, given);
+  assert.equal(declined.code, "credential_declined");
+  assert.equal(field.value, "", "Nothing is typed without the person's yes");
+  assert.equal((await fill(hostWith(undefined), given)).code, "sign_in_required", "A host that cannot ask leaves sign-in to the person");
+  assert.equal(field.value, "");
+  confirm = true;
+  const filled = await fill(host, given);
   assert.equal(filled.ok, true, JSON.stringify(filled));
+  assert.deepEqual(asked, [["chat", "https://example.com"], ["chat", "https://example.com"]], "The person confirms the exact origin");
   assert.equal(field.value, given);
   assert.equal(filled.control.filled, true);
   assert.equal(filled.control.value, undefined);
@@ -101,6 +117,13 @@ test("the agent fills a password it was given and never reads it back", async ()
   const after = await observe();
   assert.equal(after.elements[0].filled, true);
   assert.ok(!JSON.stringify(after).includes(given));
+  // A one-time code shows in an image once filled; an empty code field does not.
+  field.type = "text"; field.value = ""; field.attributes.autocomplete = "one-time-code";
+  assert.equal((await observe(host, { includeImage: true })).ok, true);
+  field.value = "123456";
+  const code = await observe(host, { includeImage: true });
+  assert.equal(code.code, "code_on_screen");
+  assert.ok(!JSON.stringify(code).includes("123456"));
 });
 
 test("select options keep backing identities private and revalidate before choosing", async () => {

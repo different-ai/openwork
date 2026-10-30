@@ -51,7 +51,7 @@ const BROWSER_SECURITY_PREFERENCES = Object.freeze({
 });
 
 export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, readWebsiteRules, websiteRulesWereInForce = false, onWebsiteRulesInForce, showNativeContextMenu, closeNativeContextMenu,
-  approveFiles = async () => false }) {
+  approveFiles = async () => false, approveCredential = undefined }) {
   // The member's agent permission rules for websites, from their desktop
   // config. They apply to every page, frame and request the built-in browser
   // makes, whoever opens it, as the engines apply them to the agent's web fetches.
@@ -917,6 +917,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       }
     },
     approveFiles,
+    approveCredential,
     changed: (tabId, activity) => {
       const tab = getBrowserTab(tabId);
       if (!tab) return;

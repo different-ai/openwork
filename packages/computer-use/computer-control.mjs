@@ -80,7 +80,7 @@ function deadline(ms) {
  * @typedef {{ isError?: boolean, content: Array<{ type: string, text?: string, data?: string, mimeType?: string }> }} ComputerResult
  * @typedef {{ sessionId?: string }} ChatInput
  * @typedef {{ ok?: boolean, error?: { code: string, message: string }, mayHaveActed?: boolean, [key: string]: unknown }} ScriptResult
- * @typedef {{ id: string, reason: "setup" | "script" | "files", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, script?: { app: string, code: string }, files?: { app: string, names: string[] } }} ComputerRequest
+ * @typedef {{ id: string, reason: "setup" | "script" | "files" | "credential", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, script?: { app: string, code: string }, files?: { app: string, names: string[] }, credential?: { site: string } }} ComputerRequest
  * @typedef {{ targets?: Record<string, string>, computer?: string }} SavedChoices
  * @typedef {{
  *   callTool: (name: string, args: Record<string, unknown>, options?: { signal?: AbortSignal, timeoutMs?: number }) => Promise<ComputerResult>,
@@ -257,6 +257,22 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     // Allowing a panel to be browsed lists no files, so it never becomes a standing approval.
     if (answer === "always" && !names.length) return "allow";
     if (answer === "always") (grant.filesAlwaysFor ??= new Set()).add(app);
+    return answer;
+  }
+  /**
+   * The built-in browser is about to type a password or one-time code into a page:
+   * the person confirms the exact site, so a credential given for one site never
+   * reaches another (a redirect or a lookalike) without their yes.
+   * @returns {Promise<"allow" | "always" | "dismiss" | "aborted" | "timeout" | "busy" | "too_many">}
+   */
+  async function approveCredential(grant, site, signal) {
+    if (!site || site.length > 200) return "too_many";
+    if (grant.credentialsAlwaysFor?.has(site)) return "always";
+    if (scriptRequests.has(grant.sessionId)) return "busy";
+    const target = targetFor(grant);
+    const answer = await approve(grant, { id: randomUUID(), reason: /** @type {const} */ ("credential"), computer: target.label, placement: target.placement,
+      credential: { site } }, signal);
+    if (answer === "always") (grant.credentialsAlwaysFor ??= new Set()).add(site);
     return answer;
   }
   /** One in-chat approval at a time per chat; answered through answerRequest. */
@@ -1195,6 +1211,16 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       const grant = await grantFor(sessionId);
       if (!grant.enabled) return false;
       return ["allow", "always"].includes(await approveFiles(grant, { app: String(app ?? "a website"), names: files }, signal));
+    },
+    /**
+     * Asks the person before the built-in browser types a password or code on `site`
+     * (an exact origin). The browser is its own feature, so this works with computer use off.
+     * @param {ChatInput & { site?: string }} input
+     */
+    async approveCredential({ sessionId, site } = {}, { signal = new AbortController().signal } = {}) {
+      if (closed || resetting || typeof site !== "string") return false;
+      const grant = await grantFor(sessionId);
+      return ["allow", "always"].includes(await approveCredential(grant, site, signal));
     },
     async script(input, { signal = new AbortController().signal } = {}) {
       if (!featureEnabled || closed || resetting || !runScript) return { ok: false, error: { code: "computer_unavailable", message: "App scripting is not available in this OpenWork app." } };

@@ -147,6 +147,51 @@ function FilesRequest({ sessionId, request, files }: { sessionId: string; reques
 }
 
 /**
+ * The built-in browser is about to type a password or one-time code on this exact
+ * site. Nothing is typed until the person confirms it; another site asks again.
+ */
+function CredentialRequest({ sessionId, request, credential }: { sessionId: string; request: ComputerRequest; credential: NonNullable<ComputerRequest["credential"]> }) {
+  const [busy, setBusy] = useState<"allow" | "always" | "dismiss" | null>(null)
+  const [error, setError] = useState("")
+
+  async function answer(next: "allow" | "always" | "dismiss") {
+    if (busy) return
+    setBusy(next)
+    setError("")
+    try {
+      await desktopBridge.computerAnswerRequest({ sessionId, answer: next, id: request.id })
+    } catch (cause) {
+      setError(`That wasn't saved. ${cause instanceof Error ? cause.message : String(cause)}`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const site = credential.site.replace(/^https:\/\//, "")
+  return (
+    <div className="overflow-hidden border-b border-dls-border bg-transparent" data-testid="session-computer-request" data-reason="credential">
+      <div className="flex flex-col gap-3 px-4 py-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover text-dls-secondary">
+            <Monitor size={16} strokeWidth={1.9} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-medium leading-5 text-dls-text">Enter your password or code on <span dir="ltr" className="break-all font-mono" data-testid="session-computer-credential-site">{site}</span>?</div>
+            <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">The agent types what you gave it into this site's sign-in field. Check the address is the site you meant; any other site asks again.</div>
+            {error ? <div role="alert" className="mt-1 text-[12px] leading-5 text-red-11">{error}</div> : null}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button type="button" variant="ghost" size="sm" disabled={busy !== null} aria-busy={busy === "dismiss"} data-testid="session-computer-credential-dismiss" onClick={() => void answer("dismiss")}>Don't enter</Button>
+          <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-credential-always" onClick={() => void answer("always")}>Always for this site in this chat</Button>
+          <Button type="button" size="sm" disabled={busy !== null} aria-busy={busy === "allow"} data-testid="session-computer-credential-allow" onClick={() => void answer("allow")}>Enter</Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
  * Shown above the composer while the agent waits for computer use. The tool
  * call carries on by itself once the person answers, so the agent never has
  * to ask them to go set it up and try again.
@@ -154,6 +199,7 @@ function FilesRequest({ sessionId, request, files }: { sessionId: string; reques
 export function ComputerRequestPanel({ sessionId, request }: { sessionId: string; request: ComputerRequest }) {
   if (request.reason === "script" && request.script) return <ScriptRequest sessionId={sessionId} request={request} script={request.script} />
   if (request.reason === "files" && request.files) return <FilesRequest sessionId={sessionId} request={request} files={request.files} />
+  if (request.reason === "credential" && request.credential) return <CredentialRequest sessionId={sessionId} request={request} credential={request.credential} />
   return <SetupRequest sessionId={sessionId} request={request} />
 }
 
