@@ -5,7 +5,7 @@ description: "Let OpenWork pick the right model and thinking level for every pro
 
 The Smart Model Router lets members choose a **Smart** model instead of a specific one. You create Smart Routers, each with a name, the people it applies to, and a few AI Gateway models tagged with the tasks they're good at. For every prompt, OpenWork sends it to the model whose tasks fit it best, and decides how much that model should think.
 
-You set it up in OpenWork Cloud under **AI Gateway → Smart Model Router**. Members don't configure anything: each Smart Router that applies to them appears at the top of their model picker as **Smart: <name>**.
+You set it up in OpenWork Cloud under **AI Gateway → Smart Model Router**. Members don't configure anything: each Smart Router that applies to them appears at the top of their model picker as **Smart:** followed by the router's name, for example **Smart: Engineering**.
 
 <Note>
 The Smart Model Router is rolling out on OpenWork Cloud. If you don't see the **Smart Model Router** tab, ask OpenWork to turn it on for your organization.
@@ -25,7 +25,7 @@ The Smart Model Router is rolling out on OpenWork Cloud. If you don't see the **
     A Smart Router can only use models that are already in your AI Gateway, in an active model group. If you haven't yet, [add a provider](/cloud/share-with-your-team/managed-llm-provider) and its models first.
   </Step>
   <Step title="Create a Smart Router and choose who it applies to">
-    Open **AI Gateway → Smart Model Router** and select **New Smart Router**. First choose who it applies to: everyone in the organization, teams, or individual people. Then give it a name; members see it as **Smart: <name>**.
+    Open **AI Gateway → Smart Model Router** and select **New Smart Router**. First choose who it applies to: everyone in the organization, teams, or individual people. Then give it a name; a router named Engineering appears to members as **Smart: Engineering**.
   </Step>
   <Step title="Add models and the tasks each handles">
     Select **Add model** for each model, then add the tasks it should handle. Pick tasks your organization already uses from the list, or type a new one and press Enter. A task can be one word ("translation") or several ("debugging failing tests"), and the same task can be added to more than one model.
@@ -46,7 +46,7 @@ Give each model a few specific tasks. "Quick questions", "short emails" for a fa
 
 ## What members see
 
-Members see one **Smart: <name>** option at the top of the desktop model picker for every Smart Router that applies to them and that has at least one model they can use. Smart manages thinking itself.
+Members see one **Smart:** option (such as **Smart: Engineering**) at the top of the desktop model picker for every Smart Router that applies to them and that has at least one model they can use. Smart manages thinking itself.
 
 <Frame caption="Each Smart Router that applies to a member is at the top of their model picker.">
   <img src="/images/auto-model-routing/smart-router-picker.png" alt="The desktop model picker with Smart: Engineering, Picks the best model for each task, at the top" />
