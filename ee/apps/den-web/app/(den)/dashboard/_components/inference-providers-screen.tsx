@@ -8,8 +8,12 @@ import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
-import { getAiGatewayProviderRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
+import { autoRouterModelName, type AutoRouter, type AutoRouterRoutingState } from "@openwork/types/den/auto-router";
+import { getAiGatewayProviderRoute, getAiGatewaySmartRouterRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { useAutoRouters } from "./auto-router-data";
+import { assignmentIsEmpty, assignmentSummary } from "./auto-router-model";
+import { AddSmartRouterButton, SmartRouterMark } from "./auto-router-screen";
 import { GatewayWhoCanUseModels } from "./gateway-who-can-use-models";
 import { useOrgInferenceProviders } from "./inference-provider-data";
 import { describeGatewayAccess, type DenInferenceProvider } from "./inference-provider-request";
@@ -79,6 +83,44 @@ function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; or
   );
 }
 
+/** A Smart Router, listed above providers and laid out like one. */
+function SmartRouterRow({ router, routing, orgSlug }: { router: AutoRouter; routing: AutoRouterRoutingState; orgSlug: string | null }) {
+  const { orgContext } = useOrgDashboard();
+  const nobody = assignmentIsEmpty(router.assignment);
+  const audience = assignmentSummary(router.assignment, { members: orgContext?.members ?? [], teams: orgContext?.teams ?? [] });
+  const name = autoRouterModelName(router.name);
+  const status = routing === "missing_key"
+    ? { label: "Paused", dot: "bg-amber-500", text: "text-amber-700" }
+    : nobody
+      ? { label: "Give access", dot: "bg-amber-500", text: "text-amber-700" }
+      : { label: "Ready", dot: "bg-emerald-500", text: "text-gray-600" };
+  return (
+    <div className={ROW} data-testid="auto-router-row" data-router-id={router.id}>
+      <SmartRouterMark />
+      <div className="min-w-0 w-[200px] shrink-0">
+        <p className="truncate text-[13px] font-medium text-gray-900">{name}</p>
+        <p className="truncate text-[12px] text-gray-500">Smart Router</p>
+      </div>
+      <p className="w-[140px] shrink-0 text-[13px] text-gray-600">{router.models.length === 1 ? "1 model" : `${router.models.length} models`}</p>
+      <p className={`min-w-0 flex-1 truncate text-[13px] ${nobody ? "text-gray-500" : "text-gray-600"}`} data-testid="auto-router-audience">
+        {nobody ? "No one yet" : audience}
+      </p>
+      <p className={`flex w-[110px] shrink-0 items-center gap-2 text-[12px] ${status.text}`} aria-label={`Status: ${status.label}`}>
+        <span className={`h-1.5 w-1.5 rounded-full ${status.dot}`} aria-hidden="true" />
+        {status.label}
+      </p>
+      <Link
+        href={getAiGatewaySmartRouterRoute(orgSlug, router.id, nobody ? "access" : undefined)}
+        data-testid="auto-router-open"
+        aria-label={`Manage ${name}`}
+        className={buttonVariants({ variant: "secondary", size: "sm" })}
+      >
+        {nobody ? "Set up" : "Manage"}
+      </Link>
+    </div>
+  );
+}
+
 function EmptyState({ orgSlug }: { orgSlug: string | null }) {
   return (
     <div data-testid="gateway-providers-empty" className="flex flex-col items-center gap-4 py-12 text-center">
@@ -93,13 +135,23 @@ function EmptyState({ orgSlug }: { orgSlug: string | null }) {
 
 /** The AI Providers tab of AI Gateway: who can use models, then one row per provider. */
 export function GatewayProvidersSection() {
-  const { orgId, orgSlug } = useOrgDashboard();
+  const { orgId, orgSlug, orgContext } = useOrgDashboard();
   const { inferenceProviders, busy, error, reloadProviders } = useOrgInferenceProviders(orgId);
+  // Smart Routers (feature `autoRouter`) are listed first, like providers.
+  const smartRoutersEnabled = orgFeatureEnabled(orgContext, "autoRouter");
+  const smartRouters = useAutoRouters(orgId ?? "", smartRoutersEnabled);
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return normalized ? inferenceProviders.filter((provider) => provider.name.toLowerCase().includes(normalized) || provider.providerId.includes(normalized)) : inferenceProviders;
   }, [inferenceProviders, query]);
+  const routers = smartRoutersEnabled ? smartRouters.data?.routers ?? [] : [];
+  const filteredRouters = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    return normalized ? routers.filter((router) => autoRouterModelName(router.name).toLowerCase().includes(normalized)) : routers;
+  }, [routers, query]);
+  const routing = smartRouters.data?.routing ?? "unknown";
+  const canAddSmartRouter = smartRoutersEnabled && smartRouters.data?.canEdit === true;
   const empty = !busy && !error && inferenceProviders.length === 0;
 
   return (
@@ -119,6 +171,7 @@ export function GatewayProvidersSection() {
                 <div className="w-[200px]">
                   <DenInput type="search" icon={Search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter by name" aria-label="Filter by name" className="h-8 text-[12px]" />
                 </div>
+                {canAddSmartRouter ? <AddSmartRouterButton missingKey={routing === "missing_key"} /> : null}
                 <Link href={getNewAiGatewayProviderRoute(orgSlug)} data-testid="gateway-provider-create" className={buttonVariants({ variant: "primary", size: "sm" })}>
                   <Plus className="h-4 w-4" aria-hidden="true" />
                   Add a provider
@@ -135,8 +188,13 @@ export function GatewayProvidersSection() {
                   <DenSkeleton className="h-4 w-[110px] shrink-0" />
                   <DenSkeleton className="h-8 w-20 shrink-0 rounded-lg" />
                 </div>
-              )) : filtered.length === 0 ? !error && !busy ? <p className="px-4 py-6 text-[13px] text-gray-500">No providers match that filter. Try another name.</p> : null
-                : filtered.map((provider) => <ProviderRow key={provider.id} provider={provider} orgSlug={orgSlug} />)}
+              )) : filtered.length === 0 && filteredRouters.length === 0 ? !error && !busy ? <p className="px-4 py-6 text-[13px] text-gray-500">No providers match that filter. Try another name.</p> : null
+                : (
+                  <>
+                    {filteredRouters.map((router) => <SmartRouterRow key={router.id} router={router} routing={routing} orgSlug={orgSlug} />)}
+                    {filtered.map((provider) => <ProviderRow key={provider.id} provider={provider} orgSlug={orgSlug} />)}
+                  </>
+                )}
             </div>
           </section>
         </>

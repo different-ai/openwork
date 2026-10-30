@@ -6,6 +6,7 @@ import {
   addTask,
   assignmentSummary,
   draftProblem,
+  assignmentIsEmpty,
   draftToWrite,
   membersWithoutAccess,
   mergeTasks,
@@ -104,7 +105,6 @@ test("a saved router round-trips through the draft in order", () => {
   const draft = routerToDraft(router, () => `row${next++}`);
   assert.deepEqual(draftToWrite(draft), {
     name: "Engineering",
-    assignment: { everyone: false, teamIds: ["t_eng"], memberIds: [] },
     models: [
       { providerId: "ipr_a", modelId: "fast", tasks: ["Quick questions"] },
       { providerId: "ipr_b", modelId: "deep", tasks: ["Code review", "Quick questions"] },
@@ -112,15 +112,17 @@ test("a saved router round-trips through the draft in order", () => {
   });
 });
 
-test("a new router starts with everyone only when the admin may share with everyone", () => {
-  assert.equal(routerToDraft(null, () => "row", true).access.orgWide, true);
-  assert.equal(routerToDraft(null, () => "row", false).access.orgWide, false);
+test("a new router starts with one empty model row; who it applies to is the second step", () => {
+  const draft = routerToDraft(null, () => "row");
+  assert.deepEqual(draft, { name: "", models: [{ key: "row", model: null, tasks: [], pending: "" }] });
+  assert.equal(assignmentIsEmpty({ everyone: false, teamIds: [], memberIds: [] }), true);
+  assert.equal(assignmentIsEmpty({ everyone: false, teamIds: ["t_eng"], memberIds: [] }), false);
+  assert.equal(assignmentIsEmpty({ everyone: true, teamIds: [], memberIds: [] }), false);
 });
 
 test("drafts explain what is missing before they can be saved", () => {
   const base: RouterDraft = {
     name: "Support",
-    access: { orgWide: true, memberIds: [], teamIds: [] },
     models: [{ key: "a", model: { providerId: "ipr_a", modelId: "fast" }, tasks: [], pending: "" }],
   };
   assert.equal(draftProblem({ ...base, name: "  " }), "Name this Smart Router.");

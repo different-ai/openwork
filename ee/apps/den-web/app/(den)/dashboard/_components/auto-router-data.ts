@@ -3,6 +3,8 @@
 import {
   autoRouterListSchema,
   autoRouterOptionsSchema,
+  autoRouterSavedSchema,
+  type AutoRouterAssignment,
   type AutoRouterList,
   type AutoRouterOptions,
   type AutoRouterWrite,
@@ -64,7 +66,16 @@ export function useAutoRouterOptions(orgId: string, enabled = true) {
   });
 }
 
-type RouterRequest = { method: "POST" | "PUT" | "DELETE"; path: string; body?: AutoRouterWrite; action: string; fallback: string };
+type RouterRequest = {
+  method: "POST" | "PUT" | "DELETE";
+  path: string;
+  body?: AutoRouterWrite | { assignment: AutoRouterAssignment };
+  action: string;
+  fallback: string;
+};
+
+/** What a write answers: the whole list, which replaces the cached one, and the router it saved. */
+export type AutoRouterWriteResult = { list: AutoRouterList; routerId: string | null };
 
 /** Every write returns the whole list, which replaces the cached one. */
 function useRouterMutation<Input>(orgId: string, name: string, toRequest: (input: Input) => RouterRequest) {
@@ -74,9 +85,9 @@ function useRouterMutation<Input>(orgId: string, name: string, toRequest: (input
   return useMutation({
     mutationKey: [...autoRoutersQueryKey(orgId), name],
     retry: false,
-    mutationFn: async (input: Input): Promise<AutoRouterList | null> => {
+    mutationFn: async (input: Input): Promise<AutoRouterWriteResult | null> => {
       const request = toRequest(input);
-      const result: { list: AutoRouterList | null } = { list: null };
+      const result: { value: AutoRouterWriteResult | null } = { value: null };
       await runReauthableAction(request.action, async () => {
         const { response, payload } = await requestJson(
           request.path,
@@ -88,19 +99,29 @@ function useRouterMutation<Input>(orgId: string, name: string, toRequest: (input
           20000,
         );
         if (!response.ok) throw getRequestError(payload, response, `${request.fallback} (${response.status}).`);
+        const saved = autoRouterSavedSchema.safeParse(payload);
+        if (saved.success) {
+          const { routerId, ...list } = saved.data;
+          result.value = { list, routerId };
+          return;
+        }
         const parsed = autoRouterListSchema.safeParse(payload);
-        result.list = parsed.success ? parsed.data : null;
+        result.value = parsed.success ? { list: parsed.data, routerId: null } : null;
       });
-      return result.list;
+      return result.value;
     },
-    onSuccess: (list) => {
-      if (list) queryClient.setQueryData(autoRoutersQueryKey(orgId), list);
+    onSuccess: (result) => {
+      if (result) queryClient.setQueryData(autoRoutersQueryKey(orgId), result.list);
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: autoRoutersQueryKey(orgId), exact: true }),
   });
 }
 
-/** Creates a Smart Router, or replaces one whole when `routerId` is set. Errors carry the server's message. */
+/**
+ * Step one: creates a Smart Router (it applies to nobody yet), or replaces an
+ * existing one's name and models when `routerId` is set. Errors carry the
+ * server's message.
+ */
 export function useSaveAutoRouter(orgId: string) {
   return useRouterMutation(orgId, "save", ({ routerId, input }: { routerId: string | null; input: AutoRouterWrite }): RouterRequest => ({
     method: routerId ? "PUT" : "POST",
@@ -108,6 +129,17 @@ export function useSaveAutoRouter(orgId: string) {
     body: input,
     action: "save-auto-router",
     fallback: "Couldn't save the Smart Router",
+  }));
+}
+
+/** Step two: sets who a Smart Router applies to. */
+export function useSaveAutoRouterAssignment(orgId: string) {
+  return useRouterMutation(orgId, "assignment", ({ routerId, assignment }: { routerId: string; assignment: AutoRouterAssignment }): RouterRequest => ({
+    method: "PUT",
+    path: `${listPath}/${encodeURIComponent(routerId)}/assignment`,
+    body: { assignment },
+    action: "save-auto-router-assignment",
+    fallback: "Couldn't save who the Smart Router applies to",
   }));
 }
 

@@ -836,6 +836,17 @@ export function getAiGatewayProviderRoute(orgSlug: string | null | undefined, in
   return `${getAiGatewayRoute(orgSlug)}/providers/${encodeURIComponent(inferenceProviderId)}`;
 }
 
+/** Step one of a new Smart Router: its name, models and tasks. */
+export function getNewAiGatewaySmartRouterRoute(orgSlug?: string | null): string {
+  return `${getAiGatewayRoute(orgSlug)}/smart-routers/new`;
+}
+
+/** A Smart Router's page; `step: "access"` is step two of creating one: who it applies to. */
+export function getAiGatewaySmartRouterRoute(orgSlug: string | null | undefined, routerId: string, step?: "access"): string {
+  const base = `${getAiGatewayRoute(orgSlug)}/smart-routers/${encodeURIComponent(routerId)}`;
+  return step ? `${base}?step=${step}` : base;
+}
+
 export function getEditAiGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
   return `${getAiGatewayProviderRoute(orgSlug, inferenceProviderId)}/edit`;
 }

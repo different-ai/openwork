@@ -243,6 +243,12 @@ export const autoRouterListSchema = z
   .meta({ ref: "AutoRouterList" })
 export type AutoRouterList = z.infer<typeof autoRouterListSchema>
 
+/** A write's answer: the whole list, and the router that was saved. */
+export const autoRouterSavedSchema = autoRouterListSchema
+  .extend({ routerId: z.string() })
+  .meta({ ref: "AutoRouterSaved" })
+export type AutoRouterSaved = z.infer<typeof autoRouterSavedSchema>
+
 /** Stored normalized (normalizeAutoRouterTaskName); no transform, so the API schema stays plain. */
 const taskNameSchema = z.string().trim().min(1).max(AUTO_ROUTER_TASK_MAX_LENGTH)
 
@@ -256,11 +262,14 @@ export const autoRouterModelWriteSchema = z
   .meta({ ref: "AutoRouterModelWrite" })
 export type AutoRouterModelWrite = z.infer<typeof autoRouterModelWriteSchema>
 
-/** Creates a router or replaces one whole. */
+/**
+ * Creates a router or replaces its name and models. Who it applies to is set
+ * separately (autoRouterAssignmentWriteSchema), as the second step of
+ * creating one; a new router applies to nobody until then.
+ */
 export const autoRouterWriteSchema = z
   .object({
     name: z.string().trim().min(1, "Name this Smart Router.").max(AUTO_ROUTER_NAME_MAX_LENGTH),
-    assignment: autoRouterAssignmentSchema,
     models: z.array(autoRouterModelWriteSchema).min(1, "Add at least one model.").max(AUTO_ROUTER_MAX_MODELS),
   })
   .strict()
@@ -279,6 +288,13 @@ export const autoRouterWriteSchema = z
   })
   .meta({ ref: "AutoRouterWrite" })
 export type AutoRouterWrite = z.infer<typeof autoRouterWriteSchema>
+
+/** Sets who a router applies to: everyone, teams, members. */
+export const autoRouterAssignmentWriteSchema = z
+  .object({ assignment: autoRouterAssignmentSchema })
+  .strict()
+  .meta({ ref: "AutoRouterAssignmentWrite" })
+export type AutoRouterAssignmentWrite = z.infer<typeof autoRouterAssignmentWriteSchema>
 
 /** Who can use a model through the AI Gateway's access grants. */
 export const autoRouterModelAccessSchema = z

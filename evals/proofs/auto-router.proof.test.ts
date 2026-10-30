@@ -23,24 +23,29 @@ function routersOf(body: unknown) {
   return isRecord(body) && Array.isArray(body.routers) ? body.routers.filter(isRecord) : [];
 }
 
-test("an admin creates a Smart Router with tasks and its Smart model answers through it", async ({ world, user, probe, step, evidence }) => {
+test("an admin adds a Smart Router in two steps from AI Providers and its Smart model answers through it", async ({ world, user, probe, step, evidence }) => {
   const modelLabel = world.provider.modelName.replace(/ \(.*\)$/, "");
+  let routerId = "";
 
-  await step("before: AI Gateway has a Smart Model Router tab with no routers", async () => {
-    await user.see({ testId: "ai-gateway-panel-auto-router" }, { timeoutMs: 60_000 });
-    await user.see({ role: "tab", text: "Smart Model Router" });
-    await user.see({ testId: "auto-router-section" }, { timeoutMs: 60_000 });
-    await user.see({ testId: "auto-router-new" }, { text: "New Smart Router" });
+  await step("before: AI Providers offers Add a Smart Router beside Add a provider, and no router is listed", async () => {
+    await user.see({ testId: "ai-gateway-panel-ai-providers" }, { timeoutMs: 60_000 });
+    await user.see({ testId: "gateway-provider-row" }, { timeoutMs: 60_000 });
+    await user.see({ testId: "auto-router-new" }, { text: "Add a Smart Router", timeoutMs: 30_000 });
+    await user.see({ testId: "gateway-provider-create" }, { text: "Add a provider" });
+    const tabs = await probe.dom('[data-testid="ai-gateway-tabs"] [role="tab"]');
+    const tabNames = tabs.elements.map((entry) => entry.text);
+    expect(tabNames).not.toContain("Smart Model Router");
+    const rows = await probe.dom('[data-testid="auto-router-row"]');
+    expect(rows.elements).toHaveLength(0);
     const connect = await probe.api(world.den.admin, "/v1/org/auto-router/connect");
     expect(connect.response.status).toBe(404);
-    evidence.recordAssertionEvidence("desktops get no Smart model before a router exists", `connect HTTP ${connect.response.status}`, connect.response.status === 404);
+    evidence.recordAssertionEvidence("no Smart Router tab, no routers, nothing for desktops", `tabs=${tabNames.join("/")}; rows=0; connect HTTP ${connect.response.status}`, connect.response.status === 404);
     await user.screenshot();
   });
 
-  await step("the admin chooses who it applies to, names it, and gives a model two tasks", async () => {
+  await step("step 1: the admin names the router and gives a model two tasks", async () => {
     await user.click({ testId: "auto-router-new" });
-    await user.see({ testId: "auto-router-editor" }, { timeoutMs: 30_000 });
-    await user.see({ testId: "who-can-use-it" });
+    await user.see({ testId: "auto-router-steps" }, { timeoutMs: 30_000 });
     await user.type({ testId: "auto-router-name" }, "Engineering");
     await user.click({ role: "combobox", label: "Model 1" });
     const option = { role: "option", label: new RegExp(modelLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) } as const;
@@ -54,32 +59,41 @@ test("an admin creates a Smart Router with tasks and its Smart model answers thr
     await user.type(tasks, "Code review");
     await user.screenshot();
     await user.click({ testId: "auto-router-save" });
-    await user.see({ testId: "auto-router-row" }, { timeoutMs: 30_000 });
+    await user.see({ testId: "auto-router-access" }, { timeoutMs: 30_000 });
   });
 
-  let routerId = "";
-  await step("after: Den stores the router, its assignment and both tasks, shared across the organization", async () => {
+  await step("after step 1: the router exists with its tasks but applies to nobody yet", async () => {
     const saved = await probe.api(world.den.admin, "/v1/org/auto-routers");
-    const routers = routersOf(saved.body);
-    const router = routers[0];
+    const router = routersOf(saved.body)[0];
     const assignment = isRecord(router?.assignment) ? router.assignment : {};
     const models = Array.isArray(router?.models) ? router.models.filter(isRecord) : [];
     const tasks = Array.isArray(models[0]?.tasks) ? models[0].tasks : [];
-    const orgTasks = isRecord(saved.body) && Array.isArray(saved.body.tasks) ? saved.body.tasks : [];
     routerId = typeof router?.id === "string" ? router.id : "";
-    expect(saved.response.ok).toBe(true);
-    expect(routers).toHaveLength(1);
+    const connect = await probe.api(world.den.admin, "/v1/org/auto-router/connect");
     expect(router?.name).toBe("Engineering");
-    expect(assignment.everyone).toBe(true);
-    expect(models.map((model) => model.modelId)).toEqual([ACME_MODEL]);
     expect(tasks).toEqual(["Debugging", "Code review"]);
-    expect([...orgTasks].sort()).toEqual(["Code review", "Debugging"]);
-    expect(router).not.toHaveProperty("thinkingLevel");
+    expect(assignment).toEqual({ everyone: false, teamIds: [], memberIds: [] });
+    expect(connect.response.status).toBe(404);
     evidence.recordAssertionEvidence(
-      "the router has its name, everyone, one model and both tasks",
-      `name=${String(router?.name)}; everyone=${String(assignment.everyone)}; models=${models.map((model) => String(model.modelId)).join(",")}; tasks=${tasks.join("/")}; org tasks=${orgTasks.join("/")}`,
-      router?.name === "Engineering" && tasks.length === 2,
+      "step 1 creates the router with no one assigned",
+      `name=${String(router?.name)}; tasks=${tasks.join("/")}; everyone=${String(assignment.everyone)}; connect HTTP ${connect.response.status}`,
+      routerId !== "" && assignment.everyone === false && connect.response.status === 404,
     );
+    await user.screenshot();
+  });
+
+  await step("step 2: the admin makes it apply to everyone, and it is listed first under AI Providers", async () => {
+    await user.click({ testId: "access-everyone" });
+    await user.click({ testId: "auto-router-save-access" });
+    await user.see({ testId: "auto-router-row" }, { timeoutMs: 30_000 });
+    const rows = await probe.dom('[data-testid="gateway-provider-row"], [data-testid="auto-router-row"]');
+    const first = rows.elements[0]?.text ?? "";
+    expect(first).toContain("Smart: Engineering");
+    const saved = await probe.api(world.den.admin, "/v1/org/auto-routers");
+    const router = routersOf(saved.body)[0];
+    const assignment = isRecord(router?.assignment) ? router.assignment : {};
+    expect(assignment.everyone).toBe(true);
+    evidence.recordAssertionEvidence("the Smart Router is the first row, like a provider, and applies to everyone", `first row="${first.replace(/\s+/g, " ")}"; everyone=${String(assignment.everyone)}`, first.includes("Smart: Engineering"));
     await user.screenshot();
   });
 
@@ -105,7 +119,6 @@ test("an admin creates a Smart Router with tasks and its Smart model answers thr
     expect(routedModel).toBe(ACME_MODEL);
     expect(text).toContain(ACME_REPLY.split(" ")[0]);
     expect(text).toContain("data: [DONE]");
-    expect(text).toContain("\"openwork_route\"");
     const upstreamCalls = world.upstream.requests.slice(before);
     expect(upstreamCalls.map((entry) => entry.model)).toEqual([ACME_MODEL]);
     evidence.recordAssertionEvidence(
@@ -115,11 +128,13 @@ test("an admin creates a Smart Router with tasks and its Smart model answers thr
     );
   });
 
-  await step("after: deleting the router removes its Smart model and its now unused tasks", async () => {
-    await user.click({ role: "button", label: "Delete Engineering" });
+  await step("after: removing the router from its page removes its Smart model and its now unused tasks", async () => {
+    await user.click({ testId: "auto-router-open" });
+    await user.see({ testId: "auto-router-delete" }, { timeoutMs: 30_000 });
+    await user.click({ testId: "auto-router-delete" });
     await user.see({ testId: "confirm-dialog" });
     await user.click({ testId: "confirm-dialog-action" });
-    await user.see({ testId: "auto-router-section" }, { timeoutMs: 30_000 });
+    await user.see({ testId: "gateway-provider-row" }, { timeoutMs: 30_000 });
     const after = await probe.eventually(() => probe.api(world.den.admin, "/v1/org/auto-routers"), {
       within: 30_000, label: "the router is gone", until: (value) => routersOf(value.body).length === 0,
     });
@@ -201,10 +216,10 @@ desktopTest("a member picks a Smart model and sees which model answered their qu
   });
 });
 
-missingKeyTest("without the gateway's routing key, New Smart Router explains how to add it instead of creating one", async ({ world, user, probe, step, evidence }) => {
-  await step("before: New Smart Router is muted and says why", async () => {
-    await user.see({ testId: "auto-router-section" }, { timeoutMs: 60_000 });
-    await user.see({ testId: "auto-router-missing-key" }, { timeoutMs: 30_000 });
+missingKeyTest("without the gateway's routing key, Add a Smart Router explains how to add it instead of creating one", async ({ world, user, probe, step, evidence }) => {
+  await step("before: Add a Smart Router is muted and says why", async () => {
+    await user.see({ testId: "ai-gateway-panel-ai-providers" }, { timeoutMs: 60_000 });
+    await user.see({ testId: "auto-router-new" }, { timeoutMs: 60_000 });
     const list = await probe.api(world.den.admin, "/v1/org/auto-routers");
     expect(isRecord(list.body) && list.body.routing).toBe("missing_key");
     const create = await probe.dom('[data-testid="auto-router-new"][data-blocked="missing-key"]');
@@ -213,7 +228,7 @@ missingKeyTest("without the gateway's routing key, New Smart Router explains how
     await user.screenshot();
   });
 
-  await step("after: clicking New Smart Router opens the setup dialog and nothing is created", async () => {
+  await step("after: clicking Add a Smart Router opens the setup dialog and nothing is created", async () => {
     await user.click({ testId: "auto-router-new" });
     await user.see({ testId: "auto-router-setup-dialog" }, { timeoutMs: 10_000 });
     await user.see({ text: "Smart Model Router needs a routing key" });

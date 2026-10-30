@@ -33,9 +33,9 @@ export type RouterModelDraft = {
   pending: string;
 };
 
+/** Step one of a router: its name and models. Who it applies to is step two. */
 export type RouterDraft = {
   name: string;
-  access: AccessDraft;
   models: RouterModelDraft[];
 };
 
@@ -93,6 +93,11 @@ export function accessGapSentence(memberIds: readonly string[], directory: Route
   return `${list} ${names.length === 1 ? "doesn't" : "don't"} have access to this model.`;
 }
 
+/** Whether a router applies to anyone yet. */
+export function assignmentIsEmpty(assignment: AutoRouterAssignment): boolean {
+  return !assignment.everyone && assignment.teamIds.length === 0 && assignment.memberIds.length === 0;
+}
+
 /** The list row's audience: "Everyone", "Engineering and Maya", or "Nobody yet". */
 export function assignmentSummary(assignment: AutoRouterAssignment, directory: RouterDirectory): string {
   if (assignment.everyone) return "Everyone";
@@ -138,12 +143,10 @@ export function rowTasks(row: Pick<RouterModelDraft, "tasks" | "pending">, known
   return row.pending.trim() ? addTask(row.tasks, row.pending, known) : [...row.tasks];
 }
 
-/** A new router applies to everyone when this admin may share with everyone. */
-export function routerToDraft(router: AutoRouter | null, newKey: () => string, everyoneByDefault = true): RouterDraft {
-  if (!router) return { name: "", access: { orgWide: everyoneByDefault, memberIds: [], teamIds: [] }, models: [{ key: newKey(), model: null, tasks: [], pending: "" }] };
+export function routerToDraft(router: AutoRouter | null, newKey: () => string): RouterDraft {
+  if (!router) return { name: "", models: [{ key: newKey(), model: null, tasks: [], pending: "" }] };
   return {
     name: router.name,
-    access: assignmentToAccess(router.assignment),
     models: router.models.map((model) => ({
       key: newKey(),
       model: { providerId: model.providerId, modelId: model.modelId },
@@ -172,5 +175,5 @@ export function draftToWrite(draft: RouterDraft, known: readonly string[] = []):
   const models = draft.models.flatMap((row) => row.model
     ? [{ providerId: row.model.providerId, modelId: row.model.modelId, tasks: rowTasks(row, known) }]
     : []);
-  return { name: draft.name.trim(), assignment: accessToAssignment(draft.access), models };
+  return { name: draft.name.trim(), models };
 }
