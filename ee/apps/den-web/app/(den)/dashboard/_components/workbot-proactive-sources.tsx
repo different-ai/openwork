@@ -120,7 +120,7 @@ function AddSource({ slot, options, disabled, onPick }: { slot: AgentSourceSlot;
           <div className={denDropdownListClass} role="menu" aria-label={`Connections to add to ${SLOT_LABEL[slot]}`}>
             {options.length === 0 ? <p className="px-3 py-2.5 text-[13px] text-gray-500">Every connection is already here.</p> : null}
             {options.map((option) => (
-              <button key={option.id} type="button" role="menuitem" className={`${denDropdownRowBaseClass} ${denDropdownRowIdleClass} items-center justify-start`}
+              <button key={option.id} type="button" role="menuitem" aria-label={option.name} className={`${denDropdownRowBaseClass} ${denDropdownRowIdleClass} items-center justify-start`}
                 onClick={() => {
                   setOpen(false);
                   onPick(option);
