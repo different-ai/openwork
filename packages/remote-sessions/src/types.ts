@@ -24,6 +24,8 @@ export interface Progress {
   finalText?: string
   error?: SessionError | null
   messageCount?: number
+  /** The step the session ran last, as a short sentence (≤240 chars); omitted by older runners. */
+  latestStep?: string | null
   observedAt: number
 }
 export type Complete =
@@ -50,10 +52,31 @@ export interface TranscriptToolCall {
   id: string; name: string; status: string | null
   input: string | null; output: string | null; error: string | null; truncated: boolean
 }
+/**
+ * One step of a message in the order the harness recorded it. Optional on the
+ * wire: older runners send only `text` and `toolCalls`, which stay populated
+ * for older readers.
+ */
+export type TranscriptPart =
+  | { type: "text"; text: string }
+  | { type: "reasoning"; text: string; durationMs?: number }
+  | {
+    type: "tool"; id: string; name: string; status: string | null; title?: string
+    input: string | null; output: string | null; error: string | null; truncated: boolean
+    startedAt?: number; endedAt?: number
+  }
 export interface TranscriptMessage {
   id: string; role: "user" | "assistant"; createdAt: number | null
   text: string; truncated: boolean; toolCalls: TranscriptToolCall[]; error: SessionError | null
+  /** Ordered steps (text, reasoning, tools); absent from older runners. */
+  parts?: TranscriptPart[]
+  /** When an assistant message finished, if the harness knows. */
+  completedAt?: number | null
 }
+export const TRANSCRIPT_PARTS_MAX = 200
+export const TRANSCRIPT_TOOL_FIELD_MAX = 2000
+export const TRANSCRIPT_TEXT_PART_MAX = 20_000
+export const TRANSCRIPT_REASONING_PART_MAX = 4_000
 export interface ReadResult {
   title: string | null
   status: Status

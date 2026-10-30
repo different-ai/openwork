@@ -189,48 +189,45 @@ function streamingAnswer(id: string, parts: UIMessage["parts"] = [{ type: "text"
   }
 }
 
-test("liveReplyModel: hovering a streaming reply shows its model where the finished reply keeps it", async () => {
+test("liveReplyModel: the Working line names the model writing this turn, revealed on hover", async () => {
   useLiveReplyModelStore.getState().setEnabled(true)
-  const container = await render([streamingAnswer("reply")], true)
-  const label = container.querySelector('[data-testid="reply-model"]')
-  expect(label?.textContent).toBe("Writing with Claude Sonnet")
-  expect(label?.hasAttribute("data-reply-model-live")).toBe(true)
-  // Same hover reveal as the finished footer.
-  expect(label?.className).toContain("opacity-0")
-  expect(label?.className).toContain("group-hover/message-group:opacity-100")
-  // The actions keep their slot so the caption does not move at completion, but cannot be used yet.
-  const actions = label?.previousElementSibling
-  expect(actions?.className).toContain("invisible")
-  expect(actions?.getAttribute("aria-hidden")).toBe("true")
-  expect(actions?.hasAttribute("inert")).toBe(true)
-  expect(container.querySelector('[data-reply-footer="live"]')).not.toBeNull()
-})
-
-test("liveReplyModel: the caption is already there while the reply is still only running steps", async () => {
-  useLiveReplyModelStore.getState().setEnabled(true)
-  const container = await render([streamingAnswer("reply", [{ type: "dynamic-tool", toolName: "bash", toolCallId: "c1", state: "input-available", input: { command: "ls", description: "list files" } }])], true)
-  expect(container.querySelector('[data-testid="reply-model"]')?.textContent).toBe("Writing with Claude Sonnet")
-})
-
-test("liveReplyModel: the caption keeps its place when the reply finishes", async () => {
-  useLiveReplyModelStore.getState().setEnabled(true)
-  const live = await render([streamingAnswer("reply")], true)
-  const liveFooter = live.querySelector("[data-reply-footer]")
-  const liveOrder = [...(liveFooter?.children ?? [])].map((child) => child.getAttribute("data-testid") ?? child.tagName)
-  await act(async () => mounted?.root.unmount())
-  mounted?.container.remove()
-  mounted = null
-  const done = await render([answer("reply")])
-  const doneFooter = done.querySelector("[data-reply-footer]")
-  expect(doneFooter?.getAttribute("data-reply-footer")).toBe("done")
-  expect([...(doneFooter?.children ?? [])].map((child) => child.getAttribute("data-testid") ?? child.tagName)).toEqual(liveOrder)
-  expect(doneFooter?.className).toBe(liveFooter?.className ?? "")
-})
-
-test("liveReplyModel off: a streaming reply shows no model", async () => {
-  const container = await render([streamingAnswer("reply")], true)
+  const container = await render([{ id: "u1", role: "user", parts: [{ type: "text", text: "Write it" }] }, streamingAnswer("reply")], true)
+  const line = container.querySelector('[data-loading-message="working"]')
+  const caption = line?.querySelector("[data-working-model]")
+  // Right after the timer, on the same line, outside the shimmer.
+  expect(line?.textContent).toMatch(/^Working \S+ · Writing with Claude Sonnet$/)
+  expect(caption?.closest(".ow-text-shimmer")).toBeNull()
+  expect(caption?.previousElementSibling?.className).toContain("ow-text-shimmer")
+  // Revealed by hovering the Working line; always shown on touch.
+  expect(line?.className).toContain("group/working")
+  expect(caption?.className).toContain("opacity-0")
+  expect(caption?.className).toContain("group-hover/working:opacity-100")
+  expect(caption?.className).toContain("pointer-coarse:opacity-100")
+  // The finished-reply footer is not involved while streaming.
   expect(container.querySelector('[data-testid="reply-model"]')).toBeNull()
-  expect(container.querySelector('[data-reply-footer="live"]')).toBeNull()
+})
+
+test("liveReplyModel: it is there while the turn only runs steps, before any text", async () => {
+  useLiveReplyModelStore.getState().setEnabled(true)
+  const container = await render([{ id: "u1", role: "user", parts: [{ type: "text", text: "Write it" }] }, streamingAnswer("reply", [{ type: "dynamic-tool", toolName: "bash", toolCallId: "c1", state: "input-available", input: { command: "ls", description: "list files" } }])], true)
+  expect(container.querySelector("[data-working-model]")?.textContent).toBe(" · Writing with Claude Sonnet")
+})
+
+test("liveReplyModel: a new turn never shows the previous turn's model", async () => {
+  useLiveReplyModelStore.getState().setEnabled(true)
+  const container = await render([
+    { id: "u1", role: "user", parts: [{ type: "text", text: "First" }] },
+    answer("reply_1"),
+    { id: "u2", role: "user", parts: [{ type: "text", text: "Second" }] },
+  ], true)
+  expect(container.querySelector('[data-loading-message]')).not.toBeNull()
+  expect(container.querySelector("[data-working-model]")).toBeNull()
+})
+
+test("liveReplyModel off: the Working line shows no model", async () => {
+  const container = await render([{ id: "u1", role: "user", parts: [{ type: "text", text: "Write it" }] }, streamingAnswer("reply")], true)
+  expect(container.querySelector('[data-loading-message="working"]')).not.toBeNull()
+  expect(container.querySelector("[data-working-model]")).toBeNull()
 })
 
 test("missing model metadata never invents a footer", async () => {

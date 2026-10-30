@@ -11,6 +11,7 @@ import type {
   HeadlessThreadSnapshot,
   HeadlessThreadTranscript,
   HeadlessTranscriptMessage,
+  HeadlessTranscriptPart,
   HeadlessTranscriptToolCall,
 } from "./types.js";
 
@@ -35,14 +36,44 @@ function toToolCalls(message: HeadlessThreadMessage): HeadlessTranscriptToolCall
     }));
 }
 
+function toParts(message: HeadlessThreadMessage): HeadlessTranscriptPart[] {
+  return message.parts.flatMap((part): HeadlessTranscriptPart[] => {
+    if (part.synthetic === true || part.ignored === true) return [];
+    if ((part.type === "text" || part.type === "reasoning") && typeof part.text === "string") {
+      if (!part.text.trim()) return [];
+      if (part.type === "text") return [{ type: "text", text: part.text }];
+      const durationMs = part.startedAt !== undefined && part.endedAt !== undefined && part.endedAt >= part.startedAt
+        ? part.endedAt - part.startedAt
+        : null;
+      return [{ type: "reasoning", text: part.text, durationMs }];
+    }
+    if (part.type !== "tool") return [];
+    return [{
+      type: "tool",
+      partId: part.id,
+      name: part.tool ?? "",
+      callId: part.callId ?? null,
+      status: part.toolStatus ?? null,
+      title: part.toolTitle ?? null,
+      input: part.toolInput,
+      output: part.toolOutput ?? null,
+      error: part.toolError ?? null,
+      startedAt: part.startedAt ?? null,
+      endedAt: part.endedAt ?? null,
+    }];
+  });
+}
+
 export function toTranscriptMessage(message: HeadlessThreadMessage): HeadlessTranscriptMessage {
   return {
     id: message.id,
     role: message.role,
     createdAt: message.createdAt,
+    completedAt: message.completedAt ?? null,
     text: joinPartText(message, "text"),
     reasoning: joinPartText(message, "reasoning"),
     toolCalls: toToolCalls(message),
+    parts: toParts(message),
   };
 }
 

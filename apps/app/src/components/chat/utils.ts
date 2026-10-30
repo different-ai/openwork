@@ -3,6 +3,7 @@ import type { ThreadStatus } from "@/lib/messages"
 // Relative so the pure grouping contract stays importable from alias-free
 // test workspaces (evals specs import this module directly).
 import { isAggregatableToolPart, type AggregateThought } from "../../lib/tool-aggregate"
+import { reasoningDurationMs } from "../../lib/text-activity"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../app/types"
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -226,7 +227,7 @@ export function groupMessages(messages: UIMessage[], status: ThreadStatus): Mess
 
 type AssistantRenderGroup =
   | { kind: "text"; text: string }
-  | { kind: "reasoning"; text: string; isStreaming: boolean }
+  | { kind: "reasoning"; text: string; isStreaming: boolean; durationMs?: number | null }
   | { kind: "file"; part: FileUIPart }
   | { kind: "tool"; part: ToolUIPart | DynamicToolUIPart }
   | { kind: "tool-aggregate"; parts: (ToolUIPart | DynamicToolUIPart)[]; thoughts: AggregateThought[] }
@@ -291,6 +292,11 @@ export function splitTurnAtAnswer(message: UIMessage): { steps: UIMessage; answe
   }
 }
 
+/** Two thoughts' combined length, unknown when either is unknown. */
+function addDurations(left: number | null | undefined, right: number | null): number | null {
+  return typeof left === "number" && right !== null ? left + right : null
+}
+
 export function getAssistantRenderGroups(
   parts: UIMessage["parts"],
   showThinking: boolean
@@ -316,6 +322,7 @@ export function getAssistantRenderGroups(
     if (!isReasoningUIPart(part)) {
       return
     }
+    const durationMs = reasoningDurationMs(part.providerMetadata)
 
     const previous = groups.at(-1)
     if (previous?.kind === "reasoning") {
@@ -324,6 +331,7 @@ export function getAssistantRenderGroups(
       // previous paragraph's last sentence.
       previous.text += previous.text && part.text.trim() ? `\n\n${part.text}` : part.text
       previous.isStreaming = previous.isStreaming || part.state === "streaming"
+      previous.durationMs = addDurations(previous.durationMs, durationMs)
       return
     }
 
@@ -340,17 +348,19 @@ export function getAssistantRenderGroups(
       if (lastThought && lastThought.afterIndex === previous.parts.length) {
         lastThought.text += lastThought.text ? `\n\n${part.text}` : part.text
         lastThought.isStreaming = lastThought.isStreaming || part.state === "streaming"
+        lastThought.durationMs = addDurations(lastThought.durationMs, durationMs)
         return
       }
       previous.thoughts.push({
         afterIndex: previous.parts.length,
         text: part.text,
         isStreaming: part.state === "streaming",
+        durationMs,
       })
       return
     }
 
-    groups.push({ kind: "reasoning", text: part.text, isStreaming: part.state === "streaming" })
+    groups.push({ kind: "reasoning", text: part.text, isStreaming: part.state === "streaming", durationMs })
   }
 
   for (const part of filteredParts) {

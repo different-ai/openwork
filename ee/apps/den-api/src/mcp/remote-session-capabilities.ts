@@ -19,6 +19,7 @@ import {
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
+import { boundCloudPage, cloudTranscriptParts } from "./remote-session-transcript.js"
 import {
   getOpenWorkWebRuntimeAccess,
   OPENWORK_WEB_ACCESS_REQUIRED_CODE,
@@ -261,7 +262,7 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "status",
     summary:
-      `Follow remote sessions cheaply: one call returns the compact status (state starting, running, waiting, idle or error; waitingFor; computer; a short preview of the answer) of up to ${REMOTE_SESSION_STATUS_THREADS_MAX} sessions, by commandId for desktop or registered targets and by sessionId for Cloud. Pass back each version you received: an unchanged session returns only its ref and version. Pass waitMs (up to ${REMOTE_SESSION_STATUS_WAIT_MAX_MS}) to wait in one call until one changes instead of polling; it returns at once when every session has settled. Use remote-session:read for the transcript or the full answer.`,
+      `Follow remote sessions cheaply: one call returns the compact status (state starting, running, waiting, idle or error; waitingFor; computer; latestStep, the step it ran last as a short sentence, while it works; a short preview of the answer) of up to ${REMOTE_SESSION_STATUS_THREADS_MAX} sessions, by commandId for desktop or registered targets and by sessionId for Cloud. Pass back each version you received: an unchanged session returns only its ref and version. Pass waitMs (up to ${REMOTE_SESSION_STATUS_WAIT_MAX_MS}) to wait in one call until one changes instead of polling; it returns at once when every session has settled. Use remote-session:read for the transcript or the full answer.`,
     searchExtraTokens: "remote session sessions status progress poll wait follow watch check done finished waiting question permission batch several many",
     argumentsSchema: {
       type: "object",
@@ -1409,12 +1410,16 @@ async function executeRemoteSession(
       title: transcript.title,
       status: snapshot.status.type,
       messageCount: transcript.messages.length,
-      messages: transcript.messages.slice(-limit).map((message) => ({
+      messages: boundCloudPage(transcript.messages.slice(-limit).map((message) => ({
         id: message.id,
         role: message.role,
+        createdAt: message.createdAt,
+        completedAt: message.completedAt,
         text: message.text.slice(0, READ_MESSAGE_TEXT_LIMIT),
         toolCalls: message.toolCalls.map((tool) => ({ id: tool.partId, name: tool.name, status: tool.status })),
-      })),
+        // The same ordered steps a desktop runner sends, so readers render one shape.
+        parts: cloudTranscriptParts(message, READ_MESSAGE_TEXT_LIMIT),
+      }))),
       finalAssistantText: body.messageId
         ? transcript.messages.filter(message => message.role === "assistant" && message.text).map(message => message.text).join("\n\n").slice(0, 100_000)
         : transcript.finalAssistantText.slice(0, FINAL_TEXT_LIMIT),

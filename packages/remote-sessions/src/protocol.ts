@@ -1,8 +1,11 @@
 import type {
   Command, Complete, Engine, Inventory, Journal, Model, Progress, ReadResult, Receipt,
-  Request, RequestComplete, SessionError, Status, TranscriptMessage, TranscriptToolCall, Turn,
+  Request, RequestComplete, SessionError, Status, TranscriptMessage, TranscriptPart, TranscriptToolCall, Turn,
 } from "./types.ts"
-import { MAX_COMMAND_ENTRIES, MAX_REQUEST_ENTRIES, REQUEST_RESULT_MAX_BYTES, SessionRunnerError } from "./types.ts"
+import {
+  MAX_COMMAND_ENTRIES, MAX_REQUEST_ENTRIES, REQUEST_RESULT_MAX_BYTES, SessionRunnerError,
+  TRANSCRIPT_PARTS_MAX, TRANSCRIPT_REASONING_PART_MAX, TRANSCRIPT_TEXT_PART_MAX, TRANSCRIPT_TOOL_FIELD_MAX,
+} from "./types.ts"
 
 function invalid(): never { throw new SessionRunnerError("invalid_data", "Invalid remote-session protocol or journal data.") }
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -81,7 +84,7 @@ export function parseReceipt(value: unknown): Receipt {
 }
 export function parseProgress(value: unknown): Progress {
   const v = object(value)
-  keys(v, ["status", "waitingFor", "engine", "model", "finalText", "error", "messageCount", "observedAt"])
+  keys(v, ["status", "waitingFor", "engine", "model", "finalText", "error", "messageCount", "latestStep", "observedAt"])
   return {
     status: status(v.status), observedAt: integer(v.observedAt),
     ...(v.waitingFor === undefined ? {} : { waitingFor: waiting(v.waitingFor) }),
@@ -90,6 +93,7 @@ export function parseProgress(value: unknown): Progress {
     ...(v.finalText === undefined ? {} : { finalText: text(v.finalText, 20_000, 0) }),
     ...(v.error === undefined ? {} : { error: nullable(v.error, parseError) }),
     ...(v.messageCount === undefined ? {} : { messageCount: integer(v.messageCount) }),
+    ...(v.latestStep === undefined ? {} : { latestStep: nullable(v.latestStep, step => text(step, 240, 1)) }),
   }
 }
 export function parseComplete(value: unknown): Complete {
@@ -136,12 +140,36 @@ function toolCall(value: unknown): TranscriptToolCall {
     error: nullable(v.error, value => text(value, 2000, 0)), truncated: boolean(v.truncated),
   }
 }
+function transcriptPart(value: unknown): TranscriptPart {
+  const v = object(value)
+  if (v.type === "text") {
+    keys(v, ["type", "text"])
+    return { type: "text", text: rawText(v.text, TRANSCRIPT_TEXT_PART_MAX, 0) }
+  }
+  if (v.type === "reasoning") {
+    keys(v, ["type", "text", "durationMs"])
+    return { type: "reasoning", text: rawText(v.text, TRANSCRIPT_REASONING_PART_MAX, 0),
+      ...(v.durationMs === undefined ? {} : { durationMs: integer(v.durationMs) }) }
+  }
+  if (v.type !== "tool") return invalid()
+  keys(v, ["type", "id", "name", "status", "title", "input", "output", "error", "truncated", "startedAt", "endedAt"])
+  const field = (value: unknown) => nullable(value, value => rawText(value, TRANSCRIPT_TOOL_FIELD_MAX, 0))
+  return {
+    type: "tool", id: text(v.id, 240, 0), name: text(v.name, 240, 0), status: nullable(v.status, value => text(value, 60, 0)),
+    ...(v.title === undefined ? {} : { title: text(v.title, 240, 0) }),
+    input: field(v.input), output: field(v.output), error: field(v.error), truncated: boolean(v.truncated),
+    ...(v.startedAt === undefined ? {} : { startedAt: integer(v.startedAt) }),
+    ...(v.endedAt === undefined ? {} : { endedAt: integer(v.endedAt) }),
+  }
+}
 function message(value: unknown): TranscriptMessage {
-  const v = object(value); keys(v, ["id", "role", "createdAt", "text", "truncated", "toolCalls", "error"])
+  const v = object(value); keys(v, ["id", "role", "createdAt", "text", "truncated", "toolCalls", "error", "parts", "completedAt"])
   if (v.role !== "user" && v.role !== "assistant") return invalid()
   return { id: text(v.id, 240, 0), role: v.role, createdAt: nullable(v.createdAt, integer),
     text: text(v.text, 20_000, 0), truncated: boolean(v.truncated), toolCalls: array(v.toolCalls, 200, toolCall),
-    error: nullable(v.error, parseError) }
+    error: nullable(v.error, parseError),
+    ...(v.parts === undefined ? {} : { parts: array(v.parts, TRANSCRIPT_PARTS_MAX, transcriptPart) }),
+    ...(v.completedAt === undefined ? {} : { completedAt: nullable(v.completedAt, integer) }) }
 }
 export function parseReadResult(value: unknown): ReadResult {
   const v = object(value)

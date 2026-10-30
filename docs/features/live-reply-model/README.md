@@ -5,30 +5,27 @@ off · author: [@benjaminshafii](https://github.com/benjaminshafii)
 
 ## What it does
 
-Hovering a reply that is still being written shows which model is writing it
-("Claude Opus 4.5" with its provider mark), in the same place the model shows
-once the reply has finished. Before, the model only appeared after the reply
-completed, so people waited a whole turn to learn which model was answering.
+While a turn runs, hovering its "Working 1m 2s" line shows which model is
+writing it, right after the timer on the same line:
+`Working 1m 2s · [provider mark] Claude Opus 4.5`. Before, the model only
+appeared under the reply once it had finished.
 
-- The caption uses the finished footer's hover reveal (hover, focus within
-  the reply, always on touch).
-- While the reply streams, the reply actions (Copy, Branch, time) keep their
-  slot but are invisible and cannot be used, so the caption does not move
-  when the reply finishes.
+- Shown on hover of the Working line (always on touch), outside the shimmer.
+- It is this turn's model only: until the reply starts there is nothing to
+  show, never the previous turn's model.
 - It shows as soon as the engine reports the reply's model, which is when
-  the reply starts, so it is there during long tool runs before any text.
+  the reply starts, so it is there during tool runs before any text.
 - With Auto, it shows the Auto label until the routing decision arrives, then
-  the routed model, exactly like the finished footer.
-- Screen readers hear "Writing with Claude Opus 4.5" while streaming and
-  "Replied with Claude Opus 4.5" after.
+  the routed model, the same as the finished reply.
+- Screen readers hear "Writing with Claude Opus 4.5".
 
-| Streaming, hovered (on) | Finished, hovered |
+| Hovered | Not hovered |
 | --- | --- |
-| ![Streaming reply hovered, flag on](streaming-hover.png) | ![Finished reply hovered](finished-hover.png) |
+| ![Working line hovered](working-hover.png) | ![Working line, not hovered](working-no-hover.png) |
 
-Flag off, streaming and hovered: no model until the reply finishes.
+Dark, hovered:
 
-![Streaming reply hovered, flag off](streaming-hover-off.png)
+![Working line hovered, dark](working-hover-dark.png)
 
 Screenshots: the real `MessageList` in headless Chrome against this
 checkout's Vite dev server, hovered with a real pointer move.
@@ -36,15 +33,14 @@ checkout's Vite dev server, hovered with a real pointer move.
 ## How to try it
 
 1. Turn `liveReplyModel` on for your organization in `/admin`.
-2. Send a message and hover the reply while it is still being written.
+2. Send a message and hover the "Working" line while it runs.
 
 ## Turning it off
 
-Rendering only. Off (or the kill switch) returns to showing the model only
-after the reply finishes, on the next features refresh. Nothing is stored.
+Rendering only. Off (or the kill switch) removes the caption from the
+Working line on the next features refresh. Nothing is stored.
 
 ## What to watch
 
-Layout reports for the footer row while streaming (it now holds its place
-under a live reply instead of appearing at the end), and replies whose model
-reads differently while streaming than after (Auto before routing).
+Replies whose model reads differently while running than after (Auto before
+routing).

@@ -23,7 +23,7 @@
     "electron": "pnpm run rebuild:electron-native && pnpm exec electron ./electron/main.mjs",
     "check:electron": "node ./scripts/check-electron-bridge.mjs",
     "typecheck:electron": "pnpm --filter @openwork/computer-use build && pnpm --filter @openwork/remote-sessions build && pnpm --dir ../server exec tsc -p ../desktop/tsconfig.electron.json --noEmit",
-    "test:session-runner": "node --test ./test/session-runner.test.mjs",
+    "test:session-runner": "node --test ./test/session-runner.test.mjs ./test/remote-session-transcript.test.mjs",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },
   "dependencies": {

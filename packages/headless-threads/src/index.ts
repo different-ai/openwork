@@ -2,6 +2,7 @@ export { createHeadlessThreadClient } from "./client.js";
 export { HeadlessThreadError, isHeadlessModelAccessError } from "./errors.js";
 export { hasAssistantReplySince, toTranscript, toTranscriptMessage } from "./transcript.js";
 export { isRunning } from "./wire.js";
+export { latestStep, LATEST_STEP_MAX_LENGTH, stepSentence } from "./latest-step.js";
 export type {
   AgentSessionClient,
   CreateThreadInput,
@@ -26,6 +27,7 @@ export type {
   HeadlessThreadWaitResult,
   HeadlessThreadWaitingFor,
   HeadlessTranscriptMessage,
+  HeadlessTranscriptPart,
   HeadlessTranscriptToolCall,
   HeadlessTurnAcceptance,
 } from "./types.js";

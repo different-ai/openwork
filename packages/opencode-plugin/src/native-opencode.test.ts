@@ -157,7 +157,7 @@ test("pagination is over recent native context; unknown or compacted cursors fai
   assert.equal(compacted.lastError, null)
 })
 
-test("bounds multibyte transcript pages by bytes and omits reasoning", async () => {
+test("bounds multibyte transcript pages by bytes and keeps reasoning out of message text", async () => {
   const { host, adapter } = await fixture()
   const receipt = await adapter.create(command, signal())
   for (let index = 0; index < 100; index++) host.histories.get(receipt.sessionId)?.push({ type: "assistant", id: `msg_large${index}`,
@@ -166,6 +166,31 @@ test("bounds multibyte transcript pages by bytes and omits reasoning", async () 
   const result = await adapter.read(receipt, { from: "end", cursor: null, limit: 100 }, signal())
   assert.ok(Buffer.byteLength(JSON.stringify(result)) < 256 * 1024)
   assert.ok(result.messages.every(message => message.truncated && !message.text.includes("not shared")))
+})
+
+test("a read sends each assistant step in native order, with the failed tool's error", async () => {
+  const { host, adapter } = await fixture()
+  const receipt = await adapter.create(command, signal())
+  host.histories.get(receipt.sessionId)?.push({ type: "assistant", id: "msg_steps", model: { providerID: "provider", id: "model" },
+    time: { created: 2000, completed: 9000 },
+    content: [
+      { type: "reasoning", text: "Plan the listing" },
+      { type: "tool", id: "prt_ls", name: "bash", state: { status: "completed", input: { command: "ls", description: "List files" }, content: [{ type: "text", text: "a" }] } },
+      { type: "text", text: "Reading one" },
+      { type: "tool", id: "prt_read", name: "read", state: { status: "error", input: { filePath: "/missing" }, error: { type: "not_found", message: "ENOENT" } } },
+      { type: "text", text: "Done." },
+    ] })
+  const result = await adapter.read(receipt, { from: "end", cursor: null, limit: 1 }, signal())
+  const message = result.messages[0]
+  assert.deepEqual(message?.parts?.map(part => part.type), ["reasoning", "tool", "text", "tool", "text"])
+  assert.equal(message?.completedAt, 9000)
+  const failed = message?.parts?.[3]
+  assert.ok(failed?.type === "tool")
+  assert.deepEqual([failed.name, failed.status, failed.error], ["read", "error", "ENOENT"])
+  const listed = message?.parts?.[1]
+  assert.ok(listed?.type === "tool")
+  assert.equal(listed.output, "a")
+  assert.equal(message?.text, "Reading one\nDone.")
 })
 
 test("inventory uses native location-scoped model list/default and public model ids, not upstream modelID", async () => {

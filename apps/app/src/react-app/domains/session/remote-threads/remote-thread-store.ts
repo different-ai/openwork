@@ -67,9 +67,12 @@ type RemoteThreadState = {
   enabled: boolean
   /** `remoteSessionThreadView`: a row opens the task's conversation beside the chat. */
   threadView: boolean
+  /** `remoteSessionHelperView`: a row opens the task in the main pane, like a helper. */
+  helperView: boolean
   threads: Record<string, RemoteThreadEntry>
   setEnabled: (enabled: boolean) => void
   setThreadView: (threadView: boolean) => void
+  setHelperView: (helperView: boolean) => void
   watch: (start: RemoteThreadStart, input: { owner: RemoteThreadOwner; organizationId: string; startedAt: number | null }) => () => void
   followedUp: (key: string) => void
   /** The agent sent the task a follow-up itself. */
@@ -94,6 +97,7 @@ export function remoteThreadNeedsStatus(entry: RemoteThreadEntry, organizationId
 export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
   enabled: false,
   threadView: false,
+  helperView: false,
   threads: {},
   setEnabled: (enabled) => {
     if (get().enabled === enabled) return
@@ -102,6 +106,7 @@ export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
     else stopFollowing()
   },
   setThreadView: (threadView) => set({ threadView }),
+  setHelperView: (helperView) => set({ helperView }),
   watch: (start, input) => {
     const ownerKey = `${input.owner.workspaceId}:${input.owner.sessionId}`
     const now = Date.now()
@@ -319,6 +324,25 @@ export function useRemoteThreadsEnabled(): boolean {
 /** Whether a task's row opens its conversation; rows alone show progress. */
 export function useRemoteThreadViewEnabled(): boolean {
   return useRemoteThreadStore((state) => state.enabled && state.threadView)
+}
+
+/** Whether a task opens in the main pane like a helper; it needs the conversation view too. */
+export function useRemoteThreadHelperViewEnabled(): boolean {
+  return useRemoteThreadStore((state) => state.enabled && state.threadView && state.helperView)
+}
+
+/** Tasks a chat started, as a string that only changes when their rows would. */
+export function useRemoteThreadChildrenKey(sessionId: string, enabled: boolean): string {
+  return useRemoteThreadStore((state) => {
+    if (!enabled || !state.enabled || !state.threadView || !state.helperView) return "[]"
+    const rows: string[][] = []
+    for (const entry of Object.values(state.threads)) {
+      if (!Object.values(entry.owners).some((owner) => owner.sessionId === sessionId)) continue
+      const title = entry.status?.title && entry.status.title !== "Remote session" ? entry.status.title : entry.start.title
+      rows.push([entry.start.key, title, entry.status?.state ?? "starting"])
+    }
+    return JSON.stringify(rows.sort((left, right) => (left[0] ?? "").localeCompare(right[0] ?? "")))
+  })
 }
 
 export function useRemoteThread(key: string | null): RemoteThreadEntry | null {

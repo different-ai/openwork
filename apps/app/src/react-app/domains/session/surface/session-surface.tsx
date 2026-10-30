@@ -1,6 +1,9 @@
 /** @jsxImportSource react */
 import { openMemberApiKeyDialog } from "../../connections/member-api-key-dialog";
 import { childOrigin, rememberChildOrigin, prepareChildReturn, consumeChildReturn, registerChildDraftPersistence } from "@/lib/child-navigation";
+import { remoteSessionRouteId } from "@/lib/remote-session-route";
+import type { RemoteThreadStart } from "@/lib/remote-session-thread";
+import { rememberRemoteHelperOrigin } from "@/react-app/domains/session/remote-threads/remote-helper-navigation";
 import { verifyChildTarget } from "@/lib/verify-child-target";
 import { isTaskToolPart, taskChildSessionId } from "@/lib/build-in-tools";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
@@ -414,6 +417,51 @@ function createChatTranscriptEvalMessages(sessionId: string) {
   return { messages };
 }
 
+/** Dev-only: one turn that exercises every text-first activity sentence (flag `textActivityRail`). */
+function createTextActivityEvalMessages(sessionId: string): UIMessage[] {
+  const now = Date.now();
+  return [
+    {
+      id: `${sessionId}:eval-text-activity-user`,
+      role: "user",
+      parts: [{ type: "text", text: "Check my notes, add a summary, fix the pricing line and tell me who is in the organization." }],
+      metadata: { opencode: { created: now } },
+    },
+    {
+      id: `${sessionId}:eval-text-activity-assistant`,
+      role: "assistant",
+      parts: [
+        {
+          type: "reasoning",
+          text: "**Plan**\n\nRead the brief, summarise it, then fix the pricing line.",
+          state: "done",
+          providerMetadata: { opencode: { partId: "eval-text-activity-thought", time: { start: now + 1, end: now + 12_001 } } },
+        },
+        { type: "dynamic-tool", toolName: "bash", toolCallId: "eval-text-activity-ls", state: "output-available",
+          input: { command: "ls -1 notes", description: "list the notes folder" }, output: "brief.md\nsummary.md\n" },
+        { type: "dynamic-tool", toolName: "read", toolCallId: "eval-text-activity-read", state: "output-available",
+          input: { filePath: "/tmp/openwork-eval/notes/brief.md" }, output: "" },
+        { type: "dynamic-tool", toolName: "grep", toolCallId: "eval-text-activity-grep", state: "output-available",
+          input: { pattern: "pricing", path: "notes" }, output: "" },
+        { type: "dynamic-tool", toolName: "bash", toolCallId: "eval-text-activity-gh", state: "output-available",
+          input: { command: "gh pr view 5212 --repo different-ai/openwork --json title,state,mergeable", description: "check the pull request" },
+          output: "{\n  \"mergeable\": \"MERGEABLE\",\n  \"state\": \"OPEN\",\n  \"title\": \"feat(server): add openwork-server web self-host command\"\n}" },
+        { type: "dynamic-tool", toolName: "write", toolCallId: "eval-text-activity-write", state: "output-available",
+          input: { filePath: "/tmp/openwork-eval/notes/summary.md", content: "# Summary\n\n- Lead with pricing.\n- Keep it short.\n" }, output: "" },
+        { type: "dynamic-tool", toolName: "edit", toolCallId: "eval-text-activity-edit", state: "output-available",
+          input: { filePath: "/tmp/openwork-eval/notes/brief.md", oldString: "Introduce the old pricing.", newString: "Introduce the new pricing.\nMention the annual plan." }, output: "" },
+        { type: "dynamic-tool", toolName: "bash", toolCallId: "eval-text-activity-fail", state: "output-error",
+          input: { command: "infisical export --env dev --path /pricing", description: "export pricing secrets from Infisical" },
+          errorText: "error: you must be logged in to run this command. Run infisical login first." },
+        { type: "dynamic-tool", toolName: "openwork-cloud_execute_capability", toolCallId: "eval-text-activity-capability", state: "output-available",
+          input: { name: "getOrg" }, output: JSON.stringify({ members: 2 }) },
+        { type: "text", text: "Your notes are summarised and the pricing line is fixed. PR opened: [#5212 feat(server): add openwork-server web self-host command](https://github.com/different-ai/openwork/pull/5212)." },
+      ],
+      metadata: { opencode: { created: now + 1, completed: now + 95_001 } },
+    },
+  ];
+}
+
 function createConnectorToolCallEvalMessages(sessionId: string): UIMessage[] {
   const now = Date.now();
   return [
@@ -758,6 +806,8 @@ export type SessionSurfaceProps = {
   onForkAtMessage?: (messageId: string | null, sessionId: string, isCurrent: () => boolean) => Promise<void>;
   /** Open a sub-agent (child) session in the main chat surface. */
   onOpenSubagentSession?: (sessionId: string) => void;
+  /** Open a task on another computer in the main pane (`remoteSessionHelperView`); absent opens it beside the chat. */
+  onOpenRemoteTask?: (threadKey: string) => void;
   onReturnToParent?: () => void;
   parentSessionTitle?: string;
   sessionTitle?: string;
@@ -1873,6 +1923,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId]);
   useControlAction(props.isControlTarget ? seedChatTranscriptControlAction : null);
+  const seedTextActivityControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.text_activity.seed",
+      label: "Seed text-first activity proof",
+      description: "Dev-only eval hook that renders one finished turn with commands, file reads and edits, a search, a failure, an OpenWork capability, a timed thought and a GitHub pull request link.",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      execute: () => {
+        const messages = createTextActivityEvalMessages(props.sessionId);
+        setEvalMarkdownMessages(messages);
+        return { ok: true, messageCount: messages.length };
+      },
+    };
+  }, [props.sessionId]);
+  useControlAction(props.isControlTarget ? seedTextActivityControlAction : null);
   const seedConnectorToolCallControlAction = useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
@@ -3233,6 +3300,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
       brief: task?.type === "dynamic-tool" && isTaskToolPart(task) ? task.input?.prompt ?? "" : "" });
     props.onOpenSubagentSession?.(id);
   }, [baseRenderedMessages, childNavigationScope, props.sessionId, props.chatPane, props.onOpenSubagentSession, props.sessionTitle]);
+  const openRemoteTask = useCallback((start: RemoteThreadStart) => {
+    // Same return path as a local helper: this pane, this scroll, this row.
+    const message = baseRenderedMessages.find(message => message.parts.some(part => part.type === "dynamic-tool" && part.toolCallId === start.toolCallId));
+    rememberChildOrigin(childNavigationScope, remoteSessionRouteId(start.key), { parentId: props.sessionId, pane: props.chatPane ?? "primary",
+      anchor: start.key, scrollTop: scrollRef.current?.scrollTop ?? 0, title: props.sessionTitle, brief: start.prompt ?? "", messageId: message?.id });
+    rememberRemoteHelperOrigin({ start, owner: { workspaceId: props.workspaceId, sessionId: props.sessionId }, parentTitle: props.sessionTitle ?? null });
+    props.onOpenRemoteTask?.(start.key);
+  }, [baseRenderedMessages, childNavigationScope, props.sessionId, props.chatPane, props.sessionTitle, props.workspaceId, props.onOpenRemoteTask]);
   const handleQueueDraftPersistenceRef = useRef<(() => void) | null>(null);
   handleQueueDraftPersistenceRef.current = () => {
     // The store receives keystrokes synchronously; a keyboard navigation event
@@ -3276,7 +3351,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
       const element = scrollRef.current;
       if (!element) return false;
       element.scrollTop = restore.scrollTop;
-      const row = element.querySelector(`[data-subagent-session-id="${CSS.escape(restore.anchor)}"]`);
+      const anchor = CSS.escape(restore.anchor);
+      const row = element.querySelector(`[data-subagent-session-id="${anchor}"], [data-remote-thread="${anchor}"]`);
       if (row) {
         observer?.disconnect();
 
@@ -3832,6 +3908,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       forkingMessageId={forkingMessageId}
                       onEditUserMessage={handleEditUserMessage}
                       onOpenSubagentSession={openChild}
+                      onOpenRemoteTask={props.onOpenRemoteTask ? openRemoteTask : undefined}
                       onStopSubagentSession={archived ? undefined : handleStopSubagentSession}
                       composerSubagentToolCallIds={subagentTrackerToolCallIds}
                       onResumeInterrupted={archived ? undefined : handleResumeInterrupted}

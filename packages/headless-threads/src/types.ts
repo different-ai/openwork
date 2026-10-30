@@ -43,6 +43,11 @@ export interface HeadlessThreadMessagePart {
   toolOutput?: string;
   /** The tool call's error text, when it failed. */
   toolError?: string;
+  /** The engine's short title for a tool call, e.g. a command's description. */
+  toolTitle?: string;
+  /** When the part started and ended, epoch ms, when the engine records it. */
+  startedAt?: number;
+  endedAt?: number;
   synthetic?: boolean;
   ignored?: boolean;
 }
@@ -53,6 +58,8 @@ export interface HeadlessThreadMessage {
   /** The user message this assistant response belongs to. */
   parentId: string | null;
   createdAt: number | null;
+  /** When an assistant message finished, when the engine records it. */
+  completedAt?: number | null;
   error: HeadlessThreadMessageError | null;
   usage: HeadlessThreadUsage | null;
   parts: HeadlessThreadMessagePart[];
@@ -170,13 +177,35 @@ export interface HeadlessTranscriptToolCall {
   status: string | null;
 }
 
+/** One step of a message, in the order the engine recorded it. */
+export type HeadlessTranscriptPart =
+  | { type: "text"; text: string }
+  | { type: "reasoning"; text: string; durationMs: number | null }
+  | {
+    type: "tool";
+    partId: string;
+    name: string;
+    callId: string | null;
+    status: string | null;
+    title: string | null;
+    /** As the engine recorded them; callers bound what they pass on. */
+    input: unknown;
+    output: string | null;
+    error: string | null;
+    startedAt: number | null;
+    endedAt: number | null;
+  };
+
 export interface HeadlessTranscriptMessage {
   id: string;
   role: string;
   createdAt: number | null;
+  completedAt: number | null;
   text: string;
   reasoning: string;
   toolCalls: HeadlessTranscriptToolCall[];
+  /** Text, reasoning and tool steps in order. */
+  parts: HeadlessTranscriptPart[];
 }
 
 export interface HeadlessThreadTranscript {

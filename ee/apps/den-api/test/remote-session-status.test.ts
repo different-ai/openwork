@@ -86,3 +86,39 @@ test("desktop-only status does not resolve Cloud access", async () => {
     cloud: async () => { throw new Error("Desktop-only status must not resolve Cloud") },
   }))
 })
+
+test("a running Cloud task says the step it ran last, and a finished one does not", async () => {
+  const messages = [
+    { id: "msg_user", role: "user", parentId: null, createdAt: 1, error: null, usage: null, parts: [{ id: "prt_u", type: "text", text: "Check the notes" }] },
+    { id: "msg_answer", role: "assistant", parentId: "msg_user", createdAt: 2, error: null, usage: null, parts: [
+      { id: "prt_ls", type: "tool", tool: "bash", toolStatus: "completed", toolInput: { command: "ls docs", description: "list the release notes" } },
+      { id: "prt_read", type: "tool", tool: "read", toolStatus: "running", toolInput: { filePath: "/repo/docs/v1.1.md" } },
+    ] },
+  ]
+  const cloud = (status: { type: "busy" } | { type: "idle" }): RemoteSessionStatusSources["cloud"] => async () => ({ client: {
+    getThreadSnapshot: async (threadId) => ({ threadId, title: "Synthetic task", directory: null, status, messages, todos: [] }),
+  } })
+  const running = await readRemoteSessionStatus({ threads: [{ sessionId: "session" }] }, sources({ cloud: cloud({ type: "busy" }) }))
+  const thread = running.threads[0]
+  assert.equal(thread?.changed, true)
+  assert.equal(thread?.changed && thread.latestStep, "Read v1.1.md")
+  const idle = await readRemoteSessionStatus({ threads: [{ sessionId: "session" }] }, sources({ cloud: cloud({ type: "idle" }) }))
+  const finished = idle.threads[0]
+  assert.equal(finished?.changed && finished.state, "idle")
+  assert.equal(finished?.changed && finished.latestStep, null)
+})
+
+test("a desktop task reports the step its runner ran last while it works", async () => {
+  const { commandProjection } = await import("../src/mcp/remote-session-status.js")
+  const base = {
+    id: "rsc_1", organizationId: "org_1", ownerMemberId: "mem_1", createdByUserId: "usr_1", status: "delivered" as const,
+    title: "Check the notes", prompt: null, model: null, idempotencyKey: null, targetComputerId: null, targetWorkspaceId: null,
+    expiresAt: 0, claimedByRunnerId: null, claimedAt: null, sessionId: "ses_1", workspaceId: "ws_1", resultSummary: null, error: null,
+    createdAt: 0, updatedAt: 0,
+  }
+  const session = { status: "running" as const, waitingFor: null, engine: null, model: null, finalText: null, lastError: null,
+    messageCount: 3, latestStep: "Ran List the release notes", observedAt: 5 }
+  assert.equal(commandProjection({ ...base, session }).latestStep, "Ran List the release notes")
+  assert.equal(commandProjection({ ...base, session: { ...session, status: "idle", finalText: "Done" } }).latestStep, null)
+  assert.equal(commandProjection({ ...base, session: { ...session, latestStep: null } }).latestStep, null)
+})

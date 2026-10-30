@@ -71,6 +71,14 @@ remote session lifecycle.
    command is one indexed read of the receipt its runner already reports; a
    Cloud session is a small worker read of its last messages, run state and,
    only while it runs, pending requests. Use `read` for the transcript.
+   While a session runs or waits, `latestStep` is a short sentence for the
+   step it ran last (`Ran List the release notes`, `Read v1.1.md`). Desktop
+   runners compute it from the current turn's last tool call and send it with
+   their progress report (`latestStep`, ≤240 chars, optional on the wire;
+   Den stores it in `session_latest_step`); Den derives it for Cloud sessions
+   from the tail it already reads (`latestStep()` in
+   `packages/headless-threads`). Older runners omit it and Den answers null.
+   A new step changes the version, so followers see it on their next wait.
 
 Cloud remains the default create target and retains its existing access and
 worker lifecycle. `target: "desktop"` and legacy wire names stay compatible.
@@ -90,7 +98,7 @@ hidden or offline, and stops once they settle. Stop on the row goes through
 `stop`. Answering a pending permission or question stays on the computer that
 runs the session.
 
-Two features roll this out in steps, both on Cloud and self-hosted and off by
+Three features roll this out in steps, all on Cloud and self-hosted and off by
 default:
 
 - `remoteSessionSubagents`: the row, its progress, Stop, the sidebar's
@@ -101,6 +109,42 @@ default:
   row shows progress only and a conversation tab left open from before says
   the view is turned off. Den routes stay behind `remoteSessionSubagents`:
   Stop also reads a slow desktop's pending receipt through `read`.
+- `remoteSessionHelperView` (needs both): the row reads as a sentence
+  (`Working on <computer> · <task>`, then `<elapsed>, last ran: <latestStep>`)
+  and opens the session in the main pane under the session route
+  `remote:<threadKey>`, like a local helper. The app never treats that id as
+  a local session: the route state reads it as "no local session" plus a
+  remote task, so no engine call uses it. Enter sends a follow-up through
+  `send`, Stop goes through `stop`, and Esc returns to the parent chat
+  through the same `child-navigation.ts` return as local helpers. The task
+  and its parent are kept per window in sessionStorage so a reload on the
+  route still renders it. The sidebar nests followed tasks under their chat
+  with a status word. Off, everything is as with the first two.
+
+### Transcript steps
+
+A `read` page's messages keep `text` and `toolCalls` for older readers and,
+from current runners, add an ordered `parts` array plus `completedAt`:
+
+- `{ type: "text", text }`
+- `{ type: "reasoning", text, durationMs? }`
+- `{ type: "tool", id, name, status, title?, input, output, error, truncated, startedAt?, endedAt? }`
+
+Caps match the rest of the page: at most 200 parts per message, 2000
+characters per tool field (`truncated` marks a cut), text and reasoning
+sharing one 20,000-character budget per message (reasoning parts at most
+4,000), and the whole result under 256 KB. Desktop runners
+(`automation-runner.mjs`), the OpenCode plugin (`native-opencode.ts`) and the
+Cloud `read` (`remote-session-transcript.ts`, from `@openwork/headless-threads`
+part order and tool state) all send this shape; Den stores and returns it
+unchanged. A runner that omits `parts` still parses, and readers rebuild steps
+from `toolCalls` then `text`.
+
+With `remoteSessionThreadView` on, the panel maps parts to the chat's message
+parts (`remoteTranscriptToUIMessages`) and renders them with the main chat's
+`MessageList`, read only: each tool step gets the local labels, the finished
+turn folds to "Worked for…", and a failed step stays open with its details.
+The agent's own status checks stay hidden, as in the chat.
 
 Slack uses the same capabilities and trusted run-token provenance to post a
 result back to its originating thread. A model cannot choose an arbitrary
