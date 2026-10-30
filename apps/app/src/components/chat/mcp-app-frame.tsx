@@ -5,6 +5,7 @@ import type { DynamicToolUIPart } from "ai"
 import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge"
 import type { McpUiStyles, McpUiStyleVariableKey } from "@modelcontextprotocol/ext-apps"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
+import { z } from "zod"
 
 import { connectionActionAppResourceUri, legacyConnectionActionAppResourceUri } from "@openwork/types/connection-action-app"
 import { parseMcpAppResourceUri } from "@openwork/types/mcp-app"
@@ -17,6 +18,7 @@ import { mcpAppDiscoverySignature } from "@/app/lib/mcp-app-discovery-scheduler"
 import { scheduleCachedMcpAppDiscovery } from "@/app/lib/mcp-app-presentation-cache"
 import { cachedMcpAppResult, forgetMcpAppResult, MCP_APP_CACHE_REQUEST_META, MCP_APP_CACHED_RESULT_META, rememberMcpAppResult } from "@/app/lib/mcp-app-result-cache"
 import { createMcpAppOpenLoads } from "@/app/lib/mcp-app-open-loads"
+import { MCP_APP_SNAPSHOT_METHOD, mcpAppSnapshotDocument, sanitizeMcpAppSnapshot } from "@/app/lib/mcp-app-snapshot"
 import { onCloudCredentialRefreshed, readCloudCredentialRevision } from "@/react-app/domains/connections/cloud-credential-revision"
 import {
   OpenworkServerError,
@@ -46,6 +48,10 @@ const RESOURCE_ACCEPT_TIMEOUT_MS = 1_000
 const MAX_RESOURCE_SEND_ATTEMPTS = 2
 const INITIALIZE_TIMEOUT_MS = 10_000
 const MAX_CONCURRENT_APP_STARTUPS = 2
+const McpAppSnapshotNotificationSchema = z.object({
+  method: z.literal(MCP_APP_SNAPSHOT_METHOD),
+  params: z.object({ html: z.string() }),
+})
 const pendingAppStartups = new Set<() => void>()
 let activeAppStartups = 0
 
@@ -249,6 +255,11 @@ const HOST_STYLE_SOURCES: Partial<Record<McpUiStyleVariableKey, string>> = {
   "--shadow-sm": "--dls-card-shadow",
 }
 
+// OpenWork marks dark mode with data-theme; the stylesheet also accepts a dark class.
+function hostTheme(): "light" | "dark" {
+  return document.documentElement.dataset.theme === "dark" || document.documentElement.classList.contains("dark") ? "dark" : "light"
+}
+
 function hostStyleVariables(): McpUiStyles {
   const computed = getComputedStyle(document.documentElement)
   const entries: Array<[string, string]> = []
@@ -348,6 +359,17 @@ export type McpAppSandboxViewProps = {
   connectionController?: ReturnType<typeof createConnectionActionController> | null
   updateMode?: "replace" | "notify"
   onReady?: () => void
+  /**
+   * A cleaned picture of what this App last showed (see onSnapshot). It is
+   * painted in a script-less frame over the live one until the App is ready.
+   */
+  snapshot?: string
+  /**
+   * Asks an App built in OpenWork for a picture of what it shows whenever it
+   * settles. Called with the cleaned markup, only for this view's document
+   * after it initialized, so a host can keep it for the next open.
+   */
+  onSnapshot?: (html: string) => void
   /** Notice prefix shown when the sandboxed view cannot render. */
   unavailableNotice: string
   onRequestTeardown?: () => void
@@ -375,7 +397,7 @@ export type McpAppSandboxViewProps = {
  * bridges it to the workspace MCP App host. Chat messages and dashboard tiles
  * share this exact pipeline so rendering and diagnostics stay identical.
  */
-export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInPlace = false, liveReady = false, toolName, inputArguments, result, connectionController, updateMode = "replace", onReady, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, presentation = "inline", onError, onRetry, onAppToolResult, openKey }: McpAppSandboxViewProps) {
+export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInPlace = false, liveReady = false, toolName, inputArguments, result, connectionController, updateMode = "replace", onReady, snapshot, onSnapshot, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, presentation = "inline", onError, onRetry, onAppToolResult, openKey }: McpAppSandboxViewProps) {
   const openworkServerClient = origin.client
   const workspaceId = origin.workspaceId
   const readOnly = origin.readOnly
@@ -395,6 +417,13 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
   onErrorRef.current = onError
   const onReadyRef = useRef(onReady)
   onReadyRef.current = onReady
+  const onSnapshotRef = useRef(onSnapshot)
+  onSnapshotRef.current = onSnapshot
+  const wantsSnapshots = Boolean(onSnapshot)
+  // Painted once, from the picture this view opened with, until the App is ready.
+  const [snapshotDocument, setSnapshotDocument] = useState(() => snapshot
+    ? mcpAppSnapshotDocument(snapshot, hostTheme(), hostStyleVariables())
+    : null)
   const signIn = useMcpAppSignIn(result)
   const reportToolResultRef = useRef(signIn.reportToolResult)
   reportToolResultRef.current = signIn.reportToolResult
@@ -498,18 +527,22 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
     }
     // The theme, colors and space the App has now. Sent again whenever they
     // change, so an open App follows a light/dark switch and a resized pane.
+    const experimental = {
+      ...(!readOnly || savedLive ? {
+        // The App may ask for its last read-only results; see the cache-read branch of oncalltool.
+        "openwork/result-cache": true,
+        ...(!readOnly && connectionController && hasHostConnectionActions(app) ? { "openwork/connection-actions": true } : {}),
+      } : {}),
+      // An App built in OpenWork then sends a picture of what it shows; see the snapshot handler below.
+      ...(wantsSnapshots ? { [MCP_APP_SNAPSHOT_METHOD]: true } : {}),
+    }
     const currentHostContext = () => ({
-      // OpenWork marks dark mode with data-theme; the stylesheet also accepts a dark class.
-      theme: document.documentElement.dataset.theme === "dark" || document.documentElement.classList.contains("dark") ? "dark" as const : "light" as const,
+      theme: hostTheme(),
       displayMode: "inline" as const,
       availableDisplayModes: ["inline" as const],
       styles: { variables: hostStyleVariables() },
       containerDimensions: { maxHeight: MAX_HEIGHT, width: Math.round(iframe.getBoundingClientRect().width) },
-      ...(!readOnly || savedLive ? { experimental: {
-        // The App may ask for its last read-only results; see the cache-read branch of oncalltool.
-        "openwork/result-cache": true,
-        ...(!readOnly && connectionController && hasHostConnectionActions(app) ? { "openwork/connection-actions": true } : {}),
-      } } : {}),
+      ...(Object.keys(experimental).length > 0 ? { experimental } : {}),
     })
     const bridge = new AppBridge(
       null,
@@ -685,6 +718,7 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
           if (!ready) {
             performance.measure("openwork.mcp-app.first-paint", { start: startedAt, duration: performance.now() - startedAt })
             ready = true
+            setSnapshotDocument(null)
             onReadyRef.current?.()
           }
           if (next === toolDeliveryRef.current) return
@@ -725,6 +759,12 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
       if (initializeTimer !== undefined) window.clearTimeout(initializeTimer)
       void deliverToolData()
     }
+    // Only this view's document can send a picture, and only once it initialized.
+    if (wantsSnapshots) bridge.setNotificationHandler(McpAppSnapshotNotificationSchema, ({ params }) => {
+      if (disposed || failed || !initialized) return
+      const html = sanitizeMcpAppSnapshot(params.html)
+      if (html) onSnapshotRef.current?.(html)
+    })
     const startInitializeTimer = () => {
       if (initialized || initializeTimer !== undefined) return
       initializeTimer = window.setTimeout(() => {
@@ -910,7 +950,7 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
       stopHostContextSync?.()
       stopSandbox?.()
     }
-  }, [app, replacementInput, openworkServerClient, replacementResult, toolName, workspaceId, readOnly, origin, origin.sessionId, origin.engine, presentation, updateMode, connectionController, retryAttempt, resolveLiveActions, openKey])
+  }, [app, replacementInput, openworkServerClient, replacementResult, toolName, workspaceId, readOnly, origin, origin.sessionId, origin.engine, presentation, updateMode, connectionController, retryAttempt, resolveLiveActions, openKey, wantsSnapshots])
 
   const reload = onRetry ?? (() => {
     setError(null)
@@ -927,6 +967,7 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
         }} />
       <div
         className={cn(
+          "relative",
           presentation === "dashboard" ? "overflow-hidden" : "mt-3 overflow-hidden rounded-xl bg-background",
           presentation !== "dashboard" && app.prefersBorder && "border border-border",
         )}
@@ -942,6 +983,20 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
           aria-busy={readOnly && Boolean(resolveLiveActions) && !liveReady || undefined}
           style={{ height: normalizeMcpAppHeight(height, MIN_HEIGHT) }}
         />
+        {snapshotDocument ? (
+          // The last picture, with no scripts, an opaque origin and nothing to load, never the host DOM.
+          <iframe
+            title={`${toolName} last view`}
+            sandbox=""
+            srcDoc={snapshotDocument}
+            referrerPolicy="no-referrer"
+            tabIndex={-1}
+            inert
+            aria-hidden
+            className="pointer-events-none absolute inset-0 block size-full border-0 bg-transparent"
+            data-mcp-app-snapshot=""
+          />
+        ) : null}
       </div>
     </>
   )
