@@ -31,15 +31,17 @@ then `PORT`, then `INFERENCE_PORT`, then `8791`. Local development scripts use
 `GATEWAY_PORT` with the deprecated `INFERENCE_PORT` fallback. Development mode
 retains its existing non-production defaults; use `.env.example` for a local setup.
 
-## Auto Router
+## Smart Model Router
 
-Auto (feature `autoRouter`, cloud only) routes each OpenAI chat request sent
-with model `openwork-auto` to one of the organization's Auto Router models
+Smart Model Router (feature `autoRouter`, cloud only) routes each OpenAI chat
+request sent with model `openwork-smart-<router id>` to one of that Smart
+Router's models: Jev scores the prompt against the router's tasks, the model
+whose tasks score highest in total answers, at the thinking level Jev scores
 (`src/auto-router/`, `docs/features/auto-router/README.md`). Set on Gateway:
 
 | Variable | Default |
 | --- | --- |
-| `TYPESAFE_API_KEY` | Unset: Auto always uses the fallback route |
+| `TYPESAFE_API_KEY` | Unset: Smart is off (Den reports it and refuses to save routers) |
 | `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` |
 | `AUTO_ROUTER_JEV_MODEL` | `jev-latest` |
 | `AUTO_ROUTER_JEV_TIMEOUT_MS` | `4000` (200-30000) |

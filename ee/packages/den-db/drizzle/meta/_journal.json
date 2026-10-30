@@ -1219,6 +1219,13 @@
       "when": 1793335732273,
       "tag": "0174_remote_session_answers",
       "breakpoints": true
+    },
+    {
+      "idx": 175,
+      "version": "5",
+      "when": 1793386506558,
+      "tag": "0175_smart_routers",
+      "breakpoints": true
     }
   ]
 }

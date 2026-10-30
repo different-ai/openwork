@@ -44,7 +44,7 @@ test("reads the routing decision from the gateway's headers", () => {
   assert.equal(autoRouteFromResponse(malformed, 1)?.name, undefined);
 });
 
-test("records each Auto reply's model in the session metadata, keeping other metadata", async () => {
+test("records each Smart reply's model, whichever router answered, in the session metadata, keeping other metadata", async () => {
   const engine = fakeEngine({ other: { kept: true } });
   const stop = await plugin.setup(engine.context);
   assert.deepEqual(engine.hooks.map(hook => hook.providerID), ["openwork-auto"]);

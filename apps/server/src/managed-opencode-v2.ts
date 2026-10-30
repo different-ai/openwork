@@ -321,9 +321,9 @@ export function renderOpencodeV2Config(input: {
     ...(input.mcpResultsPluginDirectory ? [{ package: pathToFileURL(input.mcpResultsPluginDirectory).href }] : []),
     ...(input.mcpReadinessPluginDirectory ? [{ package: pathToFileURL(input.mcpReadinessPluginDirectory).href }] : []),
     ...(input.visibleReasoningPluginDirectory ? [{ package: pathToFileURL(input.visibleReasoningPluginDirectory).href }] : []),
-    // Auto (feature `autoRouter`): records which model the gateway chose for
-    // each Auto reply. It only reads `openwork-auto` responses, which exist
-    // only while the organization offers Auto.
+    // Smart Model Router (feature `autoRouter`): records which model the
+    // gateway chose for each Smart reply. It only reads `openwork-auto`
+    // responses, which exist only while a Smart Router applies to the member.
     ...(input.autoRoutePluginDirectory ? [{ package: pathToFileURL(input.autoRoutePluginDirectory).href }] : []),
     ...(input.agentPermissionRules?.length && input.agentPermissionsPluginDirectory ? [{
       package: pathToFileURL(input.agentPermissionsPluginDirectory).href,

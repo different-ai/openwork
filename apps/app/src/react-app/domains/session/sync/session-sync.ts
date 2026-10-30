@@ -1266,7 +1266,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   }
 
   if (event.type === AUTO_ROUTES_EVENT) {
-    // Auto replies' routing decisions; any session, tracked or not, so a
+    // Smart replies' routing decisions; any session, tracked or not, so a
     // background chat shows them once opened.
     const props = event.properties;
     if (!props || typeof props !== "object") return;

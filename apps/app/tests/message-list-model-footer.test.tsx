@@ -118,18 +118,23 @@ test("an Auto reply renders the OpenWork mark beside the routed name", async () 
   expect(label?.querySelector('svg[aria-label="OpenWork"]')?.closest('[aria-hidden="true"]')).not.toBeNull()
 })
 
-test("an Auto Router reply names the model the gateway chose, with its thinking level", async () => {
+test("a Smart Router reply names the model the gateway chose, with its thinking level", async () => {
+  const smart = "openwork-smart-ar_engineering"
   const autoAnswer = (id: string, created: number, completed: number): UIMessage => ({ ...answer(id), metadata: { opencode: { created, completed,
-    replyModel: { providerID: "openwork-auto", modelID: "openwork-auto", requestedProviderID: "openwork-auto", requestedModelID: "openwork-auto" } } } })
-  const auto = [{ providerID: "openwork-auto", modelID: "openwork-auto", title: "Auto", description: "Auto" }]
+    replyModel: { providerID: "openwork-auto", modelID: smart, requestedProviderID: "openwork-auto", requestedModelID: smart } } } })
+  const auto = [
+    { providerID: "openwork-auto", modelID: "openwork-smart-ar_design", title: "Smart: Design", description: "Smart Model Router" },
+    { providerID: "openwork-auto", modelID: smart, title: "Smart: Engineering", description: "Smart Model Router" },
+  ]
   const before = await render([autoAnswer("reply", 1000, 8000)], false, auto)
-  expect(before.querySelector('[data-testid="reply-model"]')?.textContent).toBe("Replied with Auto")
+  expect(before.querySelector('[data-testid="reply-model"]')?.textContent).toBe("Replied with Smart: Engineering")
   await act(async () => useAutoRouteStore.getState().publish("session_fixture", [
     { at: 1500, provider: "anthropic", model: "claude-haiku-5-5", name: "Claude Haiku 5.5", thinking: "high" },
   ]))
   const label = before.querySelector('[data-testid="reply-model"]')
   expect(label?.textContent).toBe("Replied with Claude Haiku 5.5 · High")
   expect(before.textContent).not.toContain("openwork-auto")
+  expect(before.textContent).not.toContain("openwork-smart-")
 })
 
 test("a gateway reply uses the picker's human title without requesting an opaque provider logo", async () => {

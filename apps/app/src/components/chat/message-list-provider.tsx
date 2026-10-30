@@ -35,7 +35,7 @@ interface MessageListContextValue {
   displaySuggestions: boolean
   providerConnectedCount: number
   resolveReplyModelTitle: ReplyModelTitleResolver
-  /** Auto (feature `autoRouter`): the gateway's routing decisions for this session's replies. */
+  /** Smart Model Router (feature `autoRouter`): the gateway's routing decisions for this session's replies. */
   autoRoutes: readonly AutoRouterReplyRoute[]
   resolveAutoRouteName: AutoRouteNameResolver
   connectorIdentities: ConnectorToolIdentity[]

@@ -116,8 +116,8 @@ export const FEATURES = defineFeatures({
     default: false,
   },
   autoRouter: {
-    label: "AI Gateway: Auto Router",
-    description: "Admins describe when to use each AI Gateway model, and members can pick Auto: each prompt goes to the model and thinking level that fits it best.",
+    label: "AI Gateway: Smart Model Router",
+    description: "Admins create Smart Routers for everyone, teams or people, listing AI Gateway models and the tasks each handles. Members pick \"Smart: <name>\": each prompt goes to the model whose tasks fit it best, at the thinking level it needs.",
     category: "models",
     added: "2026-10-26",
     since: "2026-10",

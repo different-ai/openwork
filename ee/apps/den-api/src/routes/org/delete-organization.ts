@@ -108,6 +108,7 @@ import { z } from "zod"
 import { deleteOrganizationAgentPermissions } from "../../agent-permissions.js"
 import { deleteOrganizationDefaultModels } from "../../default-model.js"
 import { deleteOrganizationPrompts } from "../../prompts.js"
+import { deleteOrganizationAutoRouters } from "../../auto-router.js"
 import { deleteHeadlessSessionIndexForOrganization } from "../../headless-runner/session-index.js"
 import { unlessResumeTableMissing } from "../../headless-runner/resume-grant-revocation.js"
 import { addAuditRequestResource } from "../../audit/request-capture.js"
@@ -651,6 +652,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await deleteOrganizationAgentPermissions(tx, organizationId)
         await deleteOrganizationDefaultModels(tx, organizationId)
         await deleteOrganizationPrompts(tx, organizationId)
+        await deleteOrganizationAutoRouters(tx, organizationId)
         await tx.delete(DesktopPolicyTable).where(eq(DesktopPolicyTable.organizationId, organizationId))
 
         await tx.delete(OrganizationDiagnosticCredentialTable).where(eq(OrganizationDiagnosticCredentialTable.organizationId, organizationId))

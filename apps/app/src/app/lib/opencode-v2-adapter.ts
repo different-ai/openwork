@@ -183,7 +183,7 @@ type SessionUpdateParameters = SessionParameters & {
   time?: { archived?: number };
 };
 
-/** The app's event for a session's recorded Auto routing decisions (`properties: { sessionID, routes }`). */
+/** The app's event for a session's recorded Smart Router routing decisions (`properties: { sessionID, routes }`). */
 export const AUTO_ROUTES_EVENT = "openwork.auto-routes.updated";
 
 export const V2_SESSION_ARCHIVE_UNAVAILABLE = "Archiving needs a newer OpenWork on the computer that runs this workspace.";
@@ -515,7 +515,7 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
     } : {}),
     ...(revertMessageID ? { revert: { messageID: revertMessageID } } : {}),
   };
-  // Auto replies' routing decisions ride along for the chat's "answered by" label.
+  // Smart replies' routing decisions ride along for the chat's "answered by" label.
   const autoRoutes = autoRouterReplyRoutes(readRecord(source, "metadata")?.[AUTO_ROUTER_SESSION_ROUTES_KEY]);
   return autoRoutes.length ? Object.assign(mapped, { [AUTO_ROUTER_SESSION_ROUTES_KEY]: autoRoutes }) : mapped;
 }
@@ -1906,7 +1906,7 @@ export function translateV2Event(
   }
 
   if (type === "session.metadata.updated") {
-    // Only the Auto Router's routing decisions are read from host metadata.
+    // Only the Smart Routers' routing decisions are read from host metadata.
     const routes = autoRouterReplyRoutes(readRecord(properties, "metadata")?.[AUTO_ROUTER_SESSION_ROUTES_KEY]);
     return sessionID ? [{ type: AUTO_ROUTES_EVENT, properties: { sessionID, routes } }] : null;
   }

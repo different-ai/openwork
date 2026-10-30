@@ -13,8 +13,9 @@ function routeKey(route: AutoRouterReplyRoute) {
 }
 
 /**
- * Auto (feature `autoRouter`): the routing decisions the engine recorded for
- * each session, so the chat can say which model answered an Auto reply. A
+ * Smart Model Router (feature `autoRouter`): the routing decisions the engine
+ * recorded for each session, so the chat can say which model answered a Smart
+ * reply. A
  * session snapshot and live metadata updates may arrive in either order, so
  * both merge; the list only grows, apart from the engine dropping old turns.
  */

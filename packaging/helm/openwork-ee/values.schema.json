@@ -79,7 +79,7 @@
                 true,
                 false
               ],
-              "description": "AI Gateway: Auto Router: Admins describe when to use each AI Gateway model, and members can pick Auto: each prompt goes to the model and thinking level that fits it best. Renders DEN_FEATURE_AUTO_ROUTER."
+              "description": "AI Gateway: Smart Model Router: Admins create Smart Routers for everyone, teams or people, listing AI Gateway models and the tasks each handles. Members pick \"Smart: <name>\": each prompt goes to the model whose tasks fit it best, at the thinking level it needs. Renders DEN_FEATURE_AUTO_ROUTER."
             },
             "settledSessions": {
               "enum": [

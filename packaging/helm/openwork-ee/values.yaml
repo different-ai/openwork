@@ -27,7 +27,7 @@ config:
   # The /admin kill switch still turns a feature off, even when locked on.
   features:
     desktopUpdateDownloadWindow: "" # default off · Restart to update shows in the desktop title bar as soon as an update is found. Clicking it opens a small window that downloads the update with its progress, then restarts, instead of waiting with no sign of the download.
-    autoRouter: ""                  # default off (cloud only) · Admins describe when to use each AI Gateway model, and members can pick Auto: each prompt goes to the model and thinking level that fits it best.
+    autoRouter: ""                  # default off (cloud only) · Admins create Smart Routers for everyone, teams or people, listing AI Gateway models and the tasks each handles. Members pick "Smart: <name>": each prompt goes to the model whose tasks fit it best, at the thinking level it needs.
     settledSessions: ""             # default off · Finished sessions can be settled into a collapsed Settled row at the end of their workspace, by hand or after a few idle days, and come back on new activity.
     administratorRecovery: ""       # default off · Run a one-time, operator-selected Admin-team permission repair at deployment; disabling stops future repairs, not existing grants.
     nativeDictation: ""             # default off · Dictate editable prompts in OpenWork and Workbot using native desktop dictation or live browser speech recognition.
@@ -282,9 +282,9 @@ secret:
     initialAdminBootstrapCode: ""
     # 24+ characters. Only rendered when set; used by denApi.auditUsage.
     maintenanceToken: ""
-    # TypeSafe API key for Jev, which picks the model for each Auto request
-    # (AI Gateway Auto Model Routing, feature autoRouter). Only rendered when
-    # set; without it Auto always uses its fallback model.
+    # TypeSafe API key for Jev, which picks the model for each Smart request
+    # (AI Gateway Smart Model Router, feature autoRouter). Only rendered when
+    # set; without it Smart is off.
     typesafeApiKey: ""
 
 installerArtifacts:

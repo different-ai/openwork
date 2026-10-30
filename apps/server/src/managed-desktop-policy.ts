@@ -11,7 +11,7 @@ import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./
 import { agentPermissionDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
 
 const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
-/** Org-managed providers: Den-imported (lpr_), Gateway (ipr_), hosted OpenWork Models and the Auto Router. */
+/** Org-managed providers: Den-imported (lpr_), Gateway (ipr_), hosted OpenWork Models and Smart Routers. */
 const MANAGED_PROVIDER = /^(?:lpr_|ipr_)|^openwork(?:-auto)?$/i;
 /** One member's sign-in: another member of the same organization has another token. */
 function sessionKey(session: CloudProviderDenSession) { return `${session.baseUrl}\n${session.orgId}\n${session.token}`; }

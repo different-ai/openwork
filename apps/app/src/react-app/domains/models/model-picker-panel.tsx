@@ -94,7 +94,7 @@ export function ModelPickerPanel(props: ModelPickerPanelProps) {
   const shortcutOs = resolveThinkingModeShortcutOs(undefined, typeof navigator === "undefined" ? "" : navigator.platform);
   const autoSelected = managesOwnBehavior(current);
   const canChangeEffort = Boolean(selected && onBehaviorChange && !autoSelected && hasEffort);
-  const effortValueLabel = autoSelected ? (isAutoRouterModel(current) ? "Managed by Auto" : "Managed by OpenWork") : hasEffort ? controls.options.find((option) => option.value === behaviorValue)?.label ?? selectedBehavior.label : "Unavailable";
+  const effortValueLabel = autoSelected ? (isAutoRouterModel(current) ? "Managed by Smart Router" : "Managed by OpenWork") : hasEffort ? controls.options.find((option) => option.value === behaviorValue)?.label ?? selectedBehavior.label : "Unavailable";
 
   if (effort && selected) {
     return <div data-slot="model-thinking-submenu" className="overflow-y-auto p-2">

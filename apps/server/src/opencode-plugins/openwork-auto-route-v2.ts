@@ -70,12 +70,14 @@ function jsonRecord(value: unknown): Record<string, Json> {
 }
 
 /**
- * Auto (feature `autoRouter`): the gateway picks the model for each Auto turn
- * and names it in response headers. Record that decision in the session's
- * metadata, which the engine keeps with the session and streams to the app,
- * so the chat can say which model answered each Auto reply.
+ * Smart Model Router (feature `autoRouter`): the gateway picks the model for
+ * each Smart turn and names it in response headers. Record that decision in
+ * the session's metadata, which the engine keeps with the session and streams
+ * to the app, so the chat can say which model answered each Smart reply.
  *
- * Only the Auto provider's main-loop responses are read; titles, compaction
+ * Every Smart Router is a model of the one `openwork-auto` provider, so
+ * matching the provider covers all of them. Only that provider's main-loop
+ * responses are read; titles, compaction
  * and every other provider are untouched. Recording never blocks or fails the
  * reply.
  */
