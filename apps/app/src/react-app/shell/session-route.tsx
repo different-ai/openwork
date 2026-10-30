@@ -115,6 +115,7 @@ import { AutomationsPage } from "@/react-app/domains/automations/automations-pag
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
 import { CodePage } from "@/react-app/domains/code/code-page";
 import { SectionPlaceholder } from "@/react-app/domains/sidebar-sections/section-placeholder";
+import { ProjectsPage } from "@/react-app/domains/projects/projects-page";
 import { CalendarPage } from "@/react-app/domains/calendar/calendar-page";
 import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature";
 import { useRemoteSessionSubagentsFeature } from "@/react-app/domains/session/remote-threads/use-remote-session-subagents-feature";
@@ -3957,10 +3958,18 @@ export function SessionRoute() {
       primarySlot={activityRouteActive ? <ActivityPage onTrySkill={trySkillInNewSession} /> : codeRouteActive ? (
         <CodePage openworkServerClient={client} />
       ) : masterPlanRouteActive ? (
-        <SectionPlaceholder
-          title={masterPlanSection === "projects" ? "Proyectos" : masterPlanSection === "artifacts" ? "Artefactos" : masterPlanSection === "scheduled" ? "Programadas" : masterPlanSection === "design" ? "Design" : "Personalización"}
-          description="Esta sección está en construcción."
-        />
+        masterPlanSection === "projects" ? (
+          <ProjectsPage
+            openworkServerClient={selectedWorkspaceEndpoint?.client ?? null}
+            workspaceId={selectedWorkspaceId}
+            workspaceName={selectedWorkspace ? workspaceLabel(selectedWorkspace) : ""}
+          />
+        ) : (
+          <SectionPlaceholder
+            title={masterPlanSection === "artifacts" ? "Artefactos" : masterPlanSection === "scheduled" ? "Programadas" : masterPlanSection === "design" ? "Design" : "Personalización"}
+            description="Esta sección está en construcción."
+          />
+        )
       ) : pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
         <WorkspaceProvider
           client={opencodeClient}
