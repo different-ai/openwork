@@ -102,3 +102,14 @@ test("browsing pins a capture while live work gains frames; missing screenshots 
   expect(container.textContent).toContain("Using computer")
   expect(container.textContent).toContain("No captured views")
 })
+
+test("streaming transcript updates do not keep restarting playback", async () => {
+  const { container, render, click } = await mount(computerHistoryMessages(images), true)
+  await click("View computer session history"); await click("Play captured views")
+  for (let update = 0; update < 3; update++) {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 390)) })
+    await render(collectComputerSessionHistory(computerHistoryMessages(images))!)
+  }
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 500)) })
+  expect(container.querySelector('[data-computer-view-count]')?.textContent).toBe("2 / 3")
+})

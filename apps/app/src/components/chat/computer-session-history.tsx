@@ -26,18 +26,19 @@ export function ComputerSessionHistory({ history, active, renderAction }: {
   const index = selectedIndex < 0 ? frames.length - 1 : selectedIndex
   const frame = frames[index]
   const latest = frames.at(-1)
+  const currentFrameId = frame?.id
+  const nextFrameId = frames[index + 1]?.id
   const unfinished = parts.some(isToolPartInFlight)
   const title = unfinished ? active ? "Using computer" : "Computer status unavailable" : "Used computer"
 
   useEffect(() => {
     if (!open || !playing) return
     const timer = setTimeout(() => {
-      const next = frames[index + 1]
-      if (next) setSelectedId(next.id)
+      if (nextFrameId) setSelectedId(nextFrameId)
       else setPlaying(false)
     }, 1500)
     return () => clearTimeout(timer)
-  }, [frames, index, open, playing])
+  }, [currentFrameId, nextFrameId, open, playing])
 
   useEffect(() => {
     const pause = () => { if (document.hidden) setPlaying(false) }
