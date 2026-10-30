@@ -95,29 +95,95 @@ function memoryStore() {
 // In these fixtures, OpenWork's own reads are the api tools.
 const ownRead = (tool: McpAppToolBinding) => tool.kind === "api"
 
-async function launch(store: McpAppLaunchDataStore | undefined, options: { timeZone?: string; canKeep?: (tool: McpAppToolBinding) => boolean } = {}) {
+async function launch(store: McpAppLaunchDataStore | undefined, options: {
+  timeZone?: string
+  canKeep?: (tool: McpAppToolBinding) => boolean
+  scopes?: string[]
+  callTool?: Parameters<typeof launchInitialResults>[0]["callTool"]
+} = {}) {
   const calls: string[] = []
   const results = await launchInitialResults({
-    tools: TOOLS, scopes: new Set([DEN_MCP_READ_SCOPE]), timeZone: options.timeZone ?? "UTC", store, canKeep: options.canKeep,
-    callTool: async (tool) => {
+    tools: TOOLS, scopes: new Set(options.scopes ?? [DEN_MCP_READ_SCOPE]), timeZone: options.timeZone ?? "UTC", store, canKeep: options.canKeep,
+    callTool: async (tool, args) => {
       calls.push(tool.name)
+      if (options.callTool) return options.callTool(tool, args)
       return tool.name === "broken_read" ? { isError: true, content: [] } : { content: [{ type: "text", text: "ok" }] }
     },
   })
   return { results, calls }
 }
 
-test("a member's next open reuses their kept OpenWork reads and runs provider reads again", async () => {
+test("a member's next open checks every read before marking a matching OpenWork snapshot kept", async () => {
   const { slots, store } = memoryStore()
   const first = await launch(store, { canKeep: ownRead })
   assert.deepEqual(first.calls.sort(), ["broken_read", "count_issues", "load_mrr"])
   // A provider's data is never stored, nor a failed read.
   assert.deepEqual((slots.get("UTC") as Array<{ name: string }>).map((entry) => entry.name), ["count_issues"])
   const second = await launch(store, { canKeep: ownRead })
-  assert.deepEqual(second.calls.sort(), ["broken_read", "load_mrr"])
+  assert.deepEqual(second.calls.sort(), ["broken_read", "count_issues", "load_mrr"])
   assert.deepEqual(second.results.map((entry) => [entry.name, entry.kept]).sort(), [["count_issues", true], ["load_mrr", undefined]])
   // Another time zone is another answer, loaded afresh.
   assert.ok((await launch(store, { timeZone: "Asia/Tokyo", canKeep: ownRead })).calls.includes("count_issues"))
+})
+
+test("an access reduction cannot serve old launch data when invalidation and clearing fail", async () => {
+  const { slots, store } = memoryStore()
+  await launch(store, { canKeep: ownRead })
+  const stale = slots.get("UTC")
+  const unavailableSave: McpAppLaunchDataStore = {
+    open: async () => ({ kept: stale, save: async () => { throw new Error("cache unavailable") } }),
+  }
+  const denied = await launch(unavailableSave, {
+    canKeep: ownRead,
+    callTool: async (tool) => tool.name === "count_issues"
+      ? { isError: true, content: [{ type: "text", text: "forbidden" }] }
+      : { content: [{ type: "text", text: "ok" }] },
+  })
+  assert.ok(denied.calls.includes("count_issues"))
+  assert.ok(!denied.results.some((entry) => entry.name === "count_issues"))
+  assert.ok(!denied.results.some((entry) => entry.kept))
+  assert.equal(slots.get("UTC"), stale, "the old slot still exists but cannot authorize its contents")
+})
+
+test("a successful read with reduced visibility replaces the earlier snapshot", async () => {
+  const { slots, store } = memoryStore()
+  await launch(store, { canKeep: ownRead })
+  const reduced = await launch(store, {
+    canKeep: ownRead,
+    callTool: async () => ({ content: [{ type: "text", text: "visible subset" }] }),
+  })
+  const result = reduced.results.find((entry) => entry.name === "count_issues")
+  assert.deepEqual(result?.result.content, [{ type: "text", text: "visible subset" }])
+  assert.equal(result?.kept, undefined)
+  assert.ok(JSON.stringify(slots.get("UTC")).includes("visible subset"))
+})
+
+test("a cached read whose live check times out is omitted instead of served", async (t) => {
+  const { store } = memoryStore()
+  await launch(store, { canKeep: ownRead })
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  let settled = false
+  const loading = launch(store, {
+    canKeep: ownRead,
+    callTool: (tool) => tool.name === "count_issues"
+      ? new Promise<ExecuteCapabilityToolResult>(() => {})
+      : Promise.resolve({ content: [{ type: "text", text: "ok" }] }),
+  })
+  void loading.finally(() => { settled = true })
+  for (let step = 0; step < 100 && !settled; step++) {
+    t.mock.timers.tick(100)
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+  const result = await loading
+  assert.ok(!result.results.some((entry) => entry.name === "count_issues"))
+})
+
+test("stored results never fill in a read the current scopes cannot run", async () => {
+  const { store } = memoryStore()
+  await launch(store, { canKeep: ownRead })
+  const denied = await launch(store, { canKeep: ownRead, scopes: [] })
+  assert.deepEqual(denied.calls, [])
+  assert.deepEqual(denied.results, [])
 })
 
 test("without a rule for what may be kept, nothing is kept or reused", async () => {

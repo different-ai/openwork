@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { isDeepStrictEqual } from "node:util"
 import type { McpAppToolBinding } from "@openwork/types/mcp-app"
 import type { ExecuteCapabilityToolResult } from "./capability-registry.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
@@ -20,7 +21,7 @@ export type InitialResult = {
   arguments: Record<string, unknown>
   loadedAt: string
   result: { content: unknown[]; structuredContent?: Record<string, unknown> }
-  /** Loaded by this member's earlier open rather than this one. */
+  /** Matches this member's earlier snapshot, confirmed by this open's checked read. */
   kept?: true
 }
 
@@ -34,8 +35,8 @@ const keptLaunchDataSchema = z.array(z.object({
 /**
  * Where an App's launch data waits for the same member's next open. `open`
  * names one slot for this open, or null when nothing may be kept, and the slot
- * keeps its name for the save, so reads made while access changed are never
- * served under the access that replaced it.
+ * keeps its name for the save. The slot is an optimization hint, never proof
+ * that the caller may still read its contents.
  */
 export type McpAppLaunchDataStore = {
   open(timeZone: string | undefined): Promise<{ kept: unknown; save(results: InitialResult[]): Promise<void> } | null>
@@ -109,11 +110,11 @@ export async function loadInitialResults(input: {
 }
 
 /**
- * The launch data for this open. Reads whose results may be kept (`canKeep`:
- * OpenWork's own data, never a provider's) come from this member's recent
- * open with the same access when there is one, marked kept with their time,
- * and the App refreshes what is old enough to matter. Every other read runs
- * now through its full checks, and only keepable results are stored.
+ * The launch data for this open. Every read runs through its current route
+ * authorization and filtering, even when a snapshot exists: the inventory
+ * revision is best effort and cannot authorize a cached response. Only a
+ * snapshot identical to that checked result is marked kept. Denials, changed
+ * visibility, failed reads and timeouts never fall back to stored data.
  */
 export async function launchInitialResults(input: Parameters<typeof loadInitialResults>[0] & {
   store?: McpAppLaunchDataStore
@@ -121,11 +122,19 @@ export async function launchInitialResults(input: Parameters<typeof loadInitialR
 }): Promise<InitialResult[]> {
   const { canKeep } = input
   const keepable = new Set(canKeep ? input.tools.filter((binding) => canKeep(binding)).map((binding) => binding.name) : [])
-  const slot = input.store && keepable.size > 0 ? await input.store.open(input.timeZone).catch(() => null) : null
+  const [fresh, slot] = await Promise.all([
+    loadInitialResults(input),
+    input.store && keepable.size > 0 ? input.store.open(input.timeZone).catch(() => null) : null,
+  ])
   const parsed = keptLaunchDataSchema.safeParse(slot?.kept ?? null)
-  const kept = parsed.success ? parsed.data.filter((entry) => keepable.has(entry.name)).map((entry) => ({ ...entry, kept: true as const })) : []
-  const keptNames = new Set(kept.map((entry) => entry.name))
-  const fresh = await loadInitialResults({ ...input, tools: input.tools.filter((binding) => !keptNames.has(binding.name)) })
-  if (slot && kept.length === 0) void slot.save(fresh.filter((entry) => keepable.has(entry.name))).catch(() => undefined)
-  return [...kept, ...fresh]
+  const snapshots = new Map(parsed.success ? parsed.data.filter((entry) => keepable.has(entry.name)).map((entry) => [entry.name, entry]) : [])
+  // Replacing or clearing the slot is best effort; serving data is always
+  // gated by the fresh read above, including when this save fails.
+  if (slot) void slot.save(fresh.filter((entry) => keepable.has(entry.name))).catch(() => undefined)
+  return fresh.map((entry): InitialResult => {
+    const saved = snapshots.get(entry.name)
+    return saved && isDeepStrictEqual(saved.arguments, entry.arguments) && isDeepStrictEqual(saved.result, entry.result)
+      ? { ...entry, kept: true }
+      : entry
+  })
 }

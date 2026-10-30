@@ -1132,9 +1132,9 @@ const MAX_MCP_APP_LAUNCH_DATA_BYTES = 256 * 1024
 export const cache = {
   // What one member's last open of an App read from OpenWork's own data, never
   // a provider's, keyed by a digest of the organization's inventory revision,
-  // member, teams, App revision, scopes and time zone, so any access change
-  // starts afresh. Never authorization: every open rechecks access to the App
-  // before using it. Best effort.
+  // member, teams, App revision, scopes and time zone. The revision is a
+  // best-effort hint: every saved result needs a fresh checked read before
+  // reuse. Neither a successful lookup nor a failed invalidation grants access.
   mcpAppLaunchData: {
     async load(key: string): Promise<unknown> {
       if (!activeRedisClient || !/^[a-f0-9]{64}$/.test(key)) return null

@@ -267,8 +267,8 @@ function initialResultFor(result, name, args) {
 }
 
 // Shows the launch's result for these arguments, or calls the tool for one.
-// One kept from an earlier open shows at once and, past a minute old, loads
-// again behind it, so the person sees data now and current data a moment later.
+// A checked matching snapshot seeds the view too. Older launch producers can
+// supply an earlier load time, in which case refresh behind the visible data.
 function loadWith(call, result, name, args) {
   const loaded = initialResultFor(result, name, args);
   if (!loaded) return call.call(args);

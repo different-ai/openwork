@@ -305,9 +305,8 @@ async function handleMcpAppServerRequestUntimed(input: {
     }),
     canKeep: (binding) => mcpAppToolKeepable(capabilityContext, binding),
     launchData: {
-      // Kept only at the organization's current inventory revision, which moves
-      // after any write that can change what this member may use: connections,
-      // Plugins, Workflows, teams, membership, features and every deploy.
+      // The inventory revision limits stale hits; launchInitialResults still
+      // runs every read through current authorization before accepting a hit.
       async open(timeZone) {
         const revision = await cache.inventory.revision(organizationId)
         if (!revision) return null

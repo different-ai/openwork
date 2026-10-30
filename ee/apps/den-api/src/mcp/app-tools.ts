@@ -290,9 +290,9 @@ export async function callMcpAppTool(
 
 /**
  * Whether a read's result may be kept for this caller's next open: only a
- * read of OpenWork's own data, which Den authorizes and whose access changes
- * move the inventory revision. A provider's data is never kept: only running
- * its tool again can confirm the caller may still see it.
+ * read of OpenWork's own data. This only controls storage; launchInitialResults
+ * still runs the checked read before using a snapshot. Provider data is never
+ * stored here.
  */
 export function mcpAppToolKeepable(ctx: CapabilityRegistryContext, binding: McpAppToolBinding): boolean {
   if (!binding.readOnly || binding.kind !== "api") return false
