@@ -1,9 +1,8 @@
 import { createServer as httpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
-import type { Den, Place, Seed } from "@openwork/env";
+import type { Den, Seed } from "@openwork/env";
 import { denFetch } from "@openwork/behaviors";
-import { chrome } from "@openwork/hosts";
 import { connect, debuggerUrlFor, listTargets, type Surface } from "@openwork/cdp";
 import { seededOrganizationId } from "./organization-capabilities.ts";
 
@@ -38,7 +37,7 @@ async function startProvider(handler: (request: IncomingMessage, body: string, r
  * OAuth callbacks and readiness) with a disposable database. The member already got one answer in this conversation;
  * the runner and Google's consent and token endpoints are local fixtures. Nothing leaves localhost.
  */
-export async function workbotSetupApps(seed: Seed, { place }: { place: Place }) {
+export async function workbotSetupApps(seed: Seed) {
   if (process.env.OPENWORK_EVAL_DEN_API_URL?.trim()) throw new Error("The setup proof requires a fresh disposable Den, not a reused server.");
   const resources = new AsyncDisposableStack();
   let den: Den | undefined;
@@ -128,7 +127,7 @@ export async function workbotSetupApps(seed: Seed, { place }: { place: Place }) 
     resources.defer(() => vite.close());
     await vite.listen();
     const workbotUrl = text(vite.resolvedUrls?.local[0], "Workbot URL");
-    den = await seed.den({ web: false, org: { name: "Acme", admin: { name: "Avery Owner" }, members: {} }, trustedOrigins: [provider.url, workbotUrl], env: { DEN_WORKBOT_URL: workbotUrl, DEN_API_PUBLIC_URL: provider.url, DEN_GOOGLE_API_BASE_URL: provider.url, DEN_GOOGLE_OAUTH_AUTHORIZE_URL: `${provider.url}/authorize`, DEN_GOOGLE_OAUTH_TOKEN_URL: `${provider.url}/token`, DEN_GOOGLE_OAUTH_USERINFO_URL: `${provider.url}/userinfo`, DEN_ALLOW_PRIVATE_MCP_URLS: "true", DEN_PLAN_GATING_ENABLED: "false", RESEND_API_KEY: "", SMTP_HOST: "", LOOPS_API_KEY: "", STRIPE_SECRET_KEY: "" } });
+    den = await seed.den({ org: { name: "Acme", admin: { name: "Avery Owner" }, members: {} }, trustedOrigins: [provider.url, workbotUrl], env: { DEN_WORKBOT_URL: workbotUrl, DEN_API_PUBLIC_URL: provider.url, DEN_GOOGLE_API_BASE_URL: provider.url, DEN_GOOGLE_OAUTH_AUTHORIZE_URL: `${provider.url}/authorize`, DEN_GOOGLE_OAUTH_TOKEN_URL: `${provider.url}/token`, DEN_GOOGLE_OAUTH_USERINFO_URL: `${provider.url}/userinfo`, DEN_ALLOW_PRIVATE_MCP_URLS: "true", DEN_PLAN_GATING_ENABLED: "false", DEN_FEATURE_WORKBOT_INCLUDED_MODELS: "false", DEN_FEATURE_WORKBOT_USAGE_RECOVERY: "false", RESEND_API_KEY: "", SMTP_HOST: "", LOOPS_API_KEY: "", STRIPE_SECRET_KEY: "" } });
     const owner = den.admin;
     organizationId = await seededOrganizationId(seed, owner);
     if (!organizationId) throw new Error("The seeded organization is missing.");
@@ -136,12 +135,24 @@ export async function workbotSetupApps(seed: Seed, { place }: { place: Place }) 
     if (configured.status !== 200) throw new Error(configured.text);
     const issued = await requestDen(owner.token, "POST", "/v1/mcp/token", { orgId: organizationId, body: { scopes: ["mcp:read", "mcp:write"] } });
     token = text(field(issued.body, "token"), "Workbot token");
-    const web = resources.use(await chrome({ host: place.host(), name: "workbot-setup-apps", startUrl: workbotUrl, headless: true }));
+    const context = await requestDen(owner.token, "GET", "/v1/org", { orgId: organizationId });
+    if (field(context.body, "features", "workbotIncludedModels") !== false || field(context.body, "features", "workbotUsageRecovery") !== false) throw new Error("Setup links must work with both model recovery features disabled");
+    // Workbot's token stays in Acme while the browser's Den session starts in another workspace.
+    const other = await requestDen(owner.token, "POST", "/v1/org", { body: { name: "Other team" } });
+    if (other.status !== 200 && other.status !== 201) throw new Error(other.text);
+    const otherOrganizationId = text(field(other.body, "organization", "id"), "Other workspace");
+    const selected = await requestDen(owner.token, "POST", "/v1/me/active-organization", { body: { organizationId: otherOrganizationId } });
+    if (selected.status !== 200) throw new Error(selected.text);
+    const web = await seed.web({ den, signedInAs: owner, startPath: "/dashboard/members", headless: true });
     const clients: Array<{ close(): void }> = [];
     resources.defer(() => { for (const client of clients) client.close(); });
     const denWeb = den.ref.webUrl.replace(/\/+$/, "");
     return {
-      web, url: workbotUrl, organizationId, starts: () => starts,
+      web, url: workbotUrl, organizationId, otherOrganizationId, starts: () => starts,
+      async activeOrganizationId() {
+        const result = await requestDen(owner.token, "GET", "/v1/me/orgs");
+        return field(result.body, "activeOrgId");
+      },
       /** The exact Den page a step opens, in the signed-in workspace. */
       denPage: (path: string) => `${denWeb}/dashboard/${path}${path.includes("?") ? "&" : "?"}workbotOrganizationId=${encodeURIComponent(organizationId)}`,
       /** What Den reports for the member (a read with their Workbot token). */
@@ -165,6 +176,16 @@ export async function workbotSetupApps(seed: Seed, { place }: { place: Place }) 
         await client.send("Page.enable");
         clients.push(client);
         return { handle: { ...web.handle, name: "local-provider-consent" }, client };
+      },
+      /** Follow the real tab opened by Invite, including after Den consumes the workspace hint. */
+      async membersPage(): Promise<Surface> {
+        const targets = await listTargets(web.handle.cdpUrl);
+        const target = targets.find(entry => entry.type === "page" && entry.url.startsWith(`${denWeb}/dashboard/members`));
+        if (!target) throw new Error("Invite did not open the Members page");
+        const client = await connect(debuggerUrlFor(web.handle.cdpUrl, target));
+        await client.send("Page.enable");
+        clients.push(client);
+        return { handle: { ...web.handle, name: "workbot-invite-members" }, client };
       },
       async [Symbol.asyncDispose]() { await resources.disposeAsync(); },
     };
