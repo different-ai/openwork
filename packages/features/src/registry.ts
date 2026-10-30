@@ -113,7 +113,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/library-detail-breadcrumbs/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   desktopUpdateDownloadWindow: {
     label: "Desktop: restart to update before the download",
@@ -135,7 +135,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/development/native-affordance-codemode.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   libraryConnectorNavigation: {
     label: "Library: connected items and skill previews",
@@ -146,7 +146,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/library-connector-navigation/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   mcpAppLibraries: {
     label: "Apps: built-in libraries",
@@ -157,7 +157,7 @@ export const FEATURES = defineFeatures({
     author: "reachjalil",
     docs: "docs/features/mcp-app-libraries/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   autoRouter: {
     label: "AI Gateway: Auto Router",
@@ -179,7 +179,7 @@ export const FEATURES = defineFeatures({
     author: "OmarMcAdam",
     docs: "docs/features/gateway-provider-test/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   settledSessions: {
     label: "Desktop: settle finished sessions",
@@ -201,7 +201,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/mermaid-zoom/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   administratorRecovery: {
     label: "Deploy-time administrator recovery",
@@ -232,7 +232,7 @@ export const FEATURES = defineFeatures({
     since: "2026-10",
     author: "benjaminshafii",
     deployments: ["cloud"],
-    default: false,
+    default: true,
   },
   connectionMcpServers: {
     label: "Connect: an MCP server for each connection",
@@ -253,7 +253,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/slack-send-as-bot/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
     outcomes: true,
   },
   liveProviderSync: {
@@ -265,7 +265,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/live-provider-sync.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   managedDeployments: {
     label: "Managed deployments",
@@ -462,7 +462,7 @@ export const FEATURES = defineFeatures({
     since: "2026-10",
     author: "reachjalil",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
 
   remoteComputers: {
@@ -495,7 +495,7 @@ export const FEATURES = defineFeatures({
     author: "reachjalil",
     docs: "docs/session-offloading-architecture.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   remoteSessionThreadView: {
     label: "Desktop: open a sub-agent task's conversation",
@@ -528,7 +528,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/remote-session-answers/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   activationChecklist: {
     label: "Get set up checklist",
@@ -538,7 +538,7 @@ export const FEATURES = defineFeatures({
     since: "2026-10",
     author: "benjaminshafii",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   connectStandardTools: {
     label: "Connect: standard tools",
@@ -570,7 +570,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/gateway-provider-auth-errors/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   providerCredentialStatus: {
     label: "Desktop: honest AI provider key status",
@@ -581,7 +581,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/provider-credential-status/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   outlookAttachments: {
     label: "Outlook attachments",
@@ -624,7 +624,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/custom-connector-setup/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   expandedMcpPresets: {
     label: "Connect: more MCP server presets",
@@ -635,7 +635,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/expanded-mcp-presets/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   analyticsDailyTrends: {
     label: "Analytics: daily trends",
@@ -646,7 +646,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/analytics-daily-trends/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   gatewayProviderRemovalLimits: {
     label: "AI Gateway: keep spend limits when removing a provider",
@@ -657,7 +657,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/gateway-provider-removal-limits/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   guidedSlackSetup: {
     label: "Connect: guided Slack setup",
@@ -668,7 +668,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/guided-slack-setup/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   libraryConnectorOrgSetup: {
     label: "Desktop: connectors that need an organization app",
@@ -679,7 +679,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/library-connector-org-setup/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   liveReplyModel: {
     label: "Desktop: see a reply's model while it streams",
@@ -701,7 +701,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/composer-subagent-tracker/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   textActivityRail: {
     label: "Desktop: text-first activity in chat",
