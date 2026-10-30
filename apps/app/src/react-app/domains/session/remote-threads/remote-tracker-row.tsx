@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { t } from "@/i18n"
 import type { RemoteThreadStart } from "@/lib/remote-session-thread"
 import { cn } from "@/lib/utils"
+import { useTextActivityRail } from "@/components/chat/text-activity-rail-store"
 import { stopRemoteThread } from "./remote-thread-actions"
 import { useFollowRemoteThread, useRemoteThread, type RemoteThreadOwner } from "./remote-thread-store"
 import { remoteThreadStatusWord, remoteThreadView } from "./remote-thread-view"
@@ -27,6 +28,7 @@ export function RemoteTrackerRow({ start, owner, startedAt, onKind, onOpen }: {
   onOpen?: (start: RemoteThreadStart) => void
 }) {
   useFollowRemoteThread(start, owner, startedAt)
+  const textRail = useTextActivityRail()
   const entry = useRemoteThread(start.key)
   const [stopping, setStopping] = useState(false)
   const [stoppedHere, setStoppedHere] = useState(false)
@@ -47,13 +49,14 @@ export function RemoteTrackerRow({ start, owner, startedAt, onKind, onOpen }: {
       data-subagent-tracker-remote=""
       className="flex h-9 min-w-0 items-center gap-2.5 px-4 text-[13px]"
     >
-      {/* The list's status dot, so remote and local rows share one left edge. */}
-      <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center">
+      {/* The list's status dot, so remote and local rows share one left edge;
+          text-first (textActivityRail) drops it for both, the word carries the state. */}
+      {textRail ? null : <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center">
         <span className={cn(
           "size-1.5 rounded-full",
           kind === "attention" ? "bg-amber-9" : kind === "error" ? "bg-red-9" : kind === "stopped" || kind === "done" ? "bg-gray-6" : "bg-gray-9",
         )} />
-      </span>
+      </span>}
       <span className="flex min-w-0 flex-1 items-baseline gap-2">
         <span className="shrink-0 font-medium text-gray-12" data-subagent-tracker-agent="">{view.computer}</span>
         <span data-subagent-tracker-task className="min-w-0 truncate text-gray-9 @max-[480px]/composer:hidden">{view.title}</span>
