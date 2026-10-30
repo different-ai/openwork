@@ -9,6 +9,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useOpenTargets } from "@/lib/target-provider";
 import { useSessionReferencesMaybe } from "@/components/chat/session-reference-context";
+import { useUntrustedMarkdown } from "./untrusted-markdown";
 import { useOpenArtifactPath } from "@/lib/artifacts";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { openTargetForHref } from "@/react-app/domains/session/artifacts/resolve-open-target";
@@ -25,6 +26,7 @@ import {
   type MarkdownBlockHtml,
 } from "./markdown-primitive";
 import { LinkActionMenu } from "./link-action-menu";
+import { decorateGitHubReferences } from "./github-references";
 import { useMermaidEnhancer } from "./mermaid";
 import { MermaidZoomPortals } from "./mermaid-zoom-viewport";
 import { useSelectionStableValue } from "./selection-stability";
@@ -68,6 +70,8 @@ type MarkdownBlockInnerProps = {
   /** Opt in only for conversation prose, never tool output or artifact previews. */
   sessionReferences?: boolean;
   highlightQuery?: string;
+  /** Text-first rail: GitHub pull request and issue links show their mark. */
+  githubReferences?: boolean;
 } & Omit<
   React.ComponentProps<"div">,
   "ref" | "className" | "children" | "dangerouslySetInnerHTML"
@@ -88,6 +92,7 @@ function MarkdownBlockInner({
   streaming,
   sessionReferences = false,
   highlightQuery,
+  githubReferences = false,
   ...props
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -104,8 +109,10 @@ function MarkdownBlockInner({
   useEffect(() => setLinkMenu(null), [client, workspaceId, workspaceRoot]);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
   const references = useSessionReferencesMaybe();
-  const resolveReference = sessionReferences ? references?.resolve : undefined;
-  const streamingRenderer = useMemo(() => createStreamingMarkdownRenderer("chat", resolveReference), [resolveReference]);
+  const untrusted = useUntrustedMarkdown();
+  const presentation = untrusted ? "remote" : "chat";
+  const resolveReference = sessionReferences && !untrusted ? references?.resolve : undefined;
+  const streamingRenderer = useMemo(() => createStreamingMarkdownRenderer(presentation, resolveReference), [presentation, resolveReference]);
   const streamedBlocks = useMemo(
     () => (streaming ? streamingRenderer.render(text) : null),
     [streaming, streamingRenderer, text],
@@ -114,8 +121,8 @@ function MarkdownBlockInner({
     if (!streaming) streamingRenderer.reset();
   }, [streaming, streamingRenderer]);
   const syncHtml = useMemo(
-    () => (streamedBlocks ? "" : renderMarkdownHtml(text, "chat", resolveReference)),
-    [streamedBlocks, text, resolveReference],
+    () => (streamedBlocks ? "" : renderMarkdownHtml(text, presentation, resolveReference)),
+    [streamedBlocks, text, presentation, resolveReference],
   );
   const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string; resolveReference: typeof resolveReference } | null>(null);
 
@@ -195,7 +202,7 @@ function MarkdownBlockInner({
     if (!root || isEmpty || rendered.kind !== "document") return;
     let cancelled = false;
     const stopObserving = enhanceNearViewport([root], () => {
-      void renderHighlightedMarkdownHtml(text, "chat", resolveReference).then((html) => {
+      void renderHighlightedMarkdownHtml(text, presentation, resolveReference).then((html) => {
         if (!cancelled && html.trim()) setHighlightedHtml({ text, html, resolveReference });
       }).catch(() => {
         if (!cancelled) setHighlightedHtml(null);
@@ -205,7 +212,7 @@ function MarkdownBlockInner({
       cancelled = true;
       stopObserving();
     };
-  }, [isEmpty, rendered.kind, streaming, text, resolveReference]);
+  }, [isEmpty, rendered.kind, streaming, text, presentation, resolveReference]);
 
   const mermaidDiagrams = useMermaidEnhancer(rootRef, rendered, !streaming);
 
@@ -225,6 +232,12 @@ function MarkdownBlockInner({
       syncCodeWrapStates();
     });
   }, [highlightQuery, rendered]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !githubReferences) return;
+    decorateGitHubReferences(root);
+  }, [githubReferences, rendered]);
 
   useEffect(() => {
     const root = rootRef.current;

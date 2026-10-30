@@ -14,6 +14,7 @@ import {
   type Receipt,
   type SessionError,
   type TranscriptMessage,
+  type TranscriptPart,
   type TranscriptToolCall,
 } from "../../remote-sessions/src/index.ts"
 import { isRecord } from "./den.ts"
@@ -260,13 +261,35 @@ function toolCall(part: Extract<NativeAssistantContent, { type: "tool" }>): Tran
     error: rawError === undefined ? null : clipped(rawError, 2000),
     truncated: rawInput.length > 2000 || (rawOutput?.length ?? 0) > 2000 || (rawError?.length ?? 0) > 2000 }
 }
+/** The assistant's text, reasoning and tool steps in native order; text and reasoning share one character budget. */
+function transcriptParts(content: readonly NativeAssistantContent[]): TranscriptPart[] {
+  let chars = 20_000
+  const prose = (text: string, cap: number) => {
+    const kept = text.slice(0, Math.min(cap, chars))
+    chars -= kept.length
+    return kept
+  }
+  return content.filter(part => part.type === "tool" || part.text.trim()).slice(0, 200).map((part): TranscriptPart => {
+    if (part.type === "text") return { type: "text", text: prose(part.text, 20_000) }
+    if (part.type === "reasoning") return { type: "reasoning", text: prose(part.text, 4_000) }
+    const { id, name, status, input, output, error, truncated } = toolCall(part)
+    // The chat shows a tool's text output as text, not as its JSON content blocks.
+    const text = "content" in part.state && part.state.content
+      ? part.state.content.flatMap(item => isRecord(item) && item.type === "text" && typeof item.text === "string" ? [item.text] : []).join("\n")
+      : ""
+    return { type: "tool", id, name, status, input, output: text ? clipped(text, 2000) : output, error,
+      truncated: truncated || text.length > 2000 }
+  })
+}
 function transcriptMessage(message: NativeMessage): TranscriptMessage {
   const text = message.type === "user" ? message.text : message.type === "assistant"
     ? message.content.filter(part => part.type === "text").map(part => part.text).join("\n") : ""
   const tools = message.type === "assistant" ? message.content.filter(part => part.type === "tool").map(toolCall) : []
   return { id: clipped(message.id, 240), role: message.type === "user" ? "user" : "assistant",
     createdAt: message.time.created, text: clipped(text, 20_000), truncated: text.length > 20_000 || tools.length > 200,
-    toolCalls: tools.slice(0, 200), error: message.type === "assistant" ? errorOf(message.error) : null }
+    toolCalls: tools.slice(0, 200), error: message.type === "assistant" ? errorOf(message.error) : null,
+    ...(message.type === "assistant" ? { parts: transcriptParts(message.content) } : {}),
+    ...(message.type === "assistant" && message.time.completed !== undefined ? { completedAt: message.time.completed } : {}) }
 }
 /** Keep whole pages below the wire byte cap, including multibyte text and tool summaries. */
 function boundTranscript(messages: TranscriptMessage[]): void {
@@ -275,11 +298,15 @@ function boundTranscript(messages: TranscriptMessage[]): void {
     for (const message of messages) {
       if (message.text.length > 256) { message.text = message.text.slice(0, Math.floor(message.text.length / 2)); message.truncated = true; reduced = true }
       if (message.toolCalls.length > 4) { message.toolCalls = message.toolCalls.slice(0, Math.ceil(message.toolCalls.length / 2)); message.truncated = true; reduced = true }
-      for (const tool of message.toolCalls) {
+      for (const tool of [...message.toolCalls, ...(message.parts ?? []).flatMap(part => part.type === "tool" ? [part] : [])]) {
         for (const key of ["input", "output", "error"] satisfies Array<"input" | "output" | "error">) {
           const value = tool[key]
           if (value && value.length > 256) { tool[key] = value.slice(0, Math.floor(value.length / 2)); tool.truncated = true; reduced = true }
         }
+      }
+      if (message.parts && message.parts.length > 4) { message.parts = message.parts.slice(0, Math.ceil(message.parts.length / 2)); message.truncated = true; reduced = true }
+      for (const part of message.parts ?? []) {
+        if (part.type !== "tool" && part.text.length > 256) { part.text = part.text.slice(0, Math.floor(part.text.length / 2)); message.truncated = true; reduced = true }
       }
     }
     if (!reduced) throw new SessionRunnerError("transcript_too_large", "The bounded recent context page is still too large. Request fewer messages.")

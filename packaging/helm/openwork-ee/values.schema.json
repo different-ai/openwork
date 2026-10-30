@@ -431,6 +431,16 @@
               ],
               "description": "Desktop: open a sub-agent task's conversation: Clicking the row of a task on another computer opens its conversation beside the chat, where people read it and follow up. Needs tasks on other computers as sub-agents. Renders DEN_FEATURE_REMOTE_SESSION_THREAD_VIEW."
             },
+            "remoteSessionHelperView": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: open a task on another computer like a helper: Clicking a task on another computer opens it in the main pane like a helper: follow up with Enter, stop it, and press Esc to return to the chat where you left off. The chat row says what it ran last, and the sidebar lists the task under its chat. Needs the task conversation view. Renders DEN_FEATURE_REMOTE_SESSION_HELPER_VIEW."
+            },
             "remoteSessionAnswers": {
               "enum": [
                 "",
@@ -581,6 +591,16 @@
               ],
               "description": "Desktop: connectors that need an organization app: In the desktop Library, Slack and GitHub no longer ask for an app's client ID and secret: members see them locked until an admin sets them up, admins open the setup in OpenWork Cloud, connectors the organization already has offer Sign in from Add a connector, and a sign-in that fails says why, with a link to the service's app settings when that is the fix. Renders DEN_FEATURE_LIBRARY_CONNECTOR_ORG_SETUP."
             },
+            "liveReplyModel": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: see a reply's model while it streams: While a turn runs, hovering its Working line shows which model is writing it, right after the timer. Turning it off shows the model only after the reply finishes. Renders DEN_FEATURE_LIVE_REPLY_MODEL."
+            },
             "composerSubagentTracker": {
               "enum": [
                 "",
@@ -590,6 +610,16 @@
                 false
               ],
               "description": "Desktop: sub-agents above the composer: While a turn's sub-agents run on OpenCode v2, a compact Agents list sits on top of the composer and stays in view as the chat scrolls: each agent's name, whether it is working, needs permission, waits for an answer, is done, stopped or hit an error, with Open, Stop and Review. Turning it off leaves only the sub-agent rows in the chat. Renders DEN_FEATURE_COMPOSER_SUBAGENT_TRACKER."
+            },
+            "textActivityRail": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: text-first activity in chat: A turn's steps read as plain sentences (Ran, Read, Edited, Searched, Thought 12s) with no icon column or duration lane; grouped steps say what they explored, opened commands show their output, and GitHub links in replies show their pull request or issue mark. Turning it off restores the previous activity rail. Renders DEN_FEATURE_TEXT_ACTIVITY_RAIL."
             },
             "gatewayDashboard": {
               "enum": [

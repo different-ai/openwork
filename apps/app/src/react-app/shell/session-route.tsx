@@ -119,7 +119,11 @@ import { CalendarPage } from "@/react-app/domains/calendar/calendar-page";
 import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature";
 import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { useRemoteSessionSubagentsFeature } from "@/react-app/domains/session/remote-threads/use-remote-session-subagents-feature";
-import { remoteThreadAttentionBySession, useRemoteThreadAttentionKey } from "@/react-app/domains/session/remote-threads/remote-thread-store";
+import { remoteThreadAttentionBySession, useRemoteThreadAttentionKey, useRemoteThreadHelperViewEnabled } from "@/react-app/domains/session/remote-threads/remote-thread-store";
+import { RemoteSessionHeader, RemoteSessionSurface } from "@/react-app/domains/session/remote-threads/remote-session-surface";
+import { remoteSessionRouteId } from "@/lib/remote-session-route";
+import { useTextActivityRailFeature } from "@/react-app/domains/session/chat/use-text-activity-rail-feature";
+import { useLiveReplyModelFeature } from "@/react-app/domains/session/chat/use-live-reply-model-feature";
 import { AppsPage } from "@/react-app/domains/apps/apps-page";
 import { DashboardPage } from "@/react-app/domains/dashboard/dashboard-page";
 import { useDashboardDeploymentAvailability } from "@/react-app/domains/dashboard/dashboard-availability";
@@ -448,6 +452,8 @@ export function SessionRoute() {
   // The Calendar is an Automations view behind the automationCalendar feature.
   const calendarFeature = useOrgFeatureState("automationCalendar");
   useRemoteSessionSubagentsFeature();
+  useTextActivityRailFeature();
+  useLiveReplyModelFeature();
   const calendarSurfaceAvailable = automationsEnabled && denAuth.isSignedIn && calendarFeature.data === true;
   const calendarAvailabilityPending = denAuthChecking || (automationsEnabled && denAuth.isSignedIn && calendarFeature.isLoading);
   const calendarRouteActive = calendarSurfaceAvailable && calendarRouteRequested;
@@ -526,6 +532,7 @@ export function SessionRoute() {
     navigateToWorkspaceSession,
     routeWorkspaceId,
     selectedSessionId,
+    remoteThreadKey,
     loading,
     effectiveLoading,
     connectionPending,
@@ -1656,6 +1663,19 @@ export function SessionRoute() {
   const [libraryHeaderActionsTarget, setLibraryHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
   const [dashboardHeaderActionsTarget, setDashboardHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
   const [automationsHeaderActionsTarget, setAutomationsHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
+
+  // `remoteSessionHelperView`: a task on another computer opens in the main
+  // pane under `remote:<threadKey>` and returns to its chat like a helper.
+  const remoteHelperViewEnabled = useRemoteThreadHelperViewEnabled();
+  const remoteTaskRouteActive = Boolean(remoteThreadKey) && !activityRouteActive && !pendingConversation;
+  const remoteHelperNavigation = useMemo(() => ({
+    // The same scope the chat pane remembers its return in (session-page.tsx).
+    scope: JSON.stringify([opencodeBaseUrl?.trim() ?? "", selectedWorkspaceEndpoint?.workspaceId || null, sessionDraftScope]),
+    openParent: (sessionId: string) => navigateToWorkspaceSession(selectedWorkspaceId, sessionId),
+  }), [opencodeBaseUrl, selectedWorkspaceEndpoint?.workspaceId, sessionDraftScope, navigateToWorkspaceSession, selectedWorkspaceId]);
+  const openRemoteTask = useCallback((threadKey: string) => {
+    navigateToWorkspaceSession(selectedWorkspaceId, remoteSessionRouteId(threadKey));
+  }, [navigateToWorkspaceSession, selectedWorkspaceId]);
 
   const surfaceProps = useMemo(() => {
     if (!client || !selectedWorkspaceId || !selectedSessionId || !opencodeBaseUrl || !token || !opencodeClient) {
@@ -3993,8 +4013,12 @@ export function SessionRoute() {
       primaryTitle={activityRouteActive ? t("activity.title") : appsRouteActive ? "Dashboard" : automationsRouteActive ? "Automations" : calendarRouteActive ? "Calendar" : dashboardRouteActive ? "Dashboard" : undefined}
       // Dashboard, Automations and Library share one flat page surface.
       primarySurface={activityRouteActive || dashboardRouteActive || automationsRouteActive || calendarRouteActive || extensionsMainOpen ? "flat" : undefined}
-      primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation)}
-      primarySlot={activityRouteActive ? <ActivityPage onTrySkill={trySkillInNewSession} /> : pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
+      primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation || remoteTaskRouteActive)}
+      primaryHeader={remoteTaskRouteActive && remoteThreadKey ? <RemoteSessionHeader key={remoteThreadKey} threadKey={remoteThreadKey} navigation={remoteHelperNavigation} /> : undefined}
+      onOpenRemoteTask={remoteHelperViewEnabled ? openRemoteTask : undefined}
+      primarySlot={activityRouteActive ? <ActivityPage onTrySkill={trySkillInNewSession} /> : remoteTaskRouteActive && remoteThreadKey ? (
+        <RemoteSessionSurface key={remoteThreadKey} threadKey={remoteThreadKey} navigation={remoteHelperNavigation} />
+      ) : pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
         <WorkspaceProvider
           client={opencodeClient}
           opencodeBaseUrl={opencodeBaseUrl}

@@ -29,6 +29,8 @@ export type RemoteSessionProgress = {
   finalText: string | null
   lastError: { code: string; message: string } | null
   messageCount: number | null
+  /** The step the session ran last, as a short sentence; null from older runners. */
+  latestStep: string | null
   /** What the session waits on, from runners that read it; null otherwise. */
   pending: RemoteSessionPending | null
   observedAt: number
@@ -215,6 +217,7 @@ function mapSession(row: CommandRow): RemoteSessionProgress | null {
       ? { code: row.session_error_code, message: row.session_error_message }
       : null,
     messageCount: row.session_message_count,
+    latestStep: row.session_latest_step,
     pending: mapPending(row),
     observedAt: row.session_observed_at.getTime(),
   }
@@ -478,6 +481,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       session_error_code: input.error?.code ?? null,
       session_error_message: input.error?.message ?? null,
       ...(input.messageCount === undefined ? {} : { session_message_count: input.messageCount }),
+      session_latest_step: input.latestStep ?? null,
       session_pending: input.status === "waiting" && input.pending ? input.pending : null,
       session_observed_at: new Date(input.observedAt),
       updated_at: new Date(),

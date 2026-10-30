@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "d69941e0-5920-4c11-a592-46123ce64b9e",
+  "id": "4ad8dd8b-7adb-4613-933b-ec3ff95567ce",
   "prevId": "8e41f480-221c-4700-821c-cc9ecd3d75b3",
   "tables": {
     "admin_metric_refresh_lease": {
@@ -12205,9 +12205,9 @@
           "notNull": false,
           "autoincrement": false
         },
-        "session_pending": {
-          "name": "session_pending",
-          "type": "json",
+        "session_latest_step": {
+          "name": "session_latest_step",
+          "type": "varchar(240)",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -12351,7 +12351,7 @@
         },
         "action": {
           "name": "action",
-          "type": "enum('read','send','stop','answer')",
+          "type": "enum('read','send','stop')",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false

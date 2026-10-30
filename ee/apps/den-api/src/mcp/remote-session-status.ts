@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { isRunning, toTranscript, type HeadlessThreadClient } from "@openwork/headless-threads"
+import { isRunning, latestStep, toTranscript, type HeadlessThreadClient } from "@openwork/headless-threads"
 import {
   REMOTE_SESSION_STATUS_PREVIEW_MAX_LENGTH,
   type RemoteSessionPending,
@@ -99,7 +99,7 @@ function known(projection: Projection, extra?: unknown): Observation {
 function failed(target: Projection["target"], code: string, message: string, now: number): Observation {
   return known({
     target, state: "error", waitingFor: null, title: null, computerId: null, sessionId: null,
-    workspaceId: null, messageCount: null, preview: null, error: { code, message }, observedAt: now, pending: null,
+    workspaceId: null, messageCount: null, preview: null, latestStep: null, error: { code, message }, observedAt: now, pending: null,
   })
 }
 
@@ -133,6 +133,8 @@ export function commandProjection(command: RemoteSessionCommand): Projection {
     workspaceId: command.workspaceId,
     messageCount: session?.messageCount ?? null,
     preview: state === "idle" ? preview(session?.finalText) : null,
+    // What it ran last only means something while it works.
+    latestStep: state === "running" || state === "waiting" ? session?.latestStep ?? null : null,
     error,
     observedAt: session?.observedAt ?? command.updatedAt,
     pending: state === "waiting" ? pendingSummary(session?.pending) : null,
@@ -182,6 +184,7 @@ async function observeCloudThread(client: RemoteSessionStatusCloudClient, sessio
       workspaceId: null,
       messageCount: null,
       preview: state === "idle" ? preview(transcript.finalAssistantText) : null,
+      latestStep: state === "running" || state === "waiting" ? latestStep(snapshot.messages) : null,
       error: terminalError ? { code: terminalError.name || "session_error", message: terminalError.message || "The task stopped with an error." } : null,
       observedAt: now,
       pending: state === "waiting" ? pendingSummary(pending) : null,
