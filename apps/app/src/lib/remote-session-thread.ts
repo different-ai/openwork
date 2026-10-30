@@ -1,6 +1,9 @@
 import type { DynamicToolUIPart } from "ai"
 
+import type { RemoteSessionPending } from "@openwork/types/automations"
+
 import { parseRecord } from "@/lib/capability-call"
+import { parseRemotePending } from "@/lib/remote-session-answers"
 
 /**
  * A task the agent started on another computer through OpenWork Connect
@@ -132,6 +135,8 @@ export type RemoteTranscriptPage = {
   messages: RemoteTranscriptMessage[]
   /** Desktop pages: pass back to read earlier messages. Cloud reads widen their limit instead. */
   nextCursor: string | null
+  /** What the task waits on, from computers that report it; null otherwise. */
+  pending?: RemoteSessionPending | null
 }
 
 export type RemoteReadOutcome =
@@ -187,6 +192,7 @@ export function parseRemoteRead(payload: unknown): RemoteReadOutcome {
       title: text(record?.title),
       messages,
       nextCursor: text(record?.nextCursor),
+      pending: parseRemotePending(record?.pending),
     },
   }
 }

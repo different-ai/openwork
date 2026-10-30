@@ -9,8 +9,11 @@ import { t } from "@/i18n"
 import { latestUserMessageId, type RemoteTranscriptPage } from "@/lib/remote-session-thread"
 import { cn } from "@/lib/utils"
 import type { RemoteThreadPanelTab } from "../panel/panel-tab-store"
-import { readRemoteThread, sendRemoteFollowUp, stopRemoteThread } from "./remote-thread-actions"
-import { useFollowRemoteThread, useRemoteThread, useRemoteThreadsEnabled, useRemoteThreadViewEnabled, type RemoteThreadEntry } from "./remote-thread-store"
+import { answerRemoteThread, readRemoteThread, sendRemoteFollowUp, stopRemoteThread } from "./remote-thread-actions"
+import { RemoteThreadAnswerCard } from "./remote-thread-answer-card"
+import {
+  useFollowRemoteThread, useRemoteThread, useRemoteThreadAnswersEnabled, useRemoteThreadsEnabled, useRemoteThreadViewEnabled, type RemoteThreadEntry,
+} from "./remote-thread-store"
 import { remoteThreadView } from "./remote-thread-view"
 
 /**
@@ -63,6 +66,7 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
   const latest = useRef({ entry, limit })
   latest.current = { entry, limit }
   const reads = useRef({ inflight: false, again: false, lastAt: 0, mounted: true })
+  const answers = useRemoteThreadAnswersEnabled()
 
   useEffect(() => {
     reads.current.mounted = true
@@ -204,7 +208,9 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
         </div>
       </div>
 
-      {view.waitingFor ? (
+      {view.waitingFor && answers && page?.pending?.kind === view.waitingFor ? (
+        <RemoteThreadAnswerCard pending={page.pending} computer={view.computer} onAnswer={(answer) => answerRemoteThread(entry, answer)} />
+      ) : view.waitingFor ? (
         <div className="flex shrink-0 items-start gap-2 border-t border-border px-3 py-2 text-xs text-foreground" data-remote-thread-waiting={view.waitingFor}>
           {view.waitingFor === "permission"
             ? <ShieldAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-amber-10" />

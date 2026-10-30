@@ -1,3 +1,5 @@
+import type { RemoteSessionAnswerInput } from "@openwork/types/automations"
+
 import { createDenClient, DenApiError, readDenSettings } from "@/app/lib/den"
 import {
   latestUserMessageId,
@@ -44,7 +46,7 @@ export function remoteThreadLocation(entry: RemoteThreadEntry): { sessionId: str
   return { sessionId, ...(workspaceId ? { workspaceId } : {}) }
 }
 
-async function call(action: "read" | "send" | "stop", input: Record<string, unknown>): Promise<unknown> {
+async function call(action: "read" | "send" | "stop" | "answer", input: Record<string, unknown>): Promise<unknown> {
   const requireEnabled = () => {
     if (!useRemoteThreadStore.getState().enabled) {
       throw new DenApiError(404, "feature_disabled", "Tasks on other computers are turned off.")
@@ -94,6 +96,27 @@ export async function sendRemoteFollowUp(entry: RemoteThreadEntry, prompt: strin
     if (remotePendingRequestId(payload)) return { code: "desktop_request_pending", message: "The computer hasn't confirmed your follow-up yet. Check the conversation before sending it again.", retryable: false }
     const error = remoteActionError(payload)
     if (error) return error
+    useRemoteThreadStore.getState().followedUp(entry.start.key)
+    return null
+  } catch (error) {
+    return failure(error)
+  }
+}
+
+/**
+ * The person's own answer to the task's question or permission. The card goes
+ * away once the status Den follows says the task moved on; a request that is
+ * no longer pending comes back as a refusal to show inline.
+ */
+export async function answerRemoteThread(entry: RemoteThreadEntry, answer: RemoteSessionAnswerInput): Promise<Failure | null> {
+  const location = remoteThreadLocation(entry)
+  if (!location) return { code: "not_started", message: "The task hasn't started yet.", retryable: true }
+  try {
+    const payload = await call("answer", { ...location, ...answer })
+    if (remotePendingRequestId(payload)) return { code: "desktop_request_pending", message: "The computer hasn't confirmed your answer yet. Check the task before answering again.", retryable: false }
+    const error = remoteActionError(payload)
+    if (error) return error
+    // Look again now: the task runs on, or waits on its next question.
     useRemoteThreadStore.getState().followedUp(entry.start.key)
     return null
   } catch (error) {

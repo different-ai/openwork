@@ -9,8 +9,12 @@ import { t } from "@/i18n"
 import { remoteToolCallStartedAt, type RemoteThreadStart } from "@/lib/remote-session-thread"
 import { cn } from "@/lib/utils"
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store"
+import { RemoteThreadRowAnswers } from "@/react-app/domains/session/remote-threads/remote-thread-row-answers"
 import { stopRemoteThread } from "@/react-app/domains/session/remote-threads/remote-thread-actions"
-import { useFollowRemoteThread, useRemoteThread, useRemoteThreadViewEnabled } from "@/react-app/domains/session/remote-threads/remote-thread-store"
+import {
+  useFollowRemoteThread, useRemoteThread, useRemoteThreadAnswersEnabled, useRemoteThreadViewEnabled,
+} from "@/react-app/domains/session/remote-threads/remote-thread-store"
+import { rowQuestionOptions } from "@/lib/remote-session-answers"
 import { remoteThreadView } from "@/react-app/domains/session/remote-threads/remote-thread-view"
 import { useUiStateStore } from "@/react-app/shell/ui-state-store"
 
@@ -39,6 +43,7 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
   useFollowRemoteThread(start, { workspaceId, sessionId }, remoteToolCallStartedAt(part))
   const entry = useRemoteThread(start.key)
   const threadView = useRemoteThreadViewEnabled()
+  const answers = useRemoteThreadAnswersEnabled()
   const [stopping, setStopping] = useState(false)
   const [stoppedHere, setStoppedHere] = useState(false)
   const [now, setNow] = useState(() => Date.now())
@@ -50,7 +55,7 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
     return () => window.clearInterval(interval)
   }, [ticking])
 
-  return (
+  const row = (
     <div
       data-remote-thread={start.key}
       data-remote-thread-state={view.state}
@@ -100,6 +105,19 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
           <Square className="size-2.5 fill-current" aria-hidden="true" />
         </button>
       ) : null}
+    </div>
+  )
+  // Flag off, read-only, or nothing a row can answer: exactly the row as before.
+  const choices = answers && entry && !readOnly && view.waitingFor === "question" ? rowQuestionOptions(entry.status?.pending) : null
+  if (!entry || !choices) return row
+  return (
+    <div className="flex min-w-0 max-w-full flex-col gap-1.5">
+      {row}
+      <RemoteThreadRowAnswers
+        entry={entry}
+        choices={choices}
+        openPanel={threadView ? () => openRemoteThreadPanel(sessionId, workspaceId, start, view.title) : null}
+      />
     </div>
   )
 }
