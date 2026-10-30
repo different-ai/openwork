@@ -67,7 +67,6 @@ import { TodoWriteTool } from "@/components/tools/todowrite"
 import { WebfetchTool } from "@/components/tools/webfetch"
 import { WebsearchTool } from "@/components/tools/websearch"
 import { useMessageList, useSessionErrorMessage } from "@/components/chat/message-list-provider"
-import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature"
 import { TaskSuggestions } from "@/components/chat/task-suggestions"
 import { useSessionReferencesMaybe, type SessionReferences } from "@/components/chat/session-reference-context"
 import { SessionReferenceLink } from "@/components/chat/session-reference-link"
@@ -126,7 +125,7 @@ import { ReasoningBlock } from "@/components/chat/reasoning-block"
 import { SubagentRunLine } from "@/components/chat/subagent-run-line"
 import { RemoteThreadRunLine } from "@/components/chat/remote-thread-run-line"
 import { isRemoteThreadStatusCheck, remoteThreadFromToolPart, type RemoteThreadStart } from "@/lib/remote-session-thread"
-import { useRemoteThreadsEnabled, useReviveRemoteThread } from "@/react-app/domains/session/remote-threads/remote-thread-store"
+import { useReviveRemoteThread } from "@/react-app/domains/session/remote-threads/remote-thread-store"
 import { ToolAggregateGroup } from "@/components/chat/tool-aggregate-group"
 import {
   CurrentToolLifecycleProvider,
@@ -269,10 +268,9 @@ function isReservedConnectionQuestionPart(part: ToolUIPart | DynamicToolUIPart):
 
 const ToolMessageInner = ({ part }: ToolMessageProps) => {
   const { connectorIdentities, onMcpReconnect, onMcpReopenAuthorization, connectionQuestionToolCallId, getConnectionDecision } = useMessageList()
-  const remoteThreads = useRemoteThreadsEnabled()
   const pinnedRemoteThreads = React.useContext(PinnedRemoteThreadsContext)
   // The agent following up on a task the chat shows makes it run again.
-  useReviveRemoteThread(remoteThreads && part.type === "dynamic-tool" ? part : null)
+  useReviveRemoteThread(part.type === "dynamic-tool" ? part : null)
   const parentActive = React.useContext(ParentRunActiveContext)
   const resolveLifecycle = useCurrentToolLifecycleResolver()
   const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
@@ -283,9 +281,9 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   if (appCreationParts.has(part.toolCallId)) return null
   if (part.toolCallId === connectionQuestionToolCallId || isReservedConnectionQuestionPart(part)) return null
   const promptCall = credentialPromptCall(part)
-  const remoteStart = remoteThreads && part.type === "dynamic-tool" ? remoteThreadFromToolPart(part) : null
+  const remoteStart = part.type === "dynamic-tool" ? remoteThreadFromToolPart(part) : null
   const calls = part.type === "dynamic-tool" ? codeModeToolCalls(part) : null
-  const remoteStarts = remoteThreads && calls && part.type === "dynamic-tool" ? (codeModeCallsWithResults(part) ?? []).flatMap((call) => {
+  const remoteStarts = calls && part.type === "dynamic-tool" ? (codeModeCallsWithResults(part) ?? []).flatMap((call) => {
     const start = remoteThreadFromToolPart(call)
     return start ? [{ start, call }] : []
   }) : []
@@ -478,13 +476,13 @@ function stepsNeedAttention(items: UIMessageWithIndex[], connectionCards: Readon
   }))
 }
 
-function withoutSilentSteps(messages: UIMessage[], remoteThreads: boolean): UIMessage[] {
+function withoutSilentSteps(messages: UIMessage[]): UIMessage[] {
   let changed = false
   const next = messages.flatMap((message) => {
     if (message.role !== "assistant") return [message]
     // With tasks on other computers shown live, the agent's own checks on them are plumbing.
     const parts = message.parts.filter((part) => !(part.type === "dynamic-tool"
-      && (isSilentCodeModePart(part) || isSilentAppLookup(part) || remoteThreads && isRemoteThreadStatusCheck(part))))
+      && (isSilentCodeModePart(part) || isSilentAppLookup(part) || isRemoteThreadStatusCheck(part))))
     if (parts.length === message.parts.length) return [message]
     changed = true
     return parts.length > 0 ? [{ ...message, parts }] : []
@@ -1154,7 +1152,6 @@ const MessageComponent = React.memo(
           canRetry={isLastMessage && !isStreaming}
           technicalDetails={presentation?.technicalDetails}
           gatewayConnectUrl={presentation?.kind === "gateway-auth-required" || presentation?.kind === "provider-credentials" ? presentation.connectUrl ?? null : undefined}
-          gatewayProviderAuthError={presentation?.kind === "gateway-provider-authentication-failed" || presentation?.kind === "gateway-provider-permission-denied"}
           gatewaySelectionRequired={presentation?.kind === "gateway-selection-required"}
           changeModel={presentation !== null && ["provider-access-denied", "provider-unavailable", "provider-unreachable", "model-unavailable", "rate-limited", "conversation-too-long", "attachment-unsupported"].includes(presentation.kind)}
         />
@@ -1322,26 +1319,16 @@ interface ErrorMessageProps {
    * null deep-links to Settings > AI providers instead.
    */
   gatewayConnectUrl?: string | null
-  gatewayProviderAuthError?: boolean
   gatewaySelectionRequired?: boolean
   changeModel?: boolean
 }
 
-function ErrorMessage({ error, description, showDescriptionOnResume, resumePrompt, canRetry = true, technicalDetails, gatewayConnectUrl, gatewaySelectionRequired, gatewayProviderAuthError, changeModel }: ErrorMessageProps) {
+function ErrorMessage({ error, description, showDescriptionOnResume, resumePrompt, canRetry = true, technicalDetails, gatewayConnectUrl, gatewaySelectionRequired, changeModel }: ErrorMessageProps) {
   const { onResumeInterrupted, dispatchAction, sessionId } = useMessageList()
-  const gatewayProviderAuthEnabled = useOrgFeature("gatewayProviderAuthErrors")
-  const useGatewayProviderAuthCopy = gatewayProviderAuthError && gatewayProviderAuthEnabled
   const selection = error?.includes("gateway_selection_required") ? presentOpencodeSessionError(error) : null
-  const displayError = gatewayProviderAuthError && !gatewayProviderAuthEnabled
-    ? "Check your model connection"
-    : selection?.title ?? error
-  const displayDescription = gatewayProviderAuthError && !gatewayProviderAuthEnabled
-    ? "Update your connection in model settings."
-    : selection?.description ?? description
-  const displayDetails = selection?.technicalDetails ?? technicalDetails
-  const displayTechnicalDetails = gatewayProviderAuthError && !gatewayProviderAuthEnabled
-    ? displayDetails?.split("\n").filter((line) => !line.startsWith("Request ID:")).join("\n")
-    : displayDetails
+  const displayError = selection?.title ?? error
+  const displayDescription = selection?.description ?? description
+  const displayTechnicalDetails = selection?.technicalDetails ?? technicalDetails
   const resumable = Boolean(resumePrompt && onResumeInterrupted)
   return (
     <TaskRecovery title={displayError ?? "Task failed"} state={resumable ? "paused" : "failed"}
@@ -1349,18 +1336,16 @@ function ErrorMessage({ error, description, showDescriptionOnResume, resumePromp
       description={showDescriptionOnResume && displayDescription
         ? <span data-testid="session-error-interruption-warning">{displayDescription}</span>
         : !resumePrompt ? displayDescription : null}
-      technicalDetails={useGatewayProviderAuthCopy ? displayDetails : displayTechnicalDetails}
+      technicalDetails={displayTechnicalDetails}
       onRetry={canRetry && resumable && resumePrompt ? () => onResumeInterrupted?.(resumePrompt) : undefined}
       retryTestId="session-error-resume"
-      actions={gatewaySelectionRequired || selection || changeModel || gatewayConnectUrl !== undefined || (gatewayProviderAuthError && !gatewayProviderAuthEnabled) ? <>
+      actions={gatewaySelectionRequired || selection || changeModel || gatewayConnectUrl !== undefined ? <>
         {gatewaySelectionRequired || selection ? <Button variant="ghost" size="xs" data-testid="session-error-gateway-selection"
           onClick={() => openAlternativeModelPicker(sessionId)}>
           Choose group and credential set
         </Button> : null}
         {changeModel && !gatewaySelectionRequired && !selection ? <Button variant="ghost" size="xs"
           onClick={() => openAlternativeModelPicker(sessionId)}>Change model</Button> : null}
-        {gatewayProviderAuthError && !gatewayProviderAuthEnabled ? <Button variant="ghost" size="xs" data-testid="session-error-gateway-connect"
-          onClick={() => dispatchAction({ target: "settings", action: "open", section: "providers" })}>Connect</Button> : null}
         {gatewayConnectUrl !== undefined ? <Button variant="ghost" size="xs" data-testid="session-error-gateway-connect"
           onClick={() => dispatchAction({ target: "settings", action: "open", section: "providers" })}>Connect</Button> : null}
       </> : null} />
@@ -1594,9 +1579,8 @@ function MessageGroup({
     () => panelLive ? appBuildActivity(items.map(item => item.message), creationParts, showThinking) : null,
     [panelLive, items, creationParts, showThinking],
   )
-  const remoteThreads = useRemoteThreadsEnabled()
   const textRail = useTextActivityRail()
-  const remoteThreadStarts = React.useMemo(() => remoteThreads ? collectRemoteThreadStarts(items) : [], [items, remoteThreads])
+  const remoteThreadStarts = React.useMemo(() => collectRemoteThreadStarts(items), [items])
   // The skill this turn produced stays in view as its result, even when the
   // steps fold; later updates and shares change this card, not add another.
   const { cards: createdSkillCards } = useCreatedSkills()
@@ -2038,8 +2022,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
   }, [activityActive, runStartedAt, syncDegraded, runWaits])
   const latestUserMessageId = React.useMemo(() => messages.findLast((message) => message.role === "user")?.id, [messages])
   // Steps that render nothing are removed before layout, so they leave no gap.
-  const remoteThreads = useRemoteThreadsEnabled()
-  const visibleMessages = React.useMemo(() => dedupeRenderedTurnErrors(withoutSilentSteps(messages, remoteThreads)), [messages, remoteThreads]);
+  const visibleMessages = React.useMemo(() => dedupeRenderedTurnErrors(withoutSilentSteps(messages)), [messages]);
   const items = React.useMemo(() => groupMessages(visibleMessages, status), [visibleMessages, status]);
   // groupMessages indexes the visible transcript. Comparing those positions
   // with the unfiltered transcript marks the live turn historical as soon as

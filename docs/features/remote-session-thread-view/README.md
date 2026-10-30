@@ -1,6 +1,9 @@
 # Desktop: open a sub-agent task's conversation
 
-Feature key: `remoteSessionThreadView` · Deployments: cloud and self-hosted · Default: off · Needs: `remoteSessionSubagents`
+> **GA:** Available without a feature flag. The former rollout key is retired.
+> Off/on screenshots below are historical comparisons, not current deployment options.
+
+Retired rollout key: `remoteSessionThreadView` · Deployments: cloud and self-hosted · Status: generally available (no flag)
 
 ## What people get
 
@@ -32,7 +35,5 @@ After, the same task:
   maps them to chat message parts, and `RemoteTranscriptView` renders them
   with `MessageList` in a read-only provider. The follow-up box is
   `RemoteFollowUpComposer`, sharing `ComposerSendButton` with the chat composer.
-- Off: the row shows progress only, and a conversation tab left open says the
-  view is turned off.
 
 Proof: `evals/proofs/remote-session-steps.proof.test.ts`.

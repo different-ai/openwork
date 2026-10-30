@@ -4,6 +4,7 @@ import { bootDen, field, list, startFakeHttpServer, summary, text } from "./harn
 
 const den = await bootDen()
 let base = ""
+let mismatch = false
 const requests: Array<{ path: string; key: string | string[] | undefined }> = []
 const remote = await startFakeHttpServer((request, _body, response) => {
   const path = request.url ?? "/"
@@ -15,7 +16,7 @@ const remote = await startFakeHttpServer((request, _body, response) => {
   }
   response.setHeader("content-type", "application/json")
   if (path.includes("oauth-protected-resource")) response.end(JSON.stringify({ resource: `${base}/mcp/readonly`, authorization_servers: [`${base}/identity`], scopes_supported: ["read"] }))
-  else if (path.includes("oauth-authorization-server") || path.includes("openid-configuration")) response.end(JSON.stringify({ issuer: `${base}/different-issuer`, authorization_endpoint: `${base}/authorize`, token_endpoint: `${base}/token`, response_types_supported: ["code"], client_id_metadata_document_supported: true }))
+  else if (path.includes("oauth-authorization-server") || path.includes("openid-configuration")) response.end(JSON.stringify({ issuer: `${base}/${mismatch ? "different-issuer" : "identity"}`, authorization_endpoint: `${base}/authorize`, token_endpoint: `${base}/token`, response_types_supported: ["code"], client_id_metadata_document_supported: true }))
   else { response.statusCode = 404; response.end("{}") }
 })
 base = remote.url
@@ -24,14 +25,13 @@ const { orgId, owner } = await den.createOrg(await den.signUp("Setup Owner"), "C
 const api = den.as(owner, orgId)
 const input = { name: "Synthetic setup", url: `${base}/mcp/readonly`, authType: "oauth", credentialMode: "per_member", requestedScopes: ["read"], access: { orgWide: true }, requestHeaders: [{ name: "X-Setup-Key", value: "synthetic-only" }] }
 
-test("flagged saves refuse an issuer mismatch before persistence; explicit manual settings remain the admin trust boundary", async () => {
-  assert.equal((await den.setFeature(orgId, "customConnectorSetup", false)).status, 200)
+test("saves refuse an issuer mismatch before persistence; explicit manual settings remain the admin trust boundary", async () => {
   const legacy = await api("POST", "/v1/mcp-connections", input)
   assert.equal(legacy.status, 200, summary(legacy))
   const legacyId = text(field(legacy.body, "id"), "legacy connection id")
-  assert.equal(requests.length, 0, "flag off leaves automatic save behavior unchanged")
-
-  assert.equal((await den.setFeature(orgId, "customConnectorSetup", true)).status, 200)
+  assert.ok(requests.length > 0, "automatic save checks the published identity")
+  mismatch = true
+  requests.length = 0
   const refused = await api("POST", "/v1/mcp-connections", { ...input, name: "Rejected setup", externalKey: "rejected-setup" })
   assert.equal(refused.status, 400, summary(refused))
   assert.match(String(field(refused.body, "message")), /administrator.*both manual sign-in addresses/)

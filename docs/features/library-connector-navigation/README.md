@@ -1,9 +1,12 @@
 # Library connector navigation and skill previews
 
-- Feature: `libraryConnectorNavigation`
+> **GA:** Available without a feature flag. The former rollout key is retired.
+> Off/on screenshots below are historical comparisons, not current deployment options.
+
+- Retired rollout key: `libraryConnectorNavigation`
 - Deployments: Cloud and self-hosted
 - Author: `benjaminshafii`
-- Default: off
+- Status: generally available (no flag)
 
 ## What changes
 
@@ -28,8 +31,6 @@ authorized plugin query only when expanded; skill source is shown as text.
 
 ## Try it
 
-Enable `libraryConnectorNavigation` for a test organization in `/admin`.
-
 As an admin: open an assigned connector in Manage, choose **Open in My
 Library**, then **Manage** from its menu to go back. Sign in to a per-person
 connector, then use **Sign out of your account**; teammates stay signed in.
@@ -42,11 +43,11 @@ In My Library, expand a plugin's skill count, then a skill. Expand a one-skill
 plugin's **Steps** and use **Show all steps**. Check keyboard disclosure,
 narrow windows, and a failed preview with **Try again**.
 
-## Turning it off
+## Availability
 
-Disabling the feature restores the previous navigation and static skill rows.
-No grants, published versions, connector setup, or signed-in accounts change.
-Existing member connector pages and personal sign-out remain available.
+Generally available. The rollout flag is retired; organization/member overrides,
+operator locks and old kill-switch rows no longer disable this behavior.
+Authorization, provider setup, consent and runtime compatibility still apply.
 
 ## Evidence
 

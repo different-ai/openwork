@@ -14,7 +14,7 @@ import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getAiGatewayLimitRoute, getAiGatewayLimitsRoute, orgFeatureEnabled, type DenOrgMember, type DenOrgTeam } from "../../_lib/den-org";
+import { getAiGatewayLimitRoute, getAiGatewayLimitsRoute, type DenOrgMember, type DenOrgTeam } from "../../_lib/den-org";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { useGatewayAccessProviders } from "./gateway-subject-access-data";
 import { providerLimitLabel } from "./provider-limit-scope";
@@ -102,7 +102,6 @@ const DEFAULT_PROVIDER = "default";
 function GatewayLimitForm({ orgId, orgSlug, policy, target, teams, members }: EditorProps & { policy?: GatewayUsageLimitPolicy; target?: GatewayLimitTarget }) {
   const id = useId();
   const { orgContext } = useOrgDashboard();
-  const showRemovedProvider = orgFeatureEnabled(orgContext, "gatewayProviderRemovalLimits");
   const router = useRouter();
   const policies = useGatewayPolicies(orgId);
   const mutation = useGatewayLimitsMutation(orgId);
@@ -203,7 +202,7 @@ function GatewayLimitForm({ orgId, orgSlug, policy, target, teams, members }: Ed
       <h2 className="text-[20px] font-medium tracking-[-0.01em] text-gray-950">{policy ? policy.name : "New spend limit"}</h2>
 
       <ProviderCard orgId={orgId} headingId={`${id}-provider`} value={providerId} onChange={setProviderId}
-        removedProviderId={showRemovedProvider && policy?.providerStatus === "removed" ? policy.providerId ?? null : null} />
+        removedProviderId={policy?.providerStatus === "removed" ? policy.providerId ?? null : null} />
 
       <section className={`${CARD} mt-3`} aria-labelledby={`${id}-who`}>
         <h3 id={`${id}-who`} className={CARD_TITLE}>Who</h3>

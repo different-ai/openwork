@@ -1,10 +1,13 @@
 # More MCP server presets
 
-Feature key: `expandedMcpPresets` · Deployments: cloud and self-hosted · Default: off · Author: @benjaminshafii
+> **GA:** Available without a feature flag. The former rollout key is retired.
+> Off/on screenshots below are historical comparisons, not current deployment options.
+
+Retired rollout key: `expandedMcpPresets` · Deployments: cloud and self-hosted · Status: generally available (no flag) · Author: @benjaminshafii
 
 ## What people get
 
-With this feature on, admins see more reviewed official MCP servers to add
+Admins see more reviewed official MCP servers to add
 with one click in Manage › Connectors, alongside the existing presets
 (Notion, Linear, Stripe, Sentry, Granola, Polar, Slack, Exa, Render, GitHub,
 Context7). The new presets:
@@ -29,12 +32,12 @@ Context7). The new presets:
 Each OAuth preset uses the same CIMD/DCR auth pipeline as the existing presets
 (`packages/enterprise-mcp-client`); no new auth path was added.
 
-Manage › Connectors › Add a connector with the flag on (the new rows follow
+Manage › Connectors › Add a connector by default (the additional rows follow
 Context7, each with its own brand mark):
 
 ![Add a connector, expandedMcpPresets on](./catalog-flag-on.png)
 
-With the flag off (as shipped), the list ends at Context7:
+Historical before GA, the list ended at Context7:
 
 ![Add a connector, expandedMcpPresets off](./catalog-flag-off.png)
 
@@ -44,34 +47,23 @@ the others use the provider's own favicon.
 
 ## How to try it
 
-Turn `expandedMcpPresets` on for one organization in `/admin` (organization
-row › features), then open Manage › Connectors › Add a connector. Adding a
+Open Manage › Connectors › Add a connector. Adding a
 server and signing in happens with the member's own account; nothing is
 connected automatically. Proof: `evals/proofs/expanded-mcp-presets.proof.test.ts`
-(off → on → filter → off again).
+(default catalog and filtering).
 
 ## How it works
 
-- `EXTERNAL_MCP_PRESETS` (the 11 existing presets) is the always-on core list.
-- `EXTERNAL_MCP_PRESETS_EXPANDED` (the 16 above) is gated by this feature flag.
-- `externalMcpPresetsForCatalog({ expanded })` returns the core list, plus the
-  expanded list only when the flag is on. It feeds:
-  - the `/v1/mcp-connections/presets` route (Manage › Connectors), and
-  - `connectorCatalogForQuery` (the `search_capabilities` connectors catalog).
-- `ALL_EXTERNAL_MCP_PRESETS` (core + expanded) is the list the auth policy
-  (`external-mcp-auth-policy`) matches against, so an existing connection to an
-  expanded-preset server keeps its preset auth behavior even when the flag is
-  off. This is what makes the flag safe to turn off: it hides new catalog
-  suggestions, it never revokes or breaks existing connections.
+The reviewed core and expanded presets feed `/v1/mcp-connections/presets`,
+connector capability search and resolution. `ALL_EXTERNAL_MCP_PRESETS` also
+backs the existing preset authentication policy. Adding a catalog suggestion
+does not authorize a connection or complete provider sign-in.
 
-## What turning it off does
+## Availability
 
-- Hides the 16 new presets from the preset list and the connectors catalog.
-- The resolve flow (`/v1/mcp-connections/resolve`) stops matching the new
-  preset names/URLs; an admin typing "airtable" no longer gets a preset match
-  (they may still get a probed discovery result).
-- Existing connections made while the flag was on stay connected and keep
-  their saved auth type and OAuth client. They are not deleted or revoked.
+Generally available. The rollout flag is retired; organization/member overrides,
+operator locks and old kill-switch rows no longer disable this behavior.
+Authorization, provider setup, consent and runtime compatibility still apply.
 
 ## What this is not
 

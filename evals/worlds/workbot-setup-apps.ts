@@ -144,11 +144,6 @@ export async function workbotSetupApps(seed: Seed, { place }: { place: Place }) 
       web, url: workbotUrl, organizationId, starts: () => starts,
       /** The exact Den page a step opens, in the signed-in workspace. */
       denPage: (path: string) => `${denWeb}/dashboard/${path}${path.includes("?") ? "&" : "?"}workbotOrganizationId=${encodeURIComponent(organizationId)}`,
-      /** A platform admin turns Get set up on or off for Acme, as /admin does. */
-      async setChecklist(enabled: boolean) {
-        const result = await requestDen(owner.token, "PUT", `/v1/admin/organizations/${organizationId}/capabilities`, { body: { capabilities: { activationChecklist: enabled } } });
-        if (result.status !== 200) throw new Error(`Changing Get set up failed: HTTP ${result.status}`);
-      },
       /** What Den reports for the member (a read with their Workbot token). */
       async activation() {
         const result = await requestDen(token, "GET", "/v1/workbot/activation");

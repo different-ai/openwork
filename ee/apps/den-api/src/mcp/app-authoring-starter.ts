@@ -17,17 +17,17 @@ export const APP_STARTER_RESOURCE_ROOT = "openwork://apps/starters"
 export const appStarterResourceUri = (pattern: AppStarterPattern) => `${APP_STARTER_RESOURCE_ROOT}/${pattern}.json`
 
 /**
- * A preparation never runs a tool or saves an App. `libraries` is the
- * editor's mcpAppLibraries feature; only then does it list what may be imported.
+ * A preparation never runs a tool or saves an App. It lists the built-in
+ * libraries that may be imported in an MCP App.
  */
-export function appAuthoringStarter(input: PrepareMcpAppInput, tools: McpAppToolBinding[], options: { libraries?: boolean } = {}): PrepareMcpAppOutput {
+export function appAuthoringStarter(input: PrepareMcpAppInput, tools: McpAppToolBinding[]): PrepareMcpAppOutput {
   const starter = appStarter(tools)
   return {
     preparationId: randomUUID(),
     title: input.title,
     tools,
     starter: { reactSource: starter.reactSource, cssSource: starter.cssSource },
-    nextSteps: options.libraries ? [...starter.nextSteps, generatedAppLibrariesNextStep()] : starter.nextSteps,
+    nextSteps: [...starter.nextSteps, generatedAppLibrariesNextStep()],
   }
 }
 

@@ -210,16 +210,4 @@ test("a person moves the page the agent opened between the side, its own floatin
     await floating.user.screenshot();
   });
 
-  await step("turning the rollout off returns the same page to the standard side panel", async () => {
-    await world.setCapabilities({ browserFloatingView: false });
-    await probe.eventually(() => probe.dom('[data-testid="session-browser-toggle"]'), { within: 60_000, until: (dom) => dom.elements.length === 0, label: "the admin rollout refresh returns the standard Browser button" });
-    await user.notSee(toggle);
-    await floatingClosed();
-    await user.notSee(card);
-    const view = await pageView(true);
-    expect(view?.tabId).toBe(tabId);
-    evidence.recordAssertionEvidence("Rollout rollback preserves the page", "The floating card and the floating Browser button disappeared; the same native tab is visible beside the chat.", view?.tabId === tabId);
-    await user.screenshot();
-  });
-
 });

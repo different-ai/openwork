@@ -8,16 +8,6 @@ export async function libraryDetailBreadcrumbs(seed: Seed) {
   const { den, webPort } = await denForAppWeb(seed, {
     org: { name: "Navigation Studio", admin: { name: "Library Owner" } },
   });
-  const org = await seed.api(den.admin, "/v1/org");
-  const organizationId = stringField(isRecord(org.body) ? org.body.organization : null, "id");
-  if (!organizationId) throw new Error("No fixture organization.");
-  const setBreadcrumbs = async (enabled: boolean) => {
-    const result = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
-      method: "PUT", body: JSON.stringify({ capabilities: { libraryDetailBreadcrumbs: enabled } }),
-    });
-    if (!result.response.ok) throw new Error(`Could not set breadcrumb rollout: ${result.text}`);
-  };
-  await setBreadcrumbs(false);
   const workspacePath = seed.tmpPath("library-breadcrumbs");
   const skillPath = join(workspacePath, ".opencode", "skills", "review-notes");
   await mkdir(skillPath, { recursive: true });
@@ -33,5 +23,5 @@ export async function libraryDetailBreadcrumbs(seed: Seed) {
   const { app, workspace } = await signedInAppWeb(seed, {
     name: "library-detail-breadcrumbs", den, webPort, workspacePath,
   });
-  return { app, workspace, pluginId, setBreadcrumbs };
+  return { app, workspace, pluginId };
 }

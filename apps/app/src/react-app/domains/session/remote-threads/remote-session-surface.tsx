@@ -13,7 +13,7 @@ import { RemoteFollowUpComposer } from "./remote-follow-up-composer"
 import { RemoteThreadTranscriptBody } from "./remote-thread-panel"
 import { answerRemoteThread, stopRemoteThread } from "./remote-thread-actions"
 import { RemoteThreadAnswerCard } from "./remote-thread-answer-card"
-import { useFollowRemoteThread, useRemoteThread, useRemoteThreadAnswersEnabled, useRemoteThreadHelperViewEnabled, type RemoteThreadEntry } from "./remote-thread-store"
+import { useFollowRemoteThread, useRemoteThread, useRemoteThreadHelperViewEnabled, type RemoteThreadEntry } from "./remote-thread-store"
 import { remoteThreadView } from "./remote-thread-view"
 import { useRemoteThreadConversation } from "./use-remote-thread-conversation"
 
@@ -126,7 +126,6 @@ function RemoteSessionConversation({ entry, origin, navigation }: { entry: Remot
   const threadKey = entry.start.key
   const conversation = useRemoteThreadConversation(entry, { initialDraft: remoteHelperDraft(threadKey), foldTask: true })
   const { view } = conversation
-  const answers = useRemoteThreadAnswersEnabled()
   const returnToParent = useReturnToParent(threadKey, origin, navigation)
   const brief = entry.start.prompt?.trim() ?? ""
   const [briefOpen, setBriefOpen] = useState(false)
@@ -168,8 +167,8 @@ function RemoteSessionConversation({ entry, origin, navigation }: { entry: Remot
         ) : null}
       </RemoteThreadTranscriptBody>
 
-      {/* The task's question or permission, answered from here (`remoteSessionAnswers`). */}
-      {view.waitingFor && answers && conversation.page?.pending?.kind === view.waitingFor ? (
+      {/* The task's question or permission, answered from here. */}
+      {view.waitingFor && conversation.page?.pending?.kind === view.waitingFor ? (
         <div className="mx-auto w-full max-w-3xl shrink-0 px-3" data-remote-session-question-slot="">
           <RemoteThreadAnswerCard pending={conversation.page.pending} computer={view.computer} onAnswer={(answer) => answerRemoteThread(entry, answer)} />
         </div>

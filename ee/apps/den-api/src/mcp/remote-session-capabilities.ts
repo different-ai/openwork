@@ -336,10 +336,10 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
 export type RemoteSessionCapabilityMatch = CapabilityMatch & { kind: "remote_session" }
 
 /** Every remote-session capability with its summary and arguments schema, as search returns them. */
-type RemoteSessionCapabilityOptions = { status?: boolean; answer?: boolean }
+/** Answers are restricted to an agent chat with the person, never background scripts. */
+type RemoteSessionCapabilityOptions = { answer?: boolean }
 
 function definitionAvailable(action: RemoteSessionAction, options: RemoteSessionCapabilityOptions): boolean {
-  if (action === "status") return options.status === true
   if (action === "answer") return options.answer === true
   return true
 }

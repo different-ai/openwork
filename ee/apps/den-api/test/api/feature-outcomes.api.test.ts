@@ -29,7 +29,7 @@ const acmeMember = await den.newMember(acme.owner, acme.orgId, "Alex Chen")
 const northwind = await den.createOrg(await den.signUp("Jordan Lee"), "Northwind Labs")
 const turnedOn: Array<[string, string]> = [
   [acme.orgId, "automationCalendarTriggers"], [northwind.orgId, "automationCalendarTriggers"],
-  [acme.orgId, "automationIntervalSchedules"], [acme.orgId, "workbotProactive"], [acme.orgId, "slackSendAsBot"],
+  [acme.orgId, "automationIntervalSchedules"], [acme.orgId, "workbotProactive"],
 ]
 for (const [orgId, key] of turnedOn) {
   const set = await den.setFeature(orgId, key, true)
@@ -224,21 +224,8 @@ test("every few hours, Your agent and Slack messages from the bot report what th
   assert.deepEqual(new Set(list(field(agentDetail.body, "feature", "reasons")).map((row) => row.reason)), new Set(["google_disconnected", "member_not_linked"]))
   assert.doesNotMatch(agentDetail.text, /Fixture sentence/, "never the sentence a member reads")
 
-  const slack = feature(result, "slackSendAsBot")
-  const slackOutcomes = field(slack, "outcomes")
-  assert.equal(field(slackOutcomes, "unit"), "message")
-  assert.equal(field(slackOutcomes, "delivered"), 21)
-  assert.equal(field(slackOutcomes, "failed"), 2)
-  assert.equal(field(slackOutcomes, "limited"), 1, "the window from three days ago is not counted")
-  assert.equal(field(slackOutcomes, "coverage", "counts"), "all")
-  assert.deepEqual(field(slack, "health"), { status: "limited", count: 1 })
-  const slackDetail = await detail("slackSendAsBot")
-  const byName = new Map(list(field(slackDetail.body, "feature", "byOrganization")).map((row) => [row.name, row]))
-  assert.equal(field(byName.get("Acme Robotics"), "outcomes", "limited"), 1)
-  assert.equal(field(byName.get("Northwind Labs"), "outcomes", "delivered"), 3)
-
   // A feature with no reader shows adoption only.
-  const plain = feature(result, "mermaidZoom")
+  const plain = feature(result, "settledSessions")
   assert.equal(plain.outcomes, null)
   assert.deepEqual(field(plain, "health"), { status: "not_used", count: null })
 })
@@ -296,4 +283,21 @@ test("an interval Automation's occurrences mark its owner's use of the feature o
   assert.deepEqual(await eventually((row) => row?.daysUsed === 2), { daysUsed: 2, lastUsedDay: secondDay })
   const runs = await asOwner("GET", `/v1/automations/${automationId}/runs`)
   assert.ok(list(field(runs.body, "items")).length >= 3, "several occurrences ran")
+})
+
+
+test("Slack bot operational outcomes remain visible after its rollout graduates", async () => {
+  const result = await den.request(adminToken, "GET", "/v1/admin/slack-send-as-bot/outcomes?range=7d")
+  assert.equal(result.status, 200, summary(result))
+  const outcomes = field(result.body, "outcomes")
+  assert.equal(field(outcomes, "unit"), "message")
+  assert.equal(field(outcomes, "delivered"), 21)
+  assert.equal(field(outcomes, "failed"), 2)
+  assert.equal(field(outcomes, "limited"), 1)
+  assert.equal(field(outcomes, "coverage", "counts"), "all")
+  assert.deepEqual(field(result.body, "health"), { status: "limited", count: 1 })
+  const byOrg = new Map(list(field(result.body, "byOrganization")).map((row) => [row.organizationId, row]))
+  assert.equal(field(byOrg.get(acme.orgId), "outcomes", "limited"), 1)
+  assert.equal(field(byOrg.get(northwind.orgId), "outcomes", "delivered"), 3)
+  assert.equal((await den.request(acme.owner.token, "GET", "/v1/admin/slack-send-as-bot/outcomes")).status, 403)
 })

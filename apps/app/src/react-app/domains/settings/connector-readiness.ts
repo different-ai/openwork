@@ -5,11 +5,6 @@ export type RecordedConnectorState = "Set up" | "Change setting" | "Sign in" | "
 
 export type RecordedConnectorView = {
   checking?: boolean;
-  /**
-   * libraryConnectorOrgSetup: a setting in the service's own app that blocks
-   * sign-in is shown, with Den's reason, before any "Sign in".
-   */
-  providerSetup?: boolean;
 };
 
 type Readiness = NonNullable<DenExternalMcpConnection["readiness"]>;
@@ -28,7 +23,7 @@ export function recordedConnectorState(connection: DenExternalMcpConnection, vie
   if (readiness === undefined) return null;
   if (connection.setupRequired || connection.issuerReviewRequired || (connection.credentialMode === "shared" && !connection.connected)) return "Set up";
   // Signing in again cannot work until the setting changes, so this wins over needsReconnect.
-  if (view.providerSetup && providerSetupProblem(connection)) return "Change setting";
+  if (providerSetupProblem(connection)) return "Change setting";
   if (connection.needsReconnect) return "Sign in";
   if (view.checking) return "Checking…";
   if (readiness?.status === "ready") return "Ready";

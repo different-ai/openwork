@@ -148,7 +148,12 @@ test("Cloud answers through the worker's native reply and maps a stale request",
   assert.equal(refused.payload.error, "stale_request")
 })
 
-test("remote-session:answer is listed only where answers are turned on, and tells the agent to ask first", () => {
+test("remote-session:status is always listed without rollout options", () => {
+  assert.ok(listRemoteSessionCapabilities().some((entry) => entry.action === "status"))
+  assert.ok(searchRemoteSessionCapabilities("remote session status", 10).some((entry) => entry.name === "remote-session:status"))
+})
+
+test("remote-session:answer is listed only in allowed calling contexts, and tells the agent to ask first", () => {
   assert.equal(searchRemoteSessionCapabilities("answer remote session question", 10).some((match) => match.name === "remote-session:answer"), false)
   const match = searchRemoteSessionCapabilities("answer remote session question", 10, { answer: true }).find((entry) => entry.name === "remote-session:answer")
   assert.ok(match)

@@ -36,20 +36,7 @@ async function requestsFor() {
   return db.select().from(RemoteSessionRequestTable).where(eq(RemoteSessionRequestTable.command_id, commandId))
 }
 
-test("answering from the app is off until remoteSessionAnswers is on, even with tasks on other computers on", async () => {
-  const off = await owner("POST", "/v1/remote-sessions/answer", answerBody)
-  assert.equal(off.status, 404, summary(off))
-  assert.equal(field(off.body, "error"), "feature_disabled")
-  assert.equal((await den.setFeature(workspace.orgId, "remoteSessionSubagents", true)).status, 200)
-  const stillOff = await owner("POST", "/v1/remote-sessions/answer", answerBody)
-  assert.equal(stillOff.status, 404, summary(stillOff))
-  assert.equal(field(stillOff.body, "error"), "feature_disabled")
-  assert.equal((await requestsFor()).length, 0)
-})
-
 test("the owner's status shows what the task waits on, and a stale answer is refused by their computer", async () => {
-  assert.equal((await den.setFeature(workspace.orgId, "remoteSessionSubagents", true)).status, 200)
-  assert.equal((await den.setFeature(workspace.orgId, "remoteSessionAnswers", true)).status, 200)
   const status = await owner("POST", "/v1/remote-sessions/status", { threads: [{ commandId }] })
   assert.equal(status.status, 200, summary(status))
   assert.deepEqual(field(list(field(status.body, "threads"))[0], "pending"), { kind: "permission", requestId: "per_live", title: "Run a command" })

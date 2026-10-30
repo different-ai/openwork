@@ -49,7 +49,7 @@ const ownAppPreset: DenExternalMcpPreset = {
 
 type Rendered = { submitted: LibraryConnectorSetupInput[]; openedCloud: number };
 
-async function render(preset: DenExternalMcpPreset, options: { admin: boolean; cloud?: boolean; flag?: boolean }): Promise<Rendered> {
+async function render(preset: DenExternalMcpPreset, options: { admin: boolean; cloud?: boolean }): Promise<Rendered> {
   const rendered: Rendered = { submitted: [], openedCloud: 0 };
   const host = document.createElement("div");
   document.body.append(host);
@@ -58,7 +58,6 @@ async function render(preset: DenExternalMcpPreset, options: { admin: boolean; c
     root?.render(
       <LibraryConnectorSetupPage
         preset={preset}
-        organizationSetup={options.flag !== false}
         canSetUpOrganizationApp={options.admin}
         onSetUpInCloud={options.cloud === false ? undefined : () => { rendered.openedCloud += 1; }}
         onBack={() => undefined}
@@ -130,18 +129,6 @@ test("an admin is sent to OpenWork Cloud to add the organization's app", async (
 test("an admin without a Cloud address cannot open setup", async () => {
   await render(orgAppPreset, { admin: true, cloud: false });
   expect(button("Set up in OpenWork Cloud").disabled).toBe(true);
-});
-
-test("with libraryConnectorOrgSetup off, the page asks for the app's codes as before", async () => {
-  const rendered = await render(orgAppPreset, { admin: false, flag: false });
-  expect(page()).toContain("Acme Chat asks for two codes from your Acme Chat app first.");
-  expect(page()).toContain("Client ID (optional for now)");
-  expect(page()).toContain("Client secret (optional for now)");
-  expect(page()).not.toContain("Not set up for your organization");
-  expect(document.querySelector("[data-testid=library-connector-locked]")).toBeNull();
-  await act(async () => button("Sign in with Acme Chat").click());
-  expect(page()).toContain("Add the client ID from your Acme Chat app.");
-  expect(rendered.submitted).toEqual([]);
 });
 
 test("a preset with OpenWork's own app is a plain sign-in for everyone", async () => {

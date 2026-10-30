@@ -111,9 +111,8 @@ const waiting: RemoteSessionThreadStatus = {
   pending: { kind: "question", requestId: "que_1", question: "Which branch?", options: ["dev", "main"], multiple: false, custom: false, questionCount: 1 },
 }
 
-async function row(answers: boolean, check: (container: HTMLElement) => void) {
+async function row(check: (container: HTMLElement) => void) {
   useRemoteThreadStore.setState({
-    enabled: true, threadView: true, answers,
     threads: { [start.key]: { start, organizationId: "org_1", version: "v1", status: waiting, stale: false, checkedAt: 1, activeSince: null,
       firstSeenAt: Date.now(), followedUpAt: null, owners: {}, viewers: 1, lastViewedAt: Date.now() } },
   })
@@ -129,20 +128,12 @@ async function row(answers: boolean, check: (container: HTMLElement) => void) {
       check,
     )
   } finally {
-    useRemoteThreadStore.setState({ enabled: false, threadView: false, answers: false, threads: {} })
+    useRemoteThreadStore.setState({ threads: {} })
   }
 }
 
-test("flag off: a waiting row looks exactly as before, with no answer buttons", async () => {
-  await row(false, (container) => {
-    expect(container.querySelector("[data-remote-thread=\"command:cmd_answers\"]")?.textContent).toContain("Waiting for your answer on Studio Mac")
-    expect(container.querySelector("[data-remote-thread-answers]")).toBeNull()
-    expect(container.firstElementChild?.getAttribute("data-remote-thread")).toBe("command:cmd_answers")
-  })
-})
-
-test("flag on: a single-choice question shows its options and Other answer… on the row", async () => {
-  await row(true, (container) => {
+test("a single-choice question shows its options and Other answer… on the row", async () => {
+  await row((container) => {
     const buttons = [...container.querySelectorAll("[data-remote-thread-answers] button")].map((button) => button.textContent)
     expect(buttons).toEqual(["dev", "main", "Other answer…"])
   })

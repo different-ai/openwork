@@ -5,7 +5,7 @@ import { manualOAuthDraft, reviewPublishedAddresses, undoPublishedAddresses } fr
 
 const url = "https://mcp.example.test/mcp";
 const addresses = { authorizationEndpoint: "https://mcp.example.test/authorize", tokenEndpoint: "https://mcp.example.test/token" };
-const options = { revisedSetup: true, secretRequired: true, url };
+const options = { setupValidation: true, secretRequired: true, url };
 function draft(input: Partial<OAuthAppDraft> = {}): OAuthAppDraft {
   return { ...createOAuthAppDraft(), clientId: "test-client", clientSecret: "test-only-secret", ...input };
 }
@@ -95,9 +95,9 @@ test("endpoint edits, changed reviews and Undo reset consent; credential-only ed
   assert.equal(withOAuthAppManualDraft(confirmedReview, undoPublishedAddresses(reviewed)).trustConfirmed, false);
 });
 
-test("flag off preserves legacy submission without introducing revised validation", () => {
+test("preset setup preserves its submission without introducing custom-setup validation", () => {
   const empty = validateOAuthAppDraft(createOAuthAppDraft(), { secretRequired: true });
   assert.deepEqual(empty.input, { clientId: "", clientSecret: "" });
   const partial = draft({ manualDraft: manualOAuthDraft({ authorizationEndpoint: addresses.authorizationEndpoint, tokenEndpoint: "" }) });
-  assert.deepEqual(validateOAuthAppDraft(partial, { ...options, revisedSetup: false, issuerMismatch: true }).input, { clientId: "test-client", clientSecret: "test-only-secret" });
+  assert.deepEqual(validateOAuthAppDraft(partial, { ...options, setupValidation: false, issuerMismatch: true }).input, { clientId: "test-client", clientSecret: "test-only-secret" });
 });

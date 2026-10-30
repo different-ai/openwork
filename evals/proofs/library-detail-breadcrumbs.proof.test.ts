@@ -12,20 +12,9 @@ test("a member follows a skill's breadcrumbs back to its category or parent plug
   const library = `${world.app.webUrl}/workspace/${world.workspace.workspaceId}/extensions`;
   const crumbs = '[data-extension-detail-page] nav';
 
-  await step("before: a skill has only a back button to Library", async () => {
+  await step("by default a skill shows Library, Skills and its current name", async () => {
     await user.navigate(`${library}/skills`);
     await user.click({ text: /^review-notes$/ });
-    await user.see({ role: "heading", label: "review-notes" });
-    await user.see({ role: "button", label: /^Library$/ });
-    const count = (await probe.dom(crumbs)).elements.length;
-    evidence.recordAssertionEvidence("The old detail has no breadcrumb trail", `breadcrumb navigation count=${count}`, count === 0);
-    expect(count).toBe(0);
-    await user.screenshot();
-  });
-
-  await step("after: a skill shows Library, Skills and its current name", async () => {
-    await world.setBreadcrumbs(true);
-    await user.reload();
     await user.see({ role: "button", label: /^Skills$/ }, { timeoutMs: 60_000 });
     expect((await probe.dom(`${crumbs} [aria-current="page"]`)).elements[0]?.text).toBe("review-notes");
     const trail = (await probe.dom(crumbs)).elements[0]?.text ?? "";
@@ -73,14 +62,4 @@ test("a member follows a skill's breadcrumbs back to its category or parent plug
     expect(path).toContain(`plugin:${world.pluginId}`);
   });
 
-  await step("turning the rollout off restores the original back button without losing the open page", async () => {
-    await world.setBreadcrumbs(false);
-    await user.reload();
-    await user.see({ role: "heading", label: "Review toolkit" }, { timeoutMs: 60_000 });
-    await user.see({ role: "button", label: /^Library$/ });
-    const count = (await probe.dom(crumbs)).elements.length;
-    evidence.recordAssertionEvidence("The open plugin remains available after rollback", `breadcrumb navigation count=${count}`, count === 0);
-    expect(count).toBe(0);
-    await user.screenshot();
-  });
 });

@@ -23,8 +23,7 @@ import { remoteThreadFollowUpSessionId, remoteToolCallStartedAt, type RemoteThre
  * - A task stops being followed when it finishes or fails, 15 minutes after
  *   nothing on screen shows it, or 6 hours after it last started work.
  * - Nothing is called while the window is hidden or offline, nor when no
- *   task needs following. Failures back off to a minute; the feature turning
- *   off stops the loop.
+ *   task needs following. Failures back off to a minute.
  *
  * Transcripts are not part of this: the open panel reads one only when the
  * status says something changed.
@@ -64,18 +63,10 @@ export type RemoteThreadEntry = {
 }
 
 type RemoteThreadState = {
-  enabled: boolean
-  /** `remoteSessionThreadView`: a row opens the task's conversation beside the chat. */
-  threadView: boolean
   /** `remoteSessionHelperView`: a row opens the task in the main pane, like a helper. */
   helperView: boolean
-  /** `remoteSessionAnswers`: the person answers a task's question or permission from here. */
-  answers: boolean
   threads: Record<string, RemoteThreadEntry>
-  setEnabled: (enabled: boolean) => void
-  setThreadView: (threadView: boolean) => void
   setHelperView: (helperView: boolean) => void
-  setAnswers: (answers: boolean) => void
   watch: (start: RemoteThreadStart, input: { owner: RemoteThreadOwner; organizationId: string; startedAt: number | null }) => () => void
   followedUp: (key: string) => void
   /** The agent sent the task a follow-up itself. */
@@ -98,20 +89,9 @@ export function remoteThreadNeedsStatus(entry: RemoteThreadEntry, organizationId
 }
 
 export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
-  enabled: false,
-  threadView: false,
   helperView: false,
-  answers: false,
   threads: {},
-  setEnabled: (enabled) => {
-    if (get().enabled === enabled) return
-    set({ enabled })
-    if (enabled) kick()
-    else stopFollowing()
-  },
-  setThreadView: (threadView) => set({ threadView }),
   setHelperView: (helperView) => set({ helperView }),
-  setAnswers: (answers) => set({ answers }),
   watch: (start, input) => {
     const ownerKey = `${input.owner.workspaceId}:${input.owner.sessionId}`
     const now = Date.now()
@@ -248,18 +228,12 @@ function listen() {
   window.addEventListener("offline", onChange)
 }
 
-function stopFollowing() {
-  inflight?.controller.abort()
-  wake?.()
-}
-
 /**
  * Follow newly shown tasks now: a waiting call restarts with them. A row that
  * only remounts (scrolling) changes nothing, so it never cuts a backoff or a
  * wait short; `now` does, for a follow-up or the window coming back.
  */
 function kick(now = false) {
-  if (!useRemoteThreadStore.getState().enabled) return
   listen()
   const context = denContext()
   const keys = context ? keysToCheck(context.organizationId, Date.now()) : []
@@ -274,7 +248,6 @@ async function follow() {
   let failures = 0
   try {
     for (;;) {
-      if (!useRemoteThreadStore.getState().enabled) return
       const context = denContext()
       if (!context) return
       const keys = keysToCheck(context.organizationId, Date.now())
@@ -306,8 +279,7 @@ async function follow() {
         await pause(Math.max(next, MIN_CALL_INTERVAL_MS - (Date.now() - calledAt)))
       } catch (error) {
         if (controller.signal.aborted) continue
-        if (error instanceof DenApiError && (error.code === "feature_disabled" || error.status === 401)) {
-          if (error.code === "feature_disabled") useRemoteThreadStore.getState().setEnabled(false)
+        if (error instanceof DenApiError && error.status === 401) {
           return
         }
         failures += 1
@@ -322,23 +294,9 @@ async function follow() {
   }
 }
 
-export function useRemoteThreadsEnabled(): boolean {
-  return useRemoteThreadStore((state) => state.enabled)
-}
-
-/** Whether a task's question or permission can be answered here instead of on its computer. */
-export function useRemoteThreadAnswersEnabled(): boolean {
-  return useRemoteThreadStore((state) => state.enabled && state.answers)
-}
-
-/** Whether a task's row opens its conversation; rows alone show progress. */
-export function useRemoteThreadViewEnabled(): boolean {
-  return useRemoteThreadStore((state) => state.enabled && state.threadView)
-}
-
 /** Whether a task opens in the main pane like a helper; it needs the conversation view too. */
 export function useRemoteThreadHelperViewEnabled(): boolean {
-  return useRemoteThreadStore((state) => state.enabled && state.threadView && state.helperView)
+  return useRemoteThreadStore((state) => state.helperView)
 }
 
 export function useRemoteThread(key: string | null): RemoteThreadEntry | null {
@@ -347,7 +305,6 @@ export function useRemoteThread(key: string | null): RemoteThreadEntry | null {
 
 /** Follow a task while this component shows it (and for a while after). */
 export function useFollowRemoteThread(start: RemoteThreadStart | null, owner: RemoteThreadOwner, startedAt: number | null) {
-  const enabled = useRemoteThreadsEnabled()
   // A task is identified by its key; a re-rendered part with the same key is the same task.
   const latest = useRef({ start, startedAt })
   latest.current = { start, startedAt }
@@ -355,11 +312,11 @@ export function useFollowRemoteThread(start: RemoteThreadStart | null, owner: Re
   const { workspaceId, sessionId } = owner
   useEffect(() => {
     const current = latest.current
-    if (!enabled || !key || !current.start) return
+    if (!key || !current.start) return
     const organizationId = readDenSettings().activeOrgId?.trim()
     if (!organizationId) return
     return useRemoteThreadStore.getState().watch(current.start, { owner: { workspaceId, sessionId }, organizationId, startedAt: current.startedAt })
-  }, [enabled, key, workspaceId, sessionId])
+  }, [key, workspaceId, sessionId])
 }
 
 /** The agent's own `remote-session:send` to a task the chat shows: follow it again. */
@@ -381,7 +338,6 @@ export type RemoteThreadAttention = { kind: "permission" | "question"; title: st
  */
 export function useRemoteThreadAttentionKey(): string {
   return useRemoteThreadStore((state) => {
-    if (!state.enabled) return "[]"
     const rows: string[][] = []
     for (const entry of Object.values(state.threads)) {
       if (entry.status?.state !== "waiting") continue

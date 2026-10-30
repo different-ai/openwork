@@ -32,8 +32,8 @@ refused. A closed tab is an explicit error, never silently replaced.
 
 ## Presentation modes
 
-Behind the `browserFloatingView` desktop feature (off by default), each
-conversation shows its browser in one of four modes, kept in memory by the
+Browser presentation modes are generally available; `browserFloatingView` is
+retired. Each conversation shows its browser in one of four modes, kept in memory by the
 renderer (`panel/browser-presentation-store.ts`):
 
 - **Hidden**: no browser surface; the side rail's Browser button is unpressed.

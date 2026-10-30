@@ -168,7 +168,7 @@ async function startRunner(seed: Seed, input: { apiUrl: string; member: Paramete
  */
 export async function remoteSessionHelperViewWorld(seed: Seed) {
   const { den, webPort } = await denForAppWeb(seed, { web: false, org: { name: "Launch team", admin: { name: "Launch Owner" } } });
-  const orgId = await enableOrganizationCapabilities(seed, den.admin, { remoteSessionSubagents: true, remoteSessionThreadView: true, remoteSessionHelperView: true, composerSubagentTracker: true });
+  const orgId = await enableOrganizationCapabilities(seed, den.admin, { remoteSessionHelperView: true, composerSubagentTracker: true });
 
   const runner = await startRunner(seed, { apiUrl: den.ref.apiUrl, member: den.admin, orgId });
   try {

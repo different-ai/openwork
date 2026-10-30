@@ -4,9 +4,6 @@ import { ChevronRight, ExternalLink } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
-import { orgFeatureEnabled } from "../../_lib/den-org";
-import { markFeatureUsed } from "../../_lib/feature-usage";
-import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import type { ConnectorTarget, useConnectorSetup } from "./connector-setup";
 import { useCheckMcpConnection } from "./mcp-connections-data";
 import { type SetupCheck, SetupChecks } from "./setup-checks";
@@ -161,7 +158,6 @@ export function SlackSetupChecklist({
           rel="noopener noreferrer"
           icon={ExternalLink}
           data-testid="slack-setup-create-app"
-          onClick={() => markFeatureUsed("guidedSlackSetup")}
         >
           Create app in Slack
         </DenButton>
@@ -207,10 +203,7 @@ export function SlackSetupChecklist({
       action = (
         <DenButton
           size="sm"
-          onClick={() => {
-            markFeatureUsed("guidedSlackSetup");
-            onSignIn();
-          }}
+          onClick={onSignIn}
           data-testid="slack-setup-sign-in"
         >
           {offers.has("sign-in-again") ? "Sign in again" : "Sign in with Slack"}
@@ -244,9 +237,7 @@ export function SlackSetupChecklist({
  * @openwork assistant applies to this connection.
  */
 export function useSlackSetupState(setup: ReturnType<typeof useConnectorSetup>, target: ConnectorTarget | null, scopeChoice: SlackScopeChoice | null) {
-  const { orgContext } = useOrgDashboard();
-  // Off: the Slack preset keeps the shared setup checks, exactly as before.
-  const slack = orgFeatureEnabled(orgContext, "guidedSlackSetup") && Boolean(target?.preset && isSlackMcpUrl(target.url));
+  const slack = Boolean(target?.preset && isSlackMcpUrl(target.url));
   const checkConnection = useCheckMcpConnection();
   const [mcpConfirmed, setMcpConfirmed] = useState(false);
   const requestedCheck = useRef<string | null>(null);

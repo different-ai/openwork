@@ -115,7 +115,7 @@ export interface EngineV2PreviewStatus {
   forceUpgradePending: boolean;
   enabled: boolean;
   chatRouting: boolean;
-  /** Effective Gateway owner on the selected engine, not merely the Den rollout. */
+  /** Effective Gateway owner on the selected engine: managed v2, never v1. */
   liveProviderSync: boolean;
   running: boolean;
   version?: string;
@@ -161,7 +161,6 @@ export interface EngineV2Preview {
   connection(): { url: string; username: string; password: string } | undefined;
   ensureWorkspaceReady(directory: string): Promise<void>;
   refreshProviders(): Promise<void>;
-  setLiveProviderSync(enabled: boolean): Promise<void>;
   /**
    * Reconcile a folder's MCP connections with the engine: register new or
    * changed ones, remove revoked ones, and restart failed ones after a back-off.
@@ -576,8 +575,8 @@ export async function userConfigProviders(
   return { claimed, definitions, native: nativeProviders, skipped, errors: templates.errors };
 }
 
-export function shouldSyncLiveProviderOwnerTransition(previous: boolean, next: boolean, rollout: boolean): boolean {
-  return previous || next || rollout;
+export function shouldSyncLiveProviderOwnerTransition(previous: boolean, next: boolean): boolean {
+  return previous !== next;
 }
 
 export function shouldWaitForMirroredProviders(liveProviderSync: boolean, specs: readonly OpencodeV2ProviderSpec[]): boolean {
@@ -724,21 +723,12 @@ async function readLiveMcpStatus(
   return statuses;
 }
 
-/** Start-time feature decisions never reuse an earlier engine's ownership. */
-export async function resolveLiveProviderSyncForEngineStart(resolve?: () => Promise<boolean>): Promise<boolean> {
-  try { return await resolve?.() === true; }
-  catch { return false; }
-}
-
 export function createEngineV2Preview(options: {
   config: ServerConfig;
   env?: Pick<EnvService, "list" | "onChange">;
   deferStart?: boolean;
   hostReadRequest?: (path: string, init?: RequestInit) => Promise<unknown>;
-  resolveNativeAffordanceCodeMode?: () => Promise<boolean>;
   providerSession?: () => CloudProviderDenSession | null;
-  /** Fresh Den resolution on every child start, independent of the cloud sync timer. */
-  resolveLiveProviderSync?: () => Promise<boolean>;
   waits?: Partial<typeof ENGINE_V2_UPKEEP_WAITS>;
   /** Same running-task probe used by the interactive migration route; unknown is not idle. */
   autoUpgradeIdle?: () => Promise<boolean>;
@@ -773,10 +763,8 @@ export function createEngineV2Preview(options: {
   let stopping = false;
   let enabled = initialState.enabled;
   let chatRouting = initialState.chatRouting === true;
-  // Selected once per child lifetime. A runtime kill changes only the next
-  // engine start: never resume the old writer while a live plugin still owns v2.
-  let liveProviderSync = false;
-  const ownsGateway = () => liveProviderSync;
+  // A managed v2 child owns Gateway inventory whenever its private identity bridge is installed.
+  const ownsGateway = () => options.providerSession !== undefined;
   let v1HistoryCopiedAt = initialState.v1HistoryCopiedAt;
   let v1HistoryCopyStartedAt = initialState.v1HistoryCopyStartedAt;
   const persistState = (receipt: EngineV2MigrationStatus = migration) => writeEngineV2PreviewState(config, {
@@ -1131,24 +1119,6 @@ export function createEngineV2Preview(options: {
     if (mirrorError) throw new Error(mirrorError);
   }
 
-  async function setLiveProviderSync(next: boolean): Promise<void> {
-    // Signed-in cold boot delivers identity after the child starts. Activation
-    // is one-way for this lifetime: one watched-config write removes the old
-    // Gateway specs and registers the plugin atomically. A kill never resumes
-    // the old writer against a plugin that the engine may still have loaded.
-    if (!next || liveProviderSync || !enabled || !chatRouting) return;
-    liveProviderSync = true;
-    try {
-      await sidecar?.refreshConfig();
-    } catch (error) {
-      liveProviderSync = false;
-      throw error;
-    }
-    mirroredSpecs = mirroredSpecs.filter(spec => !/^ipr_/i.test(spec.id));
-    workspaceReadiness.clear();
-    if (sidecar) scheduleMirror();
-  }
-
   async function closeSidecar(): Promise<void> {
     const active = sidecar;
     unsubscribe?.();
@@ -1176,22 +1146,18 @@ export function createEngineV2Preview(options: {
     const resolved = await resolveBinary(config);
     binSource = resolved.source;
     if (!enabled || !allowRunning) return;
-    liveProviderSync = await resolveLiveProviderSyncForEngineStart(options.resolveLiveProviderSync);
-    if (!enabled || !allowRunning) return;
     await mkdir(workspaceDir, { recursive: true });
     // Remove copies left by the former v2-only Cloud materializer. Cloud
     // skills now use the same metadata/on-demand Connect path as v1.
     await rm(join(rootDir, "cloud-skills"), { recursive: true, force: true });
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
-    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest, connection, {
-      nativeAffordanceCodeMode: options.resolveNativeAffordanceCodeMode,
-    }) : undefined;
+    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest, connection) : undefined;
     providerSessionBridge = options.providerSession ? await createV2ProviderSessionBridge(() =>
-      ownsGateway() ? options.providerSession?.() ?? null : null) : undefined;
+      options.providerSession?.() ?? null) : undefined;
     const globalSkills = globalSkillDirectories();
     const managed = await createManagedOpencodeV2Server({
       contextTools: contextBridge,
-      ...(providerSessionBridge ? { providerSession: { ...providerSessionBridge, enabled: ownsGateway } } : {}),
+      ...(providerSessionBridge ? { providerSession: providerSessionBridge } : {}),
       bin: resolved.bin,
       rootDir,
       instanceId: engineInstanceId(),
@@ -1659,5 +1625,5 @@ export function createEngineV2Preview(options: {
     } else if (enabled && !automaticHistoryCopy && engineOrigin !== "reverted" && !(autoUpgradeEnabled && !chatRouting && !chosenV1Manually())) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, setForcePolicy, migrateHistory, status, setEnabled, setChatRouting, requireV1HistoryCopied, describeUncopiedChat, connection, ensureWorkspaceReady, refreshProviders, setLiveProviderSync, syncWorkspaceMcp, settleWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
+  return { start: startWhenReady, setForcePolicy, migrateHistory, status, setEnabled, setChatRouting, requireV1HistoryCopied, describeUncopiedChat, connection, ensureWorkspaceReady, refreshProviders, syncWorkspaceMcp, settleWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
 }

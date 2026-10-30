@@ -2,7 +2,6 @@ import type { Hono } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { remoteSessionStatusRequestSchema, remoteSessionStatusResultSchema } from "@openwork/types/automations"
-import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, type OrganizationContextVariables } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrganizationContext } from "../../orgs.js"
@@ -33,14 +32,13 @@ const remoteSessionErrorSchema = z.object({
   message: z.string().optional(),
   retryable: z.boolean().optional(),
 }).passthrough().meta({ ref: "RemoteSessionError" })
-const featureDisabledSchema = z.object({ error: z.string(), feature: z.string().optional() })
 
 const describeMemberRoute = (options: DescribeRouteOptions & { "x-mcp": false }) => describeRoute(options)
 
 const commonResponses = {
   400: jsonResponse("The request or its arguments were invalid.", z.union([invalidRequestSchema, remoteSessionErrorSchema])),
   401: jsonResponse("Authentication required.", unauthorizedSchema),
-  404: jsonResponse("The task is unknown, the organization was not found, or the feature is off.", z.union([notFoundSchema, featureDisabledSchema])),
+  404: jsonResponse("The task is unknown or the organization was not found.", notFoundSchema),
   409: jsonResponse("The task cannot do that now.", remoteSessionErrorSchema),
   503: jsonResponse("The computer or cloud workspace that runs the task can't be reached right now; retry.", remoteSessionErrorSchema),
 }
@@ -87,7 +85,6 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
       },
     }),
     orgMemberRoute(),
-    requireFeature("remoteSessionSubagents"),
     jsonValidator(remoteSessionStatusRequestSchema.meta({ ref: "RemoteSessionStatusRequest" })),
     async (c) => {
       const body = c.req.valid("json")
@@ -120,7 +117,6 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
       responses: { 200: jsonResponse("The transcript page or receipt.", remoteSessionResultSchema), ...commonResponses },
     }),
     orgMemberRoute(),
-    requireFeature("remoteSessionSubagents"),
     jsonValidator(remoteSessionReadBodySchema),
     async (c) => {
       const result = await run(c.get("organizationContext"), c.req.raw.signal, "read", c.req.valid("json"))
@@ -139,7 +135,6 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
       responses: { 200: jsonResponse("The follow-up was accepted or is pending.", remoteSessionResultSchema), ...commonResponses },
     }),
     orgMemberRoute(),
-    requireFeature("remoteSessionSubagents"),
     jsonValidator(remoteSessionSendBodySchema),
     async (c) => {
       const result = await run(c.get("organizationContext"), c.req.raw.signal, "send", c.req.valid("json"))
@@ -158,8 +153,6 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
       responses: { 200: jsonResponse("The answer reached the session, or is pending.", remoteSessionResultSchema), ...commonResponses },
     }),
     orgMemberRoute(),
-    requireFeature("remoteSessionSubagents"),
-    requireFeature("remoteSessionAnswers"),
     jsonValidator(remoteSessionAnswerBodySchema),
     async (c) => {
       const result = await run(c.get("organizationContext"), c.req.raw.signal, "answer", c.req.valid("json"))
@@ -178,7 +171,6 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
       responses: { 200: jsonResponse("Whether the session stopped, or a pending requestId.", remoteSessionResultSchema), ...commonResponses },
     }),
     orgMemberRoute(),
-    requireFeature("remoteSessionSubagents"),
     jsonValidator(remoteSessionStopBodySchema),
     async (c) => {
       const result = await run(c.get("organizationContext"), c.req.raw.signal, "stop", c.req.valid("json"))

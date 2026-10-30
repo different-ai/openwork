@@ -13,20 +13,7 @@ test("an admin sees real server and sign-in checks before choosing a custom conn
   const observed = probe.on(world.web);
   const phase = async (id: string, status: string) => (await observed.dom(`[data-testid="connector-discovery-checks"] [data-testid="setup-check-${id}"][data-status="${status}"]`)).elements.length === 1;
 
-  await step("before: with live checks off, custom setup shows detected routes without a checklist", async () => {
-    await admin.navigate(world.setupUrl("baseline"));
-    await admin.see({ text: "Register OpenWork automatically" }, { timeoutMs: 90_000 });
-    await admin.see({ role: "button", label: "Continue" }, { timeoutMs: 30_000 });
-    await admin.see({ text: "Detected" }, { timeoutMs: 30_000 });
-    const panels = (await observed.dom('[data-testid="connector-discovery-checks"]')).elements.length;
-    evidence.recordAssertionEvidence("The flag preserves existing setup and guards the new endpoint", `live checklist panels=${panels}; streaming endpoint HTTP=${world.disabledStreamStatus}`, panels === 0 && world.disabledStreamStatus === 404);
-    expect(panels).toBe(0);
-    expect(world.disabledStreamStatus).toBe(404);
-    await admin.screenshot();
-  });
-
-  await step("after: a real 401 is a successful connection while the sign-in provider is still checking", async () => {
-    await world.enable();
+  await step("by default a real 401 is a successful connection while the sign-in provider is still checking", async () => {
     await admin.navigate(world.setupUrl("held"));
     await admin.see({ testId: "connector-discovery-checks" }, { timeoutMs: 60_000 });
     await probe.eventually(() => world.heldRequests(), { within: 20_000, label: "the provider response is actually held", until: count => count > 0 });

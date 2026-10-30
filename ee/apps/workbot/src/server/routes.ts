@@ -243,7 +243,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       workspaceAssistant: who.enabled && who.workspaceAssistant,
       guidedNavigation: who.enabled && who.workspaceAssistant && who.guidedNavigation,
       usageRecovery: who.enabled && who.usageRecovery,
-      activationChecklist: who.enabled && who.activationChecklist,
+      activationChecklist: who.enabled,
       canSchedule: who.enabled && who.canSchedule,
       sideChats: who.enabled && who.sideChats,
       commandPalette: true,
@@ -372,14 +372,14 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   /** The Get set up checklist in the header: Den's answer as it is (Den computes the steps and enforces the feature). */
   app.get("/v1/workbot/activation", async (c) => {
     const member = c.get("member")
-    if (!member.den.enabled || !member.den.activationChecklist) return c.json({ error: "feature_disabled" }, 404)
+    if (!member.den.enabled) return c.json({ error: "feature_disabled" }, 404)
     const result = await den.activation(member.accessToken)
     return new Response(JSON.stringify(result.payload), { status: result.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } })
   })
   /** Only the events Workbot itself observes (its first answer) and hiding the checklist; Den validates the body. */
   app.post("/v1/workbot/activation/events", bodyLimit({ maxSize: 1024 }), async (c) => {
     const member = c.get("member")
-    if (!member.den.enabled || !member.den.activationChecklist) return c.json({ error: "feature_disabled" }, 404)
+    if (!member.den.enabled) return c.json({ error: "feature_disabled" }, 404)
     const body = activationEventRequestSchema.safeParse(await c.req.json().catch(() => null))
     if (!body.success || body.data.step === "own_provider" || body.data.step === "use_skill") return c.json({ error: "invalid_request" }, 400)
     const result = await den.activationEvent(member.accessToken, body.data)

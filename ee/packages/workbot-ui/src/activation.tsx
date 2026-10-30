@@ -19,7 +19,7 @@ import type { WorkbotConnection, WorkbotTurn } from "./data";
 import { workbotHost } from "./host";
 
 /**
- * The "Get set up" chip in Workbot's header (feature `activationChecklist`): the same six steps, in the same order, as
+ * The "Get set up" chip in Workbot's header: the same six steps, in the same order, as
  * Desktop's sidebar card. Den computes every step; Workbot only reports its first answer and hiding the checklist.
  * Nothing shows before the first answer or after all six are done.
  */

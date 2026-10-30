@@ -36,7 +36,7 @@ async function withRow(input: { helperView: boolean; start: RemoteThreadStart; e
   if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" })
   const actEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT")
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true)
-  useRemoteThreadStore.setState({ enabled: true, threadView: true, helperView: input.helperView, threads: { [input.start.key]: input.entry } })
+  useRemoteThreadStore.setState({ helperView: input.helperView, threads: { [input.start.key]: input.entry } })
   const container = document.createElement("div")
   document.body.append(container)
   const root = createRoot(container)
@@ -54,7 +54,7 @@ async function withRow(input: { helperView: boolean; start: RemoteThreadStart; e
   } finally {
     await act(async () => { root.unmount() })
     container.remove()
-    useRemoteThreadStore.setState({ enabled: false, threadView: false, helperView: false, threads: {} })
+    useRemoteThreadStore.setState({ helperView: false, threads: {} })
     Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment)
     if (ownedDom) await GlobalRegistrator.unregister()
   }

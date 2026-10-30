@@ -80,7 +80,6 @@ export function canRetryCloudProviderRow(status: CloudProviderRowStatus) {
 
 export type CloudProvidersViewProps = {
   runtimeWorkspaceId?: string | null;
-  credentialStatusEnabled?: boolean;
   checkDesktopAppRestriction: DesktopAppRestrictionChecker;
   cloudOrgProviders: DenOrgLlmProvider[];
   connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
@@ -103,7 +102,6 @@ export type CloudProvidersViewProps = {
 
 export function CloudProvidersView({
   runtimeWorkspaceId,
-  credentialStatusEnabled = false,
   checkDesktopAppRestriction,
   cloudOrgProviders,
   connectCloudProvider,
@@ -129,9 +127,8 @@ export function CloudProvidersView({
 
   const healthEntries = useProviderCredentialHealth((state) => state.entries);
   const rows = React.useMemo<CloudProviderRow[]>(() => {
-    const providerHealth = (providerId: string): ProviderCredentialHealth | undefined => credentialStatusEnabled
-      ? (runtimeWorkspaceId ? healthEntries[credentialHealthKey(runtimeWorkspaceId, providerId)]?.status : undefined) ?? "unverified"
-      : undefined;
+    const providerHealth = (providerId: string): ProviderCredentialHealth =>
+      (runtimeWorkspaceId ? healthEntries[credentialHealthKey(runtimeWorkspaceId, providerId)]?.status : undefined) ?? "unverified";
     const restrictToCloud = checkDesktopAppRestriction({ restriction: "allowCustomProviders" });
     const liveRows = cloudOrgProviders.map((provider) => {
       const imported = importedCloudProviders[provider.id] ?? null;
@@ -195,7 +192,6 @@ export function CloudProvidersView({
     return combined.filter((row) => !gatewayConnectProviders.some((provider) => provider.cloudProviderId === row.cloudProviderId)).map<CloudProviderRow>((row) => serverSync?.lastRun?.status === "failed" ? { ...row, status: "unavailable", detail: "Could not verify with Den. Sync again to check access." } : row);
   }, [
     runtimeWorkspaceId,
-    credentialStatusEnabled,
     healthEntries,
     checkDesktopAppRestriction,
     cloudOrgProviders,

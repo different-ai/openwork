@@ -11,6 +11,8 @@ import { env } from "../../env.js"
 import type { FeatureHealth, FeatureOutcomeSummary, FeatureOutcomeTotals } from "../../feature-outcomes/outcomes.js"
 import { readFeatureReport, readFeatureReports, type FeatureReport } from "../../feature-outcomes/report.js"
 import { adminRoute, queryValidator } from "../../middleware/index.js"
+import { featureHealth, featureOutcomeRange, summarizeFeatureOutcomes } from "../../feature-outcomes/outcomes.js"
+import { readSlackSendAsBotOutcomes } from "../../feature-outcomes/slack-send-as-bot.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
@@ -160,6 +162,47 @@ function featureJson(feature: FeatureReport) {
 }
 
 export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  // Operational diagnostics outlive the rollout. Slack messages still record
+  // success, refusal reasons and rate limits in their existing store.
+  app.get(
+    "/v1/admin/slack-send-as-bot/outcomes",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Slack bot message outcomes",
+      description: "Slack bot message totals, failures by reason, limits, coverage and daily outcomes for the last 7 or 30 UTC days. Independent of feature rollouts. Counts only; never message text. Platform administrators only.",
+      responses: {
+        200: jsonResponse("Slack bot message outcomes.", z.object({
+          range: rangeSchema,
+          from: z.iso.datetime(),
+          to: z.iso.datetime(),
+          health: featureHealthSchema,
+          outcomes: featureOutcomesSchema,
+          reasons: z.array(z.object({ reason: z.string(), outcome: z.enum(["failed", "skipped"]), count: z.number().int() })),
+          byOrganization: z.array(z.object({ organizationId: z.string(), outcomes: outcomeTotalsSchema })),
+        })),
+        400: jsonResponse("Invalid range.", invalidRequestSchema),
+        401: jsonResponse("Sign in required.", unauthorizedSchema),
+        403: jsonResponse("Platform administrator required.", forbiddenSchema),
+      },
+    }),
+    adminRoute(),
+    queryValidator(rangeQuerySchema),
+    async (c) => {
+      const { range } = c.req.valid("query")
+      const window = featureOutcomeRange(range === "30d" ? 30 : 7, new Date())
+      const outcomes = summarizeFeatureOutcomes(await readSlackSendAsBotOutcomes(window), window)
+      return c.json({
+        range,
+        from: window.from.toISOString(),
+        to: window.to.toISOString(),
+        health: healthJson(featureHealth({ membersUsing: 0, outcomes })),
+        outcomes: outcomesJson(outcomes),
+        reasons: outcomes.reasons,
+        byOrganization: [...outcomes.byOrganization].map(([organizationId, totals]) => ({ organizationId, outcomes: totalsJson(totals) })),
+      })
+    },
+  )
+
   app.get(
     "/v1/admin/feature-usage",
     describeRoute({

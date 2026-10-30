@@ -11,9 +11,8 @@ import type { drizzleAdapter } from "better-auth/adapters/drizzle"
  * before hashing still hold the token itself: lookups match either form until
  * those rows are rehashed on use or expire (sessions last seven days and renew
  * only on use). A value shaped like a hash is never matched as itself, so a
- * copied hash cannot be presented as a token. The `sessionTokenHashing` switch
- * decides whether rows are written hashed, so every replica reads both forms
- * before any row changes.
+ * copied hash cannot be presented as a token. New tokens are always hashed;
+ * every replica continues to read both forms during the legacy row transition.
  *
  * In memory a session's `token` is the client's token. Better Auth rows read
  * without one (by id or user) carry a sealed reference instead, which only
@@ -92,11 +91,11 @@ function whereStrings(clause: AdapterWhere): string[] {
  * Better Auth's adapter with session tokens hashed at rest. Where clauses on a
  * session token match its stored forms; session rows come back with the
  * client's token when the query named it, else a sealed reference; and new or
- * updated tokens are written hashed while `hashTokens` says so.
+ * updated tokens are always written hashed.
  */
 export function hashSessionTokens(
   factory: SessionAdapterFactory,
-  input: { secret: string; hashTokens: () => Promise<boolean> },
+  input: { secret: string },
 ): SessionAdapterFactory {
   const storedValues = (value: string) => {
     const sealed = unsealSessionTokenReference(input.secret, value)
@@ -119,7 +118,7 @@ export function hashSessionTokens(
     return row
   }
   const writeToken = async (model: string, data: Record<string, unknown>) => {
-    if (model !== "session" || typeof data.token !== "string" || !(await input.hashTokens())) return data
+    if (model !== "session" || typeof data.token !== "string") return data
     return { ...data, token: sessionTokenDigest(data.token) }
   }
   const wrap = <A extends Omit<SessionAdapter, "transaction">>(adapter: A): A => ({

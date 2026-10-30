@@ -21,7 +21,7 @@ import { listMemberUsableConnectionFacts } from "./routes/org/mcp-connections.js
 import { stableTelemetryEventId } from "./workbot/telemetry.js"
 
 /**
- * The "Get set up" checklist (feature `activationChecklist`, see packages/types/src/den/activation.ts).
+ * The "Get set up" checklist (see packages/types/src/den/activation.ts).
  *
  * Every step is computed from data Den already holds, so a step checks off only when it actually worked:
  * - first_response: an answer this member got (desktop `task.completed`, Workbot `workbot.turn_completed`, or the

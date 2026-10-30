@@ -19,8 +19,6 @@ test("inventory fingerprints only effective caller grants, including SSE and exp
   const member = await den.newMember(a.owner, a.orgId, "Inventory Member")
   const other = await den.newMember(a.owner, a.orgId, "Other Inventory Member")
   const b = await den.createOrg(await den.signUp("Other Inventory Owner"), "Other inventory fixture")
-  const feature = await den.setFeature(a.orgId, "liveProviderSync", true)
-  assert.equal(feature.status, 200, summary(feature))
   const [membership] = await db.select().from(MemberTable).where(eq(MemberTable.id, normalizeDenTypeId("member", member.memberId)))
   const [otherMembership] = await db.select().from(MemberTable).where(eq(MemberTable.id, normalizeDenTypeId("member", other.memberId)))
   const [otherOrgMembership] = await db.select().from(MemberTable).where(eq(MemberTable.id, normalizeDenTypeId("member", b.owner.memberId)))

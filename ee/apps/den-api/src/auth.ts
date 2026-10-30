@@ -812,13 +812,12 @@ export const auth = betterAuth({
       : undefined,
   socialProviders:
     Object.keys(socialProviders).length > 0 ? socialProviders : undefined,
-  // Session tokens are stored hashed once sessionTokenHashing is on (src/session-token.ts).
+  // Session tokens are stored hashed (src/session-token.ts).
   database: hashSessionTokens(drizzleAdapter(db, {
     provider: "mysql",
     schema,
   }), {
     secret: env.betterAuthSecret,
-    hashTokens: () => deploymentFeatureEnabled("sessionTokenHashing"),
   }),
   account: DEN_ACCOUNT_CONFIG,
   user: DEN_USER_CONFIG,

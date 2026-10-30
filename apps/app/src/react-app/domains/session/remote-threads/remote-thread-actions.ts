@@ -32,7 +32,6 @@ function context() {
 
 function failure(error: unknown): Failure {
   if (error instanceof DenApiError) {
-    if (error.code === "feature_disabled") useRemoteThreadStore.getState().setEnabled(false)
     return { code: error.code, message: error.message, retryable: error.status >= 500 }
   }
   return { code: "request_failed", message: "Couldn't reach OpenWork. Check your connection and try again.", retryable: true }
@@ -47,30 +46,15 @@ export function remoteThreadLocation(entry: RemoteThreadEntry): { sessionId: str
 }
 
 async function call(action: "read" | "send" | "stop" | "answer", input: Record<string, unknown>): Promise<unknown> {
-  const requireEnabled = () => {
-    if (!useRemoteThreadStore.getState().enabled) {
-      throw new DenApiError(404, "feature_disabled", "Tasks on other computers are turned off.")
-    }
-  }
-  requireEnabled()
   const den = context()
   if (!den) throw new DenApiError(401, "unauthorized", "Sign in to OpenWork to follow this task.")
-  const controller = new AbortController()
-  const unsubscribe = useRemoteThreadStore.subscribe((state) => {
-    if (!state.enabled) controller.abort()
-  })
-  try {
-    let payload = await den.client.remoteSessionAction(den.organizationId, action, input, controller.signal)
-    const deadline = Date.now() + REQUEST_WAIT_MS
-    for (let requestId = remotePendingRequestId(payload); requestId && Date.now() < deadline; requestId = remotePendingRequestId(payload)) {
-      await new Promise((resolve) => setTimeout(resolve, REQUEST_POLL_MS))
-      requireEnabled()
-      payload = await den.client.remoteSessionAction(den.organizationId, "read", { requestId }, controller.signal)
-    }
-    return payload
-  } finally {
-    unsubscribe()
+  let payload = await den.client.remoteSessionAction(den.organizationId, action, input)
+  const deadline = Date.now() + REQUEST_WAIT_MS
+  for (let requestId = remotePendingRequestId(payload); requestId && Date.now() < deadline; requestId = remotePendingRequestId(payload)) {
+    await new Promise((resolve) => setTimeout(resolve, REQUEST_POLL_MS))
+    payload = await den.client.remoteSessionAction(den.organizationId, "read", { requestId })
   }
+  return payload
 }
 
 export async function readRemoteThread(entry: RemoteThreadEntry, input: { limit: number; cursor?: string | null }): Promise<RemoteReadOutcome> {

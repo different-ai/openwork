@@ -1,7 +1,7 @@
 import { denFetch, type DenSession } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
 import { configureProvider } from "./chat.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
 
 /**
@@ -50,7 +50,7 @@ export async function remoteSessionAnswers(seed: Seed) {
     }],
   });
   const { den, webPort } = await denForAppWeb(seed, { mocks: { agent: mock } });
-  const organizationId = await enableOrganizationCapabilities(seed, den.admin, { remoteSessionSubagents: true, remoteSessionThreadView: true });
+  const organizationId = await seededOrganizationId(seed, den.admin);
 
   // The other computer registers with Den as the person's runner that takes answers.
   const minted = await seed.api(den.admin, "/v1/session-runners/token", {
@@ -204,12 +204,5 @@ export async function remoteSessionAnswers(seed: Seed) {
     question: question.questions[0],
     /** What the other computer received from the person. */
     answers: () => [...answers],
-    /** A platform admin turns answering from here on, as /admin does. */
-    async setAnswers(enabled: boolean) {
-      const result = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
-        method: "PUT", body: JSON.stringify({ capabilities: { remoteSessionAnswers: enabled } }),
-      });
-      if (!result.response.ok) throw new Error(`Changing remoteSessionAnswers failed: HTTP ${result.response.status}`);
-    },
   };
 }

@@ -12,7 +12,7 @@ import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-st
 import { RemoteThreadRowAnswers } from "@/react-app/domains/session/remote-threads/remote-thread-row-answers"
 import { stopRemoteThread } from "@/react-app/domains/session/remote-threads/remote-thread-actions"
 import {
-  useFollowRemoteThread, useRemoteThread, useRemoteThreadAnswersEnabled, useRemoteThreadHelperViewEnabled, useRemoteThreadViewEnabled,
+  useFollowRemoteThread, useRemoteThread, useRemoteThreadHelperViewEnabled,
 } from "@/react-app/domains/session/remote-threads/remote-thread-store"
 import { rowQuestionOptions } from "@/lib/remote-session-answers"
 import { remoteThreadSentence, remoteThreadView, type RemoteThreadView } from "@/react-app/domains/session/remote-threads/remote-thread-view"
@@ -32,8 +32,8 @@ export function openRemoteThreadPanel(sessionId: string, workspaceId: string, st
 
 /**
  * A task the agent started on another computer, shown like a sub-agent: line 1
- * names the task and where it runs, line 2 says what it is doing now. With
- * `remoteSessionThreadView` the row opens its conversation in the side panel,
+ * names the task and where it runs, line 2 says what it is doing now.
+ * The row opens its conversation in the side panel,
  * where the person follows up; its own Stop ends just that task. Its state
  * comes from the chat's one shared follower (remote-thread-store), never a
  * poll of its own.
@@ -42,9 +42,7 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
   const { workspaceId, sessionId, readOnly, onOpenRemoteTask } = useMessageList()
   useFollowRemoteThread(start, { workspaceId, sessionId }, remoteToolCallStartedAt(part))
   const entry = useRemoteThread(start.key)
-  const threadView = useRemoteThreadViewEnabled()
   const helperView = useRemoteThreadHelperViewEnabled()
-  const answers = useRemoteThreadAnswersEnabled()
   const [stopping, setStopping] = useState(false)
   const [stoppedHere, setStoppedHere] = useState(false)
   const [now, setNow] = useState(() => Date.now())
@@ -62,10 +60,9 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
     }).finally(() => setStopping(false))
   } : null
 
-  // `remoteSessionAnswers`: a single-choice question's options sit under the
-  // row, whichever row style shows. Flag off, read-only, or nothing a row can
-  // answer: exactly the row as before.
-  const choices = answers && entry && !readOnly && view.waitingFor === "question" ? rowQuestionOptions(entry.status?.pending) : null
+  // A single-choice question's options sit under the
+  // row, whichever row style shows, unless read-only or the question needs a full card.
+  const choices = entry && !readOnly && view.waitingFor === "question" ? rowQuestionOptions(entry.status?.pending) : null
   const withAnswers = (row: ReactNode, openTask: (() => void) | null) => {
     if (!entry || !choices) return row
     return (
@@ -94,7 +91,7 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
       className={cn("flex min-w-0 max-w-full items-start gap-2", className)}
     >
       <RemoteThreadSummary
-        open={threadView ? () => openRemoteThreadPanel(sessionId, workspaceId, start, view.title) : null}
+        open={() => openRemoteThreadPanel(sessionId, workspaceId, start, view.title)}
         label={t("session.remote_task_open", { title: view.title, computer: view.computer })}
       >
         <span className="flex min-w-0 items-center gap-2">
@@ -105,12 +102,10 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
           {view.waitingFor === "permission" ? (
             <ShieldAlert aria-hidden="true" className="size-3.5 shrink-0 text-amber-10" />
           ) : null}
-          {threadView ? (
-            <ArrowUpRight
-              aria-hidden="true"
-              className="size-3.5 shrink-0 text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
-            />
-          ) : null}
+          <ArrowUpRight
+            aria-hidden="true"
+            className="size-3.5 shrink-0 text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+          />
         </span>
         <span className={cn("min-w-0 truncate text-xs", view.waitingFor ? "font-medium text-amber-11" : "text-muted-foreground/70")}>
           {view.status}
@@ -120,7 +115,7 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
       {/* Stop just this task; the turn's own Stop stays in the composer. */}
       {stop ? <RemoteThreadStopButton title={view.title} stopping={stopping} onStop={stop} /> : null}
     </div>
-  ), threadView ? () => openRemoteThreadPanel(sessionId, workspaceId, start, view.title) : null)
+  ), () => openRemoteThreadPanel(sessionId, workspaceId, start, view.title))
 }
 
 function RemoteThreadStopButton({ title, stopping, onStop }: { title: string; stopping: boolean; onStop: () => void }) {

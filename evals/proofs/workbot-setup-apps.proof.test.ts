@@ -11,19 +11,9 @@ test("a Workbot member sets up apps from the Get set up chip: connect in place, 
   await user.resizeViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   const link = async (step: string, path: string) => (await probe.dom(`a[data-activation-action="${step}"][href="${world.denPage(path)}"][target="_blank"]`)).elements.length === 1;
 
-  await step("before: with Get set up off, Workbot's header has no setup chip", async () => {
+  await step("by default the chip shows progress after the member's first answer", async () => {
     await user.navigate(world.url);
     await user.see({ text: "The launch moved to Thursday." });
-    await user.notSee(chip);
-    const den = await world.activation();
-    expect(den.status).toBe(404);
-    evidence.recordAssertionEvidence("Off by default in Workbot", `GET /v1/workbot/activation -> ${den.status}; no chip in the header`, den.status === 404);
-    await user.screenshot();
-  });
-
-  await step("after: once it is on, the chip shows progress after the member's first answer", async () => {
-    await world.setChecklist(true);
-    await user.reload();
     await user.see({ role: "button", label: "Get set up, 1 of 6" }, { timeoutMs: 30_000 });
     const den = await world.activation();
     expect(den.done).toEqual(["first_response"]);
@@ -68,13 +58,4 @@ test("a Workbot member sets up apps from the Get set up chip: connect in place, 
     await user.screenshot();
   });
 
-  await step("turning Get set up off removes the chip again without touching the conversation", async () => {
-    await world.setChecklist(false);
-    await user.reload();
-    await user.see({ text: "The launch moved to Thursday." });
-    await user.notSee(chip);
-    const den = await world.activation();
-    evidence.recordAssertionEvidence("The kill switch hides it everywhere", `GET /v1/workbot/activation -> ${den.status}; conversation intact; no chip`, den.status === 404);
-    await user.screenshot();
-  });
 });

@@ -274,7 +274,7 @@ test("a killed shared session remains terminal when another Location joins", asy
     changed: () => assert.fail("disabled stream must not publish"),
     unauthorized: () => assert.fail("kill must retain authority"),
     revoked: () => assert.fail("kill must retain authority"),
-    fetch: async () => { calls++; return Response.json({ error: "feature_disabled", feature: "liveProviderSync" }, { status: 404 }) },
+    fetch: async () => { calls++; return Response.json({ error: "feature_disabled", feature: "retiredFeature" }, { status: 404 }) },
   }
   const first = subscribeSharedInventory({ ...options, signal: controllers[0]!.signal })
   await delay(5)
@@ -286,7 +286,7 @@ test("a killed shared session remains terminal when another Location joins", asy
 })
 
 for (const body of [
-  JSON.stringify({ error: "feature_disabled", feature: "liveProviderSync" }),
+  JSON.stringify({ error: "feature_disabled", feature: "retiredFeature" }),
   JSON.stringify({ code: "feature_disabled" }),
   JSON.stringify({ error: "not_found" }),
   JSON.stringify({ code: "organization_not_found" }),

@@ -3,7 +3,7 @@
 Feature key: `remoteSessionHelperView`
 Deployments: cloud and self-hosted, off by default
 Author: [@benjaminshafii](https://github.com/benjaminshafii)
-Needs: `remoteSessionSubagents` and `remoteSessionThreadView` (the task row and its conversation).
+Task progress and conversation views are generally available (no prerequisite flags).
 Designed for `composerSubagentTracker` (the Agents list above the composer) being on.
 
 ## What changes
@@ -57,8 +57,8 @@ After Stop, with the unsent follow-up kept:
 
 ## How to try it
 
-Turn on `remoteSessionSubagents`, `remoteSessionThreadView`,
-`remoteSessionHelperView` and `composerSubagentTracker` for an organization, sign in on two computers, and ask the
+Turn on `remoteSessionHelperView` and keep `composerSubagentTracker` enabled
+for an organization, sign in on two computers, and ask the
 agent to start a task on the other one. `evals/proofs/remote-session-helper-view.proof.test.ts`
 walks the whole flow against a registered runner.
 

@@ -105,13 +105,13 @@ export const auditServiceActionDeclarations = [
     action: "remote_session.answer", kind: "remote_session.execution", class: "tenant_job", resource: { type: "remote_session", idFrom: "sessionId argument" }, origin: "mcp",
     tools: ["execute_capability remote-session:answer"], callSites: ["src/mcp/capability-registry.ts:remoteSessionSource.execute → executeRemoteSessionCapability"],
     jobOutcome: "Desktop: runner callbacks POST /v1/remote-session-requests/:id/{claim,complete} (declared routes). Cloud: not_recorded: the reply is synchronous on the member's OpenWork Web worker.",
-    notes: `The member's agent answers their own remote session's pending question or permission after asking them (feature remoteSessionAnswers, mcp:write, agent chats only). ${MCP_PRINCIPAL}`,
+    notes: `The member's agent answers their own remote session's pending question or permission after asking them (mcp:write, agent chats only). ${MCP_PRINCIPAL}`,
   },
   {
     action: "slack_assistant.bot_message.send", kind: "slack_assistant.execution", class: "tenant_external", resource: { type: "slack_message", idFrom: null }, origin: "mcp",
     tools: ["execute_capability slack_send_as_bot", "openwork-bot.slack_send_as_bot (full tool view)"], callSites: ["src/mcp/capability-registry.ts:slackSendAsBotSource.execute → executeSlackSendAsBot"],
     external: "Slack Web API with the OpenWork Slack app's bot token (conversations.open and chat.postMessage; chat.getPermalink) and, for a channel post, conversations.history with the member's own Slack token to confirm they can read the channel",
-    notes: `A DM to the caller or a channel post credited to them, from the OpenWork Slack app's bot (feature slackSendAsBot, mcp:write). Refusals (limits, targets, no Slack app, unlinked member) are recorded as failed outcomes. Not callable from Code Mode scripts. ${MCP_PRINCIPAL}`,
+    notes: `A DM to the caller or a channel post credited to them, from the OpenWork Slack app's bot (mcp:write). Refusals (limits, targets, no Slack app, unlinked member) are recorded as failed outcomes. Not callable from Code Mode scripts. ${MCP_PRINCIPAL}`,
   },
   {
     action: "organization.plan.set", kind: "platform.admin.organization", class: "tenant_change", resource: { type: "organization", idFrom: "organizationId argument (verified to exist)" }, origin: "platform_admin",

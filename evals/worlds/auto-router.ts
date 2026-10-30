@@ -103,7 +103,7 @@ export async function autoRouterDesktopWorld(seed: Seed) {
     if (!den.database) throw new Error("The Auto Router desktop world needs its disposable local database.");
     await startAcmeGateway(stack, den.database.url, { baseUrl: gateway.baseUrl, env });
     const provider = await seedAcmeGateway(den.admin, upstream);
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { autoRouter: true, liveProviderSync: true });
+    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { autoRouter: true });
     const options = await seed.api(den.admin, "/v1/org/auto-router/options");
     const option = isRecord(options.body) && Array.isArray(options.body.options)
       ? options.body.options.filter(isRecord).find((entry) => entry.modelId === ACME_MODEL)

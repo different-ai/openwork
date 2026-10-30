@@ -67,12 +67,12 @@ test("SSE disconnect cancels work and drops late callbacks and terminal events",
   assert.equal((await reader.read()).done, true)
 })
 
-test("stream route keeps JSON request validation, header boundaries, caller filtering and feature guard", async () => {
+test("stream route keeps JSON request validation, header boundaries, caller filtering and caller authorization", async () => {
   // Registration is covered without importing the database/auth composition root.
   const source = await readFile(new URL("../src/routes/org/mcp-connections.ts", import.meta.url), "utf8")
   const start = source.indexOf('"/v1/mcp-connections/discover/stream"')
   const route = source.slice(start, source.indexOf('"/v1/mcp-connections/:connectionId/oauth/issuer-review"', start))
-  assert.match(route, /orgMemberRoute\(\),\s+requireFeature\("customConnectorSetup"\),\s+jsonValidator\(discoverConnectionBodySchema\)/)
+  assert.match(route, /orgMemberRoute\(\),\s+jsonValidator\(discoverConnectionBodySchema\)/)
   assert.match(route, /validateExternalMcpRequestHeaders\(requestHeaders \?\? \[\], "discover"\)/)
   assert.match(route, /withExternalMcpRequestHeaders\(externalMcpDiscoveryFetch, url, discoveryHeaders.headers\)/)
   assert.match(route, /hasPermission\(c, "connections.view"\)/)

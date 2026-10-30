@@ -29,14 +29,14 @@ test("the report parses, keeps counts only and drops features this build does no
     generatedAt: "2026-10-28T15:00:00.000Z",
     features: [
       { key: "automationCalendarTriggers", organizationsOn: 2, membersUsing: 3, lastUsedAt: "2026-10-28T10:00:00.000Z", health: { status: "mostly_skipped", count: null }, outcomes },
-      { key: "mermaidZoom", organizationsOn: 0, membersUsing: 0, lastUsedAt: null, health: { status: "not_used", count: null }, outcomes: null },
+      { key: "administratorRecovery", organizationsOn: 0, membersUsing: 0, lastUsedAt: null, health: { status: "not_used", count: null }, outcomes: null },
       { key: "aFeatureFromANewerServer", organizationsOn: 1, membersUsing: 1, lastUsedAt: null, health: { status: "healthy", count: null }, outcomes: null },
     ],
   });
   assert.ok(report);
   assert.equal(report.range, "30d");
   assert.equal(report.organizations, 42);
-  assert.deepEqual(report.features.map((row) => row.key), ["automationCalendarTriggers", "mermaidZoom"]);
+  assert.deepEqual(report.features.map((row) => row.key), ["automationCalendarTriggers", "administratorRecovery"]);
   assert.equal(report.features[0]?.outcomes?.unit, "meeting");
   assert.equal(report.features[0]?.outcomes?.days.length, 2);
   assert.equal(report.features[1]?.outcomes, null);
@@ -88,13 +88,13 @@ test("what needs a look comes first, then the most used", () => {
   const row = (key: FeatureUsageRow["key"], status: FeatureUsageRow["health"]["status"], membersUsing = 0): FeatureUsageRow =>
     ({ key, organizationsOn: 0, membersUsing, lastUsedAt: null, health: { status, count: null }, outcomes: null });
   const sorted = sortFeatureUsage([
-    row("mermaidZoom", "not_used"),
+    row("administratorRecovery", "not_used"),
     row("autoRouter", "in_use", 9),
     row("workbotProactive", "healthy", 2),
-    row("slackSendAsBot", "limited", 1),
+    row("automationIntervalSchedules", "limited", 1),
     row("automationCalendarTriggers", "failing", 1),
   ]);
-  assert.deepEqual(sorted.map((entry) => entry.key), ["automationCalendarTriggers", "slackSendAsBot", "workbotProactive", "autoRouter", "mermaidZoom"]);
+  assert.deepEqual(sorted.map((entry) => entry.key), ["automationCalendarTriggers", "automationIntervalSchedules", "workbotProactive", "autoRouter", "administratorRecovery"]);
 });
 
 test("the day bars scale to the busiest day and mark the failed share", () => {

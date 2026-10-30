@@ -1,13 +1,12 @@
 # Live provider sync (OpenCode v2)
 
-`liveProviderSync` is one registry rollout, default **off**, available on cloud
-and self-hosted deployments. It is not a second desktop preference or an
-independent environment switch. Den resolves the registry for the signed-in
-member's organization; an absent feature is off.
+Live provider sync is generally available on cloud and self-hosted deployments.
+The `liveProviderSync` rollout is retired; no flag or desktop preference enables
+it. Existing identity, model-access and engine compatibility boundaries remain.
 
 ## Ownership
 
-With the rollout enabled, the bundled OpenWork provider plugin owns the v2
+The bundled OpenWork provider plugin owns the v2
 AI Gateway catalog. It fetches the same member-visible inventory used by the
 standalone `opencode-openwork` plugin and injects it through
 `ctx.provider.transform`, not generated provider configuration. A changed
@@ -35,7 +34,7 @@ Unrelated grants, other members' credentials, inaccessible models/providers,
 and incidental provider touch timestamps cannot change this member's revision.
 Credential expiry and AWS client expiry add readiness booleans, not the wall
 clock, so time-only loss of readiness also invalidates inventory. The stream
-rechecks the current auth session, membership and uncached registry rollout on
+rechecks the current auth session and membership on
 every read. Only the opaque revision leaves Den.
 
 This deliberately favors complete dependency coverage over `MAX(updated_at)`
@@ -49,11 +48,11 @@ isolation requirement: an opaque revision must not signal activity on
 inaccessible resources.
 
 The old server materialization/push/confirm and app refresh triggers remain
-in place for the flag-off path and OpenCode v1. Local/legacy providers keep
-their existing path; MCP synchronization is independent of this rollout.
+in place for OpenCode v1. Local/legacy providers keep
+their existing path; MCP synchronization is independent of provider sync.
 The desktop reads the same `/v1/me/desktop-config` surface as organization
 default models, then uses the server's effective v2 ownership status rather
-than independently flipping the app when a cached rollout value changes.
+than independently flipping the app when a client state changes.
 On signed-in cold boot, late session hydration can activate the live source
 through one watched-config rewrite that simultaneously removes old gateway
 rows and registers the bundled plugin. This activation is one-way for that
@@ -70,7 +69,7 @@ also stay server-side. The engine uses an identity-bound, per-engine ephemeral
 loopback credential, not a reusable Gateway key. The transport capability is
 delivered over a one-shot anonymous pipe. Neither the initial process environment nor a config file,
 argument, URL or named socket contains that capability. A trusted inert
-consumer loads even on flag-off boot and closes the descriptor before native
+consumer loads even on signed-out boot and closes the descriptor before native
 tools can run; it makes no Den/session requests until live ownership starts.
 This permits late sign-in without exposing an unread pipe to tool subprocesses.
 
@@ -138,20 +137,12 @@ composer picker/empty state offers the next action. Turning the rollout off
 hides the note and restores legacy confirmed-removal presentation, without
 undoing a selection, interrupting work, or weakening authoritative confirmation.
 
-## Kill switch
+## Availability and recovery
 
-The registry kill switch rejects new stream connections and causes active
-streams to end on their next authorization/feature check. It does not cancel
-an in-flight model request or delete chat history. The engine's selected
-catalog owner must remain consistent for its lifetime: do not enable the old
-writer alongside a still-loaded live plugin. At minimum, the next engine
-start resolves the rollout again from fresh desktop-config hydration and
-restores the complete legacy path when off. If Den cannot be verified, this
-feature defaults off for the new engine while existing offline model-access
-and permission policies are retained. A running engine may retain its last
-snapshot until that restart;
-revoked gateway access is still rejected by Den. Restart the engine to finish
-a rollback immediately.
+There is no rollout kill switch. An engine has one selected catalog owner for
+its lifetime; do not enable the legacy writer alongside a loaded live plugin.
+Disconnected clients can retain their last snapshot until reconnecting, while
+Den still authorizes every inference request and rejects revoked access.
 
 ## Premise review
 
@@ -192,7 +183,7 @@ Upstream source: [provider state](https://github.com/anomalyco/opencode/blob/9b4
 - `packages/opencode-plugin/src/*.test.ts`: subscriptions shared by Locations,
   reconnects, retry convergence, idempotency and account/authentication fences;
   standalone sign-in and MCP regression coverage.
-- `apps/server/test/live-provider-sync.test.ts`: on/off ownership, legacy
+- `apps/server/test/live-provider-sync.test.ts`: live ownership and v1 compatibility, legacy
   polling isolation, generated-config filtering and the credential boundary.
 - `apps/server/test/live-provider-sync-native.test.ts`: actual bundled plugin
   and filters on pinned v2, native events, unchanged config, reconnects,
@@ -200,7 +191,7 @@ Upstream source: [provider state](https://github.com/anomalyco/opencode/blob/9b4
   Electron Node; absent engine binaries explicitly skip.
 - `apps/app/tests/live-provider-sync*.test.ts` and
   `provider-catalog-live-events.test.ts`: effective-owner gating, session
-  delivery and event invalidation without changing the flag-off path.
+  delivery and event invalidation with v1 compatibility preserved.
 - `evals/proofs/live-provider-sync.proof.test.ts`: real Den administrator
   model enable/disable writes reaching the already-open v2 model picker,
   without navigation or periodic provider sync, with a five-second deadline.

@@ -28,7 +28,7 @@ export function parseRemoteTaskRows(key: string): RemoteTaskRow[] {
 /** Tasks a chat started, as a string that only changes when their rows would, so status checks don't re-render the sidebar. */
 function useRemoteTaskRowsKey(sessionId: string): string {
   return useRemoteThreadStore((state) => {
-    if (!state.enabled || !state.threadView || !state.helperView) return "[]";
+    if (!state.helperView) return "[]";
     const rows: [string, string, string, boolean][] = [];
     for (const entry of Object.values(state.threads)) {
       if (!Object.values(entry.owners).some((owner) => owner.sessionId === sessionId)) continue;

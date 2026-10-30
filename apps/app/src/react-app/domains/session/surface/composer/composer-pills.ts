@@ -237,18 +237,26 @@ function getPillMatchers(): PillMatcher[] {
     // string, left inline in the user's text.
     { re: templateRegExp(skillInstruction), toPill: (match) => match[1] ? { kind: "skill", name: match[1] } : null },
     { re: templateRegExp(connectorPrompt), toPill: (match) => match[1] ? { kind: "connector", name: match[1] } : null },
-    // Both wordings: sent with the chat following the task, or not.
-    ...(["cloud", "desktop"] as const).flatMap((target) => [false, true].map((followed): PillMatcher => ({
-      re: new RegExp(escapeRegExp(computerMentionInstruction(target, followed)), "g"),
+    ...(["cloud", "desktop"] as const).flatMap((target) => computerInstructionHistory(target).map((instruction): PillMatcher => ({
+      re: new RegExp(escapeRegExp(instruction), "g"),
       toPill: () => ({ kind: "computer", target }),
     }))),
   ];
   return pillMatchers;
 }
 
+/** Decode exact historical sends without offering the retired polling instruction on new sends. */
+function computerInstructionHistory(target: "cloud" | "desktop"): string[] {
+  const current = computerMentionInstruction(target);
+  const legacyEnding = target === "cloud"
+    ? "Return the session link and use remote-session:read to check replies."
+    : "Use remote-session:read with commandId to check delivery. A delivered receipt means the task was started, not that it finished; return the desktop session reference.";
+  return [current, current.replace(/OpenWork shows the started task.*(?=\]$)/, legacyEnding)];
+}
+
 function isInstructionMatch(pill: ComposerPill, text: string) {
   if (pill.kind === "computer") {
-    return text === computerMentionInstruction(pill.target, false) || text === computerMentionInstruction(pill.target, true);
+    return computerInstructionHistory(pill.target).includes(text);
   }
   return text === composerPillInstruction(pill);
 }

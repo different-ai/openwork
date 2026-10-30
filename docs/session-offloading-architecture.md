@@ -61,7 +61,7 @@ remote session lifecycle.
    route control requests back to the owning runner. A pending request returns
    `requestId`; reading that ID collects its eventual receipt.
 5. `remote-session:list`: inspect the caller's admitted local sessions.
-6. `remote-session:status` (behind `remoteSessionSubagents`): follow up to ten
+6. `remote-session:status`: follow up to ten
    sessions in one call, desktop and registered ones by `commandId`, Cloud ones
    by `sessionId`. Each result is a compact state (`starting`, `running`,
    `waiting` with `waitingFor`, `idle` with a short answer preview, `error`) and
@@ -79,7 +79,7 @@ remote session lifecycle.
    from the tail it already reads (`latestStep()` in
    `packages/headless-threads`). Older runners omit it and Den answers null.
    A new step changes the version, so followers see it on their next wait.
-7. `remote-session:answer` (behind `remoteSessionAnswers`): answer the question
+7. `remote-session:answer`: answer the question
    or permission a session waits on, with the `requestId` from `pending`.
    Questions take the chosen option labels per question (free text only where
    the question allows it); permissions take `once` or `reject`, never
@@ -102,21 +102,14 @@ answer. Its routes under `/v1/remote-sessions/` run these same capabilities
 with the member's own session. One loop in the app follows every shown
 session with one waiting `status` call at a time, not while the window is
 hidden or offline, and stops once they settle. Stop on the row goes through
-`stop`. Without `remoteSessionAnswers`, answering a pending permission or
-question stays on the computer that runs the session.
+`stop`. Answers are available from the row and conversation when the runner
+supports remote answers.
 
-Three features roll this out in steps, all on Cloud and self-hosted and off by
-default:
+Task rows, conversation views and answers are generally available. Their former
+`remoteSessionSubagents`, `remoteSessionThreadView` and `remoteSessionAnswers`
+rollouts are retired.
 
-- `remoteSessionSubagents`: the row, its progress, Stop, the sidebar's
-  needs-you marker, and the Den routes and `status` capability behind them.
-- `remoteSessionThreadView` (needs the first): clicking the row opens the
-  session's conversation beside the chat. The transcript is read only while
-  it is open, when the status changes; follow-ups go through `send`. Off, the
-  row shows progress only and a conversation tab left open from before says
-  the view is turned off. Den routes stay behind `remoteSessionSubagents`:
-  Stop also reads a slow desktop's pending receipt through `read`.
-- `remoteSessionHelperView` (needs both): the row reads as a sentence
+- `remoteSessionHelperView` (cloud and self-hosted, off by default): the row reads as a sentence
   (`Working on <computer> · <task>`, then `<elapsed>, last ran: <latestStep>`)
   and opens the session in the main pane under the session route
   `remote:<threadKey>`, like a local helper. The app never treats that id as
@@ -129,7 +122,7 @@ default:
   Agents list shows the turn's remote tasks beside local helpers (computer,
   task, status word, Open, Stop) on either engine, from the same shared
   follower. The sidebar also lists followed tasks under their chat with a
-  status word. Off, everything is as with the first two.
+  status word. Off, the generally available row and side-panel conversation remain.
 
 ### Transcript steps
 
@@ -150,7 +143,7 @@ part order and tool state) all send this shape; Den stores and returns it
 unchanged. A runner that omits `parts` still parses, and readers rebuild steps
 from `toolCalls` then `text`.
 
-With `remoteSessionThreadView` on, the panel maps parts to the chat's message
+The panel maps parts to the chat's message
 parts (`remoteTranscriptToUIMessages`) and renders them with the main chat's
 `MessageList`, read only: each tool step gets the local labels, the finished
 turn folds to "Worked for…", and a failed step stays open with its details.
@@ -161,7 +154,7 @@ result back to its originating thread. A model cannot choose an arbitrary
 notification destination. Workbot and other MCP-backed chats use the same
 owner-scoped targets and receipts, without a separate registration mechanism.
 
-- `remoteSessionAnswers` (needs the first): the person answers the question or
+- The person answers the question or
   permission a task waits on from its row (single-choice questions) or the card
   above the conversation's follow-up box, through
   `POST /v1/remote-sessions/answer` (owner-only).

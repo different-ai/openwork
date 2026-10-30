@@ -47,8 +47,8 @@ export async function adminFeatureOutcomesWorld(seed: Seed) {
     });
     if (!set.response.ok) throw new Error(`Could not turn features on (${set.response.status}).`);
   };
-  await turnOn(acmeId, ["automationCalendarTriggers", "automationIntervalSchedules", "workbotProactive", "slackSendAsBot", "mermaidZoom"]);
-  await turnOn(northwindId, ["automationCalendarTriggers", "slackSendAsBot"]);
+  await turnOn(acmeId, ["automationCalendarTriggers", "automationIntervalSchedules", "workbotProactive", "settledSessions"]);
+  await turnOn(northwindId, ["automationCalendarTriggers"]);
 
   // Automations: inactive, so the scheduler leaves them alone; their runs are what /admin reads.
   // Times are UTC wall-clock, the way Den writes timestamps.
@@ -110,11 +110,12 @@ export async function adminFeatureOutcomesWorld(seed: Seed) {
   await limit(`slack-send-as-bot:day:${northwindId}:${northwindOwner.userId}`, 4, windowStart);
   for (let index = 0; index < 4; index += 1) await limit(`slack-send-as-bot:same:${northwindId}:${northwindOwner.userId}:fixture${index}`, 1, windowStart + index * 60_000);
 
+  // Historical GA usage rows remain stored, but retired keys no longer appear as rollout reports.
   // Who used what (feature_usage): this week, and one Northwind use three weeks ago.
   const use = async (organizationId: string, memberId: string, key: string, hoursAgo: number) => {
     await sql("INSERT INTO feature_usage (member_id, feature_key, organization_id, first_used_at, days_used, last_used_at, last_used_day) VALUES (?, ?, ?, DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? HOUR), 1, DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? HOUR), DATE_FORMAT(DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? HOUR), '%Y-%m-%d'))", [memberId, key, organizationId, hoursAgo, hoursAgo, hoursAgo]);
   };
-  for (const key of ["automationCalendarTriggers", "workbotProactive", "slackSendAsBot", "mermaidZoom"]) await use(acmeId, acmeMember.id, key, 2);
+  for (const key of ["automationCalendarTriggers", "workbotProactive", "settledSessions"]) await use(acmeId, acmeMember.id, key, 2);
   await use(acmeId, acmeOwner.id, "automationIntervalSchedules", 1);
   await use(northwindId, northwindOwner.id, "slackSendAsBot", 4);
   await use(northwindId, northwindOwner.id, "automationCalendarTriggers", 20 * 24);

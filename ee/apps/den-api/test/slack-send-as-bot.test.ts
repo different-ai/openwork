@@ -39,7 +39,6 @@ const { buildExternalCapabilityName } = await import("../src/mcp/external-capabi
 const { loadConnectFullTools } = await import("../src/mcp/connect-full-tool-sources.js")
 const { createAgentMcpServer } = await import("../src/mcp/agent-server.js")
 const { SlackApiError } = await import("../src/slack-assistant/protocol.js")
-const { createFeatureUsageMarker } = await import("../src/feature-usage.js")
 const { postWorkbotChannelMessage, workbotAttributionLine } = await import("../src/slack-assistant/bot-post.js")
 const {
   executeSlackSendAsBot,
@@ -107,7 +106,6 @@ function harness(options: {
   let clock = NOW
   let ts = 0
   const sent: SentMessage[] = []
-  const used: string[] = []
   const limits = memoryLimits()
   const deps: SlackSendAsBotDeps = {
     resolveMember: async () => options.member ?? member,
@@ -121,9 +119,8 @@ function harness(options: {
     },
     limits: limits.store,
     now: () => clock,
-    markUsed: (input) => { used.push(...input.keys.map((key) => `${input.memberId}:${key}`)) },
   }
-  return { deps, sent, limits, used, advance: (ms: number) => { clock += ms } }
+  return { deps, sent, limits, advance: (ms: number) => { clock += ms } }
 }
 
 function send(body: unknown, deps: SlackSendAsBotDeps, access: { memberId?: DenTypeId<"member"> | null; hasWriteScope?: boolean } = {}) {
@@ -281,26 +278,6 @@ describe("slack_send_as_bot limits", () => {
   })
 })
 
-describe("slack_send_as_bot use, for /admin › Features", () => {
-  test("a message the member asks for marks their use once per day; a call without a membership or a valid target does not", async () => {
-    const run = harness()
-    const writes: string[] = []
-    let now = new Date(NOW)
-    run.deps.markUsed = createFeatureUsageMarker(async (input) => {
-      writes.push(...input.keys.map((key) => `${input.at.toISOString().slice(0, 10)} ${input.memberId} ${key}`))
-    }, () => now)
-    refused(await send({ target: "me", text: "Done" }, run.deps, { memberId: null }), "membership_required")
-    refused(await send({ target: "U0OTHER", text: "Done" }, run.deps), "invalid_target")
-    assert.equal(payload(await send({ target: "me", text: "Export finished" }, run.deps)).sent, true)
-    assert.equal(payload(await send({ target: "me", text: "Report ready" }, run.deps)).sent, true)
-    now = new Date(NOW + DAY)
-    run.advance(DAY)
-    assert.equal(payload(await send({ target: "me", text: "Export finished" }, run.deps)).sent, true)
-    await new Promise((resolve) => setImmediate(resolve))
-    assert.deepEqual(writes, [`2026-10-26 ${memberId} slackSendAsBot`, `2026-10-27 ${memberId} slackSendAsBot`])
-  })
-})
-
 describe("channel posts from the bot", () => {
   test("always start with the member's attribution line, whatever the text says, and can't broadcast", async () => {
     const slack = slackChannel()
@@ -413,7 +390,7 @@ describe("routing: who a Slack message comes from", () => {
   })
 })
 
-function registryContext(input: { scopes: string[]; enabled: boolean; member?: boolean }) {
+function registryContext(input: { scopes: string[]; member?: boolean }) {
   return createCapabilityRegistryContext({
     app: new Hono(),
     env: undefined,
@@ -423,7 +400,7 @@ function registryContext(input: { scopes: string[]; enabled: boolean; member?: b
     member: input.member === false ? null : { orgMembershipId: createDenTypeId("member"), teamIds: [] },
     redirectUriBase: "http://unit.test",
     generatedArtifactViewsEnabled: false,
-    organizationFeatures: { slackSendAsBot: input.enabled },
+    organizationFeatures: {},
     usageSource: "agent",
   })
 }
@@ -440,7 +417,7 @@ describe("slack_send_as_bot on the gateway", () => {
   const writer = ["mcp:read", "mcp:write"]
 
   test("found next to the Slack tools, with its own arguments and the description about who it comes from", async () => {
-    const context = registryContext({ scopes: writer, enabled: true })
+    const context = registryContext({ scopes: writer })
     for (const query of ["slack send message", "ping me on slack", "notify me", SLACK_SEND_AS_BOT_CAPABILITY]) {
       const [match] = await searchSource(context, query)
       assert.equal(match?.name, SLACK_SEND_AS_BOT_CAPABILITY, query)
@@ -464,7 +441,7 @@ describe("slack_send_as_bot on the gateway", () => {
   })
 
   test("read-only tokens never see or run it, so Your agent's background turns can't send", async () => {
-    const reader = registryContext({ scopes: ["mcp:read"], enabled: true })
+    const reader = registryContext({ scopes: ["mcp:read"] })
     assert.equal(slackSendAsBotAvailable(reader), false)
     assert.deepEqual(await searchSource(reader, "slack send message"), [])
     const result = await executeCapability(reader, { name: SLACK_SEND_AS_BOT_CAPABILITY, arguments: { target: "me", text: "hi" } })
@@ -472,21 +449,12 @@ describe("slack_send_as_bot on the gateway", () => {
     assert.equal(JSON.parse(resultText(result)).error, "insufficient_mcp_scope")
     assert.equal(JSON.parse(resultText(result)).requiredScope, "mcp:write")
 
-    const notMember = registryContext({ scopes: writer, enabled: true, member: false })
+    const notMember = registryContext({ scopes: writer, member: false })
     assert.equal(slackSendAsBotAvailable(notMember), false)
     assert.deepEqual(await searchSource(notMember, "slack send message"), [])
     assert.equal(JSON.parse(resultText(await executeCapability(notMember, { name: SLACK_SEND_AS_BOT_CAPABILITY, arguments: { target: "me", text: "hi" } }))).error, "membership_required")
 
-    assert.equal(slackSendAsBotAvailable(registryContext({ scopes: writer, enabled: true })), true)
-  })
-
-  test("with the feature off it is gone: not in search, and execute knows no such capability", async () => {
-    const off = registryContext({ scopes: writer, enabled: false })
-    assert.equal(slackSendAsBotAvailable(off), false)
-    assert.deepEqual(await searchSource(off, "slack send message"), [])
-    const result = await executeCapability(off, { name: SLACK_SEND_AS_BOT_CAPABILITY, arguments: { target: "me", text: "hi" } })
-    assert.equal(result.isError, true)
-    assert.equal(JSON.parse(resultText(result)).error, "unknown_capability")
+    assert.equal(slackSendAsBotAvailable(registryContext({ scopes: writer })), true)
   })
 
   test("the full tool view lists it as openwork-bot.slack_send_as_bot, only while it is available", async () => {
@@ -506,23 +474,22 @@ describe("slack_send_as_bot on the gateway", () => {
       })
       return loaded.tools
     }
-    const [tool, ...rest] = await listed(registryContext({ scopes: writer, enabled: true }))
+    const [tool, ...rest] = await listed(registryContext({ scopes: writer }))
     assert.equal(rest.length, 0)
     assert.equal(tool?.name, "openwork-bot.slack_send_as_bot")
     assert.equal(tool?.capability, SLACK_SEND_AS_BOT_CAPABILITY)
     assert.equal(tool?.description, SLACK_SEND_AS_BOT_SUMMARY)
     assert.deepEqual(tool?.inputSchema, SLACK_SEND_AS_BOT_ARGUMENTS_SCHEMA)
-    assert.deepEqual(await listed(registryContext({ scopes: ["mcp:read"], enabled: true })), [])
-    assert.deepEqual(await listed(registryContext({ scopes: writer, enabled: false })), [])
+    assert.deepEqual(await listed(registryContext({ scopes: ["mcp:read"] })), [])
   })
 
   test("not in Code Mode scripts", async () => {
-    const leaves = await CAPABILITY_SOURCES.slackSendAsBot.enumerate(registryContext({ scopes: writer, enabled: true }))
+    const leaves = await CAPABILITY_SOURCES.slackSendAsBot.enumerate(registryContext({ scopes: writer }))
     assert.deepEqual(leaves, [])
   })
 
   test("agents are told when to use it instead of slack_send_message, only while it is available", async () => {
-    async function instructions(options: { slackSendAsBot?: boolean; toolView?: ConnectToolView }) {
+    async function instructions(options: { canSendSlackMessages?: boolean; toolView?: ConnectToolView }) {
       const server = createAgentMcpServer({ remoteSessionStatus: true, ...options })
       const client = new Client({ name: "slack-send-as-bot-unit-test", version: "1" })
       const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -535,9 +502,9 @@ describe("slack_send_as_bot on the gateway", () => {
         await server.close()
       }
     }
-    const search = await instructions({ slackSendAsBot: true })
+    const search = await instructions({ canSendSlackMessages: true })
     assert.match(search, /To notify the user or "send me" something on Slack \(DM me, ping me, remind me, let me know; also in Automations and their instructions\), use slack_send_as_bot with target me; slack_send_message posts as the user and does not notify them, so use it only to post as the user\./)
-    const full = await instructions({ slackSendAsBot: true, toolView: "full" })
+    const full = await instructions({ canSendSlackMessages: true, toolView: "full" })
     assert.match(full, /use openwork-bot\.slack_send_as_bot with target me;/)
     for (const text of [search, full]) assert.ok(Buffer.byteLength(text, "utf8") <= 2048)
     assert.doesNotMatch(await instructions({}), /slack_send_as_bot/)

@@ -148,12 +148,8 @@ export type CapabilityRegistryContext = {
   generatedArtifactViewsEnabled: boolean
   /** Managed deployment planning, launch preparation and status (managed deployments enabled). */
   managedDeploymentsEnabled: boolean
-  /** `remote-session:status`, rolled out with the desktop's remote sub-agents. */
-  remoteSessionStatusEnabled: boolean
   /** remote-session:answer: the member's agent answers a task's question for the person, after asking them. */
-  remoteSessionAnswersEnabled: boolean
-  /** `slack_send_as_bot` (feature `slackSendAsBot`); it also needs a member and the write scope. */
-  slackSendAsBotEnabled: boolean
+  remoteSessionAnswersAllowed: boolean
   resolvePlatformAdmin: () => Promise<boolean>
   resolveNamespaceContext: () => Promise<CodemodeConnectionNamespaceContext>
   /** Set only by MCP transports: direct service mutations are audited for this caller (src/audit/service-actions.ts). */
@@ -172,7 +168,7 @@ export type CapabilityRegistryContextInput = {
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   /** Effective features of the organization (see features.ts). */
-  organizationFeatures: Partial<Pick<FeatureMap, "remoteSessionSubagents" | "remoteSessionAnswers" | "managedDeployments" | "slackSendAsBot" | "outlookAttachments">>
+  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "outlookAttachments">>
   /** MCP transports pass the verified caller; route and Automation contexts omit it (their route records the request). */
   audit?: McpAuditPrincipal | null
   /**
@@ -211,11 +207,8 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     redirectUriBase: input.redirectUriBase,
     generatedArtifactViewsEnabled: input.generatedArtifactViewsEnabled,
     managedDeploymentsEnabled: input.organizationFeatures.managedDeployments === true,
-    remoteSessionStatusEnabled: input.organizationFeatures.remoteSessionSubagents === true,
     // Only a chat with the person in it may answer: never an Automation, a Workflow run or an App.
-    remoteSessionAnswersEnabled: input.organizationFeatures.remoteSessionSubagents === true
-      && input.organizationFeatures.remoteSessionAnswers === true && input.usageSource === "agent",
-    slackSendAsBotEnabled: input.organizationFeatures.slackSendAsBot === true,
+    remoteSessionAnswersAllowed: input.usageSource === "agent",
     resolvePlatformAdmin,
     resolveNamespaceContext,
     audit: input.audit ?? null,
@@ -255,11 +248,11 @@ export function workflowExecutionAudit(ctx: Pick<CapabilityRegistryContext, "aud
 }
 
 /**
- * Whether this caller may see and run slack_send_as_bot: the feature on, an active member, and a token that may
+ * Whether this caller may see and run slack_send_as_bot: an active member and a token that may
  * write. Read-only tokens (Your agent's background turns) never list it.
  */
-export function slackSendAsBotAvailable(ctx: Pick<CapabilityRegistryContext, "slackSendAsBotEnabled" | "member" | "principal">): boolean {
-  return ctx.slackSendAsBotEnabled && ctx.member !== null && ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE)
+export function slackSendAsBotAvailable(ctx: Pick<CapabilityRegistryContext, "member" | "principal">): boolean {
+  return ctx.member !== null && ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE)
 }
 
 const remoteSessionAuditActions: Partial<Record<RemoteSessionAction, AuditServiceActionName>> = {
@@ -771,7 +764,7 @@ const remoteSessionSource: CapabilitySource = {
   },
   search: async (ctx, query, limit) => {
     if (!ctx.sourceFilter.api || !ctx.member) return []
-    return searchRemoteSessionCapabilities(query, limit, { status: ctx.remoteSessionStatusEnabled, answer: ctx.remoteSessionAnswersEnabled })
+    return searchRemoteSessionCapabilities(query, limit, { answer: ctx.remoteSessionAnswersAllowed })
   },
   // Deliberately absent from the confined-script tool tree in v1: remote
   // sessions are long-lived side effects that agents should drive through
@@ -779,8 +772,7 @@ const remoteSessionSource: CapabilitySource = {
   enumerate: () => Promise.resolve([]),
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "remoteSession")) return unknownCapabilityResult(input.name)
-    if (parsed.action === "status" && !ctx.remoteSessionStatusEnabled) return unknownCapabilityResult(input.name)
-    if (parsed.action === "answer" && !ctx.remoteSessionAnswersEnabled) return unknownCapabilityResult(input.name)
+    if (parsed.action === "answer" && !ctx.remoteSessionAnswersAllowed) return unknownCapabilityResult(input.name)
     if (!ctx.member) {
       return capabilityErrorResult({
         error: "membership_required",
@@ -817,7 +809,7 @@ const slackSendAsBotSource: CapabilitySource = {
   // Not in Code Mode scripts in v1: each message is one explicit call the person can see.
   enumerate: () => Promise.resolve([]),
   execute: async (ctx, parsed, input) => {
-    if (!parsedForKind(parsed, "slackSendAsBot") || !ctx.slackSendAsBotEnabled) return unknownCapabilityResult(input.name)
+    if (!parsedForKind(parsed, "slackSendAsBot")) return unknownCapabilityResult(input.name)
     const run = () => executeSlackSendAsBot({
       organizationId: ctx.organizationId,
       userId: ctx.principal.userId,

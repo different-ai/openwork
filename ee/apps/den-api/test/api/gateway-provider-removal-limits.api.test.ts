@@ -1,7 +1,7 @@
 /**
  * Deleting an AI Gateway provider never silently orphans the usage limits scoped to it: the admin moves them to
  * another provider of the organization or archives them, and limits orphaned before this rule show as removed.
- * Behind gatewayProviderRemovalLimits; with it off the delete behaves exactly as before.
+ * Provider removal always requires settling active usage limits before deletion.
  */
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
@@ -51,7 +51,6 @@ const org = await den.createOrg(await den.signUp("Acme Gateway Owner"), "Acme ga
 const teammate = await den.newMember(org.owner, org.orgId, "Acme Teammate")
 const teamId = await den.createTeam(org.owner, org.orgId, "Acme research", [teammate.memberId])
 const other = await den.createOrg(await den.signUp("Other Gateway Owner"), "Other gateway org")
-assert.equal((await den.setFeature(org.orgId, "gatewayProviderRemovalLimits", true)).status, 200)
 
 test("deleting a provider with usage limits and no choice changes nothing and lists the limits", { timeout: 60_000 }, async () => {
   const providerId = await createProvider(org.owner, org.orgId, "Acme OpenRouter old")
@@ -159,28 +158,4 @@ test("limits orphaned before this rule are listed as provider removed", { timeou
   })
   assert.equal(fixed.status, 200, summary(fixed))
   assert.equal(field(fixed.body, "providerStatus"), "available")
-})
-
-test("with the feature off, deleting a provider ignores its limits exactly as before", { timeout: 60_000 }, async () => {
-  const legacy = await den.createOrg(await den.signUp("Legacy Gateway Owner"), "Acme legacy gateway")
-  assert.equal((await den.setFeature(legacy.orgId, "gatewayProviderRemovalLimits", false)).status, 200)
-  const legacyTeammate = await den.newMember(legacy.owner, legacy.orgId, "Legacy Teammate")
-  const legacyTeam = await den.createTeam(legacy.owner, legacy.orgId, "Acme legacy team", [legacyTeammate.memberId])
-  const providerId = await createProvider(legacy.owner, legacy.orgId, "Acme legacy OpenRouter")
-  const target = await createProvider(legacy.owner, legacy.orgId, "Acme legacy replacement")
-  const policyId = await createProviderLimit(legacy.owner, legacy.orgId, providerId, "Legacy monthly cap", legacyTeam)
-
-  // A choice is ignored too: nothing about the limits changes while the feature is off.
-  const deleted = await den.as(legacy.owner, legacy.orgId)("DELETE", `/v1/inference-providers/${providerId}?usageLimits=move&moveUsageLimitsTo=${target}`)
-  assert.equal(deleted.status, 204, summary(deleted))
-  assert.equal(await providerExists(legacy.owner, legacy.orgId, providerId), false)
-  const policy = await readPolicy(legacy.owner, legacy.orgId, policyId)
-  assert.equal(policy.providerId, providerId, "the limit is left as it was")
-  assert.equal(policy.archivedAt, null)
-  assert.equal(policy.providerStatus, "removed", "the list still reports the orphan")
-
-  const plain = await createProvider(legacy.owner, legacy.orgId, "Acme legacy second")
-  await createProviderLimit(legacy.owner, legacy.orgId, plain, "Legacy second cap", legacyTeam)
-  const noChoice = await den.as(legacy.owner, legacy.orgId)("DELETE", `/v1/inference-providers/${plain}`)
-  assert.equal(noChoice.status, 204, `no 409 while the feature is off: ${summary(noChoice)}`)
 })

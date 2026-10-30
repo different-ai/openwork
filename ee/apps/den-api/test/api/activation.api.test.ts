@@ -14,20 +14,10 @@ function step(body: unknown, id: string) {
   return list(field(body, "steps")).find((entry) => entry.id === id)
 }
 
-test("the Get set up checklist can be turned off, and when on reports each person's own steps from what actually happened", async () => {
+test("the Get set up checklist reports each person's own steps from what actually happened", async () => {
   const workspace = await den.createOrg(await den.signUp("Avery Owner"), "Activation workspace")
   const owner = den.as(workspace.owner, workspace.orgId)
-  assert.equal((await den.setFeature(workspace.orgId, "activationChecklist", false)).status, 200)
-
-  // Off: the routes answer as if they did not exist, for Desktop and Workbot alike.
-  const off = await owner("GET", "/v1/me/activation")
-  assert.equal(off.status, 404, summary(off))
-  assert.equal(field(off.body, "error"), "feature_disabled")
   const ownerToken = await den.mintMcpToken(workspace.owner, workspace.orgId)
-  assert.equal((await den.request(ownerToken, "GET", "/v1/workbot/activation")).status, 404)
-  assert.equal(field((await den.request(ownerToken, "GET", "/v1/workbot/session")).body, "activationChecklist"), false)
-
-  assert.equal((await den.setFeature(workspace.orgId, "activationChecklist", true)).status, 200)
   assert.equal(field((await den.request(ownerToken, "GET", "/v1/workbot/session")).body, "activationChecklist"), true)
   const before = await owner("GET", "/v1/me/activation")
   assert.equal(before.status, 200, summary(before))
@@ -93,9 +83,5 @@ test("the Get set up checklist can be turned off, and when on reports each perso
   const memberRows = await db.select().from(TelemetryEventTable).where(and(eq(TelemetryEventTable.member_id, member.memberId), sql`${TelemetryEventTable.event_type} like ${"activation.%"}`))
   assert.deepEqual(memberRows.map((row) => row.source).sort(), ["workbot", "workbot"])
 
-  // Turning the feature off again hides both surfaces without losing what was recorded.
-  assert.equal((await den.setFeature(workspace.orgId, "activationChecklist", false)).status, 200)
-  assert.equal((await memberCall("GET", "/v1/me/activation")).status, 404)
-  assert.equal((await den.request(memberToken, "POST", "/v1/workbot/activation/events", { body: { step: "dismiss" } })).status, 404)
   assert.equal((await db.select().from(TelemetryEventTable).where(sql`${TelemetryEventTable.event_type} like ${"activation.%"}`)).length, 3)
 })

@@ -638,12 +638,10 @@ export function SessionPage(props: SessionPageProps) {
     void (window as Window).__OPENWORK_ELECTRON__?.browser?.setVisibleSession?.(props.selectedSessionId ?? null);
   }, [props.selectedSessionId]);
 
-  // Floating / side / full-screen browser, behind its feature flag. Off, every
-  // action below reports "not handled" and the docked browser is unchanged.
+  // Floating / side / full-screen browser uses the native desktop host.
   // Declared after setVisibleSession so the host hears the session first.
-  const browserFloatingView = useDesktopFeature("browserFloatingView");
   const browserPresentation = useBrowserPresentationController({
-    enabled: browserFloatingView && isElectronRuntime(),
+    enabled: isElectronRuntime(),
     sessionKey: sidePanelSessionKey,
     visibleSessionId: props.selectedSessionId ?? null,
     sidePanel: activeSidePanel,

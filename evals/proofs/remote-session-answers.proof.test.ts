@@ -11,22 +11,11 @@ const test = spec.world(remoteSessionAnswers, {
 const ANSWER_MS = 90_000;
 
 test("a person answers the question a task on their other computer asks, from the chat they are in", async ({ world, user, probe, step, evidence }) => {
-  await step("before: with answering here off, the task's row only says it waits on the other computer", async () => {
+  await step("by default the row offers the task's options and Other answer…", async () => {
     await user.see("composer", { editable: true });
     await user.type("composer", world.prompt);
     await user.press("Enter");
-    await user.see({ text: `Waiting for your answer on ${world.computer}` }, { timeoutMs: ANSWER_MS });
-    await user.notSee({ role: "button", label: "Answer dev" });
-    const buttons = (await probe.dom("[data-remote-thread-answers] button")).elements.length;
-    expect(buttons).toBe(0);
-    evidence.recordAssertionEvidence("The row waits on the Studio Mac with no answer buttons", `"Waiting for your answer on ${world.computer}"; answer buttons: ${buttons}`, buttons === 0);
-    await user.screenshot();
-  });
-
-  await step("after turning it on, the row offers the task's options and Other answer…", async () => {
-    await world.setAnswers(true);
-    await user.reload();
-    await user.see({ role: "button", label: "Answer dev" }, { timeoutMs: 60_000 });
+    await user.see({ role: "button", label: "Answer dev" }, { timeoutMs: ANSWER_MS });
     await user.see({ role: "button", label: "Answer main" });
     await user.see({ role: "button", label: "Other answer…" });
     const labels = (await probe.dom("[data-remote-thread-answers] button")).elements.map((element) => element.text.trim());

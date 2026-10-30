@@ -12,7 +12,6 @@ import {
 
 const metadata = { title: "Library App", description: null }
 const LEGACY_HTML_BYTES = 768 * 1024
-const on = { allowLibraries: true }
 
 // One small App per library, written the way prepare_app tells authors to.
 const samples = {
@@ -58,16 +57,13 @@ function assertRefused(result: GeneratedArtifactViewBuildResult, pattern: RegExp
   assert.match(messages(result), pattern)
 }
 
-test("library imports are refused, naming why, until the editor has libraries", async () => {
-  for (const [specifier, reactSource] of Object.entries(samples)) {
-    assertRefused(await buildGeneratedMcpApp({ ...metadata, reactSource }), new RegExp(`cannot import "${specifier}": built-in libraries are not on for you`))
-  }
+test("legacy artifact views still refuse library imports", async () => {
   assertRefused(await buildGeneratedArtifactView({ ...metadata, reactSource: samples.recharts, outputSchema: {} }), /module imports/)
 })
 
 test("each library bundles into a self-contained App with no network access", async (t) => {
   for (const [specifier, reactSource] of Object.entries(samples)) {
-    const result = await buildGeneratedMcpApp({ ...metadata, reactSource }, on)
+    const result = await buildGeneratedMcpApp({ ...metadata, reactSource })
     assert.equal(result.ok, true, messages(result))
     if (!result.ok) continue
     t.diagnostic(`${specifier}: ${result.htmlBytes} bytes`)
@@ -79,15 +75,15 @@ test("each library bundles into a self-contained App with no network access", as
 })
 
 test("icons stay within the size every desktop host reads", async () => {
-  const result = await buildGeneratedMcpApp({ ...metadata, reactSource: samples["lucide-react"] }, on)
+  const result = await buildGeneratedMcpApp({ ...metadata, reactSource: samples["lucide-react"] })
   assert.equal(result.ok, true, messages(result))
   if (result.ok) assert.ok(result.htmlBytes < LEGACY_HTML_BYTES)
 })
 
-test("a React-only App builds the same bytes with libraries off", async () => {
+test("a React-only App builds deterministically", async () => {
   const reactSource = "export default function App() { const [n, setN] = React.useState(0); return <button type=\"button\" onClick={() => setN(n + 1)}>{n}</button>; }"
   const off = await buildGeneratedMcpApp({ ...metadata, reactSource })
-  const explicitOff = await buildGeneratedMcpApp({ ...metadata, reactSource }, { allowLibraries: false })
+  const explicitOff = await buildGeneratedMcpApp({ ...metadata, reactSource })
   assert.equal(off.ok, true, messages(off))
   assert.deepEqual(explicitOff, off)
 })
@@ -108,22 +104,21 @@ test("only exact static imports of a listed library build, and the refusal names
   const body = "export default function App() { return <p>Ready</p>; }"
   for (const [declaration, pattern] of refused) {
     await t.test(declaration, async () => {
-      assertRefused(await buildGeneratedMcpApp({ ...metadata, reactSource: `${declaration}\n${body}` }, on), pattern)
+      assertRefused(await buildGeneratedMcpApp({ ...metadata, reactSource: `${declaration}\n${body}` }), pattern)
     })
   }
   assert.deepEqual(GENERATED_APP_LIBRARY_IMPORTS, ["lucide-react", "recharts", "motion/react", "three", "three/addons/controls/OrbitControls.js"])
 })
 
 test("icons are imported by name, never the whole set", async () => {
-  assertRefused(await buildGeneratedMcpApp({ ...metadata, reactSource: 'import * as Icons from "lucide-react";\nexport default function App() { const Icon = Icons.Check; return <Icon />; }' }, on), /cannot import all of "lucide-react" at once\. Import each icon/)
-  assertRefused(await buildGeneratedMcpApp({ ...metadata, reactSource: 'import { icons as all } from "lucide-react";\nexport default function App() { return <p>{Object.keys(all).length}</p>; }' }, on), /cannot import icons from "lucide-react"/)
-  const namespace = await buildGeneratedMcpApp({ ...metadata, reactSource: 'import * as THREE from "three";\nexport default function App() { return <p>{new THREE.Vector3(1, 2, 2).length()}</p>; }' }, on)
+  assertRefused(await buildGeneratedMcpApp({ ...metadata, reactSource: 'import * as Icons from "lucide-react";\nexport default function App() { const Icon = Icons.Check; return <Icon />; }' }), /cannot import all of "lucide-react" at once\. Import each icon/)
+  assertRefused(await buildGeneratedMcpApp({ ...metadata, reactSource: 'import { icons as all } from "lucide-react";\nexport default function App() { return <p>{Object.keys(all).length}</p>; }' }), /cannot import icons from "lucide-react"/)
+  const namespace = await buildGeneratedMcpApp({ ...metadata, reactSource: 'import * as THREE from "three";\nexport default function App() { return <p>{new THREE.Vector3(1, 2, 2).length()}</p>; }' })
   assert.equal(namespace.ok, true, messages(namespace))
 })
 
 test("libraries add SVG drawing and animation frames, not other browser access", async (t) => {
-  assertRefused(await buildGeneratedMcpApp({ ...metadata, reactSource: svgSource }), /unsafe HTML elements/)
-  const drawn = await buildGeneratedMcpApp({ ...metadata, reactSource: svgSource }, on)
+  const drawn = await buildGeneratedMcpApp({ ...metadata, reactSource: svgSource })
   assert.equal(drawn.ok, true, messages(drawn))
   const refused: [string, RegExp][] = [
     ["<svg><use /></svg>", /unsafe HTML elements/],
@@ -140,12 +135,11 @@ test("libraries add SVG drawing and animation frames, not other browser access",
   ]
   for (const [markup, pattern] of refused) {
     await t.test(markup, async () => {
-      assertRefused(await buildGeneratedMcpApp({ ...metadata, reactSource: `export default function App() { return ${markup}; }` }, on), pattern)
+      assertRefused(await buildGeneratedMcpApp({ ...metadata, reactSource: `export default function App() { return ${markup}; }` }), pattern)
     })
   }
   const frame = "export default function App() { React.useEffect(() => { const id = requestAnimationFrame(() => {}); return () => cancelAnimationFrame(id); }, []); return <p>Ready</p>; }"
-  assertRefused(await buildGeneratedMcpApp({ ...metadata, reactSource: frame }), /browser host global "requestAnimationFrame"/)
-  const animated = await buildGeneratedMcpApp({ ...metadata, reactSource: frame }, on)
+  const animated = await buildGeneratedMcpApp({ ...metadata, reactSource: frame })
   assert.equal(animated.ok, true, messages(animated))
 })
 
@@ -167,7 +161,7 @@ test("library code renders through the same element checks as authored JSX", asy
   assert.throws(() => React.createElement("div", { style: { backgroundImage: "url(https://example.invalid/a.png)" } }), /external resources/)
 
   // Each library build carries the checked module alongside authored React.
-  const result = await buildGeneratedMcpApp({ ...metadata, reactSource: samples["lucide-react"] }, on)
+  const result = await buildGeneratedMcpApp({ ...metadata, reactSource: samples["lucide-react"] })
   assert.equal(result.ok, true, messages(result))
   if (result.ok) assert.ok(result.html.split("cannot render unsafe HTML elements").length - 1 >= 2)
 })
@@ -176,5 +170,5 @@ test("an App with libraries is still refused past the larger compiled bound", as
   // esbuild escapes each NUL, so bounded source can still compile past the cap.
   const reactSource = samples.three.replace('"Interactive model"', `{"${"\u0000".repeat(190_000)}"}`)
   const cssSource = `/*${"x".repeat(90_000)}*/`
-  assertRefused(await buildGeneratedMcpApp({ ...metadata, reactSource, cssSource }, on), new RegExp(`Compiled MCP App exceeds ${MCP_APP_MAX_HTML_BYTES} bytes\\. Compiled size: \\d+ bytes\\.`))
+  assertRefused(await buildGeneratedMcpApp({ ...metadata, reactSource, cssSource }), new RegExp(`Compiled MCP App exceeds ${MCP_APP_MAX_HTML_BYTES} bytes\\. Compiled size: \\d+ bytes\\.`))
 })

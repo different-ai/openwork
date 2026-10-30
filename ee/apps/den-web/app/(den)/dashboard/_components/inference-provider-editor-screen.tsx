@@ -17,7 +17,7 @@ import { DenSegmented } from "../../_components/ui/segmented";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { gatewayMemberSignInMethod } from "@openwork/types/den/inference";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ConfirmDialog } from "./item-list";
@@ -94,7 +94,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const [providerTest, setProviderTest] = useState<{ state: "running" } | { state: "done"; result: GatewayProviderTestResult } | null>(null);
   const testedConfig = useRef<string | null>(null);
   const cancelDeleteRef = useRef<HTMLButtonElement | null>(null);
-  const removalLimits = useProviderRemovalUsageLimits({ orgId, providerId: provider?.id ?? "", open: confirmDelete && Boolean(provider), providers: inferenceProviders, featureOn: orgFeatureEnabled(orgContext, "gatewayProviderRemovalLimits") });
+  const removalLimits = useProviderRemovalUsageLimits({ orgId, providerId: provider?.id ?? "", open: confirmDelete && Boolean(provider), providers: inferenceProviders });
   const initializedProviderId = useRef<string | null>(null);
   const initializedNewProviderId = useRef<string | null>(null);
 
@@ -173,8 +173,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   };
   // Newest first, so the latest models are easy to find and the test uses a current one.
   const models = useMemo(() => sortModelsNewestFirst(detail?.models ?? []), [detail]);
-  // A new provider with a shared key is tested before it can be added (feature gatewayProviderTest).
-  const testRequired = !provider && credentialMode === "org" && orgFeatureEnabled(orgContext, "gatewayProviderTest");
+  // A new provider with a shared key is tested before it can be added.
+  const testRequired = !provider && credentialMode === "org";
   // The first model in the list below that can answer a text prompt; with "Only the ones I pick", the first picked one.
   const testModelId = pickTestModel(models, allowAllModels ? null : modelIds);
   const configFingerprint = JSON.stringify(formInput);

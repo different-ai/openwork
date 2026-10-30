@@ -15,7 +15,7 @@ test("an owner opens assigned connectors in My Library, signs out only their acc
   const libraryConnector = `/dashboard/library/connectors/${world.connection.id}`;
   const skillSummary = 'details[data-skill-preview] > summary';
 
-  await step("before: the owner signs in, but the connector page has no personal Library actions", async () => {
+  await step("the owner signs in to their own connector account", async () => {
     await user.see({ role: "heading", label: "Review notes" }, { timeoutMs: 90_000 });
     expect(await world.accounts()).toMatchObject({ owner: false, peer: true });
     await user.click({ role: "button", label: "Sign in" });
@@ -24,26 +24,16 @@ test("an owner opens assigned connectors in My Library, signs out only their acc
     });
     const fingerprints = await world.tokenFingerprints();
     expect(fingerprints).toHaveLength(2);
-    await user.notSee({ role: "link", label: "Open in My Library" });
-    await user.click({ role: "button", label: "More for Review notes" });
-    await user.notSee({ role: "menuitem", label: "Sign out of your account" });
-    const enabled = await world.navigationEnabled();
-    evidence.recordAssertionEvidence("Both people are signed in before the rollout, with no personal actions on the admin page", `rollout=${enabled}; owner=${accounts.owner}; teammate=${accounts.peer}; distinct OAuth accounts=${fingerprints.length}`, !enabled && accounts.owner && accounts.peer && fingerprints.length === 2);
-    expect(enabled).toBe(false);
-    await user.screenshot();
-    await user.press("Escape");
+    evidence.recordAssertionEvidence("Both people have distinct OAuth accounts", `owner=${accounts.owner}; teammate=${accounts.peer}; accounts=${fingerprints.length}`, accounts.owner && accounts.peer && fingerprints.length === 2);
   });
 
-  await step("after: enabling the rollout adds Open in My Library and a sign-out scoped to the owner's account", async () => {
-    await world.setNavigation(true);
-    await user.reload();
+  await step("personal Library actions are available by default", async () => {
     await user.see({ role: "link", label: "Open in My Library" }, { timeoutMs: 60_000 });
     await user.click({ role: "button", label: "More for Review notes" });
     await user.see({ role: "menuitem", label: "Sign out of your account" });
     await user.see({ role: "menuitem", label: "Sign everyone out" });
     const assigned = await world.assignedConnectionIds();
-    const enabled = await world.navigationEnabled();
-    evidence.recordAssertionEvidence("Personal actions are available for the owner's assigned connector", `rollout=${enabled}; connector in My Library=${assigned.includes(world.connection.id)}`, enabled && assigned.includes(world.connection.id));
+    evidence.recordAssertionEvidence("Personal actions are available for the owner's assigned connector", `connector in My Library=${assigned.includes(world.connection.id)}`, assigned.includes(world.connection.id));
     expect(assigned).toContain(world.connection.id);
     await user.screenshot();
     await user.press("Escape");
@@ -232,15 +222,4 @@ test("an owner opens assigned connectors in My Library, signs out only their acc
     await user.screenshot();
   });
 
-  await step("turning the rollout off restores the Library list without changing accounts or access", async () => {
-    await world.setNavigation(false);
-    await user.reload();
-    await user.see({ text: world.pluginName }, { timeoutMs: 60_000 });
-    expect((await probe.dom(`[data-testid="library-plugin-skills-${world.pluginId}"]`)).elements).toHaveLength(0);
-    const accounts = await world.accounts();
-    evidence.recordAssertionEvidence("The rollout can be reverted without signing out a teammate or removing access", `rollout=${await world.navigationEnabled()}; owner=${accounts.owner}; teammate=${accounts.peer}; connector exists=${accounts.exists}; shared=${accounts.orgWide}`, accounts.peer && accounts.exists && accounts.orgWide);
-    expect(await world.navigationEnabled()).toBe(false);
-    expect(accounts).toEqual({ owner: false, peer: true, exists: true, orgWide: true });
-    await user.screenshot();
-  });
 });

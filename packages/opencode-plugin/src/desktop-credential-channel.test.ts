@@ -28,8 +28,6 @@ for (const runtime of [process.execPath, ...(process.execPath.endsWith("/bun") ?
       if (process.platform === "linux") assert.ok(!readFileSync("/proc/self/environ", "utf8").includes(${JSON.stringify(capability)}));
       const plugin = (await import(${JSON.stringify(entry)})).default;
       assert.throws(() => fstatSync(3), /EBADF/);
-      // Flag-off setup must not expose or consume a second copy of the channel.
-      await plugin.setup({ options: { desktopSession: ${JSON.stringify(endpoint)}, liveProviderSync: false } });
       const { fetchDesktopSession } = await import(${JSON.stringify(broker)});
       // Separate ESM copies (matching native Location/source graphs) must share
       // the native broker without a global credential getter or another fd read.

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Plus } from "lucide-react";
 
-import { getNewPluginSkillRoute, getOrgAccessFlags, getPluginSkillRoute, getPluginsRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getNewPluginSkillRoute, getOrgAccessFlags, getPluginSkillRoute, getPluginsRoute } from "../../_lib/den-org";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
@@ -25,7 +25,7 @@ import {
 import { ItemHeader, SectionTitle } from "./item-header";
 import { DetailRows, ItemMenu, ItemPanel, ItemRow, removeEntry } from "./item-list";
 import { ConnectorLogo, KindTile, PluginLogo } from "./item-logo";
-import { SkillPreview, skillTitle } from "./skill-preview";
+import { SkillPreview } from "./skill-preview";
 import { usePluginAccess } from "./plugin-access-data";
 import { PluginAccessSection } from "./plugin-access-section";
 import { WorkflowDetailPanel } from "./workflow-detail-panel";
@@ -263,13 +263,11 @@ function PrimitiveSection<T>({
 }
 
 function SkillsSection({ orgSlug, plugin, canEdit }: { orgSlug: string | null; plugin: DenPlugin; canEdit: boolean }) {
-  const { orgContext } = useOrgDashboard();
-  const skillPreviews = orgFeatureEnabled(orgContext, "libraryConnectorNavigation");
   return (
     <section className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-3"><SectionTitle title="Skills" />{canEdit ? <DenButton size="sm" href={getNewPluginSkillRoute(orgSlug, plugin.id)} icon={Plus}>Add skill</DenButton> : null}</div>
       <ItemPanel>
-        {plugin.skills.length === 0 ? <p className="px-3 py-4 text-[13px] text-[var(--dls-text-secondary)]">No skills yet.</p> : plugin.skills.map((skill) => skillPreviews ? <SkillPreview key={skill.id} skill={skill} editHref={canEdit ? getPluginSkillRoute(orgSlug, plugin.id, skill.id) : undefined} /> : <ItemRow compact key={skill.id} logo={<KindTile kind="skill" />} title={skillTitle(skill.name)} description={skill.description} href={canEdit ? getPluginSkillRoute(orgSlug, plugin.id, skill.id) : undefined} />)}
+        {plugin.skills.length === 0 ? <p className="px-3 py-4 text-[13px] text-[var(--dls-text-secondary)]">No skills yet.</p> : plugin.skills.map((skill) => <SkillPreview key={skill.id} skill={skill} editHref={canEdit ? getPluginSkillRoute(orgSlug, plugin.id, skill.id) : undefined} />)}
       </ItemPanel>
     </section>
   );

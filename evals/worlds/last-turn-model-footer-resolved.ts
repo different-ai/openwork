@@ -17,10 +17,6 @@ export async function lastTurnModelFooterResolved(seed: Seed) {
   });
   const organizationId = await seededOrganizationId(seed, den.admin);
   if (!organizationId) throw new Error("The footer proof requires an organization.");
-  const enabled = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
-    method: "PUT", body: JSON.stringify({ capabilities: { liveProviderSync: true } }),
-  });
-  if (!enabled.response.ok) throw new Error(`Enabling live provider sync failed: ${enabled.response.status} ${enabled.text}`);
   const assigned = await seed.api(den.admin, "/v1/inference-providers", {
     method: "POST", body: JSON.stringify({ name: "Reply model proof", providerId: "openai", modelIds: ["gpt-4o-mini"],
       credential: { kind: "api_key", secret: "synthetic-footer-upstream-key" }, allMembers: true }),

@@ -46,7 +46,7 @@ export const denSessionSchema = z.object({
   guidedNavigation: z.boolean().default(false),
   usageRecovery: z.boolean().default(false),
   /** The Get set up checklist. A Den from before it doesn't say: off. */
-  activationChecklist: z.boolean().default(false),
+  activationChecklist: z.boolean().default(true),
   /** Side chats are on for this person. A Den from before side chats doesn't say: off. */
   sideChats: z.boolean().default(false),
   /** The Cmd+K / Ctrl+K command palette. A Den from before it doesn't say: off. */

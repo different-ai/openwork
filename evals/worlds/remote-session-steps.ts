@@ -11,7 +11,7 @@ import {
   type TranscriptMessage,
 } from "../../packages/remote-sessions/src/index.ts";
 import { configureProvider } from "./chat.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
 
 export const TASK_TITLE = "Check the release notes";
@@ -170,7 +170,7 @@ async function startRunner(seed: Seed, input: { apiUrl: string; member: Paramete
  */
 export async function remoteSessionStepsWorld(seed: Seed) {
   const { den, webPort } = await denForAppWeb(seed, { web: false, org: { name: "Release team", admin: { name: "Release Owner" } } });
-  const orgId = await enableOrganizationCapabilities(seed, den.admin, { remoteSessionSubagents: true, remoteSessionThreadView: true });
+  const orgId = await seededOrganizationId(seed, den.admin);
 
   const runner = await startRunner(seed, { apiUrl: den.ref.apiUrl, member: den.admin, orgId });
   try {

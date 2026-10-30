@@ -428,9 +428,6 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     cloudAutomationsEnabled: z.boolean().optional(),
     dashboardEnabled: z.boolean().optional(),
     connectEnabled: z.boolean().optional(),
-    /** Whether the server may start the live OpenCode provider engine. Missing means off. */
-    liveProviderSync: z.boolean().optional(),
-    nativeAffordanceCodeMode: z.boolean().optional(),
     /** Compatibility for older clients: true. Current hosts always mirror personal API keys into OpenCode v2. */
     localProviderMirror: z.boolean().optional(),
     /** Compatibility for older clients: true. Current clients always remove retired OpenCode Zen models. */
@@ -849,8 +846,6 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     ...(typeof raw?.cloudAutomationsEnabled === "boolean" ? { cloudAutomationsEnabled: raw.cloudAutomationsEnabled } : {}),
     ...(dashboardEnabled !== undefined ? { dashboardEnabled } : {}),
     ...(connectEnabled !== undefined ? { connectEnabled } : {}),
-    ...(typeof raw?.liveProviderSync === "boolean" ? { liveProviderSync: raw.liveProviderSync } : {}),
-    ...(typeof raw?.nativeAffordanceCodeMode === "boolean" ? { nativeAffordanceCodeMode: raw.nativeAffordanceCodeMode } : {}),
     ...(typeof raw?.localProviderMirror === "boolean" ? { localProviderMirror: raw.localProviderMirror } : {}),
     ...(typeof raw?.removeOpencodeZen === "boolean" ? { removeOpencodeZen: raw.removeOpencodeZen } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),

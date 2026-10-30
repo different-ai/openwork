@@ -21,8 +21,6 @@ export async function workspacePlanLabelsWorld(seed: Seed) {
     const id = await createOrganization(call, tier === "team" ? "Team workspace" : "Enterprise workspace");
     await setPlan(call, id, { tier, seatLimit: 10 });
   }
-  const enabled = await call("/v1/admin/features/sandboxOrgs", { method: "PUT", body: JSON.stringify({ enabled: true }) });
-  if (!enabled.ok) throw new Error(`Enable sandboxes: HTTP ${enabled.status}`);
   const created = await call("/v1/admin/sandbox-orgs", {
     method: "POST",
     body: JSON.stringify({ name: "Trial sandbox", connectorBaseUrl: null, days: 14, memberLimit: 3, allowedEmailDomains: [], joinRole: "member" }),

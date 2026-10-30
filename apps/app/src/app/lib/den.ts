@@ -3249,7 +3249,7 @@ export function createDenClient(options: {
       };
     },
 
-    /** The Get set up checklist; null when the activationChecklist feature is off for the organization. */
+    /** The Get set up checklist; null when unavailable. */
     async getActivation(orgId: string): Promise<ActivationState | null> {
       try {
         return activationStateSchema.parse(await requestJson<unknown>(baseUrls, "/v1/me/activation", { method: "GET", token, organizationId: orgId }));

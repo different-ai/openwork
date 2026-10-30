@@ -1,7 +1,7 @@
 import { z } from "zod"
 
 /**
- * The "Get set up" checklist (feature `activationChecklist`): the six activation recipe steps every surface shows,
+ * The "Get set up" checklist: the six activation recipe steps every surface shows,
  * in this order. Den computes each step from what actually happened (`GET /v1/me/activation`, and
  * `GET /v1/workbot/activation` for Workbot); clients only report what Den cannot see itself
  * (`POST /v1/me/activation/events`).

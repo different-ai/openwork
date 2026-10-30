@@ -55,19 +55,12 @@ test("a provider without limits adds nothing to the dialog", () => {
 });
 
 test("a limit whose provider was removed says it is not applied and offers to choose a provider", () => {
-  const html = renderToStaticMarkup(<ul><GatewayLimitRow policy={policy({ providerStatus: "removed" })} orgSlug="acme" teams={[]} members={[]} providers={[]} showRemovedProvider /></ul>);
+  const html = renderToStaticMarkup(<ul><GatewayLimitRow policy={policy({ providerStatus: "removed" })} orgSlug="acme" teams={[]} members={[]} providers={[]} /></ul>);
   assert.match(html, /Provider removed/);
   assert.match(html, /Not applied/);
   assert.match(html, /Choose provider/);
   assert.doesNotMatch(html, />Edit</);
-  const live = renderToStaticMarkup(<ul><GatewayLimitRow policy={policy({})} orgSlug="acme" teams={[]} members={[]} providers={[{ id: removedProvider, name: "Acme OpenRouter" }]} showRemovedProvider /></ul>);
+  const live = renderToStaticMarkup(<ul><GatewayLimitRow policy={policy({})} orgSlug="acme" teams={[]} members={[]} providers={[{ id: removedProvider, name: "Acme OpenRouter" }]} /></ul>);
   assert.doesNotMatch(live, /Provider removed/);
   assert.match(live, />Edit</);
-});
-
-test("with the feature off, a removed provider's limit keeps the row it had before", () => {
-  const html = renderToStaticMarkup(<ul><GatewayLimitRow policy={policy({ providerStatus: "removed" })} orgSlug="acme" teams={[]} members={[]} providers={[]} /></ul>);
-  assert.doesNotMatch(html, /Provider removed|>Not applied<|Choose provider/);
-  assert.match(html, /Provider not in current list/);
-  assert.match(html, />Edit</);
 });

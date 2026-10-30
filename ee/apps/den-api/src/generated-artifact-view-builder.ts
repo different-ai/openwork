@@ -150,9 +150,6 @@ function modulePolicySource(source: string, allowLibraries: boolean): string {
 // Names the import to change, so the author can fix it in one try.
 function moduleImportDiagnostic(subject: string, source: string, allowLibraries: boolean): GeneratedArtifactViewBuildDiagnostic {
   const specifier = FIRST_IMPORTED_SPECIFIER.exec(modulePolicySource(source, allowLibraries))?.[1]
-  if (specifier && !allowLibraries && generatedAppLibrary(specifier)) {
-    return diagnostic(`Generated ${subject} cannot import "${specifier}": built-in libraries are not on for you. React is injected; use no imports.`)
-  }
   if (specifier && allowLibraries) {
     return diagnostic(`Generated ${subject} cannot import "${specifier}". Import only the built-in libraries: ${GENERATED_APP_LIBRARY_IMPORTS.join(", ")}.`)
   }
@@ -495,13 +492,9 @@ export type GeneratedArtifactViewBuildInput = GeneratedMcpAppBuildInput & {
   outputSchema: unknown
 }
 
-// Internal server policy, never an authored or stored App field: the caller
-// resolves the editor's mcpAppLibraries feature before turning it on.
-export type GeneratedMcpAppCompileOptions = {
-  allowLibraries?: boolean
-}
-
-export type GeneratedArtifactViewCompilerInput = GeneratedMcpAppCompileOptions & (
+// Internal runtime policy, never an authored or stored App field.
+// MCP Apps support built-in libraries; legacy artifact views do not.
+export type GeneratedArtifactViewCompilerInput = (
   | (GeneratedArtifactViewBuildInput & { runtime?: "artifact" })
   | (GeneratedMcpAppBuildInput & { runtime: "mcp-app" })
 )
@@ -525,7 +518,7 @@ export async function buildGeneratedArtifactViewInWorker(input: GeneratedArtifac
   const reactSource = input.reactSource.trim()
   const cssSource = input.cssSource?.trim() ?? ""
   const runtime = input.runtime ?? "artifact"
-  const allowLibraries = runtime === "mcp-app" && input.allowLibraries === true
+  const allowLibraries = runtime === "mcp-app"
   const shared = buildMetadata(input)
   const policyFailure = await sourcePolicyDiagnostic(reactSource, cssSource, runtime, allowLibraries)
   if (policyFailure) return { ok: false, ...shared, diagnostics: [policyFailure] }
@@ -553,11 +546,11 @@ export async function buildGeneratedArtifactViewInWorker(input: GeneratedArtifac
 }
 
 export async function buildGeneratedArtifactView(input: GeneratedArtifactViewBuildInput): Promise<GeneratedArtifactViewBuildResult> {
-  return buildGeneratedView({ ...input, allowLibraries: false, runtime: "artifact" })
+  return buildGeneratedView({ ...input, runtime: "artifact" })
 }
 
-export async function buildGeneratedMcpApp(input: GeneratedMcpAppBuildInput, options: GeneratedMcpAppCompileOptions = {}): Promise<GeneratedArtifactViewBuildResult> {
-  return buildGeneratedView({ ...input, allowLibraries: options.allowLibraries === true, runtime: "mcp-app" })
+export async function buildGeneratedMcpApp(input: GeneratedMcpAppBuildInput): Promise<GeneratedArtifactViewBuildResult> {
+  return buildGeneratedView({ ...input, runtime: "mcp-app" })
 }
 
 async function buildGeneratedView(input: GeneratedArtifactViewCompilerInput): Promise<GeneratedArtifactViewBuildResult> {

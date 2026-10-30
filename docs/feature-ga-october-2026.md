@@ -88,21 +88,19 @@ optional fields from older Dens as false. Existing turns keep their persisted ex
 remain readable and move only through lossless split logic and forwarding. Owner-shared memory, legacy history,
 and fallback event transports remain intact. Deploy a compatible runner before the GA Den.
 
-## On by default (October 29)
+## Additional GA features (October 30)
 
-These 22 rollouts are on for everyone on OpenWork Cloud. Their registry default
-is now `true`, so fresh installations, self-hosted upgrades and clients that
-cannot reach Den get them without an override. The switches stay in place: the
-`/admin` kill switch, organization and member overrides, and operator Helm locks
-still turn each one off without a deploy. Retiring the switches and their off
-paths is a separate follow-up.
+These rollouts were enabled in Cloud on October 29. They are now retired: the
+enabled paths are unconditional on cloud and self-hosted, except sandbox
+organization administration remains cloud-only. Old disabled overrides, killed
+rows and operator feature locks no longer turn them off.
 
-| Area | Switches |
+| Area | Retired switches |
 | --- | --- |
 | AI Gateway providers | `gatewayProviderTest`, `gatewayProviderAuthErrors`, `providerCredentialStatus`, `gatewayProviderRemovalLimits`, `liveProviderSync` |
 | Connect | `customConnectorSetup`, `expandedMcpPresets`, `guidedSlackSetup`, `slackSendAsBot`, `libraryConnectorOrgSetup` |
 | Library | `libraryConnectorNavigation`, `libraryDetailBreadcrumbs` |
-| Browser and remote tasks | `browserFloatingView`, `remoteSessionSubagents`, `remoteSessionThreadView`, `composerSubagentTracker` |
+| Browser and remote tasks | `browserFloatingView`, `remoteSessionSubagents`, `remoteSessionThreadView`, `remoteSessionAnswers` |
 | Everyday use | `mermaidZoom`, `activationChecklist`, `mcpAppLibraries`, `nativeAffordanceCodeMode`, `analyticsDailyTrends` |
 | Platform admin (cloud only) | `sandboxOrgs` |
 
@@ -110,8 +108,11 @@ Features that still need setup keep needing it: Slack messages from the OpenWork
 bot and guided Slack setup need the OpenWork app in Slack, and tasks on other
 computers need a connected computer.
 
-`sessionTokenHashing` stays off by default even though it is on in Cloud. Den
-releases before October 23 cannot read hashed session tokens, so a self-hosted
-rolling upgrade from one of them would sign people out while old replicas are
-still serving. Operators turn it on once every replica runs a release that reads
-both forms.
+`sessionTokenHashing` is also retired: Den hashes newly issued session tokens
+without a feature flag and continues reading compatible existing tokens. Upgrade
+all replicas to a version that reads hashed tokens before introducing this
+release into a self-hosted rolling deployment; pre-October-23 replicas cannot
+read them. There is no token-storage rollback switch.
+
+`composerSubagentTracker` is **not retired**. It remains on by default with an
+organization opt-out. All other unlisted flags retain their existing behavior.

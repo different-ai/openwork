@@ -8,7 +8,7 @@ import { useLocal } from "@/react-app/kernel/local-provider"
 import type { RemoteThreadPanelTab } from "../panel/panel-tab-store"
 import { answerRemoteThread } from "./remote-thread-actions"
 import { RemoteThreadAnswerCard } from "./remote-thread-answer-card"
-import { useFollowRemoteThread, useRemoteThread, useRemoteThreadAnswersEnabled, useRemoteThreadsEnabled, useRemoteThreadViewEnabled, type RemoteThreadEntry } from "./remote-thread-store"
+import { useFollowRemoteThread, useRemoteThread, type RemoteThreadEntry } from "./remote-thread-store"
 import { REMOTE_THREAD_PAGE_MAX, REMOTE_THREAD_PAGE_SIZE, useRemoteThreadConversation } from "./use-remote-thread-conversation"
 import { RemoteFollowUpComposer } from "./remote-follow-up-composer"
 import { RemoteTranscriptView } from "./remote-transcript-view"
@@ -25,18 +25,9 @@ import { RemoteTranscriptView } from "./remote-transcript-view"
  */
 
 export function RemoteThreadPanel({ tab }: { tab: RemoteThreadPanelTab }) {
-  const enabled = useRemoteThreadsEnabled()
-  const threadView = useRemoteThreadViewEnabled()
   const entry = useRemoteThread(tab.threadKey)
   // The open panel keeps the task followed, like its row.
   useFollowRemoteThread(entry?.start ?? null, tab.owner, null)
-  if (!threadView) {
-    return (
-      <div className="p-4 text-sm text-muted-foreground" data-remote-thread-disabled>
-        {t(enabled ? "session.remote_task_thread_view_disabled" : "session.remote_task_disabled")}
-      </div>
-    )
-  }
   if (!entry) {
     return <div className="p-4 text-sm text-muted-foreground">{t("session.remote_task_read_failed")}</div>
   }
@@ -46,7 +37,6 @@ export function RemoteThreadPanel({ tab }: { tab: RemoteThreadPanelTab }) {
 function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
   const conversation = useRemoteThreadConversation(entry)
   const { view, stopping, page } = conversation
-  const answers = useRemoteThreadAnswersEnabled()
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-remote-thread-panel={entry.start.key} data-remote-thread-state={view.state}>
@@ -73,7 +63,7 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
         className="[&_.md\:px-10]:md:px-3 [&_.md\:px-8]:md:px-2"
       />
 
-      {view.waitingFor && answers && page?.pending?.kind === view.waitingFor ? (
+      {view.waitingFor && page?.pending?.kind === view.waitingFor ? (
         <RemoteThreadAnswerCard pending={page.pending} computer={view.computer} onAnswer={(answer) => answerRemoteThread(entry, answer)} />
       ) : view.waitingFor ? (
         <div className="shrink-0 border-t border-border px-4 py-2 text-xs text-amber-11" data-remote-thread-waiting={view.waitingFor}>

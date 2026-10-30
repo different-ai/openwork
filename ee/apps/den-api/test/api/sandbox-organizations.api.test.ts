@@ -1,6 +1,6 @@
 /**
- * Sandbox organizations: platform admins create try-it-out organizations behind the cloud-only sandboxOrgs
- * rollout; anyone with the join link joins as a member until the seats run out, the sandbox closes, or the
+ * Sandbox organizations: platform admins create try-it-out organizations on cloud deployments;
+ * anyone with the join link joins as a member until the seats run out, the sandbox closes, or the
  * link is replaced. A closed or expired sandbox gets no Free Auto (Den API reads the sandbox row; no grants or
  * benefit settings are written) without removing members, and extending it restores Free Auto.
  */
@@ -36,19 +36,6 @@ const grantRows = async (orgId: string) => {
   const [rows] = await client.query("SELECT (SELECT count(*) FROM organization_grant WHERE organization_id = ?) + (SELECT count(*) FROM organization_benefit_setting WHERE organization_id = ?) AS total", [orgId, orgId])
   return Number(field(Array.isArray(rows) ? rows[0] : null, "total") ?? -1)
 }
-
-test("sandboxes stay unavailable while the platform rollout is off", async () => {
-  const disabled = await den.request(admin.token, "PUT", "/v1/admin/features/sandboxOrgs", { body: { enabled: false } })
-  assert.equal(disabled.status, 200, summary(disabled))
-  const listed = await den.request(admin.token, "GET", "/v1/admin/sandbox-orgs")
-  assert.equal(listed.status, 200, summary(listed))
-  assert.equal(field(listed.body, "enabled"), false)
-  const refused = await create({})
-  assert.equal(refused.status, 404, summary(refused))
-  assert.equal(field(refused.body, "error"), "feature_disabled")
-  const enabled = await den.request(admin.token, "PUT", "/v1/admin/features/sandboxOrgs", { body: { enabled: true } })
-  assert.equal(enabled.status, 200, summary(enabled))
-})
 
 test("only platform admins create or list sandboxes", async () => {
   const person = await den.signUp("Not Admin")
@@ -224,14 +211,4 @@ test("an admin sandbox makes people who join admins; changing it later never cha
   assert.equal(field((await den.request(mo.token, "GET", "/v1/org", { orgId })).body, "currentMember", "role"), "member")
   assert.equal(field((await den.request(ada.token, "GET", "/v1/org", { orgId })).body, "currentMember", "role"), "admin", "Ada keeps her role")
   assert.equal((await den.request(ada.token, "POST", `/v1/admin/sandbox-orgs/${id}/join-role`, { body: { joinRole: "admin" } })).status, 403, "a sandbox admin is not a platform admin")
-})
-
-test("the kill switch stops join links everywhere without deleting sandboxes", async () => {
-  const sandbox = field((await create({})).body, "sandbox")
-  const killed = await den.request(admin.token, "PUT", "/v1/admin/features/sandboxOrgs", { body: { killed: true } })
-  assert.equal(killed.status, 200, summary(killed))
-  assert.equal((await join((await den.signUp("During Kill")).token, tokenOf(sandbox))).status, 404)
-  await den.request(admin.token, "PUT", "/v1/admin/features/sandboxOrgs", { body: { killed: false } })
-  const listed = await den.request(admin.token, "GET", "/v1/admin/sandbox-orgs")
-  assert.ok(list(field(listed.body, "sandboxes")).some((entry) => entry.id === field(sandbox, "id")))
 })

@@ -27,21 +27,7 @@ test("a member sees Slack locked until an admin sets it up, and signs in to a co
     await member.see({ role: "button", label: "Add Slack" }, { timeoutMs: WITHIN });
   }
 
-  await step("before: with libraryConnectorOrgSetup off, Slack asks the member for the app's client ID and secret", async () => {
-    await openCatalog();
-    const notes = await row("Team notes");
-    await member.click({ role: "button", label: "Add Slack" });
-    await member.see({ text: "Client ID (optional for now)" }, { timeoutMs: WITHIN });
-    const inputs = (await memberProbe.dom(`${SETUP} input`)).elements.length;
-    evidence.recordAssertionEvidence("Flag off keeps the old page: two code fields, and Team notes only says Added", `fields=${inputs}; Team notes: "${notes}"`, inputs === 2 && notes.includes("Added"));
-    expect(inputs).toBe(2);
-    expect(notes).toContain("Added");
-    await member.screenshot();
-    await world.setOrgSetup(true);
-  });
-
   await step("the member's catalog offers Sign in for Team notes, which the organization already has", async () => {
-    await member.reload();
     await openCatalog();
     await member.see({ role: "button", label: "Sign in with Team notes" }, { timeoutMs: WITHIN });
     const notes = await row("Team notes");
@@ -98,7 +84,6 @@ test("an owner is sent to OpenWork Cloud to add the organization's Slack app", a
   const ownerProbe = probe.on(world.owner.app);
 
   await step("the owner opens Slack from Add a connector and sees Set up in OpenWork Cloud", async () => {
-    await world.setOrgSetup(true);
     await owner.navigate(world.owner.libraryUrl);
     await owner.see({ role: "button", label: "Add to library" }, { timeoutMs: WITHIN });
     await owner.click({ role: "button", label: "Add to library" });

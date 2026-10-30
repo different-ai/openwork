@@ -1,24 +1,27 @@
 # Answer a sub-agent task's question here
 
-Feature key: `remoteSessionAnswers` · Deployments: Cloud and self-hosted · Default: off · Author: [@benjaminshafii](https://github.com/benjaminshafii)
+> **GA:** Available without a feature flag. The former rollout key is retired.
+> Off/on screenshots below are historical comparisons, not current deployment options.
 
-Needs `remoteSessionSubagents` (the row) and, for the panel card, `remoteSessionThreadView`.
+Retired rollout key: `remoteSessionAnswers` · Deployments: Cloud and self-hosted · Status: generally available (no flag) · Author: [@benjaminshafii](https://github.com/benjaminshafii)
+
+Task progress, conversation views and answers are generally available.
 
 ## What people get
 
-A task the agent started on the cloud or another computer sometimes stops to ask a question or to ask for a permission. Today the row says "Waiting for your answer on Studio Mac" and the person has to go to that computer.
+A task the agent started on the cloud or another computer sometimes stops to ask a question or to ask for a permission. Older clients required the person to go to that computer.
 
-With the feature on:
+By default:
 
 - The row offers the options of a single-choice question as small buttons, plus `Other answer…`, which opens the task's conversation.
 - The conversation beside the chat shows the question or permission as a text-only card above the follow-up box: number keys choose, Enter goes to the next question, ⌘Enter allows a permission once. A permission shows its command.
 - After an answer the card goes away; the task runs on and the row follows it. A failure shows the reason inline with a retry.
 
-Off (today):
+Historical before GA:
 
 ![The row only says it waits on the other computer](row-off.png)
 
-On, the row offers the task's options:
+Now the row offers the task's options:
 
 ![The row offers dev, main and Other answer…](row-options.png)
 
@@ -40,20 +43,22 @@ After allowing it once, the task finishes:
 - The runner journals the answer like a follow-up, idempotent by the pending requestId: a lost reply is replayed safely, because a native request is answered at most once.
 - Den routes `answer` requests only to runners that register `remote_session_answer_v1`. Older runners get `answer_unsupported` and keep "Answer it on that computer".
 - `remote-session:status` carries a short `pending` summary (question and option labels, or the permission's title); a new request changes the status version.
-- The app calls `POST /v1/remote-sessions/answer` (owner-only, behind this feature and `remoteSessionSubagents`). Agents get `remote-session:answer`, only in the member's own chat (never Automations, Workflows or Apps), and its instructions require asking the person first, every time.
+- The app calls `POST /v1/remote-sessions/answer` (owner-only). Agents get `remote-session:answer`, only in the member's own chat (never Automations, Workflows or Apps), and its instructions require asking the person first, every time.
 - The OpenCode plugin host (2.0.26) has no question reply, so `opencode-openwork` answers permissions only; its questions still say to answer them on that computer.
 
 ## Try it
 
-1. Turn on `remoteSessionSubagents`, `remoteSessionThreadView` and `remoteSessionAnswers` for your organization in `/admin`.
+1. Connect a computer with a runner that supports remote answers.
 2. Ask the agent to run a task on another computer that asks a question (for example one that needs a branch) or runs a command that needs approval.
 3. Answer from the row or the task's conversation.
 
 The proof `evals/proofs/remote-session-answers.proof.test.ts` drives this end to end against a real Den with a runner that speaks Den's runner protocol.
 
-## Turning it off
+## Availability
 
-The kill switch hides the buttons and the card; rows go back to "Waiting for your answer on …", the route answers 404 `feature_disabled`, and the capability disappears from search. Answers already sent stay sent; nothing else changes on the other computer. Runners keep reporting `pending`, which older apps ignore.
+Generally available. The rollout flag is retired; organization/member overrides,
+operator locks and old kill-switch rows no longer disable this behavior.
+Authorization, provider setup, consent and runtime compatibility still apply.
 
 ## What to watch
 
