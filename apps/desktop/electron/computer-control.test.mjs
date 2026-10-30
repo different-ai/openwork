@@ -858,7 +858,7 @@ function credentialFixture() {
   const answer = async (app, reply) => {
     const before = cards().length;
     for (let waited = 0; cards().length === before && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
-    assert.deepEqual(cards().at(-1).credential, { app });
+    assert.deepEqual(cards().at(-1).credential, { app, appId: "com.example.editor" });
     await f.control.answerRequest({ sessionId: "chat", answer: reply, id: cards().at(-1).id });
   };
   return { ...f, acts, cards, answer };

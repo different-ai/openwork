@@ -368,8 +368,8 @@ export type ComputerRequest = {
   script?: { app: "applescript" | "jxa" | "blender"; code: string };
   /** The files handed over if the person approves: names or full paths, and the app or site receiving them. */
   files?: { app: string; names: string[] };
-  /** Where the agent would type a password or one-time code: an exact site (origin) in the built-in browser, or a native app. */
-  credential?: { site?: string; app?: string };
+  /** Where the agent would type a password or one-time code: an exact site (origin) in the built-in browser, or a native app by name and id. */
+  credential?: { site?: string; app?: string; appId?: string };
 };
 
 /** One chat's computer use state, as the broker reports it. */

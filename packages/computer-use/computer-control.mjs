@@ -80,7 +80,7 @@ function deadline(ms) {
  * @typedef {{ isError?: boolean, content: Array<{ type: string, text?: string, data?: string, mimeType?: string }> }} ComputerResult
  * @typedef {{ sessionId?: string }} ChatInput
  * @typedef {{ ok?: boolean, error?: { code: string, message: string }, mayHaveActed?: boolean, [key: string]: unknown }} ScriptResult
- * @typedef {{ id: string, reason: "setup" | "script" | "files" | "credential", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, script?: { app: string, code: string }, files?: { app: string, names: string[] }, credential?: { site?: string, app?: string } }} ComputerRequest
+ * @typedef {{ id: string, reason: "setup" | "script" | "files" | "credential", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, script?: { app: string, code: string }, files?: { app: string, names: string[] }, credential?: { site?: string, app?: string, appId?: string } }} ComputerRequest
  * @typedef {{ targets?: Record<string, string>, computer?: string }} SavedChoices
  * @typedef {{
  *   callTool: (name: string, args: Record<string, unknown>, options?: { signal?: AbortSignal, timeoutMs?: number }) => Promise<ComputerResult>,
@@ -275,8 +275,9 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     if (grant.credentialsAlwaysFor?.has(key)) return "always";
     if (scriptRequests.has(grant.sessionId)) return "busy";
     const target = targetFor(grant);
+    // An app's name can be copied by another app; its id is shown beside it.
     const answer = await approve(grant, { id: randomUUID(), reason: /** @type {const} */ ("credential"), computer: target.label, placement: target.placement,
-      credential: site ? { site } : { app: shown } }, signal);
+      credential: site ? { site } : { app: shown, appId: app } }, signal);
     if (answer === "always") (grant.credentialsAlwaysFor ??= new Set()).add(key);
     return answer;
   }

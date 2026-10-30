@@ -168,7 +168,9 @@ function CredentialRequest({ sessionId, request, credential }: { sessionId: stri
   }
 
   const site = credential.site?.replace(/^https:\/\//, "")
-  const recipient = site ?? credential.app ?? "this app"
+  // A name can be copied by another app; the id cannot, so it is always shown.
+  const recipient = site ?? (credential.app && credential.appId && credential.app !== credential.appId
+    ? `${credential.app} (${credential.appId})` : credential.appId ?? credential.app ?? "this app")
   return (
     <div className="overflow-hidden border-b border-dls-border bg-transparent" data-testid="session-computer-request" data-reason="credential">
       <div className="flex flex-col gap-3 px-4 py-3">
