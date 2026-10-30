@@ -19,6 +19,7 @@ import {
   listAutoRouterOptions,
   listAutoRouters,
   memberAutoRouters,
+  readAutoRouter,
   readAutoRouterRouting,
   saveAutoRouter,
 } from "../../auto-router.js"
@@ -29,13 +30,15 @@ import { jsonValidator, orgMemberRoute, paramValidator, requireOrgPermission } f
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { ResourceActionContext } from "./declarative.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { hasPermission, idParamSchema, type PermissionRouteContext } from "./shared.js"
+import { hasPermission, idParamSchema, permissionDeniedResponse, permissionFailureHeaders, type PermissionRouteContext } from "./shared.js"
 
 const notConfiguredSchema = z
   .object({ error: z.literal("auto_router_not_configured"), message: z.string() })
   .meta({ ref: "AutoRouterNotConfiguredError" })
 
 export const AUTO_ROUTER_NOT_CONFIGURED_MESSAGE = "The AI Gateway is missing its routing key. Ask the person who runs your OpenWork instance to add a TypeSafe API key to the AI Gateway, then save your Smart Routers."
+
+const ORG_WIDE_SHARE_DENIED_MESSAGE = "You can't make a Smart Router apply to everyone in the organization. Choose specific people or teams instead."
 
 const writeProblemSchema = z
   .object({
@@ -69,7 +72,7 @@ const writeResponses = {
   400: jsonResponse("The request is invalid (for example a model without tasks), names a model the AI Gateway does not offer, or a team or person that is not in the organization.", z.union([writeProblemSchema, invalidRequestSchema])),
   409: jsonResponse("Refused because the AI Gateway has no routing (TypeSafe) key.", notConfiguredSchema),
   401: unauthorized,
-  403: manageForbidden,
+  403: jsonResponse("The caller lacks the Manage Gateway providers permission, needs to sign in again, or assigns the router to everyone without the Share with everyone permission.", forbiddenSchema),
   404: notFound,
 }
 
@@ -90,6 +93,15 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
     }
     if (routerId === undefined && (await listAutoRouters(organizationId)).routers.length >= AUTO_ROUTER_MAX_ROUTERS) {
       return c.json({ error: "too_many_routers" as const, message: `An organization can have at most ${AUTO_ROUTER_MAX_ROUTERS} Smart Routers.` }, 400)
+    }
+    // Everyone reaches every member, so it needs Share with everyone on its own.
+    // Keeping an already org-wide router org-wide while editing shares nothing new.
+    if (write.assignment.everyone && !await hasPermission(c, "sharing.share_org_wide")) {
+      const existing = routerId === undefined ? null : await readAutoRouter(organizationId, routerId)
+      if (!existing?.assignment.everyone) {
+        const denied = { ...permissionDeniedResponse("sharing.share_org_wide"), message: ORG_WIDE_SHARE_DENIED_MESSAGE }
+        return c.json(denied, 403, permissionFailureHeaders(denied))
+      }
     }
     const problem = await checkAutoRouterWrite(organizationId, write, await listAutoRouterOptions(organizationId))
     if (problem) return c.json(problem, 400)
@@ -147,7 +159,7 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Inference Providers"],
       summary: "Create a Smart Router",
-      description: "Creates a Smart Router: its name, who it applies to, and its AI Gateway models in order, each with the tasks it handles (at least one). Tasks are shared across the organization and matched case-insensitively; new names are created. The first model wins ties and is used when the router cannot decide. Refused with auto_router_not_configured while the AI Gateway has no TypeSafe key. Requires the Manage Gateway providers permission, a recent sign-in and the Smart Model Router feature. Returns the whole list.",
+      description: "Creates a Smart Router: its name, who it applies to, and its AI Gateway models in order, each with the tasks it handles (at least one). Tasks are shared across the organization and matched case-insensitively; new names are created. The first model wins ties and is used when the router cannot decide. Refused with auto_router_not_configured while the AI Gateway has no TypeSafe key. Assigning it to everyone also needs the Share with everyone permission. Requires the Manage Gateway providers permission, a recent sign-in and the Smart Model Router feature. Returns the whole list.",
       responses: { 200: jsonResponse("Smart Router created.", autoRouterListSchema), ...writeResponses },
     }),
     orgMemberRoute(),
@@ -162,7 +174,7 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Inference Providers"],
       summary: "Update a Smart Router",
-      description: "Replaces a Smart Router whole: name, who it applies to, and models with their tasks. Tasks no model uses anymore are removed from the organization. Requires the Manage Gateway providers permission, a recent sign-in and the Smart Model Router feature. Returns the whole list.",
+      description: "Replaces a Smart Router whole: name, who it applies to, and models with their tasks. Tasks no model uses anymore are removed from the organization. Making it apply to everyone also needs the Share with everyone permission. Requires the Manage Gateway providers permission, a recent sign-in and the Smart Model Router feature. Returns the whole list.",
       responses: { 200: jsonResponse("Smart Router saved.", autoRouterListSchema), ...writeResponses },
     }),
     orgMemberRoute(),

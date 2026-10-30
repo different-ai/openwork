@@ -219,7 +219,7 @@ export const autoRouterSchema = z
     assignment: autoRouterAssignmentSchema,
     /** In the order the admin listed them; the first wins ties and is used when Jev cannot answer. */
     models: z.array(autoRouterModelSchema),
-    updatedAt: z.string(),
+    updatedAt: z.string().datetime(),
   })
   .meta({ ref: "AutoRouter" })
 export type AutoRouter = z.infer<typeof autoRouterSchema>
