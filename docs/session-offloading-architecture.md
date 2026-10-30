@@ -102,6 +102,31 @@ default:
   the view is turned off. Den routes stay behind `remoteSessionSubagents`:
   Stop also reads a slow desktop's pending receipt through `read`.
 
+### Transcript steps
+
+A `read` page's messages keep `text` and `toolCalls` for older readers and,
+from current runners, add an ordered `parts` array plus `completedAt`:
+
+- `{ type: "text", text }`
+- `{ type: "reasoning", text, durationMs? }`
+- `{ type: "tool", id, name, status, title?, input, output, error, truncated, startedAt?, endedAt? }`
+
+Caps match the rest of the page: at most 200 parts per message, 2000
+characters per tool field (`truncated` marks a cut), text and reasoning
+sharing one 20,000-character budget per message (reasoning parts at most
+4,000), and the whole result under 256 KB. Desktop runners
+(`automation-runner.mjs`), the OpenCode plugin (`native-opencode.ts`) and the
+Cloud `read` (`remote-session-transcript.ts`, from `@openwork/headless-threads`
+part order and tool state) all send this shape; Den stores and returns it
+unchanged. A runner that omits `parts` still parses, and readers rebuild steps
+from `toolCalls` then `text`.
+
+With `remoteSessionThreadView` on, the panel maps parts to the chat's message
+parts (`remoteTranscriptToUIMessages`) and renders them with the main chat's
+`MessageList`, read only: each tool step gets the local labels, the finished
+turn folds to "Worked for…", and a failed step stays open with its details.
+The agent's own status checks stay hidden, as in the chat.
+
 Slack uses the same capabilities and trusted run-token provenance to post a
 result back to its originating thread. A model cannot choose an arbitrary
 notification destination. Workbot and other MCP-backed chats use the same

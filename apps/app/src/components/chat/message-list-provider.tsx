@@ -46,7 +46,8 @@ interface MessageListContextValue {
   dispatchAction: (action: DispatchAction) => void
   setPrompt: (prompt: string) => void
   onRevertToUserMessage: (messageId: string) => void
-  onForkAtMessage: (messageId: string) => void | Promise<void>
+  /** Absent where a reply cannot be branched into a new chat (a task on another computer). */
+  onForkAtMessage?: (messageId: string) => void | Promise<void>
   forkingMessageId?: string
   onEditUserMessage: (messageId: string, text: string) => void
   /** Open a sub-agent (child) session in the main chat surface. */
@@ -86,7 +87,7 @@ interface MessageListProviderProps {
   highlightQuery?: string
   developerMode: boolean
   onRevertToUserMessage: (messageId: string) => void
-  onForkAtMessage: (messageId: string) => void | Promise<void>
+  onForkAtMessage?: (messageId: string) => void | Promise<void>
   forkingMessageId?: string
   onEditUserMessage: (messageId: string, text: string) => void
   onOpenSubagentSession?: (sessionId: string) => void
@@ -190,7 +191,7 @@ export function MessageListProvider({
     dispatchAction: (action: DispatchAction) => handlersRef.current.dispatchAction(action),
     setPrompt: (prompt: string) => handlersRef.current.setPrompt(prompt),
     onRevertToUserMessage: (messageId: string) => handlersRef.current.onRevertToUserMessage(messageId),
-    onForkAtMessage: (messageId: string) => handlersRef.current.onForkAtMessage(messageId),
+    onForkAtMessage: (messageId: string) => handlersRef.current.onForkAtMessage?.(messageId),
     onEditUserMessage: (messageId: string, text: string) => handlersRef.current.onEditUserMessage(messageId, text),
     onOpenSubagentSession: (sessionId: string) => handlersRef.current.onOpenSubagentSession?.(sessionId),
     onStopSubagentSession: (sessionId: string) => handlersRef.current.onStopSubagentSession?.(sessionId),
@@ -205,6 +206,7 @@ export function MessageListProvider({
       handlersRef.current.onMcpReopenAuthorization(action, authorizeUrl, isCurrent)
     ),
   }), [])
+  const canForkAtMessage = Boolean(onForkAtMessage)
   const canOpenSubagentSession = Boolean(onOpenSubagentSession)
   const canStopSubagentSession = Boolean(onStopSubagentSession)
   const canResumeInterrupted = Boolean(onResumeInterrupted)
@@ -255,6 +257,7 @@ export function MessageListProvider({
       syncDegraded,
       composerSubagentToolCallIds,
       ...stableHandlers,
+      onForkAtMessage: canForkAtMessage ? stableHandlers.onForkAtMessage : undefined,
       onOpenSubagentSession: canOpenSubagentSession
         ? stableHandlers.onOpenSubagentSession
         : undefined,
@@ -290,6 +293,7 @@ export function MessageListProvider({
       syncDegraded,
       composerSubagentToolCallIds,
       stableHandlers,
+      canForkAtMessage,
       canOpenSubagentSession,
       canStopSubagentSession,
       canResumeInterrupted,

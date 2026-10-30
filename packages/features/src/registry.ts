@@ -504,7 +504,7 @@ export const FEATURES = defineFeatures({
     added: "2026-10-26",
     since: "2026-10",
     author: "reachjalil",
-    docs: "docs/session-offloading-architecture.md",
+    docs: "docs/features/remote-session-thread-view/README.md",
     deployments: everywhere,
     default: false,
   },

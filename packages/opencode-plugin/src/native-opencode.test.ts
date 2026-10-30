@@ -187,6 +187,9 @@ test("a read sends each assistant step in native order, with the failed tool's e
   const failed = message?.parts?.[3]
   assert.ok(failed?.type === "tool")
   assert.deepEqual([failed.name, failed.status, failed.error], ["read", "error", "ENOENT"])
+  const listed = message?.parts?.[1]
+  assert.ok(listed?.type === "tool")
+  assert.equal(listed.output, "a")
   assert.equal(message?.text, "Reading one\nDone.")
 })
 

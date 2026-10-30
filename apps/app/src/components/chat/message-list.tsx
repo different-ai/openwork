@@ -1593,7 +1593,7 @@ function MessageGroup({
     if (replyText) replyMenuActions.push(
       { type: "item", id: "copy", label: "Copy", icon: <Copy className="size-4" />, onSelect: () => navigator.clipboard.writeText(replyText) },
     )
-    if (lastRealItem) replyMenuActions.push(
+    if (lastRealItem && onForkAtMessage) replyMenuActions.push(
       { type: "item", id: "branch", label: forkingMessageId === lastRealItem.message.id ? "Branching..." : "Branch in new chat", icon: <Split className="size-4 rotate-90" />, disabled: Boolean(forkingMessageId), onSelect: () => onForkAtMessage(lastRealItem.message.id) },
     )
   }
@@ -1819,7 +1819,7 @@ function MessageGroup({
           <div className={cn("flex items-center gap-2 transition-opacity duration-150 ease-out motion-reduce:transition-none group-hover/message-group:opacity-100 group-focus-within/message-group:opacity-100 pointer-coarse:opacity-100", forkingMessageId && forkingMessageId === lastRealItem?.message.id ? "opacity-100" : "opacity-0")}>
           <MessageActions data-testid="reply-actions" className="flex gap-0">
             <CopyMessageButton messages={renderableItems.map((item) => item.message)} />
-            {lastRealItem ? (
+            {lastRealItem && onForkAtMessage ? (
               <>
                 <MessageAction tooltip={forkingMessageId === lastRealItem.message.id ? "Branching..." : "Branch in new chat"}>
                   <Button

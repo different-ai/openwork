@@ -188,7 +188,8 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
 
       <div
         ref={scroller}
-        className="min-h-0 flex-1 overflow-y-auto py-3"
+        // The chat's rows are padded for a full-width pane; beside the chat they take the panel's width.
+        className="min-h-0 flex-1 overflow-y-auto py-3 [&_.md\:px-10]:md:px-3 [&_.md\:px-8]:md:px-2"
         data-remote-thread-transcript=""
         onScroll={(event) => {
           const element = event.currentTarget

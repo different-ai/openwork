@@ -246,7 +246,12 @@ function transcriptParts(content: readonly NativeAssistantContent[]): Transcript
     if (part.type === "text") return { type: "text", text: prose(part.text, 20_000) }
     if (part.type === "reasoning") return { type: "reasoning", text: prose(part.text, 4_000) }
     const { id, name, status, input, output, error, truncated } = toolCall(part)
-    return { type: "tool", id, name, status, input, output, error, truncated }
+    // The chat shows a tool's text output as text, not as its JSON content blocks.
+    const text = "content" in part.state && part.state.content
+      ? part.state.content.flatMap(item => isRecord(item) && item.type === "text" && typeof item.text === "string" ? [item.text] : []).join("\n")
+      : ""
+    return { type: "tool", id, name, status, input, output: text ? clipped(text, 2000) : output, error,
+      truncated: truncated || text.length > 2000 }
   })
 }
 function transcriptMessage(message: NativeMessage): TranscriptMessage {

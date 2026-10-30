@@ -68,7 +68,7 @@ test("a finished remote turn renders through the chat renderer, folded to Worked
     expect(container.textContent).toContain("missing-notes.md")
     expect(container.textContent).toContain("There are no notes.")
     // Read only: the turns carry no branch action.
-    expect(container.textContent).not.toContain("Branch in new chat")
+    expect(container.querySelector("[aria-label='Branch in new chat']")).toBeNull()
   })
 })
 

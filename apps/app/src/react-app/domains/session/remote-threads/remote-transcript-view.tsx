@@ -49,7 +49,6 @@ export function RemoteTranscriptView({
       dispatchAction={noop}
       setPrompt={noop}
       onRevertToUserMessage={noop}
-      onForkAtMessage={noop}
       onEditUserMessage={noop}
       onMcpReconnect={reconnect}
       onMcpReopenAuthorization={reopen}
