@@ -119,11 +119,14 @@ export async function remoteSessionAnswers(seed: Seed) {
   const report = (body: Record<string, unknown>) => runnerCall(`/v1/remote-session-commands/${commandId}/session`, { engine: "v2", messageCount: 2, ...body, observedAt: ++clock });
   await report({ status: "waiting", waitingFor: "question", pending: question });
 
+  const permission = { kind: "permission", requestId: "per_publish", title: "Run a command", detail: "Publish the draft release",
+    command: "gh release create v2.4.0 --draft --notes-file release-notes.md" };
   const answers: Answer[] = [];
-  let pending: typeof question | null = question;
+  let pending: typeof question | typeof permission | null = question;
+  let branch = "dev";
   let done = "";
   const transcript = () => ({
-    title: TITLE, status: pending ? "waiting" : "idle", waitingFor: pending ? "question" : null, lastError: null, historyScope: "full",
+    title: TITLE, status: pending ? "waiting" : "idle", waitingFor: pending?.kind ?? null, lastError: null, historyScope: "full",
     messageCount: pending ? 2 : 3, from: "end", nextCursor: null, pending,
     messages: [
       { id: "msg_task", role: "user", createdAt: 1, text: "Draft the release notes from the merged pull requests.", truncated: false, toolCalls: [], error: null },
@@ -156,10 +159,19 @@ export async function remoteSessionAnswers(seed: Seed) {
                 ? { kind: "question", requestId: input.requestId, answers: input.answers.map((entry) => Array.isArray(entry) ? entry.map(String) : []) }
                 : { kind: "permission", requestId: input.requestId, decision: String(input.decision) };
               answers.push(answer);
-              pending = null;
-              done = `Release notes drafted from ${answer.kind === "question" ? answer.answers[0]?.[0] ?? "dev" : "dev"}: 14 changes in 3 sections.`;
               await runnerCall(`/v1/remote-session-requests/${requestId}/complete`, { status: "done", outcome: { action: "answer", result: { requestId: input.requestId, alreadyAnswered: false } } });
-              await report({ status: "idle", waitingFor: null, pending: null, messageCount: 3, finalText: done });
+              if (answer.kind === "question") {
+                // The chosen branch is used; publishing the draft then needs the person's approval.
+                branch = answer.answers[0]?.[0] ?? branch;
+                pending = permission;
+                await report({ status: "waiting", waitingFor: "permission", pending: permission });
+              } else {
+                pending = null;
+                done = answer.decision === "once"
+                  ? `Release notes drafted from ${branch} and published as a draft: 14 changes in 3 sections.`
+                  : `Release notes drafted from ${branch}; not published.`;
+                await report({ status: "idle", waitingFor: null, pending: null, messageCount: 3, finalText: done });
+              }
             }
           } else {
             await runnerCall(`/v1/remote-session-requests/${requestId}/complete`, { status: "failed", error: { code: "unsupported_request", message: "Not part of this world." } });

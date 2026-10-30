@@ -71,6 +71,13 @@ remote session lifecycle.
    command is one indexed read of the receipt its runner already reports; a
    Cloud session is a small worker read of its last messages, run state and,
    only while it runs, pending requests. Use `read` for the transcript.
+7. `remote-session:answer` (behind `remoteSessionAnswers`): answer the question
+   or permission a session waits on, with the `requestId` from `pending`.
+   Questions take the chosen option labels per question (free text only where
+   the question allows it); permissions take `once` or `reject`, never
+   `always`. Only the member's own chat lists it (never an Automation, Workflow
+   run or App), and its instructions require asking the person first, every
+   time, as a chat answering another local session's question does.
 
 Cloud remains the default create target and retains its existing access and
 worker lifecycle. `target: "desktop"` and legacy wire names stay compatible.
@@ -87,8 +94,8 @@ answer. Its routes under `/v1/remote-sessions/` run these same capabilities
 with the member's own session. One loop in the app follows every shown
 session with one waiting `status` call at a time, not while the window is
 hidden or offline, and stops once they settle. Stop on the row goes through
-`stop`. Answering a pending permission or question stays on the computer that
-runs the session.
+`stop`. Without `remoteSessionAnswers`, answering a pending permission or
+question stays on the computer that runs the session.
 
 Two features roll this out in steps, both on Cloud and self-hosted and off by
 default:
@@ -106,6 +113,36 @@ Slack uses the same capabilities and trusted run-token provenance to post a
 result back to its originating thread. A model cannot choose an arbitrary
 notification destination. Workbot and other MCP-backed chats use the same
 owner-scoped targets and receipts, without a separate registration mechanism.
+
+- `remoteSessionAnswers` (needs the first): the person answers the question or
+  permission a task waits on from its row (single-choice questions) or the card
+  above the conversation's follow-up box, through
+  `POST /v1/remote-sessions/answer` (owner-only).
+
+### Pending requests and answers
+
+A runner that registers `remote_session_answer_v1` reports what a waiting
+session waits on as `pending` in its progress and transcript reads:
+`{ kind: "question", requestId, questions: [{ header, question, options: [{ label, description }], multiple, custom }] }`
+or `{ kind: "permission", requestId, title, detail, command? }`. It is plain
+text from the other computer; clients never render it as links or run it. Den
+stores it with the command's progress, and `status` returns a short summary
+(question and option labels, or the permission's title) whose `requestId`
+changes the version. Cloud sessions read the same shape from the worker's
+pending lists while they run.
+
+An `answer` request reaches only such runners; older ones are refused with
+`answer_unsupported` before anything is queued. The runner journals it like a
+follow-up, idempotent by the pending `requestId`: the marker is durable before
+the native reply, and a replay that finds the request gone reports it answered
+rather than replying again (a native request is answered at most once). The
+adapter checks the answer against the live request and refuses a stale
+`requestId` (`stale_request`) or a misfit answer (`invalid_answer`). Desktop
+replies through the same native paths as a local chat: v1 question and
+permission replies, v2 form replies by field key and option value, v2 permission
+replies. The OpenCode plugin host has no question reply in 2.0.26, so
+`opencode-openwork` answers permissions only. An answer request that expires
+after its reply was dispatched settles as `ambiguous_answer`.
 
 ## Recovery and honest guarantees
 
