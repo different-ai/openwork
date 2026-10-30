@@ -431,6 +431,16 @@
               ],
               "description": "Desktop: open a sub-agent task's conversation: Clicking the row of a task on another computer opens its conversation beside the chat, where people read it and follow up. Needs tasks on other computers as sub-agents. Renders DEN_FEATURE_REMOTE_SESSION_THREAD_VIEW."
             },
+            "remoteSessionHelperView": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: open a task on another computer like a helper: Clicking a task on another computer opens it in the main pane like a helper: follow up with Enter, stop it, and press Esc to return to the chat where you left off. The chat row says what it ran last, and the sidebar lists the task under its chat. Needs the task conversation view. Renders DEN_FEATURE_REMOTE_SESSION_HELPER_VIEW."
+            },
             "activationChecklist": {
               "enum": [
                 "",

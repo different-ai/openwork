@@ -508,6 +508,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  remoteSessionHelperView: {
+    label: "Desktop: open a task on another computer like a helper",
+    description: "Clicking a task on another computer opens it in the main pane like a helper: follow up with Enter, stop it, and press Esc to return to the chat where you left off. The chat row says what it ran last, and the sidebar lists the task under its chat. Needs the task conversation view.",
+    category: "computerUse",
+    added: "2026-10-29",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/remote-session-helper-view/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   activationChecklist: {
     label: "Get set up checklist",
     description: "After their first answer, people see a Get set up checklist in Desktop and Workbot: invite a teammate, use a skill, add a model provider, share one on AI Gateway and connect an app, each checked off once it works.",
