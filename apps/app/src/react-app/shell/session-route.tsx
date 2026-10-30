@@ -432,6 +432,8 @@ export function SessionRoute() {
   const platform = usePlatform();
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
   const denAuth = useDenAuth();
+  const artifactsListFirstEnabled = useDesktopFeature("artifactsListFirst");
+  const artifactsLabel = artifactsListFirstEnabled ? "Artifacts" : "Dashboard";
   // On desktop, Dashboard and Automations stay in the sidebar while signed
   // out: each page explains that it needs OpenWork Cloud and calls nothing.
   const denAuthChecking = denAuth.status === "checking";
@@ -458,6 +460,10 @@ export function SessionRoute() {
   const calendarAvailabilityPending = denAuthChecking || (automationsEnabled && denAuth.isSignedIn && calendarFeature.isLoading);
   const calendarRouteActive = calendarSurfaceAvailable && calendarRouteRequested;
   const denSettings = readDenSettings();
+  const retainedArtifactsScope = artifactsListFirstEnabled && dashboardSurfaceAvailable && denAuth.isSignedIn && denAuth.verifiedIdentity
+    && denAuth.verifiedIdentity.organizationId === denSettings.activeOrgId
+    ? JSON.stringify([denSettings.baseUrl, denSettings.apiBaseUrl, denAuth.verifiedIdentity.principalId, denAuth.verifiedIdentity.organizationId])
+    : null;
   const sessionDraftScope = resolveSessionDraftScope({
     hasCloudCredential: Boolean(denSettings.authToken?.trim()),
     verifiedIdentity: denAuth.verifiedIdentity,
@@ -669,7 +675,7 @@ export function SessionRoute() {
   // a per-tile fallback so tiles keep working when the selected workspace does
   // not configure their server.
   const dashboardEndpoints = useMemo(() => {
-    if (!dashboardRouteActive) return [];
+    if (!dashboardRouteActive && !retainedArtifactsScope) return [];
     const endpoints: ResolvedWorkspaceEndpoint[] = [];
     if (selectedWorkspaceEndpoint) endpoints.push(selectedWorkspaceEndpoint);
     for (const workspace of workspaces) {
@@ -679,7 +685,7 @@ export function SessionRoute() {
       }
     }
     return endpoints;
-  }, [dashboardRouteActive, endpointForWorkspace, selectedWorkspaceEndpoint, workspaces]);
+  }, [dashboardRouteActive, retainedArtifactsScope, endpointForWorkspace, selectedWorkspaceEndpoint, workspaces]);
   const dashboardEndpoint = dashboardEndpoints[0] ?? null;
   const dashboardFallbackEndpoints = useMemo(
     () => dashboardEndpoints.slice(1).map((endpoint) => ({
@@ -4010,12 +4016,31 @@ export function SessionRoute() {
         />
       }
       // Page titles match their sidebar labels.
-      primaryTitle={activityRouteActive ? t("activity.title") : appsRouteActive ? "Dashboard" : automationsRouteActive ? "Automations" : calendarRouteActive ? "Calendar" : dashboardRouteActive ? "Dashboard" : undefined}
+      primaryTitle={activityRouteActive ? t("activity.title") : appsRouteActive ? artifactsLabel : automationsRouteActive ? "Automations" : calendarRouteActive ? "Calendar" : dashboardRouteActive ? artifactsLabel : undefined}
       // Dashboard, Automations and Library share one flat page surface.
       primarySurface={activityRouteActive || dashboardRouteActive || automationsRouteActive || calendarRouteActive || extensionsMainOpen ? "flat" : undefined}
       primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation || remoteTaskRouteActive)}
       primaryHeader={remoteTaskRouteActive && remoteThreadKey ? <RemoteSessionHeader key={remoteThreadKey} threadKey={remoteThreadKey} navigation={remoteHelperNavigation} /> : undefined}
       onOpenRemoteTask={remoteHelperViewEnabled ? openRemoteTask : undefined}
+      retainedArtifactSlot={retainedArtifactsScope ? {
+        scope: retainedArtifactsScope,
+        active: dashboardRouteActive && !appsRouteActive,
+        content: <WorkspaceProvider
+          client={opencodeClient}
+          opencodeBaseUrl={opencodeBaseUrl}
+          openworkServerClient={dashboardEndpoint?.client ?? null}
+          workspaceId={dashboardEndpoint?.workspaceId ?? ""}
+          selectedWorkspaceRoot={selectedWorkspaceRoot}
+        >
+          <DashboardPage
+            active={dashboardRouteActive && !appsRouteActive}
+            fallbackEndpoints={dashboardFallbackEndpoints}
+            onCreateApp={startAppConversation}
+            headerActionsTarget={dashboardRouteActive && !appsRouteActive ? dashboardHeaderActionsTarget : null}
+            onSignIn={() => handleOpenSettings("/settings/cloud-account")}
+          />
+        </WorkspaceProvider>,
+      } : undefined}
       primarySlot={activityRouteActive ? <ActivityPage onTrySkill={trySkillInNewSession} /> : remoteTaskRouteActive && remoteThreadKey ? (
         <RemoteSessionSurface key={remoteThreadKey} threadKey={remoteThreadKey} navigation={remoteHelperNavigation} />
       ) : pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
@@ -4042,7 +4067,7 @@ export function SessionRoute() {
           onSignIn={() => handleOpenSettings("/settings/cloud-account")}
           onOpenConnections={() => handleOpenExtensions()}
         />
-      ) : dashboardRouteActive ? (
+      ) : dashboardRouteActive && retainedArtifactsScope ? <></> : dashboardRouteActive ? (
         <WorkspaceProvider
           client={opencodeClient}
           opencodeBaseUrl={opencodeBaseUrl}
@@ -4092,6 +4117,7 @@ export function SessionRoute() {
             }
           : undefined,
         dashboardActive: dashboardRouteActive || appsRouteActive,
+        dashboardLabel: artifactsLabel,
         onOpenDashboard: dashboardSurfaceAvailable
           ? () => {
               navigate(dashboardRoute());
@@ -4311,6 +4337,7 @@ export function SessionRoute() {
       onOpenAutomations={() => navigate(automationsRoute())}
       onOpenCalendar={calendarSurfaceAvailable ? () => navigate(calendarRoute()) : undefined}
       onOpenDashboard={() => navigate(dashboardRoute())}
+      dashboardLabel={artifactsLabel}
       onCreateWorkspace={handleOpenCreateWorkspace}
       modelOptions={commandPaletteModelOptions(paletteModelCatalog, modelPicker.actionOptions)}
       selectedModel={paletteSelectedModel}

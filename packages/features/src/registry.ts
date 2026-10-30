@@ -104,6 +104,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  artifactsListFirst: {
+    label: "Artifacts: list-first workspace",
+    description: "Browse pinned, personal and team artifacts in a list, open one live view at a time, and pin new artifacts directly from their chat preview.",
+    category: "experience",
+    added: "2026-10-30",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/artifacts-list-first/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   desktopUpdateDownloadWindow: {
     label: "Desktop: restart to update before the download",
     description: "Restart to update shows in the desktop title bar as soon as an update is found. Clicking it opens a small window that downloads the update with its progress, then restarts, instead of waiting with no sign of the download.",

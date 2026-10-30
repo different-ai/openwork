@@ -12,6 +12,7 @@ import {
 } from "@/react-app/domains/apps/app-creation-progress";
 import { appBuilderResultFailed } from "@/react-app/domains/apps/built-mcp-app-model";
 import { BuiltAppChatPreview } from "@/react-app/domains/apps/built-app-chat-preview";
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { DetailsToggle, TechnicalDetailsPanel } from "./capability-call-line";
 import type { DynamicToolUIPart } from "ai";
 
@@ -136,6 +137,7 @@ export function AppBuilderStep({
   /** While the panel is live: the agent's latest thought or call, shown under the active stage. */
   activity?: string | null;
 }) {
+  const artifactsListFirst = useDesktopFeature("artifactsListFirst");
   const context = useOptionalMessageList();
   const sessionActivity = useCurrentSessionActivityStatus();
   const waiting = active && sessionActivity === "waiting";
@@ -211,6 +213,84 @@ export function AppBuilderStep({
       ))}
     </div>
   ) : null;
+
+  if (artifactsListFirst) {
+    const artifactSentence = built
+      ? `${editing ? "Updated" : "Created"} artifact${title}`
+      : progress.title ?? (editing ? "Artifact changes" : "Artifact");
+    const currentStage = stages.find((stage) => stage.state === "failed")
+      ?? stages.find((stage) => stage.state === "active");
+    const failedPart = [progress.build, run.preparation, run.script?.part].find(
+      (part) => part && appBuilderResultFailed(part),
+    );
+    const problem = failedPart ? appBuildProblem(failedPart) : null;
+    // A compiled view is not proof that its connected data has been read.
+    // Keep the summary factual; the original checklist remains in details.
+    const stageLabel = currentStage?.key === "write"
+      ? editing ? "Writing the changes" : "Writing the artifact"
+      : currentStage?.key === "build" ? "Building the artifact"
+      : currentStage?.key === "check" ? "Checking the connections"
+      : "Finding the right connections";
+    const subtitle = progress.failed
+      ? `${problem ?? (failedPart?.state === "output-denied" ? "Permission was denied" : `Couldn’t ${editing ? "update" : "create"} the artifact`)}. Review details before retrying.`
+      : progress.unavailable ? "Couldn’t open the preview. Review details."
+      : progress.builtUnrecorded ? "Open it from your Library"
+      : built ? null
+      : state === "Reconnecting" ? "Reconnecting — progress will resume when connected"
+      : state === "Waiting for your response" ? "Waiting for your response — review the request in chat"
+      : state === "Paused" ? "Paused — send a message to continue"
+      : stageLabel;
+    return (
+      <section
+        className="group/step w-full min-w-0"
+        data-app-builder-step
+        data-artifact-progress
+        data-app-creation-stage={progress.stage}
+        aria-label={artifactSentence}
+      >
+        {/* Both lines and trailing slots stay mounted through tool/thought gaps.
+            Completion also keeps the same geometry instead of collapsing chat. */}
+        <div className="flex min-h-12 min-w-0 items-center gap-2 text-sm">
+          <span className="shrink-0" aria-hidden="true">
+            {built ? <Blocks className="size-4 text-muted-foreground" strokeWidth={1.5} />
+              : <StageMark state={progress.failed || progress.unavailable ? "failed" : "active"} running={progress.running} />}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className={`truncate ${built ? "text-muted-foreground" : "text-foreground"}`}>{artifactSentence}</div>
+            <div
+              className={`h-4 truncate text-xs ${progress.failed || progress.unavailable ? "text-destructive" : "text-muted-foreground"}`}
+              data-app-builder-activity
+              title={subtitle ?? undefined}
+            >
+              {subtitle}
+            </div>
+          </div>
+          <span className="flex shrink-0 items-center gap-1">
+            {shownElapsed ? <span className="text-xs tabular-nums text-muted-foreground/70" data-app-builder-elapsed>{shownElapsed}</span> : null}
+            {progress.app && progress.build ? <BuiltAppChatPreview part={progress.build} compact /> : null}
+            <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={artifactSentence} alwaysVisible={!progress.running && !built} />
+          </span>
+        </div>
+        {detailsOpen ? (
+          <div className="mt-2 min-w-0">
+            <ol className="flex flex-col gap-2 text-sm" aria-label={`Stages of ${artifactSentence}`} data-app-builder-checklist>
+              {appCreationStages(run, progress, editing, fixedProblems, latestProblem).map((stage) => (
+                <li key={stage.key} className="flex min-w-0 flex-col" data-checklist-state={stage.state}>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <StageMark state={stage.state} running={progress.running} />
+                    <span className={stage.state === "failed" ? "text-destructive" : "text-muted-foreground"}>{stage.label}</span>
+                  </span>
+                  {stage.notes?.map((note) => <span key={note} className="ml-6 text-muted-foreground">{note}</span>)}
+                  {stage.state === "active" ? <span className="ml-6 h-4 truncate text-xs text-muted-foreground">{progress.running ? activity : null}</span> : null}
+                </li>
+              ))}
+            </ol>
+            {details}
+          </div>
+        ) : null}
+      </section>
+    );
+  }
 
   if (stages.length === 0) {
     return (

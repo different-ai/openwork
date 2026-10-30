@@ -61,6 +61,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "artifactsListFirst": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Artifacts: list-first workspace: Browse pinned, personal and team artifacts in a list, open one live view at a time, and pin new artifacts directly from their chat preview. Renders DEN_FEATURE_ARTIFACTS_LIST_FIRST."
+            },
             "desktopUpdateDownloadWindow": {
               "enum": [
                 "",
