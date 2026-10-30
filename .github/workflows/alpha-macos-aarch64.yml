@@ -78,7 +78,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || inputs.platform != 'windows-x64')
     name: Build + Publish alpha (aarch64-apple-darwin)
-    runs-on: macos-14
+    runs-on: macos-26
     # Apple signing secrets belong to this environment; no deployment is recorded.
     environment:
       name: macos-signing
