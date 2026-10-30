@@ -2,18 +2,18 @@
 
 import { Lock } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../_lib/den-org";
+import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessPeopleIds, peopleLabel } from "./access-summary";
 import type { ConnectorRoute } from "./connector-route";
 import { ConnectorRouteStep } from "./connector-route-step";
 import { ConnectorConnectionProgress } from "./connector-connection-progress";
 import { connectorAccountReady } from "./connector-detail";
-import { type OAuthAppInput, useConnectorSetup } from "./connector-setup";
+import { useConnectorSetup } from "./connector-setup";
 import { ApiKeyFields, ApiKeySchemeAdvanced, OAuthAppFields, createOAuthAppDraft } from "./connector-setup-fields";
 import { useConnectorTarget } from "./connector-setup-screen";
 import { useDenToast } from "./den-toast";
@@ -107,21 +107,18 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
   const [showOAuthApp, setShowOAuthApp] = useState(false);
   // A custom connector first shows what OpenWork detected and lets the admin pick another route.
   const isCustom = catalogId === "custom";
-  const liveDiscovery = isCustom && orgFeatureEnabled(orgContext, "customConnectorSetup");
-  const revisedSetup = liveDiscovery;
   const presets = useMcpConnectionPresets();
   const callbackUrl = presets.data?.find((preset) => preset.oauthCallbackUrl)?.oauthCallbackUrl ?? undefined;
   const [oauthDraft, setOAuthDraft] = useState(createOAuthAppDraft);
   const initialConnectionId = searchParams.get("connection");
   const [route, setRoute] = useState<ConnectorRoute | null>(null);
   const [previousRoute, setPreviousRoute] = useState<ConnectorRoute | null>(null);
-  const [pendingOAuthApp, setPendingOAuthApp] = useState<OAuthAppInput | null>(null);
   const setup = useConnectorSetup({
     mode: "admin",
     target,
     route,
     routeRequired: isCustom && !initialConnectionId,
-    liveDiscovery,
+    liveDiscovery: isCustom,
     initialConnectionId,
     onConnectionCreated: (connectionId) => {
       const params = new URLSearchParams(searchParams.toString());
@@ -135,14 +132,6 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
 
   const name = target?.name ?? "";
   const back = { href: getAddConnectorRoute(orgSlug), label: "Add a connector" };
-
-  // "Use your own OAuth app" saves the app once the route (and its headers) is in place.
-  const { saveOAuthApp, discovering, connection: setupConnection } = setup;
-  useEffect(() => {
-    if (revisedSetup || !route || !pendingOAuthApp || discovering || setupConnection) return;
-    setPendingOAuthApp(null);
-    void saveOAuthApp(pendingOAuthApp);
-  }, [discovering, pendingOAuthApp, revisedSetup, route, saveOAuthApp, setupConnection]);
 
   if (missing || failed) {
     return (
@@ -285,16 +274,14 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
         discovering={setup.discovering}
         unreachable={setup.unreachable}
         secretRequired={setup.secretRequired}
-        revisedSetup={revisedSetup}
         callbackUrl={callbackUrl}
         oauthDraft={oauthDraft}
         onOAuthDraftChange={setOAuthDraft}
-        liveChecks={liveDiscovery ? { checks: setup.discoveryChecks, failed: setup.discoveryFailed, onRetry: setup.retryDiscovery } : undefined}
+        liveChecks={{ checks: setup.discoveryChecks, failed: setup.discoveryFailed, onRetry: setup.retryDiscovery }}
         onCancel={() => router.push(getAddConnectorRoute(orgSlug))}
         onContinue={(chosen, oauthApp) => {
           setRoute(chosen);
-          if (revisedSetup && chosen.auth === "oauth") void setup.startSignIn({ route: chosen, oauthApp });
-          else setPendingOAuthApp(oauthApp);
+          if (chosen.auth === "oauth") void setup.startSignIn({ route: chosen, oauthApp });
         }}
       />
     );
@@ -304,13 +291,12 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
     if (!(await setup.restartSetup())) return;
     setPreviousRoute(route);
     setRoute(null);
-    setPendingOAuthApp(null);
     const params = new URLSearchParams(searchParams.toString());
     params.delete("connection");
     router.replace(`?${params.toString()}`, { scroll: false });
   }
 
-  if (revisedSetup && (route || initialConnectionId) && !ready) {
+  if (isCustom && (route || initialConnectionId) && !ready) {
     const needsKey = setup.method === "api_key" && setup.needsInput;
     const keyFields = needsKey ? checks.find((check) => check.id === "sign-in-method")?.body : undefined;
     const toolFailure = setup.checks.find((check) => check.id === "tools" && check.status === "failed")?.description ?? null;
@@ -370,9 +356,9 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
       <ItemHeader
         back={back}
         logo={<ConnectorLogo name={name} url={target.url} size="md" />}
-        title={revisedSetup ? name : usesIndividualKeys ? `${name} is set up` : setup.allDone ? `${name} passed all ${stepTotal} checks` : `Add ${name} anyway`}
-        actions={revisedSetup ? <DenBadge>{usesIndividualKeys ? "Set up" : "Connected"}</DenBadge> : undefined}
-        description={revisedSetup || setup.allDone ? undefined : `Some checks did not pass. Finish its settings, like its OAuth app, on its page after you add it.`}
+        title={isCustom ? name : usesIndividualKeys ? `${name} is set up` : setup.allDone ? `${name} passed all ${stepTotal} checks` : `Add ${name} anyway`}
+        actions={isCustom ? <DenBadge>{usesIndividualKeys ? "Set up" : "Connected"}</DenBadge> : undefined}
+        description={isCustom || setup.allDone ? undefined : `Some checks did not pass. Finish its settings, like its OAuth app, on its page after you add it.`}
       />
       {signsIn || usesKey ? (
         <section className="flex flex-col gap-2.5">

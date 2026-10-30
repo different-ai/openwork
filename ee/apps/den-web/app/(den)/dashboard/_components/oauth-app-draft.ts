@@ -39,14 +39,15 @@ type OAuthAppValidation = { input: OAuthAppInput; error: null } | { input: null;
 /** Used by the real form submit handler, including Enter and external footer submits. */
 export function validateOAuthAppDraft(draft: OAuthAppDraft, options: {
   secretRequired: boolean;
-  revisedSetup?: boolean;
+  /** Custom setup requires reviewed destinations; preset forms use their existing validation. */
+  setupValidation?: boolean;
   url?: string;
   issuerMismatch?: boolean;
 }): OAuthAppValidation {
   const authorizationEndpoint = draft.manualDraft.values.authorizationEndpoint.trim();
   const tokenEndpoint = draft.manualDraft.values.tokenEndpoint.trim();
   const hasManual = Boolean(authorizationEndpoint && tokenEndpoint);
-  if (options.revisedSetup) {
+  if (options.setupValidation) {
     if (!draft.clientId.trim()) return { input: null, error: { field: "clientId", message: "Enter the Client ID from your OAuth app." } };
     if (options.secretRequired && !draft.clientSecret.trim()) return { input: null, error: { field: "clientSecret", message: "Enter the Client secret from your OAuth app." } };
     const mismatch = options.issuerMismatch || draft.manualDraft.published?.inconsistent === true;

@@ -6,7 +6,7 @@ import { buttonVariants } from "../../_components/ui/button";
 export const AUTO_ROUTER_SETUP_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/auto-model-routing#self-hosted";
 
 /**
- * Shown when an admin tries to enable the Auto Router while the AI Gateway has
+ * Shown when an admin tries to create or edit a Smart Router while the AI Gateway has
  * no TypeSafe (Jev) key. Only the person who runs the OpenWork instance can add
  * it, so the dialog names who acts and the exact steps (DESIGN.md P2, P4).
  */
@@ -20,11 +20,11 @@ export function AutoRouterSetupDialog({ open, onOpenChange }: { open: boolean; o
           className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-gray-200 bg-white p-5 outline-none"
         >
           <Dialog.Title className="text-[15px] font-medium leading-5 text-gray-950">
-            Auto Router needs a routing key
+            Smart Model Router needs a routing key
           </Dialog.Title>
           <div className="mt-2 flex flex-col gap-3 text-[13px] leading-5 text-gray-600">
             <Dialog.Description>
-              Auto Router uses Jev, a routing model from TypeSafe, to choose a model for each prompt. Your AI Gateway
+              Smart Model Router uses Jev, a routing model from TypeSafe, to choose a model for each prompt. Your AI Gateway
               doesn&apos;t have its key yet. Ask the person who runs your OpenWork instance to:
             </Dialog.Description>
             <ol className="list-decimal space-y-1.5 pl-5">
@@ -33,7 +33,7 @@ export function AutoRouterSetupDialog({ open, onOpenChange }: { open: boolean; o
                 Add it to the AI Gateway as <code className="rounded bg-gray-100 px-1 text-[12px] text-gray-800">TYPESAFE_API_KEY</code>.
                 With the Helm chart, set <code className="rounded bg-gray-100 px-1 text-[12px] text-gray-800">secret.values.typesafeApiKey</code>.
               </li>
-              <li>Restart the AI Gateway, then come back here and select Turn on.</li>
+              <li>Restart the AI Gateway, then come back here to create Smart Routers.</li>
             </ol>
           </div>
           <div className="mt-5 flex justify-end gap-2">

@@ -64,7 +64,7 @@ test("native warm offline catalog infers through a new bridge port/key without e
   let engine: Awaited<ReturnType<typeof createManagedOpencodeV2Server>> | undefined;
   const boot = async () => createManagedOpencodeV2Server({ bin: binary, rootDir: join(root, "engine"),
     env: { HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_DATA_HOME: join(home, "data"), XDG_CACHE_HOME: join(home, "cache"), XDG_STATE_HOME: join(home, "state"), OPENCODE_DISABLE_MODELS_FETCH: "true" },
-    providerSession: { ...bridge, enabled: () => true } });
+    providerSession: { ...bridge } });
   const metadata = async () => (await (await fetch(bridge.url, { headers: { authorization: `Bearer ${bridge.token}` } })).json());
   try {
     engine = await boot();

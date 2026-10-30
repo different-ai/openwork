@@ -141,25 +141,23 @@ The desktop server can load the same `server.ts` source entry (or the built
 
 ```json
 {
-  "desktopSession": "http://127.0.0.1:1234/provider-session",
-  "liveProviderSync": true
+  "desktopSession": "http://127.0.0.1:1234/provider-session"
 }
 ```
 
-`liveProviderSync` must be the server's resolved registry feature value. Choose
-one provider owner for the engine's entire lifetime; do not start the legacy
-writer alongside a running plugin when the rollout is killed. Restarting the
-engine can choose the legacy owner again.
+The managed v2 plugin owns Gateway inventory for the engine's entire lifetime.
+The legacy materializer remains the owner only for v1; never run it alongside
+the v2 plugin. No feature lookup or rollout option is needed.
 
 The managed child receives a one-shot anonymous pipe on fd 3 containing JSON
 `{endpoint, token}`. Only a nonsecret fd marker (`OPENWORK_PROVIDER_SESSION_FD=3`)
 is in its environment: the capability is never in initial process environment,
 arguments, files, plugin options, or config. The trusted plugin entrypoint consumes
-and closes the pipe before setup, including flag-off boot. A frozen native CJS
+and closes the pipe before setup. A frozen native CJS
 broker shares the capability across Location-scoped ESM/source graphs and reloads,
 with the credential retained only in its module closure; it signs requests only to
 the bound endpoint. `OPENWORK_PROVIDER_SESSION_BROKER` contains only the absolute
-path to that credential-free broker code (not a credential/config file). Thus late rollout activation needs no still-open credential descriptor.
+path to that credential-free broker code (not a credential/config file). Reloads need no still-open credential descriptor.
 The capability is scoped to catalog transport and ephemeral local inference, not
 a Den session or reusable Gateway credential. `desktopSession` returns only
 `{apiBaseUrl, identity, orgId, inferenceOrigin, inferenceKey}` or JSON `null` while
@@ -203,7 +201,7 @@ an individual provider's connect 403 first refetches the inventory.
 ## How it works
 
 - Sign-in uses OpenWork's device authorization. OpenCode stores the session in its own credential store (`~/.local/share/opencode/opencode.db`).
-- On start, the plugin publishes the same account's last known models and servers, then refreshes from OpenWork in the background and every five minutes. When `GET /v1/org` resolves `features.liveProviderSync` true, it also subscribes to authenticated inventory events; each event/reconnect bypasses the 30-second shared cache. The rollout defaults off; standalone sign-in and periodic MCP refresh remain unchanged.
+- On start, the plugin publishes the same account's last known models and servers, then refreshes from OpenWork in the background and every five minutes. It also subscribes to authenticated inventory events; each event/reconnect bypasses the 30-second shared cache. Standalone sign-in and periodic MCP refresh remain unchanged.
 - AI Gateway models talk to `gateway.openworklabs.com` with your personal gateway key. MCP servers talk to OpenWork's MCP gateway (`/mcp/agent`) with a 7-day token that is renewed automatically.
 
 Built for OpenCode 2 (`@opencode/plugin` 2.0.26).

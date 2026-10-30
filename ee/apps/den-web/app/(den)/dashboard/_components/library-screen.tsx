@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { KeyRound, Plus } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
@@ -14,6 +14,8 @@ import {
   getLibraryNewPluginRoute,
   getLibraryPluginRoute,
   getLibraryPluginShareRoute,
+  getLibraryLlmProviderRoute,
+  getLibraryRoute,
   getYourConnectionsRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -46,6 +48,7 @@ import { MemberApiKeyDialog } from "./member-api-key-dialog";
 import { useDenToast } from "./den-toast";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
 import { pluginQueryKeys } from "./plugin-data";
+import { useOrgLlmProviders } from "./llm-provider-data";
 
 /** Show the name filter once a Library holds more than this many items. */
 const FILTER_AFTER = 10;
@@ -158,7 +161,11 @@ function LibraryContent() {
   const [addOpen, setAddOpen] = useState(searchParams.get("add") === "1");
   const [query, setQuery] = useState("");
   const filter = parseLibraryFilter(searchParams.get("show"));
+  const personal = useOrgLlmProviders(filter === "models" ? orgContext?.organization.id ?? null : null);
+  const personalProviders = personal.llmProviders.filter(provider => provider.source !== "openwork" && provider.createdByOrgMembershipId === orgContext?.currentMember.id);
+  const addKeyHref = `${getLibraryRoute(orgSlug)}/model-providers/new`;
   const onlyNeedsSignIn = parseNeedsSignIn(searchParams.get("status"));
+  const personalRows = personalProviders.filter(provider => !onlyNeedsSignIn && provider.name.toLowerCase().includes(query.trim().toLowerCase()));
 
   const ownedConnections = new Map((usable.data ?? []).filter((connection) => connection.access !== null).map((connection) => [connection.id, connection]));
   const viewerId = orgContext?.currentMember.id ?? null;
@@ -194,9 +201,9 @@ function LibraryContent() {
     ? (models.data ?? []).filter((provider) => matchesModelQuery(provider, query) && (!onlyNeedsSignIn || provider.state === "needs_signin"))
     : [];
   const hasModels = (models.data ?? []).length > 0;
-  const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels;
+  const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels && personalProviders.length === 0;
   // A short Library is read at a glance; the filter earns its place once the list runs long.
-  const showFilter = items.length + (models.data ?? []).length > FILTER_AFTER || query !== "";
+  const showFilter = items.length + (models.data ?? []).length + personalProviders.length > FILTER_AFTER || query !== "";
 
   // What waits on you first, then one section per kind.
   const mineKeys = new Set(groups.mine.map((item) => `${item.type}:${item.id}`));
@@ -218,7 +225,7 @@ function LibraryContent() {
       <DenPageHeader
         title="My Library"
         size="compact"
-        action={!empty ? <DenButton size="sm" icon={Plus} onClick={openAdd}>Add</DenButton> : undefined}
+        action={filter === "models" ? <DenButton size="sm" icon={Plus} href={addKeyHref}>Add key</DenButton> : !empty ? <DenButton size="sm" icon={Plus} onClick={openAdd}>Add</DenButton> : undefined}
       />
 
       {library.error ? (
@@ -227,9 +234,9 @@ function LibraryContent() {
         </p>
       ) : null}
 
-      {empty ? <LibraryEmpty onAdd={openAdd} /> : null}
-
-      {!empty && !library.error ? (
+      {empty && filter !== "models" ? <LibraryEmpty onAdd={openAdd} /> : null}
+      {filter === "models" && personal.error ? <p role="alert" className="text-sm text-red-600">{personal.error}</p> : null}
+      {(!empty || filter === "models") && !library.error ? (
         <>
           <div className="flex flex-wrap items-end" data-testid="library-compact-toolbar">
             <UnderlineTabs tabs={LIBRARY_FILTERS} activeTab={filter} onChange={setFilter} className="min-w-0 flex-1" />
@@ -241,6 +248,15 @@ function LibraryContent() {
           </div>
 
           {library.isLoading ? <LibraryCompactSurface><LibraryCompactSkeleton label="Loading your Library" /></LibraryCompactSurface> : null}
+
+          {filter === "models" && personalRows.length > 0 ? (
+            <LibraryCompactSurface>
+              <LibraryCompactSection title="Your model providers" count={personalRows.length} testId="library-personal-models">
+                {personalRows.map(provider => <LibraryCompactRow key={provider.id} href={getLibraryLlmProviderRoute(orgSlug, provider.id)} kind="model" testName={provider.name}
+                  logo={<KeyRound size={16} aria-hidden />} name={provider.name} source="You" />)}
+              </LibraryCompactSection>
+            </LibraryCompactSurface>
+          ) : null}
 
           {sections.length > 0 ? <LibraryCompactSurface testId="library-compact-sections">
             {sections.map((section) => (
@@ -261,13 +277,13 @@ function LibraryContent() {
             </p>
           ) : null}
 
-          {filter === "models" && !models.isLoading && !models.error && !hasModels ? (
+          {filter === "models" && !models.isLoading && !models.error && !hasModels && !personal.busy && !personal.error && personalProviders.length === 0 ? (
             <p className="rounded-2xl border border-gray-100 bg-white px-5 py-6 text-center text-[13px] text-gray-500" data-testid="library-models-empty">
               Your organization hasn't given you any models yet.
             </p>
           ) : null}
 
-          {!library.isLoading && !models.isLoading && groups.mine.length === 0 && groups.received.length === 0 && modelRows.length === 0 && !(filter === "models" && (models.error || !hasModels)) ? (
+          {!library.isLoading && !models.isLoading && groups.mine.length === 0 && groups.received.length === 0 && modelRows.length === 0 && personalRows.length === 0 && !(filter === "models" && (models.error || !hasModels)) ? (
             <p className="rounded-2xl border border-gray-100 bg-white px-5 py-6 text-center text-[13px] text-gray-500">Nothing matches.</p>
           ) : null}
         </>

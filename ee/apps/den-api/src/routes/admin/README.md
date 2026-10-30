@@ -60,7 +60,12 @@ did. Each such feature has exactly one reader in `src/feature-outcomes/readers.t
   status and `error.code`, through `automation_run_history` per Automation; never `trigger_context`
 - `workbotProactive`: `agent_check` daily counters (every member) plus `agent_member_check` failures and daily-limit
   hits (members with My agent, kept about 14 days)
-- `slackSendAsBot`: each member's latest `rate_limit` daily window, so the last 24 hours whatever the range
+
+Slack bot messages are generally available and no longer have a feature row.
+Their operational diagnostics remain at `GET /v1/admin/slack-send-as-bot/outcomes?range=7d|30d`,
+behind platform-admin authorization. The reader uses each member's latest
+`rate_limit` daily window, so coverage is the last 24 hours whatever the range;
+responses contain aggregate outcomes and refusal reasons, never message text.
 
 A new background feature adds `outcomes: true` and a reader over the table it already writes; if a rollup is ever
 needed, follow `capability_usage_event` / `capability_usage_rollups` rather than adding another usage store.

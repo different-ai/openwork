@@ -11,8 +11,13 @@ import {
   useSubagentRunState,
 } from "@/components/chat/subagent-run-line"
 import { isTaskToolPart, type TaskToolPart } from "@/lib/build-in-tools"
+import { remoteToolCallStartedAt, type RemoteThreadStart } from "@/lib/remote-session-thread"
+import { remoteThreadStartsInParts } from "@/lib/remote-thread-starts"
+import { RemoteTrackerRow } from "@/react-app/domains/session/remote-threads/remote-tracker-row"
+import type { RemoteThreadOwner } from "@/react-app/domains/session/remote-threads/remote-thread-store"
 import { formatElapsedSeconds } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
+import { useTextActivityRail } from "@/components/chat/text-activity-rail-store"
 import { t } from "@/i18n"
 
 /** What the person needs to know about one agent, in the order the header reports it. */
@@ -21,15 +26,16 @@ export type SubagentTrackerKind = "attention" | "working" | "error" | "done" | "
 /** Interaction cards (approval, question) the Review action brings into focus. */
 export const COMPOSER_INTERACTION_SELECTOR = "[data-composer-interaction]"
 
+function currentTurnStart(messages: readonly UIMessage[]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]?.role === "user") return index + 1
+  }
+  return 0
+}
+
 /** Sub-agent tasks the current turn started: everything after the latest message the person sent. */
 export function currentTurnSubagentParts(messages: readonly UIMessage[]): TaskToolPart[] {
-  let start = 0
-  for (let index = messages.length - 1; index >= 0; index--) {
-    if (messages[index]?.role === "user") {
-      start = index + 1
-      break
-    }
-  }
+  const start = currentTurnStart(messages)
   const seen = new Set<string>()
   const parts: TaskToolPart[] = []
   for (const message of messages.slice(start)) {
@@ -41,6 +47,24 @@ export function currentTurnSubagentParts(messages: readonly UIMessage[]): TaskTo
     }
   }
   return parts
+}
+
+/** A task the current turn started on another computer (`remoteSessionHelperView`). */
+export type RemoteTrackerTask = { start: RemoteThreadStart; startedAt: number | null }
+
+/** Tasks the current turn started on other computers, directly or from a script, once each. */
+export function currentTurnRemoteTasks(messages: readonly UIMessage[]): RemoteTrackerTask[] {
+  const seen = new Set<string>()
+  const tasks: RemoteTrackerTask[] = []
+  for (const message of messages.slice(currentTurnStart(messages))) {
+    if (message.role !== "assistant") continue
+    for (const { start, part } of remoteThreadStartsInParts(message.parts)) {
+      if (seen.has(start.key)) continue
+      seen.add(start.key)
+      tasks.push({ start, startedAt: remoteToolCallStartedAt(part) })
+    }
+  }
+  return tasks
 }
 
 /** The header's counts, attention first; empty groups are left out. */
@@ -66,7 +90,17 @@ type ComposerSubagentTrackerProps = {
   syncDegraded: boolean
   onOpenSubagentSession?: (sessionId: string) => void
   onStopSubagentSession?: (sessionId: string) => void | Promise<void>
+  /** Local helpers are listed only where their state can be followed (OpenCode v2); defaults to true. */
+  includeLocal?: boolean
+  /** Tasks the turn started on other computers, listed and counted with the local helpers. */
+  remote?: {
+    tasks: readonly RemoteTrackerTask[]
+    owner: RemoteThreadOwner
+    onOpen?: (start: RemoteThreadStart) => void
+  }
 }
+
+const NO_REMOTE_TASKS: readonly RemoteTrackerTask[] = []
 
 /**
  * The current turn's sub-agents, attached to the top of the composer so they
@@ -75,7 +109,11 @@ type ComposerSubagentTrackerProps = {
  * dot and one word, never a panel), then a fixed action lane.
  */
 export function ComposerSubagentTracker(props: ComposerSubagentTrackerProps) {
-  const parts = useMemo(() => currentTurnSubagentParts(props.messages), [props.messages])
+  const includeLocal = props.includeLocal !== false
+  const parts = useMemo(() => includeLocal ? currentTurnSubagentParts(props.messages) : [], [includeLocal, props.messages])
+  const remote = props.remote
+  const remoteTasks = remote?.tasks ?? NO_REMOTE_TASKS
+  const ids = [...parts.map((part) => part.toolCallId), ...remoteTasks.map((task) => task.start.key)]
   const [kinds, setKinds] = useState<Record<string, SubagentTrackerKind>>({})
   const [manualExpanded, setManualExpanded] = useState<boolean | null>(null)
   const report = useCallback((toolCallId: string, kind: SubagentTrackerKind) => {
@@ -83,26 +121,26 @@ export function ComposerSubagentTracker(props: ComposerSubagentTrackerProps) {
   }, [])
   const partIds = parts.map((part) => part.toolCallId).join("\n")
   // A new turn starts collapsed or expanded by its own rule again.
-  const firstPartId = parts[0]?.toolCallId
+  const firstPartId = ids[0]
   useEffect(() => { setManualExpanded(null) }, [firstPartId])
 
-  const current = parts.map((part) => kinds[part.toolCallId]).filter((kind) => kind !== undefined)
+  const current = ids.map((id) => kinds[id]).filter((kind) => kind !== undefined)
   const anyAttention = current.includes("attention")
-  const settled = current.length === parts.length && current.every((kind) => kind === "done" || kind === "stopped" || kind === "error")
-  const allQuiet = current.length === parts.length && current.every((kind) => kind === "done" || kind === "stopped")
-  const expanded = manualExpanded ?? (anyAttention || (!allQuiet && parts.length <= 3))
+  const settled = current.length === ids.length && current.every((kind) => kind === "done" || kind === "stopped" || kind === "error")
+  const allQuiet = current.length === ids.length && current.every((kind) => kind === "done" || kind === "stopped")
+  const expanded = manualExpanded ?? (anyAttention || (!allQuiet && ids.length <= 3))
   const summary = subagentTrackerSummary(current)
 
-  if (parts.length === 0 || (!props.parentActive && settled)) return null
+  if (ids.length === 0 || (!props.parentActive && settled)) return null
   // Reopening a finished turn: wait for every row's state before showing
   // anything, so a list that is about to go away never flashes.
-  const unresolved = !props.parentActive && current.length < parts.length
+  const unresolved = !props.parentActive && current.length < ids.length
 
   return (
     <div
       hidden={unresolved}
       data-subagent-tracker
-      data-subagent-tracker-count={parts.length}
+      data-subagent-tracker-count={ids.length}
       data-subagent-tracker-expanded={expanded ? "true" : "false"}
       data-subagent-tracker-parts={partIds}
       className="overflow-hidden border-b border-dls-border bg-transparent"
@@ -144,6 +182,16 @@ export function ComposerSubagentTracker(props: ComposerSubagentTrackerProps) {
             onKind={report}
           />
         ))}
+        {remote ? remoteTasks.map((task) => (
+          <RemoteTrackerRow
+            key={task.start.key}
+            start={task.start}
+            startedAt={task.startedAt}
+            owner={remote.owner}
+            onKind={report}
+            onOpen={remote.onOpen}
+          />
+        )) : null}
       </div>
     </div>
   )
@@ -168,6 +216,7 @@ function SubagentTrackerRow(props: {
   onKind: (toolCallId: string, kind: SubagentTrackerKind) => void
 }) {
   const { part, onKind } = props
+  const textRail = useTextActivityRail()
   const [stopping, setStopping] = useState(false)
   const stoppedByPerson = useRef(false)
   const state = useSubagentRunState(part, props.parentActive, props.workspaceId, props.syncDegraded)
@@ -220,7 +269,8 @@ function SubagentTrackerRow(props: {
       {...(childSessionId ? { "data-subagent-session-id": childSessionId } : {})}
       className="flex h-9 min-w-0 items-center gap-2.5 px-4 text-[13px]"
     >
-      <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center">
+      {/* Text-first: the status word carries the state; no dot or check column. */}
+      {textRail ? null : <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center">
         {kind === "done" ? (
           <Check size={12} className="text-gray-9" />
         ) : (
@@ -232,11 +282,27 @@ function SubagentTrackerRow(props: {
               : "bg-gray-9",
           )} />
         )}
-      </span>
-      <span className="flex min-w-0 flex-1 items-baseline gap-2">
-        <span className="shrink-0 font-medium text-gray-12">{agent}</span>
-        <span data-subagent-tracker-task className="min-w-0 truncate text-gray-9 @max-[480px]/composer:hidden">{task}</span>
-      </span>
+      </span>}
+      {/* The name and task open the agent's chat too, like Open does. Open
+          stays the keyboard and screen-reader target, so this is pointer-only. */}
+      {canOpen ? (
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-hidden="true"
+          data-subagent-tracker-name-open=""
+          onClick={open}
+          className="group/name flex min-w-0 flex-1 cursor-pointer items-baseline gap-2 text-start"
+        >
+          <span className="shrink-0 font-medium text-gray-12 underline-offset-2 group-hover/name:underline">{agent}</span>
+          <span data-subagent-tracker-task className="min-w-0 truncate text-gray-9 transition-colors group-hover/name:text-gray-11 @max-[480px]/composer:hidden">{task}</span>
+        </button>
+      ) : (
+        <span className="flex min-w-0 flex-1 items-baseline gap-2">
+          <span className="shrink-0 font-medium text-gray-12">{agent}</span>
+          <span data-subagent-tracker-task className="min-w-0 truncate text-gray-9 @max-[480px]/composer:hidden">{task}</span>
+        </span>
+      )}
       <span
         data-subagent-tracker-status
         className={cn(
@@ -249,7 +315,7 @@ function SubagentTrackerRow(props: {
       >
         {status}
       </span>
-      <span className="flex w-[104px] shrink-0 items-center justify-end gap-0.5 max-sm:w-auto">
+      <span className={cn("flex shrink-0 items-center justify-end gap-0.5", textRail ? "w-auto" : "w-[104px] max-sm:w-auto")}>
         {kind === "attention" ? (
           <Button type="button" variant="ghost" size="xs" className="text-gray-11 hover:text-gray-12" data-subagent-tracker-review="" data-testid="subagent-tracker-review" onClick={review}>
             {t("session.subagent_tracker_review")}
@@ -259,27 +325,27 @@ function SubagentTrackerRow(props: {
           <Button
             type="button"
             variant="ghost"
-            size="icon-xs"
+            size={textRail ? "xs" : "icon-xs"}
             className="text-gray-9 hover:text-gray-12"
             data-subagent-tracker-stop=""
             disabled={stopping}
             aria-label={t("session.subagent_tracker_stop", { agent })}
             onClick={stop}
           >
-            <Square className="size-2.5 fill-current" aria-hidden="true" />
+            {textRail ? t("text_activity.stop") : <Square className="size-2.5 fill-current" aria-hidden="true" />}
           </Button>
         ) : null}
         {canOpen ? (
           <Button
             type="button"
             variant="ghost"
-            size="icon-xs"
+            size={textRail ? "xs" : "icon-xs"}
             className="text-gray-9 hover:text-gray-12"
             data-subagent-tracker-open=""
             aria-label={t("session.subagent_tracker_open", { agent })}
             onClick={open}
           >
-            <ArrowUpRight aria-hidden="true" />
+            {textRail ? t("text_activity.open") : <ArrowUpRight aria-hidden="true" />}
           </Button>
         ) : null}
       </span>

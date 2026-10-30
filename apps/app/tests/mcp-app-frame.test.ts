@@ -6,6 +6,7 @@ import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js"
 import type { DynamicToolUIPart } from "ai"
+import { mcpAppResourceUri } from "@openwork/types/mcp-app"
 
 import {
   createOpenworkServerClient,
@@ -30,6 +31,7 @@ const { useSessionActivityStore } = await import("../src/react-app/domains/sessi
 const { McpAppTile } = await import("../src/react-app/domains/dashboard/mcp-app-tile")
 const { removeDashboardTileCache, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache")
 const { flushDashboardTileCacheStorage } = await import("../src/app/lib/dashboard-cache-storage")
+const { createMcpAppPresentationCache, mcpAppPresentationScope } = await import("../src/app/lib/mcp-app-presentation-cache")
 const {
   buildMcpAppCsp,
   hasPreservedMcpAppResult,
@@ -116,7 +118,7 @@ async function startupFixture(options: Pick<McpAppSandboxViewProps, "presentatio
     mcpAppSandbox: app => ({ url: `about:blank#${app.toolName}`, expectedOrigin: "https://sandbox.example", sandbox: "allow-scripts allow-same-origin" }),
   }
   const sandboxSpy = spyOn(client, "mcpAppSandbox")
-  const views = Array.from({ length: 6 }, (_, index) => createElement(McpAppSandboxView, {
+  const views = Array.from({ length: 7 }, (_, index) => createElement(McpAppSandboxView, {
     key: index,
     origin: { client, workspaceId: `workspace-${index % 2}`, sessionId: null, readOnly: true },
     app: fixture({ toolName: `render-${index}` }), toolName: `render-${index}`,
@@ -233,127 +235,206 @@ describe("MCP App startup scheduling", () => {
     } finally { call.mockRestore(); await host.dispose() }
   })
 
-  test("starts at most two Apps across workspaces and advances FIFO only after initialization", async () => {
-    const host = await startupFixture()
+  test("starts at most four Apps across workspaces and advances FIFO only after initialization", async () => {
+    // Dashboard tiles start without waiting to scroll into view; chat Apps share the same queue.
+    const host = await startupFixture({ presentation: "dashboard" })
     try {
-      await host.render([0, 1, 2, 3, 4])
-      expect([0, 1, 2, 3, 4].map(id => host.frame(id).getAttribute("src"))).toEqual(["about:blank#render-0", "about:blank#render-1", null, null, null])
-      expect(host.deadlines).toEqual([10_000, 10_000])
-      await host.notify(2, "ui/notifications/sandbox-proxy-ready")
+      await host.render([0, 1, 2, 3, 4, 5])
+      expect([0, 1, 2, 3, 4, 5].map(id => host.frame(id).getAttribute("src"))).toEqual([
+        "about:blank#render-0", "about:blank#render-1", "about:blank#render-2", "about:blank#render-3", null, null,
+      ])
+      expect(host.deadlines).toEqual([10_000, 10_000, 10_000, 10_000])
+      await host.notify(4, "ui/notifications/sandbox-proxy-ready")
       await host.notify(0, "ui/notifications/sandbox-proxy-ready", "https://wrong.example")
       expect(host.connectSpy).not.toHaveBeenCalled()
-      await host.notify(0, "ui/notifications/sandbox-proxy-ready")
-      await host.notify(1, "ui/notifications/sandbox-proxy-ready")
-      expect(host.resourceSpy).toHaveBeenCalledTimes(2)
-      expect(host.frame(2).getAttribute("src")).toBeNull()
-      await act(async () => { host.bridges[1].oninitialized?.() })
-      expect(host.frame(2).getAttribute("src")).toBe("about:blank#render-2")
-      expect(host.frame(3).getAttribute("src")).toBeNull()
-      await act(async () => { host.bridges[1].oninitialized?.() })
-      expect(host.frame(3).getAttribute("src")).toBeNull()
-      await act(async () => { host.bridges[0].oninitialized?.() })
-      expect(host.frame(3).getAttribute("src")).toBe("about:blank#render-3")
+      for (const id of [0, 1, 2, 3]) await host.notify(id, "ui/notifications/sandbox-proxy-ready")
+      expect(host.resourceSpy).toHaveBeenCalledTimes(4)
       expect(host.frame(4).getAttribute("src")).toBeNull()
-      expect(host.inputSpy).toHaveBeenCalledTimes(2)
-      expect(host.resultSpy).toHaveBeenCalledTimes(2)
+      await act(async () => { host.bridges[1].oninitialized?.() })
+      expect(host.frame(4).getAttribute("src")).toBe("about:blank#render-4")
+      expect(host.frame(5).getAttribute("src")).toBeNull()
+      await act(async () => { host.bridges[1].oninitialized?.() })
+      expect(host.frame(5).getAttribute("src")).toBeNull()
+      await act(async () => { host.bridges[0].oninitialized?.() })
+      expect(host.frame(5).getAttribute("src")).toBe("about:blank#render-5")
+      for (const id of [2, 3]) await act(async () => { host.bridges[id].oninitialized?.() })
+      expect(host.inputSpy).toHaveBeenCalledTimes(4)
+      expect(host.resultSpy).toHaveBeenCalledTimes(4)
       await host.advance(10_000)
-      expect(host.errorSpy.mock.calls.map(([, diagnostic]) => diagnostic.toolName)).toEqual(["render-2", "render-3"])
-      expect(host.frame(0).getAttribute("src")).toBe("about:blank#render-0")
-      expect(host.frame(1).getAttribute("src")).toBe("about:blank#render-1")
+      expect(host.errorSpy.mock.calls.map(([, diagnostic]) => diagnostic.toolName)).toEqual(["render-4", "render-5"])
+      for (const id of [0, 1, 2, 3]) expect(host.frame(id).getAttribute("src")).toBe(`about:blank#render-${id}`)
     } finally { await host.dispose() }
   })
 
-  test("gives each navigation ten seconds, excludes queue time, and never retries a timed-out startup", async () => {
+  test.each(["same", "changed"])("a cached chat preview goes live in place only for the same document (%s)", async (document) => {
+    // Inline Apps wait for IntersectionObserver, which happy-dom never fires.
+    const intersectionObserver = Reflect.get(globalThis, "IntersectionObserver")
+    Reflect.set(globalThis, "IntersectionObserver", undefined)
     const host = await startupFixture()
+    const appId = `cob_0${"0".repeat(25)}`
+    const resourceUri = mcpAppResourceUri(appId, `cov_0${"0".repeat(25)}`)
+    const launch = { connectionId: appId, toolName: "open_app", resourceUri, arguments: {} }
+    const saved: OpenworkMcpAppResource = fixture({ launchId: undefined, serverName: "openwork-app-host-connect-fixture", toolName: "open_app", resourceUri })
+    const live = fixture({ ...saved, launchId: "live-lease", ...(document === "changed" ? { html: "<p>changed</p>" } : {}) })
+    const discovery = Promise.withResolvers<{ app: OpenworkMcpAppResource | null }>()
+    const resolveSpy = spyOn(host.client, "resolveMcpApp").mockImplementation(() => discovery.promise)
+    const callSpy = spyOn(host.client, "callMcpAppTool").mockResolvedValue({ content: [] })
+    const releaseSpy = spyOn(host.client, "releaseMcpApp").mockResolvedValue({ released: true })
+    const actionContext = { requestId: 1, signal: new AbortController().signal,
+      sendNotification: async () => {}, sendRequest: async () => { throw new Error("Unexpected request") } }
+    const settle = async (done: () => boolean) => {
+      for (let turn = 0; turn < 50 && !done(); turn += 1) await act(async () => { await new Promise(resolve => setImmediate(resolve)) })
+    }
+    const part: DynamicToolUIPart = {
+      type: "dynamic-tool", toolName: "render-0", toolCallId: "preview-launch", state: "output-available", input: {}, output: "ok",
+      callProviderMetadata: { openwork: { mcpResult: { content: [{ type: "text", text: "ok" }], _meta: { "openwork/mcpApp": launch } } } },
+    }
     try {
-      await host.render([0, 1, 2, 3, 4])
+      localStorage.setItem("openwork.den.authToken", "preview-fixture-token")
+      const scope = await mcpAppPresentationScope({ client: host.client, workspaceId: "fixture", sessionId: null, readOnly: false })
+      if (!scope) throw new Error("Missing presentation scope")
+      await createMcpAppPresentationCache(scope, "fixture").write(launch, saved)
+      await host.renderElement(createElement(MessageListProvider, {
+        client: host.client, workspaceId: "fixture", sessionId: "session_fixture", mcpAppEngine: "v2",
+        showThinking: false, developerMode: false, displaySuggestions: false, providerConnectedCount: 0,
+        dispatchAction: () => {}, setPrompt: () => {}, onRevertToUserMessage: () => {},
+        onForkAtMessage: () => {}, onEditUserMessage: () => {},
+        onMcpReconnect: async () => { throw new Error("Unexpected reconnect") },
+        onMcpReopenAuthorization: async () => {},
+        children: createElement(McpAppFrame, { part }),
+      }))
+      await settle(() => host.container.querySelector("iframe") !== null)
+      const iframe = host.frame(0)
+      expect(iframe.hasAttribute("inert")).toBe(true)
+      expect(resolveSpy).toHaveBeenCalledTimes(1)
+      await host.notify(0, "ui/notifications/sandbox-proxy-ready")
+      await host.notify(0, "ui/notifications/sandbox-resource-accepted")
+      await act(async () => { host.bridges[0].oninitialized?.() })
+      // The preview may ask now, but nothing runs before the live lease.
+      const pending = host.bridges[0].oncalltool?.({ name: "read_detail" }, actionContext)
+      await settle(() => false)
+      expect(callSpy).not.toHaveBeenCalled()
+      await act(async () => discovery.resolve({ app: live }))
+      await settle(() => document === "same" ? callSpy.mock.calls.length > 0 : host.srcAssignments.length > 1)
+      expect(host.frame(0)).toBe(iframe)
+      expect(iframe.hasAttribute("inert")).toBe(false)
+      if (document === "same") {
+        await expect(pending).resolves.toEqual({ content: [] })
+        expect(callSpy.mock.calls[0][1]).toMatchObject({ launchId: "live-lease", name: "read_detail" })
+        expect(host.srcAssignments).toHaveLength(1)
+        expect(host.sandboxSpy).toHaveBeenCalledTimes(1)
+        expect(host.connectSpy).toHaveBeenCalledTimes(1)
+        expect(host.teardownSpy).not.toHaveBeenCalled()
+        // A chat card cannot renew its lease in place: a stale one retires the view as for any live App.
+        callSpy.mockRejectedValueOnce(new OpenworkServerError(422, "stale_launch_context", "This App launch has expired."))
+        await expect(host.bridges[0].oncalltool?.({ name: "read_summary" }, actionContext)).rejects.toThrow("expired")
+        await settle(() => host.container.querySelector("iframe") === null)
+        expect(host.errorSpy.mock.calls.map(([message]) => message)).toContain("[OpenWork MCP App] MCP_APP_LAUNCH_CONTEXT_STALE")
+      } else {
+        // A different document starts its own sandbox; the preview's call never runs.
+        expect(host.srcAssignments).toHaveLength(2)
+        expect(host.sandboxSpy).toHaveBeenCalledTimes(2)
+        expect(host.teardownSpy).toHaveBeenCalledTimes(1)
+        expect(callSpy).not.toHaveBeenCalled()
+      }
+      expect(releaseSpy).not.toHaveBeenCalled()
+    } finally {
+      localStorage.removeItem("openwork.den.authToken")
+      try {
+        await host.renderElement(createElement("div"))
+        flushDashboardTileCacheStorage()
+        await host.dispose()
+      } finally {
+        for (const spy of [resolveSpy, callSpy, releaseSpy]) spy.mockRestore()
+        Reflect.set(globalThis, "IntersectionObserver", intersectionObserver)
+      }
+    }
+  })
+
+  test("gives each navigation ten seconds, excludes queue time, and never retries a timed-out startup", async () => {
+    const host = await startupFixture({ presentation: "dashboard" })
+    try {
+      await host.render([0, 1, 2, 3, 4, 5])
       await host.advance(9_999)
       expect(host.errorSpy).not.toHaveBeenCalled()
       await host.advance(1)
-      expect(host.errorSpy).toHaveBeenCalledTimes(2)
-      expect(host.deadlines).toEqual([10_000, 10_000, 20_000, 20_000])
-      expect(host.frame(2).getAttribute("src")).toBe("about:blank#render-2")
-      expect(host.frame(4).getAttribute("src")).toBeNull()
-      await host.advance(9_999)
-      expect(host.errorSpy).toHaveBeenCalledTimes(2)
-      await host.advance(1)
       expect(host.errorSpy).toHaveBeenCalledTimes(4)
-      expect(host.deadlines).toEqual([10_000, 10_000, 20_000, 20_000, 30_000])
+      expect(host.deadlines).toEqual([10_000, 10_000, 10_000, 10_000, 20_000, 20_000])
+      expect(host.frame(4).getAttribute("src")).toBe("about:blank#render-4")
+      expect(host.frame(5).getAttribute("src")).toBe("about:blank#render-5")
       await host.advance(9_999)
       expect(host.errorSpy).toHaveBeenCalledTimes(4)
       await host.advance(1)
-      expect(host.errorSpy).toHaveBeenCalledTimes(5)
+      expect(host.errorSpy).toHaveBeenCalledTimes(6)
       for (const [, diagnostic] of host.errorSpy.mock.calls) {
         expect(diagnostic).toMatchObject({ code: "MCP_APP_SANDBOX_PROXY_TIMEOUT", message: expect.stringContaining("within 10 seconds") })
       }
       await host.advance(60_000)
-      expect(host.deadlines).toHaveLength(5)
+      expect(host.deadlines).toHaveLength(6)
       expect(host.timers.size).toBe(0)
       expect(host.connectSpy).not.toHaveBeenCalled()
       expect(host.teardownSpy).not.toHaveBeenCalled()
-      expect(host.closeSpy).toHaveBeenCalledTimes(5)
+      expect(host.closeSpy).toHaveBeenCalledTimes(6)
     } finally { await host.dispose() }
   })
 
   test("cancels queued unmounts and does not navigate siblings during a whole-view teardown", async () => {
-    const host = await startupFixture()
+    const host = await startupFixture({ presentation: "dashboard" })
     try {
-      await host.render([0, 1, 2, 3, 4])
-      await host.render([0, 1, 3, 4])
-      expect(host.deadlines).toHaveLength(2)
-      await host.render([1, 3, 4])
-      expect(host.frame(3).getAttribute("src")).toBe("about:blank#render-3")
-      expect(host.frame(4).getAttribute("src")).toBeNull()
-      expect(host.deadlines).toHaveLength(3)
+      await host.render([0, 1, 2, 3, 4, 5, 6])
+      await host.render([0, 1, 2, 3, 5, 6])
+      expect(host.deadlines).toHaveLength(4)
+      await host.render([1, 2, 3, 5, 6])
+      expect(host.frame(5).getAttribute("src")).toBe("about:blank#render-5")
+      expect(host.frame(6).getAttribute("src")).toBeNull()
+      expect(host.deadlines).toHaveLength(5)
       await host.render([])
-      expect(host.deadlines).toHaveLength(3)
+      expect(host.deadlines).toHaveLength(5)
       expect(host.timers.size).toBe(0)
-      await host.render([0, 1, 2])
-      expect(host.frame(0).getAttribute("src")).toBe("about:blank#render-0")
-      expect(host.frame(1).getAttribute("src")).toBe("about:blank#render-1")
-      expect(host.frame(2).getAttribute("src")).toBeNull()
+      await host.render([0, 1, 2, 3, 4])
+      for (const id of [0, 1, 2, 3]) expect(host.frame(id).getAttribute("src")).toBe(`about:blank#render-${id}`)
+      expect(host.frame(4).getAttribute("src")).toBeNull()
     } finally { await host.dispose() }
   })
 
   test.each(["failure", "initialize-timeout", "teardown"])("releases a startup slot on %s and ignores late callbacks", async mode => {
-    const host = await startupFixture()
+    const host = await startupFixture({ presentation: "dashboard" })
     try {
-      await host.render([0, 1, 2])
-      await host.notify(0, "ui/notifications/sandbox-proxy-ready")
-      await host.notify(1, "ui/notifications/sandbox-proxy-ready")
-      await host.notify(0, "ui/notifications/sandbox-resource-accepted")
-      await host.notify(1, "ui/notifications/sandbox-resource-accepted")
+      await host.render([0, 1, 2, 3, 4])
+      for (const id of [0, 1, 2, 3]) await host.notify(id, "ui/notifications/sandbox-proxy-ready")
+      for (const id of [0, 1, 2, 3]) await host.notify(id, "ui/notifications/sandbox-resource-accepted")
+      expect(host.frame(4).getAttribute("src")).toBeNull()
       if (mode === "failure") await host.notify(0, "ui/notifications/sandbox-diagnostic")
       else if (mode === "teardown") await act(async () => { await host.bridges[0].onrequestteardown?.({}) })
       else {
         await host.advance(10_000)
-        expect(host.errorSpy).toHaveBeenCalledTimes(2)
+        expect(host.errorSpy).toHaveBeenCalledTimes(4)
         for (const [, diagnostic] of host.errorSpy.mock.calls) expect(diagnostic.code).toBe("MCP_APP_INITIALIZE_TIMEOUT")
       }
-      expect(host.frame(2).getAttribute("src")).toBe("about:blank#render-2")
+      expect(host.frame(4).getAttribute("src")).toBe("about:blank#render-4")
       const timerCount = host.timers.size
       await act(async () => { host.bridges[0].oninitialized?.() })
       expect(host.inputSpy).not.toHaveBeenCalled()
       expect(host.timers.size).toBe(timerCount)
-      expect(host.resourceSpy).toHaveBeenCalledTimes(2)
-      expect(host.failures).toEqual(mode === "teardown" ? [] : mode === "failure" ? [0] : [0, 1])
+      expect(host.resourceSpy).toHaveBeenCalledTimes(4)
+      expect(host.failures).toEqual(mode === "teardown" ? [] : mode === "failure" ? [0] : [0, 1, 2, 3])
     } finally { await host.dispose() }
   })
 
   test.each(["connect", "delivery"])("unmount during pending %s cannot deliver or recreate startup timers", async mode => {
-    const host = await startupFixture()
+    const host = await startupFixture({ presentation: "dashboard" })
     let finish: (() => void) | undefined
     const pending = new Promise<void>(resolve => { finish = resolve })
     try {
       if (mode === "connect") host.connectSpy.mockImplementationOnce(() => pending)
       else host.resourceSpy.mockImplementationOnce(() => pending)
-      await host.render([0, 1, 2])
+      await host.render([0, 1, 2, 3, 4])
       await host.notify(0, "ui/notifications/sandbox-proxy-ready")
-      await host.render([1, 2])
-      expect(host.frame(2).getAttribute("src")).toBe("about:blank#render-2")
+      await host.render([1, 2, 3, 4])
+      expect(host.frame(4).getAttribute("src")).toBe("about:blank#render-4")
       await act(async () => { finish?.() })
       expect(host.resourceSpy).toHaveBeenCalledTimes(mode === "connect" ? 0 : 1)
-      expect(host.timers.size).toBe(2)
+      expect(host.timers.size).toBe(4)
       await host.render([])
       await host.advance(60_000)
       expect(host.errorSpy).not.toHaveBeenCalled()
@@ -2046,6 +2127,23 @@ describe("MCP App iframe policy", () => {
     expect(sandbox.sandbox).toBe(sandboxFlags)
     expect(sandbox.url).not.toContain("private-")
     expect(new URL(sandbox.url).searchParams.get("hostOrigin")).toBe(normalizeMcpAppHostOrigin(hostOrigin))
+  })
+
+  test("names the sandbox page version so the browser can keep that page", () => {
+    const previous = process.env.VITE_OPENWORK_MCP_APP_SANDBOX_VERSION
+    try {
+      const client = createOpenworkServerClient({ baseUrl: "http://localhost:61856" })
+      process.env.VITE_OPENWORK_MCP_APP_SANDBOX_VERSION = "0123456789abcdef"
+      const url = new URL(client.mcpAppSandbox(fixture(), "file://").url)
+      expect(url.pathname).toBe("/mcp-apps/sandbox.html")
+      expect(url.searchParams.get("v")).toBe("0123456789abcdef")
+      expect(url.searchParams.get("csp")).toBe(JSON.stringify(fixture().csp))
+      delete process.env.VITE_OPENWORK_MCP_APP_SANDBOX_VERSION
+      expect(new URL(client.mcpAppSandbox(fixture(), "file://").url).searchParams.has("v")).toBe(false)
+    } finally {
+      if (previous === undefined) delete process.env.VITE_OPENWORK_MCP_APP_SANDBOX_VERSION
+      else process.env.VITE_OPENWORK_MCP_APP_SANDBOX_VERSION = previous
+    }
   })
 
   test("uses the opaque message origin for packaged file hosts", () => {

@@ -119,6 +119,19 @@ test("a sub-agent waiting on permission reads Needs permission with Review, and 
   expect(stopped).toEqual(["ses_work"])
 })
 
+test("clicking an agent's name or task opens its chat, like Open", async () => {
+  store.getState().setRunStatus(WORKSPACE, "ses_work", { type: "busy" })
+  const opened: string[] = []
+  const container = await render(turn([
+    taskPart("t1", "explore", "Map the billing service", "working", "ses_work"),
+  ]), { onOpen: (id) => opened.push(id), onStop: () => {} })
+
+  const name = container.querySelector<HTMLButtonElement>("[data-subagent-tracker-row='t1'] [data-subagent-tracker-name-open]")
+  expect(name?.textContent).toContain("Map the billing service")
+  await act(async () => { name?.click() })
+  expect(opened).toEqual(["ses_work"])
+})
+
 test("finished, failed and stopped agents keep distinct words; several quiet agents start collapsed", async () => {
   const container = await render(turn([
     taskPart("t1", "general", "Summarize incidents", "done", "ses_done"),

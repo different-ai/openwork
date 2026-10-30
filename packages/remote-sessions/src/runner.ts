@@ -23,6 +23,10 @@ function definitive(error: unknown): SessionError | null {
   if (!(error instanceof SessionRunnerError) || error.code === "operation_timeout" || error.code === "invalid_data") return null
   return parseError({ code: error.code, message: error.message })
 }
+function ambiguousAnswer(): SessionError {
+  return failure("ambiguous_answer", "The answer may already have reached the session. Check it on that computer before answering again; it will not be sent again automatically.")
+}
+function staleRequest(error: unknown): boolean { return error instanceof SessionRunnerError && error.code === "stale_request" }
 function same(a: unknown, b: unknown): boolean { return JSON.stringify(a) === JSON.stringify(b) }
 function sameProgress(a: Progress | null, b: Progress): boolean {
   if (!a) return false
@@ -223,7 +227,8 @@ export function createSessionRunner(options: SessionRunnerOptions): SessionRunne
       completion = { status: "failed", error: ambiguousSend(e.request) }
       applyTurn = true
     } else if (e.request.expiresAt <= now()) {
-      completion = { status: "failed", error: failure("expired", "The request expired before its next native effect.") }
+      completion = { status: "failed", error: e.request.action === "answer" && e.messageId !== null ? ambiguousAnswer()
+        : failure("expired", "The request expired before its next native effect.") }
       // An interrupted send may already have been accepted, even though it can no longer be retried.
       applyTurn = e.turn !== null
     }
@@ -255,6 +260,28 @@ export function createSessionRunner(options: SessionRunnerOptions): SessionRunne
           if (result.messageId !== null && result.messageId !== e.messageId) throw new SessionRunnerError("invalid_data", "The adapter returned a different stable message ID.")
           completion = { status: "done", outcome: { action: "send", result } }
           applyTurn = true
+        } else if (e.request.action === "answer") {
+          const input = e.request.input
+          const answer = adapter.answer
+          if (!answer) {
+            completion = { status: "failed", error: failure("answer_unsupported", "This computer can't take answers from here. Answer it on that computer.") }
+          } else {
+            // The marker is durable BEFORE the native reply. A native request is answered at most once, so a
+            // replay that finds it gone reports it answered instead of sending another reply.
+            const replay = e.messageId !== null
+            if (!replay) {
+              await saveRequest({ ...e, messageId: input.requestId })
+              e = request(id)
+            }
+            throwIfAborted(signal)
+            try {
+              await local(signal, s => answer.call(adapter, structuredClone(c.receipt!), structuredClone(input), s))
+              completion = { status: "done", outcome: { action: "answer", result: { requestId: input.requestId, alreadyAnswered: false } } }
+            } catch (error) {
+              if (!replay || !staleRequest(error)) throw error
+              completion = { status: "done", outcome: { action: "answer", result: { requestId: input.requestId, alreadyAnswered: true } } }
+            }
+          }
         } else if (e.request.input.messageId === null && e.messageId !== null && c.lastMessageId !== e.messageId) {
           completion = { status: "done", outcome: { action: "stop", result: { stopped: false, reason: "different_turn" } } }
         } else if (e.messageId === null) {
@@ -375,6 +402,12 @@ export function createSessionRunner(options: SessionRunnerOptions): SessionRunne
             && c.receipt?.sessionId === value.sessionId && c.receipt.workspaceId === value.workspaceId)
           let completion: RequestComplete | null = !c ? { status: "failed", error: failure("unknown_receipt",
             "Only a session delivered by this account's local journal can be controlled.") } : null
+          if (c && value.action === "answer") {
+            // A second Den request for an already answered native request is a duplicate, not a new reply.
+            const prior = state().requests.find(r => r.request.commandId === value.commandId && r.request.action === "answer"
+              && r.request.input.requestId === value.input.requestId && r.completion?.status === "done")
+            if (prior) completion = { status: "done", outcome: { action: "answer", result: { requestId: value.input.requestId, alreadyAnswered: true } } }
+          }
           const id = value.action === "send" ? value.input.messageId ?? stableMessageId(value.requestId)
             : value.action === "stop" ? value.input.messageId ?? c?.lastMessageId ?? null : null
           if (c && value.action === "send") {

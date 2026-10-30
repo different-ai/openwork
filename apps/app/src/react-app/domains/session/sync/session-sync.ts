@@ -35,6 +35,8 @@ import {
 import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
+  withToolAttachmentOwner,
+  reasoningTime,
   STRUCTURED_OUTPUT_TOOL,
 } from "./parse-tool-parts";
 import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
@@ -962,7 +964,7 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
       type: "reasoning",
       text: part.text,
       state: "done",
-      providerMetadata: { opencode: { partId: part.id } },
+      providerMetadata: { opencode: { partId: part.id, ...reasoningTime(part) } },
     };
   }
   if (part.type === "file") {
@@ -993,7 +995,7 @@ function toUIParts(part: Part): UIMessage["parts"] {
   if (!mapped) return [];
   if (part.type === "tool" && part.tool === STRUCTURED_OUTPUT_TOOL) return [mapped];
   if (part.type === "tool" && part.state.status === "completed" && part.state.attachments) {
-    return [mapped, ...part.state.attachments.flatMap(toFileUIParts)];
+    return [mapped, ...withToolAttachmentOwner(part.state.attachments.flatMap(toFileUIParts), part.callID)];
   }
   return [mapped];
 }
@@ -1265,7 +1267,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   }
 
   if (event.type === AUTO_ROUTES_EVENT) {
-    // Auto replies' routing decisions; any session, tracked or not, so a
+    // Smart replies' routing decisions; any session, tracked or not, so a
     // background chat shows them once opened.
     const props = event.properties;
     if (!props || typeof props !== "object") return;

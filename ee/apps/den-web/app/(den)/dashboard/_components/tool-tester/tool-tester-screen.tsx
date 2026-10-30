@@ -20,7 +20,7 @@ import { DenNotice } from "../../../_components/ui/notice";
 import { DenSelect } from "../../../_components/ui/select";
 import { DenToggleRow } from "../../../_components/ui/toggle-row";
 import { DenRequestTimeoutError } from "../../../_lib/den-flow";
-import { getMcpConnectionsRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../../_lib/den-org";
+import { getMcpConnectionsRoute, getOrgAccessFlags } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { marketplaceConnectionNeedsAdminSetup } from "../mcp-connection-setup";
 import { personalApiKeyStatus, personalApiKeyStatusLabel } from "../member-api-key";
@@ -102,7 +102,6 @@ export function ToolTesterScreen() {
   const searchParams = useSearchParams();
   const requestedConnectionId = searchParams.get("connectionId");
   const { orgContext, orgSlug } = useOrgDashboard();
-  const revisedSetup = orgFeatureEnabled(orgContext, "customConnectorSetup");
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
@@ -511,7 +510,7 @@ export function ToolTesterScreen() {
                           </div>
                           {selectedTool.description ? <p className="mt-2 text-[12.5px] leading-5 text-gray-500">{selectedTool.description}</p> : null}
                         </div>
-                        <p className={`max-w-full break-all text-right font-mono text-[11px] ${revisedSetup ? "text-gray-500" : "text-gray-400"}`}>{selectedTool.name}</p>
+                        <p className="max-w-full break-all text-right font-mono text-[11px] text-gray-500">{selectedTool.name}</p>
                       </div>
 
                       {currentRun?.status === "policy_blocked" ? <div className="mt-5"><DenNotice message={currentRun.message} /></div> : null}
@@ -574,7 +573,7 @@ export function ToolTesterScreen() {
                       )}
 
                       {currentRun && currentRun.status !== "policy_blocked" ? (
-                        <div className="mt-5"><McpToolCallInspector key={currentRun.id} outcome={currentRun.outcome} revisedSetup={revisedSetup} /></div>
+                        <div className="mt-5"><McpToolCallInspector key={currentRun.id} outcome={currentRun.outcome} /></div>
                       ) : null}
                     </section>
                   ) : null}
@@ -582,7 +581,6 @@ export function ToolTesterScreen() {
               )}
 
               <RecentToolRuns
-                    revisedSetup={revisedSetup}
                 runs={recentRuns}
                 caption="Kept in this browser for this session only — OpenWork never stores run results."
                 onLoad={loadRun}

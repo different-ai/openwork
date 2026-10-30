@@ -62,11 +62,10 @@ import {
 } from "./mcp-app-host.js";
 import { CONNECT_MCP_SERVER_NAME_PREFIX } from "./connect-mcp-server-catalog.js";
 import {
-  buildMcpAppSandboxCsp,
   MCP_APP_SANDBOX_PROXY_CSS,
   MCP_APP_SANDBOX_PROXY_HTML,
   MCP_APP_SANDBOX_PROXY_SCRIPT,
-  parseMcpAppSandboxCsp,
+  mcpAppSandboxPageHeaders,
 } from "./mcp-app-sandbox.js";
 import { deleteSkill, listSkills, renderSkillContentForResponse, upsertSkill } from "./skills.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
@@ -831,15 +830,7 @@ export async function startServer(
     logger,
   });
   setEngineInstanceReaperForConfig(config, engineInstanceReaper);
-  let resolvedLiveProviderSync = false;
-  const resolveLiveProviderSync = async () => {
-    resolvedLiveProviderSync = false;
-    resolvedLiveProviderSync = (await managedDesktopPolicy(config).current())?.liveProviderSync === true;
-    return resolvedLiveProviderSync;
-  };
   const engineV2Preview: EngineV2Preview = createEngineV2Preview({ config, env, deferStart: true,
-    resolveLiveProviderSync,
-    resolveNativeAffordanceCodeMode: async () => (await managedDesktopPolicy(config).current())?.nativeAffordanceCodeMode === true,
     autoUpgradeIdle: async () => (await describeV1EngineActivity(config)).verdict === "idle",
     autoUpgradeError: (error) => logger.log("warn", "Automatic engine upgrade failed; keeping v1", { error }),
     providerSession: () => cloudProviderSync.providerBridgeSession(),
@@ -860,12 +851,7 @@ export async function startServer(
   const cloudProviderSync = new CloudProviderSync({
     config,
     env,
-    liveProviderSync: async () => {
-      // The same signed-in desktop-config hydration as organization defaults. A
-      // missing field/older Den is off; never infer this from org metadata.
-      await engineV2Preview.setLiveProviderSync(await resolveLiveProviderSync());
-      return engineV2Preview.status().liveProviderSync;
-    },
+    liveProviderSync: async () => engineV2Preview.status().liveProviderSync,
     reloadEngine: async () => {
       if (engineV2Preview.status().chatRouting) {
         await engineV2Preview.refreshProviders();
@@ -907,7 +893,6 @@ export async function startServer(
     engineV2Preview,
     () => managedEngineReady,
     anonymousInference,
-    () => resolvedLiveProviderSync,
   );
 
   const serverOptions: {
@@ -2802,7 +2787,6 @@ function createRoutes(
   engineV2Preview: EngineV2Preview,
   isReady: () => boolean,
   anonymousInference: AnonymousInferenceService,
-  liveProviderSyncAvailable: () => boolean,
 ): Route[] {
   const routes: Route[] = [];
   addRoute(routes, "GET", "/anonymous-inference/status", "client", async () =>
@@ -3570,7 +3554,7 @@ function createRoutes(
     if (body.chatRouting === false) status = await engineV2Preview.setChatRouting(false);
     if (typeof body.enabled === "boolean") status = await engineV2Preview.setEnabled(body.enabled);
     if (body.chatRouting === true) status = await engineV2Preview.setChatRouting(true);
-    if (shouldSyncLiveProviderOwnerTransition(previouslyLiveProviderSync, status.liveProviderSync, liveProviderSyncAvailable())) {
+    if (shouldSyncLiveProviderOwnerTransition(previouslyLiveProviderSync, status.liveProviderSync)) {
       void cloudProviderSync.run("engine_routing_changed");
     }
     return jsonResponse(status);
@@ -4077,13 +4061,7 @@ function createRoutes(
   });
 
   addRoute(routes, "GET", "/mcp-apps/sandbox.html", "none", async (ctx) => new Response(MCP_APP_SANDBOX_PROXY_HTML, {
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Content-Security-Policy": buildMcpAppSandboxCsp(parseMcpAppSandboxCsp(ctx.url.searchParams.get("csp"))),
-      "Cache-Control": "no-store",
-      "Referrer-Policy": "strict-origin",
-      "X-Content-Type-Options": "nosniff",
-    },
+    headers: mcpAppSandboxPageHeaders(ctx.url.searchParams),
   }));
   addRoute(routes, "GET", "/mcp-apps/sandbox.js", "none", async () => new Response(MCP_APP_SANDBOX_PROXY_SCRIPT, {
     headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },

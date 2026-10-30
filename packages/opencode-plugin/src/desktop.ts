@@ -97,8 +97,6 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
   return {
     id: "openwork",
     async setup(ctx) {
-      // The server supplies the resolved registry value, not a new environment flag.
-      if (ctx.options.liveProviderSync !== true) return
       const endpoint = ctx.options.desktopSession
       const capability = deps.capability?.()
       if (!isDesktopSessionEndpoint(endpoint)) return

@@ -1,5 +1,5 @@
 // Asks AI Gateway to send one test prompt with a provider configuration that
-// has not been saved yet (feature `gatewayProviderTest`). Den checks the
+// has not been saved yet . Den checks the
 // catalog, settings and key shape first; the gateway owns the upstream call.
 import type { GatewayProviderTestResult } from "@openwork/types/den/gateway"
 import { PROVIDER_TEST_SIGNATURE_HEADER, signProviderTest } from "@openwork-ee/utils/provider-test-signature"

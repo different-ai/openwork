@@ -5,11 +5,12 @@ import { workbotAgentSourcesWorld } from "../worlds/workbot-agent-sources.ts";
 
 const test = spec.world(workbotAgentSourcesWorld, { resources: { surfaces: ["web"], services: ["den", "mock"] }, needs: { placement: "local" }, timeout: 600_000 });
 
-// DESIGN S2 (one row per source: label left, state and its one control right), S7 (Add source is a Base UI popover),
-// P1 (state, not explanation: "No sources", "Read on checks; no early meeting alerts"), P4/C5 (a source the admin decided is
-// shown locked with the reason and who changes it), P8 (chat's change says how to undo it), C1/C7 (verb-first actions:
-// "Connect Gmail", "Edit"; sentence case). Chat is the Connect call Workbot makes for the member.
-test("an admin chooses what agents read; a member turns sources on and steers them in chat or on the page, never past the admin", async ({ world, user, probe, step, evidence }) => {
+// DESIGN S2 (one row per source: label left, state and its one control right), S7 (Add source and the member's app picker
+// are Base UI popovers), P1 (state, not explanation: "Members use Google Workspace or Granola", "Read on checks; no early
+// meeting alerts"), P4/C5 (a source the admin decided is shown locked with the reason and who changes it), P8 (chat's change
+// says how to undo it), V5 (a category shows its generic icon, each app its logo), C1/C7 (verb-first actions: "Connect
+// Gmail", "Make default"; sentence case). Chat is the Connect call Workbot makes for the member.
+test("an admin sets guardrails for what agents read; a member picks within them and steers sources in chat or on the page, never past the admin", async ({ world, user, probe, step, evidence }) => {
   const owner = user.on(world.owner), ownerProbe = probe.on(world.owner);
   const member = user.on(world.member), memberProbe = probe.on(world.member);
   const agent = async () => memberAgentViewSchema.parse((await memberProbe.api(world.den.members.member, "/v1/me/agent")).body);
@@ -40,7 +41,7 @@ test("an admin chooses what agents read; a member turns sources on and steers th
     await owner.screenshot();
   });
 
-  await step("the owner adds Granola to Email; Support desk, a service without reviewed reads, isn't offered", async () => {
+  await step("the owner allows Granola for Email; Support desk, a service without reviewed reads, isn't offered", async () => {
     await owner.click({ role: "button", label: "Add source to Email" });
     await owner.see({ role: "menuitem", label: "Granola" }, { timeoutMs: 30_000 });
     await owner.notSee({ role: "menuitem", label: "Support desk" });
@@ -53,18 +54,29 @@ test("an admin chooses what agents read; a member turns sources on and steers th
     });
     const saved = agentSourcesPolicySchema.parse(policy);
     const reads = saved.coreConnections?.email?.includes(notes.id) === true && saved.coreConnections.email.includes(desk.id) === false;
-    evidence.recordAssertionEvidence("Saved on the server", `email reads through: ${saved.coreConnections?.email?.join(", ")}`, reads);
+    evidence.recordAssertionEvidence("Saved on the server", `email allows: ${saved.coreConnections?.email?.join(", ")}`, reads);
     expect(reads).toBe(true);
-    await owner.see({ role: "button", label: "Remove Granola from Email" });
+    await owner.see({ role: "switch", label: "Allow Granola" });
+    await owner.see({ text: "Members use Google Workspace or Granola" });
+    await owner.see({ role: "button", label: "Make Granola the default for Email" });
     await owner.screenshot();
   });
 
-  await step("a member's What it reads: a switch per source, the wiki locked with the reason, Google waiting for them to connect", async () => {
+  await step("a member's What it reads: email reads the app they already have, the wiki locked with the reason, Google Calendar waiting for them to connect", async () => {
     await member.reload();
     await member.see({ testId: "my-agent-uses" }, { timeoutMs: 90_000 });
     await member.see({ text: "Not allowed" });
     await member.see({ text: "Locked sources are set by your admin in Manage › Workbot." });
     await member.see({ role: "link", label: "Connect Google Calendar" });
+    await member.see({ role: "button", label: "Read your email from: Granola" });
+    await member.notSee({ role: "link", label: "Connect Gmail" });
+    const email = await sourceOf("email");
+    evidence.recordAssertionEvidence(
+      "Email reads one allowed app, never asking for the other",
+      `email reads ${email?.connections.map((connection) => connection.name).join(", ")} (chosen ${email?.chosenBy}) of ${email?.options.map((option) => option.name).join(", ")}`,
+      email?.connections.length === 1 && email.connections[0]?.id === notes.id && email.options.length === 2,
+    );
+    expect(email?.connections.map((connection) => connection.id)).toEqual([notes.id]);
     await member.click({ role: "switch", label: "Linear" });
     const linear = await memberProbe.eventually(() => sourceOf(tracker.id), { within: 30_000, label: "Linear is on", until: (value) => value?.on === true });
     const notion = await sourceOf(wiki.id);
@@ -86,6 +98,20 @@ test("an admin chooses what agents read; a member turns sources on and steers th
     const granola = await sourceOf(notes.id);
     const linear = await sourceOf(tracker.id);
     evidence.recordAssertionEvidence("Chat's reply, and the page shows what chat saved", `${reply.replaceAll("\n", " / ")}; Granola on=${granola?.on} "${granola?.instruction}"; Linear on=${linear?.on}`, granola?.on === true && linear?.on === false);
+    await member.screenshot();
+  });
+
+  await step("in chat: \"read my email from Google Workspace\" picks it among the allowed apps, and says where to connect it", async () => {
+    const google = (await sourceOf("email"))?.options.find((option) => option.name === "Google Workspace");
+    expect(google).toBeDefined();
+    const said = await world.sayInChat("putMeAgent", { sources: [{ source: "my email", connectionId: google?.id }] });
+    const reply = memberAgentSavedSchema.parse(said.body).saved?.reply ?? "";
+    expect(reply).toMatch(/^Saved:\n- Email: reads Google Workspace\nConnect Google Workspace: http.+\nReply "undo" to revert\. My bot: http/);
+    await member.reload();
+    await member.see({ role: "button", label: "Read your email from: Google Workspace" }, { timeoutMs: 60_000 });
+    await member.see({ role: "link", label: "Connect Gmail" });
+    const email = await sourceOf("email");
+    evidence.recordAssertionEvidence("Chat's reply, and the page reads email from the app chat picked", `${reply.replaceAll("\n", " / ")}; chosen by ${email?.chosenBy}`, email?.chosenBy === "member" && email.connections[0]?.id === google?.id);
     await member.screenshot();
   });
 

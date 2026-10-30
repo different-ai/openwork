@@ -13,6 +13,7 @@ const { MessageListProvider } = await import("../src/components/chat/message-lis
 const { MessageList } = await import("../src/components/chat/message-list")
 const { useModelPickerCatalogStore } = await import("../src/react-app/domains/session/models/model-collections-store")
 const { useAutoRouteStore } = await import("../src/react-app/domains/session/sync/auto-route-store")
+const { useLiveReplyModelStore } = await import("../src/components/chat/live-reply-model-store")
 let mounted: { root: Root; container: HTMLElement } | null = null
 
 afterEach(async () => {
@@ -24,6 +25,7 @@ afterEach(async () => {
   }
   useModelPickerCatalogStore.setState({ bySession: {} })
   useAutoRouteStore.setState({ bySession: {} })
+  useLiveReplyModelStore.getState().setEnabled(false)
 })
 afterAll(() => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct)
@@ -116,18 +118,23 @@ test("an Auto reply renders the OpenWork mark beside the routed name", async () 
   expect(label?.querySelector('svg[aria-label="OpenWork"]')?.closest('[aria-hidden="true"]')).not.toBeNull()
 })
 
-test("an Auto Router reply names the model the gateway chose, with its thinking level", async () => {
+test("a Smart Router reply names the model the gateway chose, with its thinking level", async () => {
+  const smart = "openwork-smart-ar_engineering"
   const autoAnswer = (id: string, created: number, completed: number): UIMessage => ({ ...answer(id), metadata: { opencode: { created, completed,
-    replyModel: { providerID: "openwork-auto", modelID: "openwork-auto", requestedProviderID: "openwork-auto", requestedModelID: "openwork-auto" } } } })
-  const auto = [{ providerID: "openwork-auto", modelID: "openwork-auto", title: "Auto", description: "Auto" }]
+    replyModel: { providerID: "openwork-auto", modelID: smart, requestedProviderID: "openwork-auto", requestedModelID: smart } } } })
+  const auto = [
+    { providerID: "openwork-auto", modelID: "openwork-smart-ar_design", title: "Smart: Design", description: "Smart Model Router" },
+    { providerID: "openwork-auto", modelID: smart, title: "Smart: Engineering", description: "Smart Model Router" },
+  ]
   const before = await render([autoAnswer("reply", 1000, 8000)], false, auto)
-  expect(before.querySelector('[data-testid="reply-model"]')?.textContent).toBe("Replied with Auto")
+  expect(before.querySelector('[data-testid="reply-model"]')?.textContent).toBe("Replied with Smart: Engineering")
   await act(async () => useAutoRouteStore.getState().publish("session_fixture", [
     { at: 1500, provider: "anthropic", model: "claude-haiku-5-5", name: "Claude Haiku 5.5", thinking: "high" },
   ]))
   const label = before.querySelector('[data-testid="reply-model"]')
   expect(label?.textContent).toBe("Replied with Claude Haiku 5.5 · High")
   expect(before.textContent).not.toContain("openwork-auto")
+  expect(before.textContent).not.toContain("openwork-smart-")
 })
 
 test("a gateway reply uses the picker's human title without requesting an opaque provider logo", async () => {
@@ -178,6 +185,54 @@ test("an unknown gateway identity stays hidden without a catalog title", async (
 test("a streaming reply does not claim a completed model", async () => {
   const container = await render([answer("reply")], true)
   expect(container.querySelector('[data-testid="reply-model"]')).toBeNull()
+})
+
+function streamingAnswer(id: string, parts: UIMessage["parts"] = [{ type: "text", text: "Writing the document" }]): UIMessage {
+  return {
+    id, role: "assistant", parts,
+    metadata: { opencode: { created: 1000, replyModel: { providerID: "anthropic", modelID: "claude-sonnet", name: "Claude Sonnet", resolved: true } } },
+  }
+}
+
+test("liveReplyModel: the Working line names the model writing this turn, revealed on hover", async () => {
+  useLiveReplyModelStore.getState().setEnabled(true)
+  const container = await render([{ id: "u1", role: "user", parts: [{ type: "text", text: "Write it" }] }, streamingAnswer("reply")], true)
+  const line = container.querySelector('[data-loading-message="working"]')
+  const caption = line?.querySelector("[data-working-model]")
+  // Right after the timer, on the same line, outside the shimmer.
+  expect(line?.textContent).toMatch(/^Working \S+ · Writing with Claude Sonnet$/)
+  expect(caption?.closest(".ow-text-shimmer")).toBeNull()
+  expect(caption?.previousElementSibling?.className).toContain("ow-text-shimmer")
+  // Revealed by hovering the Working line; always shown on touch.
+  expect(line?.className).toContain("group/working")
+  expect(caption?.className).toContain("opacity-0")
+  expect(caption?.className).toContain("group-hover/working:opacity-100")
+  expect(caption?.className).toContain("pointer-coarse:opacity-100")
+  // The finished-reply footer is not involved while streaming.
+  expect(container.querySelector('[data-testid="reply-model"]')).toBeNull()
+})
+
+test("liveReplyModel: it is there while the turn only runs steps, before any text", async () => {
+  useLiveReplyModelStore.getState().setEnabled(true)
+  const container = await render([{ id: "u1", role: "user", parts: [{ type: "text", text: "Write it" }] }, streamingAnswer("reply", [{ type: "dynamic-tool", toolName: "bash", toolCallId: "c1", state: "input-available", input: { command: "ls", description: "list files" } }])], true)
+  expect(container.querySelector("[data-working-model]")?.textContent).toBe(" · Writing with Claude Sonnet")
+})
+
+test("liveReplyModel: a new turn never shows the previous turn's model", async () => {
+  useLiveReplyModelStore.getState().setEnabled(true)
+  const container = await render([
+    { id: "u1", role: "user", parts: [{ type: "text", text: "First" }] },
+    answer("reply_1"),
+    { id: "u2", role: "user", parts: [{ type: "text", text: "Second" }] },
+  ], true)
+  expect(container.querySelector('[data-loading-message]')).not.toBeNull()
+  expect(container.querySelector("[data-working-model]")).toBeNull()
+})
+
+test("liveReplyModel off: the Working line shows no model", async () => {
+  const container = await render([{ id: "u1", role: "user", parts: [{ type: "text", text: "Write it" }] }, streamingAnswer("reply")], true)
+  expect(container.querySelector('[data-loading-message="working"]')).not.toBeNull()
+  expect(container.querySelector("[data-working-model]")).toBeNull()
 })
 
 test("missing model metadata never invents a footer", async () => {

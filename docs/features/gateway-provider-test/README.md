@@ -1,6 +1,9 @@
 # AI Gateway: test a provider before adding it
 
-Feature key: `gatewayProviderTest` · Deployments: cloud and self-hosted · Default: off · Author: [@OmarMcAdam](https://github.com/OmarMcAdam)
+> **GA:** Available without a feature flag. The former rollout key is retired.
+> Off/on screenshots below are historical comparisons, not current deployment options.
+
+Retired rollout key: `gatewayProviderTest` · Deployments: cloud and self-hosted · Status: generally available (no flag) · Author: [@OmarMcAdam](https://github.com/OmarMcAdam)
 
 ## What changes
 
@@ -60,16 +63,16 @@ returned. The test can use a few tokens on the provider account.
 
 ## Try it
 
-1. Turn on `gatewayProviderTest` for your organization in `/admin`.
+1. Sign in as an organization admin with AI Gateway configured.
 2. Den › AI Gateway › Add a provider › pick one › paste a key › **Test**.
 3. Paste a wrong key to see the red message; fix it to see the green one;
    change any field and the message goes away.
 
-## Turning it off
+## Availability
 
-The page goes back to adding without a test. Nothing is stored by the test,
-so there is nothing to clean up. Den's route answers 404 `feature_disabled`,
-and the gateway route only serves requests Den signed.
+Generally available. The rollout flag is retired; organization/member overrides,
+operator locks and old kill-switch rows no longer disable this behavior.
+Authorization, provider setup, consent and runtime compatibility still apply.
 
 ## What to watch
 

@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto"
-import { isRunning, toTranscript, type HeadlessThreadClient } from "@openwork/headless-threads"
+import { isRunning, latestStep, toTranscript, type HeadlessThreadClient } from "@openwork/headless-threads"
 import {
   REMOTE_SESSION_STATUS_PREVIEW_MAX_LENGTH,
+  type RemoteSessionPending,
+  type RemoteSessionPendingSummary,
   type RemoteSessionStatusRequest,
   type RemoteSessionStatusResult,
   type RemoteSessionThreadState,
@@ -33,7 +35,7 @@ const RETRY_ACTIVE_MS = 5_000
 const UNAVAILABLE_VERSION = "unavailable"
 
 export type RemoteSessionStatusCloudClient = Pick<HeadlessThreadClient, "getThreadSnapshot">
-  & Partial<Pick<HeadlessThreadClient, "getThreadWaitingFor">>
+  & Partial<Pick<HeadlessThreadClient, "getThreadWaitingFor" | "getThreadPending">>
 
 /** Cloud for this caller: a client, a lasting reason it cannot be read, or null while it is waking or unreachable. */
 export type RemoteSessionStatusCloud =
@@ -68,6 +70,27 @@ function preview(text: string | null | undefined): string | null {
     : trimmed
 }
 
+/**
+ * The status line's short form of what a session waits on: the first question's
+ * text and option labels, or the permission's title. Its requestId is part of
+ * the projection, so a new request changes the version.
+ */
+export function pendingSummary(pending: RemoteSessionPending | null | undefined): RemoteSessionPendingSummary | null {
+  if (!pending) return null
+  if (pending.kind === "permission") return { kind: "permission", requestId: pending.requestId, title: pending.title }
+  const first = pending.questions[0]
+  if (!first) return null
+  return {
+    kind: "question",
+    requestId: pending.requestId,
+    question: first.question || first.header,
+    options: first.options.map((option) => option.label),
+    multiple: first.multiple,
+    custom: first.custom,
+    questionCount: pending.questions.length,
+  }
+}
+
 function known(projection: Projection, extra?: unknown): Observation {
   // A heartbeat that only re-confirms the same state is not a change.
   return { kind: "known", projection, version: versionOf({ ...projection, observedAt: undefined, extra }) }
@@ -76,7 +99,7 @@ function known(projection: Projection, extra?: unknown): Observation {
 function failed(target: Projection["target"], code: string, message: string, now: number): Observation {
   return known({
     target, state: "error", waitingFor: null, title: null, computerId: null, sessionId: null,
-    workspaceId: null, messageCount: null, preview: null, error: { code, message }, observedAt: now,
+    workspaceId: null, messageCount: null, preview: null, latestStep: null, error: { code, message }, observedAt: now, pending: null,
   })
 }
 
@@ -110,8 +133,11 @@ export function commandProjection(command: RemoteSessionCommand): Projection {
     workspaceId: command.workspaceId,
     messageCount: session?.messageCount ?? null,
     preview: state === "idle" ? preview(session?.finalText) : null,
+    // What it ran last only means something while it works.
+    latestStep: state === "running" || state === "waiting" ? session?.latestStep ?? null : null,
     error,
     observedAt: session?.observedAt ?? command.updatedAt,
+    pending: state === "waiting" ? pendingSummary(session?.pending) : null,
   }
 }
 
@@ -133,7 +159,11 @@ async function observeCloudThread(client: RemoteSessionStatusCloudClient, sessio
     const snapshot = await client.getThreadSnapshot(sessionId, { limit: CLOUD_TAIL_MESSAGES, signal })
     const running = isRunning(snapshot.status)
     // Two small reads, only while it runs: a settled thread waits on nobody.
-    const waitingFor = running && client.getThreadWaitingFor
+    // The pending request itself where the client can read it, so the row can offer its options.
+    const pending = running && client.getThreadPending
+      ? await client.getThreadPending(sessionId, { signal }).catch(() => null)
+      : null
+    const waitingFor = pending ? pending.kind : running && client.getThreadWaitingFor && !client.getThreadPending
       ? await client.getThreadWaitingFor(sessionId, { signal }).catch(() => null)
       : null
     const transcript = toTranscript(snapshot)
@@ -154,8 +184,10 @@ async function observeCloudThread(client: RemoteSessionStatusCloudClient, sessio
       workspaceId: null,
       messageCount: null,
       preview: state === "idle" ? preview(transcript.finalAssistantText) : null,
+      latestStep: state === "running" || state === "waiting" ? latestStep(snapshot.messages) : null,
       error: terminalError ? { code: terminalError.name || "session_error", message: terminalError.message || "The task stopped with an error." } : null,
       observedAt: now,
+      pending: state === "waiting" ? pendingSummary(pending) : null,
     // A new message changes the version, so an open transcript knows to refresh;
     // a reply still streaming does not, or every check would be a change.
     }, last?.id ?? null)

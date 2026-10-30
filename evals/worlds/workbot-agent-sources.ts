@@ -14,8 +14,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * connector the member hasn't signed in to, and three shared connections everyone can use without signing in. They
  * are created against a local MCP fixture, then pointed at Granola's, Linear's and Notion's MCP addresses: agents only
  * read services whose read tools are reviewed, recognised by that address. A fourth, "Support desk", stays on the
- * fixture: a service without reviewed reads, which can't be a source at all. Nothing contacts the reviewed services
- * and no turn runs during the proof; "chat" is the Connect call Workbot makes for the member.
+ * fixture: a service without reviewed reads, which can't be a source at all. Granola needs no sign-in, so once the
+ * admin allows it for Email it is the app the member already has, and their agent reads email from it rather than asking
+ * them to connect Google. Nothing contacts the reviewed services and no turn runs during the proof; "chat" is the
+ * Connect call Workbot makes for the member.
  */
 export async function workbotAgentSourcesWorld(seed: Seed) {
   const stack = new AsyncDisposableStack();

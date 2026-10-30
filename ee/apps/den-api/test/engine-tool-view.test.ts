@@ -108,7 +108,7 @@ async function discovered(options: Parameters<typeof createAgentMcpServer>[0]) {
 
 test("the engine's instructions name its tools, keep search for the rest and list services within the limit", async () => {
   const services = Array.from({ length: 120 }, (_, index) => ({ namespace: `service_${index}`, name: `Service ${index}`, ready: index % 3 !== 0 }))
-  const engine = await discovered({ toolView: "full", engine: true, services, remoteSessionStatus: true, slackSendAsBot: true, myAgent: true })
+  const engine = await discovered({ toolView: "full", engine: true, services, remoteSessionStatus: true, canSendSlackMessages: true, myAgent: true })
   assert.ok(engine.instructions.length <= AGENT_MCP_INSTRUCTIONS_MAX_CHARS, String(engine.instructions.length))
   assert.match(engine.instructions, /<service>_<action>, run-workflow_<name>, open-app_<name> and remote-session_<action>/)
   assert.match(engine.instructions, /search_capabilities and execute_capability cover only OpenWork's own operations and skills/)

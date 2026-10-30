@@ -1,7 +1,6 @@
 import { Message, MessageContent } from "@/components/ui/message";
 import { TaskRecovery } from "@/components/chat/task-recovery";
-import { gatewayProviderAuthPresentationForFeature, presentOpencodeSessionError } from "../sync/session-error";
-import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
+import { presentOpencodeSessionError } from "../sync/session-error";
 import { persistableComposerDraftText } from "../surface/composer-state-store";
 import { resolvePastedTextPlaceholders } from "../surface/composer/pasted-text";
 import { retryPendingConversation, type PendingConversation } from "./pending-conversation-store";
@@ -11,11 +10,8 @@ const noop = () => {};
 
 export function PendingConversationView({ conversation, composer }: { conversation: PendingConversation; composer: NewTaskComposerContext | null }) {
   const failed = conversation.phase === "creation-failed";
-  const gatewayProviderAuthEnabled = useOrgFeature("gatewayProviderAuthErrors");
   const text = persistableComposerDraftText(resolvePastedTextPlaceholders(conversation.submitted.draft, conversation.submitted.pasteParts));
-  const error = failed ? gatewayProviderAuthPresentationForFeature(
-    presentOpencodeSessionError(conversation.error, "Couldn’t send your message"), gatewayProviderAuthEnabled,
-  ) : null;
+  const error = failed ? presentOpencodeSessionError(conversation.error, "Couldn’t send your message") : null;
   const gatewayProviderAuthFailure = error?.kind === "gateway-provider-authentication-failed" || error?.kind === "gateway-provider-permission-denied";
   return <div className="flex h-full min-h-0 flex-col" data-pending-conversation={conversation.id}>
     <div className="relative min-h-0 flex-1">

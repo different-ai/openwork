@@ -27,7 +27,8 @@ import { findSource, type MemberSourceChoice, type ResolvedSource } from "./sour
 
 /**
  * My agent (`workbotAgentLibrary`): what a member tells their agent in their own words, the limits they narrow, which
- * sources it reads and their instruction for each, and the short change log behind "Saved from chat at 11:20 AM ·
+ * sources it reads, which allowed connection calendar, email and team chat read from, their instruction for each, and
+ * the short change log behind "Saved from chat at 11:20 AM ·
  * Undo". Pure: no database, no clock, no ids of its own.
  *
  * A member can only narrow the organization's limits: their hours sit inside the admin's, their daily limit is at
@@ -45,7 +46,7 @@ const storedChangeSchema = z.object({
   /** Every field one request changed shares its save id, so "undo" reverts the whole save. */
   save: z.string().min(1).max(64),
   field: agentChangeFieldSchema,
-  /** For `source` and `sourceInstruction`: which source. */
+  /** For `source`, `sourceInstruction` and `sourceConnection`: which source. */
   sourceId: z.string().max(64).optional(),
   previous: changeValueSchema,
   value: changeValueSchema,
@@ -55,10 +56,14 @@ const storedChangeSchema = z.object({
 })
 export type StoredAgentChange = z.infer<typeof storedChangeSchema>
 
-/** The member's choice per source: on or off where they may choose, their instruction, and where it last changed. */
+/**
+ * The member's choice per source: on or off where they may choose, their instruction, for a core source the allowed
+ * connection they picked to read it from, and where it last changed.
+ */
 const storedSourceSchema = z.object({
   on: z.boolean().optional(),
   instruction: z.string().max(AGENT_PREFERENCE_MAX).optional(),
+  connectionId: z.string().max(64).optional(),
   changedFrom: z.enum(["chat", "page"]).optional(),
   changedAt: z.number().optional(),
 })
@@ -155,8 +160,13 @@ function isPreferenceField(field: AgentChangeField): field is AgentPreferenceFie
   return AGENT_PREFERENCE_FIELDS.some((entry) => entry === field)
 }
 
+function isSourceField(field: AgentChangeField) {
+  return field === "source" || field === "sourceInstruction" || field === "sourceConnection"
+}
+
 function valueOf(state: MemberAgentState, field: AgentChangeField, sourceId?: string): ChangeValue {
   if (field === "source") return sourceId ? state.sources[sourceId]?.on ?? null : null
+  if (field === "sourceConnection") return sourceId ? state.sources[sourceId]?.connectionId ?? null : null
   if (field === "sourceInstruction") return sourceId ? state.sources[sourceId]?.instruction ?? "" : ""
   if (isPreferenceField(field)) return state.words[field]
   if (isResponsibility(field)) return state.muted.has(field)
@@ -166,12 +176,15 @@ function valueOf(state: MemberAgentState, field: AgentChangeField, sourceId?: st
 }
 
 function assign(state: MemberAgentState, field: AgentChangeField, value: ChangeValue, sourceId?: string, changed?: { from: AgentChangeSource; at: number }) {
-  if (field === "source" || field === "sourceInstruction") {
+  if (isSourceField(field)) {
     if (!sourceId) return
     const next: StoredSourceChoice = { ...state.sources[sourceId] }
     if (field === "source") {
       if (typeof value === "boolean") next.on = value
       else delete next.on
+    } else if (field === "sourceConnection") {
+      if (typeof value === "string" && value) next.connectionId = value
+      else delete next.connectionId
     } else if (typeof value === "string" && value) next.instruction = value
     else delete next.instruction
     if (changed) {
@@ -196,9 +209,22 @@ function quote(text: string) {
   return `“${text}”`
 }
 
-/** One change in a few words, as the member and the chat reply read it. */
-export function describeChange(field: AgentChangeField, value: ChangeValue, admin: { startHour: number; endHour: number; dailyCap: number }, sourceName = "That source"): string {
+/**
+ * One change in a few words, as the member and the chat reply read it. `connectionNames` names the connections a core
+ * source can read from ("Calendar: reads Google Workspace").
+ */
+export function describeChange(
+  field: AgentChangeField,
+  value: ChangeValue,
+  admin: { startHour: number; endHour: number; dailyCap: number },
+  sourceName = "That source",
+  connectionNames: ReadonlyMap<string, string> = new Map(),
+): string {
   if (field === "source") return value === null ? `${sourceName}: back to your organization's default` : `${sourceName} ${value === true ? "on" : "off"}`
+  if (field === "sourceConnection") {
+    if (typeof value !== "string" || !value) return `${sourceName}: back to your organization's default`
+    return `${sourceName}: reads ${connectionNames.get(value) ?? "the connection you picked"}`
+  }
   if (field === "sourceInstruction") {
     const text = typeof value === "string" ? value.trim() : ""
     return text ? `${sourceName}: ${quote(text)}` : `${sourceName}: instruction cleared`
@@ -236,7 +262,7 @@ export type MemberAgentChangeResult =
   | {
       ok: false
       status: 400 | 409
-      error: "limit_wider_than_admin" | "nothing_to_undo" | "undo_superseded" | "undo_alone" | "source_locked" | "source_not_allowed"
+      error: "limit_wider_than_admin" | "nothing_to_undo" | "undo_superseded" | "undo_alone" | "source_locked" | "source_not_allowed" | "connection_not_allowed"
       message: string
     }
 
@@ -247,6 +273,11 @@ export function usesAgentLibrary(input: MemberAgentInput) {
 }
 
 const ADMIN_PLACE = "An admin can change it in Manage › Workbot."
+
+/** The names of the connections the member's core sources can read from, by connection id. */
+export function sourceConnectionNames(sources: readonly ResolvedSource[]): Map<string, string> {
+  return new Map(sources.flatMap((source) => source.options.map((connection): [string, string] => [connection.id, connection.name])))
+}
 
 /**
  * Applies a member's request (their words, narrower limits, mutes, or an undo) to what they have now, logging each
@@ -283,6 +314,8 @@ export function applyMemberAgentChange(input: {
   const lines: string[] = []
   const connect: { name: string; connectionId: string | null }[] = []
   const names = new Map((input.sources ?? []).map((source) => [source.id, source.name]))
+  const connectionNames = sourceConnectionNames(input.sources ?? [])
+  const wakes = (field: AgentChangeField) => field === "hours" || field === "quietWindow" || field === "source" || field === "sourceConnection"
   let wake = false
 
   const finish = (undid: boolean): MemberAgentChangeResult => {
@@ -314,8 +347,8 @@ export function applyMemberAgentChange(input: {
     for (const entry of targets) {
       assign(state, entry.field, entry.previous, entry.sourceId, { from: input.source, at: now })
       entry.undoneAt = now
-      lines.push(describeChange(entry.field, entry.previous, admin, names.get(entry.sourceId ?? "")))
-      if (entry.field === "hours" || entry.field === "quietWindow" || entry.field === "source") wake = true
+      lines.push(describeChange(entry.field, entry.previous, admin, names.get(entry.sourceId ?? ""), connectionNames))
+      if (wakes(entry.field)) wake = true
     }
     return finish(true)
   }
@@ -329,21 +362,29 @@ export function applyMemberAgentChange(input: {
   }
 
   // Sources: the admin decides which a member may change; a name nobody has connected becomes one "Connect" line.
-  const sourceChanges: { source: ResolvedSource; on?: boolean; instruction?: string }[] = []
+  const sourceChanges: { source: ResolvedSource; on?: boolean; instruction?: string; connection?: ResolvedSource["options"][number] }[] = []
   for (const wanted of request.sources ?? []) {
     const source = findSource(input.sources ?? [], wanted.source)
     if (!source) {
       connect.push({ name: wanted.source.trim(), connectionId: null })
       continue
     }
-    if (source.policy === "off" && (wanted.on === true || wanted.instruction)) {
+    if (source.policy === "off" && (wanted.on === true || wanted.instruction || wanted.connectionId)) {
       return { ok: false, status: 400, error: "source_not_allowed", message: `${source.name} isn't allowed for agents in your organization. ${ADMIN_PLACE}` }
+    }
+    // "Read my calendar from this connection": only a core source, and only one of the connections the admin allowed.
+    const connection = wanted.connectionId ? source.options.find((option) => option.id === wanted.connectionId) : undefined
+    if (wanted.connectionId && source.kind === "other") {
+      return { ok: false, status: 400, error: "connection_not_allowed", message: `${source.name} always reads its own connection. Only calendar, email and team chat read from a connection you pick.` }
+    }
+    if (wanted.connectionId && !connection) {
+      return { ok: false, status: 400, error: "connection_not_allowed", message: `${source.name} can't read from that connection in your organization. An admin chooses the allowed apps in Manage › Workbot.` }
     }
     if (source.policy === "everyone" && wanted.on === false) {
       return { ok: false, status: 400, error: "source_locked", message: `${source.name} is on for everyone in your organization. ${ADMIN_PLACE}` }
     }
     if (source.policy === "off" && wanted.on === false) continue
-    sourceChanges.push({ source, on: source.policy === "everyone" ? undefined : wanted.on, instruction: wanted.instruction })
+    sourceChanges.push({ source, on: source.policy === "everyone" ? undefined : wanted.on, instruction: wanted.instruction, connection })
   }
 
   const save = input.newId()
@@ -353,8 +394,8 @@ export function applyMemberAgentChange(input: {
     assign(state, field, value, sourceId, { from: input.source, at: now })
     const saved = valueOf(state, field, sourceId)
     log.push({ id: input.newId(), save, field, ...(sourceId ? { sourceId } : {}), previous, value: saved, source: input.source, at: now })
-    if (field === "hours" || field === "quietWindow" || field === "source") wake = true
-    return describeChange(field, saved, admin, names.get(sourceId ?? ""))
+    if (wakes(field)) wake = true
+    return describeChange(field, saved, admin, names.get(sourceId ?? ""), connectionNames)
   }
   const setLine = (field: AgentChangeField, value: ChangeValue) => {
     const line = set(field, value)
@@ -374,12 +415,16 @@ export function applyMemberAgentChange(input: {
     const { source } = change
     const switched = change.on === undefined ? null : set("source", change.on, source.id)
     const instructed = change.instruction === undefined ? null : set("sourceInstruction", change.instruction, source.id)
+    const picked = change.connection ? set("sourceConnection", change.connection.id, source.id) : null
     // One line per source, as chat says it back: "Granola on, for “meeting context and action items”".
     if (switched && instructed && change.on && change.instruction) lines.push(`${source.name} on, for ${quote(change.instruction)}`)
     else for (const line of [switched, instructed]) if (line) lines.push(line)
+    if (picked) lines.push(picked)
     const on = change.on ?? source.on
-    if (on && !source.connections.some((connection) => connection.state === "connected")) {
-      const connection = source.connections[0]
+    // What it reads from now: the connection just picked, else the one it read before.
+    const reads = change.connection ? [change.connection] : source.connections
+    if (on && !reads.some((connection) => connection.state === "connected")) {
+      const connection = reads[0]
       connect.push({ name: connection?.name ?? source.name, connectionId: connection?.id ?? null })
     }
   }
@@ -387,13 +432,19 @@ export function applyMemberAgentChange(input: {
 }
 
 /** The member's recent changes, newest first, as the page and chat read them. */
-export function memberAgentChanges(stored: StoredAgentPreferences, settings: WorkbotProactiveSettings, sourceNames: ReadonlyMap<string, string> = new Map(), limit = 20): MemberAgentChange[] {
+export function memberAgentChanges(
+  stored: StoredAgentPreferences,
+  settings: WorkbotProactiveSettings,
+  sourceNames: ReadonlyMap<string, string> = new Map(),
+  limit = 20,
+  connectionNames: ReadonlyMap<string, string> = new Map(),
+): MemberAgentChange[] {
   const admin = { startHour: settings.startHour, endHour: settings.endHour, dailyCap: settings.dailyCap }
   return [...stored.log].reverse().slice(0, limit).map((entry) => ({
     id: entry.id,
     field: entry.field,
     sourceId: entry.sourceId ?? null,
-    summary: describeChange(entry.field, entry.value, admin, sourceNames.get(entry.sourceId ?? "")),
+    summary: describeChange(entry.field, entry.value, admin, sourceNames.get(entry.sourceId ?? ""), connectionNames),
     source: entry.source,
     at: new Date(entry.at).toISOString(),
     undone: entry.undoneAt !== undefined,

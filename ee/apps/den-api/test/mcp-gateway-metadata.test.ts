@@ -148,7 +148,7 @@ test("with My agent on, chat is told to change Your agent with putMeAgent and to
   assert.doesNotMatch(await instructions({}), /putMeAgent/)
   const views: ConnectToolView[] = ["search", "full"]
   for (const toolView of views) {
-    const everything = await instructions({ myAgent: true, remoteSessionStatus: true, slackSendAsBot: true, toolView, toolShapes: true })
+    const everything = await instructions({ myAgent: true, remoteSessionStatus: true, canSendSlackMessages: true, toolView, toolShapes: true })
     assert.ok(Buffer.byteLength(everything, "utf8") <= 2048, `${toolView}: ${Buffer.byteLength(everything, "utf8")} bytes`)
   }
 })

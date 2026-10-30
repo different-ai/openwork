@@ -4,7 +4,6 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/request-capture.js"
 import { env } from "../../env.js"
-import { deploymentFeatureEnabled } from "../../features.js"
 import { jsonValidator, publicRoute, queryValidator, userSessionRoute } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
@@ -33,14 +32,14 @@ export function registerOrgSandboxJoinRoutes<T extends { Variables: OrgRouteVari
       responses: {
         200: jsonResponse("Sandbox preview.", sandboxJoinPreviewSchema),
         400: jsonResponse("Invalid link.", invalidRequestSchema),
-        404: jsonResponse("Unknown link, or sandbox organizations are turned off.", errorSchema),
+        404: jsonResponse("Unknown link, or sandbox organizations are unavailable on this deployment.", errorSchema),
         429: jsonResponse("Too many attempts.", errorSchema),
       },
     }),
     publicRoute,
     queryValidator(tokenSchema),
     async (c) => {
-      if (!await deploymentFeatureEnabled("sandboxOrgs")) return c.json(notFound, 404)
+      if (env.features.deployment !== "cloud") return c.json(notFound, 404)
       const retryAfter = await checkRateLimit(`sandbox-join-preview:${requestClientIpKey(c.req.raw.headers)}`, JOIN_RATE_LIMIT_MAX * 3, JOIN_RATE_LIMIT_WINDOW_MS, Date.now())
       if (retryAfter !== null) return c.json({ error: "rate_limited", message: "Too many attempts. Try again in a few minutes." }, 429)
       const preview = await previewSandboxJoin(c.req.valid("query").token)
@@ -64,7 +63,7 @@ export function registerOrgSandboxJoinRoutes<T extends { Variables: OrgRouteVari
         400: jsonResponse("Invalid request.", invalidRequestSchema),
         401: jsonResponse("Sign in first.", unauthorizedSchema),
         403: jsonResponse("Verify your email first, or this account was removed from the sandbox.", forbiddenSchema),
-        404: jsonResponse("Unknown link, or sandbox organizations are turned off.", notFoundSchema),
+        404: jsonResponse("Unknown link, or sandbox organizations are unavailable on this deployment.", notFoundSchema),
         409: jsonResponse("The sandbox is closed, ended, full, or limited to other email domains.", errorSchema),
         429: jsonResponse("Too many attempts.", errorSchema),
       },
@@ -72,7 +71,7 @@ export function registerOrgSandboxJoinRoutes<T extends { Variables: OrgRouteVari
     userSessionRoute(),
     jsonValidator(tokenSchema),
     async (c) => {
-      if (!await deploymentFeatureEnabled("sandboxOrgs")) return c.json(notFound, 404)
+      if (env.features.deployment !== "cloud") return c.json(notFound, 404)
       const user = c.get("user")
       const retryAfter = await checkRateLimit(`sandbox-join:${user.id}`, JOIN_RATE_LIMIT_MAX, JOIN_RATE_LIMIT_WINDOW_MS, Date.now())
       if (retryAfter !== null) return c.json({ error: "rate_limited", message: "Too many attempts. Try again in a few minutes." }, 429)

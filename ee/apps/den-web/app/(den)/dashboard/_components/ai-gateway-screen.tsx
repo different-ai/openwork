@@ -31,7 +31,7 @@ export type AiGatewayTab = "overview" | "ai-providers" | "auto-router" | "limits
 const AI_GATEWAY_TABS: readonly TabItem<AiGatewayTab>[] = [
   { value: "overview", label: "Overview", icon: LayoutDashboard },
   { value: "ai-providers", label: "AI Providers", icon: Plug },
-  { value: "auto-router", label: "Auto Router", icon: Route },
+  { value: "auto-router", label: "Smart Model Router", icon: Route },
   { value: "limits", label: "Limits", icon: SlidersHorizontal },
   { value: "users-and-teams", label: "Users & Teams", icon: Users },
   { value: "openwork-models", label: "OpenWork Models", icon: Sparkles },
@@ -114,7 +114,7 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
   const router = useRouter();
   const searchParams = useSearchParams();
   const autoRouterEnabled = orgFeatureEnabled(orgContext, "autoRouter");
-  // Auto Router sits right after AI Providers, only for organizations with the feature.
+  // Smart Model Router sits right after AI Providers, only for organizations with the feature.
   const tabs = autoRouterEnabled ? AI_GATEWAY_TABS : AI_GATEWAY_TABS.filter((item) => item.value !== "auto-router");
   const nestedContent = providerContent ?? pageContent;
   const nestedTab = providerContent !== undefined ? "ai-providers" : pageTab;
@@ -168,7 +168,6 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
                           orgSlug={orgSlug}
                           teams={orgContext.teams}
                           members={orgContext.members}
-                          showRemovedProviders={orgFeatureEnabled(orgContext, "gatewayProviderRemovalLimits")}
                         />
                       </>
                     ) : null}

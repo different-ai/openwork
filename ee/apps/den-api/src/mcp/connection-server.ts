@@ -384,7 +384,7 @@ export function createConnectionServerHandler(input: { revision: InventoryRevisi
 
 export type ConnectionServerRouteDeps = {
   verify: (request: Request, requestId: string) => Promise<McpPrincipal | Response>
-  features: (organizationId: string, userId: string) => Promise<Pick<FeatureMap, "connectionMcpServers" | "managedDeployments" | "remoteSessionSubagents" | "outlookAttachments">>
+  features: (organizationId: string, userId: string) => Promise<Pick<FeatureMap, "connectionMcpServers" | "managedDeployments" | "outlookAttachments">>
   member: typeof resolveMcpMemberIdentity
   catalog: (app: Hono, env: unknown) => Promise<readonly McpToolOperation[]>
   sources: ConnectionServerSources

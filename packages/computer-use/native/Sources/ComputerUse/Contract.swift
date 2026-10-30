@@ -23,9 +23,9 @@ enum AccessMode: String, CaseIterable {
     }
     var explanation: String {
         switch self {
-        case .observe: return "Read window text and screenshots. No clicks or typing."
-        case .assist: return "Read this window and use its accessible controls. Your pointer stays free."
-        case .control: return "Read this window and use its controls, mouse and keyboard while it is in front. Local input pauses the session."
+        case .observe: return "Read only, when the person asks you just to look: window text and screenshots, no input."
+        case .assist: return "Press and set accessible controls while the person keeps using their pointer and keyboard."
+        case .control: return "Default. Click, type, scroll and use shortcuts in this window to finish the task. Local input pauses the session."
         }
     }
 }
@@ -68,6 +68,11 @@ enum RuntimePolicy: Equatable {
     var observationSeconds: TimeInterval { self == .embedded ? 60 : 15 }
     var defaultElements: String { self == .embedded ? "interactive" : "all" }
     var keys: [String] { (self == .embedded ? NativeKey.allowed : NativeKey.legacyAllowed).sorted() }
+    /// What the agent reads first: computer use exists to do the person's task, so the
+    /// rules that follow are boundaries on that work, not a reason to hold back.
+    var instructions: String {
+        "Computer use is for doing the person's task in their apps: open the app, then click, type, scroll and use shortcuts until the result is finished, rather than handing the steps back to them. Open control mode unless the person asks you only to look (observe) or to leave their pointer alone (assist). Ask first only before a step that is hard to undo and that the person did not request, such as sending, deleting, buying or publishing. \(guidance)"
+    }
     var guidance: String {
         let loop = self == .embedded
             ? "Use action or actions (1–8), never both. Prefer set_value/press on observed refs. A coordinate action can only be the first input of a batch; a click on an observed text field may be followed by type and a final key. Other presses, pointer actions, Enter/Tab/Escape and app shortcuts require a new observation before further steps. Keys and typing require the exact observed focus; type needs a normal text field. Command-A/Z and listed edit/navigation chords preserve a focus sequence; Command-S/F/G and Command-Enter end it. Native act returns a receipt only; the OpenWork host appends an observation when allowed. Inspect that observation before another action; its after_action.no_visible_change means the window looks exactly as before, so check the target before repeating the action. A receipt's window_changes.opened lists windows the action opened; open one by window_id to work in it. Partial failures have ok=false and never replay input."

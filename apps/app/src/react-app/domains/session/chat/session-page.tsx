@@ -101,6 +101,7 @@ import { FloatingSlotProvider, SessionFloatingLayer } from "../panel/floating-sl
 import { useDesktopFeature } from "../status/use-desktop-feature";
 import { CloudComputerControl } from "../computer/cloud-computer-control";
 import { ComputerControl } from "../computer/computer-control";
+import { useComputerSessionHistoryStore } from "@/components/chat/computer-session-history-store";
 import { useComputerEndTurn } from "../computer/computer-store";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
@@ -313,6 +314,10 @@ export type SessionPageProps = {
   /** Standalone pages use the main canvas instead of the inset conversation pane. */
   primarySurface?: "flat";
   primaryTitle?: string;
+  /** Replaces the header's title, e.g. a task on another computer's `Chat / Task` breadcrumb. */
+  primaryHeader?: React.ReactNode;
+  /** Open a task on another computer in the main pane (`remoteSessionHelperView`). */
+  onOpenRemoteTask?: (threadKey: string) => void;
   terminalOpen?: boolean;
   onTerminalOpenChange?: (open: boolean) => void;
   onSessionTabsChange?: (tabs: OpenSessionTab[]) => void;
@@ -634,12 +639,10 @@ export function SessionPage(props: SessionPageProps) {
     void (window as Window).__OPENWORK_ELECTRON__?.browser?.setVisibleSession?.(props.selectedSessionId ?? null);
   }, [props.selectedSessionId]);
 
-  // Floating / side / full-screen browser, behind its feature flag. Off, every
-  // action below reports "not handled" and the docked browser is unchanged.
+  // Floating / side / full-screen browser uses the native desktop host.
   // Declared after setVisibleSession so the host hears the session first.
-  const browserFloatingView = useDesktopFeature("browserFloatingView");
   const browserPresentation = useBrowserPresentationController({
-    enabled: browserFloatingView && isElectronRuntime(),
+    enabled: isElectronRuntime(),
     sessionKey: sidePanelSessionKey,
     visibleSessionId: props.selectedSessionId ?? null,
     sidePanel: activeSidePanel,
@@ -649,6 +652,10 @@ export function SessionPage(props: SessionPageProps) {
   // Computer use on this Mac, behind its feature flag: the header Computer
   // button, its floating view, in-chat requests and the hand-back at turn end.
   const computerUseFeature = useDesktopFeature("computerUse");
+  const computerHistoryFeature = useDesktopFeature("computerSessionHistory");
+  useEffect(() => {
+    useComputerSessionHistoryStore.getState().setEnabled(computerHistoryFeature);
+  }, [computerHistoryFeature]);
   const remoteComputersFeature = useDesktopFeature("remoteComputers");
   // The button hides itself when this computer can't run it and no VM is connected.
   const computerUse = computerUseFeature && isElectronRuntime();
@@ -1528,7 +1535,8 @@ export function SessionPage(props: SessionPageProps) {
           >
             <div className="flex min-w-0 items-center gap-3">
               {shellConfig.sidebar ? <MainSidebarControls onOpenSessionSearch={props.sidebar.onOpenSessionSearch} /> : null}
-              {parentSessionLink && !props.primarySlot && !hasMainContentTakeover ? (
+              {props.primaryHeader && !hasMainContentTakeover ? props.primaryHeader : null}
+              {!props.primaryHeader && parentSessionLink && !props.primarySlot && !hasMainContentTakeover ? (
                 <Tooltip>
                   <TooltipTrigger
                     render={
@@ -1550,6 +1558,7 @@ export function SessionPage(props: SessionPageProps) {
                   <TooltipContent>Back to parent chat</TooltipContent>
                 </Tooltip>
               ) : null}
+              {props.primaryHeader && !hasMainContentTakeover ? null : <>
               <h1 data-session-header-title className={cn("truncate font-medium text-dls-text", !isElectronRuntime() && !props.primaryTitle && !props.mainContentTitle && "max-lg:hidden", props.mainContentHeaderActionsRef ? "text-base leading-6" : "text-[13px]")}>
                 {props.primaryTitle
                   ? props.primaryTitle
@@ -1570,6 +1579,7 @@ export function SessionPage(props: SessionPageProps) {
                   <span className="max-w-40 truncate">{workspaceName}</span>
                 </span>
               ) : null}
+              </>}
               {props.developerMode && !props.mainContentHeaderActionsRef ? (
                 <span className="hidden text-[12px] text-dls-secondary lg:inline">
                   {props.headerStatus}
@@ -1887,6 +1897,7 @@ export function SessionPage(props: SessionPageProps) {
                             parentSessionTitle={parentSessionLink?.title}
                             onReturnToParent={parentSessionLink ? returnFromChild : undefined}
                             onOpenSubagentSession={openSubagentSession}
+                            onOpenRemoteTask={props.onOpenRemoteTask}
                           />
                         </div>
                       </div>

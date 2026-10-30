@@ -54,6 +54,7 @@ function nativeFixture() {
   let interrupts = 0
   let active = false
   let pendingPermission = false
+  let pendingForm = false
   let routing = "v2"
   let autoReply = false
   let loseCreateResponse = false
@@ -97,14 +98,29 @@ function nativeFixture() {
       return response({ data: {} })
     }
     if (path === `/session/${sessionId}/interrupt`) { interrupts += 1; active = false; return response({ data: { interrupted: true } }) }
-    if (path === `/session/${sessionId}/permission`) return response({ data: pendingPermission ? [{ id: "permission_fixture" }] : [] })
-    if (path === `/session/${sessionId}/form`) return response({ data: [] })
+    if (path === `/session/${sessionId}/permission`) {
+      return response({ data: pendingPermission ? [{ id: "permission_fixture", sessionID: sessionId, action: "bash", resources: ["pnpm test"] }] : [] })
+    }
+    if (path === `/session/${sessionId}/permission/permission_fixture/reply` && method === "POST" && pendingPermission) {
+      pendingPermission = false
+      return response({}, 200)
+    }
+    if (path === `/session/${sessionId}/form`) {
+      return response({ data: pendingForm ? [{ id: "form_fixture", sessionID: sessionId, metadata: { kind: "question" }, fields: [{
+        key: "branch", type: "string", title: "Branch", description: "Which branch should I use?",
+        options: [{ label: "Development", value: "dev", description: "The default branch" }, { label: "Release", value: "main" }], custom: false,
+      }] }] : [] })
+    }
+    if (path === `/session/${sessionId}/form/form_fixture/reply` && method === "POST" && pendingForm) {
+      pendingForm = false
+      return response({}, 200)
+    }
     return response({ message: "unexpected native path" }, 404)
   }
   return {
     calls, messages, fetchImpl, getLocalRuntime: async () => ({ baseUrl: "http://localhost:8787", token: localToken }),
     get created() { return created }, get sessionId() { return sessionId }, get interrupts() { return interrupts },
-    set pendingPermission(value) { pendingPermission = value }, set routing(value) { routing = value },
+    set pendingPermission(value) { pendingPermission = value }, set pendingForm(value) { pendingForm = value }, set routing(value) { routing = value },
     set active(value) { active = value }, set autoReply(value) { autoReply = value },
     set loseCreateResponse(value) { loseCreateResponse = value }, set localToken(value) { localToken = value },
   }
@@ -265,6 +281,75 @@ test("native observation never uses the previous answer for a follow-up and neve
   const page = await adapter.read(receipt, { from: "end", cursor: null, limit: 2 }, signal)
   assert.deepEqual(page.messages.map((message) => message.id), ["msg_newuser", "msg_newreply"])
   assert.equal(page.historyScope, "full")
+})
+
+test("a pending v2 question is read as plain text and answered by field key and option value, once", async () => {
+  const native = nativeFixture()
+  const adapter = createDesktopSessionAdapter(native)
+  const signal = new AbortController().signal
+  const receipt = await adapter.create(command(), signal)
+  await adapter.send(receipt, { prompt: "first turn", messageId: "msg_firstturn", model: null }, signal)
+  native.active = true
+  native.pendingForm = true
+  const pending = {
+    kind: "question", requestId: "form_fixture", questions: [{ header: "Branch", question: "Which branch should I use?", multiple: false, custom: false,
+      options: [{ label: "Development", description: "The default branch" }, { label: "Release", description: "" }] }],
+  }
+  const waiting = await adapter.observe(receipt, signal)
+  assert.equal(waiting.waitingFor, "question")
+  assert.deepEqual(waiting.pending, pending)
+  assert.deepEqual((await adapter.read(receipt, { from: "end", cursor: null, limit: 5 }, signal)).pending, pending)
+  await assert.rejects(adapter.answer(receipt, { kind: "question", requestId: "form_fixture", answers: [["Something else"]] }, signal), { code: "invalid_answer" })
+  await assert.rejects(adapter.answer(receipt, { kind: "question", requestId: "form_old", answers: [["Release"]] }, signal), { code: "stale_request" })
+  assert.equal(native.calls.some((call) => call.path.endsWith("/reply")), false)
+  await adapter.answer(receipt, { kind: "question", requestId: "form_fixture", answers: [["Release"]] }, signal)
+  const replies = native.calls.filter((call) => call.path.endsWith("/reply"))
+  assert.deepEqual(replies.map((call) => call.body), [{ answer: { branch: "main" } }])
+  await assert.rejects(adapter.answer(receipt, { kind: "question", requestId: "form_fixture", answers: [["Release"]] }, signal), { code: "stale_request" })
+})
+
+test("a pending permission is answered once through the native reply, never with always", async () => {
+  const native = nativeFixture()
+  const adapter = createDesktopSessionAdapter(native)
+  const signal = new AbortController().signal
+  const receipt = await adapter.create(command(), signal)
+  await adapter.send(receipt, { prompt: "first turn", messageId: "msg_firstturn", model: null }, signal)
+  native.active = true
+  native.pendingPermission = true
+  assert.deepEqual((await adapter.observe(receipt, signal)).pending,
+    { kind: "permission", requestId: "permission_fixture", title: "Run a command", detail: "", command: "pnpm test" })
+  await adapter.answer(receipt, { kind: "permission", requestId: "permission_fixture", decision: "once" }, signal)
+  const reply = native.calls.find((call) => call.path.endsWith("/permission/permission_fixture/reply"))
+  assert.deepEqual(reply.body, { decision: "once", reply: "once" })
+  await assert.rejects(adapter.answer(receipt, { kind: "permission", requestId: "permission_fixture", decision: "once" }, signal), { code: "stale_request" })
+})
+
+test("a v1 question and permission reply on the workspace's own reply routes", async () => {
+  const calls = []
+  let question = true
+  let permission = true
+  const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
+  const client = createHeadlessThreadClient({
+    baseUrl: "http://localhost:8787", token: "fixture-token", workspaceId: "workspace_fixture", engine: "v1",
+    fetch: async (input, init = {}) => {
+      const url = new URL(String(input))
+      calls.push({ path: url.pathname, method: init.method ?? "GET", body: init.body ? JSON.parse(init.body) : null })
+      if (url.pathname.endsWith("/opencode/permission")) return response(permission ? [{ id: "per_v1", sessionID: "ses_v1", permission: "edit", patterns: ["notes.md"] }, { id: "per_other", sessionID: "ses_other", permission: "bash", patterns: ["rm"] }] : [])
+      if (url.pathname.endsWith("/opencode/question")) return response(question ? [{ id: "que_v1", sessionID: "ses_v1", questions: [{ header: "Size", question: "How long?", options: [{ label: "Short" }, { label: "Long" }], multiple: true }] }] : [])
+      if (url.pathname.endsWith("/opencode/permission/per_v1/reply")) { permission = false; return response(true) }
+      if (url.pathname.endsWith("/opencode/question/que_v1/reply")) { question = false; return response(true) }
+      return response({ message: "unexpected" }, 404)
+    },
+  })
+  assert.deepEqual(await client.getThreadPending("ses_v1"), { kind: "permission", requestId: "per_v1", title: "Edit files", detail: "notes.md" })
+  await assert.rejects(client.answerThread("ses_v1", { kind: "permission", requestId: "per_other", decision: "once" }), { code: "stale_request" })
+  await client.answerThread("ses_v1", { kind: "permission", requestId: "per_v1", decision: "reject" })
+  assert.equal((await client.getThreadPending("ses_v1"))?.kind, "question")
+  await client.answerThread("ses_v1", { kind: "question", requestId: "que_v1", answers: [["Short", "A custom note"]] })
+  assert.deepEqual(calls.filter((call) => call.method === "POST").map((call) => [call.path, call.body]), [
+    ["/workspace/workspace_fixture/opencode/permission/per_v1/reply", { reply: "reject" }],
+    ["/workspace/workspace_fixture/opencode/question/que_v1/reply", { answers: [["Short", "A custom note"]] }],
+  ])
 })
 
 test("native stop compares the current turn; restart probes the original owning engine", async () => {
@@ -502,4 +587,24 @@ test("an engine policy the local server cannot take yet never stops the runner f
   await eventually(() => den.calls.some((call) => call.path.endsWith("/complete")))
   assert.ok(den.calls.some((call) => call.path.endsWith("/claim")), "the Automation was still claimed")
   assert.deepEqual(policies[0], { upgrade: true }, "the policy was still offered to the local server")
+})
+
+test("native observation reports the step the current turn ran last, only while it works", async () => {
+  const native = nativeFixture()
+  const adapter = createDesktopSessionAdapter(native)
+  const signal = new AbortController().signal
+  const receipt = await adapter.create(command(), signal)
+  await adapter.send(receipt, { prompt: "check the notes", messageId: "msg_steps", model: null }, signal)
+  native.messages.push({ id: "msg_working", role: "assistant", content: [
+    { type: "tool", id: "prt_ls", name: "bash", state: { status: "completed", input: { command: "ls docs", description: "list the release notes" } } },
+  ] })
+  native.active = true
+  const working = await adapter.observe(receipt, signal)
+  assert.equal(working.status, "running")
+  assert.equal(working.latestStep, "Ran List the release notes")
+  native.active = false
+  native.messages.push({ id: "msg_done", role: "assistant", text: "done" })
+  const done = await adapter.observe(receipt, signal)
+  assert.equal(done.status, "idle")
+  assert.equal(done.latestStep, null)
 })

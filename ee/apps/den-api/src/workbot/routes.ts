@@ -408,7 +408,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         guidedNavigation: features.workbotWorkspaceAssistant,
         // The limit card and model recovery links: included models need them as much as upgrades do.
         usageRecovery: includedModels,
-        activationChecklist: features.activationChecklist,
+        activationChecklist: true,
         sideChats: true,
         commandPalette: true,
         model,
@@ -429,21 +429,19 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
     if (!resolved.scopes.has(DEN_MCP_READ_SCOPE) || (write && !resolved.scopes.has(DEN_MCP_WRITE_SCOPE))) return c.json({ error: "insufficient_scope" }, 403)
     const organizationContext = await getOrganizationContextForUser({ userId: normalizeDenTypeId("user", resolved.principal.userId), organizationId: resolved.organization.id })
     if (!organizationContext) return c.json({ error: "membership_revoked", message: "This account is no longer a member of the workspace." }, 401)
-    if (!organizationContext.features.activationChecklist) return c.json({ error: "feature_disabled", feature: "activationChecklist" }, 404)
     const memberTeams = await listTeamsForMember({ organizationId: resolved.organization.id, memberId: normalizeDenTypeId("member", resolved.memberId) })
     return { organizationContext, memberTeams, resolved }
   }
   const activationResponses = {
     401: jsonResponse("The token or membership is invalid.", unauthorizedSchema),
     403: jsonResponse("The sign-in grant does not allow this.", z.object({ error: z.literal("insufficient_scope") })),
-    404: jsonResponse("The checklist is off for this workspace.", z.object({ error: z.literal("feature_disabled"), feature: z.string() })),
   }
   app.get(
     "/v1/workbot/activation",
     describeWorkbotRoute({
       tags: ["Workbot"], operationId: "getWorkbotActivation", "x-mcp": false,
       summary: "The member's Get set up checklist, for Workbot",
-      description: "For the Workbot app only. With a live Workbot member token (read scope), returns the same six activation steps as GET /v1/me/activation for the token's organization and member. Off unless the activationChecklist feature is on.",
+      description: "For the Workbot app only. With a live Workbot member token (read scope), returns the same six activation steps as GET /v1/me/activation for the token's organization and member.",
       responses: { 200: jsonResponse("The member's checklist.", activationResponseSchema), ...activationResponses },
     }),
     tokenRoute,
@@ -458,7 +456,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
     describeWorkbotRoute({
       tags: ["Workbot"], operationId: "recordWorkbotActivationEvent", "x-mcp": false,
       summary: "Report a Get set up step Workbot observed",
-      description: "For the Workbot app only. With a live Workbot member token (read and write scopes), records the member's first Workbot answer or that they hid the checklist, then returns the updated checklist. Repeats are ignored. Off unless the activationChecklist feature is on.",
+      description: "For the Workbot app only. With a live Workbot member token (read and write scopes), records the member's first Workbot answer or that they hid the checklist, then returns the updated checklist. Repeats are ignored.",
       responses: { 200: jsonResponse("The updated checklist.", activationResponseSchema), 400: jsonResponse("The event is not one Workbot may report.", signedOutSchema), ...activationResponses },
     }),
     tokenRoute,

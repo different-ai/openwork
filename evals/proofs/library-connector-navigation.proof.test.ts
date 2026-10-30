@@ -8,14 +8,14 @@ const test = spec.world(libraryConnectorNavigation, {
   resources: { surfaces: ["web"], services: ["den", "mock"] },
 });
 
-// DESIGN P3/S3: skill instructions stay behind native disclosures; P10: every
-// changed surface and the unassigned boundary have a real, captioned screenshot.
-test("an owner opens assigned connectors in My Library, signs out only their account, and reads a plugin's skills inline", async ({ world, user, probe, step, evidence }) => {
+// DESIGN P3/S3: the compact list only navigates; skill instructions stay behind
+// native disclosures on details. P10: changed surfaces have captioned screenshots.
+test("an owner opens assigned connectors in My Library, signs out only their account, and reads skills on plugin details", async ({ world, user, probe, step, evidence }) => {
   const manage = `/dashboard/mcp-connections/${world.connection.id}`;
   const libraryConnector = `/dashboard/library/connectors/${world.connection.id}`;
   const skillSummary = 'details[data-skill-preview] > summary';
 
-  await step("before: the owner signs in, but the connector page has no personal Library actions", async () => {
+  await step("the owner signs in to their own connector account", async () => {
     await user.see({ role: "heading", label: "Review notes" }, { timeoutMs: 90_000 });
     expect(await world.accounts()).toMatchObject({ owner: false, peer: true });
     await user.click({ role: "button", label: "Sign in" });
@@ -24,26 +24,16 @@ test("an owner opens assigned connectors in My Library, signs out only their acc
     });
     const fingerprints = await world.tokenFingerprints();
     expect(fingerprints).toHaveLength(2);
-    await user.notSee({ role: "link", label: "Open in My Library" });
-    await user.click({ role: "button", label: "More for Review notes" });
-    await user.notSee({ role: "menuitem", label: "Sign out of your account" });
-    const enabled = await world.navigationEnabled();
-    evidence.recordAssertionEvidence("Both people are signed in before the rollout, with no personal actions on the admin page", `rollout=${enabled}; owner=${accounts.owner}; teammate=${accounts.peer}; distinct OAuth accounts=${fingerprints.length}`, !enabled && accounts.owner && accounts.peer && fingerprints.length === 2);
-    expect(enabled).toBe(false);
-    await user.screenshot();
-    await user.press("Escape");
+    evidence.recordAssertionEvidence("Both people have distinct OAuth accounts", `owner=${accounts.owner}; teammate=${accounts.peer}; accounts=${fingerprints.length}`, accounts.owner && accounts.peer && fingerprints.length === 2);
   });
 
-  await step("after: enabling the rollout adds Open in My Library and a sign-out scoped to the owner's account", async () => {
-    await world.setNavigation(true);
-    await user.reload();
+  await step("personal Library actions are available by default", async () => {
     await user.see({ role: "link", label: "Open in My Library" }, { timeoutMs: 60_000 });
     await user.click({ role: "button", label: "More for Review notes" });
     await user.see({ role: "menuitem", label: "Sign out of your account" });
     await user.see({ role: "menuitem", label: "Sign everyone out" });
     const assigned = await world.assignedConnectionIds();
-    const enabled = await world.navigationEnabled();
-    evidence.recordAssertionEvidence("Personal actions are available for the owner's assigned connector", `rollout=${enabled}; connector in My Library=${assigned.includes(world.connection.id)}`, enabled && assigned.includes(world.connection.id));
+    evidence.recordAssertionEvidence("Personal actions are available for the owner's assigned connector", `connector in My Library=${assigned.includes(world.connection.id)}`, assigned.includes(world.connection.id));
     expect(assigned).toContain(world.connection.id);
     await user.screenshot();
     await user.press("Escape");
@@ -72,6 +62,8 @@ test("an owner opens assigned connectors in My Library, signs out only their acc
 
   await step("the Manage Connectors menu also opens the personal connector", async () => {
     await user.navigate(world.url("/dashboard/mcp-connections"));
+    // Compact rows reveal their menu on hover (or keyboard focus).
+    await user.hover({ role: "link", label: /^Review notes/ });
     await user.see({ role: "button", label: "More for Review notes" }, { timeoutMs: 60_000 });
     await user.click({ role: "button", label: "More for Review notes" });
     await user.see({ role: "menuitem", label: "Open in My Library" });
@@ -151,96 +143,110 @@ test("an owner opens assigned connectors in My Library, signs out only their acc
     await user.screenshot();
   });
 
-  await step("My Library loads a plugin's two skills only when the owner expands its skill count", async () => {
+  await step("the compact Library lists plugins without disclosures or fetching their details", async () => {
     // A full page navigation gives this list a fresh query cache: preceding detail
-    // visits cannot accidentally satisfy the lazy-load witness.
+    // visits cannot accidentally satisfy the no-eager-detail-read witness.
     await user.navigate(world.url("/dashboard/library"));
-    await user.see({ text: world.pluginName }, { timeoutMs: 60_000 });
-    const readsBefore = await world.pluginReads();
-    expect(readsBefore).toBe(0);
-    const summaries = await probe.dom(`summary[aria-label="2 skills in ${world.pluginName}"]`);
-    expect(summaries.elements).toHaveLength(1);
-    expect(summaries.elements[0]?.text).toBe("2 skills");
-    await user.notSee({ text: "Plan a review" });
+    await user.see({ testId: "library-compact-sections" }, { timeoutMs: 60_000 });
+    await user.see({ text: world.pluginName });
+    await user.see({ text: world.singlePluginName });
+    const previews = await probe.dom('[data-testid="library-screen"] details, [data-testid="library-screen"] [data-skill-steps]');
+    expect(previews.elements).toHaveLength(0);
     expect((await probe.dom(skillSummary)).elements).toHaveLength(0);
-    expect(await world.pluginReads()).toBe(readsBefore);
+    await user.notSee({ text: "Plan a review" });
+    await user.notSee({ text: world.skillBody });
+    const readsBefore = await world.pluginReads();
+    const singleReadsBefore = await world.pluginReads(world.singlePluginId);
+    evidence.recordAssertionEvidence("The compact list has no inline skill previews and fetches neither plugin's detail", `inline previews=${previews.elements.length}; toolkit detail reads=${readsBefore}; single-skill detail reads=${singleReadsBefore}`, previews.elements.length === 0 && readsBefore === 0 && singleReadsBefore === 0);
+    expect(readsBefore).toBe(0);
+    expect(singleReadsBefore).toBe(0);
     await user.screenshot();
-    await user.click({ testId: `library-plugin-skills-${world.pluginId}` });
-    await user.see({ text: "Plan a review" }, { timeoutMs: 30_000 });
+  });
+
+  await step("opening the plugin row fetches its detail once and reveals both skills there", async () => {
+    // Nothing has fetched the detail while the list was on screen, including
+    // while its screenshot settled. The row click is the loading boundary.
+    expect(await world.pluginReads()).toBe(0);
+    await user.click({ role: "link", label: /^Review toolkit/ });
+    await user.see({ testId: "plugin-page" }, { timeoutMs: 30_000 });
+    await user.see({ text: "Plan a review" });
     await user.see({ text: "Capture decisions" });
+    await user.notSee({ text: world.skillBody });
+    expect((await probe.dom(skillSummary)).elements).toHaveLength(2);
     const readsAfter = await probe.eventually(() => world.pluginReads(), {
-      within: 15_000, label: "expanding Skills fetches the plugin", until: count => count > readsBefore,
+      within: 15_000, label: "opening the row fetches the plugin detail", until: count => count > 0,
     });
     await user.click({ text: "Plan a review" });
     await user.see({ text: world.skillBody });
     const bodies = (await probe.dom("details[data-skill-preview][open] pre")).elements.map(element => element.text);
-    evidence.recordAssertionEvidence("Expanding the skill count loads the plugin once and reveals both skills without navigation", `plugin detail reads added=${readsAfter - readsBefore}; full body displayed=${bodies.includes(world.skillBody)}; destination=${new URL(await probe.url()).pathname}`, readsAfter - readsBefore === 1 && bodies.includes(world.skillBody) && new URL(await probe.url()).pathname === "/dashboard/library");
-    expect(readsAfter - readsBefore).toBe(1);
+    const route = new URL(await probe.url()).pathname;
+    evidence.recordAssertionEvidence("The row opens a dedicated detail page with two skills and their full instructions", `plugin detail reads=${readsAfter}; full body displayed=${bodies.includes(world.skillBody)}; destination=${route}`, readsAfter === 1 && bodies.includes(world.skillBody) && route === `/dashboard/library/plugins/${world.pluginId}`);
+    expect(readsAfter).toBe(1);
     expect(bodies).toContain(world.skillBody);
-    expect(new URL(await probe.url()).pathname).toBe("/dashboard/library");
+    expect(route).toBe(`/dashboard/library/plugins/${world.pluginId}`);
     await user.screenshot();
   });
 
-  await step("a failed skill preview keeps the plugin in My Library and offers Try again", async () => {
+  await step("a failed plugin detail explains how to recover without showing stale skills", async () => {
     await world.failPluginReads();
-    await user.navigate(world.url("/dashboard/library"));
-    await user.see({ text: world.pluginName }, { timeoutMs: 60_000 });
-    await user.click({ testId: `library-plugin-skills-${world.pluginId}` });
-    await user.see({ text: "Skills could not load." }, { timeoutMs: 30_000 });
-    await user.see({ role: "button", label: "Try again" });
-    const alerts = (await probe.dom('[role="alert"]')).elements.map(element => element.text).join(" ");
-    evidence.recordAssertionEvidence("The failed request has an inline recovery without removing the plugin", `inline message=${alerts}; destination=${new URL(await probe.url()).pathname}`, alerts.includes("Skills could not load.") && new URL(await probe.url()).pathname === "/dashboard/library");
-    expect(alerts).toContain("Skills could not load.");
+    await user.navigate(world.url(`/dashboard/library/plugins/${world.pluginId}`));
+    await user.see({ role: "heading", label: "It did not load" }, { timeoutMs: 30_000 });
+    await user.see({ text: "Reload the page to try again." });
+    await user.notSee({ text: world.skillBody });
+    const previews = await probe.dom(skillSummary);
+    const route = new URL(await probe.url()).pathname;
+    evidence.recordAssertionEvidence("The failed detail offers reload recovery and does not leave stale skill instructions visible", `skill disclosures=${previews.elements.length}; destination=${route}`, previews.elements.length === 0 && route === `/dashboard/library/plugins/${world.pluginId}`);
+    expect(previews.elements).toHaveLength(0);
+    expect(route).toBe(`/dashboard/library/plugins/${world.pluginId}`);
     await user.screenshot();
   });
 
-  await step("Try again restores the skill preview in place", async () => {
+  await step("reloading the detail restores its published instructions", async () => {
     await world.restorePluginReads();
-    await user.click({ role: "button", label: "Try again" });
-    await user.see({ text: "Plan a review" }, { timeoutMs: 30_000 });
+    await user.reload();
+    await user.see({ testId: "plugin-page" }, { timeoutMs: 30_000 });
+    await user.see({ text: "Plan a review" });
+    await user.notSee({ text: world.skillBody });
     await user.click({ text: "Plan a review" });
     await user.see({ text: world.skillBody });
-    await user.notSee({ text: "Skills could not load." });
+    await user.notSee({ role: "heading", label: "It did not load" });
     const bodies = (await probe.dom("details[data-skill-preview][open] pre")).elements.map(element => element.text);
-    evidence.recordAssertionEvidence("Retry shows the published instructions without leaving My Library", `full body displayed=${bodies.includes(world.skillBody)}`, bodies.includes(world.skillBody));
+    evidence.recordAssertionEvidence("Reload recovers the same plugin's complete instructions", `full body displayed=${bodies.includes(world.skillBody)}; destination=${new URL(await probe.url()).pathname}`, bodies.includes(world.skillBody) && new URL(await probe.url()).pathname === `/dashboard/library/plugins/${world.pluginId}`);
     expect(bodies).toContain(world.skillBody);
+    expect(new URL(await probe.url()).pathname).toBe(`/dashboard/library/plugins/${world.pluginId}`);
     await user.screenshot();
   });
 
-  await step("a one-skill plugin opens straight to its steps, previewing long steps first", async () => {
-    await user.see({ text: world.singlePluginName });
-    const summary = await probe.dom(`[data-testid="library-plugin-skills-${world.singlePluginId}"]`);
-    expect(summary.elements[0]?.text).toBe("Steps");
-    await user.click({ testId: `library-plugin-skills-${world.singlePluginId}` });
-    await user.see({ text: world.singleFirstLine }, { timeoutMs: 30_000 });
+  await step("a one-skill row opens its detail, where long steps expand without duplicate skill rows", async () => {
+    await user.navigate(world.url("/dashboard/library"));
+    await user.see({ text: world.singlePluginName }, { timeoutMs: 30_000 });
+    expect((await probe.dom('[data-testid="library-screen"] details')).elements).toHaveLength(0);
+    expect(await world.pluginReads(world.singlePluginId)).toBe(0);
+    await user.click({ role: "link", label: /^Meeting follow-up/ });
+    await user.see({ testId: "plugin-page" }, { timeoutMs: 30_000 });
+    await user.see({ text: "Write a follow up" });
+    expect((await probe.dom(skillSummary)).elements).toHaveLength(1);
+    await user.notSee({ text: world.singleFirstLine });
+    await user.click({ text: "Write a follow up" });
+    await user.see({ text: world.singleFirstLine });
     await user.see({ role: "button", label: "Show all steps" });
     // Read the steps block itself: page-text matching only scans the top of a long page.
-    const singleSteps = `details:has(> summary[data-testid="library-plugin-skills-${world.singlePluginId}"]) pre`;
+    const singleSteps = "details[data-skill-preview][open] pre";
     const previewText = (await probe.dom(singleSteps)).elements.map(element => element.text).join("\n");
     expect(previewText).toContain(world.singleFirstLine);
     expect(previewText).not.toContain(world.singleLastLine);
-    // The skill is not listed again inside itself as a nested skill row.
-    const nested = (await probe.dom(`details:has(> summary[data-testid="library-plugin-skills-${world.singlePluginId}"]) details[data-skill-preview]`)).elements.length;
+    const nested = (await probe.dom("details[data-skill-preview] details[data-skill-preview]")).elements.length;
     await user.screenshot();
     await user.click({ role: "button", label: "Show all steps" });
     await user.see({ role: "button", label: "Show less" });
     const fullText = (await probe.dom(singleSteps)).elements.map(element => element.text).join("\n");
     const lastShown = fullText.includes(world.singleLastLine);
-    evidence.recordAssertionEvidence("A one-skill plugin shows its steps directly, with long steps behind Show all steps", `label=${summary.elements[0]?.text}; nested skill rows=${nested}; last step in preview=${previewText.includes(world.singleLastLine)}; last step after Show all steps=${lastShown}`, summary.elements[0]?.text === "Steps" && nested === 0 && !previewText.includes(world.singleLastLine) && lastShown);
+    const route = new URL(await probe.url()).pathname;
+    evidence.recordAssertionEvidence("The single skill's detail keeps long instructions behind Show all steps without duplicating the skill", `nested skill rows=${nested}; last step in preview=${previewText.includes(world.singleLastLine)}; last step after Show all steps=${lastShown}; destination=${route}`, nested === 0 && !previewText.includes(world.singleLastLine) && lastShown && route === `/dashboard/library/plugins/${world.singlePluginId}`);
     expect(nested).toBe(0);
     expect(lastShown).toBe(true);
+    expect(route).toBe(`/dashboard/library/plugins/${world.singlePluginId}`);
     await user.screenshot();
   });
 
-  await step("turning the rollout off restores the Library list without changing accounts or access", async () => {
-    await world.setNavigation(false);
-    await user.reload();
-    await user.see({ text: world.pluginName }, { timeoutMs: 60_000 });
-    expect((await probe.dom(`[data-testid="library-plugin-skills-${world.pluginId}"]`)).elements).toHaveLength(0);
-    const accounts = await world.accounts();
-    evidence.recordAssertionEvidence("The rollout can be reverted without signing out a teammate or removing access", `rollout=${await world.navigationEnabled()}; owner=${accounts.owner}; teammate=${accounts.peer}; connector exists=${accounts.exists}; shared=${accounts.orgWide}`, accounts.peer && accounts.exists && accounts.orgWide);
-    expect(await world.navigationEnabled()).toBe(false);
-    expect(accounts).toEqual({ owner: false, peer: true, exists: true, orgWide: true });
-    await user.screenshot();
-  });
 });

@@ -2,11 +2,10 @@ import type { ExternalMcpConnection } from "./mcp-connections-data";
 
 /** Manage access is not a grant to use a connector. Only trust the usable list. */
 export function assignedConnectorForLibrary(
-  enabled: boolean,
   connectionId: string,
   usable: readonly ExternalMcpConnection[] | undefined,
 ): ExternalMcpConnection | undefined {
-  return enabled ? usable?.find((connection) => connection.id === connectionId) : undefined;
+  return usable?.find((connection) => connection.id === connectionId);
 }
 
 /**
@@ -23,6 +22,6 @@ export function personalConnectorDisconnectLabel(connection: ExternalMcpConnecti
  * My Library itself (Share, Remove); Manage › Connectors needs `connections.view`,
  * so only people who can open that page get the link.
  */
-export function canOpenConnectorManagement(enabled: boolean, access: { canViewAllConnections: boolean } | null): boolean {
-  return enabled && access?.canViewAllConnections === true;
+export function canOpenConnectorManagement(access: { canViewAllConnections: boolean } | null): boolean {
+  return access?.canViewAllConnections === true;
 }

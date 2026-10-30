@@ -5,7 +5,7 @@ import { denFetch } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
 import { readHeadlessRuntimeManifest, resolveHeadlessWorldRuntimePaths } from "@openwork/world";
 import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 import { isRecord } from "./openwork-server-cli.ts";
 
 export interface ManagedModel {
@@ -27,7 +27,7 @@ export async function liveProviderSync(seed: Seed) {
     org: { admin: { name: "Avery Owner" }, members: { riley: { name: "Riley Member" }, jordan: { name: "Jordan Member" } } },
     env: { GATEWAY_ENABLED: "true", GATEWAY_PROXY_BASE_URL: gatewayUrl, GATEWAY_PUBLIC_BASE_URL: gatewayUrl },
   });
-  const organizationId = await enableOrganizationCapabilities(seed, den.admin, { liveProviderSync: true });
+  const organizationId = await seededOrganizationId(seed, den.admin);
   const adminRequest = (path: string, method = "GET", body?: unknown) => denFetch(den.ref, path, {
     method,
     headers: { authorization: `Bearer ${den.admin.token}`, "x-openwork-org-id": organizationId },

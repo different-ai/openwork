@@ -32,7 +32,7 @@ test("the pinned native engine discovers and runs OpenWork group queries and com
   const directory = join(root, "project");
   await mkdir(home); await mkdir(directory);
   const { assignments, writes, request } = groupHost();
-  const bridge = await createV2ContextBridge(request, undefined, { nativeAffordanceCodeMode: async () => true });
+  const bridge = await createV2ContextBridge(request);
   let observed: unknown;
   let failure: unknown;
   const model = createServer(async (req, res) => {

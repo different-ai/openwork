@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import type { McpServer } from "@modelcontextprotocol/server"
 import type { McpAppToolBinding, McpAppToolDeclaration, PrepareMcpAppInput, PrepareMcpAppOutput } from "@openwork/types/mcp-app"
 import { generatedAppLibrariesNextStep } from "../generated-app-libraries.js"
+import { runsWithoutClick } from "./app-tool-access.js"
 
 /**
  * OpenWork's opinionated App starters. prepare_app returns the one that fits
@@ -17,17 +18,17 @@ export const APP_STARTER_RESOURCE_ROOT = "openwork://apps/starters"
 export const appStarterResourceUri = (pattern: AppStarterPattern) => `${APP_STARTER_RESOURCE_ROOT}/${pattern}.json`
 
 /**
- * A preparation never runs a tool or saves an App. `libraries` is the
- * editor's mcpAppLibraries feature; only then does it list what may be imported.
+ * A preparation never runs a tool or saves an App. It lists the built-in
+ * libraries that may be imported in an MCP App.
  */
-export function appAuthoringStarter(input: PrepareMcpAppInput, tools: McpAppToolBinding[], options: { libraries?: boolean } = {}): PrepareMcpAppOutput {
+export function appAuthoringStarter(input: PrepareMcpAppInput, tools: McpAppToolBinding[]): PrepareMcpAppOutput {
   const starter = appStarter(tools)
   return {
     preparationId: randomUUID(),
     title: input.title,
     tools,
     starter: { reactSource: starter.reactSource, cssSource: starter.cssSource },
-    nextSteps: options.libraries ? [...starter.nextSteps, generatedAppLibrariesNextStep()] : starter.nextSteps,
+    nextSteps: [...starter.nextSteps, generatedAppLibrariesNextStep()],
   }
 }
 
@@ -50,7 +51,7 @@ const MAX_OPTIONS = 20
 /** The pattern a set of verified tools calls for. */
 export function appStarterPattern(tools: McpAppToolBinding[]): AppStarterPattern {
   if (tools.length === 0) return "standalone"
-  return tools.some((tool) => !tool.readOnly) ? "action" : "lookup"
+  return tools.some((tool) => !runsWithoutClick(tool)) ? "action" : "lookup"
 }
 
 export function appStarter(tools: McpAppToolBinding[]) {
@@ -67,9 +68,9 @@ export function appStarter(tools: McpAppToolBinding[]) {
       ],
     }
   }
-  const change = pattern === "action" ? tools.find((tool) => !tool.readOnly) : undefined
+  const change = pattern === "action" ? tools.find((tool) => !runsWithoutClick(tool)) : undefined
   const load = change
-    ? tools.find((tool) => tool.readOnly && !starterTool(tool).fields.some((field) => field.required))
+    ? tools.find((tool) => runsWithoutClick(tool) && !starterTool(tool).fields.some((field) => field.required))
     : tools[0]
   const wired = [change, load].flatMap((tool) => tool ? [tool.name] : [])
   const unwired = tools.filter((tool) => !wired.includes(tool.name)).map((tool) => tool.name)
@@ -139,7 +140,7 @@ function schemaFields(schema: Record<string, unknown>, placement?: "path" | "que
 /** "create_invoice" → "Create invoice"; a read with no verb gets "Find" or "Refresh". */
 function actionLabel(tool: McpAppToolBinding): string {
   const label = humanize(tool.name)
-  if (!tool.readOnly) return label
+  if (!runsWithoutClick(tool)) return label
   if (/^(?:find|search|get|list|look|load|show|read|check|fetch|query|lookup)\b/iu.test(label)) {
     return label.replace(/^(?:get|list|load|fetch|query|read|lookup)\b/iu, "Show")
   }

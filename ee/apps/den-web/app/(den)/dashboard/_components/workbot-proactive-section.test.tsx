@@ -5,7 +5,7 @@ import { DEFAULT_AGENT_TEMPLATE, DEFAULT_WORKBOT_PROACTIVE_SETTINGS, type AgentR
 import { WorkbotProactivePanel } from "./workbot-proactive-section";
 import { previewTime } from "./workbot-proactive-preview";
 import { WorkbotProactiveHealthTable } from "./workbot-proactive-health";
-import { addSourceChange, addableTo, removeSourceChange, WorkbotProactiveSources } from "./workbot-proactive-sources";
+import { addSourceChange, addableTo, allowAppChange, coreAppRows, makeDefaultChange, removeSourceChange, WorkbotProactiveSources } from "./workbot-proactive-sources";
 
 const ready: WorkbotProactiveView = {
   settings: { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS, enabled: true },
@@ -13,19 +13,20 @@ const ready: WorkbotProactiveView = {
   slackReady: true,
   runnerReady: true,
   sourceConnections: {
-    calendar: [{ id: "google-workspace", name: "Google Calendar", url: "https://google.com" }],
-    email: [{ id: "google-workspace", name: "Gmail", url: "https://google.com" }],
-    chat: [{ id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp" }],
+    calendar: [{ id: "google-workspace", name: "Google Calendar", url: "https://google.com", connectedMembers: 4 }],
+    email: [{ id: "google-workspace", name: "Gmail", url: "https://google.com", connectedMembers: 4 }],
+    chat: [{ id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp", connectedMembers: null }],
     other: [
       { id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp" },
       { id: "emc_tracker", name: "Issue tracker", url: "https://mcp.linear.app/mcp" },
     ],
     all: [
-      { id: "google-workspace", name: "Google Workspace", url: "https://google.com", native: true, slots: ["calendar", "email"] },
-      { id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp", native: false, slots: ["calendar", "email", "chat", "other"] },
-      { id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp", native: false, slots: ["calendar", "email", "chat", "other"] },
-      { id: "emc_tracker", name: "Issue tracker", url: "https://mcp.linear.app/mcp", native: false, slots: ["calendar", "email", "chat", "other"] },
+      { id: "google-workspace", name: "Google Workspace", url: "https://google.com", native: true, slots: ["calendar", "email"], connectedMembers: 4 },
+      { id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp", native: false, slots: ["calendar", "email", "chat", "other"], connectedMembers: null },
+      { id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp", native: false, slots: ["calendar", "email", "chat", "other"], connectedMembers: null },
+      { id: "emc_tracker", name: "Issue tracker", url: "https://mcp.linear.app/mcp", native: false, slots: ["calendar", "email", "chat", "other"], connectedMembers: null },
     ],
+    defaults: { calendar: "google-workspace", email: "google-workspace", chat: "emc_slack" },
   },
 };
 
@@ -119,16 +120,30 @@ function withSources(view: WorkbotProactiveView, change: Partial<WorkbotProactiv
   return { ...view, settings: { ...view.settings, sources: { ...view.settings.sources, ...change } } };
 }
 
-const legacy = { id: "google-workspace", name: "Google Workspace", url: "https://google.com" };
-const personal = { id: "gws_personal", name: "Google Workspace - Personal", url: "https://google.com" };
+const legacy = { id: "google-workspace", name: "Google Workspace", url: "https://google.com", connectedMembers: 2 };
+const personal = { id: "gws_personal", name: "Google Workspace - Personal", url: "https://google.com", connectedMembers: 0 };
+const microsoft = { id: "m365_main", name: "Microsoft 365", url: "https://microsoft.com", connectedMembers: 9 };
 
-test("what agents read: each category with its sources, Add source, and Other context with each connection's policy", () => {
+/** Google Workspace and Microsoft 365 both serve calendar and email; Microsoft 365 is the default most members use. */
+const twoApps: WorkbotProactiveView = { ...ready, sourceConnections: {
+  calendar: [legacy, microsoft], email: [legacy, microsoft], chat: [microsoft], other: [],
+  all: [
+    { ...legacy, native: true, slots: ["calendar", "email"] },
+    { ...microsoft, native: true, slots: ["calendar", "email", "chat"] },
+    { id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp", native: false, slots: ["calendar", "email", "chat", "other"], connectedMembers: null },
+  ],
+  defaults: { calendar: microsoft.id, email: microsoft.id, chat: microsoft.id },
+} };
+
+test("what agents read: each category with what members use, its apps, Add source, and Other context with each connection's policy", () => {
   const html = sources();
   const view = text(html);
   assert.match(view, /What agents read/);
-  assert.match(row(html, "workbot-source-calendar"), /Calendar On for everyone/);
-  assert.match(row(html, "workbot-source-calendar-google-workspace"), /Google Workspace Remove/);
-  assert.match(row(html, "workbot-source-chat-emc_slack"), /Slack Remove/);
+  assert.match(row(html, "workbot-source-calendar"), /Calendar Everyone uses Google Workspace On for everyone/);
+  assert.match(row(html, "workbot-source-calendar-google-workspace"), /Google Workspace Default 4 connected/);
+  assert.match(switchFor(html, "Allow Google Workspace") ?? "", /aria-checked="true"/);
+  assert.match(row(html, "workbot-source-chat-emc_slack"), /Slack Default/);
+  assert.doesNotMatch(row(html, "workbot-source-chat-emc_slack"), /connected/, "a shared connection: no member count");
   assert.match(html, /aria-label="Add source to Calendar"/);
   assert.match(html, /aria-label="Add source to Other context"/);
   assert.match(row(html, "workbot-source-other-emc_notes"), /Meeting notes Members choose Remove/);
@@ -136,21 +151,56 @@ test("what agents read: each category with its sources, Add source, and Other co
   assert.match(view, /Read only\. Agents never send, edit or delete through these\./);
 });
 
-test("what agents read: a legacy and a newer Google Workspace are both listed and removable one at a time", () => {
+test("what agents read: with two apps allowed, members pick; the default has a badge and its switch waits for another default", () => {
+  const html = sources(twoApps);
+  const calendar = row(html, "workbot-source-calendar");
+  assert.match(calendar, /Calendar Members use Google Workspace or Microsoft 365 On for everyone/);
+  assert.match(row(html, "workbot-source-calendar-m365_main"), /Microsoft 365 Default 9 connected/);
+  assert.match(row(html, "workbot-source-calendar-google-workspace"), /Google Workspace 2 connected Make default/);
+  assert.doesNotMatch(row(html, "workbot-source-calendar-m365_main"), /Make default/, "the default isn't offered as default again");
+  assert.match(html, /aria-label="Make Google Workspace the default for Calendar"/);
+  const defaultSwitch = /data-testid="workbot-source-calendar-m365_main"[\s\S]*?<button[^>]*role="switch"[^>]*>/.exec(html)?.[0] ?? "";
+  assert.match(defaultSwitch, /aria-label="Allow Microsoft 365"/);
+  assert.match(defaultSwitch, /disabled=""/, "choose another default before turning the default off");
+  const otherSwitch = /data-testid="workbot-source-calendar-google-workspace"[\s\S]*?<button[^>]*role="switch"[^>]*>/.exec(html)?.[0] ?? "";
+  assert.doesNotMatch(otherSwitch, /disabled=""/);
+  assert.deepEqual(makeDefaultChange("calendar", legacy.id), { coreDefaults: { calendar: legacy.id } });
+  assert.deepEqual(allowAppChange(twoApps, "calendar", legacy.id, false), { coreConnections: { calendar: [microsoft.id] } }, "an explicit list without Google");
+  const onlyMicrosoft = withSources(twoApps, { coreConnections: { calendar: [microsoft.id] } });
+  assert.match(row(sources(onlyMicrosoft), "workbot-source-calendar"), /Everyone uses Microsoft 365/);
+  assert.match(switchFor(sources(onlyMicrosoft), "Allow Google Workspace") ?? "", /aria-checked="false"/, "a disallowed app keeps its row, switched off");
+  assert.deepEqual(allowAppChange(onlyMicrosoft, "calendar", legacy.id, true), { coreConnections: { calendar: null } }, "every app that serves it again: back to automatic");
+  const adminDefault = withSources(twoApps, { coreDefaults: { calendar: legacy.id } });
+  assert.deepEqual(coreAppRows(adminDefault, "calendar").map((entry) => [entry.option.id, entry.isDefault]), [[legacy.id, true], [microsoft.id, false]], "the admin's default wins over the automatic one at once");
+  assert.match(row(sources(withSources(twoApps, { coreConnections: { calendar: [] } })), "workbot-source-calendar"), /No apps allowed/);
+});
+
+test("what agents read: a category header shows a generic icon, never an app logo", () => {
+  const html = sources(twoApps);
+  for (const kind of ["calendar", "email", "chat"]) {
+    const header = new RegExp(`data-testid="workbot-source-${kind}"[\\s\\S]*?data-testid="workbot-category-state-${kind}"`).exec(html)?.[0] ?? "";
+    assert.ok(header.length > 0, kind);
+    assert.doesNotMatch(header, /<img/, `${kind}: no app logo on the category`);
+    assert.match(header, /<svg/, `${kind}: its generic icon`);
+  }
+  assert.match(/data-testid="workbot-source-calendar-m365_main"[\s\S]*?<\/div>/.exec(html)?.[0] ?? "", /<img|<svg/, "each app row has its logo");
+});
+
+test("what agents read: a legacy and a newer Google Workspace are both listed and allowed one at a time", () => {
   const two: WorkbotProactiveView = { ...ready, sourceConnections: {
     calendar: [legacy, personal], email: [legacy, personal], chat: [], other: [],
     all: [
       { ...legacy, native: true, slots: ["calendar", "email"] },
       { ...personal, native: true, slots: ["calendar", "email"] },
     ],
+    defaults: { calendar: legacy.id, email: legacy.id, chat: null },
   } };
   const html = sources(two);
-  assert.match(row(html, "workbot-source-calendar-google-workspace"), /Google Workspace Remove/);
-  assert.match(row(html, "workbot-source-calendar-gws_personal"), /Google Workspace - Personal Remove/);
-  assert.deepEqual(removeSourceChange(two, "calendar", legacy.id), { coreConnections: { calendar: [personal.id] } }, "removed from Calendar only");
-  const none = sources(withSources(two, { coreConnections: { calendar: [] } }));
-  assert.match(row(none, "workbot-source-calendar-empty"), /No sources/, "the last one removed: it reads nothing");
-  assert.match(text(sources({ ...two, sourceConnections: two.sourceConnections && { ...two.sourceConnections, calendar: [], email: [], chat: [] } })), /Team chat On for everyone No sources/);
+  assert.match(row(html, "workbot-source-calendar-google-workspace"), /Google Workspace Default 2 connected/);
+  assert.match(row(html, "workbot-source-calendar-gws_personal"), /Google Workspace - Personal 0 connected Make default/);
+  assert.deepEqual(allowAppChange(two, "calendar", personal.id, false), { coreConnections: { calendar: [legacy.id] } }, "Calendar only");
+  assert.deepEqual(removeSourceChange(two, "calendar", legacy.id), { coreConnections: { calendar: [personal.id] } });
+  assert.match(text(sources({ ...two, sourceConnections: two.sourceConnections && { ...two.sourceConnections, calendar: [], email: [], chat: [] } })), /Team chat No apps allowed On for everyone/);
 });
 
 test("what agents read: Add source lists every connection not already there, and adds it at once", () => {
@@ -158,18 +208,22 @@ test("what agents read: Add source lists every connection not already there, and
   assert.deepEqual(addableTo(ready, "chat").map((option) => option.id), ["emc_notes", "emc_tracker"], "Google can't serve team chat");
   assert.deepEqual(addableTo(ready, "other").map((option) => option.id), ["emc_slack"]);
   assert.deepEqual(addSourceChange(ready, "email", "emc_notes"), { coreConnections: { email: ["google-workspace", "emc_notes"] } });
-  assert.match(row(sources(withSources(ready, { coreConnections: { calendar: ["google-workspace", "emc_notes"] } })), "workbot-source-calendar-emc_notes"), /Meeting notes Read on checks; no early meeting alerts Remove/, "only Google's calendar wakes the agent early");
+  const added = withSources(ready, { coreConnections: { calendar: ["google-workspace", "emc_notes"] } });
+  assert.match(row(sources(added), "workbot-source-calendar-emc_notes"), /Meeting notes Read on checks; no early meeting alerts Make default/, "only Google's calendar wakes the agent early");
+  assert.deepEqual(addableTo(added, "calendar").map((option) => option.id), ["emc_slack", "emc_tracker"], "an app with a row there isn't offered again");
+  assert.deepEqual(allowAppChange(added, "calendar", "emc_notes", false), { coreConnections: { calendar: null } }, "stopping the added one: back to what serves it");
   assert.deepEqual(removeSourceChange(ready, "other", "emc_notes"), { otherConnections: ["emc_tracker"], connections: { emc_notes: null } });
 });
 
 test("what agents read: locked for people who can't manage it, and without View connections", () => {
   const locked = sources(ready, false);
   const buttons = locked.match(/<button[^>]*>/g) ?? [];
-  assert.ok(buttons.length > 0 && buttons.every((button) => /disabled=""/.test(button)), "every choice, Remove and Add source are locked without Manage");
+  assert.ok(buttons.length > 0 && buttons.every((button) => /disabled=""/.test(button)), "every choice, switch, Make default, Remove and Add source are locked without Manage");
   const policy = withSources(ready, { email: "members", chat: "off", connections: { emc_tracker: "off" } });
   const html = sources(policy);
   assert.match(row(html, "workbot-source-email"), /Members choose/);
-  assert.match(row(html, "workbot-source-chat"), /Not allowed/);
+  assert.match(row(html, "workbot-source-chat"), /Team chat Agents don't read it Not allowed/);
+  assert.doesNotMatch(html, /workbot-source-chat-emc_slack/, "no app rows while it's not allowed");
   assert.match(row(html, "workbot-source-other-emc_tracker"), /Not allowed/);
   const hidden = text(sources({ ...ready, sourceConnections: null }));
   assert.match(hidden, /Calendar Google Calendar or Outlook On for everyone/, "without View connections: what each source reads through, not the organization's connections");

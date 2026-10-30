@@ -123,3 +123,42 @@ test("an admin can't add an MCP without reviewed read tools as a source, in any 
     assert.equal(refused.status, 400, `${JSON.stringify(sources)}: ${summary(refused)}`)
   }
 })
+
+test("an admin allows apps per category and sets a default; each member's agent reads one, and picks another within the allowed ones", async () => {
+  const space = await workspace("Agent sources guardrails")
+  const linear = space.connectionId
+
+  // The default has to be allowed first (here in the same change), and can't be an MCP without reviewed reads.
+  assert.equal((await space.owner("PUT", proactive, { sources: { coreDefaults: { email: linear } } })).status, 400, "not allowed for email yet")
+  assert.equal((await space.owner("PUT", proactive, { sources: { coreDefaults: { email: space.customId } } })).status, 400)
+  const saved = await space.owner("PUT", proactive, { sources: { coreConnections: { email: [linear] }, coreDefaults: { email: linear } } })
+  assert.equal(saved.status, 200, summary(saved))
+  assert.deepEqual(field(saved.body, "settings", "sources", "coreDefaults"), { email: linear })
+  assert.equal(field(saved.body, "sourceConnections", "defaults", "email"), linear, "the effective default")
+  const linearEntry = list(field(saved.body, "sourceConnections", "all")).find((entry) => entry.id === linear)
+  assert.equal(linearEntry?.connectedMembers, null, "a shared credential: who uses it isn't known")
+
+  const removeDefault = await space.owner("PUT", proactive, { sources: { coreConnections: { email: [] } } })
+  assert.equal(removeDefault.status, 400, summary(removeDefault))
+  assert.match(text(field(removeDefault.body, "message"), "message"), /Choose another default first\./)
+
+  // The member's view: one connection read, the allowed ones to pick from, and who picked it.
+  const before = list(field((await space.call("GET", "/v1/me/agent")).body, "sources")).find((source) => source.id === "email")
+  assert.deepEqual(list(before?.options).map((option) => option.id), [linear])
+  assert.deepEqual(list(before?.connections).map((connection) => connection.id), [linear])
+  assert.equal(before?.chosenBy, "admin")
+  const other = list(field((await space.call("GET", "/v1/me/agent")).body, "sources")).find((source) => source.id === linear)
+  assert.deepEqual([other?.options, other?.chosenBy], [[], null])
+
+  const refused = await space.call("PUT", "/v1/me/agent", { sources: [{ source: "email", connectionId: space.customId }] })
+  assert.equal(refused.status, 400, summary(refused))
+  assert.equal(field(refused.body, "error"), "connection_not_allowed")
+
+  const picked = await space.call("PUT", "/v1/me/agent", { sources: [{ source: "my email", connectionId: linear }] })
+  assert.equal(picked.status, 200, summary(picked))
+  assert.match(text(field(picked.body, "saved", "reply"), "reply"), /^Saved:\n- Email: reads Linear\nReply "undo" to revert\./)
+  assert.equal(list(field(picked.body, "sources")).find((source) => source.id === "email")?.chosenBy, "member")
+  const undone = await space.call("PUT", "/v1/me/agent", { undo: "last" })
+  assert.equal(undone.status, 200, summary(undone))
+  assert.equal(list(field(undone.body, "sources")).find((source) => source.id === "email")?.chosenBy, "admin", "undo goes back to the admin's default")
+})

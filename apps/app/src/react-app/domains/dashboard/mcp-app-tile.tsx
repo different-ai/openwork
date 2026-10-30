@@ -12,7 +12,7 @@ import {
   type OpenworkMcpAppToolResult,
   type OpenworkServerClient,
 } from "@/app/lib/openwork-server";
-import { McpAppSandboxView, type PreservedMcpAppResult } from "@/components/chat/mcp-app-frame";
+import { McpAppSandboxView, sameMcpAppDocument, type PreservedMcpAppResult } from "@/components/chat/mcp-app-frame";
 import { snapshotMcpAppArguments, type McpAppOrigin } from "@/components/chat/mcp-app-origin";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -74,15 +74,6 @@ type LiveTarget = { origin: McpAppOrigin; app: OpenworkMcpAppResource };
 function liveTargetOf(state: ReadyTileState): LiveTarget | null {
   if (state.live) return state.live;
   return state.origin.readOnly ? null : { origin: state.origin, app: state.app };
-}
-
-const CSP_KEYS: ReadonlyArray<keyof OpenworkMcpAppResource["csp"]> = ["connectDomains", "resourceDomains", "frameDomains", "baseUriDomains"];
-
-/** A launch that serves exactly the document a saved tile is already showing. */
-function sameAppDocument(saved: OpenworkMcpAppResource, live: OpenworkMcpAppResource) {
-  return saved.serverName === live.serverName && saved.toolName === live.toolName && saved.resourceUri === live.resourceUri
-    && saved.html === live.html && saved.prefersBorder === live.prefersBorder
-    && CSP_KEYS.every(key => JSON.stringify(saved.csp[key]) === JSON.stringify(live.csp[key]));
 }
 
 type TileState =
@@ -570,7 +561,7 @@ function McpAppTileContent({
         const settled: ReadyTileState = previous.phase === "ready" && previous.lifetime !== next.lifetime
           && previous.origin.readOnly && !next.origin.readOnly && previous.lifetime.active && !previous.lifetime.failed
           && previous.argumentsSignature === next.argumentsSignature && sameLaunchEndpoint(previous.endpoint, next.endpoint)
-          && sameAppDocument(previous.app, next.app)
+          && sameMcpAppDocument(previous.app, next.app)
           ? { ...next, app: previous.app, origin: previous.origin, lifetime: previous.lifetime, live: { origin: next.origin, app: next.app } }
           : next;
         if (previous.phase === "ready" && previous.lifetime !== settled.lifetime) previous.lifetime.active = false;

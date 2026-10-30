@@ -1,8 +1,7 @@
 /**
- * Usage analytics per day (analyticsDailyTrends): with the feature on, the
- * analytics response adds 30 UTC days ending today, today's events land in the
- * last day, and the project filter narrows them. Off, `daily` is absent and the
- * weekly trend is unchanged.
+ * Usage analytics per day: the response includes 30 UTC days ending today,
+ * today's events land in the last day, and the project filter narrows them.
+ * The weekly trend remains available.
  */
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
@@ -45,17 +44,7 @@ function days(body: unknown): Day[] {
   }))
 }
 
-test("off: the response has no daily trend and keeps the weekly one", async () => {
-  assert.equal((await den.setFeature(org.orgId, "analyticsDailyTrends", false)).status, 200)
-  const result = await owner("GET", "/v1/telemetry/analytics")
-  assert.equal(result.status, 200, summary(result))
-  assert.equal(result.text.includes("\"daily\""), false)
-  const weekly = field(result.body, "weekly")
-  assert.ok(Array.isArray(weekly) && weekly.length === 12)
-})
-
 test("on: 30 UTC days ending today, with each event on its own day", async () => {
-  assert.equal((await den.setFeature(org.orgId, "analyticsDailyTrends", true)).status, 200)
   const result = await owner("GET", "/v1/telemetry/analytics")
   assert.equal(result.status, 200, summary(result))
   const daily = days(result.body)

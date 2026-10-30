@@ -550,14 +550,11 @@ async function loadOrgMembers(organizationId: OrgId): Promise<CachedOrgMember[]>
 }
 
 /**
- * Once sessionTokenHashing is on, a session still stored as its token is
+ * A session still stored as its token is
  * rewritten as the hash the first time it is used (session-token.ts).
  */
 async function hashLegacySessionToken(sessionId: DenTypeId<"session">, token: string) {
   try {
-    // Lazy import: features.ts reads its rollouts through this module.
-    const { deploymentFeatureEnabled } = await import("./features.js")
-    if (!(await deploymentFeatureEnabled("sessionTokenHashing"))) return
     await db
       .update(AuthSessionTable)
       .set({ token: sessionTokenDigest(token) })

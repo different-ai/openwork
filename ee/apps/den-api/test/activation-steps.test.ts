@@ -7,7 +7,7 @@ const fresh: ActivationFacts = {
   firstResponse: { done: false, durationMs: null },
   invite: { canInvite: true, invitedByMe: 0, teammates: 0, joined: 1, pending: 0 },
   skillUsed: false,
-  ownProvider: { reportedOnDevice: false, addedProviderName: null },
+  ownProvider: { reportedOnDevice: false, addedProviderName: null, orgProvided: false, canConfigure: true },
   gateway: { canManage: true, hasProvider: false, providerName: null },
   readyConnectionName: null,
   ownerName: "Avery Owner",
@@ -58,17 +58,38 @@ test("a member sees the AI Gateway step locked with who manages it, and checked 
   // The next step skips a locked one the person cannot act on.
   const next = computeActivationState(facts({
     firstResponse: { done: true, durationMs: 900 }, invite: { canInvite: false, invitedByMe: 0, teammates: 1, joined: 2, pending: 0 },
-    skillUsed: true, ownProvider: { reportedOnDevice: true, addedProviderName: null }, gateway: { canManage: false, hasProvider: false, providerName: null },
+    skillUsed: true, ownProvider: { reportedOnDevice: true, addedProviderName: null, orgProvided: false, canConfigure: true }, gateway: { canManage: false, hasProvider: false, providerName: null },
   }))
   assert.equal(nextActivationStep(next)?.id, "connector")
 })
 
 test("provider, skill and connection steps check off only from what actually happened", () => {
-  const device = computeActivationState(facts({ ownProvider: { reportedOnDevice: true, addedProviderName: "Personal OpenAI" } }))
+  const device = computeActivationState(facts({ ownProvider: { reportedOnDevice: true, addedProviderName: "Personal OpenAI", orgProvided: false, canConfigure: true } }))
   assert.deepEqual(device.steps[3], { id: "own_provider", done: true, detail: "Your key, on this device" })
-  assert.deepEqual(computeActivationState(facts({ ownProvider: { reportedOnDevice: false, addedProviderName: "Personal OpenAI" } })).steps[3]?.detail, "Personal OpenAI added")
+  assert.deepEqual(computeActivationState(facts({ ownProvider: { reportedOnDevice: false, addedProviderName: "Personal OpenAI", orgProvided: false, canConfigure: true } })).steps[3]?.detail, "Personal OpenAI added")
   assert.equal(computeActivationState(facts({ skillUsed: true })).steps[2]?.done, true)
   assert.deepEqual(computeActivationState(facts({ readyConnectionName: "Google Workspace" })).steps[5], { id: "connector", done: true, detail: "Google Workspace connected" })
+})
+
+test("a member whose organization provides models centrally checks off the provider step without setting one up", () => {
+  // The org has providers (Den/managed models an admin provisioned): the member has a model provider to use.
+  const managed = computeActivationState(facts({ ownProvider: { reportedOnDevice: false, addedProviderName: null, orgProvided: true, canConfigure: true } }))
+  assert.deepEqual(managed.steps[3], { id: "own_provider", done: true, detail: "Models from your organization" })
+  // A member who also saved their own key keeps their own, more specific detail.
+  const own = computeActivationState(facts({ ownProvider: { reportedOnDevice: true, addedProviderName: null, orgProvided: true, canConfigure: true } }))
+  assert.equal(own.steps[3]?.detail, "Your key, on this device")
+})
+
+test("the provider step is never an un-completable blocker when the organization disables personal providers", () => {
+  // No org providers yet, but the org allows only its own: the step checks off rather than blocking.
+  const disabled = computeActivationState(facts({ ownProvider: { reportedOnDevice: false, addedProviderName: null, orgProvided: false, canConfigure: false } }))
+  assert.deepEqual(disabled.steps[3], { id: "own_provider", done: true, detail: "Your team manages models" })
+  // Org-provided models take precedence over the disabled notice.
+  const both = computeActivationState(facts({ ownProvider: { reportedOnDevice: false, addedProviderName: null, orgProvided: true, canConfigure: false } }))
+  assert.equal(both.steps[3]?.detail, "Models from your organization")
+  // A member who may configure, with no org providers and no personal setup, still sees the step open.
+  const open = computeActivationState(facts({ ownProvider: { reportedOnDevice: false, addedProviderName: null, orgProvided: false, canConfigure: true } }))
+  assert.equal(open.steps[3]?.done, false)
 })
 
 test("hiding collapses to the next line, and the checklist disappears at six of six", () => {
@@ -76,7 +97,7 @@ test("hiding collapses to the next line, and the checklist disappears at six of 
     firstResponse: { done: true, durationMs: 1000 },
     invite: { canInvite: true, invitedByMe: 1, teammates: 1, joined: 2, pending: 0 },
     skillUsed: true,
-    ownProvider: { reportedOnDevice: true, addedProviderName: null },
+    ownProvider: { reportedOnDevice: true, addedProviderName: null, orgProvided: false, canConfigure: true },
     gateway: { canManage: true, hasProvider: true, providerName: "Team OpenAI" },
     readyConnectionName: "Slack",
     ownerName: "Avery Owner",

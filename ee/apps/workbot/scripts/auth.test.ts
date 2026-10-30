@@ -4,9 +4,23 @@ import { Hono } from "hono"
 import { createAuth, type AppEnv, type DenAuth } from "../src/server/auth.js"
 import { createDen, DenRateLimitedError, DenSignedOutError, tokenRetryAfterSeconds, type DenSession } from "../src/server/den.js"
 import type { Tokens } from "../src/server/sealed.js"
+import { loadConfig } from "../src/server/config.js"
 
 const SECRET = "test-secret-test-secret-test-secret-0001"
 const config = { publicUrl: "https://workbot.test", secureCookies: true, sessionSecret: SECRET }
+
+test("optional deployment URLs treat blank values as unset but reject malformed nonempty URLs", () => {
+  const required = { WORKBOT_PUBLIC_URL: config.publicUrl, WORKBOT_DEN_API_URL: "https://api.example.test", WORKBOT_RUNNER_URL: "http://runner:3030", WORKBOT_RUNNER_TOKEN: "r".repeat(32), WORKBOT_SESSION_SECRET: SECRET }
+  for (const value of [undefined, "", "  ", "\t\n"]) {
+    const loaded = loadConfig({ ...required, WORKBOT_DEN_WEB_URL: value, WORKBOT_CALENDAR_MOCK_URL: value })
+    assert.equal(loaded.denWebUrl, null)
+    assert.equal(loaded.calendarMockUrl, null)
+  }
+  assert.equal(loadConfig({ ...required, WORKBOT_DEN_WEB_URL: " https://console.example.test/ " }).denWebUrl, "https://console.example.test")
+  for (const key of ["WORKBOT_DEN_WEB_URL", "WORKBOT_CALENDAR_MOCK_URL"]) {
+    for (const value of ["not a URL", "http://outside.example.test", "javascript:alert(1)"]) assert.throws(() => loadConfig({ ...required, [key]: value }), new RegExp(key))
+  }
+})
 const who: DenSession = {
   user: { id: "user_test", name: "Test Person", email: "person@example.test" },
   organization: { id: "org_test", name: "Test Org", brandAppName: null },
@@ -373,4 +387,40 @@ test("Den's token endpoint Retry-After is bounded, and invalid_grant still signs
   await assert.rejects(den.refresh("refresh-0"), (error: unknown) => error instanceof DenRateLimitedError && error.retryAfter === 240)
   tokenResponse = () => Response.json({ error: "invalid_grant", error_description: "invalid refresh token" }, { status: 400 })
   await assert.rejects(den.refresh("refresh-0"), DenSignedOutError)
+})
+
+test("OAuth discovery keeps separate Workbot, Den web and API deployment domains", async (t) => {
+  const apiUrl = "https://api.backend.example.test"
+  const webUrl = "https://console.identity.example.test"
+  const publicUrl = "https://chat.workspace.example.test"
+  const resource = `${apiUrl}/mcp/agent`
+  const tokenRequests: URLSearchParams[] = []
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input)
+    if (url === `${apiUrl}/.well-known/oauth-protected-resource/mcp/agent`) {
+      return Response.json({ resource, authorization_servers: [`${webUrl}/api/auth`] })
+    }
+    if (url === `${webUrl}/.well-known/oauth-authorization-server/api/auth`) {
+      return Response.json({ issuer: `${webUrl}/api/auth`, authorization_endpoint: `${webUrl}/api/auth/oauth2/authorize`, token_endpoint: `${webUrl}/api/auth/oauth2/token` })
+    }
+    if (url === `${webUrl}/api/auth/oauth2/token`) {
+      assert.equal(new Headers(init?.headers).has("cookie"), false, "Den's browser cookie is never needed for the server exchange")
+      assert.ok(init?.body instanceof URLSearchParams)
+      tokenRequests.push(init.body)
+      return Response.json({ access_token: "fixture-access", refresh_token: "fixture-refresh", expires_in: 900 })
+    }
+    throw new Error(`Unexpected OAuth endpoint: ${url}`)
+  })
+  const den = createDen({ apiUrl, publicUrl })
+  const authorize = new URL(await den.authorizeUrl({ state: "fixture-state", verifier: "fixture-verifier" }))
+  assert.equal(authorize.origin, webUrl)
+  assert.equal(authorize.searchParams.get("redirect_uri"), `${publicUrl}/auth/callback`)
+  assert.equal(authorize.searchParams.get("resource"), resource)
+  assert.equal(authorize.searchParams.get("code_challenge_method"), "S256")
+  assert.equal(await den.webUrl(), webUrl)
+  await den.exchangeCode("fixture-code", "fixture-verifier")
+  assert.equal(tokenRequests.length, 1)
+  assert.equal(tokenRequests[0].get("redirect_uri"), `${publicUrl}/auth/callback`)
+  assert.equal(tokenRequests[0].get("code_verifier"), "fixture-verifier")
+  assert.equal(tokenRequests[0].get("resource"), resource)
 })

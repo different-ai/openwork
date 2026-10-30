@@ -85,7 +85,7 @@ export const getCloudManagedProviderId = (
  * A provider key in `opencode.jsonc` that is owned by the cloud-import system:
  * `lpr_*` keys (org-managed providers), `ipr_*` keys (providers routed through
  * the OpenWork inference gateway), the `openwork` hosted provider and the
- * organization's Auto Router (`openwork-auto`).
+ * organization's Smart Routers (`openwork-auto`).
  * These keys are never hand-authored, so re-importing over an existing block
  * with one of these ids is a safe reconcile (recovers a lost import baseline)
  * rather than a clobber of a user's manual provider (#2346).

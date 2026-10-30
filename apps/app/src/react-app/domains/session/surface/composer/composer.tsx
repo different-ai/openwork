@@ -2,7 +2,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { Cloud, Monitor, ArrowUp, Check, ChevronDown, FileText, LoaderCircle, RefreshCw, Square, Terminal, Zap } from "lucide-react";
+import { Cloud, Monitor, Check, ChevronDown, FileText, RefreshCw, Terminal, Zap } from "lucide-react";
+import { ComposerSendButton } from "./composer-send-button";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
@@ -1660,25 +1661,26 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               */}
               <div data-composer-actions className="col-start-2 row-start-2 ml-auto flex shrink-0 items-center gap-1.5">
                 {nativeDictationEnabled ? <NativeDictationControl dictation={dictation} disabled={props.disabled} text={props.draft} /> : null}
-                <button
-                  type="button"
+                <ComposerSendButton
+                  mode={props.stopping ? "stopping" : showStop ? "stop" : props.submissionPreparing ? "preparing" : "send"}
+                  ready={canSend && !props.disabled}
                   onPointerDown={(event) => {
                     // Preserve focus until submission succeeds; rejected sends keep the keyboard.
                     if (event.pointerType === "touch" && window.matchMedia("(max-width: 1023px)").matches) event.preventDefault();
                   }}
                   onClick={
                     showStop
-                      ? props.onStop
+                      ? () => void props.onStop()
                       : !canSend || props.submissionPreparing
                         ? undefined
                         : () => void prepareVoiceSubmission().onSend()
                   }
                   disabled={
                     props.disabled
-                    || props.stopping
-                    || (!showStop && (!canSend || props.submissionPreparing))
+                    || Boolean(props.stopping)
+                    || (!showStop && (!canSend || Boolean(props.submissionPreparing)))
                   }
-                  aria-label={
+                  label={
                     props.stopping
                       ? t("composer.stopping")
                       : showStop
@@ -1687,45 +1689,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                           ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
                           : t("composer.run_task")
                   }
-                  aria-busy={props.stopping || props.submissionPreparing || undefined}
-                  className={`inline-flex h-9 max-h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
-                    props.stopping
-                      ? "cursor-wait bg-[var(--dls-accent)] text-[var(--dls-accent-fg)]"
-                      : showStop
-                        ? "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
-                        : !canSend || props.disabled || props.submissionPreparing
-                          ? "bg-gray-4 text-gray-10"
-                          : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
-                  }`}
-                  title={
-                    props.stopping
-                      ? t("composer.stopping")
-                      : showStop
-                        ? t("composer.stop")
-                        : props.submissionPreparing
-                          ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
-                          : t("composer.run_task")
-                  }
-                >
-                  {props.stopping ? (
-                    <LoaderCircle size={15} className="animate-spin" />
-                  ) : showStop ? (
-                    <Square size={12} fill="currentColor" />
-                  ) : props.submissionPreparing ? (
-                    <LoaderCircle size={15} className="animate-spin" />
-                  ) : (
-                    <ArrowUp size={15} />
-                  )}
-                  <span className="sr-only">
-                    {props.stopping
-                      ? t("composer.stopping")
-                      : showStop
-                        ? t("composer.stop")
-                        : props.submissionPreparing
-                          ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
-                          : t("composer.run_task")}
-                  </span>
-                </button>
+                />
               </div>
             </div>
           </div>

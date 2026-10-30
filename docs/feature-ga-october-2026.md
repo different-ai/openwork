@@ -87,3 +87,32 @@ Den returns `stepTurns: true` and `sessionCells: true` for older clients. Workbo
 optional fields from older Dens as false. Existing turns keep their persisted execution mode; existing sessions
 remain readable and move only through lossless split logic and forwarding. Owner-shared memory, legacy history,
 and fallback event transports remain intact. Deploy a compatible runner before the GA Den.
+
+## Additional GA features (October 30)
+
+These rollouts were enabled in Cloud on October 29. They are now retired: the
+enabled paths are unconditional on cloud and self-hosted, except sandbox
+organization administration remains cloud-only. Old disabled overrides, killed
+rows and operator feature locks no longer turn them off.
+
+| Area | Retired switches |
+| --- | --- |
+| AI Gateway providers | `gatewayProviderTest`, `gatewayProviderAuthErrors`, `providerCredentialStatus`, `gatewayProviderRemovalLimits`, `liveProviderSync` |
+| Connect | `customConnectorSetup`, `expandedMcpPresets`, `guidedSlackSetup`, `slackSendAsBot`, `libraryConnectorOrgSetup` |
+| Library | `libraryConnectorNavigation`, `libraryDetailBreadcrumbs` |
+| Browser and remote tasks | `browserFloatingView`, `remoteSessionSubagents`, `remoteSessionThreadView`, `remoteSessionAnswers` |
+| Everyday use | `mermaidZoom`, `activationChecklist`, `mcpAppLibraries`, `nativeAffordanceCodeMode`, `analyticsDailyTrends` |
+| Platform admin (cloud only) | `sandboxOrgs` |
+
+Features that still need setup keep needing it: Slack messages from the OpenWork
+bot and guided Slack setup need the OpenWork app in Slack, and tasks on other
+computers need a connected computer.
+
+`sessionTokenHashing` is also retired: Den hashes newly issued session tokens
+without a feature flag and continues reading compatible existing tokens. Upgrade
+all replicas to a version that reads hashed tokens before introducing this
+release into a self-hosted rolling deployment; pre-October-23 replicas cannot
+read them. There is no token-storage rollback switch.
+
+`composerSubagentTracker` is **not retired**. It remains on by default with an
+organization opt-out. All other unlisted flags retain their existing behavior.

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { gatewayProviderAuthPresentationForFeature, presentOpencodeSessionError } from "../src/react-app/domains/session/sync/session-error"
+import { presentOpencodeSessionError } from "../src/react-app/domains/session/sync/session-error"
 
 const requestId = "req_01j-gateway-auth"
 
@@ -37,19 +37,6 @@ describe("AI Gateway provider credential failures", () => {
     expect(presentation.kind).toBe("gateway-provider-permission-denied")
     expect(presentation.description).toContain("Ask your administrator")
     expect(presentation.connectUrl).toBeUndefined()
-  })
-
-  test("turning the feature off restores the previous recovery copy and hides the request ID", () => {
-    const presentation = presentOpencodeSessionError(gatewayFailure(
-      "provider_authentication_failed",
-      "Acme rejected your organization's API credential. Ask your administrator to check the Acme connection in AI Gateway.",
-    ))
-    const disabled = gatewayProviderAuthPresentationForFeature(presentation, false)
-    expect(disabled.kind).toBe("provider-credentials")
-    expect(disabled.title).toBe("Check your model connection")
-    expect(disabled.description).toBe("Update your connection in model settings.")
-    expect(disabled.technicalDetails).not.toContain(requestId)
-    expect(gatewayProviderAuthPresentationForFeature(presentation, true)).toEqual(presentation)
   })
 
   test("leaves personal-provider API key copy unchanged", () => {

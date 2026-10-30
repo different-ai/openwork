@@ -29,12 +29,12 @@ test("a member's feature is written once per UTC day per replica", async () => {
   mark({ organizationId: "org", memberId: "member-a", keys: ["autoRouter", "autoRouter"] })
   mark({ organizationId: "org", memberId: "member-a", keys: ["autoRouter"] })
   setNow("2026-10-27T23:59:59.000Z")
-  mark({ organizationId: "org", memberId: "member-a", keys: ["autoRouter", "mermaidZoom"] })
+  mark({ organizationId: "org", memberId: "member-a", keys: ["autoRouter", "nativeDictation"] })
   mark({ organizationId: "org", memberId: "member-b", keys: ["autoRouter"] })
   await settle()
   assert.deepEqual(writes, [
     { memberId: "member-a", keys: ["autoRouter"], day: "2026-10-27" },
-    { memberId: "member-a", keys: ["mermaidZoom"], day: "2026-10-27" },
+    { memberId: "member-a", keys: ["nativeDictation"], day: "2026-10-27" },
     { memberId: "member-b", keys: ["autoRouter"], day: "2026-10-27" },
   ])
 })

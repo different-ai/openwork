@@ -8,8 +8,7 @@ import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelOption, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
 import { TaskRecovery } from "@/components/chat/task-recovery";
-import { gatewayProviderAuthPresentationForFeature, presentOpencodeSessionError, type OpencodeSessionErrorPresentation } from "../sync/session-error";
-import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
+import { presentOpencodeSessionError, type OpencodeSessionErrorPresentation } from "../sync/session-error";
 import type { ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import { ReactSessionComposer } from "@/react-app/domains/session/surface/composer/composer";
 import { WorkspaceRunModeMenu } from "@/react-app/domains/session/surface/composer/workspace-run-mode-menu";
@@ -138,7 +137,6 @@ const FALLBACK_MODEL: ModelRef = { providerID: "", modelID: "" };
  * created session, where the normal send path uploads them into the workspace.
  */
 export function NewTaskComposer(props: NewTaskComposerProps) {
-  const gatewayProviderAuthEnabled = useOrgFeature("gatewayProviderAuthErrors");
   const context = props.context;
   const draftOwnerKey = context?.draftOwnerKey ?? "legacy";
   const [initialState] = useState(() => context?.draftOwnerKey ? useComposerStateStore.getState().sessions[draftOwnerKey] : undefined);
@@ -506,9 +504,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     return () => window.removeEventListener(MOVE_NEW_TASK_DRAFT_EVENT, onMove);
   }, [moveTargetKey, context?.destination]);
 
-  const displayedSubmissionError = submissionError
-    ? gatewayProviderAuthPresentationForFeature(submissionError, gatewayProviderAuthEnabled)
-    : null;
+  const displayedSubmissionError = submissionError;
   const isGatewayProviderAuthFailure = displayedSubmissionError?.kind === "gateway-provider-authentication-failed"
     || displayedSubmissionError?.kind === "gateway-provider-permission-denied";
 

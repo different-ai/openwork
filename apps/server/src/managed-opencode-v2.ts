@@ -65,9 +65,9 @@ export interface ManagedOpencodeV2ServerOptions {
   port?: number;
   env?: Record<string, string>;
   bootTimeoutMs?: number;
-  contextTools?: { url: string; token: string; codeMode?: boolean; browser?: { url: string; token: string } };
+  contextTools?: { url: string; token: string; browser?: { url: string; token: string } };
   /** Session capability travels once over an inherited pipe, never environment or config. */
-  providerSession?: { url: string; token: string; enabled: () => boolean };
+  providerSession?: { url: string; token: string };
   permissions?: () => Promise<EnginePermissionRule[]>;
   /** Extra absolute skill directories registered before boot, so no later config write reloads the catalog. */
   skills?: string[];
@@ -226,8 +226,6 @@ export function renderOpencodeV2Config(input: {
   gatewayQuotaPluginDirectory?: string;
   providerSyncPluginDirectory?: string;
   desktopSession?: string;
-  /** Load the channel consumer even before the live-provider rollout activates. */
-  providerSessionEndpoint?: string;
   /** Catalog-only rules survive removal of live-owned providers from config. */
   providerFilters?: OpencodeV2ProviderFilters;
   providerFiltersPluginDirectory?: string;
@@ -238,7 +236,7 @@ export function renderOpencodeV2Config(input: {
   visibleReasoningPluginDirectory?: string;
   autoRoutePluginDirectory?: string;
   contextPluginDirectory?: string;
-  contextTools?: { url: string; token: string; codeMode?: boolean; browser?: { url: string; token: string } };
+  contextTools?: { url: string; token: string; browser?: { url: string; token: string } };
   agentPermissionRules?: AgentPermissionRule[];
   organizationMcp?: OrganizationMcpServers;
   agentPermissionsPluginDirectory?: string;
@@ -307,9 +305,9 @@ export function renderOpencodeV2Config(input: {
   // disconnected OpenCode Zen disappears here too and returns once re-enabled.
   for (const id of disabled) filters[id] = { whitelist: [] };
   const plugins = [
-    ...((input.desktopSession || input.providerSessionEndpoint) && input.providerSyncPluginDirectory ? [{
+    ...(input.desktopSession && input.providerSyncPluginDirectory ? [{
       package: pathToFileURL(input.providerSyncPluginDirectory).href,
-      options: { desktopSession: input.desktopSession ?? input.providerSessionEndpoint, liveProviderSync: Boolean(input.desktopSession) },
+      options: { desktopSession: input.desktopSession },
     }] : []),
     ...(input.contextTools && input.contextPluginDirectory ? [{ package: pathToFileURL(input.contextPluginDirectory).href, options: input.contextTools }] : []),
     ...((Object.keys(gatewayProviders).length || input.desktopSession) && input.gatewayQuotaPluginDirectory ? [{
@@ -323,9 +321,9 @@ export function renderOpencodeV2Config(input: {
     ...(input.mcpResultsPluginDirectory ? [{ package: pathToFileURL(input.mcpResultsPluginDirectory).href }] : []),
     ...(input.mcpReadinessPluginDirectory ? [{ package: pathToFileURL(input.mcpReadinessPluginDirectory).href }] : []),
     ...(input.visibleReasoningPluginDirectory ? [{ package: pathToFileURL(input.visibleReasoningPluginDirectory).href }] : []),
-    // Auto (feature `autoRouter`): records which model the gateway chose for
-    // each Auto reply. It only reads `openwork-auto` responses, which exist
-    // only while the organization offers Auto.
+    // Smart Model Router (feature `autoRouter`): records which model the
+    // gateway chose for each Smart reply. It only reads `openwork-auto`
+    // responses, which exist only while a Smart Router applies to the member.
     ...(input.autoRoutePluginDirectory ? [{ package: pathToFileURL(input.autoRoutePluginDirectory).href }] : []),
     ...(input.agentPermissionRules?.length && input.agentPermissionsPluginDirectory ? [{
       package: pathToFileURL(input.agentPermissionsPluginDirectory).href,
@@ -489,7 +487,7 @@ async function createManagedOpencodeV2ServerInner(
     }
     // A private, anonymous pipe: no named socket, file, argument, or environment
     // contains this credential. The trusted plugin consumes and closes it before
-    // setup, even on flag-off boot, and retains it only in its module closure.
+    // setup and retains it only in its module closure.
     channel.on("error", () => { child.kill(); });
     channel.end(JSON.stringify({ endpoint: options.providerSession.url, token: options.providerSession.token }));
   }
@@ -573,8 +571,7 @@ async function createManagedOpencodeV2ServerInner(
       providers: [...providers.values()],
       disabledProviderIds,
       gatewayQuotaPluginDirectory,
-      ...(options.providerSession ? { providerSyncPluginDirectory, providerSessionEndpoint: options.providerSession.url } : {}),
-      ...(options.providerSession?.enabled() ? { desktopSession: options.providerSession.url } : {}),
+      ...(options.providerSession ? { providerSyncPluginDirectory, desktopSession: options.providerSession.url } : {}),
       providerFiltersPluginDirectory,
       providerFilters,
       mcpResultsPluginDirectory,

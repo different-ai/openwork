@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AGENT_RESPONSIBILITIES, AGENT_RESPONSIBILITY_COPY, type MemberAgentCheck, type MemberAgentLimits, type MemberAgentSource, type MemberAgentView } from "@openwork/types/den/workbot-proactive";
-import { MyAgentPanel, MyAgentRow, MyAgentRowError, type MyAgentLinks } from "./my-agent";
+import { AccountPickerOptions, MyAgentPanel, MyAgentRow, MyAgentRowError, type MyAgentLinks } from "./my-agent";
 import { myAgentStateLine, sentTodayLabel, whenPhrase } from "./my-agent-view";
 
 const TZ = "America/New_York";
@@ -20,7 +20,9 @@ const sentCheck = check({ at: at("2026-10-20T08:02:00"), kind: "morning", outcom
 
 const baseLimits: MemberAgentLimits = { workingDays: "weekdays", startHour: 8, endHour: 19, dailyCap: 3, quietWindow: { startHour: 12, endHour: 14 }, admin: { startHour: 8, endHour: 19, dailyCap: 3 }, narrowed: { hours: false, dailyCap: false } };
 
-const emailSource: MemberAgentSource = { id: "email", kind: "email", name: "Email", connections: [{ id: "google-workspace", name: "Gmail", url: "https://google.com", state: "connected" }], policy: "everyone", on: true, instruction: "", lastReadAt: at("2026-10-20T11:20:00") };
+const googleApp = { id: "google-workspace", name: "Google Workspace", url: "https://google.com", state: "connected" as const };
+const microsoftApp = { id: "m365_main", name: "Microsoft 365", url: "https://microsoft.com", state: "needs_connection" as const };
+const emailSource: MemberAgentSource = { id: "email", kind: "email", name: "Email", connections: [{ id: "google-workspace", name: "Gmail", url: "https://google.com", state: "connected" }], options: [googleApp], chosenBy: "auto", policy: "everyone", on: true, instruction: "", lastReadAt: at("2026-10-20T11:20:00") };
 
 const base: MemberAgentView = {
   available: true,
@@ -43,12 +45,12 @@ const base: MemberAgentView = {
     { id: "chg_s", field: "sourceInstruction", sourceId: "emc_notes", summary: "Meeting notes: “Use my meeting notes for context and action items.”", source: "chat", at: at("2026-10-20T10:42:00"), undone: false },
   ],
   sources: [
-    { id: "calendar", kind: "calendar", name: "Calendar", connections: [{ id: "google-workspace", name: "Google Calendar", url: "https://google.com", state: "connected" }], policy: "everyone", on: true, instruction: "", lastReadAt: at("2026-10-20T11:20:00") },
+    { id: "calendar", kind: "calendar", name: "Calendar", connections: [{ id: "google-workspace", name: "Google Calendar", url: "https://google.com", state: "connected" }], options: [googleApp], chosenBy: "auto", policy: "everyone", on: true, instruction: "", lastReadAt: at("2026-10-20T11:20:00") },
     emailSource,
-    { id: "chat", kind: "chat", name: "Team chat", connections: [{ id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp", state: "connected" }], policy: "members", on: true, instruction: "", lastReadAt: at("2026-10-20T11:20:00") },
-    { id: "emc_notes", kind: "other", name: "Meeting notes", connections: [{ id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp", state: "connected" }], policy: "members", on: true, instruction: "Use my meeting notes for context and action items.", lastReadAt: null },
-    { id: "emc_tracker", kind: "other", name: "Issue tracker", connections: [{ id: "emc_tracker", name: "Issue tracker", url: "https://mcp.linear.app/mcp", state: "needs_connection" }], policy: "members", on: true, instruction: "", lastReadAt: null },
-    { id: "emc_wiki", kind: "other", name: "Wiki", connections: [{ id: "emc_wiki", name: "Wiki", url: "https://mcp.notion.com/mcp", state: "connected" }], policy: "off", on: false, instruction: "", lastReadAt: null },
+    { id: "chat", kind: "chat", name: "Team chat", connections: [{ id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp", state: "connected" }], options: [{ id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp", state: "connected" }], chosenBy: "auto", policy: "members", on: true, instruction: "", lastReadAt: at("2026-10-20T11:20:00") },
+    { id: "emc_notes", kind: "other", name: "Meeting notes", connections: [{ id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp", state: "connected" }], options: [], chosenBy: null, policy: "members", on: true, instruction: "Use my meeting notes for context and action items.", lastReadAt: null },
+    { id: "emc_tracker", kind: "other", name: "Issue tracker", connections: [{ id: "emc_tracker", name: "Issue tracker", url: "https://mcp.linear.app/mcp", state: "needs_connection" }], options: [], chosenBy: null, policy: "members", on: true, instruction: "", lastReadAt: null },
+    { id: "emc_wiki", kind: "other", name: "Wiki", connections: [{ id: "emc_wiki", name: "Wiki", url: "https://mcp.notion.com/mcp", state: "connected" }], options: [], chosenBy: null, policy: "off", on: false, instruction: "", lastReadAt: null },
   ],
   link: "https://den.example/dashboard/library/my-agent",
 };
@@ -155,13 +157,18 @@ function source(html: string, id: string) {
   return new RegExp(`data-testid="my-agent-source-${id}"[\\s\\S]*?(?=data-testid="my-agent-source-(?!instruction)|data-testid="my-agent-limits"|$)`).exec(html)?.[0] ?? "";
 }
 
-test("uses: a switch per source with when it was last read; the admin's decisions are locked with the reason", () => {
+test("uses: each core row has its category icon, a state line and the app it reads; on for everyone means no switch and no lock", () => {
   const html = page();
   const calendar = source(html, "calendar");
-  assert.match(text(calendar), /Calendar Google Calendar Last read at 11:20 AM/, "the account it reads through, under the source");
-  assert.match(switchFor(calendar, "Calendar") ?? "", /aria-checked="true"[\s\S]*disabled=""|disabled=""[\s\S]*aria-checked="true"/);
-  assert.match(calendar, /aria-label="On for everyone, set by your admin"/);
-  assert.doesNotMatch(text(calendar), /Set by your admin/, "the reason is said once, under the list, not on every row");
+  assert.match(text(calendar), /Calendar Last read at 11:20 AM Google Workspace/, "the state under the label, the app on the right");
+  const header = /data-testid="my-agent-source-calendar"[\s\S]*?data-testid="my-agent-state-calendar"/.exec(calendar)?.[0] ?? "";
+  assert.doesNotMatch(header, /<img/, "the category's own icon, never an app logo");
+  assert.match(header, /<svg/);
+  assert.equal(switchFor(calendar, "Calendar"), null, "on for everyone: no switch");
+  assert.doesNotMatch(calendar, /On for everyone, set by your admin/, "and no lock");
+  assert.doesNotMatch(calendar, /my-agent-picker-calendar/, "one app allowed: no picker");
+  assert.match(calendar, /data-testid="my-agent-app-calendar"/);
+  assert.match(source(html, "emc_notes"), /<img|<svg/, "another source keeps its own logo");
   assert.match(text(/data-testid="my-agent-sources-locked"[\s\S]*?<\/p>/.exec(html)?.[0] ?? ""), /Locked sources are set by your admin in Manage › Workbot\./);
   const chat = source(html, "chat");
   assert.doesNotMatch(switchFor(chat, "Team chat") ?? "", /disabled=""/, "members choose: their switch");
@@ -182,18 +189,43 @@ test("uses: the member's instruction in their own words, where it was saved and 
   assert.match(text(tracker), /Issue tracker Connect Issue tracker/);
   assert.match(tracker, /href="\/dashboard\/library\/connectors\/emc_tracker\?from=my-agent"/);
   assert.match(source(html, "chat"), /aria-label="Add an instruction for Team chat"/);
-  const reconnect = page({ ...base, sources: [{ ...emailSource, connections: [{ id: "google-workspace", name: "Gmail", url: "https://google.com", state: "reconnect" }] }] });
+  const reconnect = page({ ...base, sources: [{ ...emailSource, connections: [{ id: "google-workspace", name: "Gmail", url: "https://google.com", state: "reconnect" }], options: [{ ...googleApp, state: "reconnect" }] }] });
   assert.match(text(source(reconnect, "email")), /Email Reconnect Gmail/);
 });
 
-test("uses: with two accounts, the row names the one it reads through and asks for nothing more", () => {
-  const two = page({ ...base, sources: [{ ...emailSource, connections: [
-    { id: "gws_work", name: "Acme Google", url: "https://google.com", state: "connected" },
-    { id: "gws_personal", name: "Personal Google", url: "https://google.com", state: "needs_connection" },
-  ] }] });
-  const email = source(two, "email");
-  assert.match(text(email), /Email Acme Google/);
-  assert.doesNotMatch(text(email), /Connect|Personal Google/, "one ready account is enough");
+test("uses: with two apps allowed, a picker shows the app it reads; the menu lists them with a check and Connect", () => {
+  const two: MemberAgentSource = { ...emailSource, options: [googleApp, microsoftApp] };
+  const email = source(page({ ...base, sources: [two] }), "email");
+  assert.match(email, /data-testid="my-agent-picker-email"/);
+  assert.match(email, /aria-label="Read your email from: Google Workspace"/);
+  assert.match(text(email), /Email Last read at 11:20 AM Google Workspace/);
+  assert.doesNotMatch(text(email), /Connect|Microsoft 365/, "the member isn't asked to connect an app they don't use");
+  assert.equal(switchFor(email, "Email"), null, "on for everyone: the picker is the only control");
+
+  const picked: string[] = [];
+  const menu = renderToStaticMarkup(<AccountPickerOptions kind="email" options={two.options} chosen={googleApp} onPick={(id) => picked.push(id)} />);
+  assert.match(text(menu), /Read your email from Google Workspace Microsoft 365 Connect/);
+  assert.match(menu, /role="menu" aria-label="Read your email from"/);
+  assert.match(menu, /<button[^>]*role="menuitemradio"[^>]*aria-checked="true"[^>]*aria-label="Google Workspace"/);
+  assert.match(menu, /<button[^>]*role="menuitemradio"[^>]*aria-checked="false"[^>]*aria-label="Microsoft 365"/);
+  assert.match(text(renderToStaticMarkup(<AccountPickerOptions kind="chat" options={two.options} chosen={null} onPick={() => undefined} />)), /^ ?Read your team chat from/);
+
+  const chose = page({ ...base, sources: [{ ...two, connections: [{ id: "m365_main", name: "Outlook mail", url: "https://microsoft.com", state: "needs_connection" }], chosenBy: "member" }] });
+  const chosen = source(chose, "email");
+  assert.match(chosen, /aria-label="Read your email from: Microsoft 365"/);
+  assert.match(text(chosen), /Email Connect Outlook mail/, "the app picked needs connecting: the Connect link on the row");
+  assert.match(chosen, /href="\/dashboard\/library\/connectors\/m365_main\?from=my-agent"/);
+});
+
+test("uses: where members choose, a core row keeps its switch next to the picker; not allowed stays locked", () => {
+  const members = source(page({ ...base, sources: [{ ...emailSource, policy: "members", options: [googleApp, microsoftApp] }] }), "email");
+  assert.match(members, /data-testid="my-agent-picker-email"/);
+  assert.doesNotMatch(switchFor(members, "Email") ?? "", /disabled=""/);
+  const off = source(page({ ...base, sources: [{ ...emailSource, policy: "off", on: false, options: [googleApp, microsoftApp] }] }), "email");
+  assert.match(text(off), /Email Not allowed/);
+  assert.match(off, /aria-label="Not allowed by your admin"/);
+  assert.match(switchFor(off, "Email") ?? "", /disabled=""/);
+  assert.doesNotMatch(off, /my-agent-picker-email/, "nothing to pick on a source it may not read");
 });
 
 test("limits: their hours inside the admin's, the only-urgent window, and the cap locked by the admin", () => {

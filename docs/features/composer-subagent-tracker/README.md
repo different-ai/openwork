@@ -20,7 +20,8 @@ stays in view while the sub-agent rows in the chat scroll away.
 - Actions: **Open** (the agent's own chat), **Stop** (only that agent, while
   it runs) and **Review** when it needs the person. Review moves focus to the
   approval or question card that already sits above the composer for that
-  agent, or opens the agent's chat when there is none.
+  agent, or opens the agent's chat when there is none. Clicking the agent's
+  name or task opens its chat too, the same as Open.
 - The list opens on its own when an agent needs the person, or when there are
   at most three agents still busy; several quiet agents start folded. Once the
   turn ends and every agent has settled, the list goes away; the chat rows

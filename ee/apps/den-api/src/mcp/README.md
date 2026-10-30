@@ -78,8 +78,8 @@ on the same replica; the `tools/list` cache hint (60 s, private) covers the rest
 
 ## Slack messages from the OpenWork bot
 
-`slack_send_as_bot` (`slack-send-as-bot.ts`, feature `slackSendAsBot`, off by
-default) is a Den-native capability next to the Slack connection's tools: a DM
+`slack_send_as_bot` (`slack-send-as-bot.ts`, generally available without a
+rollout flag) is a Den-native capability next to the Slack connection's tools: a DM
 to the caller or a channel post from the OpenWork Slack app's bot, instead of
 as the member (`slack_send_message`). It needs a member and `mcp:write`, so
 read-only tokens never list or run it, and it is not in Code Mode scripts. Limits

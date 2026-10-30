@@ -458,22 +458,6 @@ export function presentOpencodeSessionError(error: unknown, fallback = "Session 
   };
 }
 
-export function gatewayProviderAuthPresentationForFeature(
-  presentation: OpencodeSessionErrorPresentation,
-  enabled: boolean,
-): OpencodeSessionErrorPresentation {
-  const gatewayFailure = presentation.kind === "gateway-provider-authentication-failed"
-    || presentation.kind === "gateway-provider-permission-denied"
-  if (!gatewayFailure || enabled) return presentation
-  return {
-    ...presentation,
-    kind: "provider-credentials",
-    title: "Check your model connection",
-    description: "Update your connection in model settings.",
-    technicalDetails: presentation.technicalDetails.split("\n").filter((line) => !line.startsWith("Request ID:")).join("\n"),
-  }
-}
-
 export function describeOpencodeSessionError(error: unknown, fallback = "Session failed") {
   const presentation = presentOpencodeSessionError(error, fallback);
   return presentation.description

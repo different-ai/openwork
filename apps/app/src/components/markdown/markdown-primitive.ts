@@ -19,7 +19,13 @@ import { markdownMath } from "./markdown-math";
 import { parseSessionReference } from "@/components/chat/session-reference";
 import { containsInlineHtml, markUnsafeReferenceTokens, stripSessionReferenceAttributes, renderSessionReferenceText, sessionReferenceHtml, type ResolveSessionReference } from "./session-reference-html";
 
-export type MarkdownPresentation = "chat" | "surface";
+/**
+ * `remote` is chat prose written somewhere we do not trust (a task on another
+ * computer): raw HTML is dropped, images and video links render as plain links
+ * and links carry no favicon, so viewing it never makes the browser fetch a
+ * URL the remote side chose (localhost, private network, tracking pixels).
+ */
+export type MarkdownPresentation = "chat" | "surface" | "remote";
 type RawHtmlMode = "passthrough" | "shiki-only";
 type ShikiThemeConfig =
   | { kind: "single"; theme: string }
@@ -33,7 +39,7 @@ type MarkdownProfile = {
   codeBlockHtml: (text: string, lang: string | undefined) => string;
   codeSpanClassName: string;
   linkPresentation: "chat" | "simple";
-  imagePresentation: "chat" | "simple";
+  imagePresentation: "chat" | "simple" | "link";
   tableHeaderClassName: string;
   tableCellClassName: string;
   shikiContainer: string;
@@ -327,6 +333,9 @@ function sanitizeMarkdownHtml(value: string) {
 }
 
 function markdownProfileForPresentation(presentation: MarkdownPresentation): MarkdownProfile {
+  if (presentation === "remote") {
+    return { ...markdownProfileForPresentation("chat"), rawHtmlMode: "shiki-only", linkPresentation: "simple", imagePresentation: "link" };
+  }
   if (presentation === "surface") {
     return {
       rawHtmlMode: "shiki-only",
@@ -415,6 +424,7 @@ function renderLinkHtml(profile: MarkdownProfile, href: string, title: string | 
 }
 
 function renderImage(profile: MarkdownProfile, href: string, title: string | null | undefined, text: string) {
+  if (profile.imagePresentation === "link") return renderLinkHtml(profile, href, title, escapeHtml(text || href));
   const video = profile.linkPresentation === "chat" ? renderVideo(href, href, renderLinkHtml(profile, href, title, escapeHtml(text || href))) : null;
   if (video) return video;
   const safe = escapeAttribute(safeHref(href));
@@ -439,7 +449,7 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
     async: isAsync,
     // Chat text is written line by line, so a single newline stays a line break.
     // File previews keep CommonMark wrapping for hard-wrapped Markdown files.
-    breaks: presentation === "chat",
+    breaks: presentation !== "surface",
     gfm: true,
     pedantic: false,
     silent: true,
@@ -619,12 +629,15 @@ function createMarkdownParsers(presentation: MarkdownPresentation, resolveRefere
 
 const chatParsers = createMarkdownParsers("chat");
 const surfaceParsers = createMarkdownParsers("surface");
+const remoteParsers = createMarkdownParsers("remote");
 
 // One parser pair per inventory revision, shared by all message blocks. Never
 // mutate the global parsers with a workspace/user resolver.
 const referenceParsers = new WeakMap<ResolveSessionReference, ReturnType<typeof createMarkdownParsers>>();
 function parsersForPresentation(presentation: MarkdownPresentation, resolveReference?: ResolveSessionReference) {
   if (presentation === "surface") return surfaceParsers;
+  // Untrusted prose never resolves local session references.
+  if (presentation === "remote") return remoteParsers;
   if (!resolveReference) return chatParsers;
   let parsers = referenceParsers.get(resolveReference);
   if (!parsers) {

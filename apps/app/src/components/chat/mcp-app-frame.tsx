@@ -45,7 +45,8 @@ const SANDBOX_READY_TIMEOUT_MS = 10_000
 const RESOURCE_ACCEPT_TIMEOUT_MS = 1_000
 const MAX_RESOURCE_SEND_ATTEMPTS = 2
 const INITIALIZE_TIMEOUT_MS = 10_000
-const MAX_CONCURRENT_APP_STARTUPS = 2
+// Four lets a dashboard row or a screen of chat start together; each slot frees once its App initializes.
+const MAX_CONCURRENT_APP_STARTUPS = 4
 const pendingAppStartups = new Set<() => void>()
 let activeAppStartups = 0
 
@@ -118,6 +119,15 @@ function sameMcpAppValue(left: unknown, right: unknown): boolean {
   const keys = Object.keys(left)
   return keys.length === Object.keys(right).length
     && keys.every(key => Object.hasOwn(right, key) && sameMcpAppValue(left[key], right[key]))
+}
+
+const CSP_KEYS: ReadonlyArray<keyof OpenworkMcpAppResource["csp"]> = ["connectDomains", "resourceDomains", "frameDomains", "baseUriDomains"]
+
+/** A launch that serves exactly the document a saved view is already showing. */
+export function sameMcpAppDocument(saved: OpenworkMcpAppResource, live: OpenworkMcpAppResource) {
+  return saved.serverName === live.serverName && saved.toolName === live.toolName && saved.resourceUri === live.resourceUri
+    && saved.html === live.html && saved.prefersBorder === live.prefersBorder
+    && CSP_KEYS.every(key => JSON.stringify(saved.csp[key]) === JSON.stringify(live.csp[key]))
 }
 
 function normalizeMcpAppHeight(height: number, minimum: number): number {
@@ -339,6 +349,12 @@ export type McpAppSandboxViewProps = {
    * went live in place takes input like any live App.
    */
   liveReady?: boolean
+  /**
+   * With goesLiveInPlace: the host renews a lease that goes stale while the
+   * view is open, as a Dashboard tile does by relaunching. When false, a stale
+   * lease retires the view as it does any live App.
+   */
+  renewsLease?: boolean
   /** Tool name used for host diagnostics and the iframe title. */
   toolName: string
   /** Arguments the host reports to the app as its launch input. */
@@ -375,12 +391,13 @@ export type McpAppSandboxViewProps = {
  * bridges it to the workspace MCP App host. Chat messages and dashboard tiles
  * share this exact pipeline so rendering and diagnostics stay identical.
  */
-export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInPlace = false, liveReady = false, toolName, inputArguments, result, connectionController, updateMode = "replace", onReady, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, presentation = "inline", onError, onRetry, onAppToolResult, openKey }: McpAppSandboxViewProps) {
+export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInPlace = false, liveReady = false, renewsLease = true, toolName, inputArguments, result, connectionController, updateMode = "replace", onReady, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, presentation = "inline", onError, onRetry, onAppToolResult, openKey }: McpAppSandboxViewProps) {
   const openworkServerClient = origin.client
   const workspaceId = origin.workspaceId
   const readOnly = origin.readOnly
-  // A saved Dashboard view that becomes live in place once its lease arrives.
+  // A saved Dashboard view or cached chat preview that becomes live in place once its lease arrives.
   const savedLive = readOnly && Boolean(resolveLiveActions) && goesLiveInPlace
+  const renewsStaleLease = savedLive && renewsLease
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [height, setHeightState] = useState(() => normalizeMcpAppHeight(initialHeight ?? DEFAULT_HEIGHT, MIN_HEIGHT))
   const heightRef = useRef(height)
@@ -611,7 +628,7 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
           try {
             return await callOnce()
           } catch (cause) {
-            if (!savedLive || !leaseId || !(cause instanceof OpenworkServerError)
+            if (!renewsStaleLease || !leaseId || !(cause instanceof OpenworkServerError)
               || !["missing_launch_context", "stale_launch_context"].includes(cause.code)) throw cause
             await bindLiveActions(leaseId)
             if (liveLaunchId === leaseId) throw cause
@@ -651,7 +668,7 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
         // A Dashboard view that goes live in place outlives each lease: a call
         // caught by a refresh fails alone, the next uses the newer lease, and
         // the tile itself retires the view if no lease can be had.
-        if (!savedLive && cause instanceof OpenworkServerError && ["missing_launch_context", "stale_launch_context", "inactive_session"].includes(cause.code)) {
+        if (!renewsStaleLease && cause instanceof OpenworkServerError && ["missing_launch_context", "stale_launch_context", "inactive_session"].includes(cause.code)) {
           fail("MCP_APP_LAUNCH_CONTEXT_STALE", "resource-resolution", cause, "Reopen the artifact in its original conversation before trying again.")
         }
         throw cause
@@ -1012,6 +1029,8 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
   connectionController?.observeBinding()
   const [app, setApp] = useState<OpenworkMcpAppResource | null>(null)
   const [previewActions, setPreviewActions] = useState<(() => Promise<{ origin: McpAppOrigin; app: OpenworkMcpAppResource }>) | undefined>()
+  // The live launch a cached preview took in place, when it serves the same document.
+  const [liveApp, setLiveApp] = useState<OpenworkMcpAppResource | null>(null)
   // The sandbox rebuilds whenever its origin identity changes; keep the inert
   // preview origin stable across unrelated re-renders.
   const previewOrigin = useMemo(() => origin ? { ...origin, readOnly: true } : origin, [origin])
@@ -1046,8 +1065,10 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
       }
     }
     let stopCredentialRetry: (() => void) | undefined
+    let previewed: OpenworkMcpAppResource | null = null
     setApp(null)
     setPreviewActions(undefined)
+    setLiveApp(null)
     setError(null)
     if (draft || !result || !openworkServerClient || !workspaceId || !origin) return () => { cancelled = true }
     const startedAt = performance.now()
@@ -1066,10 +1087,16 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
           // ordinary tools such as save_artifact_view render only their normal
           // result without claiming an unavailable interactive view.
           resolvedFor.current = resolution
-          setApp(resolved)
-          setPreviewActions(undefined)
           if (resolved) live.resolve({ origin, app: resolved })
           else live.reject(new Error("This tool no longer advertises an App."))
+          // The preview already shows this exact document: it takes the lease
+          // in place instead of starting the sandbox again.
+          if (resolved && previewed && sameMcpAppDocument(previewed, resolved)) {
+            setLiveApp(resolved)
+            return
+          }
+          setApp(resolved)
+          setPreviewActions(undefined)
         },
         (cause) => {
           live.reject(cause)
@@ -1096,11 +1123,13 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
         },
         (cached) => {
           if (cancelled) return
+          previewed = cached
           resolvedFor.current = resolution
           setApp(cached)
           setPreviewActions(() => async () => {
-            await live.promise
-            // Live discovery always retires this cached document: the same
+            const target = await live.promise
+            if (sameMcpAppDocument(cached, target.app)) return target
+            // A different live document retires this cached one: the same
             // commit mounts a replacement with its own lease. A startup call
             // that waited here belongs to the retiring document, so leave it
             // pending until teardown instead of rejecting it into an error
@@ -1136,6 +1165,9 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
     <McpAppSandboxView
       origin={previewActions && previewOrigin ? previewOrigin : origin}
       resolveLiveActions={previewActions && !origin.readOnly ? previewActions : undefined}
+      goesLiveInPlace={Boolean(previewActions)}
+      liveReady={liveApp !== null}
+      renewsLease={false}
       app={app}
       toolName={part.toolName}
       inputArguments={inputArguments}
@@ -1144,7 +1176,8 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
       unavailableNotice={CHAT_MCP_APP_UNAVAILABLE_NOTICE}
       openKey={JSON.stringify([scope, part.toolCallId, resolveToken])}
       onRequestTeardown={() => {
-        if (app.launchId) void origin.client.releaseMcpApp(origin.workspaceId, app.launchId).catch(() => undefined)
+        const launchId = (liveApp ?? app).launchId
+        if (launchId) void origin.client.releaseMcpApp(origin.workspaceId, launchId).catch(() => undefined)
         setApp(null)
       }}
       initialHeight={heightRef.current}

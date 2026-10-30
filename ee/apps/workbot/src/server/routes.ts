@@ -104,6 +104,10 @@ function actorOf(member: Member): WorkbotActor {
   }
 }
 
+export function workbotConnectionUrl(denWeb: string, organizationId: string, connectionId: string) {
+  return `${denWeb}/dashboard/your-connections?${new URLSearchParams({ connectionId, workbotOrganizationId: organizationId })}`
+}
+
 export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config; den: Den; member: MiddlewareHandler<AppEnv>; sameOrigin: MiddlewareHandler }) {
   const { config, den } = input
   const sent = new Map<string, number[]>()
@@ -243,7 +247,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       workspaceAssistant: who.enabled && who.workspaceAssistant,
       guidedNavigation: who.enabled && who.workspaceAssistant && who.guidedNavigation,
       usageRecovery: who.enabled && who.usageRecovery,
-      activationChecklist: who.enabled && who.activationChecklist,
+      activationChecklist: who.enabled,
       canSchedule: who.enabled && who.canSchedule,
       sideChats: who.enabled && who.sideChats,
       commandPalette: true,
@@ -372,14 +376,14 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   /** The Get set up checklist in the header: Den's answer as it is (Den computes the steps and enforces the feature). */
   app.get("/v1/workbot/activation", async (c) => {
     const member = c.get("member")
-    if (!member.den.enabled || !member.den.activationChecklist) return c.json({ error: "feature_disabled" }, 404)
+    if (!member.den.enabled) return c.json({ error: "feature_disabled" }, 404)
     const result = await den.activation(member.accessToken)
     return new Response(JSON.stringify(result.payload), { status: result.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } })
   })
   /** Only the events Workbot itself observes (its first answer) and hiding the checklist; Den validates the body. */
   app.post("/v1/workbot/activation/events", bodyLimit({ maxSize: 1024 }), async (c) => {
     const member = c.get("member")
-    if (!member.den.enabled || !member.den.activationChecklist) return c.json({ error: "feature_disabled" }, 404)
+    if (!member.den.enabled) return c.json({ error: "feature_disabled" }, 404)
     const body = activationEventRequestSchema.safeParse(await c.req.json().catch(() => null))
     if (!body.success || body.data.step === "own_provider" || body.data.step === "use_skill") return c.json({ error: "invalid_request" }, 400)
     const result = await den.activationEvent(member.accessToken, body.data)
@@ -491,7 +495,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       connections: connections.map((connection) => ({
         ...connection,
         // Den's own link, at the Den web origin this Workbot is configured with.
-        connectUrl: connection.ready || !denWeb ? connection.connectUrl : `${denWeb}/dashboard/your-connections?connectionId=${encodeURIComponent(connection.id)}`,
+        connectUrl: connection.ready || !denWeb ? connection.connectUrl : workbotConnectionUrl(denWeb, member.den.organization.id, connection.id),
       })),
     })
   })

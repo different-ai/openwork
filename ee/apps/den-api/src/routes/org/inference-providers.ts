@@ -20,7 +20,6 @@ import { gatewayManagementUnavailable, gatewayManagementUnavailableSchema } from
 import { ensureMemberGatewayKey } from "../../gateway-keys.js"
 import { gatewayMemberConnections } from "../../llm/gateway-member-connections.js"
 import { requestGatewayProviderTest } from "../../llm/gateway-provider-test.js"
-import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import { GatewayWriteError, normalizeCredential, reusableAwsCredential, enableGatewayGroupModels, gatewayCatalog, effectiveGatewaySummaryGrants, gatewayGrantSummary, gatewaySummary, readGatewaySummaries, refreshGatewayCatalog, resolveGatewayCatalog, trustedProviderCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
 import { buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "../../llm/inference-provider-config.js"
@@ -120,7 +119,7 @@ const connectResponse = z.object({ inferenceProvider: summarySchema.extend({ api
 const gatewayErrorSchema = z.object({ error: z.string(), message: z.string().optional() })
 const providerHasUsageLimitsSchema = gatewayProviderHasUsageLimitsSchema.meta({ ref: "GatewayProviderHasUsageLimits" })
 const deleteProviderQuery = z.object({
-  usageLimits: z.enum(GATEWAY_PROVIDER_REMOVAL_LIMIT_ACTIONS).optional().describe("What happens to active usage limits scoped to this provider. move: re-scope them to moveUsageLimitsTo. archive: archive them. Required only when such limits exist and gatewayProviderRemovalLimits is on."),
+  usageLimits: z.enum(GATEWAY_PROVIDER_REMOVAL_LIMIT_ACTIONS).optional().describe("What happens to active usage limits scoped to this provider. move: re-scope them to moveUsageLimitsTo. archive: archive them. Required when such limits exist."),
   moveUsageLimitsTo: denTypeIdSchema("inferenceProvider").optional().describe("With usageLimits=move: another active Gateway provider of this organization."),
 }).superRefine((input, ctx) => {
   if (input.usageLimits === "move" && !input.moveUsageLimitsTo) ctx.addIssue({ code: "custom", path: ["moveUsageLimitsTo"], message: "Choose the provider the usage limits move to." })
@@ -548,7 +547,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.post("/v1/inference-providers/test-connection", route("Test an inference gateway provider before adding it", "Sends one short test prompt through AI Gateway to the trusted catalog provider with an unsaved organization credential (credential, apiKeys, or reuseCredentialFrom for Amazon Bedrock), the destination settings and one catalog model. Nothing is stored and no usage is recorded. ok=false carries a message for the admin that never contains the key. May consume a few tokens on the provider account. Requires the gatewayProviderTest feature, the Manage Gateway providers permission and enabled Gateway management; a person must send it, never the agent or an API key. Limited to 20 tests per member and 60 per organization every ten minutes.", testConnectionResultSchema, 200, true, { responses: { 429: jsonResponse("Too many tests. Try again later.", z.object({ error: z.literal("rate_limited"), retryAfterSeconds: z.number() })) } }), orgMemberRoute(), requireFeature("gatewayProviderTest"), testConnectionAccess, jsonValidator(testConnectionSchema), async (c) => {
+  app.post("/v1/inference-providers/test-connection", route("Test an inference gateway provider before adding it", "Sends one short test prompt through AI Gateway to the trusted catalog provider with an unsaved organization credential (credential, apiKeys, or reuseCredentialFrom for Amazon Bedrock), the destination settings and one catalog model. Nothing is stored and no usage is recorded. ok=false carries a message for the admin that never contains the key. May consume a few tokens on the provider account. Requires the Manage Gateway providers permission and enabled Gateway management; a person must send it, never the agent or an API key. Limited to 20 tests per member and 60 per organization every ten minutes.", testConnectionResultSchema, 200, true, { responses: { 429: jsonResponse("Too many tests. Try again later.", z.object({ error: z.literal("rate_limited"), retryAfterSeconds: z.number() })) } }), orgMemberRoute(), testConnectionAccess, jsonValidator(testConnectionSchema), async (c) => {
     try {
       c.header("Cache-Control", "no-store")
       const actor = c.get("organizationContext")
@@ -853,19 +852,16 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     })
   }
 
-  app.delete("/v1/inference-providers/:inferenceProviderId", route("Delete inference gateway provider", "Deletes the provider, models, groups, credential sets, grants, credentials and pending sign-ins, and revokes applicable Google tokens. Returns an empty 204; historical request logs and usage rollups are retained. With the gatewayProviderRemovalLimits feature on and active usage limits scoped to the provider, usageLimits must say what happens to them: move (to the active provider in moveUsageLimitsTo, same organization) or archive. Without it the request changes nothing and returns 409 provider_has_usage_limits listing those limits. With the feature off, usageLimits is ignored and those limits are left in place. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", undefined, 204, false, { responses: { 409: jsonResponse("The provider has usage limits that need a choice, or another selection or resource conflict.", z.union([providerHasUsageLimitsSchema, gatewayErrorSchema])) } }), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), queryValidator(deleteProviderQuery), async (c) => {
+  app.delete("/v1/inference-providers/:inferenceProviderId", route("Delete inference gateway provider", "Deletes the provider, models, groups, credential sets, grants, credentials and pending sign-ins, and revokes applicable Google tokens. Returns an empty 204; historical request logs and usage rollups are retained. With active usage limits scoped to the provider, usageLimits must say what happens to them: move (to the active provider in moveUsageLimitsTo, same organization) or archive. Without it the request changes nothing and returns 409 provider_has_usage_limits listing those limits. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", undefined, 204, false, { responses: { 409: jsonResponse("The provider has usage limits that need a choice, or another selection or resource conflict.", z.union([providerHasUsageLimitsSchema, gatewayErrorSchema])) } }), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), queryValidator(deleteProviderQuery), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const query = c.req.valid("query")
       const choice: GatewayProviderRemovalLimitChoice | undefined = query.usageLimits === "archive" ? { action: "archive" }
         : query.usageLimits === "move" && query.moveUsageLimitsTo ? { action: "move", providerId: query.moveUsageLimitsTo } : undefined
-      // Behind gatewayProviderRemovalLimits. Off: the delete behaves as before the feature and
-      // ignores usageLimits, leaving scoped limits as they are (listed as providerStatus "removed").
-      const settleLimits = await organizationFeatureEnabled(actor.organization.id, "gatewayProviderRemovalLimits", { userId: actor.currentMember.userId })
       const credentials = await providerTransaction(c, async (tx, provider) => {
         // Usage limits scoped to this provider are moved or archived first, so a missing choice
         // stops the request before anything is deleted here or in LiteLLM.
-        if (settleLimits) await settleGatewayProviderUsageLimits(tx, { organizationId: actor.organization.id, memberId: actor.currentMember.id }, provider.id, choice)
+        await settleGatewayProviderUsageLimits(tx, { organizationId: actor.organization.id, memberId: actor.currentMember.id }, provider.id, choice)
         // Keys OpenWork created in LiteLLM go first, while the admin key is still stored. This runs
         // inside the transaction, after providerTransaction has locked the caller's member row and
         // re-checked the permission, so a concurrent membership removal or revocation stops the
@@ -884,7 +880,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         await tx.delete(GatewayProviderTable).where(eq(GatewayProviderTable.id, provider.id))
         // Request logs and rollups deliberately retain historical resource IDs.
         return credentials.filter((row) => row.status !== "revoked")
-      }, { lockOrganization: settleLimits })
+      }, { lockOrganization: true })
       await revokeUpstreamCredentials(credentials)
       return c.body(null, 204)
     } catch (error) {

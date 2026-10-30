@@ -35,6 +35,7 @@ import {
   type McpAppServerDefinition,
 } from "../mcp-apps.js"
 import { executeCapabilityWithBudget } from "./agent.js"
+import { runsWithoutClick } from "./app-tool-access.js"
 import { callMcpAppTool } from "./app-tools.js"
 import { mcpAuditPrincipal } from "../audit/mcp-service-audit.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
@@ -79,19 +80,16 @@ function launchTool(definition: McpAppServerDefinition): Tool {
   }
 }
 
-/**
- * Read-only tools, including connection tools their provider marks read-only,
- * advertise it so hosts can run them without a click. Den checks a connection
- * tool's label again on every call.
- */
+/** Den checks a connection tool's labels again on every call. */
 function boundTool(binding: McpAppToolBinding): Tool {
+  const noClick = runsWithoutClick(binding)
   return {
     name: binding.name,
     description: binding.description,
     inputSchema: { ...binding.inputSchema, type: "object" },
     annotations: {
-      readOnlyHint: binding.readOnly,
-      destructiveHint: !binding.readOnly,
+      readOnlyHint: noClick,
+      destructiveHint: !noClick,
       idempotentHint: binding.readOnly,
       openWorldHint: binding.kind !== "api",
     },

@@ -3249,7 +3249,7 @@ export function createDenClient(options: {
       };
     },
 
-    /** The Get set up checklist; null when the activationChecklist feature is off for the organization. */
+    /** The Get set up checklist; null when unavailable. */
     async getActivation(orgId: string): Promise<ActivationState | null> {
       try {
         return activationStateSchema.parse(await requestJson<unknown>(baseUrls, "/v1/me/activation", { method: "GET", token, organizationId: orgId }));
@@ -3717,7 +3717,7 @@ export function createDenClient(options: {
     },
 
     /** A transcript page or pending receipt of one of the member's remote sessions; the caller parses it. */
-    async remoteSessionAction(orgId: string, action: "read" | "send" | "stop", input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    async remoteSessionAction(orgId: string, action: "read" | "send" | "stop" | "answer", input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
       // A desktop has about 20 seconds to answer before Den returns a requestId instead.
       return requestJson<unknown>(baseUrls, `/v1/remote-sessions/${action}`, {
         method: "POST", token, organizationId: orgId, body: input, timeoutMs: 35_000, signal,

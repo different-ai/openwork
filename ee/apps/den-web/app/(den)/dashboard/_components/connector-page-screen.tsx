@@ -5,7 +5,7 @@ import { ChevronDown, MessageSquare, UserPlus } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
-import { getLibraryConnectorShareRoute, getLibraryRoute, getMcpConnectionRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../_lib/den-org";
+import { getLibraryConnectorShareRoute, getLibraryRoute, getMcpConnectionRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { connectorReturnToAgent } from "./my-agent-connector-navigation";
 import { ownedAccessStatus } from "./access-summary";
@@ -102,7 +102,7 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
   const memberAccess = orgContext
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
     : null;
-  const canManage = canOpenConnectorManagement(orgFeatureEnabled(orgContext, "libraryConnectorNavigation"), memberAccess);
+  const canManage = canOpenConnectorManagement(memberAccess);
 
   if (!connection && (usable.isLoading || library.isLoading)) {
     return <ItemPage><ItemHeader back={back} title="Loading..." /></ItemPage>;

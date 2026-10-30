@@ -5,6 +5,7 @@ import { getAuthResumeUrl } from "./auth-resume";
 import { ORG_SCOPE_HEADER, getRequestOrgScope, shouldPinOrgScopePath } from "./org-scope";
 import { getRuntimeConfig } from "./runtime-config";
 import { getSafeMemberReturnTo } from "./member-auth-routing";
+import { workbotAuthReturnTo } from "../dashboard/_lib/workbot-team-link";
 
 export type AuthMode = "sign-in" | "sign-up";
 export type SocialAuthProvider = "github" | "google";
@@ -209,6 +210,8 @@ export function getSocialCallbackUrl(authCallbackBaseUrl = "", requestedReturnTo
       if (returnTo) {
         callbackUrl.searchParams.set("returnTo", returnTo);
       }
+      const workbotReturnTo = workbotAuthReturnTo(params.get("workbotReturnTo"));
+      if (workbotReturnTo) callbackUrl.searchParams.set("workbotReturnTo", workbotReturnTo);
     }
     return callbackUrl.toString();
   } catch {

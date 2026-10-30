@@ -34,7 +34,7 @@ test("every feature that declares outcomes has exactly one reader, and no reader
   assert.deepEqual([...OUTCOME_FEATURE_KEYS].sort(), [...declared].sort())
   assert.deepEqual(Object.keys(FEATURE_OUTCOME_READERS).sort(), [...declared].sort())
   for (const key of FEATURE_KEYS) assert.equal(featureOutcomeReader(key) !== null, declared.includes(key), key)
-  assert.ok(declared.length >= 4, "calendar triggers, interval schedules, Your agent and slack_send_as_bot report outcomes")
+  assert.ok(declared.length >= 3, "calendar triggers, interval schedules and Your agent report rollout outcomes; Slack diagnostics are independent")
 })
 
 test("a range is whole UTC days ending today", () => {

@@ -80,6 +80,13 @@ export const RETIRED_FEATURE_KEYS = [
   // Billing without flags (2026-10): Team checkout is always sold where Stripe seat billing is set up,
   // and Enterprise is only set in /admin (no card purchase, no Stripe Enterprise subscriptions).
   "teamPlan", "selfServeEnterprise",
+  // Generally available (2026-10): completed rollouts. Sandbox organizations remain cloud-only.
+  "libraryDetailBreadcrumbs", "nativeAffordanceCodeMode", "libraryConnectorNavigation", "mcpAppLibraries",
+  "gatewayProviderTest", "mermaidZoom", "sandboxOrgs", "slackSendAsBot", "liveProviderSync",
+  "browserFloatingView", "remoteSessionSubagents", "remoteSessionThreadView", "remoteSessionAnswers",
+  "activationChecklist", "gatewayProviderAuthErrors", "providerCredentialStatus", "sessionTokenHashing",
+  "customConnectorSetup", "expandedMcpPresets", "analyticsDailyTrends", "gatewayProviderRemovalLimits",
+  "guidedSlackSetup", "libraryConnectorOrgSetup",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

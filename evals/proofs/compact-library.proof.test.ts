@@ -58,22 +58,16 @@ test("a Library owner scans a grouped collection, opens a skill and sees the sig
     await library.screenshot();
   });
 
-  await step("a skill inside a plugin opens as a readable page", async () => {
+  await step("a skill previews its complete instructions inline", async () => {
     await library.type({ placeholder: "Filter by name" }, "", { replace: true });
     await library.click({ role: "tab", label: "All" });
     await library.click({ role: "link", label: /^Daily brief/ });
     await library.see({ testId: "whats-inside" }, { timeoutMs: 30_000 });
-    // The skill row inside "What's inside" is the only link whose name includes the skill's description.
-    await library.click({ role: "link", label: /^Daily brief\s+Prepare a clear daily brief/ });
-    await library.see({ testId: "skill-instructions" }, { timeoutMs: 30_000 });
-    await library.see({ text: "Use in chat" });
-    const list = await observed.dom('[data-testid="skill-instructions"] ol li');
-    const strong = await observed.dom('[data-testid="skill-instructions"] strong');
-    const headings = await observed.dom('[data-testid="skill-instructions"] h3, [data-testid="skill-instructions"] h4');
-    const text = await observed.text();
-    const ok = list.elements.length === 2 && strong.elements.some((entry) => entry.text === "supplied notes")
-      && headings.elements.length === 0 && !text.includes("# Daily brief") && !text.includes("**");
-    evidence.recordAssertionEvidence("Skill Markdown renders as a document, without repeating its title or raw syntax", `list items=${list.elements.length}; bold=${strong.elements.map((entry) => entry.text).join(",")}; headings=${headings.elements.length}`, ok);
+    await library.click({ text: /^Daily brief instructions$/ });
+    const bodies = (await observed.dom("details[data-skill-preview][open] pre")).elements.map(element => element.text);
+    const text = bodies.join("\n");
+    const ok = text.includes("Read the **supplied notes**") && text.includes("Keep `names` and dates as written.") && text.includes("Do not invent facts.");
+    evidence.recordAssertionEvidence("The default skill disclosure contains the full instructions", text, ok);
     expect(ok).toBe(true);
     await library.screenshot();
   });
