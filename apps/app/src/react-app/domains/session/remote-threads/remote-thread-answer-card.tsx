@@ -180,6 +180,7 @@ function QuestionCard({ pending, computer, busy, error, onSubmit }: CardProps<"q
                 type="button"
                 role={question.multiple ? "checkbox" : "radio"}
                 aria-checked={isSelected}
+                aria-label={option.label}
                 disabled={busy}
                 data-remote-answer-option={option.label}
                 className={cn(
