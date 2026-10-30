@@ -55,6 +55,26 @@ export function codeRoute() {
   return "/code";
 }
 
+export function projectsRoute() {
+  return "/projects";
+}
+
+export function artifactsRoute() {
+  return "/artifacts";
+}
+
+export function scheduledRoute() {
+  return "/scheduled";
+}
+
+export function designRoute() {
+  return "/design";
+}
+
+export function personalizationRoute() {
+  return "/personalization";
+}
+
 export function calendarRoute() {
   return "/calendar";
 }

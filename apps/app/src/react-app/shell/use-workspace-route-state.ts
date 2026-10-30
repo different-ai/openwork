@@ -88,6 +88,11 @@ import {
   calendarRoute,
   codeRoute,
   dashboardRoute,
+  projectsRoute,
+  artifactsRoute,
+  scheduledRoute,
+  designRoute,
+  personalizationRoute,
   workspaceExtensionsRoute,
   workspaceSessionRoute,
 } from "./workspace-routes";
@@ -96,7 +101,7 @@ export type UseWorkspaceRouteStateInput = {
   /** A local first-send owner must survive workspace preparation until it has a real session. */
   preservePendingConversationRoute?: boolean;
   developerMode: boolean;
-  workspaceRoute?: "session" | "automations" | "calendar" | "dashboard" | "apps" | "activity" | "code";
+  workspaceRoute?: "session" | "automations" | "calendar" | "dashboard" | "apps" | "activity" | "code" | "projects" | "artifacts" | "scheduled" | "design" | "personalization";
   /** Invoked when the openwork-server settings-changed event fires (the route bumps its settings version). */
   onServerSettingsChanged: () => void;
   /** Receives the local openwork-server host info discovered during refresh. */
@@ -203,6 +208,31 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     if (workspaceRoute === "code") {
       if (/^\/code(?:\/|$)/.test(location.pathname)) return;
       navigate(codeRoute(), options);
+      return;
+    }
+    if (workspaceRoute === "projects") {
+      if (/^\/projects(?:\/|$)/.test(location.pathname)) return;
+      navigate(projectsRoute(), options);
+      return;
+    }
+    if (workspaceRoute === "artifacts") {
+      if (/^\/artifacts(?:\/|$)/.test(location.pathname)) return;
+      navigate(artifactsRoute(), options);
+      return;
+    }
+    if (workspaceRoute === "scheduled") {
+      if (/^\/scheduled(?:\/|$)/.test(location.pathname)) return;
+      navigate(scheduledRoute(), options);
+      return;
+    }
+    if (workspaceRoute === "design") {
+      if (/^\/design(?:\/|$)/.test(location.pathname)) return;
+      navigate(designRoute(), options);
+      return;
+    }
+    if (workspaceRoute === "personalization") {
+      if (/^\/personalization(?:\/|$)/.test(location.pathname)) return;
+      navigate(personalizationRoute(), options);
       return;
     }
     navigateToWorkspaceSession(workspaceId, sessionId, options);
