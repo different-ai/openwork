@@ -483,10 +483,10 @@ final class MacAccessibility {
         let label = try checkedString(record.element, kAXTitleAttribute, budget, displayOnly: true)
             ?? checkedString(record.element, kAXDescriptionAttribute, budget, displayOnly: true) ?? ""
         let value = record.protected ? nil : try checkedString(record.element, kAXValueAttribute, budget, displayOnly: true)
-        // A field observed as secure must still be one: if it became ordinary text,
-        // what was typed would show in later observations and screenshots.
+        // A field must still be what was observed. Secure turned ordinary would show what was
+        // typed; ordinary turned secure would take a password without the app's confirmation.
         guard !record.protected || record.textField, record.enabled,
-              try !record.protected || isSecureTextField(record.element, role: record.role, budget),
+              try isSecureTextField(record.element, role: record.role, budget) == record.protected,
               try checkedFrame(record.element, budget) == record.frame,
               try checkedString(record.element, kAXRoleAttribute, budget) == record.role,
               textHash(label) == (record.labelHash ?? textHash(record.label)),
@@ -547,7 +547,7 @@ final class MacAccessibility {
               let window = try checkedElement(root, kAXFocusedWindowAttribute, budget), CFEqual(window, target.element),
               let focused = try checkedElement(root, kAXFocusedUIElementAttribute, budget), CFEqual(focused, expected.element),
               try checkedString(focused, kAXRoleAttribute, budget) == expected.role,
-              try !expected.protected || isSecureTextField(focused, role: expected.role, budget),
+              try isSecureTextField(focused, role: expected.role, budget) == expected.protected,
               try checkedFrame(focused, budget) == expected.frame,
               try checkedBool(focused, kAXEnabledAttribute, budget) != false else {
             throw UseError("focus_changed", "The exact observed keyboard target changed. Observe again before typing or pressing keys.", next: "observe")
