@@ -139,7 +139,8 @@ test("a given password is filled only on the site the person confirms, and never
   assert.equal(code.code, "credential_on_screen");
   assert.ok(!JSON.stringify(code).includes("123456"));
   // An ordinary field in a new document (no credential filled yet) can be pictured.
-  delete field.attributes.autocomplete; field.value = ""; delete context.__openworkCredentialEntered;
+  delete field.attributes.autocomplete; field.value = "";
+  vm.runInContext("globalThis.__openworkCredentialEntered = false", context);
   assert.equal((await observe(host, { includeImage: true })).ok, true);
 });
 
