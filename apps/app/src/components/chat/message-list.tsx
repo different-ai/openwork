@@ -34,6 +34,7 @@ import { openDesktopUrl, revealDesktopItemInDir } from "@/app/lib/desktop"
 import { isElectronRuntime } from "@/app/lib/runtime-env"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { t } from "@/i18n"
+import { markFeatureUsed } from "@/app/lib/den"
 import { useOpenTargets } from "@/lib/target-provider"
 import { openTargetFromUrl } from "@/react-app/domains/session/artifacts/open-target"
 import { presentOpencodeSessionError, sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error"
@@ -46,6 +47,7 @@ import { OpenWorkModelsLimitCard } from "@/react-app/domains/cloud/usage-limit-c
 import type { OpenWorkModelsLimit } from "@/react-app/domains/cloud/usage-limit-state"
 import { rejectedRecoveryFromMessage } from "@/react-app/domains/session/sync/rejected-turn"
 import { replyModelLabel, replyModelProvider } from "@/react-app/domains/session/sync/reply-model"
+import { useLiveReplyModel } from "@/components/chat/live-reply-model-store"
 import { ProviderIcon } from "@/react-app/design-system/provider-icon"
 import { openAlternativeModelPicker } from "@/app/lib/inference-access"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
@@ -1574,6 +1576,7 @@ function MessageGroup({
   // The skill this turn produced stays in view as its result, even when the
   // steps fold; later updates and shares change this card, not add another.
   const { cards: createdSkillCards } = useCreatedSkills()
+  const liveReplyModel = useLiveReplyModel()
   const groupSkillCards = React.useMemo(() => {
     const ids = new Set(items.flatMap((item) => item.message.parts.flatMap((part) => part.type === "dynamic-tool" ? [part.toolCallId] : [])))
     return createdSkillCards.filter((card) => ids.has(card.anchorToolCallId))
@@ -1602,6 +1605,9 @@ function MessageGroup({
   const replyModelMessage = items.findLast(item => item.message.role === "assistant" && replyModelLabel(item.message, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName))?.message
   const resolvedReplyModel = replyModelMessage ? replyModelLabel(replyModelMessage, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName) : null
   const replyModelProviderId = replyModelMessage ? replyModelProvider(replyModelMessage, autoRoutes) : undefined
+  // Feature `liveReplyModel`: a reply still being written already knows its
+  // model; hovering it shows the model where the finished reply keeps it.
+  const liveModelFooter = liveReplyModel && (isStreaming || isLiveGroup) && Boolean(resolvedReplyModel)
   const mcpAppParts = collectMcpAppParts(items)
 
   // Leading messages without prose (tool/reasoning steps) render inline and
@@ -1814,9 +1820,19 @@ function MessageGroup({
           {groupSkillCards.map((card) => <CreatedSkillCard key={card.kind === "ready" ? card.skillId : card.key} card={card} />)}
         </div>
       ) : null}
-      {lastTextMessage && !isStreaming && (
-        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 md:px-8">
-          <div className={cn("flex items-center gap-2 transition-opacity duration-150 ease-out motion-reduce:transition-none group-hover/message-group:opacity-100 group-focus-within/message-group:opacity-100 pointer-coarse:opacity-100", forkingMessageId && forkingMessageId === lastRealItem?.message.id ? "opacity-100" : "opacity-0")}>
+      {((lastTextMessage && !isStreaming) || liveModelFooter) && (
+        <div
+          className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 md:px-8"
+          data-reply-footer={liveModelFooter ? "live" : "done"}
+          onMouseEnter={liveModelFooter ? () => markFeatureUsed("liveReplyModel") : undefined}
+        >
+          {/* While the reply streams, the actions keep their slot (invisible and
+              inert) so the model caption sits exactly where it stays once done. */}
+          <div
+            aria-hidden={liveModelFooter || undefined}
+            inert={liveModelFooter || undefined}
+            className={cn("flex items-center gap-2 transition-opacity duration-150 ease-out motion-reduce:transition-none", liveModelFooter ? "invisible" : "group-hover/message-group:opacity-100 group-focus-within/message-group:opacity-100 pointer-coarse:opacity-100", forkingMessageId && forkingMessageId === lastRealItem?.message.id ? "opacity-100" : "opacity-0")}
+          >
           <MessageActions data-testid="reply-actions" className="flex gap-0">
             <CopyMessageButton messages={renderableItems.map((item) => item.message)} />
             {lastRealItem ? (
@@ -1841,11 +1857,12 @@ function MessageGroup({
           </div>
           {/* Keep caption ink readable (DESIGN.md V1/V2); hierarchy comes from size,
               not compounded opacity. Hidden actions retain their layout slot. */}
-          {!isLiveGroup && resolvedReplyModel ? <span
+          {(!isLiveGroup || liveModelFooter) && resolvedReplyModel ? <span
             data-testid="reply-model"
+            data-reply-model-live={liveModelFooter ? "" : undefined}
             className="inline-flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground dark:text-foreground/70 opacity-0 transition-opacity duration-150 ease-out motion-reduce:transition-none group-hover/message-group:opacity-100 group-focus-within/message-group:opacity-100 pointer-coarse:opacity-100"
           >
-            <span className="sr-only">Replied with </span>
+            <span className="sr-only">{liveModelFooter ? t("session.reply_model_live_prefix") : "Replied with "}</span>
             <span aria-hidden="true" className="flex size-3 shrink-0 items-center justify-center">
               {replyModelProviderId ? <ProviderIcon providerId={replyModelProviderId} size={12} /> : null}
             </span>

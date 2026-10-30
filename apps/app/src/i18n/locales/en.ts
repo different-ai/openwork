@@ -1511,6 +1511,7 @@ export default {
   "restrictions.add_custom_providers_disabled_title": "Adding custom providers is disabled",
   "session.allow_for_session": "Allow for session",
   "session.allow_once": "Allow once",
+  "session.reply_model_live_prefix": "Writing with ",
   "session.cmd_agent_active": "Active",
   "session.cmd_agent_default_detail": "Use the engine's default agent",
   "session.cmd_agents_detail": "Choose which agent runs your prompts",

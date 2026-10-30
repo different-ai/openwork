@@ -13,6 +13,7 @@ const { MessageListProvider } = await import("../src/components/chat/message-lis
 const { MessageList } = await import("../src/components/chat/message-list")
 const { useModelPickerCatalogStore } = await import("../src/react-app/domains/session/models/model-collections-store")
 const { useAutoRouteStore } = await import("../src/react-app/domains/session/sync/auto-route-store")
+const { useLiveReplyModelStore } = await import("../src/components/chat/live-reply-model-store")
 let mounted: { root: Root; container: HTMLElement } | null = null
 
 afterEach(async () => {
@@ -24,6 +25,7 @@ afterEach(async () => {
   }
   useModelPickerCatalogStore.setState({ bySession: {} })
   useAutoRouteStore.setState({ bySession: {} })
+  useLiveReplyModelStore.getState().setEnabled(false)
 })
 afterAll(() => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct)
@@ -178,6 +180,57 @@ test("an unknown gateway identity stays hidden without a catalog title", async (
 test("a streaming reply does not claim a completed model", async () => {
   const container = await render([answer("reply")], true)
   expect(container.querySelector('[data-testid="reply-model"]')).toBeNull()
+})
+
+function streamingAnswer(id: string, parts: UIMessage["parts"] = [{ type: "text", text: "Writing the document" }]): UIMessage {
+  return {
+    id, role: "assistant", parts,
+    metadata: { opencode: { created: 1000, replyModel: { providerID: "anthropic", modelID: "claude-sonnet", name: "Claude Sonnet", resolved: true } } },
+  }
+}
+
+test("liveReplyModel: hovering a streaming reply shows its model where the finished reply keeps it", async () => {
+  useLiveReplyModelStore.getState().setEnabled(true)
+  const container = await render([streamingAnswer("reply")], true)
+  const label = container.querySelector('[data-testid="reply-model"]')
+  expect(label?.textContent).toBe("Writing with Claude Sonnet")
+  expect(label?.hasAttribute("data-reply-model-live")).toBe(true)
+  // Same hover reveal as the finished footer.
+  expect(label?.className).toContain("opacity-0")
+  expect(label?.className).toContain("group-hover/message-group:opacity-100")
+  // The actions keep their slot so the caption does not move at completion, but cannot be used yet.
+  const actions = label?.previousElementSibling
+  expect(actions?.className).toContain("invisible")
+  expect(actions?.getAttribute("aria-hidden")).toBe("true")
+  expect(actions?.hasAttribute("inert")).toBe(true)
+  expect(container.querySelector('[data-reply-footer="live"]')).not.toBeNull()
+})
+
+test("liveReplyModel: the caption is already there while the reply is still only running steps", async () => {
+  useLiveReplyModelStore.getState().setEnabled(true)
+  const container = await render([streamingAnswer("reply", [{ type: "dynamic-tool", toolName: "bash", toolCallId: "c1", state: "input-available", input: { command: "ls", description: "list files" } }])], true)
+  expect(container.querySelector('[data-testid="reply-model"]')?.textContent).toBe("Writing with Claude Sonnet")
+})
+
+test("liveReplyModel: the caption keeps its place when the reply finishes", async () => {
+  useLiveReplyModelStore.getState().setEnabled(true)
+  const live = await render([streamingAnswer("reply")], true)
+  const liveFooter = live.querySelector("[data-reply-footer]")
+  const liveOrder = [...(liveFooter?.children ?? [])].map((child) => child.getAttribute("data-testid") ?? child.tagName)
+  await act(async () => mounted?.root.unmount())
+  mounted?.container.remove()
+  mounted = null
+  const done = await render([answer("reply")])
+  const doneFooter = done.querySelector("[data-reply-footer]")
+  expect(doneFooter?.getAttribute("data-reply-footer")).toBe("done")
+  expect([...(doneFooter?.children ?? [])].map((child) => child.getAttribute("data-testid") ?? child.tagName)).toEqual(liveOrder)
+  expect(doneFooter?.className).toBe(liveFooter?.className ?? "")
+})
+
+test("liveReplyModel off: a streaming reply shows no model", async () => {
+  const container = await render([streamingAnswer("reply")], true)
+  expect(container.querySelector('[data-testid="reply-model"]')).toBeNull()
+  expect(container.querySelector('[data-reply-footer="live"]')).toBeNull()
 })
 
 test("missing model metadata never invents a footer", async () => {

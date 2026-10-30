@@ -119,6 +119,7 @@ import { CalendarPage } from "@/react-app/domains/calendar/calendar-page";
 import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature";
 import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { useRemoteSessionSubagentsFeature } from "@/react-app/domains/session/remote-threads/use-remote-session-subagents-feature";
+import { useLiveReplyModelFeature } from "@/react-app/domains/session/chat/use-live-reply-model-feature";
 import { remoteThreadAttentionBySession, useRemoteThreadAttentionKey } from "@/react-app/domains/session/remote-threads/remote-thread-store";
 import { AppsPage } from "@/react-app/domains/apps/apps-page";
 import { DashboardPage } from "@/react-app/domains/dashboard/dashboard-page";
@@ -448,6 +449,7 @@ export function SessionRoute() {
   // The Calendar is an Automations view behind the automationCalendar feature.
   const calendarFeature = useOrgFeatureState("automationCalendar");
   useRemoteSessionSubagentsFeature();
+  useLiveReplyModelFeature();
   const calendarSurfaceAvailable = automationsEnabled && denAuth.isSignedIn && calendarFeature.data === true;
   const calendarAvailabilityPending = denAuthChecking || (automationsEnabled && denAuth.isSignedIn && calendarFeature.isLoading);
   const calendarRouteActive = calendarSurfaceAvailable && calendarRouteRequested;

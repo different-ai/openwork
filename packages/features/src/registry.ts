@@ -659,6 +659,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  liveReplyModel: {
+    label: "Desktop: see a reply's model while it streams",
+    description: "Hovering a reply that is still being written shows which model is writing it, in the same place the model shows once the reply is finished. Turning it off shows the model only after the reply finishes.",
+    category: "experience",
+    added: "2026-10-29",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/live-reply-model/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   composerSubagentTracker: {
     label: "Desktop: sub-agents above the composer",
     description: "While a turn's sub-agents run on OpenCode v2, a compact Agents list sits on top of the composer and stays in view as the chat scrolls: each agent's name, whether it is working, needs permission, waits for an answer, is done, stopped or hit an error, with Open, Stop and Review. Turning it off leaves only the sub-agent rows in the chat.",
