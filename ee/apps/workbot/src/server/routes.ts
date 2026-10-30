@@ -480,7 +480,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } })
   })
 
-  /** The everyday apps to connect on the welcome screen and workspace recovery actions. */
+  /** The apps to connect on the welcome screen and workspace recovery actions. */
   app.get("/v1/workbot/connections", async (c) => {
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
     const member = c.get("member")

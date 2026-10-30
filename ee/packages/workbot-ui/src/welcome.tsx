@@ -9,7 +9,7 @@ import { OpenWorkMark } from "./mark";
 
 /**
  * The first thing a person sees, once, before the conversation: a quiet hello, then (when their admins set any up)
- * their everyday apps to connect. Nothing to read about the interface (DESIGN P1); one primary action per step.
+ * their apps to connect, everyday ones first. Nothing to read about the interface (DESIGN P1); one primary action per step.
  * Each step's parts rise in one after another (V6: 200ms, ease-out, staggered), and leave together.
  */
 export function Welcome({ name, firstName, onBegin, onDone }: { name: string; firstName: string | null; onBegin: () => void; onDone: () => void }) {
@@ -98,11 +98,11 @@ function ConnectStep(props: {
       </Rise>
       <Rise order={2}>
         {props.connect.connections.isError && <p role="alert" className="pt-4 text-[13px] text-[var(--wb-muted)]">Couldn&apos;t verify your connections. <button type="button" onClick={() => void props.connect.connections.refetch()}>Try again</button></p>}
-        <ul className="mt-7 w-[min(400px,calc(100vw-48px))] overflow-hidden rounded-[16px] bg-[var(--wb-surface)] text-left shadow-[var(--wb-card-shadow)]">
+        <ul className="mt-7 max-h-[min(420px,50dvh)] w-[min(400px,calc(100vw-48px))] overflow-y-auto rounded-[16px] bg-[var(--wb-surface)] text-left shadow-[var(--wb-card-shadow)]">
           {props.connections.map((connection, index) => (
             <li key={connection.id} className={`flex min-h-14 flex-wrap items-center gap-3 px-4 py-3 ${index > 0 ? "border-t border-[var(--wb-row-line)]" : ""}`}>
               <span aria-hidden className="grid size-8 shrink-0 place-items-center rounded-[9px] bg-[var(--wb-chip)]">
-                <AppMark name={APP_NAMES[connection.app]} size={18} />
+                <AppMark name={connection.app === "other" ? connection.name : APP_NAMES[connection.app]} size={18} />
               </span>
               <span className="min-w-0 flex-1 truncate text-[14px] font-medium leading-5 text-[var(--wb-text)]">{connection.name}</span>
               {connection.ready ? (
@@ -137,7 +137,7 @@ function ConnectStep(props: {
   );
 }
 
-const APP_NAMES: Record<WorkbotConnection["app"], string> = { gmail: "Gmail", googleCalendar: "Google Calendar", slack: "Slack", microsoft: "Microsoft 365" };
+const APP_NAMES: Record<Exclude<WorkbotConnection["app"], "other">, string> = { gmail: "Gmail", googleCalendar: "Google Calendar", slack: "Slack", microsoft: "Microsoft 365" };
 
 /** One part of a step, rising in after the parts before it. */
 function Rise({ order, children }: { order: number; children: ReactNode }) {

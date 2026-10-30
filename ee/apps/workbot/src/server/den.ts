@@ -287,7 +287,7 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
       if (!parsed.success) throw new Error("den_run_token_200")
       return parsed.data
     },
-    /** The Gmail, Slack and Microsoft 365 connections the person's admins set up, and whether each is ready for them. */
+    /** Every connection the person's admins set up for them (Gmail, Slack and Microsoft 365 first), and whether each is ready. */
     async connections(accessToken: string) {
       const { status, payload } = await authorized("GET", "/v1/workbot/connections", accessToken)
       const parsed = workbotConnectionsSchema.safeParse(payload)
@@ -324,7 +324,8 @@ const workbotConnectionsSchema = z.object({
   connections: z.array(z.object({
     id: z.string(),
     name: z.string(),
-    app: z.enum(["gmail", "googleCalendar", "slack", "microsoft"]),
+    // Any app Den doesn't name is shown by its own name, so a newer Den never empties the list.
+    app: z.enum(["gmail", "googleCalendar", "slack", "microsoft", "other"]).catch("other"),
     ready: z.boolean(),
     connectUrl: z.string().nullable(),
     nativeProviderKey: z.string().nullable().optional(),
