@@ -86,6 +86,11 @@ final class BoundaryTests: XCTestCase {
         XCTAssertFalse(try Action(["type": "click", "x": 1, "y": 1]).entersText)
         XCTAssertFalse(try Action(["type": "key", "key": "enter"]).entersText)
         XCTAssertTrue(try Action(["type": "key", "key": "space"]).entersText, "A space is a character too")
+        // An app approval cannot name the website, so browsers never take a password here.
+        XCTAssertTrue(WebBrowser.contains(bundleID: "com.apple.Safari", info: [:]))
+        XCTAssertTrue(WebBrowser.contains(bundleID: "com.google.Chrome.canary", info: [:]))
+        XCTAssertTrue(WebBrowser.contains(bundleID: "com.example.newbrowser", info: ["CFBundleURLTypes": [["CFBundleURLSchemes": ["HTTPS"]]]]))
+        XCTAssertFalse(WebBrowser.contains(bundleID: "com.apple.TextEdit", info: ["CFBundleURLTypes": [["CFBundleURLSchemes": ["textedit"]]]]))
     }
 
     func testMalformedInputNeverBecomesAnAction() throws {

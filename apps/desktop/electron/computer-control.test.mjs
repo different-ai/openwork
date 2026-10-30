@@ -897,6 +897,15 @@ test("text marked secret goes only to an app the person confirmed, where no fiel
   assert.equal(f.cards().length, 2, "Always covers this app in this chat");
 });
 
+test("a browser app never takes a password: the site cannot be confirmed there", async (t) => {
+  const f = credentialFixture(); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "chrome", mode: "control", purpose: "Sign in" } });
+  assert.equal(payload(await typeInto(f.control, { type: "type", text: "given-password", secret: true })).code, "browser_app");
+  assert.equal(f.cards().length, 0, "Nobody is asked to approve a browser for every site in it");
+  assert.equal(f.acts().length, 0);
+});
+
 test("allowing a file panel to be browsed never becomes a standing approval", async (t) => {
   const f = filePanelFixture({ browsing: true }); t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);

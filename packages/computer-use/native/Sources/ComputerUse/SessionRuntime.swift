@@ -580,6 +580,10 @@ final class SessionRuntime {
         // Text typed while a secure field is on screen can land in it: the person confirms
         // this exact app before a password or code they gave reaches it. Nothing is sent first.
         if current.records.contains(where: \.protected), actions.contains(where: \.entersText),
+           WebBrowser.contains(bundleID: current.app.bundleID, info: current.app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:]) {
+            throw UseError("protected_input", "Web pages take a password or code only in OpenWork's browser, which confirms the exact site. Use it, or take over here; nothing was sent.", next: "human_takeover")
+        }
+        if current.records.contains(where: \.protected), actions.contains(where: \.entersText),
            credentialApproval != current.app.bundleID {
             return text(["ok": false, "code": "credential_approval_required", "app": current.app.app.localizedName ?? current.app.bundleID,
                 "app_id": current.app.bundleID, "dispatched": false, "next": "observe",

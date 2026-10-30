@@ -100,6 +100,12 @@ function deadline(ms) {
  * }} ComputerAdapter
  */
 
+
+// Approving a browser app cannot say which website gets a password, so browsers take none
+// through computer use; OpenWork's own browser confirms the exact site. Mac bundle ids and
+// Windows or Linux app names.
+const WEB_BROWSERS = /^(com\.apple\.safari|com\.google\.chrome|org\.chromium\.|com\.microsoft\.edgemac|com\.brave\.browser|com\.vivaldi\.|company\.thebrowser\.|com\.operasoftware\.|org\.mozilla\.|com\.kagi\.kagimacos|app\.zen-browser\.)|^(chrome|chromium|msedge|firefox|brave|opera|vivaldi|iexplore|arc|librewolf|waterfox|zen)$/i;
+
 /**
  * Adapters are trusted main-process dependencies, never renderer or model
  * input: "This Mac" (the native helper) or "This PC" (the Windows helper), and
@@ -1344,6 +1350,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         let confirmedApp = null;
         if (secret) {
           const app = typeof grant.lastOpen?.app_id === "string" ? grant.lastOpen.app_id : "";
+          if (WEB_BROWSERS.test(app)) return failure("browser_app", "Web pages take a password or code only in OpenWork's browser, which confirms the exact site. Use it, or ask the person to take over. Nothing was sent.");
           const answer = app ? await approveCredential(grant, { app }, signal) : "too_many";
           if (!["allow", "always"].includes(answer)) return failure("credential_declined", app
             ? "The person did not confirm entering a password or code in this app. Nothing was sent."
