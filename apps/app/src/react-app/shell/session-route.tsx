@@ -289,9 +289,14 @@ import {
   legacySessionRoute,
   mergeWorkspaceRouteSession,
   automationsRoute,
+  artifactsRoute,
   calendarRoute,
   codeRoute,
   dashboardRoute,
+  designRoute,
+  personalizationRoute,
+  projectsRoute,
+  scheduledRoute,
   workspaceExtensionsRoute,
   workspaceSessionRoute,
   workspaceSettingsRoute,
@@ -4044,6 +4049,26 @@ export function SessionRoute() {
         codeActive: codeRouteActive,
         onOpenCode: () => {
           navigate(codeRoute());
+        },
+        projectsActive: masterPlanRouteActive && masterPlanSection === "projects",
+        onOpenProjects: () => {
+          navigate(projectsRoute());
+        },
+        artifactsActive: masterPlanRouteActive && masterPlanSection === "artifacts",
+        onOpenArtifacts: () => {
+          navigate(artifactsRoute());
+        },
+        scheduledActive: masterPlanRouteActive && masterPlanSection === "scheduled",
+        onOpenScheduled: () => {
+          navigate(scheduledRoute());
+        },
+        designActive: masterPlanRouteActive && masterPlanSection === "design",
+        onOpenDesign: () => {
+          navigate(designRoute());
+        },
+        personalizationActive: masterPlanRouteActive && masterPlanSection === "personalization",
+        onOpenPersonalization: () => {
+          navigate(personalizationRoute());
         },
         dashboardActive: dashboardRouteActive || appsRouteActive,
         onOpenDashboard: dashboardSurfaceAvailable
