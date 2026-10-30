@@ -248,6 +248,7 @@ function McpAppTileContent({
   const documentSequence = useRef(0);
   const [readyDocument, setReadyDocument] = useState<TileDocument | null>(null);
   const lastHeight = useRef<number | undefined>(undefined);
+  const documentSnapshot = useRef<{ document: TileDocument; snapshot: string | undefined } | null>(null);
   const [state, setState] = useState<TileState>(() => cached && cachedEndpoint
     ? {
         phase: "ready", app: cached.app, result: cached.result, endpoint: cachedEndpoint, cachedAt: cached.cachedAt,
@@ -576,8 +577,13 @@ function McpAppTileContent({
         if (previous.phase === "ready" && previous.lifetime !== settled.lifetime) previous.lifetime.active = false;
         const live = liveTargetOf(settled)?.app ?? settled.app;
         for (const id of ownedLaunches.current.keys()) if (id !== live.launchId) releaseLaunch(id);
+        // The picture stays only for the same App document and launch input it shows.
+        const saved = readDashboardTileCache(cacheScopeKey, entry.id);
+        const snapshot = saved?.snapshot !== undefined && saved.argumentsSignature === argumentsSignature
+          && saved.workspaceId === settled.endpoint.workspaceId && sameAppDocument(saved.app, live) ? saved.snapshot : undefined;
         writeDashboardTileCache(cacheScopeKey, entry.id, {
           argumentsSignature, cachedAt: settled.cachedAt, workspaceId: settled.endpoint.workspaceId, app: live, result: settled.result,
+          ...(snapshot !== undefined ? { snapshot } : {}),
         });
         lastRefreshAtRef.current = settled.cachedAt;
         updateState(settled);
@@ -669,6 +675,16 @@ function McpAppTileContent({
   const origin = state.phase === "ready" && interactiveEndpoint ? state.origin : null;
   const awaitingReady = state.phase === "ready" && !state.lifetime.failed && readyDocument !== state.lifetime;
   const loadingDocument = state.phase === "loading" || awaitingReady || (state.phase === "ready" && state.argumentsSignature !== argumentsSignature);
+  // The last picture of this exact App document, fixed when the document
+  // opens, stands in for the skeleton until the App is ready.
+  if (state.phase === "ready" && documentSnapshot.current?.document !== state.lifetime) {
+    documentSnapshot.current = {
+      document: state.lifetime,
+      snapshot: cached?.snapshot !== undefined && sameAppDocument(cached.app, state.app) ? cached.snapshot : undefined,
+    };
+  }
+  const snapshot = state.phase === "ready" ? documentSnapshot.current?.snapshot : undefined;
+  const paintsSnapshot = awaitingReady && snapshot !== undefined && state.argumentsSignature === argumentsSignature;
   const reservedHeight = geometry.reservedHeight ?? lastHeight.current ?? geometry.initialHeight ?? 320;
   const currentDocument = (document: TileDocument) => lifetime.current.active && document.active
     && stateRef.current.phase === "ready" && stateRef.current.lifetime === document
@@ -771,6 +787,14 @@ function McpAppTileContent({
                 }}
                 initialHeight={geometry.initialHeight ?? lastHeight.current}
                 onReady={() => { if (currentDocument(state.lifetime) && !state.lifetime.failed) setReadyDocument(state.lifetime); }}
+                snapshot={snapshot}
+                onSnapshot={(html) => {
+                  if (!currentDocument(state.lifetime) || state.lifetime.failed) return;
+                  // Kept with the entry this document shows, so it is removed with it.
+                  const saved = readDashboardTileCache(cacheScopeKey, entry.id);
+                  if (!saved || saved.argumentsSignature !== argumentsRef.current.signature || !sameAppDocument(saved.app, state.app)) return;
+                  writeDashboardTileCache(cacheScopeKey, entry.id, { ...saved, snapshot: html });
+                }}
                 onHeightChange={(height) => {
                   if (!currentDocument(state.lifetime) || state.lifetime.failed) return;
                   lastHeight.current = height;
@@ -804,7 +828,8 @@ function McpAppTileContent({
           )
         ) : null}
       </DashboardTileShell>
-      {loadingDocument ? (
+      {paintsSnapshot ? <span className="sr-only" role="status">Loading {entry.title}</span> : null}
+      {loadingDocument && !paintsSnapshot ? (
         <div className="absolute inset-0 z-10 flex flex-col gap-3 rounded-xl bg-background p-3" role="status" aria-label={`Loading ${entry.title}`} data-dashboard-loading>
           <span className="text-xs text-muted-foreground">Loading {entry.title}</span>
           <Skeleton className="h-4 w-2/3" />

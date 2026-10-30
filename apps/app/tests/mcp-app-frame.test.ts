@@ -28,7 +28,7 @@ const { useUiStateStore } = await import("../src/react-app/shell/ui-state-store"
 const { usePanelTabStore } = await import("../src/react-app/domains/session/panel/panel-tab-store")
 const { useSessionActivityStore } = await import("../src/react-app/domains/session/status/session-activity-store")
 const { McpAppTile } = await import("../src/react-app/domains/dashboard/mcp-app-tile")
-const { removeDashboardTileCache, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache")
+const { readDashboardTileCache, removeDashboardTileCache, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache")
 const { flushDashboardTileCacheStorage } = await import("../src/app/lib/dashboard-cache-storage")
 const {
   buildMcpAppCsp,
@@ -591,6 +591,70 @@ describe("MCP App retry ownership", () => {
       expect(host.failures).toEqual([])
     } finally {
       removeDashboardTileCache(scope, "stale-0")
+      flushDashboardTileCacheStorage()
+      try { await host.dispose() } finally {
+        for (const spy of [resolveSpy, releaseSpy, callSpy]) spy.mockRestore()
+      }
+    }
+  })
+})
+
+describe("MCP App snapshots", () => {
+  test("a reopened tile paints its last picture in a script-less frame until the live App is ready, and keeps the next one", async () => {
+    const host = await startupFixture()
+    const scope = "snapshot-first-paint"
+    const resolveSpy = spyOn(host.client, "resolveMcpApp").mockResolvedValue({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) })
+    const releaseSpy = spyOn(host.client, "releaseMcpApp").mockResolvedValue({ released: true })
+    const callSpy = spyOn(host.client, "callMcpAppTool").mockResolvedValue({ content: [] })
+    writeDashboardTileCache(scope, "snapshot-0", {
+      argumentsSignature: "{}", cachedAt: Date.now(), workspaceId: "fixture",
+      app: fixture({ toolName: "render-0", launchId: undefined }), result: { content: [] },
+      snapshot: '<style>p { color: red }</style><div id="openwork-mcp-app-root"><p onclick="steal()">Revenue 42</p><script>steal()</script><img src="https://outside.example/pixel.png"></div>',
+    })
+    const sendSnapshot = async (html: unknown) => {
+      await act(async () => {
+        Reflect.get(host.bridges[0], "_onnotification").call(host.bridges[0], { jsonrpc: "2.0", method: "openwork/snapshot", params: { html } })
+        await Promise.resolve()
+      })
+    }
+    try {
+      await host.renderElement(createElement(WorkspaceProvider, {
+        client: null, openworkServerClient: host.client, workspaceId: "fixture", selectedWorkspaceRoot: "/fixture",
+      }, createElement(McpAppTile, {
+        entry: { kind: "mcp", id: "snapshot-0", title: "Snapshot 0", serverName: "fixture", toolName: "render-0",
+          projectedToolName: "render-0", resourceUri: fixture().resourceUri, autoLaunch: true },
+        cacheScopeKey: scope,
+      })))
+      const painted = host.container.querySelector<HTMLIFrameElement>("iframe[data-mcp-app-snapshot]")
+      if (!painted) throw new Error("Missing snapshot frame")
+      expect(painted.getAttribute("sandbox")).toBe("")
+      expect(painted.hasAttribute("inert")).toBe(true)
+      expect(painted.getAttribute("aria-hidden")).toBe("true")
+      const srcdoc = painted.getAttribute("srcdoc") ?? ""
+      expect(srcdoc).toContain(`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">`)
+      expect(srcdoc).toContain("<p>Revenue 42</p>")
+      expect(srcdoc).toContain("<style>p { color: red }</style>")
+      expect(srcdoc).not.toMatch(/<script|onclick|outside\.example/)
+      // The picture stands in for the skeleton; the live frame starts behind it.
+      expect(host.container.querySelector("[data-dashboard-loading]")).toBeNull()
+      expect(host.frame(0).getAttribute("sandbox")).not.toBe("")
+
+      await host.notify(0, "ui/notifications/sandbox-proxy-ready")
+      expect(Reflect.get(host.bridges[0], "_hostContext")?.experimental).toMatchObject({ "openwork/snapshot": true })
+      await sendSnapshot('<div id="openwork-mcp-app-root"><p>Too early</p></div>')
+      expect(readDashboardTileCache(scope, "snapshot-0")?.snapshot).toContain("Revenue 42")
+
+      await act(async () => { host.bridges[0].oninitialized?.() })
+      expect(host.container.querySelector("iframe[data-mcp-app-snapshot]")).toBeNull()
+      expect(host.frame(0)).toBeDefined()
+
+      await sendSnapshot('<div id="openwork-mcp-app-root"><p onmouseover="steal()">Revenue 43</p><script>steal()</script></div>')
+      expect(readDashboardTileCache(scope, "snapshot-0")?.snapshot).toBe('<div id="openwork-mcp-app-root"><p>Revenue 43</p></div>')
+      await sendSnapshot("x".repeat(200_001))
+      expect(readDashboardTileCache(scope, "snapshot-0")?.snapshot).toBe('<div id="openwork-mcp-app-root"><p>Revenue 43</p></div>')
+      expect(host.failures).toEqual([])
+    } finally {
+      removeDashboardTileCache(scope, "snapshot-0")
       flushDashboardTileCacheStorage()
       try { await host.dispose() } finally {
         for (const spy of [resolveSpy, releaseSpy, callSpy]) spy.mockRestore()

@@ -1,6 +1,7 @@
 import type { OpenworkMcpAppResource } from "@/app/lib/openwork-server";
 import { createDashboardTileCacheStore, DASHBOARD_TILE_CACHE_STORAGE_PREFIX } from "@/app/lib/dashboard-cache-storage";
 import type { PreservedMcpAppResult } from "@/components/chat/mcp-app-frame";
+import { MCP_APP_SNAPSHOT_MAX_BYTES } from "@/app/lib/mcp-app-snapshot";
 
 const MAX_CACHE_AGE_MS = 24 * 60 * 60 * 1_000;
 const MAX_SCOPE_CACHE_BYTES = 3_000_000;
@@ -12,6 +13,11 @@ export type DashboardTileCache = {
   workspaceId: string;
   app: OpenworkMcpAppResource;
   result: PreservedMcpAppResult;
+  /**
+   * The cleaned picture the App last showed, painted on the next open until
+   * the live App is ready. It goes whenever this entry is removed.
+   */
+  snapshot?: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -71,6 +77,7 @@ function parseCache(value: unknown, now: number): DashboardTileCache | null {
   return app && result ? {
     cachedAt: value.cachedAt, workspaceId: value.workspaceId, app, result,
     ...(typeof value.argumentsSignature === "string" ? { argumentsSignature: value.argumentsSignature } : {}),
+    ...(typeof value.snapshot === "string" && value.snapshot.length <= MCP_APP_SNAPSHOT_MAX_BYTES ? { snapshot: value.snapshot } : {}),
   } : null;
 }
 
@@ -124,15 +131,25 @@ function serializeScope(scope: Map<string, DashboardTileCache>, now: number, max
       continue;
     }
     const ref = htmlRefFor(cache.app.html, refs);
+    const encode = (entry: DashboardTileCache) => {
+      const { html: _html, ...app } = entry.app;
+      return `${JSON.stringify(entryId)}:${JSON.stringify({ ...entry, app: { ...app, htmlRef: ref } })}`;
+    };
+    let entry = cache;
     let serialized: string;
     let htmlCost = 0;
     try {
-      const { html, ...app } = cache.app;
-      serialized = `${JSON.stringify(entryId)}:${JSON.stringify({ ...cache, app: { ...app, htmlRef: ref } })}`;
-      if (!keptHtml.has(ref)) htmlCost = `${JSON.stringify(ref)}:${JSON.stringify(html)},`.length;
+      serialized = encode(entry);
+      if (!keptHtml.has(ref)) htmlCost = `${JSON.stringify(ref)}:${JSON.stringify(cache.app.html)},`.length;
     } catch {
       scope.delete(entryId);
       continue;
+    }
+    // A picture is the first thing to go: the entry's data outlives it.
+    if (size + serialized.length + 1 + htmlCost > maxBytes && entry.snapshot !== undefined) {
+      const { snapshot: _snapshot, ...rest } = entry;
+      entry = rest;
+      serialized = encode(entry);
     }
     const cost = serialized.length + 1 + htmlCost;
     if (size + cost > maxBytes) {
@@ -141,7 +158,7 @@ function serializeScope(scope: Map<string, DashboardTileCache>, now: number, max
     }
     size += cost;
     keptHtml.add(ref);
-    scope.set(entryId, cache);
+    scope.set(entryId, entry);
     kept.push({ entryId, serialized });
   }
   if (kept.length === 0) return null;
