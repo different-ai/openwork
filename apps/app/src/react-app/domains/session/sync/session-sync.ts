@@ -35,6 +35,7 @@ import {
 import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
+  reasoningTime,
   STRUCTURED_OUTPUT_TOOL,
 } from "./parse-tool-parts";
 import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
@@ -962,7 +963,7 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
       type: "reasoning",
       text: part.text,
       state: "done",
-      providerMetadata: { opencode: { partId: part.id } },
+      providerMetadata: { opencode: { partId: part.id, ...reasoningTime(part) } },
     };
   }
   if (part.type === "file") {

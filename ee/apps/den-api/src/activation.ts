@@ -12,6 +12,7 @@ import {
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { ActivationClientEvent, ActivationEventRequest } from "@openwork/types/den/activation"
 import { computeActivationState, type ActivationFacts } from "./activation-steps.js"
+import { calculateDesktopPolicyForOrgMember } from "./desktop-policies.js"
 import { db } from "./db.js"
 import type { MemberTeamSummary, OrganizationContext } from "./orgs.js"
 import { roleIncludesOwner } from "./organization-member-guards.js"
@@ -75,7 +76,7 @@ export async function readActivationFacts(input: { organizationContext: Organiza
   const reportedIds = Object.values(CLIENT_EVENT_TYPES).map((type) => eventId(actor, type))
   const now = new Date()
 
-  const [permissions, reported, others, pending, invitedByMe, owners, gatewayProvider, addedProvider, connections] = await Promise.all([
+  const [permissions, reported, others, pending, invitedByMe, owners, gatewayProvider, addedProvider, connections, desktopPolicy, orgProvider] = await Promise.all([
     resolveMemberPermissionsFromContext(organizationContext, memberTeams.map((team) => team.id)),
     db.select({ type: TelemetryEventTable.event_type, durationMs: TelemetryEventTable.duration_ms })
       .from(TelemetryEventTable)
@@ -111,6 +112,13 @@ export async function readActivationFacts(input: { organizationContext: Organiza
       .orderBy(asc(LlmProviderTable.createdAt))
       .limit(1),
     listMemberUsableConnectionFacts({ context: { organizationContext, memberTeams, session: null } }).catch(() => []),
+    // Whether the member may add their own model provider (desktop policy `allowCustomProviders`).
+    calculateDesktopPolicyForOrgMember({ organizationId, orgMemberId: member.id }),
+    // Whether the organization already provides models centrally (any provider in the org, including
+    // Den/managed `source: "openwork"` providers an admin provisioned), so the member need not set one up.
+    db.select({ id: LlmProviderTable.id }).from(LlmProviderTable)
+      .where(eq(LlmProviderTable.organizationId, organizationId))
+      .limit(1),
   ])
 
   const reportedType = (step: ActivationClientEvent) => reported.find((row) => row.type === CLIENT_EVENT_TYPES[step])
@@ -146,7 +154,12 @@ export async function readActivationFacts(input: { organizationContext: Organiza
       pending: pendingCount,
     },
     skillUsed,
-    ownProvider: { reportedOnDevice: Boolean(reportedType("own_provider")), addedProviderName: addedProvider[0]?.name ?? null },
+    ownProvider: {
+      reportedOnDevice: Boolean(reportedType("own_provider")),
+      addedProviderName: addedProvider[0]?.name ?? null,
+      orgProvided: orgProvider.length > 0,
+      canConfigure: desktopPolicy.allowCustomProviders !== false,
+    },
     gateway: {
       canManage: permissions.has("gateway_providers.manage"),
       hasProvider: gatewayProvider.length > 0,

@@ -9,6 +9,9 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
 import { MessageContent } from "@/components/ui/message"
+import { TextSentenceLine, TrailingChevron } from "@/components/chat/activity-rail"
+import { useTextActivityRail } from "@/components/chat/text-activity-rail-store"
+import { textThoughtLabel } from "@/lib/text-activity"
 import { cn } from "@/lib/utils"
 
 type ReasoningBlockProps = {
@@ -16,6 +19,8 @@ type ReasoningBlockProps = {
   isStreaming: boolean
   className?: string
   disclosureKey?: string
+  /** How long the model thought; text-first shows "Thought 12s". */
+  durationMs?: number | null
 }
 
 /**
@@ -23,20 +28,29 @@ type ReasoningBlockProps = {
  * line with a chevron; the full reasoning renders as markdown only
  * when the user opens it.
  */
-export function ReasoningBlock({ text, isStreaming, className, disclosureKey }: ReasoningBlockProps) {
+export function ReasoningBlock({ text, isStreaming, className, disclosureKey, durationMs }: ReasoningBlockProps) {
   const [open, setOpen] = useWorkbenchDisclosure(disclosureKey)
+  const textRail = useTextActivityRail()
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className={cn("w-full", className)} data-reasoning-block="">
-      <CollapsibleTrigger className="group flex cursor-pointer items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground">
-        <span className={cn(isStreaming && "animate-pulse")}>
-          {isStreaming ? "Thinking…" : "Thought"}
-        </span>
-        <ChevronDown
-          aria-hidden="true"
-          className="size-3.5 text-muted-foreground/70 transition-transform duration-150 group-data-panel-open:rotate-180"
-        />
-      </CollapsibleTrigger>
+      {textRail ? (
+        // Text-first: "Thought 12s ›", the chevron after the text; only a live thought shimmers.
+        <CollapsibleTrigger className="group flex min-h-6.5 cursor-pointer items-center gap-2 text-sm transition-colors hover:text-foreground">
+          <TextSentenceLine verb={textThoughtLabel(durationMs, isStreaming)} tone={isStreaming ? "running" : "normal"} />
+          <TrailingChevron open={open} />
+        </CollapsibleTrigger>
+      ) : (
+        <CollapsibleTrigger className="group flex cursor-pointer items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground">
+          <span className={cn(isStreaming && "animate-pulse")}>
+            {isStreaming ? "Thinking…" : "Thought"}
+          </span>
+          <ChevronDown
+            aria-hidden="true"
+            className="size-3.5 text-muted-foreground/70 transition-transform duration-150 group-data-panel-open:rotate-180"
+          />
+        </CollapsibleTrigger>
+      )}
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
         <MessageContent
           markdown

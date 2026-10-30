@@ -7,6 +7,8 @@ import { FileChip } from "@/components/chat/file-chip"
 import { LaneChevron, LeadingLane, RAIL_LINE, RAIL_ROW, RailDuration, RailMeta } from "@/components/chat/activity-rail"
 import { DetailsToggle } from "@/components/chat/capability-call-line"
 import { ShellCommandText } from "@/components/chat/shell-command-text"
+import { useTextActivityRail } from "@/components/chat/text-activity-rail-store"
+import { TextToolAggregateGroup } from "@/components/chat/text-tool-aggregate-group"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
 import { useWorkbenchDisclosure } from "@/react-app/domains/session/chat/workbench-ui-state"
 import { useCurrentToolLifecycleResolver } from "@/components/chat/current-tool-lifecycle-context"
@@ -212,7 +214,12 @@ export function buildAggregateRows(parts: AnyToolPart[], thoughts: AggregateThou
  * current action; past-tense summary when done. Chevron expands the chronological list — status
  * dot, monospace action, per-item duration — capped with "Show N more".
  */
-export function ToolAggregateGroup({ parts, messageId, thoughts = [], className }: ToolAggregateGroupProps) {
+export function ToolAggregateGroup(props: ToolAggregateGroupProps) {
+  // Text-first rail (flag `textActivityRail`); off keeps this rail exactly as it was.
+  return useTextActivityRail() ? <TextToolAggregateGroup {...props} /> : <RailToolAggregateGroup {...props} />
+}
+
+function RailToolAggregateGroup({ parts, messageId, thoughts = [], className }: ToolAggregateGroupProps) {
   const groupKey = parts[0]?.toolCallId ?? "aggregate"
   const latestToolCallId = parts.at(-1)?.toolCallId ?? groupKey
   const keyFor = (id: string, detail: string) => messageId ? JSON.stringify(["tool", messageId, id, detail]) : undefined

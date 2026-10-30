@@ -8,6 +8,7 @@ import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../../../app/types";
 import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
+  reasoningTime,
   STRUCTURED_OUTPUT_TOOL,
 } from "./parse-tool-parts";
 import { readComposerPill } from "../surface/composer/composer-pills";
@@ -203,7 +204,7 @@ export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "me
             type: "reasoning",
             text: getTextPartValue(part),
             state: "done" as const,
-            providerMetadata: { opencode: { partId: part.id } },
+            providerMetadata: { opencode: { partId: part.id, ...reasoningTime(part) } },
           }];
         }
         if (part.type === "file") {

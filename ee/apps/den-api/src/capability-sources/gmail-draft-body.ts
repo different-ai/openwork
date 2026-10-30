@@ -121,9 +121,9 @@ function line(content: DraftBody): string {
   return content.html.length === 0 ? "<div><br></div>" : `<div dir="ltr" style="${escapeHtmlAttribute(lineStyle)}">${content.html}</div>`
 }
 
-function listItem(text: string): { indent: number; ordered: boolean; number: number; text: string } | null {
+function listItem(text: string): { indent: number; prefix: string; ordered: boolean; number: number; text: string } | null {
   const match = text.match(/^([ \t]*)([-*]|\d+\.)[ \t]+(.*)$/)
-  return match ? { indent: match[1].replace(/\t/g, "    ").length, ordered: match[2].endsWith("."), number: parseInt(match[2], 10), text: match[3] } : null
+  return match ? { indent: match[1].replace(/\t/g, "    ").length, prefix: `${match[1]}${match[2]} `, ordered: match[2].endsWith("."), number: parseInt(match[2], 10), text: match[3] } : null
 }
 
 function cells(text: string): string[] {
@@ -177,7 +177,8 @@ function blocks(lines: string[], normalizeProse: (text: string) => string, depth
       if (!item || item.indent !== indent || item.ordered !== first.ordered) break
       const content = inline(item.text)
       let itemHtml = content.html
-      text.push(" ".repeat(indent) + content.plain)
+      // Keep authored markers/numbers and indentation; normalize only the marker separator.
+      text.push(item.prefix + content.plain)
       index++
       while (index < lines.length && lines[index].trim() !== "") {
         const child = listItem(lines[index])
@@ -217,7 +218,7 @@ function blocks(lines: string[], normalizeProse: (text: string) => string, depth
       const quoted: string[] = []
       while (index < lines.length && quoteAt(index)) quoted.push(lines[index++].replace(/^ {0,3}> ?/, ""))
       const content = blocks(quoted, normalizeProse, depth + 1)
-      plain.push(content.plain)
+      plain.push(content.plain.split("\n").map(text => `> ${text}`).join("\n"))
       html.push(`<blockquote dir="ltr" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">${content.html}</blockquote>`)
       continue
     }
