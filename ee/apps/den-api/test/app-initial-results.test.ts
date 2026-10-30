@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { MCP_APP_INITIAL_RESULTS_META, type McpAppToolBinding } from "@openwork/types/mcp-app"
 import { appStarter } from "../src/mcp/app-authoring-starter.js"
-import { loadInitialResults } from "../src/mcp/app-launch-data.js"
+import { launchInitialResults, loadInitialResults, type McpAppLaunchDataStore } from "../src/mcp/app-launch-data.js"
 import type { ExecuteCapabilityToolResult } from "../src/mcp/capability-registry.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../src/mcp/scopes.js"
 
@@ -77,6 +77,49 @@ test("a read past its time budget is left out rather than holding the launch", a
   }
   const { results } = await loading
   assert.deepEqual(results.map((entry) => entry.name).sort(), ["broken_read", "count_issues"])
+})
+
+function memoryStore() {
+  const slots = new Map<string, unknown>()
+  const store: McpAppLaunchDataStore = {
+    async open(timeZone) {
+      const key = timeZone ?? ""
+      return { kept: slots.get(key) ?? null, save: async (results) => { slots.set(key, results) } }
+    },
+  }
+  return { slots, store }
+}
+
+async function launch(store: McpAppLaunchDataStore | undefined, timeZone = "UTC") {
+  const calls: string[] = []
+  const results = await launchInitialResults({
+    tools: TOOLS, scopes: new Set([DEN_MCP_READ_SCOPE]), timeZone, store,
+    callTool: async (tool) => { calls.push(tool.name); return { content: [{ type: "text", text: "ok" }] } },
+  })
+  return { results, calls }
+}
+
+test("a member's next open gets what their last open loaded at once, marked kept", async () => {
+  const { slots, store } = memoryStore()
+  const first = await launch(store)
+  assert.equal(first.calls.length, 3)
+  assert.equal(slots.size, 1)
+  const second = await launch(store)
+  assert.deepEqual(second.calls, [])
+  assert.deepEqual(second.results.map((entry) => [entry.name, entry.kept]).sort(), [["broken_read", true], ["count_issues", true], ["load_mrr", true]])
+  // Another time zone is another answer, loaded afresh.
+  assert.equal((await launch(store, "Asia/Tokyo")).calls.length, 3)
+})
+
+test("kept launch data that does not parse, or a store that cannot keep it, loads afresh", async () => {
+  const broken: McpAppLaunchDataStore = { open: async () => ({ kept: [{ name: 1 }], save: async () => {} }) }
+  const brokenOpen = await launch(broken)
+  assert.equal(brokenOpen.calls.length, 3)
+  assert.ok(brokenOpen.results.every((entry) => entry.kept === undefined))
+  // No slot, as when the inventory revision is unknown: nothing is kept or reused.
+  const unavailable: McpAppLaunchDataStore = { open: async () => null }
+  assert.equal((await launch(unavailable)).calls.length, 3)
+  assert.equal((await launch(unavailable)).calls.length, 3)
 })
 
 test("Apps built from the starter read initial results, so new Apps load with their launch", () => {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { startMcpAppTiming } from "@openwork/types/mcp-app-timing";
 import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
@@ -25,6 +26,7 @@ import {
 } from "@openwork/types/mcp-app"
 import type { Context, Hono } from "hono"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
+import { cache } from "../cache.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { getOrganizationFeatures } from "../features.js"
@@ -37,7 +39,7 @@ import {
 } from "../mcp-apps.js"
 import { executeCapabilityWithBudget } from "./agent.js"
 import { runsWithoutClick } from "./app-tool-access.js"
-import { loadInitialResults, requiredScope } from "./app-launch-data.js"
+import { launchInitialResults, requiredScope, type McpAppLaunchDataStore } from "./app-launch-data.js"
 import { callMcpAppTool } from "./app-tools.js"
 import { mcpAuditPrincipal } from "../audit/mcp-service-audit.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
@@ -170,6 +172,7 @@ export function createMcpAppServer(input: {
   scopes: ReadonlySet<string>
   loadResource: (revision: { appId: string; revisionId: string }) => Promise<McpAppResource>
   callTool: (binding: McpAppToolBinding, args: Record<string, unknown>) => Promise<ExecuteCapabilityToolResult>
+  launchData?: McpAppLaunchDataStore
 }) {
   const { app, tools } = input.definition
   const server = new McpServer({ name: app.title, version: "1.0.0" }, {
@@ -193,7 +196,7 @@ export function createMcpAppServer(input: {
       // without any gets reads made ahead of it. They stay out of the model's
       // view in _meta, which hosts pass to the App with the result.
       const initialResults = input.definition.loadsWithLaunch && Object.keys(launchInput).length === 0
-        ? await loadInitialResults({ tools, scopes: input.scopes, timeZone: typeof args.timeZone === "string" ? args.timeZone : undefined, callTool: input.callTool })
+        ? await launchInitialResults({ tools, scopes: input.scopes, timeZone: typeof args.timeZone === "string" ? args.timeZone : undefined, callTool: input.callTool, store: input.launchData })
         : []
       return {
         content: [{ type: "text", text: app.textFallback }],
@@ -298,6 +301,23 @@ async function handleMcpAppServerRequestUntimed(input: {
       capability: binding.capability,
       invoke: () => callMcpAppTool(capabilityContext, binding, args),
     }),
+    launchData: {
+      // Kept only at the organization's current inventory revision, which moves
+      // after any write that can change what this member may use: connections,
+      // Plugins, Workflows, teams, membership, features and every deploy.
+      async open(timeZone) {
+        const revision = await cache.inventory.revision(organizationId)
+        if (!revision) return null
+        const key = createHash("sha256").update(JSON.stringify([
+          revision, member.orgMembershipId, [...member.teamIds].sort(), definition.app.appId, definition.app.revisionId,
+          [...principal.scopes].sort(), timeZone ?? "",
+        ])).digest("hex")
+        return {
+          kept: await cache.mcpAppLaunchData.load(key),
+          save: (results) => cache.mcpAppLaunchData.save(key, results),
+        }
+      },
+    },
   })
   const transport = new StreamableHTTPTransport()
   await server.connect(transport)
