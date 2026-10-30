@@ -84,7 +84,7 @@ export function parseReceipt(value: unknown): Receipt {
 }
 export function parseProgress(value: unknown): Progress {
   const v = object(value)
-  keys(v, ["status", "waitingFor", "engine", "model", "finalText", "error", "messageCount", "observedAt"])
+  keys(v, ["status", "waitingFor", "engine", "model", "finalText", "error", "messageCount", "latestStep", "observedAt"])
   return {
     status: status(v.status), observedAt: integer(v.observedAt),
     ...(v.waitingFor === undefined ? {} : { waitingFor: waiting(v.waitingFor) }),
@@ -93,6 +93,7 @@ export function parseProgress(value: unknown): Progress {
     ...(v.finalText === undefined ? {} : { finalText: text(v.finalText, 20_000, 0) }),
     ...(v.error === undefined ? {} : { error: nullable(v.error, parseError) }),
     ...(v.messageCount === undefined ? {} : { messageCount: integer(v.messageCount) }),
+    ...(v.latestStep === undefined ? {} : { latestStep: nullable(v.latestStep, step => text(step, 240, 1)) }),
   }
 }
 export function parseComplete(value: unknown): Complete {

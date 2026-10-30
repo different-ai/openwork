@@ -111,6 +111,7 @@ import {
 } from "@/components/ui/select";
 
 import { SidebarContext, useSidebarContext } from "./app-sidebar-provider";
+import { RemoteTaskSidebarRows } from "./remote-task-sidebar-rows";
 import { AccountStatusMenu, type AccountStatusMenuProps } from "./account-status-menu";
 import { ActivationCard } from "../../cloud/activation/activation-card";
 import { usePlatform } from "../../../kernel/platform";
@@ -2656,5 +2657,11 @@ export function SessionMenuItem({
   );
 
   if (attachedAsSideChat && !isSelected) return null;
-  return item;
+  if (subtitle || workspaceName) return item;
+  return (
+    <>
+      {item}
+      <RemoteTaskSidebarRows sessionId={session.id} sessionTitle={displayTitle} onOpen={(routeId) => ctx.onOpenSession(workspaceId, routeId)} />
+    </>
+  );
 }

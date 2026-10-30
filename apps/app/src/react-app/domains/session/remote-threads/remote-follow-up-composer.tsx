@@ -18,6 +18,7 @@ export function RemoteFollowUpComposer({
   sending,
   stopping,
   error,
+  autoFocus = false,
 }: {
   draft: string
   onDraftChange: (draft: string) => void
@@ -31,6 +32,8 @@ export function RemoteFollowUpComposer({
   sending: boolean
   stopping: boolean
   error: string | null
+  /** Focus the box on open, where the person just chose to open the task. */
+  autoFocus?: boolean
 }) {
   const canSend = !disabled && !sending && Boolean(draft.trim())
   // Same as the chat composer: while busy the one button stops, Enter still sends.
@@ -50,6 +53,7 @@ export function RemoteFollowUpComposer({
           value={draft}
           rows={1}
           disabled={disabled}
+          autoFocus={autoFocus}
           aria-label={t("session.remote_task_follow_up")}
           placeholder={t("session.remote_task_follow_up")}
           className="block field-sizing-content max-h-40 min-h-6 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm leading-6 text-dls-text outline-none placeholder:text-dls-secondary disabled:cursor-not-allowed disabled:opacity-60"

@@ -1,6 +1,9 @@
 /** @jsxImportSource react */
 import { openMemberApiKeyDialog } from "../../connections/member-api-key-dialog";
 import { childOrigin, rememberChildOrigin, prepareChildReturn, consumeChildReturn, registerChildDraftPersistence } from "@/lib/child-navigation";
+import { remoteSessionRouteId } from "@/lib/remote-session-route";
+import type { RemoteThreadStart } from "@/lib/remote-session-thread";
+import { rememberRemoteHelperOrigin } from "@/react-app/domains/session/remote-threads/remote-helper-navigation";
 import { verifyChildTarget } from "@/lib/verify-child-target";
 import { isTaskToolPart, taskChildSessionId } from "@/lib/build-in-tools";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
@@ -758,6 +761,8 @@ export type SessionSurfaceProps = {
   onForkAtMessage?: (messageId: string | null, sessionId: string, isCurrent: () => boolean) => Promise<void>;
   /** Open a sub-agent (child) session in the main chat surface. */
   onOpenSubagentSession?: (sessionId: string) => void;
+  /** Open a task on another computer in the main pane (`remoteSessionHelperView`); absent opens it beside the chat. */
+  onOpenRemoteTask?: (threadKey: string) => void;
   onReturnToParent?: () => void;
   parentSessionTitle?: string;
   sessionTitle?: string;
@@ -3233,6 +3238,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
       brief: task?.type === "dynamic-tool" && isTaskToolPart(task) ? task.input?.prompt ?? "" : "" });
     props.onOpenSubagentSession?.(id);
   }, [baseRenderedMessages, childNavigationScope, props.sessionId, props.chatPane, props.onOpenSubagentSession, props.sessionTitle]);
+  const openRemoteTask = useCallback((start: RemoteThreadStart) => {
+    // Same return path as a local helper: this pane, this scroll, this row.
+    const message = baseRenderedMessages.find(message => message.parts.some(part => part.type === "dynamic-tool" && part.toolCallId === start.toolCallId));
+    rememberChildOrigin(childNavigationScope, remoteSessionRouteId(start.key), { parentId: props.sessionId, pane: props.chatPane ?? "primary",
+      anchor: start.key, scrollTop: scrollRef.current?.scrollTop ?? 0, title: props.sessionTitle, brief: start.prompt ?? "", messageId: message?.id });
+    rememberRemoteHelperOrigin({ start, owner: { workspaceId: props.workspaceId, sessionId: props.sessionId }, parentTitle: props.sessionTitle ?? null });
+    props.onOpenRemoteTask?.(start.key);
+  }, [baseRenderedMessages, childNavigationScope, props.sessionId, props.chatPane, props.sessionTitle, props.workspaceId, props.onOpenRemoteTask]);
   const handleQueueDraftPersistenceRef = useRef<(() => void) | null>(null);
   handleQueueDraftPersistenceRef.current = () => {
     // The store receives keystrokes synchronously; a keyboard navigation event
@@ -3276,7 +3289,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
       const element = scrollRef.current;
       if (!element) return false;
       element.scrollTop = restore.scrollTop;
-      const row = element.querySelector(`[data-subagent-session-id="${CSS.escape(restore.anchor)}"]`);
+      const anchor = CSS.escape(restore.anchor);
+      const row = element.querySelector(`[data-subagent-session-id="${anchor}"], [data-remote-thread="${anchor}"]`);
       if (row) {
         observer?.disconnect();
 
@@ -3832,6 +3846,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       forkingMessageId={forkingMessageId}
                       onEditUserMessage={handleEditUserMessage}
                       onOpenSubagentSession={openChild}
+                      onOpenRemoteTask={props.onOpenRemoteTask ? openRemoteTask : undefined}
                       onStopSubagentSession={archived ? undefined : handleStopSubagentSession}
                       composerSubagentToolCallIds={subagentTrackerToolCallIds}
                       onResumeInterrupted={archived ? undefined : handleResumeInterrupted}

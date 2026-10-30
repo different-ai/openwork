@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { parseReadResult, parseRequestComplete, REQUEST_RESULT_MAX_BYTES, SessionRunnerError } from "../src/index.ts"
+import { parseProgress, parseReadResult, parseRequestComplete, REQUEST_RESULT_MAX_BYTES, SessionRunnerError } from "../src/index.ts"
 
 function page(messages: unknown[]) {
   return { title: "Task", status: "idle", waitingFor: null, lastError: null, messageCount: messages.length, from: "end", messages, nextCursor: null }
@@ -46,4 +46,12 @@ test("a page with parts still respects the request result byte cap", () => {
   const messages = Array.from({ length: 14 }, (_, index) => ({ ...legacyMessage, id: `msg_${index}`, parts: [big] }))
   assert.ok(JSON.stringify(page(messages)).length > REQUEST_RESULT_MAX_BYTES)
   assert.throws(() => parseRequestComplete({ status: "done", outcome: { action: "read", result: page(messages) } }), SessionRunnerError)
+})
+
+test("progress carries the step it ran last, and older progress without it still parses", () => {
+  assert.deepEqual(parseProgress({ status: "running", latestStep: "Ran List the release notes", observedAt: 1 }),
+    { status: "running", latestStep: "Ran List the release notes", observedAt: 1 })
+  assert.deepEqual(parseProgress({ status: "running", observedAt: 1 }), { status: "running", observedAt: 1 })
+  assert.equal(parseProgress({ status: "idle", latestStep: null, observedAt: 1 }).latestStep, null)
+  assert.throws(() => parseProgress({ status: "running", latestStep: "x".repeat(241), observedAt: 1 }), SessionRunnerError)
 })

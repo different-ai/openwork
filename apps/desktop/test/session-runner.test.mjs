@@ -267,6 +267,26 @@ test("native observation never uses the previous answer for a follow-up and neve
   assert.equal(page.historyScope, "full")
 })
 
+test("native observation reports the step the current turn ran last, only while it works", async () => {
+  const native = nativeFixture()
+  const adapter = createDesktopSessionAdapter(native)
+  const signal = new AbortController().signal
+  const receipt = await adapter.create(command(), signal)
+  await adapter.send(receipt, { prompt: "check the notes", messageId: "msg_steps", model: null }, signal)
+  native.messages.push({ id: "msg_working", role: "assistant", content: [
+    { type: "tool", id: "prt_ls", name: "bash", state: { status: "completed", input: { command: "ls docs", description: "list the release notes" } } },
+  ] })
+  native.active = true
+  const working = await adapter.observe(receipt, signal)
+  assert.equal(working.status, "running")
+  assert.equal(working.latestStep, "Ran List the release notes")
+  native.active = false
+  native.messages.push({ id: "msg_done", role: "assistant", text: "done" })
+  const done = await adapter.observe(receipt, signal)
+  assert.equal(done.status, "idle")
+  assert.equal(done.latestStep, null)
+})
+
 test("native stop compares the current turn; restart probes the original owning engine", async () => {
   const native = nativeFixture()
   const adapter = createDesktopSessionAdapter(native)

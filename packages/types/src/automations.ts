@@ -562,6 +562,7 @@ export const remoteSessionModelSchema = z.object({
  * Progress the claiming desktop runner reports for a delivered remote-session
  * command's local session, so Den callers can follow it to the final answer.
  */
+export const REMOTE_SESSION_LATEST_STEP_MAX_LENGTH = 240
 export const remoteSessionCommandSessionReportSchema = z.object({
   status: remoteSessionStatusSchema,
   waitingFor: remoteSessionWaitingForSchema.nullable().optional(),
@@ -570,6 +571,8 @@ export const remoteSessionCommandSessionReportSchema = z.object({
   finalText: z.string().max(REMOTE_SESSION_FINAL_TEXT_MAX_LENGTH).optional(),
   error: remoteSessionCommandErrorSchema.nullable().optional(),
   messageCount: z.number().int().min(0).optional(),
+  /** The step the session ran last, as a short sentence ("Ran List the release notes"). */
+  latestStep: z.string().max(REMOTE_SESSION_LATEST_STEP_MAX_LENGTH).nullable().optional(),
   observedAt: timestampSchema,
 })
 export type RemoteSessionCommandSessionReport = z.infer<typeof remoteSessionCommandSessionReportSchema>
@@ -619,6 +622,8 @@ export const remoteSessionThreadStatusSchema = z.object({
   messageCount: z.number().int().min(0).nullable(),
   /** The start of the final answer once the thread is idle; read the session for all of it. */
   preview: z.string().max(REMOTE_SESSION_STATUS_PREVIEW_MAX_LENGTH).nullable(),
+  /** The step the thread ran last, as a short sentence; absent from older Den deployments. */
+  latestStep: z.string().max(REMOTE_SESSION_LATEST_STEP_MAX_LENGTH).nullable().optional(),
   error: remoteSessionCommandErrorSchema.nullable(),
   /** When this state was last confirmed. */
   observedAt: timestampSchema.nullable(),

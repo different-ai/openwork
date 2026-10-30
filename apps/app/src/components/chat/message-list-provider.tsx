@@ -10,6 +10,7 @@ import * as React from "react"
 import type { ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
 import type { OpenworkServerClient } from "@/app/lib/openwork-server"
 import type { McpAppOrigin } from "./mcp-app-origin"
+import type { RemoteThreadStart } from "@/lib/remote-session-thread"
 import { publicModelTitle } from "@/react-app/domains/models/model-catalog"
 import type { AutoRouteNameResolver, ReplyModelTitleResolver } from "@/react-app/domains/session/sync/reply-model"
 import type { AutoRouterReplyRoute } from "@openwork/types/den/auto-router"
@@ -54,6 +55,8 @@ interface MessageListContextValue {
   onOpenSubagentSession?: (sessionId: string) => void
   /** Stop one running sub-agent (child) session without stopping the parent turn. */
   onStopSubagentSession?: (sessionId: string) => void | Promise<void>
+  /** Open a task on another computer in the main pane, like a helper. Absent where it opens beside the chat. */
+  onOpenRemoteTask?: (start: RemoteThreadStart) => void
   /** Sub-agent calls the composer's Agents list shows; their Stop lives there, not on the chat row. */
   composerSubagentToolCallIds: ReadonlySet<string>
   /** Re-submit an interrupted run by sending its recovery prompt. */
@@ -92,6 +95,7 @@ interface MessageListProviderProps {
   onEditUserMessage: (messageId: string, text: string) => void
   onOpenSubagentSession?: (sessionId: string) => void
   onStopSubagentSession?: (sessionId: string) => void | Promise<void>
+  onOpenRemoteTask?: (start: RemoteThreadStart) => void
   composerSubagentToolCallIds?: ReadonlySet<string>
   onResumeInterrupted?: (recoveryPrompt: string) => void
   onOpenLibraryDetail?: (detailId: string) => void
@@ -141,6 +145,7 @@ export function MessageListProvider({
   onEditUserMessage,
   onOpenSubagentSession,
   onStopSubagentSession,
+  onOpenRemoteTask,
   composerSubagentToolCallIds = NO_TOOL_CALL_IDS,
   onResumeInterrupted,
   onOpenLibraryDetail,
@@ -155,6 +160,7 @@ export function MessageListProvider({
     onEditUserMessage,
     onOpenSubagentSession,
     onStopSubagentSession,
+    onOpenRemoteTask,
     onResumeInterrupted,
     onOpenLibraryDetail,
     onMcpReconnect,
@@ -169,6 +175,7 @@ export function MessageListProvider({
       onEditUserMessage,
       onOpenSubagentSession,
       onStopSubagentSession,
+      onOpenRemoteTask,
       onResumeInterrupted,
       onOpenLibraryDetail,
       onMcpReconnect,
@@ -182,6 +189,7 @@ export function MessageListProvider({
     onEditUserMessage,
     onOpenSubagentSession,
     onStopSubagentSession,
+    onOpenRemoteTask,
     onResumeInterrupted,
     onOpenLibraryDetail,
     onMcpReconnect,
@@ -195,6 +203,7 @@ export function MessageListProvider({
     onEditUserMessage: (messageId: string, text: string) => handlersRef.current.onEditUserMessage(messageId, text),
     onOpenSubagentSession: (sessionId: string) => handlersRef.current.onOpenSubagentSession?.(sessionId),
     onStopSubagentSession: (sessionId: string) => handlersRef.current.onStopSubagentSession?.(sessionId),
+    onOpenRemoteTask: (start: RemoteThreadStart) => handlersRef.current.onOpenRemoteTask?.(start),
     onResumeInterrupted: (recoveryPrompt: string) => handlersRef.current.onResumeInterrupted?.(recoveryPrompt),
     onOpenLibraryDetail: (detailId: string) => handlersRef.current.onOpenLibraryDetail?.(detailId),
     onMcpReconnect: (
@@ -209,6 +218,7 @@ export function MessageListProvider({
   const canForkAtMessage = Boolean(onForkAtMessage)
   const canOpenSubagentSession = Boolean(onOpenSubagentSession)
   const canStopSubagentSession = Boolean(onStopSubagentSession)
+  const canOpenRemoteTask = Boolean(onOpenRemoteTask)
   const canResumeInterrupted = Boolean(onResumeInterrupted)
   const canOpenLibraryDetail = Boolean(onOpenLibraryDetail)
   const mcpAppOrigin = React.useMemo<McpAppOrigin | null>(
@@ -264,6 +274,7 @@ export function MessageListProvider({
       onStopSubagentSession: canStopSubagentSession
         ? stableHandlers.onStopSubagentSession
         : undefined,
+      onOpenRemoteTask: canOpenRemoteTask ? stableHandlers.onOpenRemoteTask : undefined,
       onResumeInterrupted: canResumeInterrupted
         ? stableHandlers.onResumeInterrupted
         : undefined,
@@ -296,6 +307,7 @@ export function MessageListProvider({
       canForkAtMessage,
       canOpenSubagentSession,
       canStopSubagentSession,
+      canOpenRemoteTask,
       canResumeInterrupted,
       canOpenLibraryDetail,
     ],
