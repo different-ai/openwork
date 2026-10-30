@@ -28,7 +28,7 @@ const schema = z.object({
   /** Den's API, e.g. https://api.openworklabs.com: where Workbot discovers Den's sign-in and asks who someone is. */
   WORKBOT_DEN_API_URL: origin(false),
   /** Den's web app for the "back to OpenWork" link and app logos; defaults to the origin of Den's sign-in. */
-  WORKBOT_DEN_WEB_URL: origin(false).optional(),
+  WORKBOT_DEN_WEB_URL: optionalText.pipe(origin(false).optional()),
   /** The headless runner every Workbot conversation runs on, and its service token. */
   WORKBOT_RUNNER_URL: origin(true),
   WORKBOT_RUNNER_TOKEN: z.string().min(32, "must be at least 32 characters"),
@@ -41,7 +41,7 @@ const schema = z.object({
    * Testing only: read Calendar meetings from the calendar mock (evals/packages/labs/src/calendar-mock.mjs), which
    * serves Den's calendar routes, instead of the member's real connections through Den. Unset in production.
    */
-  WORKBOT_CALENDAR_MOCK_URL: origin(false).optional(),
+  WORKBOT_CALENDAR_MOCK_URL: optionalText.pipe(origin(false).optional()),
   /** Serve the page from Vite with hot reload instead of the built files. */
   WORKBOT_DEV: z.enum(["0", "1"]).default("0"),
   /**

@@ -11,7 +11,7 @@ import {
 import { flushSync } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { permissionsQueryKeys } from "../_components/permissions-query-keys";
-import { linkedWorkbotOrganization, workbotLinkPurpose } from "../_lib/workbot-team-link";
+import { linkedWorkbotOrganization, workbotLinkPurpose, workbotSignInRoute } from "../_lib/workbot-team-link";
 import { usePathname, useRouter } from "next/navigation";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, getRequestError, isReauthRequiredError, requestJson, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../../_lib/den-flow";
@@ -1056,6 +1056,12 @@ export function OrgDashboardProvider({
 
     if (!user) {
       void refreshOrgData();
+      const signInRoute = workbotSignInRoute(window.location.href);
+      if (signInRoute !== "/") {
+        // A fresh auth page reads the preserved intent after the old session is cleared.
+        void signOut().then(() => window.location.replace(signInRoute));
+        return;
+      }
       void signOut();
       router.replace("/");
       return;

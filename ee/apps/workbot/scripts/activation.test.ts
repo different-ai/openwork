@@ -11,12 +11,13 @@ const PUBLIC = "http://localhost:3090"
 
 function workbot(enabled: boolean) {
   const calls: Array<{ method: string; body?: unknown }> = []
-  const config = loadConfig({ WORKBOT_PUBLIC_URL: PUBLIC, WORKBOT_DEN_API_URL: "http://localhost:3091", WORKBOT_RUNNER_URL: "http://localhost:3092", WORKBOT_RUNNER_TOKEN: "r".repeat(32), WORKBOT_SESSION_SECRET: "s".repeat(32) })
+  const config = loadConfig({ WORKBOT_PUBLIC_URL: PUBLIC, WORKBOT_DEN_API_URL: "http://localhost:3091", WORKBOT_DEN_WEB_URL: "https://console.example.test", WORKBOT_RUNNER_URL: "http://localhost:3092", WORKBOT_RUNNER_TOKEN: "r".repeat(32), WORKBOT_SESSION_SECRET: "s".repeat(32) })
   const state = { steps: [{ id: "first_response", done: true }], dismissed: false }
-  const den = {
+  const den: ReturnType<typeof createDen> = {
     ...createDen({ apiUrl: config.denApiUrl, publicUrl: config.publicUrl }),
     activation: async () => { calls.push({ method: "GET" }); return { status: 200, payload: state } },
     activationEvent: async (_token: string, body: unknown) => { calls.push({ method: "POST", body }); return { status: 200, payload: { ...state, dismissed: true } } },
+    connections: async () => [{ id: "fixture-connection", name: "Fixture", app: "gmail", ready: false, connectUrl: "https://old.example.test/", connectMode: "external" }],
   }
   const auth = createAuth({ config, den })
   const app = new Hono<AppEnv>()
@@ -62,10 +63,17 @@ test("the header chip waits for a real answer, reports it once and links to the 
   assert.equal(claimActivationReport("org_a:user_a:first_response"), false)
   assert.equal(claimActivationReport("org_b:user_a:first_response"), true, "another workspace reports its own")
   const destination = { denUrl: "https://den.example.test/", organizationId: "org_example" }
-  assert.equal(activationDenUrl(destination, "own_provider"), "https://den.example.test/dashboard/library?show=models&workbotOrganizationId=org_example")
+  assert.equal(activationDenUrl(destination, "own_provider"), "https://den.example.test/dashboard/library/model-providers/new?workbotOrganizationId=org_example")
   assert.equal(activationDenUrl(destination, "gateway_provider"), "https://den.example.test/dashboard/ai-gateway?tab=ai-providers&workbotOrganizationId=org_example")
   assert.equal(activationDenUrl(destination, "use_skill"), "https://den.example.test/dashboard/library?show=skills&workbotOrganizationId=org_example")
   assert.equal(activationDenUrl(destination, "invite_teammate"), "https://den.example.test/dashboard/members?workbotOrganizationId=org_example")
+})
+
+test("external connection links carry the Workbot workspace on the configured Den domain", async () => {
+  const { request } = workbot(true)
+  const response = await request("GET", "/v1/workbot/connections")
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), { connections: [{ id: "fixture-connection", name: "Fixture", app: "gmail", ready: false, connectMode: "external", connectUrl: "https://console.example.test/dashboard/your-connections?connectionId=fixture-connection&workbotOrganizationId=org_example" }] })
 })
 
 test("activation links strip only trailing slashes in one scan, including long suffixes", () => {

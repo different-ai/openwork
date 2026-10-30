@@ -4,9 +4,23 @@ import { Hono } from "hono"
 import { createAuth, type AppEnv, type DenAuth } from "../src/server/auth.js"
 import { createDen, DenRateLimitedError, DenSignedOutError, tokenRetryAfterSeconds, type DenSession } from "../src/server/den.js"
 import type { Tokens } from "../src/server/sealed.js"
+import { loadConfig } from "../src/server/config.js"
 
 const SECRET = "test-secret-test-secret-test-secret-0001"
 const config = { publicUrl: "https://workbot.test", secureCookies: true, sessionSecret: SECRET }
+
+test("optional deployment URLs treat blank values as unset but reject malformed nonempty URLs", () => {
+  const required = { WORKBOT_PUBLIC_URL: config.publicUrl, WORKBOT_DEN_API_URL: "https://api.example.test", WORKBOT_RUNNER_URL: "http://runner:3030", WORKBOT_RUNNER_TOKEN: "r".repeat(32), WORKBOT_SESSION_SECRET: SECRET }
+  for (const value of [undefined, "", "  ", "\t\n"]) {
+    const loaded = loadConfig({ ...required, WORKBOT_DEN_WEB_URL: value, WORKBOT_CALENDAR_MOCK_URL: value })
+    assert.equal(loaded.denWebUrl, null)
+    assert.equal(loaded.calendarMockUrl, null)
+  }
+  assert.equal(loadConfig({ ...required, WORKBOT_DEN_WEB_URL: " https://console.example.test/ " }).denWebUrl, "https://console.example.test")
+  for (const key of ["WORKBOT_DEN_WEB_URL", "WORKBOT_CALENDAR_MOCK_URL"]) {
+    for (const value of ["not a URL", "http://outside.example.test", "javascript:alert(1)"]) assert.throws(() => loadConfig({ ...required, [key]: value }), new RegExp(key))
+  }
+})
 const who: DenSession = {
   user: { id: "user_test", name: "Test Person", email: "person@example.test" },
   organization: { id: "org_test", name: "Test Org", brandAppName: null },

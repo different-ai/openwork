@@ -759,6 +759,10 @@ export function getWebRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/web`;
 }
 
+export function getLibraryLlmProviderRoute(orgSlug: string | null | undefined, providerId: string): string {
+  return `${getLibraryRoute(orgSlug)}/model-providers/${encodeURIComponent(providerId)}`;
+}
+
 export function getLlmProvidersRoute(orgSlug?: string | null): string {
   return getCustomLlmProvidersRoute(orgSlug);
 }

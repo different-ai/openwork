@@ -104,6 +104,10 @@ function actorOf(member: Member): WorkbotActor {
   }
 }
 
+export function workbotConnectionUrl(denWeb: string, organizationId: string, connectionId: string) {
+  return `${denWeb}/dashboard/your-connections?${new URLSearchParams({ connectionId, workbotOrganizationId: organizationId })}`
+}
+
 export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config; den: Den; member: MiddlewareHandler<AppEnv>; sameOrigin: MiddlewareHandler }) {
   const { config, den } = input
   const sent = new Map<string, number[]>()
@@ -491,7 +495,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       connections: connections.map((connection) => ({
         ...connection,
         // Den's own link, at the Den web origin this Workbot is configured with.
-        connectUrl: connection.ready || !denWeb ? connection.connectUrl : `${denWeb}/dashboard/your-connections?connectionId=${encodeURIComponent(connection.id)}`,
+        connectUrl: connection.ready || !denWeb ? connection.connectUrl : workbotConnectionUrl(denWeb, member.den.organization.id, connection.id),
       })),
     })
   })

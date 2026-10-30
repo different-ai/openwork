@@ -5,6 +5,7 @@ import type { Den, Seed } from "@openwork/env";
 import { denFetch } from "@openwork/behaviors";
 import { connect, debuggerUrlFor, listTargets, type Surface } from "@openwork/cdp";
 import { seededOrganizationId } from "./organization-capabilities.ts";
+import { workbotConnectionUrl } from "../../ee/apps/workbot/src/server/routes.ts";
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -37,7 +38,10 @@ async function startProvider(handler: (request: IncomingMessage, body: string, r
  * OAuth callbacks and readiness) with a disposable database. The member already got one answer in this conversation;
  * the runner and Google's consent and token endpoints are local fixtures. Nothing leaves localhost.
  */
-export async function workbotSetupApps(seed: Seed) {
+export function workbotSetupApps(seed: Seed) { return setupApps(seed, false); }
+export function workbotSetupExternalApps(seed: Seed) { return setupApps(seed, true); }
+
+async function setupApps(seed: Seed, external: boolean) {
   if (process.env.OPENWORK_EVAL_DEN_API_URL?.trim()) throw new Error("The setup proof requires a fresh disposable Den, not a reused server.");
   const resources = new AsyncDisposableStack();
   let den: Den | undefined;
@@ -114,6 +118,10 @@ export async function workbotSetupApps(seed: Seed) {
           let body = ""; for await (const chunk of req) body += chunk;
           if (url.pathname.endsWith("/connect/start")) starts++;
           const result = await requestDen(token, req.method === "POST" ? "POST" : "GET", url.pathname + url.search, body ? { body: JSON.parse(body) } : {});
+          if (external && url.pathname === "/v1/workbot/connections" && Array.isArray(field(result.body, "connections"))) {
+            const connections = field(result.body, "connections");
+            if (Array.isArray(connections)) return json({ connections: connections.filter(record).map(connection => ({ ...connection, connectMode: "external", connectUrl: workbotConnectionUrl(den!.ref.webUrl.replace(/\/+$/, ""), organizationId, String(connection.id)) })) });
+          }
           if (url.pathname.endsWith("/connect/start")) {
             const authorizeUrl = field(result.body, "authorizeUrl");
             latestAuthorizationState = typeof authorizeUrl === "string" ? new URL(authorizeUrl).searchParams.get("state") : null;
@@ -149,6 +157,16 @@ export async function workbotSetupApps(seed: Seed) {
     const denWeb = den.ref.webUrl.replace(/\/+$/, "");
     return {
       web, url: workbotUrl, organizationId, otherOrganizationId, starts: () => starts,
+      person: { email: owner.email, password: owner.password },
+      modelConfig: JSON.stringify({ id: "fixture-provider", name: "Fixture provider", npm: "@ai-sdk/openai-compatible", env: ["FIXTURE_API_KEY"], api: `${provider.url}/v1`, models: [{ id: "fixture-model", name: "Fixture Model", attachment: false, reasoning: false, tool_call: true, structured_output: true, temperature: true, release_date: "2026-01-01", last_updated: "2026-01-01", open_weights: false, limit: { context: 128000, input: 128000, output: 8192 }, modalities: { input: ["text"], output: ["text"] } }] }),
+      async savedProviders() {
+        const result = await requestDen(owner.token, "GET", "/v1/llm-providers?scope=manageable", { orgId: organizationId });
+        const list = field(result.body, "llmProviders");
+        return Array.isArray(list) ? list.filter(record).map(item => {
+          const members = field(item, "access", "members");
+          return { name: item.name, hasApiKey: item.hasApiKey, allMembers: field(item, "access", "allMembers"), memberCount: Array.isArray(members) ? members.length : 0 };
+        }) : [];
+      },
       async activeOrganizationId() {
         const result = await requestDen(owner.token, "GET", "/v1/me/orgs");
         return field(result.body, "activeOrgId");
@@ -186,6 +204,14 @@ export async function workbotSetupApps(seed: Seed) {
         await client.send("Page.enable");
         clients.push(client);
         return { handle: { ...web.handle, name: "workbot-invite-members" }, client };
+      },
+      async denTab(path: string): Promise<Surface> {
+        const target = (await listTargets(web.handle.cdpUrl)).find(entry => entry.type === "page" && entry.url.startsWith(`${denWeb}/dashboard/${path}`));
+        if (!target) throw new Error(`The ${path} page did not open`);
+        const client = await connect(debuggerUrlFor(web.handle.cdpUrl, target));
+        await client.send("Page.enable");
+        clients.push(client);
+        return { handle: { ...web.handle, name: "workbot-setup-destination" }, client };
       },
       async [Symbol.asyncDispose]() { await resources.disposeAsync(); },
     };

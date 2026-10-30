@@ -11,6 +11,8 @@ import {
     getEditLlmProviderRoute,
     getAiGatewayProviderRoute,
     getLlmProvidersRoute,
+    getLibraryRoute,
+    getLibraryLlmProviderRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { migrateLlmProviderToGateway } from "./inference-provider-data";
@@ -42,12 +44,15 @@ function getLimitLabel(config: Record<string, unknown>) {
 
 export function LlmProviderDetailScreen({
     llmProviderId,
+    library = false,
 }: {
     llmProviderId: string;
+    library?: boolean;
 }) {
     const router = useRouter();
     const gatewayEnabled = useGatewayDashboardAccess("manage-providers") === "enabled";
     const { orgId, orgSlug, runReauthableAction } = useOrgDashboard();
+    const listRoute = library ? `${getLibraryRoute(orgSlug)}?show=models` : getLlmProvidersRoute(orgSlug);
     const { llmProviders, busy, error, reloadProviders } =
         useOrgLlmProviders(orgId);
     const [deleteBusy, setDeleteBusy] = useState(false);
@@ -94,7 +99,7 @@ export function LlmProviderDetailScreen({
                 }
 
                 await reloadProviders();
-                router.push(getLlmProvidersRoute(orgSlug));
+                router.push(listRoute);
                 router.refresh();
             });
         } catch (nextError) {
@@ -178,7 +183,7 @@ export function LlmProviderDetailScreen({
 
             <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
                 <Link
-                    href={getLlmProvidersRoute(orgSlug)}
+                    href={listRoute}
                     className="inline-flex items-center gap-2 text-[15px] font-medium text-gray-500 transition hover:text-gray-900"
                 >
                     <ArrowLeft className="h-5 w-5" />
@@ -202,10 +207,7 @@ export function LlmProviderDetailScreen({
                     {provider.canManage && provider.source !== "openwork" ? (
                         <>
                             <Link
-                                href={getEditLlmProviderRoute(
-                                    orgSlug,
-                                    provider.id,
-                                )}
+                                href={library ? `${getLibraryLlmProviderRoute(orgSlug, provider.id)}/edit` : getEditLlmProviderRoute(orgSlug, provider.id)}
                             >
                                 <DenButton variant="secondary">
                                     Edit Provider
