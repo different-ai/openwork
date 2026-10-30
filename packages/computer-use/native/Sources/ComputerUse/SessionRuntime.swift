@@ -207,7 +207,7 @@ final class SessionRuntime {
         var result: [String: Any] = ["ok": true, "protocol": "openwork.computer-use/1", "platform": "macos",
             "permissions": Self.permissions(), "apps": apps,
             "modes": AccessMode.allCases.map { ["id": $0.rawValue, "description": $0.explanation] },
-            "keys": policy.keys, "guidance": policy.guidance]
+            "keys": policy.keys, "guidance": policy.instructions]
         if policy == .embedded {
             limits["batch_actions"] = Action.batchLimit
             result["modifiers"] = NativeKey.supportedModifiers

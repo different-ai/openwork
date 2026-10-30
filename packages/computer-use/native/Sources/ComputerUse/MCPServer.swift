@@ -46,7 +46,7 @@ final class MCPServer {
             result(id, ["protocolVersion": supported.contains(requested) ? requested : "2025-11-25",
                 "capabilities": ["tools": ["listChanged": false]],
                 "serverInfo": ["name": "openwork-computer-use", "version": "1.0.0"],
-                "instructions": policy.guidance])
+                "instructions": policy.instructions])
         case "ping": result(id, [:])
         case "tools/list":
             guard initialized else { error(id, -32000, "Initialize first"); return }

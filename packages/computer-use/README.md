@@ -27,8 +27,10 @@ with the helper's status; the relaunched helper stops if that parent goes away.
 A session covers one app, one window and one mode. Technical leases and action
 accounting renew silently; idle cleanup and follow-up requests preserve enabled
 access. Neither renewal nor cleanup clears a human takeover. The modes are
-`observe` (read only), `assist` (accessibility press/set value) and `control`
-(also targeted mouse and keyboard input). Control brings the selected window to
+`control` (the default: accessibility plus targeted mouse and keyboard input),
+`assist` (accessibility press/set value) and `observe` (read only). The agent is
+told to use control to finish the task and to pick a narrower mode only when the
+person asks for one. Control brings the selected window to
 the front for each step; with `computerUseBackground` on it works in the window
 where it is ([docs](../../docs/features/computer-use-background/README.md)).
 A kernel-held lock allows one session per window, so chats in different windows
