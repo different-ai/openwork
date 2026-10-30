@@ -1,6 +1,7 @@
 import { useCallback, type ReactNode } from "react"
 import type { UIMessage } from "ai"
 
+import { UntrustedMarkdown } from "@/components/markdown/untrusted-markdown"
 import { MessageList } from "@/components/chat/message-list"
 import { MessageListProvider } from "@/components/chat/message-list-provider"
 import type { ChatToolReconnectResult } from "@/components/tools/error-attribution"
@@ -53,12 +54,16 @@ export function RemoteTranscriptView({
       onMcpReconnect={reconnect}
       onMcpReopenAuthorization={reopen}
     >
-      <MessageList
-        messages={messages}
-        status={running ? "streaming" : "ready"}
-        activityStatus={running ? "thinking" : "idle"}
-      />
-      {children}
+      {/* Text from the other computer is untrusted: it must not make this
+          browser fetch URLs it chose (images, video, raw HTML). */}
+      <UntrustedMarkdown>
+        <MessageList
+          messages={messages}
+          status={running ? "streaming" : "ready"}
+          activityStatus={running ? "thinking" : "idle"}
+        />
+        {children}
+      </UntrustedMarkdown>
     </MessageListProvider>
   )
 }

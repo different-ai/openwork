@@ -91,3 +91,31 @@ test("the follow-up composer sends with Enter and becomes Stop while the task ru
     },
   )
 })
+
+test("text from the other computer never makes this browser fetch a URL it chose", async () => {
+  const hostile = [
+    "Done. ![chart](http://127.0.0.1:8080/admin/delete.png) and ![pixel](https://tracker.example/p.gif)",
+    "",
+    "<img src=\"http://10.0.0.5/secret.png\"> <iframe src=\"http://192.168.1.1/\"></iframe> <video src=\"http://169.254.169.254/latest\"></video>",
+    "",
+    "Recording: http://192.168.1.20/demo.mp4 and [the notes](https://example.com/notes)",
+  ].join("\n")
+  const outcome = parseRemoteRead({ messages: [
+    { id: "msg_user", role: "user", createdAt: 1_000, text: "Make the chart", toolCalls: [] },
+    { id: "msg_reply", role: "assistant", createdAt: 1_100, completedAt: 3_000, text: hostile, toolCalls: [], parts: [{ type: "text", text: hostile }] },
+  ] })
+  if (outcome.kind !== "page") throw new Error("expected a page")
+  await render(<RemoteTranscriptView threadKey="command:rsc_hostile" messages={remoteTranscriptToUIMessages(outcome.page.messages, { running: false })} running={false} showThinking={false} developerMode={false} />, async (container) => {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)) })
+    // Nothing that loads a resource: no image, frame, media or source element.
+    expect(container.querySelectorAll("img, iframe, video, audio, source, object, embed").length).toBe(0)
+    const html = container.innerHTML
+    for (const host of ["127.0.0.1:8080", "10.0.0.5", "192.168.1.1/", "169.254.169.254", "tracker.example"]) {
+      expect(html.includes(`src="http://${host}`) || html.includes(`src="https://${host}`)).toBe(false)
+    }
+    // The text still reads: images become plain links the person can choose to open.
+    const links = [...container.querySelectorAll("a")].map((link) => link.textContent)
+    expect(links).toContain("chart")
+    expect(links).toContain("the notes")
+  })
+})
