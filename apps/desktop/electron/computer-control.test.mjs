@@ -839,6 +839,104 @@ test("always allowing files in a chat stops asking there", async (t) => {
   assert.equal(await other, false);
 });
 
+test("the browser types a password only on a site the person confirmed, with computer use off", async (t) => {
+  const f = fixture(); t.after(() => f.control.reset(true));
+  const credentialCards = () => f.requests.filter((request) => request?.reason === "credential");
+  const answerSite = async (site, answer) => {
+    const before = credentialCards().length;
+    for (let waited = 0; credentialCards().length === before && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+    const card = credentialCards().at(-1);
+    assert.deepEqual(card.credential, { site });
+    await f.control.answerRequest({ sessionId: "chat", answer, id: card.id });
+  };
+  const declined = f.control.approveCredential({ sessionId: "chat", site: "https://example.com" });
+  await answerSite("https://example.com", "dismiss");
+  assert.equal(await declined, false);
+  const always = f.control.approveCredential({ sessionId: "chat", site: "https://example.com" });
+  await answerSite("https://example.com", "always");
+  assert.equal(await always, true);
+  const asked = credentialCards().length;
+  assert.equal(await f.control.approveCredential({ sessionId: "chat", site: "https://example.com" }), true);
+  assert.equal(credentialCards().length, asked, "Always covers that exact site in this chat");
+  // Another origin, even a lookalike or the same host over http, asks again.
+  const other = f.control.approveCredential({ sessionId: "chat", site: "http://example.com" });
+  await answerSite("http://example.com", "dismiss");
+  assert.equal(await other, false);
+});
+
+function credentialFixture() {
+  const seen = [];
+  const f = fixture({ seen, toolResult: (name) => {
+    if (name !== "computer_act") return undefined;
+    // Like the Mac helper with a secure field in the window: nothing is typed until the host sends the approved app.
+    return seen.at(-1).args.credential_approval === "com.example.editor" ? text({ ok: true, status: "dispatched" })
+      : text({ ok: false, code: "credential_approval_required", app: "Editor", app_id: "com.example.editor", dispatched: false, next: "observe" });
+  } });
+  const acts = () => seen.filter((call) => call.name === "computer_act").map((call) => call.args);
+  const cards = () => f.requests.filter((request) => request?.reason === "credential");
+  const answer = async (app, reply, appId = "com.example.editor") => {
+    const before = cards().length;
+    for (let waited = 0; cards().length === before && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(cards().at(-1).credential, { app, appId });
+    await f.control.answerRequest({ sessionId: "chat", answer: reply, id: cards().at(-1).id });
+  };
+  return { ...f, acts, cards, answer };
+}
+const typeInto = (control, action) => control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action } });
+
+test("typing next to a password field waits for the person to confirm the app", async (t) => {
+  const f = credentialFixture(); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "com.example.editor", mode: "control", purpose: "Sign in" } });
+  const declined = typeInto(f.control, { type: "type", text: "given-password" });
+  await f.answer("Editor", "dismiss");
+  assert.equal(payload(await declined).code, "credential_declined");
+  assert.equal(f.acts().length, 1, "Nothing is sent again without the person's yes");
+  const allowed = typeInto(f.control, { type: "type", text: "given-password" });
+  await f.answer("Editor", "allow");
+  assert.equal(payload(await allowed).status, "dispatched");
+  assert.equal(f.acts().at(-1).credential_approval, "com.example.editor");
+});
+
+test("text marked secret goes only to an app the person confirmed, where no field can be detected", async (t) => {
+  const f = credentialFixture(); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "com.example.editor", mode: "control", purpose: "Sign in" } });
+  const declined = typeInto(f.control, { type: "type", text: "given-password", secret: true });
+  await f.answer("com.example.editor", "dismiss");
+  assert.equal(payload(await declined).code, "credential_declined");
+  assert.equal(f.acts().length, 0, "A declined secret never reaches the computer");
+  const allowed = typeInto(f.control, { type: "type", text: "given-password", secret: true });
+  await f.answer("com.example.editor", "always");
+  assert.equal(payload(await allowed).status, "dispatched");
+  // One question covered both the mark and the helper's own check, and the mark never reaches it.
+  assert.equal(f.cards().length, 2);
+  assert.ok(f.acts().every((args) => !("secret" in args.action)));
+  assert.equal(payload(await typeInto(f.control, { type: "type", text: "given-password", secret: true })).status, "dispatched");
+  assert.equal(f.cards().length, 2, "Always covers this app in this chat");
+});
+
+test("a browser app never takes a password: the site cannot be confirmed there", async (t) => {
+  const f = credentialFixture(); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  // Mac bundle ids, Windows executables and Linux window classes.
+  const open = async (app) => {
+    await f.control.execute({ sessionId: "chat", name: "computer_close", args: {} });
+    assert.notEqual(payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: app, mode: "control", purpose: "Sign in" } })).code, "session_open", app);
+  };
+  for (const app of ["com.apple.Safari", "com.microsoft.edgemac.Dev", "chrome", "msedge", "google-chrome", "microsoft-edge", "Navigator", "firefox-esr", "brave-browser", "org.gnome.Epiphany"]) {
+    await open(app);
+    assert.equal(payload(await typeInto(f.control, { type: "type", text: "given-password", secret: true })).code, "browser_app", app);
+  }
+  assert.equal(f.cards().length, 0, "Nobody is asked to approve a browser for every site in it");
+  assert.equal(f.acts().length, 0);
+  // An app whose name merely contains a browser word is still an app.
+  await open("com.example.knowledge");
+  const app = typeInto(f.control, { type: "type", text: "given-password", secret: true });
+  await f.answer("com.example.knowledge", "dismiss", "com.example.knowledge");
+  assert.equal(payload(await app).code, "credential_declined");
+});
+
 test("allowing a file panel to be browsed never becomes a standing approval", async (t) => {
   const f = filePanelFixture({ browsing: true }); t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);

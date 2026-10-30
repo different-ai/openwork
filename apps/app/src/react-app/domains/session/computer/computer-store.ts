@@ -50,11 +50,13 @@ export function ComputerBridge() {
 
   useEffect(() => {
     void desktopBridge.computerSetFeatureEnabled(enabled).catch(() => {})
-    if (!enabled) return
-    return window.__OPENWORK_ELECTRON__?.computer?.onRequest?.(({ sessionId, request }) => {
-      useComputerStore.getState().setRequest(sessionId, request)
-    })
   }, [enabled])
+
+  // The broker raises computer-use requests only while computer use is on, but the
+  // built-in browser's sign-in confirmations arrive either way.
+  useEffect(() => window.__OPENWORK_ELECTRON__?.computer?.onRequest?.(({ sessionId, request }) => {
+    useComputerStore.getState().setRequest(sessionId, request)
+  }), [])
   return null
 }
 

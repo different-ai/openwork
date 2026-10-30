@@ -65,6 +65,34 @@ final class BoundaryTests: XCTestCase {
         }
     }
 
+    func testSecureTextFieldTakesTypingWithoutExposingItsValue() throws {
+        let frame = CGRect(x: 0, y: 0, width: 320, height: 240)
+        let secure = ElementRecord(ref: "e1", element: AXUIElementCreateApplication(getpid()), role: "AXTextField",
+            label: "Password", value: "given-password", frame: frame, actions: [], settable: true,
+            enabled: true, protected: true)
+        XCTAssertTrue(secure.textField, "A password the person gave can be typed into a secure field")
+        for compact in [false, true] {
+            let payload = try secure.payload(bounds: frame, width: 320, height: 240, compact: compact)
+            XCTAssertEqual(payload["secure"] as? Bool, true)
+            XCTAssertNil(payload["value"])
+            XCTAssertFalse(String(describing: payload).contains("given-password"))
+        }
+        let masked = ElementRecord(ref: "e2", element: AXUIElementCreateApplication(getpid()), role: "AXGroup",
+            label: "Protected", value: nil, frame: frame, actions: [], settable: false, enabled: true, protected: true)
+        XCTAssertFalse(masked.textField, "Other protected content still never takes input")
+        // Only text entry waits for the person to confirm the app while a secure field is on screen.
+        XCTAssertTrue(try Action(["type": "type", "text": "given-password"]).entersText)
+        XCTAssertTrue(try Action(["type": "set_value", "ref": "e1", "text": "given-password"]).entersText)
+        XCTAssertFalse(try Action(["type": "click", "x": 1, "y": 1]).entersText)
+        XCTAssertFalse(try Action(["type": "key", "key": "enter"]).entersText)
+        XCTAssertTrue(try Action(["type": "key", "key": "space"]).entersText, "A space is a character too")
+        // An app approval cannot name the website, so browsers never take a password here.
+        XCTAssertTrue(WebBrowser.contains(bundleID: "com.apple.Safari", info: [:]))
+        XCTAssertTrue(WebBrowser.contains(bundleID: "com.google.Chrome.canary", info: [:]))
+        XCTAssertTrue(WebBrowser.contains(bundleID: "com.example.newbrowser", info: ["CFBundleURLTypes": [["CFBundleURLSchemes": ["HTTPS"]]]]))
+        XCTAssertFalse(WebBrowser.contains(bundleID: "com.apple.TextEdit", info: ["CFBundleURLTypes": [["CFBundleURLSchemes": ["textedit"]]]]))
+    }
+
     func testMalformedInputNeverBecomesAnAction() throws {
         let invalid: [[String: Any]] = [
             ["type": "click", "x": true, "y": 1],

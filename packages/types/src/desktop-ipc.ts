@@ -355,8 +355,8 @@ export type ComputerPermission = "accessibility" | "screenRecording";
 /** The agent needs computer use this chat does not have yet: setup, or the person's allowance. */
 export type ComputerRequest = {
   id: string;
-  /** setup: macOS permissions or a remote connection; script: an app script waiting for the person's approval; files: files an app or page is about to receive. */
-  reason: "setup" | "script" | "files";
+  /** setup: macOS permissions or a remote connection; script: an app script waiting for the person's approval; files: files an app or page is about to receive; credential: the browser is about to type a password or code on a site. */
+  reason: "setup" | "script" | "files" | "credential";
   /** The computer the chat uses, e.g. "This Mac" or "Freestyle VM". */
   computer: string;
   placement: "local" | "remote";
@@ -368,6 +368,8 @@ export type ComputerRequest = {
   script?: { app: "applescript" | "jxa" | "blender"; code: string };
   /** The files handed over if the person approves: names or full paths, and the app or site receiving them. */
   files?: { app: string; names: string[] };
+  /** Where the agent would type a password or one-time code: an exact site (origin) in the built-in browser, or a native app by name and id. */
+  credential?: { site?: string; app?: string; appId?: string };
 };
 
 /** One chat's computer use state, as the broker reports it. */
