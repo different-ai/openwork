@@ -647,6 +647,8 @@ export const REMOTE_SESSION_REQUEST_RESULT_MAX_BYTES = 256 * 1024
 export const REMOTE_SESSION_TRANSCRIPT_TEXT_MAX_LENGTH = 20_000
 export const REMOTE_SESSION_TOOL_SUMMARY_MAX_LENGTH = 2_000
 export const REMOTE_SESSION_TRANSCRIPT_PAGE_MAX = 100
+export const REMOTE_SESSION_TRANSCRIPT_PARTS_MAX = 200
+export const REMOTE_SESSION_REASONING_PART_MAX_LENGTH = 4_000
 export const remoteSessionRequestActionSchema = z.enum(["read", "send", "stop"])
 export type RemoteSessionRequestAction = z.infer<typeof remoteSessionRequestActionSchema>
 const remoteSessionMessageIdSchema = z.string().regex(/^msg_[a-zA-Z0-9]+$/).max(160)
@@ -698,6 +700,29 @@ export const remoteSessionTranscriptToolCallSchema = z.object({
   error: boundedSummarySchema,
   truncated: z.boolean(),
 })
+/** One step of a message, in the order the harness recorded it. */
+export const remoteSessionTranscriptPartSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), text: z.string().max(REMOTE_SESSION_TRANSCRIPT_TEXT_MAX_LENGTH) }),
+  z.object({
+    type: z.literal("reasoning"),
+    text: z.string().max(REMOTE_SESSION_REASONING_PART_MAX_LENGTH),
+    durationMs: timestampSchema.optional(),
+  }),
+  z.object({
+    type: z.literal("tool"),
+    id: z.string().max(240),
+    name: z.string().max(240),
+    status: z.string().max(60).nullable(),
+    title: z.string().max(240).optional(),
+    input: boundedSummarySchema,
+    output: boundedSummarySchema,
+    error: boundedSummarySchema,
+    truncated: z.boolean(),
+    startedAt: timestampSchema.optional(),
+    endedAt: timestampSchema.optional(),
+  }),
+])
+export type RemoteSessionTranscriptPart = z.infer<typeof remoteSessionTranscriptPartSchema>
 export const remoteSessionTranscriptMessageSchema = z.object({
   id: z.string().max(240),
   role: z.enum(["user", "assistant"]),
@@ -706,6 +731,9 @@ export const remoteSessionTranscriptMessageSchema = z.object({
   truncated: z.boolean(),
   toolCalls: z.array(remoteSessionTranscriptToolCallSchema).max(200),
   error: remoteSessionCommandErrorSchema.nullable(),
+  /** Ordered steps; older runners omit them and readers fall back to text + toolCalls. */
+  parts: z.array(remoteSessionTranscriptPartSchema).max(REMOTE_SESSION_TRANSCRIPT_PARTS_MAX).optional(),
+  completedAt: timestampSchema.nullable().optional(),
 })
 export type RemoteSessionTranscriptMessage = z.infer<typeof remoteSessionTranscriptMessageSchema>
 export const remoteSessionReadResultSchema = z.object({

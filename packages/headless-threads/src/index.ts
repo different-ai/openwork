@@ -26,6 +26,7 @@ export type {
   HeadlessThreadWaitResult,
   HeadlessThreadWaitingFor,
   HeadlessTranscriptMessage,
+  HeadlessTranscriptPart,
   HeadlessTranscriptToolCall,
   HeadlessTurnAcceptance,
 } from "./types.js";

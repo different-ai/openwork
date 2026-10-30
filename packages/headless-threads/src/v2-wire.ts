@@ -75,7 +75,15 @@ const v2ContentSchema = z
     name: z.string().optional(),
     tool: z.string().optional(),
     callID: z.string().optional(),
-    state: z.object({ status: z.string().optional() }).passthrough().optional(),
+    time: z.object({ created: z.number().optional(), ran: z.number().optional(), completed: z.number().optional() }).passthrough().optional(),
+    state: z.object({
+      status: z.string().optional(),
+      input: z.unknown().optional(),
+      content: z.unknown().optional(),
+      result: z.unknown().optional(),
+      error: z.unknown().optional(),
+      title: z.string().optional(),
+    }).passthrough().optional(),
   })
   .passthrough();
 
@@ -84,7 +92,7 @@ const v2MessageSchema = z
     id: z.string(),
     type: z.string().optional(),
     role: z.string().optional(),
-    time: z.object({ created: z.number().optional() }).passthrough().optional(),
+    time: z.object({ created: z.number().optional(), completed: z.number().optional() }).passthrough().optional(),
     text: z.string().optional(),
     content: z.array(v2ContentSchema).optional(),
     error: z.unknown().optional(),
@@ -136,20 +144,66 @@ function roleOf(message: V2Message): string {
 function fromV2Content(messageId: string, content: V2Content, index: number): MessageWire["parts"] {
   const id = content.id ?? `${messageId}:${index}`;
   if ((content.type === "text" || content.type === "reasoning") && content.text !== undefined) {
-    return [{ id, type: content.type, text: content.text }];
+    const start = content.time?.created;
+    const end = content.time?.completed;
+    return [{
+      id,
+      type: content.type,
+      text: content.text,
+      ...(start === undefined ? {} : { time: { start, ...(end === undefined ? {} : { end }) } }),
+    }];
   }
   if (content.type === "tool") {
     const tool = content.name ?? content.tool;
     if (tool === undefined) return [];
+    const state = content.state;
+    const output = state ? v2ToolOutput(state.content, state.result) : undefined;
+    const error = state?.status === "error" ? v2ErrorText(state.error ?? state.result) : undefined;
+    const start = content.time?.ran ?? content.time?.created;
+    const end = content.time?.completed;
     return [{
       id,
       type: "tool",
       tool,
       callID: content.callID ?? id,
-      ...(content.state?.status === undefined ? {} : { state: { status: content.state.status } }),
+      ...(state?.status === undefined ? {} : {
+        state: {
+          status: state.status,
+          ...(state.input === undefined ? {} : { input: state.input }),
+          ...(state.status === "completed" && output !== undefined ? { output } : {}),
+          ...(error === undefined ? {} : { error }),
+          ...(state.title === undefined ? {} : { title: state.title }),
+          ...(start === undefined ? {} : { time: { start, ...(end === undefined ? {} : { end }) } }),
+        },
+      }),
     }];
   }
   return [];
+}
+
+/** A v2 tool's text content, or its structured result as JSON. */
+function v2ToolOutput(content: unknown, result: unknown): string | undefined {
+  if (Array.isArray(content)) {
+    const text = content.flatMap((item) => {
+      const parsed = z.object({ type: z.literal("text"), text: z.string() }).passthrough().safeParse(item);
+      return parsed.success ? [parsed.data.text] : [];
+    });
+    if (text.length > 0) return text.join("\n");
+  }
+  if (typeof result === "string") return result;
+  if (result === undefined) return undefined;
+  try {
+    return JSON.stringify(result);
+  } catch {
+    return undefined;
+  }
+}
+
+function v2ErrorText(error: unknown): string | undefined {
+  if (typeof error === "string") return error;
+  const parsed = z.object({ message: z.string().optional(), type: z.string().optional() }).passthrough().safeParse(error);
+  if (!parsed.success) return undefined;
+  return parsed.data.message ?? parsed.data.type;
 }
 
 /** v2 errors are `{ type, message }`; give them the `name` v1 errors carry. */
@@ -182,7 +236,12 @@ export function fromV2Messages(messages: V2Message[]): MessageWire[] {
         id: message.id,
         role,
         ...(role === "assistant" && parentId !== null ? { parentID: parentId } : {}),
-        ...(message.time?.created === undefined ? {} : { time: { created: message.time.created } }),
+        ...(message.time?.created === undefined ? {} : {
+          time: {
+            created: message.time.created,
+            ...(message.time.completed === undefined ? {} : { completed: message.time.completed }),
+          },
+        }),
         ...(role === "assistant" && message.error !== undefined && message.error !== null ? { error: fromV2Error(message.error) } : {}),
         ...(message.tokens === undefined ? {} : { tokens: message.tokens }),
         ...(message.cost === undefined ? {} : { cost: message.cost }),

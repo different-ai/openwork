@@ -19,6 +19,7 @@ import {
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
+import { boundCloudPage, cloudTranscriptParts } from "./remote-session-transcript.js"
 import {
   getOpenWorkWebRuntimeAccess,
   OPENWORK_WEB_ACCESS_REQUIRED_CODE,
@@ -1409,12 +1410,16 @@ async function executeRemoteSession(
       title: transcript.title,
       status: snapshot.status.type,
       messageCount: transcript.messages.length,
-      messages: transcript.messages.slice(-limit).map((message) => ({
+      messages: boundCloudPage(transcript.messages.slice(-limit).map((message) => ({
         id: message.id,
         role: message.role,
+        createdAt: message.createdAt,
+        completedAt: message.completedAt,
         text: message.text.slice(0, READ_MESSAGE_TEXT_LIMIT),
         toolCalls: message.toolCalls.map((tool) => ({ id: tool.partId, name: tool.name, status: tool.status })),
-      })),
+        // The same ordered steps a desktop runner sends, so readers render one shape.
+        parts: cloudTranscriptParts(message, READ_MESSAGE_TEXT_LIMIT),
+      }))),
       finalAssistantText: body.messageId
         ? transcript.messages.filter(message => message.role === "assistant" && message.text).map(message => message.text).join("\n\n").slice(0, 100_000)
         : transcript.finalAssistantText.slice(0, FINAL_TEXT_LIMIT),
