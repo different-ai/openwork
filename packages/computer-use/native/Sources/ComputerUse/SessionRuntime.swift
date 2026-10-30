@@ -61,6 +61,8 @@ final class SessionRuntime {
         var receiptInputs: [String: Data] = [:]
         var focus: ElementRecord?
         var baseline: ActionBaseline?
+        /// The last image the model received; an identical automatic one is not sent again.
+        var lastImage: ImagePolicy.Sent?
         /// The person interrupted the last step; the read right after it leaves the front to them.
         var yielded = false
     }
@@ -408,8 +410,11 @@ final class SessionRuntime {
         var png: Data?
         var imageFailure: UseError?
         var width = max(1, Int(bounds.width)); var height = max(1, Int(bounds.height))
-        let namedControls = state.records.filter { bounds.contains($0.frame) && $0.interactive && !$0.label.isEmpty }.count
-        let image = ImagePolicy.include(requested: requested, automatic: current.delivery == .background, namedControls: namedControls)
+        let interactive = state.records.filter { bounds.contains($0.frame) && $0.interactive }
+        let namedControls = interactive.filter { !$0.label.isEmpty }.count
+        let image = ImagePolicy.include(requested: requested,
+            automatic: ImagePolicy.automatic(delivery: current.delivery, mode: current.mode, policy: policy),
+            namedControls: namedControls, interactiveControls: interactive.count)
         if image {
             do {
                 let captured = try await observationImage(current, bounds: bounds, state: state, requireFrontmost: frontmost, check: check)
@@ -431,19 +436,25 @@ final class SessionRuntime {
         guard try access.validate(current.target, app: current.app, requireFrontmost: frontmost) == bounds else {
             throw UseError("stale_observation", "The window moved during the observation.", next: "observe")
         }
+        let imageDigest = png.map(access.imageDigest)
+        // The lease keeps the digest either way, so coordinate input still checks the live window against it.
+        let repeated = imageDigest.flatMap { digest in
+            ImagePolicy.alreadySent(requested: requested, last: current.lastImage, generation: current.generation,
+                window: current.target.id, width: width, height: height, digest: digest)
+        }
         var effectiveFilter = filter
         // AX trees can retain virtualized or scrolled-out nodes. Keep those
         // internal for privacy/staleness scans, never expose their text or refs.
         let visible = state.records.filter { bounds.contains($0.frame) }
         var shown = filter == "none" ? [] : filter == "all" ? visible : visible.filter(\.interactive)
-        if png == nil, shown.isEmpty, filter == "interactive" { shown = visible; effectiveFilter = "all" }
+        if png == nil || repeated != nil, shown.isEmpty, filter == "interactive" { shown = visible; effectiveFilter = "all" }
         guard png != nil || !shown.isEmpty else {
             throw imageFailure ?? UseError("observation_unavailable", "No image or useful accessible elements could be read.", next: "observe")
         }
         let elements = try shown.map { try $0.payload(bounds: bounds, width: width, height: height, compact: policy == .embedded) }
         let observation = ObservationLease(id: UUID().uuidString.lowercased(), createdAt: now, generation: current.generation,
             frame: bounds, imageWidth: width, imageHeight: height, stateDigest: try access.captureDigest(state),
-            imageDigest: png.map(access.imageDigest), validFor: policy.observationSeconds)
+            imageDigest: imageDigest, validFor: policy.observationSeconds)
         try check()
         let observedFocus = state.focusRecord.flatMap { focus in shown.first { CFEqual($0.element, focus.element) } }
         let afterAction = current.baseline.flatMap { baseline in
@@ -451,10 +462,19 @@ final class SessionRuntime {
         }
         session?.observation = observation; session?.records = shown; session?.focus = observedFocus
         session?.lastUsed = now; session?.needsRefresh = false; session?.baseline = nil
+        if repeated == nil, let digest = observation.imageDigest {
+            session?.lastImage = ImagePolicy.Sent(observationID: observation.id, generation: current.generation,
+                window: current.target.id, width: width, height: height, digest: digest)
+        }
         controls.update("Window observed. Ready for the next action.", paused: false)
-        var imageInfo: [String: Any] = ["width": width, "height": height, "included": png != nil, "coordinate_space": "image_pixels"]
+        let sent = repeated == nil ? png : nil
+        var imageInfo: [String: Any] = ["width": width, "height": height, "included": sent != nil, "coordinate_space": "image_pixels"]
         if let imageFailure { imageInfo["unavailable"] = imageFailure.payload }
         if !image { imageInfo["omitted"] = requested == false ? "requested" : "accessible_controls_suffice" }
+        if let repeated {
+            imageInfo["omitted"] = "unchanged"
+            imageInfo["same_as_observation"] = repeated.observationID
+        }
         var payload: [String: Any] = ["ok": true, "session_id": id, "observation_id": observation.id, "window_id": Int(current.target.id),
             "window_title": current.target.title, "mode": current.mode.rawValue, "image": imageInfo, "elements": elements,
             "truncated": state.truncated, "protected_fields": state.protectedFrames.count,
@@ -473,17 +493,19 @@ final class SessionRuntime {
             if let issue = state.privacyIssue { payload["privacy_issue"] = issue }
         }
         var result: [[String: Any]] = []
-        if let png { result.append(["type": "image", "data": png.base64EncodedString(), "mimeType": Self.observationMimeType]) }
+        if let sent { result.append(["type": "image", "data": sent.base64EncodedString(), "mimeType": Self.observationMimeType]) }
         return result + text(payload)
     }
 
     /// Observations are compact JPEGs: image tokens and upload time dominate each step.
-    /// The re-capture that guards coordinate input uses the same encoding, so digests compare.
+    /// The re-capture that guards coordinate input uses the same encoding, so digests compare;
+    /// a session's mode never changes, so neither does its profile.
     static let observationMimeType = "image/jpeg"
     private func observationImage(_ current: Session, bounds: CGRect, state: WindowState, requireFrontmost: Bool,
                                   check: () throws -> Void) async throws -> (Data, Int, Int, Int64) {
-        try await access.capture(target: current.target, app: current.app, bounds: bounds, state: state,
-            maxLongSide: 1280, jpegQuality: 0.8, requireFrontmost: requireFrontmost, check: check)
+        let profile = ImagePolicy.profile(mode: current.mode, policy: policy)
+        return try await access.capture(target: current.target, app: current.app, bounds: bounds, state: state,
+            maxLongSide: profile.maxLongSide, jpegQuality: profile.jpegQuality, requireFrontmost: requireFrontmost, check: check)
     }
 
     /// A sharper look at part of the current observation, for reading only. It

@@ -396,6 +396,25 @@ test("screenshot false settles the act with elements only and never reaches the 
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "key", key: "return" }, screenshot: "no" } })).code, "invalid_arguments");
 });
 
+test("without a screenshot choice the computer decides whether the settled view needs an image", async (t) => {
+  const seen = [];
+  const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? text({ ok: true, status: "dispatched", next: "observe" }) : undefined });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  const postRead = () => seen.find((call) => call.name === "computer_observe")?.args;
+  assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit the draft" } })).ok, true);
+  assert.equal(Object.hasOwn(postRead(), "include_image"), false, "opening leaves the image to the computer");
+  seen.length = 0;
+  await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "key", key: "return" } } });
+  assert.equal(Object.hasOwn(postRead(), "include_image"), false, "an act without a choice leaves the image to the computer");
+  seen.length = 0;
+  await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "key", key: "return" }, screenshot: true } });
+  assert.equal(postRead().include_image, true, "screenshot true always asks for an image");
+  seen.length = 0;
+  await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "key", key: "return" } } }, { includePostImage: false });
+  assert.equal(postRead().include_image, false, "programs never receive a post-action image");
+});
+
 test("each step records computer time and the model's time since the previous step", async (t) => {
   const steps = [];
   const f = fixture({ onTiming: (_sessionId, step) => steps.push(step) }); t.after(() => f.control.reset(true));

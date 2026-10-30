@@ -55,6 +55,17 @@ permission, credential and host apps (`com.differentai.openwork*`,
 `com.differentai.opencoworker*`) can never be targeted. Failures are MCP
 `isError: true` results with machine-readable `code` and `next` fields.
 
+On this Mac an observation carries a screenshot only when it adds something,
+unless `include_image` (or `computer_act`'s `screenshot`) says otherwise.
+Observe and assist sessions, and background delivery, read the elements first
+and add an image when they name fewer than eight controls or leave most of them
+unnamed. A control session in front always gets one. An automatic image that
+matches the last one sent from the same window is not sent again
+(`image.omitted: "unchanged"`, `same_as_observation`); its coordinates still
+apply. Observe and assist images, used only for reading, are 1024 pixels on
+the long side; control keeps 1280 for coordinate accuracy, and `computer_zoom`
+shows detail at full resolution.
+
 Person input in the selected app or a deliberate app switch pauses
 the session and releases held input. Only the person's Continue resumes it;
 neither time nor the agent can. Sleep or temporary desktop unavailability

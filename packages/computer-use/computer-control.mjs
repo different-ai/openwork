@@ -787,7 +787,9 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
               if (!postStillOwned(call) || current.needsObservation) return postWarning(result, "handoff_required", "human_takeover");
               // One read in this exact tool call, never a repeated input or a
               // continuation across a person takeover. Watch frames are unrelated.
-              const observation = await current.transport.callTool("computer_observe", { session_id: current.nativeId, include_image: call.includePostImage !== false }, { signal: active });
+              // Unless the model chose, the computer decides whether an image adds anything.
+              const observation = await current.transport.callTool("computer_observe", { session_id: current.nativeId,
+                ...(call.postImage === undefined ? {} : { include_image: call.postImage }) }, { signal: active });
               progress(); assertUiActive(current);
               if (!postStillOwned(call)) return postWarning(result, "observation_withheld", "human_takeover");
               const observed = stateOf(observation);
@@ -1301,9 +1303,10 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         }
         if (!featureEnabled || generation !== featureGeneration || grant.adapter.placement === "remote" && remoteRevision !== remoteGeneration) return failure("computer_unavailable", "Computer use was turned off while this request was waiting. Nothing was dispatched.");
         if (args.screenshot !== undefined && typeof args.screenshot !== "boolean") return failure("invalid_arguments", "screenshot must be true or false.");
-        // screenshot:false returns the settled elements without an image; the native call never sees it.
+        // screenshot:false returns the settled elements without an image and true always attaches one;
+        // omitted, the computer adds one only when it helps. The native act never sees it.
         const { screenshot, ...nativeArgs } = args;
-        const call = { name, includePostImage: includePostImage && screenshot !== false, args: structuredClone(nativeArgs), grant, revision: grant.revision, featureGeneration: generation, remoteGeneration: remoteRevision, remoteTarget: grant.adapter.placement === "remote" };
+        const call = { name, postImage: !includePostImage || screenshot === false ? false : screenshot, args: structuredClone(nativeArgs), grant, revision: grant.revision, featureGeneration: generation, remoteGeneration: remoteRevision, remoteTarget: grant.adapter.placement === "remote" };
         // The operation budget starts once the person has answered.
         limit = deadline(operationMs);
         const started = now();
