@@ -109,31 +109,38 @@ function App() {
 }
 
 /**
- * index.html draws the header and a message box before this script loads. Once the app draws, the words typed there
- * move to the app's own message box, with the caret where it was, and the boot page goes.
+ * index.html draws the header and a message box before this script loads. The boot page goes once the app draws; the
+ * words typed there, with the caret, move to the first message box the app shows (which can come a render later).
  */
 function handOffBoot(root: HTMLElement) {
   const boot = document.getElementById("workbot-boot")
   if (!boot) return
+  const typed = boot.querySelector("textarea")
+  let draft: { text: string; start: number; end: number; focused: boolean } | null = null
   const observer = new MutationObserver(() => {
     if (!root.firstElementChild) return
-    observer.disconnect()
-    const typed = boot.querySelector("textarea")
-    const box = Array.from(root.querySelectorAll<HTMLTextAreaElement>("[data-workbot-composer] textarea")).find(node => node.offsetParent !== null && !node.disabled)
-    if (typed && box) {
-      if (typed.value && !box.value) {
-        // Through the element's own setter and an input event, so React's onChange sees it as typing.
-        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(box, typed.value)
-        box.dispatchEvent(new Event("input", { bubbles: true }))
-      }
-      if (document.activeElement === typed) {
-        box.focus()
-        box.setSelectionRange(typed.selectionStart, typed.selectionEnd)
-      }
+    if (boot.isConnected) {
+      const focused = document.activeElement === typed
+      draft = typed && (typed.value || focused) ? { text: typed.value, start: typed.selectionStart, end: typed.selectionEnd, focused } : null
+      boot.remove()
     }
-    boot.remove()
+    if (!draft) { observer.disconnect(); return }
+    const box = Array.from(root.querySelectorAll<HTMLTextAreaElement>("[data-workbot-composer] textarea")).find(node => node.offsetParent !== null && !node.disabled)
+    if (!box) return
+    observer.disconnect()
+    if (draft.text && !box.value) {
+      // Through the element's own setter and an input event, so React's onChange sees it as typing.
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(box, draft.text)
+      box.dispatchEvent(new Event("input", { bubbles: true }))
+    }
+    if (draft.focused) {
+      box.focus()
+      box.setSelectionRange(draft.start, draft.end)
+    }
   })
-  observer.observe(root, { childList: true, subtree: true })
+  observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden", "disabled", "style"] })
+  // Words typed before a sign-in redirect or an error page have no message box to go to.
+  setTimeout(() => observer.disconnect(), 15_000)
 }
 
 const root = document.getElementById("root")

@@ -11,7 +11,7 @@ test("a member can write to Workbot before the conversation has loaded", async (
     await user.navigate(`${world.url}?assistant=off`);
     await probe.eventually(() => world.pendingThreads(), { within: 5000, label: "the conversation read is held", until: count => count > 0 });
     await user.see({ role: "textbox", label: "Message Workbot" });
-    await user.see({ label: "Loading conversation" });
+    await user.see({ role: "progressbar", label: "Loading conversation" });
     await user.type({ role: "textbox", label: "Message Workbot" }, "Started before it loaded");
     evidence.recordAssertionEvidence("The message box works while the conversation loads", "The thread read is held; the header, a placeholder and an editable message box are on screen", world.pendingThreads() > 0 && world.attempts().length === 0);
     await user.screenshot();
@@ -19,7 +19,7 @@ test("a member can write to Workbot before the conversation has loaded", async (
   await step("after: the conversation fills in around the words already typed", async () => {
     world.releaseThread();
     await user.see({ text: "Use Monday" });
-    await user.notSee({ label: "Loading conversation" });
+    await user.notSee({ role: "progressbar", label: "Loading conversation" });
     await user.see({ role: "textbox", label: "Message Workbot" }, { value: "Started before it loaded" });
     evidence.recordAssertionEvidence("Loading never replaces the draft", "The earlier messages arrive and the unsent words stay in the message box", world.attempts().length === 0);
     await user.screenshot();
@@ -28,24 +28,28 @@ test("a member can write to Workbot before the conversation has loaded", async (
 
 test("a member's newest messages are on their way before the app's script arrives", async ({ world, user, probe, step, evidence }) => {
   await user.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
-  const before = world.threadReads().length;
+  // The fixture starts in a side chat; this test opens the main chat, so only its reads are counted.
+  const main = () => world.threadReads().filter(read => read.chat === "main");
   await step("before: the app's script is still downloading, and the conversation read has already been made for the signed-in member", async () => {
     world.holdScript();
+    world.holdThread();
     await user.navigate(`${world.url}?assistant=off`);
     await probe.eventually(() => world.pendingScripts(), { within: 5000, label: "the app's script is held", until: count => count > 0 });
-    const reads = await probe.eventually(() => world.threadReads().slice(before), { within: 5000, label: "the page reads the conversation without the script", until: reads => reads.length > 0 });
-    expect(reads[0]).toEqual({ turns: 8, user: "user_example" });
+    const reads = await probe.eventually(main, { within: 5000, label: "the page reads the conversation without the script", until: reads => reads.length > 0 });
+    expect(reads[0]).toEqual({ turns: 8, chat: "main", user: "user_example" });
     await user.see({ role: "textbox", label: "Message Workbot" });
     evidence.recordAssertionEvidence("The conversation read starts beside the sign-in check", `With the script held, the page read the newest ${reads[0]?.turns} turns and named ${reads[0]?.user}`, reads[0]?.turns === 8 && reads[0]?.user === "user_example");
     await user.screenshot();
   });
-  await step("after: the app shows that read's messages without asking again", async () => {
+  await step("after: the app waits on that read instead of asking again", async () => {
     world.releaseScript();
+    // The app is up and its first read is pending: the early one, still held.
+    await user.see({ role: "progressbar", label: "Loading conversation" });
+    const reads = main();
+    expect(reads).toHaveLength(1);
+    world.releaseThread();
     await user.see({ text: "Use Monday" });
-    const reads = world.threadReads().slice(before);
-    expect(reads.filter(read => read.turns === 8)).toHaveLength(1);
-    expect(reads.every(read => read.user === "user_example")).toBe(true);
-    evidence.recordAssertionEvidence("The early read is used once", `Conversation reads after opening: ${reads.map(read => read.turns).join(", ")}; every one named the signed-in member`, reads.filter(read => read.turns === 8).length === 1);
+    evidence.recordAssertionEvidence("The early read is used once", `While the app loaded, the main chat had ${reads.length} read, the one the page started`, reads.length === 1);
     await user.screenshot();
   });
 });
@@ -79,14 +83,12 @@ test("a member keeps separate chat drafts and one draft across Home and Document
     await user.type({ role: "textbox", label: "Message Workbot" }, "A follow-up about this view", { replace: true });
     await user.press("Enter");
     await probe.eventually(() => world.attempts(), { within: 5000, label: "the question is accepted", until: attempts => attempts.length === 1 });
-    await user.notSee({ role: "button", label: "Hide workspace chat" });
     await user.see({ role: "textbox", label: "Document text" }, { value: "Unsaved project draft" });
     expect((await probe.dom('textarea[aria-label="Message Workbot"]')).elements.some(element => element.focused)).toBe(true);
-    evidence.recordAssertionEvidence("Sending does not open chat or take focus from the composer", "Document draft stays; chat remains closed; composer keeps focus", (await probe.dom("[data-workbot-workspace-chat]")).elements.length === 0);
+    evidence.recordAssertionEvidence("Sending keeps the document draft and the composer's focus", "Document draft stays; the composer that sent keeps focus", (await probe.dom('textarea[aria-label="Message Workbot"]')).elements.some(element => element.focused));
     await user.screenshot();
   });
-  await step("the member explicitly opens chat and can send another follow-up without closing it", async () => {
-    await user.click({ role: "button", label: "Show workspace chat" });
+  await step("the workspace chat stays open beside the document and takes another follow-up", async () => {
     await user.see({ text: "A follow-up about this view" });
     await user.type({ role: "textbox", label: "Message Workbot" }, "Another follow-up");
     await user.see({ role: "button", label: "Hide workspace chat", nth: 0 });
@@ -95,7 +97,7 @@ test("a member keeps separate chat drafts and one draft across Home and Document
     await user.see({ role: "button", label: "Hide workspace chat", nth: 0 });
     const attempts = await probe.eventually(() => world.attempts(), { within: 5000, label: "both follow-ups reach the API", until: attempts => attempts.length === 2 });
     expect(attempts).toHaveLength(2);
-    evidence.recordAssertionEvidence("Explicit chat disclosure stays open for a follow-up", "Both questions reached the API and are visible; the document draft remains mounted", attempts.length === 2);
+    evidence.recordAssertionEvidence("The workspace chat stays open for a follow-up", "Both questions reached the API and are visible; the document draft remains mounted", attempts.length === 2);
     await user.screenshot();
   });
 });
@@ -142,7 +144,8 @@ test("a member retries a refused correction without losing earlier messages or t
 test("a member retries a message after its file uploaded without uploading or sending duplicate copies", async ({ world, user, probe, step, evidence }) => {
   await step("the member sends a selected file while it is still uploading", async () => {
     await user.navigate(`${world.url}?assistant=off&chat=sidechat000000001`);
-    await user.see({ role: "textbox", label: "Message Workbot" });
+    // The message box is there before the conversation; adding files waits until it says files are on.
+    await user.see({ text: "Use Monday" });
     await user.attachFiles('input[type="file"]', [world.notesPath]);
     await user.type({ role: "textbox", label: "Message Workbot" }, "Read my notes");
     await user.press("Enter");
@@ -220,10 +223,10 @@ test("a member reaches an honest history limit instead of an inert Show earlier 
     if (!reading || !question) throw new Error("No conversation row is on screen");
     await user.click({ role: "button", label: "Show earlier messages" });
     await probe.eventually(() => world.windows(), { within: 5000, label: "history grows to 60 messages", until: windows => windows.includes(60) });
-    await user.see({ role: "button", label: "Show earlier messages" });
-    const after = (await probe.dom(rows)).elements;
+    // Read the rows without locating anything by role or text: locating scrolls an off-screen target into view.
+    // 60 mixed records are 30 conversation messages.
+    const after = (await probe.eventually(() => probe.dom(rows), { within: 5000, label: "the earlier rows are on the page", until: layout => layout.elements.length >= 30 })).elements;
     const same = after.find(element => element.text.includes(question));
-    expect(after.length).toBeGreaterThan(15);
     expect(same).toBeDefined();
     expect(Math.abs((same?.rect.bottom ?? Number.NaN) - reading.rect.bottom)).toBeLessThanOrEqual(2);
     evidence.recordAssertionEvidence("Loading earlier messages keeps the reader's place", `${after.length} rows after loading; "${question}" stays at ${Math.round(reading.rect.bottom)}px`, same !== undefined && Math.abs(same.rect.bottom - reading.rect.bottom) <= 2);

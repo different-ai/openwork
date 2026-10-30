@@ -84,7 +84,12 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   setWorkbotHost(host);
   const sideChats = host.sideChats === true;
   const composers = useMemo(() => new Map<string | null, ComposerState>(), [host.identity?.organizationId, host.identity?.principalId]);
-  useEffect(() => () => { for (const owner of composers.values()) owner.dispose(); }, [composers]);
+  // Disposed a tick after unmount, so a remount of the same owners (React's StrictMode check) keeps what was typed.
+  const disposeComposers = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => {
+    clearTimeout(disposeComposers.current);
+    return () => { disposeComposers.current = setTimeout(() => { for (const owner of composers.values()) owner.dispose(); }, 0); };
+  }, [composers]);
   const [workspaceDrafts, setWorkspaceDrafts] = useState(false);
   const [chat, openChat] = useChatLocation(sideChats, workspaceDrafts ? () => false : undefined);
   const [chatsOpen, setChatsOpen] = useState(false);
@@ -642,7 +647,7 @@ const LOADING_THREAD: Extract<WorkbotThread, { available: true }> = { available:
 /** Where the thread will be while it is first read: a few lines in the shape of a conversation. */
 function ThreadPlaceholder() {
   return (
-    <div className="flex flex-col gap-[3px] pb-8" aria-busy="true" aria-label="Loading conversation">
+    <div className="flex flex-col gap-[3px] pb-8" role="progressbar" aria-busy="true" aria-label="Loading conversation">
       <span className="ml-auto h-[38px] w-48 rounded-[20px] rounded-br-md bg-[var(--wb-bubble)]" />
       <span className="mt-3.5 h-6 w-40 rounded bg-[var(--wb-chip)]" />
       <span className="mt-1.5 h-24 w-[70%] rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] shadow-[var(--wb-card-shadow)]" />
