@@ -102,9 +102,14 @@ function deadline(ms) {
 
 
 // Approving a browser app cannot say which website gets a password, so browsers take none
-// through computer use; OpenWork's own browser confirms the exact site. Mac bundle ids and
-// Windows or Linux app names.
-const WEB_BROWSERS = /^(com\.apple\.safari|com\.google\.chrome|org\.chromium\.|com\.microsoft\.edgemac|com\.brave\.browser|com\.vivaldi\.|company\.thebrowser\.|com\.operasoftware\.|org\.mozilla\.|com\.kagi\.kagimacos|app\.zen-browser\.)|^(chrome|chromium|msedge|firefox|brave|opera|vivaldi|iexplore|arc|librewolf|waterfox|zen)$/i;
+// through computer use; OpenWork's own browser confirms the exact site. Matched on the parts
+// of Mac bundle ids, Windows executables and Linux window classes ("google-chrome",
+// "microsoft-edge", "Navigator"): a false match only leaves sign-in to the person.
+const WEB_BROWSER_PARTS = new Set(["chrome", "chromium", "edge", "msedge", "edgemac", "firefox", "mozilla", "navigator", "safari",
+  "brave", "opera", "operasoftware", "vivaldi", "arc", "thebrowser", "browser", "iexplore", "librewolf", "waterfox", "floorp", "zen",
+  "epiphany", "falkon", "konqueror", "midori", "qutebrowser", "seamonkey", "palemoon", "yandex", "whale", "thorium",
+  "torbrowser", "mullvadbrowser", "duckduckgo", "kagimacos", "orion"]);
+const isWebBrowser = (app) => String(app).toLowerCase().split(/[^a-z0-9]+/).some((part) => WEB_BROWSER_PARTS.has(part));
 
 /**
  * Adapters are trusted main-process dependencies, never renderer or model
@@ -1350,7 +1355,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         let confirmedApp = null;
         if (secret) {
           const app = typeof grant.lastOpen?.app_id === "string" ? grant.lastOpen.app_id : "";
-          if (WEB_BROWSERS.test(app)) return failure("browser_app", "Web pages take a password or code only in OpenWork's browser, which confirms the exact site. Use it, or ask the person to take over. Nothing was sent.");
+          if (isWebBrowser(app)) return failure("browser_app", "Web pages take a password or code only in OpenWork's browser, which confirms the exact site. Use it, or ask the person to take over. Nothing was sent.");
           const answer = app ? await approveCredential(grant, { app }, signal) : "too_many";
           if (!["allow", "always"].includes(answer)) return failure("credential_declined", app
             ? "The person did not confirm entering a password or code in this app. Nothing was sent."

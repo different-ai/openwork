@@ -855,10 +855,10 @@ function credentialFixture() {
   } });
   const acts = () => seen.filter((call) => call.name === "computer_act").map((call) => call.args);
   const cards = () => f.requests.filter((request) => request?.reason === "credential");
-  const answer = async (app, reply) => {
+  const answer = async (app, reply, appId = "com.example.editor") => {
     const before = cards().length;
     for (let waited = 0; cards().length === before && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
-    assert.deepEqual(cards().at(-1).credential, { app, appId: "com.example.editor" });
+    assert.deepEqual(cards().at(-1).credential, { app, appId });
     await f.control.answerRequest({ sessionId: "chat", answer: reply, id: cards().at(-1).id });
   };
   return { ...f, acts, cards, answer };
@@ -900,10 +900,22 @@ test("text marked secret goes only to an app the person confirmed, where no fiel
 test("a browser app never takes a password: the site cannot be confirmed there", async (t) => {
   const f = credentialFixture(); t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);
-  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "chrome", mode: "control", purpose: "Sign in" } });
-  assert.equal(payload(await typeInto(f.control, { type: "type", text: "given-password", secret: true })).code, "browser_app");
+  // Mac bundle ids, Windows executables and Linux window classes.
+  const open = async (app) => {
+    await f.control.execute({ sessionId: "chat", name: "computer_close", args: {} });
+    assert.notEqual(payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: app, mode: "control", purpose: "Sign in" } })).code, "session_open", app);
+  };
+  for (const app of ["com.apple.Safari", "com.microsoft.edgemac.Dev", "chrome", "msedge", "google-chrome", "microsoft-edge", "Navigator", "firefox-esr", "brave-browser", "org.gnome.Epiphany"]) {
+    await open(app);
+    assert.equal(payload(await typeInto(f.control, { type: "type", text: "given-password", secret: true })).code, "browser_app", app);
+  }
   assert.equal(f.cards().length, 0, "Nobody is asked to approve a browser for every site in it");
   assert.equal(f.acts().length, 0);
+  // An app whose name merely contains a browser word is still an app.
+  await open("com.example.knowledge");
+  const app = typeInto(f.control, { type: "type", text: "given-password", secret: true });
+  await f.answer("com.example.knowledge", "dismiss", "com.example.knowledge");
+  assert.equal(payload(await app).code, "credential_declined");
 });
 
 test("allowing a file panel to be browsed never becomes a standing approval", async (t) => {
