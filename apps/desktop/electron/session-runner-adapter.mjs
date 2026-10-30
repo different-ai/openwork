@@ -4,7 +4,6 @@ import {
   classifyRemoteSessionCommandError,
   classifyRemoteSessionRequestError,
   createWorkspaceSessionClient,
-  readRemoteSessionWaitingFor,
   remoteSessionObservation,
   remoteSessionTranscriptPage,
   remoteSessionTurnVisible,
@@ -89,11 +88,17 @@ export function createDesktopSessionAdapter(options) {
       return await read(selected === "v2" ? "v1" : "v2")
     }
   }
-  const waitingFor = async (native, receipt, signal) => {
+  // The request a running session waits on, with what is needed to answer it.
+  // An unreadable list is unknown (undefined), never "nothing pending".
+  const pendingFor = async (native, receipt, signal) => {
     const running = native.snapshot?.status?.type === "busy" || native.snapshot?.status?.type === "retry"
-    return running
-      ? await readRemoteSessionWaitingFor(native.local, receipt.workspaceId, receipt.sessionId, native.engine, fetchImpl, signal)
-      : null
+    if (!running) return null
+    try {
+      return await native.client.getThreadPending(receipt.sessionId, { signal })
+    } catch (error) {
+      if (signal.aborted) throw error
+      return undefined
+    }
   }
   return {
     // Engine selection is dynamic per command. Do not claim V2's native create
@@ -179,9 +184,11 @@ export function createDesktopSessionAdapter(options) {
       const operationSignal = bounded(signal)
       try {
         const native = await snapshotFor(receipt, operationSignal)
+        const pending = await pendingFor(native, receipt, operationSignal)
         return parseReadResult({
-          ...remoteSessionTranscriptPage(native.snapshot, input, await waitingFor(native, receipt, operationSignal)),
+          ...remoteSessionTranscriptPage(native.snapshot, input, pending === undefined ? null : pending?.kind ?? null),
           historyScope: "full",
+          ...(pending === undefined ? {} : { pending }),
         })
       } catch (error) {
         if (error?.code === "invalid_cursor") {
@@ -206,6 +213,23 @@ export function createDesktopSessionAdapter(options) {
         throw definitiveFailure(error, false)
       }
     },
+    /**
+     * The person's answer, through the same native reply paths a local chat uses:
+     * v1 question/permission reply, v2 form reply by field key and option value,
+     * v2 permission reply. Never "always". A request no longer pending is refused.
+     */
+    async answer(receipt, input, signal) {
+      const operationSignal = bounded(signal)
+      try {
+        const native = await snapshotFor(receipt, operationSignal, 1)
+        await native.client.answerThread(receipt.sessionId, input, { signal: operationSignal })
+      } catch (error) {
+        if (error?.code === "stale_request" || error?.code === "invalid_answer") {
+          throw new SessionRunnerError(error.code, error.message)
+        }
+        throw definitiveFailure(error, false)
+      }
+    },
     async observe(receipt, signal) {
       const operationSignal = bounded(signal)
       try {
@@ -213,8 +237,9 @@ export function createDesktopSessionAdapter(options) {
         // Status and messages are separate native reads. Until the accepted
         // stable user message appears, even an idle old reply is not this turn.
         const visible = !native.messageId || remoteSessionTurnVisible(native.snapshot, { messageId: native.messageId })
+        const pending = visible ? await pendingFor(native, receipt, operationSignal) : null
         const observation = visible
-          ? remoteSessionObservation(native.snapshot, await waitingFor(native, receipt, operationSignal))
+          ? remoteSessionObservation(native.snapshot, pending === undefined ? undefined : pending?.kind ?? null)
           : { status: "running", messageCount: native.snapshot.messages.length }
         return parseProgress({
           ...observation,
@@ -225,6 +250,7 @@ export function createDesktopSessionAdapter(options) {
           error: observation.error ?? null,
           engine: native.engine,
           ...(native.model ? { model: native.model } : {}),
+          ...(pending === undefined ? {} : { pending: observation.status === "waiting" ? pending : null }),
           observedAt: now(),
         })
       } catch (error) {
