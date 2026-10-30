@@ -56,6 +56,7 @@ final class SessionRuntime {
         let purpose: String
         var observation: ObservationLease?
         var records: [ElementRecord] = []
+        var refs = StableRefs<AXUIElement>()
         var actionCount = 0
         var receipts: [String: [String: Any]] = [:]
         var receiptInputs: [String: Data] = [:]
@@ -406,7 +407,14 @@ final class SessionRuntime {
         let frontmost = current.checksFront && !otherWindowFocused
         let bounds = try access.validate(current.target, app: current.app, requireFrontmost: frontmost)
         @MainActor func check() throws { try self.checkActive(current) }
-        var state = try await access.read(current.target, check: check)
+        @MainActor func readState() async throws -> WindowState {
+            let state = try await access.read(current.target, check: check)
+            guard session?.id == id, var refs = session?.refs else { return state }
+            let stable = refs.assign(state, window: current.target.id)
+            session?.refs = refs
+            return stable
+        }
+        var state = try await readState()
         var png: Data?
         var imageFailure: UseError?
         var width = max(1, Int(bounds.width)); var height = max(1, Int(bounds.height))
@@ -416,15 +424,22 @@ final class SessionRuntime {
             automatic: ImagePolicy.automatic(delivery: current.delivery, mode: current.mode, policy: policy),
             namedControls: namedControls, interactiveControls: interactive.count)
         if image {
-            do {
-                let captured = try await observationImage(current, bounds: bounds, state: state, requireFrontmost: frontmost, check: check)
-                png = captured.0; width = captured.1; height = captured.2
-            } catch {
-                try check()
-                let failure = (error as? UseError) ?? UseError("capture_failed", "The window screenshot is unavailable; only the accessible text was read.", next: "observe")
-                if failure.code == "stale_observation", policy == .desktop { throw failure }
-                imageFailure = failure
-                if failure.code == "stale_observation" { state = try await access.read(current.target, check: check) }
+            // A window that just opened is often still settling: one more look
+            // before the observation goes out without its image.
+            for attempt in 0..<2 {
+                do {
+                    let captured = try await observationImage(current, bounds: bounds, state: state, requireFrontmost: frontmost, check: check)
+                    png = captured.0; width = captured.1; height = captured.2; imageFailure = nil
+                    break
+                } catch {
+                    try check()
+                    let failure = (error as? UseError) ?? UseError("capture_failed", "The window screenshot is unavailable; only the accessible text was read.", next: "observe")
+                    if failure.code == "stale_observation", policy == .desktop { throw failure }
+                    imageFailure = failure
+                    guard failure.code == "stale_observation" else { break }
+                    if attempt == 0 { try await Task.sleep(nanoseconds: 120_000_000); try check() }
+                    state = try await readState()
+                }
             }
         } else if policy == .desktop {
             let after = try await access.read(current.target, check: check)
@@ -477,7 +492,7 @@ final class SessionRuntime {
         }
         var payload: [String: Any] = ["ok": true, "session_id": id, "observation_id": observation.id, "window_id": Int(current.target.id),
             "window_title": current.target.title, "mode": current.mode.rawValue, "image": imageInfo, "elements": elements,
-            "truncated": state.truncated, "protected_fields": state.protectedFrames.count,
+            "truncated": state.truncated || state.listCapped, "protected_fields": state.protectedFrames.count,
             "content_trust": "untrusted_app_content", "next": "act_once_then_observe"]
         if let afterAction { payload["after_action"] = afterAction }
         if otherWindowFocused { payload["other_window_focused"] = true }
@@ -489,6 +504,8 @@ final class SessionRuntime {
         if policy == .embedded {
             payload["elements_filter"] = effectiveFilter; payload["elements_total"] = visible.count
             payload["observation_seconds"] = Int(policy.observationSeconds)
+            // A control keeps its ref across observations of this window; the host may list only changes.
+            payload["refs"] = "stable"
             if let focus = observedFocus { payload["focused_ref"] = focus.ref }
             if let issue = state.privacyIssue { payload["privacy_issue"] = issue }
         }
@@ -653,11 +670,15 @@ final class SessionRuntime {
         var activated = false
         var primed = false
         var needsObservation = false
+        var lastPressed = false
         var failure: UseError?
         var uncertain = false
         for (index, action) in actions.enumerated() {
             do {
                 try checkInput()
+                if needsObservation, lastPressed, try await unchangedAfterPress(action, current: current, windowsBefore: windowsBefore, check: check) {
+                    needsObservation = false
+                }
                 guard !needsObservation, !action.usesCoordinates || !progress.hasInput else {
                     throw UseError("observation_required", "The preceding step may have changed the view or focus. Observe before executing the remaining steps.", next: "observe")
                 }
@@ -740,6 +761,7 @@ final class SessionRuntime {
                 case .key: needsObservation = action.endsFocusSequence
                 default: break
                 }
+                if case .press = action { lastPressed = true } else { lastPressed = false }
                 if policy == .embedded, !needsObservation, action.changesWindow, index + 1 < actions.count {
                     try await Task.sleep(nanoseconds: 50_000_000)
                     try check()
@@ -783,6 +805,30 @@ final class SessionRuntime {
         receipt["desktop"] = desktopBefore.changes(to: DesktopState.now())
         if session?.id == id { session?.receipts[requestID] = receipt }
         return text(receipt)
+    }
+    /// After a press, the batch's next press or set_value still runs when nothing opened
+    /// over the window and its exact control reads back unchanged: the check a fresh
+    /// observation would make, without a model round trip. Anything else needs one.
+    private func unchangedAfterPress(_ action: Action, current: Session, windowsBefore: WindowChanges,
+                                     check: () throws -> Void) async throws -> Bool {
+        guard policy == .embedded else { return false }
+        let ref: String
+        switch action {
+        case .press(let value), .setValue(let value, _): ref = value
+        default: return false
+        }
+        guard let record = current.records.first(where: { $0.ref == ref }) else { return false }
+        try await Task.sleep(nanoseconds: 50_000_000); try check()
+        guard windowsBefore.diff(access.windowChanges(current.app), target: current.target.id) == nil,
+              access.personPrompt() == nil else { return false }
+        if await access.openMenu(of: current.app) != nil { return false }
+        if await access.dialog(over: current.target, app: current.app) != nil { return false }
+        // A read that fails only means the batch stops here and asks for an observation.
+        let live: WindowState
+        do { live = try await access.read(current.target, check: check) }
+        catch is CancellationError { throw CancellationError() }
+        catch { try check(); return false }
+        return live.records.contains { ElementRecord.sameControl($0, record) }
     }
     private func next(_ current: Session) -> String {
         current.paused ? "human_takeover" : "observe"

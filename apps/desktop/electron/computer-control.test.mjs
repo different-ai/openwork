@@ -415,6 +415,56 @@ test("without a screenshot choice the computer decides whether the settled view 
   assert.equal(postRead().include_image, false, "programs never receive a post-action image");
 });
 
+test("after an act the model gets only changed elements, while programs and opens get the full list", async (t) => {
+  const seen = [];
+  let display = "0";
+  const button = (ref, label, x) => ({ ref, role: "Button", label, press: true, x, y: 300, w: 48, h: 48 });
+  const view = () => text({ ok: true, observation_id: "observation", window_id: 17, refs: "stable", elements_filter: "interactive", elements: [
+    { ref: "e1", role: "StaticText", value: display, x: 160, y: 90, w: 60, h: 36 },
+    button("e2", "1", 10), button("e3", "2", 64), button("e4", "3", 118), button("e5", "Add", 172),
+  ] });
+  const f = fixture({ seen, toolResult: (name) => name === "computer_observe" ? view()
+    : name === "computer_act" ? (display = "12", text({ ok: true, status: "dispatched", next: "observe" })) : undefined });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  const opened = await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "calculator", mode: "assist", purpose: "Add", screenshot: false } });
+  const openedView = opened.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {}).find((value) => value.observation_id);
+  assert.equal(openedView.elements.length, 5);
+  assert.equal(seen.find((call) => call.name === "computer_observe")?.args.include_image, false);
+  assert.equal(Object.hasOwn(seen.find((call) => call.name === "computer_open_session").args, "screenshot"), false);
+
+  const acted = await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", actions: [{ type: "press", ref: "e2" }, { type: "press", ref: "e3" }], screenshot: false } });
+  const changes = acted.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {}).find((value) => value.observation_id);
+  assert.equal(changes.elements_listing, "changes");
+  assert.deepEqual(changes.elements, [{ ref: "e1", role: "StaticText", value: "12", x: 160, y: 90, w: 60, h: 36 }]);
+  assert.equal(changes.elements_unchanged, 4);
+
+  // A program reads every element itself.
+  const program = await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "press", ref: "e4" } } }, { includePostImage: false, program: true });
+  const full = program.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {}).find((value) => value.observation_id);
+  assert.equal(full.elements.length, 5);
+  assert.equal(full.elements_listing, undefined);
+});
+
+test("change listing falls back to the full list on another window, filter or a mostly new list", async () => {
+  const { listChanges } = await import("@openwork/computer-use/computer-control");
+  const part = (value) => [{ type: "text", text: JSON.stringify({ observation_id: "o", refs: "stable", window_id: 1, elements_filter: "all", ...value }) }];
+  const first = listChanges(null, part({ elements: [{ ref: "e1", label: "A" }, { ref: "e2", label: "B" }, { ref: "e3", label: "C" }] }));
+  const shown = (result) => JSON.parse(result.content[0].text);
+  assert.equal(shown(first).elements.length, 3);
+  assert.equal(shown(listChanges(first.listing, part({ window_id: 2, elements: [{ ref: "e1", label: "A" }] }))).elements_listing, undefined);
+  assert.equal(shown(listChanges(first.listing, part({ elements_filter: "interactive", elements: [{ ref: "e1", label: "A" }] }))).elements_listing, undefined);
+  assert.equal(shown(listChanges(first.listing, part({ elements: [{ ref: "e4", label: "D" }, { ref: "e5", label: "E" }, { ref: "e3", label: "C" }] }))).elements_listing, undefined);
+  const six = ["A", "B", "C", "D", "E", "F"].map((label, index) => ({ ref: `e${index + 1}`, label }));
+  const before = listChanges(null, part({ elements: six }));
+  const removed = shown(listChanges(before.listing, part({ elements: [...six.filter((element) => element.ref !== "e2"), { ref: "e9", label: "Z" }] })));
+  assert.deepEqual(removed.elements_removed, ["e2"]);
+  assert.deepEqual(removed.elements, [{ ref: "e9", label: "Z" }]);
+  assert.equal(removed.elements_unchanged, 5);
+  const unstable = [{ type: "text", text: JSON.stringify({ observation_id: "o", elements: [{ ref: "e1" }] }) }];
+  assert.equal(listChanges(first.listing, unstable).listing, null);
+});
+
 test("each step records computer time and the model's time since the previous step", async (t) => {
   const steps = [];
   const f = fixture({ onTiming: (_sessionId, step) => steps.push(step) }); t.after(() => f.control.reset(true));

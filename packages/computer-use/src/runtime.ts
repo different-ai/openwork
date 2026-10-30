@@ -1,4 +1,4 @@
-import { CodeMode, Tool } from "@openwork/codemode"
+import { CodeMode, Tool, toolError } from "@openwork/codemode"
 import { Effect } from "effect"
 import { z } from "zod"
 
@@ -40,13 +40,16 @@ const node = z.object({
 })
 type Selector = z.infer<typeof selector>
 type Node = z.infer<typeof node>
-type Observation = { observationId: string; elements: Node[]; text: string; width: number; height: number; scroll?: { x: number; y: number }; truncated: boolean; progress?: string }
+type Observation = { observationId: string; elements: Node[]; text: string; width: number; height: number; scroll?: { x: number; y: number }; truncated: boolean; progress?: string; focusedRef?: string }
 
 export class ComputerProgramError extends Error {
   constructor(readonly code: string, message: string, readonly mayHaveActed = false, readonly canRefreshTarget = false) { super(message) }
 }
 const issue = (code: string, message: string, mayHaveActed = false, canRefreshTarget = false): never => { throw new ComputerProgramError(code, message, mayHaveActed, canRefreshTarget) }
 const stringAt = (value: unknown, fallback = "") => typeof value === "string" ? value : fallback
+// Apps wrap numbers and names in invisible direction marks ("\u200E408"), which
+// defeat exact matching against the text a person sees.
+const visibleText = (value: string) => value.replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "")
 const numberAt = (value: unknown, fallback = 0) => typeof value === "number" && Number.isFinite(value) ? value : fallback
 function roleName(value: unknown, tag?: unknown) {
   const role = stringAt(value).replace(/^AX/, "").toLowerCase()
@@ -63,12 +66,12 @@ function normalizeNode(raw: unknown): Node | null {
   const rect = b.success ? b.data : value
   const role = roleName(value.role, value.tag)
   return {
-    ref: stringAt(value.ref), name: stringAt(value.label, stringAt(value.name)), role,
+    ref: stringAt(value.ref), name: visibleText(stringAt(value.label, stringAt(value.name))), role,
     bounds: { x: numberAt(rect.x), y: numberAt(rect.y), width: numberAt(rect.width, numberAt(rect.w)), height: numberAt(rect.height, numberAt(rect.h)) },
     disabled: value.disabled === true || value.enabled === false, editable: ["textbox", "searchbox", "combobox"].includes(role),
     press: value.press === true || Array.isArray(value.actions) && value.actions.includes("press"), settable: value.settable === true,
     ...(typeof value.checked === "boolean" ? { checked: value.checked } : ["checkbox", "switch", "radio"].includes(role) && value.value !== undefined ? { checked: value.value === true || value.value === 1 || value.value === "1" } : {}),
-    ...(typeof value.value === "string" ? { value: value.value } : {}),
+    ...(typeof value.value === "string" ? { value: visibleText(value.value) } : {}),
     ...(typeof value.visible === "boolean" ? { visible: value.visible } : {}),
     ...(value.needsReveal === true ? { needsReveal: true } : {}),
     ...(Array.isArray(value.options) ? { options: value.options.flatMap(option => {
@@ -159,6 +162,7 @@ export async function runComputerProgram(request: ProgramRequest, host: ProgramH
       elements: Array.isArray(value.elements) ? value.elements.flatMap((item) => { const normalized = normalizeNode(item); return normalized ? [normalized] : [] }) : [],
       text: stringAt(value.text), width: numberAt(geometry.width, 1), height: numberAt(geometry.height, 1),
       truncated: value.truncated === true, progress: JSON.stringify(value.scrollRegions ?? null), ...(scroll.success ? { scroll: scroll.data } : {}),
+      ...(typeof value.focused_ref === "string" ? { focusedRef: value.focused_ref } : {}),
     }
   }
   const observe = async (includeImage = false, query?: Selector) => {
@@ -275,7 +279,11 @@ export async function runComputerProgram(request: ProgramRequest, host: ProgramH
         lastFailure = { code: error instanceof ComputerProgramError ? error.code : "helper_failed", message: error instanceof Error ? error.message : "The UI helper failed." }
         throw error
       }
-    }, catch: (error) => error }),
+    // CodeMode hides host error text from the program. These codes and messages
+    // are authored by this runtime and the helper, so a program can branch on them.
+    }, catch: (error) => error instanceof ComputerProgramError
+      ? toolError(`${error.code}: ${error.message}${error.mayHaveActed ? " Input may have run; do not repeat it." : ""}`, error)
+      : error }),
   })
   const tools = { ui: {
     open: add("Open a website or app on this program's surface. Enabled computer use opens the requested target directly. Internal sessions renew silently. Resolve genuine target ambiguity from the request or ask for clarification. Human takeover requires Continue.", z.object({ url: z.url().optional(), appId: z.string().max(256).optional(), windowId: z.number().int().min(1).max(0xffffffff).optional(), mode: z.enum(["observe", "assist", "control"]).default("control"), purpose: z.string().max(500).default("Complete the requested task") }).strict(), async (args) => {
@@ -323,17 +331,39 @@ export async function runComputerProgram(request: ProgramRequest, host: ProgramH
     }),
     findText: add("Find text through the native app's Find field, handling the focus transition locally. Browser programs read matching page text directly.", z.object({ text: z.string().min(1).max(1000) }).strict(), async ({ text }) => {
       if (request.surface === "browser") { const view = await observe(false); return { found: view.text.toLowerCase().includes(text.toLowerCase()) } }
-      await observe(false); await act({ type: "key", key: "f", modifiers: ["command"] })
-      const until = performance.now() + 3000
+      const before = await observe(false)
+      // Native find fields are often unnamed (TextEdit's is), so the field that
+      // takes focus after Command-F counts as well as one named Find or Search.
+      const wasFocused = before.elements.find((element) => element.ref === before.focusedRef)
+      const sameControl = (a: Node, b?: Node) => Boolean(b) && a.role === b!.role && a.name === b!.name && a.bounds.width === b!.bounds.width
+      await act({ type: "key", key: "f", modifiers: ["command"] })
+      const until = performance.now() + 1500
       do {
         const view = await observe(false)
-        const candidates = view.elements.filter((element) => element.editable && !element.disabled && /find|search/i.test(element.name))
-        if (candidates.length === 1) { await fill({ role: candidates[0].role, name: candidates[0].name }, text); await observe(false); await act({ type: "key", key: "enter" }); return { searched: true } }
+        const usable = view.elements.filter((element) => element.editable && !element.disabled)
+        const named = usable.filter((element) => element.role === "searchbox" || /find|search/i.test(element.name))
+        const focused = usable.find((element) => element.ref === view.focusedRef && !sameControl(element, wasFocused))
+        const field = named.length === 1 ? named[0] : focused
+        if (field) {
+          if (field.settable) await act({ type: "set_value", ref: field.ref, text })
+          else { if (field.ref !== view.focusedRef) await click({ role: field.role, name: field.name }); await act({ type: "type", text }) }
+          await observe(false); await act({ type: "key", key: "enter" })
+          return { searched: true }
+        }
         await pause(100)
       } while (performance.now() < until)
-      return issue("find_field_unavailable", "Find opened but its text field could not be uniquely identified. Inspect the current view.", true)
+      return issue("find_field_unavailable", "Command-F was sent but no find field took focus. The app's Find bar may be open; inspect the current view.", true)
     }),
-    menu: add("Activate a native menu path or successive named browser controls, re-resolving after each transition.", z.object({ path: z.array(z.string().min(1).max(200)).min(1).max(6) }).strict(), async ({ path }) => { for (const name of path) { await waitFor({ name }, "enabled", 3000); await click({ name }) }; return { activated: path.at(-1) } }),
+    menu: add("Activate a pop-up or context menu path inside the window, or successive named browser controls, re-resolving after each transition. Menu-bar menus are outside the window.", z.object({ path: z.array(z.string().min(1).max(200)).min(1).max(6) }).strict(), async ({ path }) => {
+      for (const [index, name] of path.entries()) {
+        // The menu bar is outside the selected window: say so now instead of waiting it out.
+        if (index === 0 && request.surface === "computer" && !await find({ name }, false, true)) {
+          return issue("menu_not_in_window", `"${name}" is not a control in the selected window. Menu-bar menus are outside it; use the app's keyboard shortcut or a control in the window.`)
+        }
+        await waitFor({ name }, "enabled", 3000); await click({ name })
+      }
+      return { activated: path.at(-1) }
+    }),
     waitFor: add("Wait locally for a control to become visible, hidden, or enabled; no fixed sleep or model turn is needed.", z.object({ target: selector, state: z.enum(["visible", "hidden", "enabled"]).default("visible"), timeoutMs: z.number().int().min(100).max(15000).default(5000) }).strict(), ({ target, state, timeoutMs }) => waitFor(target, state, timeoutMs)),
     scroll: add("Scroll the intended container by an overlapping page. Positive down/up direction is platform-independent.", z.object({ direction: z.enum(["up", "down"]).default("down"), pages: z.number().min(0.1).max(2).default(1), container: selector.optional() }).strict(), ({ direction, pages, container }) => scroll(direction, pages, container)),
     scrollUntil: add("Search and scroll locally until a target appears, content stops changing, or maxPages is reached. Virtualized lists are searched after each scroll.", z.object({ target: selector, container: selector.optional(), direction: z.enum(["up", "down"]).default("down"), maxPages: z.number().int().min(1).max(12).default(6) }).strict(), async ({ target, container, direction, maxPages }) => {

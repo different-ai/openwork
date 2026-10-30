@@ -61,11 +61,11 @@ function computerTool<T extends z.ZodTypeAny>(name: string, description: string,
   } };
 }
 
-// Control is the default: computer use is there to do the task, and the narrower modes are opt-in.
-const open = { app_id: string, pid: z.number().int().min(1).max(2_147_483_647).optional(), window_id: z.number().int().min(1).max(0xffffffff).optional(), mode: z.enum(["observe", "assist", "control"]).default("control").describe("control (default) clicks, types, scrolls and uses shortcuts. observe only reads; assist only presses and sets accessible controls. Choose a narrower mode only when the person asks for it."), purpose: z.string().min(1).max(500) };
 const observe = { include_image: z.boolean().optional().describe("true always sends a screenshot, false never does; omitted, the computer adds one when the elements are not enough."), elements: z.enum(["interactive", "all", "none"]).optional() };
 const zoom = { observation_id: string, x: number, y: number, width: z.number().min(8).max(100_000), height: z.number().min(8).max(100_000) };
 const screenshot = z.boolean().optional().describe("true always attaches a screenshot of the settled window, false never does; omitted, the computer attaches one only when it adds something.");
+// Control is the default: computer use is there to do the task, and the narrower modes are opt-in.
+const open = { app_id: string, pid: z.number().int().min(1).max(2_147_483_647).optional(), window_id: z.number().int().min(1).max(0xffffffff).optional(), mode: z.enum(["observe", "assist", "control"]).default("control").describe("control (default) clicks, types, scrolls and uses shortcuts. observe only reads; assist only presses and sets accessible controls. Choose a narrower mode only when the person asks for it."), purpose: z.string().min(1).max(500), screenshot };
 const act = { observation_id: string, action: action.optional(), actions: z.array(action).min(1).max(8).optional(), intent, screenshot };
 const actSchema = z.union([
   z.object({ observation_id: string, action, intent, screenshot }).strict(),

@@ -121,9 +121,13 @@ final class MacInput {
                     result = AXUIElementPerformAction(record.element, kAXPressAction as CFString)
                 }
                 feedback?.didDispatch = true; feedback?.point = CGPoint(x: record.frame.midX, y: record.frame.midY)
-                guard result == .success else { throw UseError("action_failed", "The app did not confirm the accessible action. Observe before retrying.", next: "observe") }
+                // A press that opens a modal (a close button's save sheet) keeps the app busy
+                // past the AX timeout: it was delivered, only its reply is missing.
+                var unanswered = false
+                if case .press = action { unanswered = result == .cannotComplete }
+                guard result == .success || unanswered else { throw UseError("action_failed", "The app did not confirm the accessible action. Observe before retrying.", next: "observe") }
                 report(.dispatched, point: CGPoint(x: record.frame.midX, y: record.frame.midY))
-                path = "accessibility"
+                path = unanswered ? "accessibility_unconfirmed" : "accessibility"
             case .wait(let ms):
                 var remaining = ms
                 while remaining > 0 {

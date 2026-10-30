@@ -185,6 +185,50 @@ struct ElementRecord {
         "AXDisclosureTriangle", "AXColorWell", "AXSwitch", "AXToggle", "AXTab", "AXCell", "AXRow", "AXOutlineRow", "AXDockItem", "AXHandle"]
     var interactive: Bool { !actions.isEmpty || settable || Self.interactiveRoles.contains(role) }
 
+    /// The same control under another ref; hashes still describe the raw AX text.
+    func with(ref: String) -> ElementRecord {
+        var copy = ElementRecord(ref: ref, element: element, role: role, label: label, value: value, frame: frame,
+            actions: actions, settable: settable, enabled: enabled, protected: protected)
+        copy.labelHash = labelHash; copy.valueHash = valueHash
+        return copy
+    }
+
+    /// Apps wrap numbers and names in invisible direction marks ("\u{200E}408"),
+    /// which defeat matching against the text a person sees.
+    static func visibleText(_ text: String) -> String {
+        String(String.UnicodeScalarView(text.unicodeScalars.filter { scalar in
+            !(0x200E...0x200F).contains(scalar.value) && !(0x202A...0x202E).contains(scalar.value) && !(0x2066...0x2069).contains(scalar.value)
+        }))
+    }
+
+    /// The title-bar buttons carry no title or description, only a subrole.
+    static func windowButtonLabel(subrole: String?) -> String? {
+        switch subrole {
+        case "AXCloseButton": return "Close window"
+        case "AXMinimizeButton": return "Minimize window"
+        case "AXZoomButton": return "Zoom window"
+        case "AXFullScreenButton": return "Full screen"
+        default: return nil
+        }
+    }
+
+    /// The exact control, reading back as it was observed.
+    static func sameControl(_ live: ElementRecord, _ observed: ElementRecord) -> Bool {
+        CFEqual(live.element, observed.element) && live.role == observed.role && live.frame == observed.frame
+            && live.enabled == observed.enabled && live.actions == observed.actions && live.settable == observed.settable
+            && live.label == observed.label && live.labelHash == observed.labelHash
+            && live.value == observed.value && live.valueHash == observed.valueHash
+    }
+
+    static let wrapperRoles: Set<String> = ["AXGroup", "AXScrollArea", "AXSplitGroup", "AXLayoutArea", "AXUnknown"]
+    /// Elements that add nothing to the listing: slivers too small to see or use, and
+    /// unnamed wrappers exactly covering their parent (Electron nests several per window).
+    /// Their children are still scanned for privacy and listed.
+    static func isClutter(role: String, label: String, value: String?, frame: CGRect, parentFrame: CGRect?) -> Bool {
+        if frame.width < 2 || frame.height < 2 { return true }
+        return label.isEmpty && (value ?? "").isEmpty && wrapperRoles.contains(role) && parentFrame == frame
+    }
+
     func payload(bounds: CGRect, width: Int, height: Int, compact: Bool) throws -> [String: Any] {
         guard Geometry.valid(frame), Geometry.valid(bounds), (1...1_000_000).contains(width), (1...1_000_000).contains(height) else {
             throw UseError("invalid_geometry", "The observation geometry is invalid.", next: "observe")
@@ -203,19 +247,19 @@ struct ElementRecord {
         if compact {
             result = ["ref": ref, "role": role.hasPrefix("AX") ? String(role.dropFirst(2)) : role,
                 "x": Int(x.rounded()), "y": Int(y.rounded()), "w": Int(w.rounded()), "h": Int(h.rounded())]
-            if !label.isEmpty { result["label"] = label }
+            if !label.isEmpty { result["label"] = Self.visibleText(label) }
             if !actions.isEmpty { result["press"] = true }
             if settable { result["settable"] = true }
             if !enabled { result["disabled"] = true }
         } else {
-            result = ["ref": ref, "role": role, "label": label, "enabled": enabled,
+            result = ["ref": ref, "role": role, "label": Self.visibleText(label), "enabled": enabled,
                 "actions": actions.isEmpty ? [] : ["press"], "settable": settable,
                 "bounds": ["x": x, "y": y, "width": w, "height": h]]
         }
         // Custom password widgets may be ordinary editable controls in AX.
         // Keep raw values inside the helper for stale-state checks. The model
         // reads normal field content from the image, never a hidden AX value.
-        if !settable, !protected, Self.valueRoles.contains(role), let value { result["value"] = value }
+        if !settable, !protected, Self.valueRoles.contains(role), let value { result["value"] = Self.visibleText(value) }
         return result
     }
 }
@@ -229,11 +273,58 @@ struct WindowState {
     var focused: AXUIElement? = nil
 
     var focusRecord: ElementRecord? { records.first { record in focused.map { CFEqual($0, record.element) } == true } }
+    /// The listing stopped at its size limit while the scan went on: every element was
+    /// still checked for protected fields, so this alone never withholds the image.
+    var listCapped = false
+
+    func with(records: [ElementRecord]) -> WindowState {
+        WindowState(records: records, visited: visited, truncated: truncated, protectedFrames: protectedFrames,
+            privacyIssue: privacyIssue, focused: focused, listCapped: listCapped)
+    }
     func requireCapture() throws {
         guard !truncated, privacyIssue == nil, protectedFrames.allSatisfy({ Geometry.valid($0) }),
               records.allSatisfy({ Geometry.valid($0.frame) }) else {
             throw UseError("privacy_incomplete", "The accessibility privacy scan is incomplete or has invalid masks. No screenshot was captured; use the available text or observe again.", next: "observe")
         }
+    }
+}
+
+/// Refs that survive re-reads of one window: a control keeps its ref while it exists,
+/// and a ref is never reused for another control in the session. Refs the model holds
+/// from an earlier listing stay valid, and a batch can recheck the exact control.
+struct StableRefs<Identity> {
+    private(set) var next = 0
+    private var known: [(identity: Identity, ref: String)] = []
+    private var window: UInt32?
+    private let hash: (Identity) -> Int
+    private let same: (Identity, Identity) -> Bool
+
+    init(hash: @escaping (Identity) -> Int, same: @escaping (Identity, Identity) -> Bool) {
+        self.hash = hash; self.same = same
+    }
+
+    mutating func assign(_ identities: [Identity], window id: UInt32) -> [String] {
+        if window != id { known = []; window = id }
+        var buckets: [Int: [(identity: Identity, ref: String)]] = [:]
+        for entry in known { buckets[hash(entry.identity), default: []].append(entry) }
+        var used = Set<String>()
+        var kept: [(identity: Identity, ref: String)] = []
+        let refs = identities.map { identity -> String in
+            var ref = buckets[hash(identity)]?.first(where: { same($0.identity, identity) })?.ref
+            if ref == nil || used.contains(ref!) { next += 1; ref = "e\(next)" }
+            used.insert(ref!); kept.append((identity, ref!))
+            return ref!
+        }
+        known = kept
+        return refs
+    }
+}
+
+extension StableRefs where Identity == AXUIElement {
+    init() { self.init(hash: { Int(bitPattern: CFHash($0)) }, same: { CFEqual($0, $1) }) }
+    mutating func assign(_ state: WindowState, window id: UInt32) -> WindowState {
+        let refs = assign(state.records.map(\.element), window: id)
+        return state.with(records: zip(state.records, refs).map { $0.with(ref: $1) })
     }
 }
 
@@ -395,13 +486,16 @@ final class MacAccessibility {
         var records: [ElementRecord] = []
         var protectedFrames: [CGRect] = []
         var visited: Set<AXUIElement> = []
-        var pending = [(target.element, 0)]
+        var pending: [(AXUIElement, Int, CGRect?)] = [(target.element, 0, nil)]
         var issue: String?
+        var listCapped = false
         var focused: AXUIElement?
         var childSnapshots: [AXChildrenSnapshot] = []
-        while let (element, depth) = pending.popLast() {
+        while let (element, depth, parentFrame) = pending.popLast() {
             try Task.checkCancellation(); try check()
-            guard depth < 24, visited.count < 1500, records.count < 300 else { issue = "tree_limit"; break }
+            // Only the scan limits withhold the image. Past 300 listed elements the
+            // scan continues for protected fields, and the listing is marked truncated.
+            guard depth < 24, visited.count < 1500 else { issue = "tree_limit"; break }
             guard visited.insert(element).inserted else { continue }
             do {
                 try budget.check()
@@ -416,22 +510,31 @@ final class MacAccessibility {
                     }
                     protectedFrames.append(bounds)
                 } else {
-                    let label = try checkedString(element, kAXTitleAttribute, budget, displayOnly: true)
+                    let rawLabel = try checkedString(element, kAXTitleAttribute, budget, displayOnly: true)
                         ?? checkedString(element, kAXDescriptionAttribute, budget, displayOnly: true) ?? ""
+                    var label = rawLabel
+                    if label.isEmpty, role == "AXButton",
+                       let name = ElementRecord.windowButtonLabel(subrole: try checkedString(element, kAXSubroleAttribute, budget, displayOnly: true)) {
+                        label = name
+                    }
                     let value = try checkedString(element, kAXValueAttribute, budget, displayOnly: true)
                     let actions = try actionNames(element, budget)
                     let settable = try valueSettable(element, budget, displayOnly: true)
                     let enabled = try checkedBool(element, kAXEnabledAttribute, budget, displayOnly: true) != false
-                    if let bounds, Geometry.valid(bounds), !label.isEmpty || !(value ?? "").isEmpty || !actions.isEmpty || settable || ElementRecord.interactiveRoles.contains(role) {
-                        records.append(ElementRecord(ref: "e\(records.count + 1)", element: element, role: role,
-                            label: String(label.prefix(180)), value: value.map { String($0.prefix(500)) }, frame: bounds,
-                            actions: actions, settable: settable, enabled: enabled, protected: false,
-                            labelHash: textHash(label), valueHash: value.map(textHash)))
+                    if let bounds, Geometry.valid(bounds), !label.isEmpty || !(value ?? "").isEmpty || !actions.isEmpty || settable || ElementRecord.interactiveRoles.contains(role),
+                       !ElementRecord.isClutter(role: role, label: label, value: value, frame: bounds, parentFrame: parentFrame) {
+                        if records.count < 300 {
+                            // The hash is of the raw AX text, so validation reads compare like with like.
+                            records.append(ElementRecord(ref: "e\(records.count + 1)", element: element, role: role,
+                                label: String(label.prefix(180)), value: value.map { String($0.prefix(500)) }, frame: bounds,
+                                actions: actions, settable: settable, enabled: enabled, protected: false,
+                                labelHash: textHash(rawLabel), valueHash: value.map(textHash)))
+                        } else { listCapped = true }
                     }
                     let descendants = try children(element, limit: 1500 - visited.count - pending.count, budget: budget, check: check)
                     childSnapshots.append(descendants)
                     if descendants.truncated { issue = "tree_limit" }
-                    pending += descendants.elements.reversed().map { ($0, depth + 1) }
+                    pending += descendants.elements.reversed().map { ($0, depth + 1, bounds) }
                 }
             } catch is CancellationError { throw CancellationError() }
             catch {
@@ -458,7 +561,7 @@ final class MacAccessibility {
         }
         try check()
         return WindowState(records: records, visited: visited.count, truncated: issue != nil,
-            protectedFrames: protectedFrames, privacyIssue: issue, focused: focused)
+            protectedFrames: protectedFrames, privacyIssue: issue, focused: focused, listCapped: listCapped)
     }
 
     func validateRecord(_ record: ElementRecord, target: WindowTarget) throws {
