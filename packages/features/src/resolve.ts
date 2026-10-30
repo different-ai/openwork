@@ -87,6 +87,9 @@ export const RETIRED_FEATURE_KEYS = [
   "activationChecklist", "gatewayProviderAuthErrors", "providerCredentialStatus", "sessionTokenHashing",
   "customConnectorSetup", "expandedMcpPresets", "analyticsDailyTrends", "gatewayProviderRemovalLimits",
   "guidedSlackSetup", "libraryConnectorOrgSetup",
+  // Generally available (2026-10): every-few-hours and before/after-meetings schedules are always on;
+  // Desktop or Cloud placement, calendar scope and the headless runner stay enforced without a flag.
+  "automationIntervalSchedules", "automationCalendarTriggers",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

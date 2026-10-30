@@ -39,6 +39,8 @@ const retiredClientFeaturesSchema = z.object({
   gatewayProviderRemovalLimits: retired,
   guidedSlackSetup: retired,
   libraryConnectorOrgSetup: retired,
+  automationIntervalSchedules: retired,
+  automationCalendarTriggers: retired,
 })
 
 export const clientFeaturesSchema = retiredClientFeaturesSchema.meta({

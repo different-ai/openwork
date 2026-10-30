@@ -9,6 +9,7 @@ Retire completed rollout gates, preserving their enabled behavior:
 - Connect: `mcpAppLibraries`, `slackSendAsBot`, `customConnectorSetup`, `expandedMcpPresets`, `guidedSlackSetup`
 - AI Gateway: `gatewayProviderTest`, `gatewayProviderAuthErrors`, `providerCredentialStatus`, `gatewayProviderRemovalLimits`
 - Administration: `sandboxOrgs`, `analyticsDailyTrends`, `sessionTokenHashing`
+- Automations: `automationIntervalSchedules`, `automationCalendarTriggers` — every-few-hours and before/after-meetings schedules are always on. Cloud placement, the headless runner, Google Calendar calendar scope and the Desktop/Cloud (`automationTargetAllowed`) toggle remain enforced without a flag. The schedule-kind negotiation for released desktops (`x-openwork-automation-schedule-kinds`) stays, so older desktops still do not receive kinds they cannot parse.
 
 Keep `composerSubagentTracker` and all other active rollouts. Sandbox organizations remain cloud-only. Sign-in token hashing retains compatibility with existing sessions. Retired keys remain accepted-and-ignored in legacy feature override input and Helm values; historical database records are not deleted.
 

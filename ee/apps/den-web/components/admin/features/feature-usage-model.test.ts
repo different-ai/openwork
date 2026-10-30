@@ -91,10 +91,10 @@ test("what needs a look comes first, then the most used", () => {
     row("administratorRecovery", "not_used"),
     row("autoRouter", "in_use", 9),
     row("workbotProactive", "healthy", 2),
-    row("automationIntervalSchedules", "limited", 1),
-    row("automationCalendarTriggers", "failing", 1),
+    row("nativeDictation", "limited", 1),
+    row("composerSubagentTracker", "failing", 1),
   ]);
-  assert.deepEqual(sorted.map((entry) => entry.key), ["automationCalendarTriggers", "automationIntervalSchedules", "workbotProactive", "autoRouter", "administratorRecovery"]);
+  assert.deepEqual(sorted.map((entry) => entry.key), ["composerSubagentTracker", "nativeDictation", "workbotProactive", "autoRouter", "administratorRecovery"]);
 });
 
 test("the day bars scale to the busiest day and mark the failed share", () => {

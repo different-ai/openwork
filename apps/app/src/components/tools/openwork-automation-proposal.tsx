@@ -24,7 +24,6 @@ import {
 import { automationsRoute } from "@/react-app/shell/workspace-routes"
 import { useWorkspaceMaybe } from "@/react-app/shell/workspace-provider"
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider"
-import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature"
 import { getConnectedProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query"
 
 function parseOutputValue(output: unknown): unknown {
@@ -62,8 +61,6 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
   const navigate = useNavigate()
   const denAuth = useDenAuth()
   const automationsEnabled = useAutomationDeploymentEnabled()
-  const intervalSchedules = useOrgFeatureState("automationIntervalSchedules")
-  const calendarTriggers = useOrgFeatureState("automationCalendarTriggers")
   const placement = automationCreationPlacement()
   const workspaceContext = useWorkspaceMaybe()
   const [created, setCreated] = useState<string | null>(null)
@@ -118,13 +115,9 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
       ? "Sign in to OpenWork Cloud to create this Automation."
       : modelLookupFailed
         ? "Model availability could not be checked. Try again before creating this Automation."
-        : proposal.schedule.kind === "interval" && intervalSchedules.resolved && !intervalSchedules.enabled
-          ? "Every-few-hours schedules are not on for your organization yet. Ask for a daily or weekly schedule instead."
-          : proposal.schedule.kind === "calendar" && calendarTriggers.resolved && !calendarTriggers.enabled
-            ? "Automations that run around meetings are not on for your organization yet. Ask for a clock schedule instead."
-            : proposal.schedule.kind === "calendar" && placement !== "cloud"
-              ? "Automations that run around meetings run in OpenWork Cloud, which this desktop does not create. Create it from OpenWork Web or Cloud Chat."
-              : null
+        : proposal.schedule.kind === "calendar" && placement !== "cloud"
+          ? "Automations that run around meetings run in OpenWork Cloud, which this desktop does not create. Create it from OpenWork Web or Cloud Chat."
+          : null
 
   const create = async () => {
     if (!automationsEnabled || blocker || !resolved || resolved.resolution === "unavailable") return

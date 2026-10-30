@@ -1,7 +1,8 @@
 /**
- * Every-few-hours (interval) schedules: gated by `automationIntervalSchedules`,
- * scheduled by Den's own resolver, and kept away from released desktops that
- * parse only once/daily/weekly schedules.
+ * Every-few-hours (interval) schedules: generally available (the
+ * `automationIntervalSchedules` flag is retired), scheduled by Den's own
+ * resolver, and kept away from released desktops that parse only
+ * once/daily/weekly schedules.
  */
 import {
   AUTOMATION_FREE_MODEL,
@@ -32,15 +33,7 @@ const definition = (schedule: unknown, name = "Inbox sweep") => ({
 let intervalId = ""
 let dailyId = ""
 
-test("an interval schedule is refused while the organization does not have the feature", async () => {
-  const refused = await asOwner("POST", "/v1/automations", definition(interval))
-  assert.equal(refused.status, 400, summary(refused))
-  assert.equal(field(refused.body, "error"), "automation_interval_schedule_disabled")
-  assert.match(String(field(refused.body, "message")), /daily or weekly/)
-})
-
-test("with the feature on, Den stores the full schedule and schedules its next run from the window", async () => {
-  assert.equal((await den.setFeature(orgId, "automationIntervalSchedules", true)).status, 200)
+test("an interval schedule is accepted without a feature flag and scheduled from the window", async () => {
   const before = Date.now()
   const created = await asOwner("POST", "/v1/automations", definition({ kind: "interval", timezone: "UTC", everyHours: 3, daysOfWeek: [5, 1, 2, 3, 4, 3], startHour: 9, endHour: 18 }))
   assert.equal(created.status, 201, summary(created))
@@ -89,35 +82,15 @@ test("the agent index keeps interval Automations out of the array released deskt
   assert.equal(field(more[0], "summary"), "Every 3 hours · 09:00–18:00 · Mon, Tue, Wed, Thu, Fri · UTC")
 })
 
-test("after the feature is turned off, the Automation keeps its interval through edits but cannot get a new one", async () => {
-  assert.equal((await den.setFeature(orgId, "automationIntervalSchedules", false)).status, 200)
+test("an interval Automation keeps its schedule through edits and can change to a different interval", async () => {
   const kept = await asOwner("PATCH", `/v1/automations/${intervalId}`, { instructions: "Sweep my inbox and my calendar.", schedule: interval })
   assert.equal(kept.status, 200, summary(kept))
   assert.deepEqual(field(kept.body, "revision", "schedule"), interval)
 
   const changed = await asOwner("PATCH", `/v1/automations/${intervalId}`, { schedule: { ...interval, everyHours: 2 } })
-  assert.equal(changed.status, 400, summary(changed))
-  assert.equal(field(changed.body, "error"), "automation_interval_schedule_disabled")
+  assert.equal(changed.status, 200, summary(changed))
+  assert.equal(field(changed.body, "revision", "schedule", "everyHours"), 2)
+  // A daily Automation can also be switched to an interval without a flag.
   const daily = await asOwner("PATCH", `/v1/automations/${dailyId}`, { schedule: interval })
-  assert.equal(daily.status, 400, summary(daily))
-})
-
-test("while the feature is off, each due interval occurrence is recorded as skipped and the schedule moves on", async () => {
-  const { AutomationService } = await import("../../src/automations/service.js")
-  // The updated-desktop reads above flagged the legacy free model; activating as Den web schedules it again.
-  assert.equal((await asOwner("POST", `/v1/automations/${intervalId}/activate`, {})).status, 200)
-  const detail = await asOwner("GET", `/v1/automations/${intervalId}`)
-  assert.equal(field(detail.body, "automation", "state"), "active", summary(detail))
-  const dueAt = Number(field(detail.body, "automation", "nextDueAt"))
-  const off = new AutomationService({ intervalSchedulesEnabled: async () => false })
-  await off.tick({ now: dueAt + 1_000 })
-
-  const runs = await asOwner("GET", `/v1/automations/${intervalId}/runs`)
-  const [run] = list(field(runs.body, "items"))
-  assert.equal(field(run, "status"), "skipped", summary(runs))
-  assert.equal(field(run, "scheduledFor"), dueAt)
-  assert.equal(field(run, "error", "message"), "Every-few-hours schedules are turned off for this organization.")
-  const after = await asOwner("GET", `/v1/automations/${intervalId}`)
-  assert.equal(field(after.body, "automation", "state"), "active")
-  assert.equal(field(after.body, "automation", "nextDueAt"), nextAutomationOccurrence(interval, dueAt))
+  assert.equal(daily.status, 200, summary(daily))
 })
