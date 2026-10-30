@@ -1,9 +1,11 @@
-import { afterAll, afterEach, expect, test } from "bun:test"
+import { afterAll, afterEach, expect, mock, test } from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 
 GlobalRegistrator.register({ url: "https://web.example/" })
+// This notice fixture does not mount the signed-in app or its artifact surface.
+mock.module("../src/react-app/domains/session/status/use-desktop-feature", () => ({ useDesktopFeature: () => false }))
 const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT")
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true)
 const originalFetch = globalThis.fetch
