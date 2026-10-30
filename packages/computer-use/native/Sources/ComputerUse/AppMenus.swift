@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
@@ -29,11 +30,52 @@ enum MenuRules {
     static let maxEntries = 250
     static let blockedMenus: Set<String> = ["Window"]
     static let blockedPrefixes = ["Quit", "Close", "Hide", "Minimize", "Services", "Copy", "Cut", "Paste", "Log Out"]
-    /// Recent documents need file approval, including when the caller supplies a path.
-    static let blockedSubmenus: Set<String> = ["Open Recent", "Recent Files", "Recent Documents"]
+    /// Recent documents need file approval, including when the caller supplies a
+    /// path in a different language from this process. Keep AppKit's translated
+    /// labels as a fallback for macOS 14, which cannot enumerate translations
+    /// through Bundle's public localization API yet.
+    static let blockedSubmenus: Set<String> = {
+        var titles: Set<String> = [
+            "Open Recent", "Recent Files", "Recent Documents", "Recent Items",
+            "Abrir Recente", "Abrir documento recente", "Abrir recientes", "Apri recenti",
+            "Avaa äskeinen", "Benutzte Dokumente", "Buka Terbaharu", "Buka Terbaru",
+            "Deschideți recente", "Legutóbbi megnyitása", "Mở Mục gần đây", "Obre els recents",
+            "Odpri nedavno", "Open recente bestanden", "Otvori nedavne stavke", "Otvoriť posledné",
+            "Otwórz ostatnie", "Ouvrir l’élément récent", "Ouvrir un élément récent", "Ouvrir élément récent",
+            "Poslední položky", "Son Kullanılanı Aç",
+            "Åbn seneste", "Åpne sist brukte", "Öppna senaste", "Άνοιγμα πρόσφατου",
+            "Останні документи", "Открытие недавних", "פתיחת האחרונים", "فتح العناصر الأخيرة",
+            "हालिया खोलें", "เปิดล่าสุด", "打开最近使用", "打開最近使用過的檔案", "最近使った項目を開く",
+            "開啟最近項目", "최근 사용 열기",
+            "Articole recente", "Benutzte Objekte", "Elementi recenti", "Elementos recentes",
+            "Elementos recientes", "Item Terbaharu", "Item Terbaru", "Itens Recentes",
+            "Legutóbbi elemek", "Mục gần đây", "Nedavni elementi", "Novije stavke",
+            "Ostatnie rzeczy", "Posledné položky", "Recente onderdelen", "Senaste objekt",
+            "Seneste emner", "Sist brukte objekter", "Son Kullanılan Öğeler", "Äskeiset kohteet",
+            "Éléments récents", "Ítems recents", "Ítems recientes", "Πρόσφατα στοιχεία",
+            "Недавние объекты", "Недавні елементи", "פריטים אחרונים", "العناصر الأخيرة",
+            "हालिया आइटम", "รายการล่าสุด", "最近使った項目", "最近使用的项目", "最近使用過的項目", "최근 사용 항목",
+        ]
+        let appKit = Bundle(for: NSDocumentController.self)
+        for (table, key) in [("MenuCommands", "Open Recent"), ("Menus", "Recent Items")] {
+            titles.insert(appKit.localizedString(forKey: key, value: key, table: table))
+            if #available(macOS 15.4, *) {
+                for language in appKit.localizations {
+                    titles.insert(appKit.localizedString(forKey: key, value: key, table: table,
+                        localizations: [Locale.Language(identifier: language)]))
+                }
+            }
+        }
+        return Set(titles.map(normalizedTitle))
+    }()
+
+    private static func normalizedTitle(_ title: String) -> String {
+        ElementRecord.visibleText(title).trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased().precomposedStringWithCanonicalMapping
+    }
 
     static func validatePath(_ path: [String]) throws {
-        guard !path.contains(where: { title in blockedSubmenus.contains(where: { same(title, $0) }) }) else {
+        guard !path.contains(where: { blockedSubmenus.contains(normalizedTitle($0)) }) else {
             throw UseError("blocked_menu_item", "Recent documents require file approval and cannot be opened through a menu path.", next: "observe")
         }
     }
@@ -54,7 +96,7 @@ enum MenuRules {
     }
 
     static func blocked(title: String, shortcut: (key: String, flags: CGEventFlags)?) -> Bool {
-        if blockedSubmenus.contains(where: { same(title, $0) }) { return true }
+        if blockedSubmenus.contains(normalizedTitle(title)) { return true }
         if let shortcut, NativeKey.isBlocked(shortcut.key, shortcut.flags) { return true }
         return blockedPrefixes.contains { title.hasPrefix($0) }
     }

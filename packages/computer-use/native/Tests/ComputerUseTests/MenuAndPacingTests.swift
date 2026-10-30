@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 import ApplicationServices
 @testable import ComputerUse
 
@@ -61,7 +62,10 @@ final class MenuAndPacingTests: XCTestCase {
     }
 
     func testRecentDocumentsCannotBypassFileApprovalWithAMenuPath() throws {
-        for title in ["Open Recent", "open recent", " Open Recent ", "\u{200E}Open Recent", "Recent Files", "Recent Documents"] {
+        for title in ["Open Recent", "open recent", " Open Recent ", "\u{200E}Open Recent", "Recent Files", "Recent Documents",
+                      "Benutzte Dokumente", "Ouvrir l’élément récent", "Ouvrir un élément récent", "Abrir recientes", "最近使った項目を開く",
+                      "打开最近使用", "최근 사용 열기", "Открытие недавних", "פתיחת האחרונים", "فتح العناصر الأخيرة",
+                      "E\u{301}le\u{301}ments re\u{301}cents"] {
             XCTAssertTrue(MenuRules.blocked(title: title, shortcut: nil), "recent-document submenus must not be listed")
             for path in [["File", title], ["File", title, "Private Example.txt"], ["File", "History", title, "Private Example.txt"]] {
                 XCTAssertThrowsError(try Action(["type": "menu", "path": path], policy: .embedded)) { error in
@@ -74,6 +78,21 @@ final class MenuAndPacingTests: XCTestCase {
         }
         XCTAssertNoThrow(try Action(["type": "menu", "path": ["File", "New"]], policy: .embedded))
         XCTAssertNoThrow(try Action(["type": "menu", "path": ["Format", "Font", "Bold"]], policy: .embedded))
+    }
+
+    func testEveryAppKitRecentMenuTranslationIsBlocked() throws {
+        guard #available(macOS 15.4, *) else { throw XCTSkip("Enumerating AppKit translations needs macOS 15.4") }
+        let appKit = Bundle(for: NSDocumentController.self)
+        for language in appKit.localizations {
+            for (table, key) in [("MenuCommands", "Open Recent"), ("Menus", "Recent Items")] {
+                let title = appKit.localizedString(forKey: key, value: key, table: table,
+                    localizations: [Locale.Language(identifier: language)])
+                XCTAssertTrue(MenuRules.blocked(title: title, shortcut: nil), "\(language): \(title) must be omitted from catalogs")
+                XCTAssertThrowsError(try Action(["type": "menu", "path": ["File", title, "Private Example.txt"]], policy: .embedded)) { error in
+                    XCTAssertEqual((error as? UseError)?.code, "blocked_menu_item")
+                }
+            }
+        }
     }
 
     func testPacingDefaultsToFastAndBoundsItsRetry() throws {
