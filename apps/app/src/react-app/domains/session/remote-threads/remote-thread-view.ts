@@ -88,7 +88,13 @@ export function remoteThreadSentence(start: RemoteThreadStart, view: RemoteThrea
     : view.state === "idle" ? "done"
     : view.state === "error" ? view.stopped ? "stopped" : "failed"
     : "running"
-  const lead = t(`session.remote_task_row_${tone}`, { place })
+  // Static keys, so the i18n audit can see every string this row uses.
+  const lead = tone === "starting" ? t("session.remote_task_row_starting", { place })
+    : tone === "waiting" ? t("session.remote_task_row_waiting", { place })
+    : tone === "done" ? t("session.remote_task_row_done", { place })
+    : tone === "stopped" ? t("session.remote_task_row_stopped", { place })
+    : tone === "failed" ? t("session.remote_task_row_failed", { place })
+    : t("session.remote_task_row_running", { place })
   const detail = tone === "running"
     ? view.elapsed && view.latestStep ? t("session.remote_task_row_last_ran", { elapsed: view.elapsed, step: view.latestStep })
       : view.latestStep ? t("session.remote_task_row_last_ran_only", { step: view.latestStep }) : view.elapsed
