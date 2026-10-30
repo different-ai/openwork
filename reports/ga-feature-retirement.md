@@ -44,7 +44,7 @@ No production feature state or stored overrides are changed by this cleanup. The
 
 After the gates are removed, rollback is a code revert and redeploy, not the retired kill switches. Preserve existing deployment boundaries, authorization and plan checks.
 
-## Verification
+## Local verification
 
 - Node `24.22.1`: `pnpm --filter @openwork/features test` — 22 passed, zero failures/skips. The same updated regression suite against a detached `0dcf407af6` control gives 21 passed / 1 expected failure (`libraryDetailBreadcrumbs` is still active on the baseline). Temporary control worktree removed.
 - Node `24.22.1`: `pnpm features:check` — passed (registry, generated Helm values/schema and guard rules).
@@ -53,7 +53,7 @@ After the gates are removed, rollback is a code revert and redeploy, not the ret
 - Helm render with legacy `libraryDetailBreadcrumbs=false`, `sessionTokenHashing=false` and `sandboxOrgs=false` values — passed; old values files still validate.
 - Independent read-only review found no actionable safety bugs in registry, Den web or client compatibility boundaries.
 - App/server/plugin, Den API and Workbot typechecks passed on Node `24.22.1`.
-- Focused API/Workbot checks — 216 passed, zero skipped. API runtime tests requiring MySQL were not run.
+- Focused API/Workbot checks — 216 passed, zero skipped. Full Den provider unit suite — 1,229 passed, zero failures/skips. Fixed its inherited upload-relay expiry fixture by controlling the test clock and explicitly asserting expiry blocks Microsoft requests. The clean `0dcf407af6` control reproduced the original 1,227 passed / 1 failed result. API runtime tests requiring MySQL were not run locally.
 - Desktop/plugin focused unit checks — plugin suite 147 passed; server suite 19 passed; app UI suite 43 passed; ownership/breadcrumb/Mermaid/instruction suite 41 passed. Native binary integration fixtures were updated but not executed.
 - Den web focused unit checks — 89 passed, zero failures/skips; Den web lint passed.
 - Evals static checks — spec lint passed (122 files), browser callback check passed (430 callbacks), and layer lint passed (1,049 modules).
