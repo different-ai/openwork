@@ -1650,6 +1650,8 @@ export default {
   "session.remote_task_answer_there": "Answer it in OpenWork on {computer}.",
   "session.remote_task_follow_up": "Follow up",
   "session.remote_task_send": "Send",
+  "session.remote_task_stop_short": "Stop",
+  "session.remote_task_stopping_short": "Stopping…",
   "session.remote_task_earlier": "Show earlier messages",
   "session.remote_task_read_failed": "Couldn't load the conversation",
   "session.remote_task_disabled": "Tasks on other computers are turned off.",
