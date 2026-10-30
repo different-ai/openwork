@@ -109,7 +109,8 @@ import { CreatedSkillCard, CreatedSkillsContext, useCreatedSkills, type CreatedS
 import { readCreatedSkillAccess } from "@/components/chat/created-skill-access"
 import { collectCreatedSkills, type ConfirmedSkillAccess, type CreatedSkillsModel } from "@/lib/created-skill"
 import { openWorkNativeFailure } from "@/lib/openwork-native-activity"
-import { LaneChevron, LeadingLane, RailMeta } from "@/components/chat/activity-rail"
+import { LaneChevron, LeadingLane, RailMeta, TextSentenceLine, TrailingChevron } from "@/components/chat/activity-rail"
+import { useTextActivityRail } from "@/components/chat/text-activity-rail-store"
 import { ConnectionCard } from "@/components/chat/connection-card"
 import { CredentialPromptCard } from "@/components/chat/credential-prompt-card"
 import { credentialPromptCall } from "@/components/chat/credential-prompt"
@@ -275,6 +276,7 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   const connectionCardParts = React.useContext(ConnectionCardPartsContext)
   const appCreationParts = React.useContext(AppCreationPartsContext)
   const appPanelFold = React.useContext(AppPanelFoldContext)
+  const textRail = useTextActivityRail()
   if (appCreationParts.has(part.toolCallId)) return null
   if (part.toolCallId === connectionQuestionToolCallId || isReservedConnectionQuestionPart(part)) return null
   const promptCall = credentialPromptCall(part)
@@ -312,6 +314,15 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
       // A key the script's Den call asked for is entered in the host's private field.
       return promptCall ? <>{script}<CredentialPromptCard part={promptCall} continueToolCallId={part.toolCallId} /></> : script
     }
+  }
+
+  if (lifecycle === "waiting" && textRail) {
+    // Text-first: waiting on the person is one amber sentence; the decision itself sits above the composer (T4).
+    return (
+      <div className="flex min-h-6.5 items-center text-sm" data-tool-lifecycle="waiting" role="status">
+        <TextSentenceLine verb={t("text_activity.waiting_for_you")} tone="waiting" />
+      </div>
+    )
   }
 
   if (lifecycle === "waiting") {
@@ -674,6 +685,7 @@ type AssistantMessageProps = {
 const AssistantMessage = React.memo(
   ({ message, isStreaming, hideReasoning }: AssistantMessageProps) => {
     const { showThinking, highlightQuery } = useMessageList()
+    const textRail = useTextActivityRail()
     const assistantRenderGroups = React.useMemo(
       () => {
         const groups = getAssistantRenderGroups(message.parts, showThinking)
@@ -702,6 +714,7 @@ const AssistantMessage = React.memo(
                     className="text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
                     markdown
                     sessionReferences
+                    githubReferences={textRail}
                     isStreaming={isStreaming}
                     highlightQuery={highlightQuery}
                   >
@@ -718,6 +731,7 @@ const AssistantMessage = React.memo(
                   disclosureKey={JSON.stringify(["reasoning", message.id, index])}
                   text={group.text}
                   isStreaming={group.isStreaming}
+                  durationMs={group.durationMs}
                 />
               )
             }
@@ -1451,6 +1465,8 @@ function LiveSteps({ children, active }: { children: React.ReactNode; active: bo
  */
 function CompletedStepRun({ label, count, modelLabel, children }: { label: string; count?: string | null; modelLabel?: string | null; children: React.ReactNode }) {
   const [open, setOpen] = React.useState(false)
+  // Text-first: "Worked for 43m 29s ›", no step count beside it.
+  const textRail = useTextActivityRail()
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="flex w-full flex-col gap-2">
@@ -1463,8 +1479,9 @@ function CompletedStepRun({ label, count, modelLabel, children }: { label: strin
           {/* The chevron sits in the rail's 20px leading lane, so step labels line up below it. */}
           <LaneChevron open={open} />
           <span>{label}</span>
-          {count ? <RailMeta>{count}</RailMeta> : null}
+          {count && !textRail ? <RailMeta>{count}</RailMeta> : null}
           {modelLabel ? <span data-testid="reply-model"> · {modelLabel}</span> : null}
+          <TrailingChevron open={open} />
         </CollapsibleTrigger>
       </div>
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 motion-reduce:transition-none [&[hidden]:not([hidden='until-found'])]:hidden">
@@ -1570,6 +1587,7 @@ function MessageGroup({
     [panelLive, items, creationParts, showThinking],
   )
   const remoteThreads = useRemoteThreadsEnabled()
+  const textRail = useTextActivityRail()
   const remoteThreadStarts = React.useMemo(() => remoteThreads ? collectRemoteThreadStarts(items) : [], [items, remoteThreads])
   // The skill this turn produced stays in view as its result, even when the
   // steps fold; later updates and shares change this card, not add another.
@@ -1646,7 +1664,7 @@ function MessageGroup({
     item.message.role === "assistant" && !isSessionErrorMessage(item.message)
       ? getAssistantRenderGroups(item.message.parts, showThinking).flatMap((group, groupIndex) =>
         group.kind === "reasoning"
-          ? [{ key: JSON.stringify(["reasoning", item.message.id, groupIndex]), text: group.text, isStreaming: group.isStreaming }]
+          ? [{ key: JSON.stringify(["reasoning", item.message.id, groupIndex]), text: group.text, isStreaming: group.isStreaming, durationMs: group.durationMs }]
           : []
       )
       : []
@@ -1693,7 +1711,7 @@ function MessageGroup({
         key={`folded-reasoning-${reasoning.key}`}
         className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10"
       >
-        <ReasoningBlock disclosureKey={reasoning.key} text={reasoning.text} isStreaming={reasoning.isStreaming} />
+        <ReasoningBlock disclosureKey={reasoning.key} text={reasoning.text} isStreaming={reasoning.isStreaming} durationMs={reasoning.durationMs} />
       </Message>
     ))
     : []
@@ -1777,7 +1795,7 @@ function MessageGroup({
         <div className="flex min-h-6 items-center gap-2 text-xs text-muted-foreground">
           <LeadingLane />
           <span>{replyWorkedLabel ?? replySummaryLabel}</span>
-          {replyWorkedLabel && stepCountLabel ? <RailMeta>{stepCountLabel}</RailMeta> : null}
+          {replyWorkedLabel && stepCountLabel && !textRail ? <RailMeta>{stepCountLabel}</RailMeta> : null}
         </div>
       </div> : null}
       {stepItems.length > 0 ? (

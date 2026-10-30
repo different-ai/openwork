@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import type { DynamicToolUIPart } from "ai";
 import { LoaderCircle } from "lucide-react";
-import { CapabilityCallLine, DetailsToggle, TechnicalDetailsPanel } from "./capability-call-line";
-import { LaneChevron, LeadingLane, RAIL_LINE, RAIL_ROW, RailDuration, RailMeta } from "./activity-rail";
+import { CapabilityCallLine, ConnectorMark, DetailsToggle, isOpenWorkActivity, OPENWORK_IDENTITY, TechnicalDetailsPanel } from "./capability-call-line";
+import { LaneChevron, LeadingLane, RAIL_LINE, RAIL_ROW, RailDuration, RailMeta, TextSentenceLine, TrailingChevron } from "./activity-rail";
+import { useTextActivityRail } from "./text-activity-rail-store";
+import { isOpenWorkSkillCall } from "@/lib/created-skill";
+import { splitSentence } from "@/lib/text-activity";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { getCapabilityCallSentence } from "@/lib/capability-call";
 import { codeModeSummary } from "@/lib/code-mode-summary";
@@ -53,6 +56,7 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
   const calls = allCalls.filter((call) => !isToolLookup(call));
   // A finished group folds unless the person explicitly chose otherwise.
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const textRail = useTextActivityRail();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [lastActivityAt, setLastActivityAt] = useState(Date.now());
@@ -125,8 +129,10 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
     return (
       <div data-code-mode-call={part.toolCallId} className={RAIL_ROW}>
         <div className={RAIL_LINE}>
-          <LeadingLane>{running ? <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" /> : null}</LeadingLane>
-          <span className={cn("shrink-0", failed && "text-destructive", running && "ow-text-shimmer motion-reduce:animate-none")}>{label}</span>
+          <LeadingLane>{running && !textRail ? <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" /> : null}</LeadingLane>
+          {textRail
+            ? <TextSentenceLine {...splitSentence(label)} tone={failed ? "failed" : running ? "running" : "normal"} className="shrink-0" />
+            : <span className={cn("shrink-0", failed && "text-destructive", running && "ow-text-shimmer motion-reduce:animate-none")}>{label}</span>}
           {failed && reason ? <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{reason}</span> : null}
           <RailDuration value={duration} />
           <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={label} alwaysVisible={failed} />
@@ -170,6 +176,15 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
     else rows.push({ call, repeat: 1 });
   }
 
+  // Text-first: a group whose calls all reached one service carries that
+  // service's real mark inline ("[OpenWork] Looked up 2 tools"), never a glyph.
+  const groupMarks = textRail ? [...new Map(calls.map((call) => {
+    const identity = resolveConnectorToolIdentity(call, connectors)
+      ?? (isOpenWorkSkillCall(call) || isOpenWorkActivity(call) || call.toolName.startsWith("openwork-cloud_") ? OPENWORK_IDENTITY : null);
+    return [identity?.id ?? "", identity] as const;
+  })).values()] : [];
+  const groupMark = groupMarks.length === 1 ? groupMarks[0] ?? null : null;
+
   return (
     <Collapsible open={open} onOpenChange={setUserOpen} data-code-mode-call={part.toolCallId}>
       <div className={cn(RAIL_ROW, RAIL_LINE)}>
@@ -178,19 +193,27 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
           aria-label={`${label}. ${open ? "Hide steps" : "Show steps"}`}
         >
           <LaneChevron open={open} />
-          <span className={cn("min-w-0 truncate", running && !current && "ow-text-shimmer motion-reduce:animate-none")}>{label}</span>
-          {calls.length > 0 ? <RailMeta>{calls.length} {calls.length === 1 ? "step" : "steps"}</RailMeta> : null}
+          {textRail ? (
+            <>
+              <LeadingLane>{groupMark ? <ConnectorMark connector={groupMark} /> : null}</LeadingLane>
+              <TextSentenceLine {...splitSentence(label)} tone={running && !current ? "running" : "normal"} />
+            </>
+          ) : (
+            <span className={cn("min-w-0 truncate", running && !current && "ow-text-shimmer motion-reduce:animate-none")}>{label}</span>
+          )}
+          {calls.length > 0 && !textRail ? <RailMeta>{calls.length} {calls.length === 1 ? "step" : "steps"}</RailMeta> : null}
           {waitingOn ? <RailMeta>Waiting on {waitingOn}</RailMeta> : null}
-          {failedCalls.length > 0 ? <RailMeta className="text-destructive">{failedCalls.length} failed</RailMeta> : null}
+          {failedCalls.length > 0 ? <RailMeta className={textRail ? "text-red-11" : "text-destructive"}>{failedCalls.length} failed</RailMeta> : null}
           {blockedCalls.length > 0 ? <RailMeta>{blockedCalls.length} blocked</RailMeta> : null}
           <RailDuration value={duration} />
+          <TrailingChevron open={open} />
         </CollapsibleTrigger>
         <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={label} alwaysVisible={failed} />
       </div>
       {detailsOpen ? <TechnicalDetailsPanel part={part} /> : null}
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-180 ease-out data-starting-style:h-0 data-ending-style:h-0 motion-reduce:transition-none [&[hidden]:not([hidden='until-found'])]:hidden">
         {/* Flat, not boxed (S1): the group's steps indent under its label. */}
-        <div className="mt-2 flex flex-col gap-2 ps-7">
+        <div className={cn("mt-2 flex flex-col gap-2", textRail ? "ps-4" : "ps-7")}>
           {rows.map(({ call, repeat }) => (
             <CapabilityCallLine
               key={call.toolCallId}

@@ -670,6 +670,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  textActivityRail: {
+    label: "Desktop: text-first activity in chat",
+    description: "A turn's steps read as plain sentences (Ran, Read, Edited, Searched, Thought 12s) with no icon column or duration lane; grouped steps say what they explored, opened commands show their output, and GitHub links in replies show their pull request or issue mark. Turning it off restores the previous activity rail.",
+    category: "experience",
+    added: "2026-10-29",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/text-activity-rail/README.md",
+    deployments: everywhere,
+    default: false,
+  },
 })
 
 export type FeatureKey = keyof typeof FEATURES

@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import type { DynamicToolUIPart } from "ai"
-import { CodeXml, ExternalLink, LoaderCircle, Lock, RefreshCcw, WifiOff } from "lucide-react"
+import { ChevronRight, CodeXml, ExternalLink, LoaderCircle, Lock, RefreshCcw, WifiOff } from "lucide-react"
 
 import { useCreatedSkills } from "@/components/chat/created-skill-card"
 import { useOptionalMessageList } from "@/components/chat/message-list-provider"
@@ -22,7 +22,10 @@ import {
 } from "@/lib/created-skill"
 import { OPENWORK_NATIVE_TOOL, openWorkNativeFailure, openWorkNativeSentence } from "@/lib/openwork-native-activity"
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src"
-import { LeadingLane, RAIL_LINE, RAIL_ROW, RailDuration } from "./activity-rail"
+import { LeadingLane, RAIL_LINE, RAIL_ROW, RailDuration, TextSentenceLine } from "./activity-rail"
+import { TextTechnicalDetails } from "./text-activity-details"
+import { useTextActivityRail } from "./text-activity-rail-store"
+import { splitSentence } from "@/lib/text-activity"
 import { trackToolCallDuration } from "@/lib/tool-call-duration"
 import { isToolPartInFlight } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
@@ -45,7 +48,7 @@ type CapabilityCallLineProps = ChatToolReconnectCallbacks & {
 }
 
 /** OpenWork's own skill tools are first-party work: they carry the OpenWork mark. */
-const OPENWORK_IDENTITY: ConnectorToolIdentity = {
+export const OPENWORK_IDENTITY: ConnectorToolIdentity = {
   id: "openwork",
   name: "OpenWork",
   iconUrl: resolveExtensionIconSrc("/openwork-sidebar-mark.svg"),
@@ -54,15 +57,18 @@ const OPENWORK_IDENTITY: ConnectorToolIdentity = {
   connectionId: null,
 }
 
-function ConnectorMark({ connector }: { connector: ConnectorToolIdentity }) {
+export function ConnectorMark({ connector }: { connector: ConnectorToolIdentity }) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null)
+  // Text-first: the mark sits inline in the sentence at the text's size.
+  const inline = useTextActivityRail()
   const showImage = Boolean(connector.iconUrl && failedUrl !== connector.iconUrl)
   return (
     <span
       data-connector-icon={connector.id}
       data-connector-name={connector.name}
       className={cn(
-        "flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-md",
+        "flex shrink-0 items-center justify-center overflow-hidden rounded-md",
+        inline ? "size-4" : "size-5",
         // The muted chip only exists to make the single-letter fallback read
         // as an avatar; real brand icons render without a background.
         !showImage && "bg-muted text-[10px] font-semibold text-foreground",
@@ -144,6 +150,23 @@ function scriptSource(input: unknown): { code: string } | null {
 
 export function TechnicalDetailsPanel({ part }: { part: DynamicToolUIPart }) {
   const script = scriptSource(part.input)
+  const textRail = useTextActivityRail()
+  if (textRail) {
+    // Text-first: one quiet "Technical details" box (slate-2, inset hairline, small mono).
+    const input = part.input !== undefined && part.input !== null && !(typeof part.input === "object" && Object.keys(part.input).length === 0)
+    return (
+      <div className="mt-1.5">
+        <TextTechnicalDetails>
+          <div className="flex flex-col gap-2">
+            {part.state === "output-error" && part.errorText ? <p className="whitespace-pre-wrap wrap-break-word text-red-11">{part.errorText}</p> : null}
+            {script ? <pre className="whitespace-pre font-mono">{script.code}</pre>
+              : input ? <pre className="whitespace-pre-wrap wrap-break-word font-mono">{formatTechnicalValue(part.input)}</pre> : null}
+            {"output" in part && part.output !== undefined ? <pre className="whitespace-pre-wrap wrap-break-word font-mono text-slate-9">{formatTechnicalValue(part.output)}</pre> : null}
+          </div>
+        </TextTechnicalDetails>
+      </div>
+    )
+  }
   return (
     <div className="mt-2 flex flex-col gap-2 rounded-lg bg-muted p-2 text-xs">
       {part.state === "output-error" && part.errorText ? (
@@ -178,6 +201,19 @@ export function DetailsToggle({ open, onToggle, label, alwaysVisible = false }: 
   label: string
   alwaysVisible?: boolean
 }) {
+  const textRail = useTextActivityRail()
+  if (textRail) {
+    // Text-first: a small chevron after the sentence instead of a code icon.
+    return (
+      <Button type="button" variant="ghost" size="icon-xs"
+        className={cn("shrink-0 text-muted-foreground/70 transition-opacity duration-150 motion-reduce:transition-none",
+          open || alwaysVisible ? "opacity-100" : "opacity-0 group-hover/step:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100")}
+        aria-label={`${open ? "Hide" : "Show"} technical details for ${label}`} title="Technical details"
+        aria-expanded={open} onClick={onToggle} data-testid="tool-details-toggle">
+        <ChevronRight aria-hidden="true" className={cn("size-3 transition-transform duration-150 ease-out motion-reduce:transition-none", open && "rotate-90")} />
+      </Button>
+    )
+  }
   return (
     <Button type="button" variant={open ? "secondary" : "ghost"} size="icon-xs"
       className={cn("shrink-0 text-muted-foreground transition-opacity duration-150 motion-reduce:transition-none",
@@ -202,7 +238,7 @@ export function DetailsToggle({ open, onToggle, label, alwaysVisible = false }: 
  * API capabilities) carry the OpenWork mark. A capability that reaches
  * another service ("mcp:", "native:", "plugin:") is that service's, never ours.
  */
-function isOpenWorkActivity(part: DynamicToolUIPart): boolean {
+export function isOpenWorkActivity(part: DynamicToolUIPart): boolean {
   if (OPENWORK_NATIVE_TOOL.test(part.toolName)) return true
   if (!/^(?:openwork|openwork-cloud)_/.test(part.toolName)) return false
   const input = part.input
@@ -225,6 +261,7 @@ export function CapabilityCallLine({
   onReopenAuthorization,
 }: CapabilityCallLineProps) {
   const [open, setOpen] = useState(false)
+  const textRail = useTextActivityRail()
   const { shareLabels } = useCreatedSkills()
   const syncDegraded = useOptionalMessageList()?.syncDegraded === true
   const inFlight = !statusUnknown && isToolPartInFlight(part)
@@ -275,7 +312,7 @@ export function CapabilityCallLine({
           <Lock aria-label="Blocked by your organization" className="size-3.5 shrink-0" strokeWidth={1.5} />
           <DetailsToggle open={open} onToggle={() => setOpen(!open)} label={label} />
         </div>
-        <p className="ps-7 pb-1 text-xs text-muted-foreground">An organization admin can change who may share skills.</p>
+        <p className={cn(!textRail && "ps-7", "pb-1 text-xs text-muted-foreground")}>An organization admin can change who may share skills.</p>
         {open ? <TechnicalDetailsPanel part={part} /> : null}
       </div>
     )
@@ -290,7 +327,9 @@ export function CapabilityCallLine({
       <div data-capability-call={part.toolName} className={cn(RAIL_ROW, className)}>
         <div className={RAIL_LINE}>
           <LeadingLane>{mark ? <ConnectorMark connector={mark} /> : null}</LeadingLane>
-          <span className="min-w-0 flex-1 truncate">{label}</span>
+          {textRail
+            ? <TextSentenceLine {...splitSentence(label)} tone="failed" />
+            : <span className="min-w-0 flex-1 truncate">{label}</span>}
           <RailDuration value={duration} />
           <DetailsToggle open={open} onToggle={() => setOpen(!open)} label={label} alwaysVisible />
         </div>
@@ -314,12 +353,14 @@ export function CapabilityCallLine({
       <div data-capability-call={part.toolName} className={cn(RAIL_ROW, className)}>
         <div className="flex min-h-6.5 min-w-0 items-center gap-2 text-sm">
           <LeadingLane>{mark ? <ConnectorMark connector={mark} /> : null}</LeadingLane>
-          <span className="min-w-0 flex-1 truncate text-destructive">{failureLabel}</span>
+          {textRail
+            ? <TextSentenceLine {...splitSentence(failureLabel)} tone="failed" />
+            : <span className="min-w-0 flex-1 truncate text-destructive">{failureLabel}</span>}
           <RailDuration value={duration} />
           <DetailsToggle open={open} onToggle={() => setOpen(!open)} label={failureLabel} alwaysVisible />
         </div>
         {reason || (reconnectAction && onReconnect) ? (
-          <div className="flex min-w-0 items-center gap-3 ps-7 pb-1 text-xs text-muted-foreground">
+          <div className={cn("flex min-w-0 items-center gap-3 pb-1 text-xs text-muted-foreground", !textRail && "ps-7")}>
             {reason ? <span className="min-w-0 truncate" title={reason}>{reason}</span> : null}
             {reconnectAction && onReconnect ? (
               <Button
@@ -346,7 +387,7 @@ export function CapabilityCallLine({
           </div>
         ) : null}
         {reconnectError ? (
-          <p className="mt-1 ps-7 text-xs text-dls-secondary" role="alert">{describeChatToolFailure(reconnectError)}</p>
+          <p className={cn("mt-1 text-xs text-dls-secondary", !textRail && "ps-7")} role="alert">{describeChatToolFailure(reconnectError)}</p>
         ) : null}
         {open ? <TechnicalDetailsPanel part={part} /> : null}
       </div>
@@ -364,11 +405,13 @@ export function CapabilityCallLine({
         <LeadingLane>
           {mark ? (
             <ConnectorMark connector={mark} />
-          ) : inFlight ? (
+          ) : inFlight && !textRail ? (
             <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" />
           ) : null}
         </LeadingLane>
-        <span className={cn("min-w-0 flex-1 truncate", shimmer && inFlight && "ow-text-shimmer motion-reduce:animate-none")}>{line}</span>
+        {textRail
+          ? <TextSentenceLine {...splitSentence(line)} tone={shimmer && inFlight ? "running" : "normal"} />
+          : <span className={cn("min-w-0 flex-1 truncate", shimmer && inFlight && "ow-text-shimmer motion-reduce:animate-none")}>{line}</span>}
         {repeat > 1 ? <span className="shrink-0 text-xs text-muted-foreground">{repeat} times</span> : null}
         <RailDuration value={duration} />
         <DetailsToggle open={open} onToggle={() => setOpen(!open)} label={line} />

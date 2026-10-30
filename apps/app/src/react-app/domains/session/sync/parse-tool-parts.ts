@@ -84,9 +84,14 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
   const fileDestination = part.tool === "write" && typeof stateMetadata.filepath === "string" ? stateMetadata.filepath
     : part.tool === "edit" && isRecord(stateMetadata.filediff) && typeof stateMetadata.filediff.file === "string" ? stateMetadata.filediff.file : null;
   const workspacePaths = isJsonValue(stateMetadata.openworkWorkspacePaths) ? stateMetadata.openworkWorkspacePaths : null;
+  // An edit's own line counts, for the text-first rail's "+11 −3".
+  const filediff = part.tool === "edit" && isRecord(stateMetadata.filediff) ? stateMetadata.filediff : null;
+  const diffStats = filediff && typeof filediff.additions === "number" && typeof filediff.deletions === "number"
+    ? { added: filediff.additions, removed: filediff.deletions } : null;
   const openwork = {
     ...(fileDestination ? { fileDestination } : {}),
     ...(workspacePaths ? { workspacePaths } : {}),
+    ...(diffStats ? { diffStats } : {}),
     ...(part.id !== part.callID ? { sourcePartId: part.id } : {}),
     ...(mcpResult ? { mcpResult } : {}),
     ...(childSessionId ? { childSessionId } : {}),
@@ -186,4 +191,16 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
     input: part.state.input,
     callProviderMetadata: toolCallProviderMetadata(part),
   };
+}
+
+/**
+ * A finished reasoning part's engine timing, kept on the UI part so the chat
+ * can say how long the model thought ("Thought 12s"). Unknown stays absent.
+ */
+export function reasoningTime(part: { time?: { start?: number; end?: number } }): { time?: { start: number; end: number } } {
+  const start = part.time?.start
+  const end = part.time?.end
+  return typeof start === "number" && typeof end === "number" && Number.isFinite(start) && Number.isFinite(end) && end >= start
+    ? { time: { start, end } }
+    : {}
 }

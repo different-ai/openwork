@@ -25,6 +25,7 @@ import {
   type MarkdownBlockHtml,
 } from "./markdown-primitive";
 import { LinkActionMenu } from "./link-action-menu";
+import { decorateGitHubReferences } from "./github-references";
 import { useMermaidEnhancer } from "./mermaid";
 import { MermaidZoomPortals } from "./mermaid-zoom-viewport";
 import { useSelectionStableValue } from "./selection-stability";
@@ -68,6 +69,8 @@ type MarkdownBlockInnerProps = {
   /** Opt in only for conversation prose, never tool output or artifact previews. */
   sessionReferences?: boolean;
   highlightQuery?: string;
+  /** Text-first rail: GitHub pull request and issue links show their mark. */
+  githubReferences?: boolean;
 } & Omit<
   React.ComponentProps<"div">,
   "ref" | "className" | "children" | "dangerouslySetInnerHTML"
@@ -88,6 +91,7 @@ function MarkdownBlockInner({
   streaming,
   sessionReferences = false,
   highlightQuery,
+  githubReferences = false,
   ...props
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -225,6 +229,12 @@ function MarkdownBlockInner({
       syncCodeWrapStates();
     });
   }, [highlightQuery, rendered]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !githubReferences) return;
+    decorateGitHubReferences(root);
+  }, [githubReferences, rendered]);
 
   useEffect(() => {
     const root = rootRef.current;
