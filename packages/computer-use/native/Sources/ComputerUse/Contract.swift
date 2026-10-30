@@ -157,10 +157,11 @@ enum Action {
         let a = Arguments(values: values)
         return CGPoint(x: try a.number("x", min: 0, max: 100_000), y: try a.number("y", min: 0, max: 100_000))
     }
-    /// Typing or setting text: what could put a password into a field.
+    /// Typing, setting text or a space: what could put characters into a field.
     var entersText: Bool {
         switch self {
         case .type, .setValue: return true
+        case .key(let key, _): return key == "space"
         default: return false
         }
     }

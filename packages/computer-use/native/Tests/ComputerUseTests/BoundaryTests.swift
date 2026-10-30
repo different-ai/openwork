@@ -85,6 +85,7 @@ final class BoundaryTests: XCTestCase {
         XCTAssertTrue(try Action(["type": "set_value", "ref": "e1", "text": "given-password"]).entersText)
         XCTAssertFalse(try Action(["type": "click", "x": 1, "y": 1]).entersText)
         XCTAssertFalse(try Action(["type": "key", "key": "enter"]).entersText)
+        XCTAssertTrue(try Action(["type": "key", "key": "space"]).entersText, "A space is a character too")
     }
 
     func testMalformedInputNeverBecomesAnAction() throws {

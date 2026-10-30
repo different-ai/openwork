@@ -296,13 +296,12 @@ function observePage(id, options = {}) {
     registry.last = { mode, items: current };
   }
   const focused = registry.byElement.get(document.activeElement);
-  // A card field shows its digits in an image. A filled password or code may too: a code
-  // field is not masked, and page script can copy what was typed into visible text.
+  // A card field shows its digits in an image. While a password or code field is on screen,
+  // page script can copy what was typed or autofilled into visible text, even after clearing it.
   const onScreen = (element) => { const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; };
   const payment = [...candidates].some((element) => element instanceof HTMLElement && isPayment(element) && onScreen(element));
-  const secret = [...candidates].some((element) => element instanceof HTMLElement && isCredential(element)
-    && Boolean(element instanceof HTMLInputElement ? element.value : element.textContent) && onScreen(element));
-  const page = { viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, hasPaymentField: payment, hasFilledSecret: secret };
+  const credential = [...candidates].some((element) => element instanceof HTMLElement && isCredential(element) && onScreen(element));
+  const page = { viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, hasPaymentField: payment, hasCredentialField: credential };
   if (!interactive) {
     return { truncated, scrollRegions, title: text(document.title, 300), ...(includeText ? { text: text(document.body?.innerText, 16000) } : {}), elements,
       ...page, ...(diff ? { diff } : {}), ...(focused ? { focused } : {}),
@@ -735,7 +734,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     let image, digest;
     if (includeImage) {
       if (page.hasPaymentField) fail("payment_required", "This page shows payment card fields. Take over and complete them directly in the browser, then resume.");
-      if (page.hasFilledSecret) fail("secret_on_screen", "A filled password or code is on screen, so no image was taken. Submit it, or observe without an image.");
+      if (page.hasCredentialField) fail("credential_on_screen", "This page shows a password or code field, so no image was taken. Work from its controls without an image.");
       const png = await captureObservation(tab.view.webContents, page.viewport, (viewport) => capture(tab, viewport));
       digest = imageDigest(png);
       image = { mimeType: "image/png", data: png.toString("base64"), width: page.viewport.width, height: page.viewport.height };
@@ -749,10 +748,10 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     state.observations.set(id, record); state.latest = record;
     for (const old of state.observations.keys()) { if (state.observations.size <= 20) break; state.observations.delete(old); }
     if (mode === "interactive") {
-      const { hasPaymentField, hasFilledSecret: _secret, viewport: _viewport, scroll: _scroll, ...compact } = page;
+      const { hasPaymentField, hasCredentialField: _credential, viewport: _viewport, scroll: _scroll, ...compact } = page;
       return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...compact, ...(hasPaymentField ? { payment: "take_over" } : {}), ...(image ? { image } : {}) };
     }
-    const { hasFilledSecret: _secret, ...full } = page;
+    const { hasCredentialField: _credential, ...full } = page;
     return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...full, ...(image ? { image } : {}) };
   }
   /** Bounded wait after input: navigation, in-flight requests and DOM structure. */

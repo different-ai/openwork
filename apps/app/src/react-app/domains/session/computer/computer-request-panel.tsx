@@ -168,9 +168,11 @@ function CredentialRequest({ sessionId, request, credential }: { sessionId: stri
   }
 
   const site = credential.site?.replace(/^https:\/\//, "")
-  // A name can be copied by another app; the id cannot, so it is always shown.
-  const recipient = site ?? (credential.app && credential.appId && credential.app !== credential.appId
-    ? `${credential.app} (${credential.appId})` : credential.appId ?? credential.app ?? "this app")
+  // A name can be copied by another app; the id cannot, so it is always shown. Both are
+  // shown exactly as stored: hidden characters visible, no right-to-left reordering.
+  const name = !site && credential.app && credential.app !== credential.appId ? revealHidden(credential.app) : null
+  const id = revealHidden(site ?? credential.appId ?? credential.app ?? "this app")
+  const hidden = id.hidden + (name?.hidden ?? 0)
   return (
     <div className="overflow-hidden border-b border-dls-border bg-transparent" data-testid="session-computer-request" data-reason="credential">
       <div className="flex flex-col gap-3 px-4 py-3">
@@ -179,10 +181,11 @@ function CredentialRequest({ sessionId, request, credential }: { sessionId: stri
             <Monitor size={16} strokeWidth={1.9} />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-[13px] font-medium leading-5 text-dls-text">Enter your password or code {site ? "on" : "in"} <span dir="ltr" className="break-all font-mono" data-testid="session-computer-credential-site">{recipient}</span>?</div>
+            <div className="text-[13px] font-medium leading-5 text-dls-text">Enter your password or code {site ? "on" : "in"} <span dir="ltr" style={{ unicodeBidi: "bidi-override" }} className="break-all font-mono" data-testid="session-computer-credential-site">{name ? <>{name.parts} (</> : null}{id.parts}{name ? ")" : null}</span>?</div>
             <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{site
               ? "The agent types what you gave it into this site's sign-in field. Check the address is the site you meant; any other site asks again."
               : `The agent types what you gave it into this app on ${request.computer}. Any other app asks again.`}</div>
+            {hidden ? <div className="mt-2 text-[12px] font-medium leading-5 text-amber-11" data-testid="session-computer-credential-hidden">This name has {hidden === 1 ? "1 hidden character" : `${hidden} hidden characters`}, shown as &lt;U+…&gt;. Don't enter anything unless you expected that.</div> : null}
             {error ? <div role="alert" className="mt-1 text-[12px] leading-5 text-red-11">{error}</div> : null}
           </div>
         </div>

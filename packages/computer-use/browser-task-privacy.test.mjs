@@ -96,9 +96,11 @@ test("a given password is filled only on the site the person confirms, and never
     return target.request({ sessionId: "chat", operation: "act", args: { tabId: "tab", observationId: seen.observationId,
       action: { type: "fill", ref: seen.elements[0].ref, text } } });
   };
-  const pictured = await observe(host, { includeImage: true });
-  assert.equal(pictured.ok, true, "A sign-in page can be seen: the browser masks the password itself");
-  assert.ok(pictured.image);
+  // Page script can copy a typed or autofilled password into visible text, even after
+  // clearing the field, so no image is taken while a credential field is on screen.
+  assert.equal((await observe(host, { includeImage: true })).code, "credential_on_screen");
+  const pictured = await observe(host);
+  assert.equal(pictured.ok, true, "A sign-in page can still be read and used without an image");
   const given = "given-password-123";
   confirm = false;
   const declined = await fill(host, given);
@@ -117,20 +119,20 @@ test("a given password is filled only on the site the person confirms, and never
   const after = await observe();
   assert.equal(after.elements[0].filled, true);
   assert.ok(!JSON.stringify(after).includes(given));
-  // Page script can copy a typed password into visible text, so no image while one is filled.
-  assert.equal((await observe(host, { includeImage: true })).code, "secret_on_screen");
+  assert.equal((await observe(host, { includeImage: true })).code, "credential_on_screen");
   // A text field the page marks as a password is a credential field too.
   field.type = "text"; field.value = ""; field.attributes.autocomplete = "current-password";
   confirm = false;
   assert.equal((await fill(host, given)).code, "credential_declined");
   assert.equal(field.value, "");
-  // A one-time code shows in an image once filled; an empty code field does not.
+  // A one-time code field blocks images too, filled or not; an ordinary field does not.
   field.attributes.autocomplete = "one-time-code";
-  assert.equal((await observe(host, { includeImage: true })).ok, true);
   field.value = "123456";
   const code = await observe(host, { includeImage: true });
-  assert.equal(code.code, "secret_on_screen");
+  assert.equal(code.code, "credential_on_screen");
   assert.ok(!JSON.stringify(code).includes("123456"));
+  delete field.attributes.autocomplete; field.value = "";
+  assert.equal((await observe(host, { includeImage: true })).ok, true);
 });
 
 test("select options keep backing identities private and revalidate before choosing", async () => {
