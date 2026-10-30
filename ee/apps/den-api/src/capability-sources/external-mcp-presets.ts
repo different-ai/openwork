@@ -101,6 +101,13 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
     authType: "oauth",
   },
   {
+    presetId: "strunk",
+    displayName: "Strunk",
+    description: "Publish drafts to Google Docs for review, then pull reviewer comments back and revise in place.",
+    url: "https://strunk.io/mcp",
+    authType: "oauth",
+  },
+  {
     presetId: "slack",
     displayName: "Slack",
     description: "Channels, DMs, and search. Requires an eligible internal or Slack Marketplace-published app; not every Slack app can use MCP. An admin configures its OAuth client once, then each person connects their own account. Automatic app registration is not supported.",
