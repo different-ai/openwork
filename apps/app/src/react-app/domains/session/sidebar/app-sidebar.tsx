@@ -170,6 +170,7 @@ import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
 import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
 import { SidebarDestination } from "./sidebar-destination";
 import { SessionTitle } from "./session-title";
+import { isKeyboardFocus } from "./session-title-marquee";
 import { getSessionOrder } from "./session-order";
 import { SESSION_DRAG_TYPE, SessionDragScope, SessionReorderList, useDraggedSession, useSessionReorderTarget } from "./session-reorder";
 
@@ -1611,7 +1612,7 @@ function WorkspaceHeader({
           if (event.pointerType === "mouse") setIsTitleHovered(true);
         }}
         onPointerLeave={() => setIsTitleHovered(false)}
-        onFocus={() => setIsTitleFocused(true)}
+        onFocus={(event) => setIsTitleFocused(isKeyboardFocus(event.currentTarget))}
         onBlur={() => setIsTitleFocused(false)}
         onClick={handleSelectWorkspace}
       >
@@ -1911,7 +1912,7 @@ function DraftSessionRow({ workspaceId, groupId, title, pending }: { workspaceId
         }}
         onPointerEnter={() => setHovered(true)}
         onPointerLeave={() => setHovered(false)}
-        onFocus={() => setFocused(true)}
+        onFocus={(event) => setFocused(isKeyboardFocus(event.currentTarget))}
         onBlur={() => setFocused(false)}
       >
         <SessionStatusIndicator isActiveWork={false} isUnread={false} />
@@ -2619,9 +2620,7 @@ export function SessionMenuItem({
             onClick={openSession}
             onPointerEnter={handlePointerEnter}
             onPointerLeave={() => setIsTitleHovered(false)}
-            onFocus={() => {
-              setIsTitleFocused(true);
-            }}
+            onFocus={(event) => setIsTitleFocused(isKeyboardFocus(event.currentTarget))}
             onBlur={() => setIsTitleFocused(false)}
             aria-label={accessibleState}
             aria-description={shortcutDigit === undefined ? undefined : sessionNumberShortcutDescription(ctx.sessionNumberShortcutOs, shortcutDigit)}
