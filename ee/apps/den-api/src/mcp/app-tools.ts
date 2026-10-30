@@ -289,23 +289,13 @@ export async function callMcpAppTool(
 }
 
 /**
- * Whether a read-only App tool would still run for this caller now, checked
- * the way a call checks it but without running it: a live Workflow's access
- * and every tool it reaches, or a connection tool's current listing with the
- * caller's own credential. A read that goes through a provider without such
- * a check (a native provider route) is never answered from kept data.
+ * Whether a read's result may be kept for this caller's next open: only a
+ * read of OpenWork's own data, which Den authorizes and whose access changes
+ * move the inventory revision. A provider's data is never kept: only running
+ * its tool again can confirm the caller may still see it.
  */
-export async function mcpAppToolStillReadOnly(ctx: CapabilityRegistryContext, binding: McpAppToolBinding): Promise<boolean> {
-  if (!binding.readOnly) return false
+export function mcpAppToolKeepable(ctx: CapabilityRegistryContext, binding: McpAppToolBinding): boolean {
+  if (!binding.readOnly || binding.kind !== "api") return false
   const parsed = parseCapability(binding.capability)
-  if (binding.kind === "workflow" && binding.mode === "live") {
-    if (parsed?.kind !== "marketplace" || !ctx.member) return false
-    const [workflow] = await listAccessibleWorkflows({ member: ctx.member, organizationId: ctx.organizationId, configObjectIds: new Set([parsed.configObjectId]) })
-    if (!workflow) return false
-    const access = bindingAccess(await workflowAccesses(ctx, workflow.requiredCapabilities), binding.loadOnOpen)
-    return !("refused" in access) && access.readOnly
-  }
-  if (binding.kind === "api") return parsed?.kind === "catalog" && isDenRead(ctx, parsed)
-  if (binding.kind === "mcp") return parsed?.kind === "externalMcp" && await capabilityAccess(ctx, binding.capability) === "read"
-  return false
+  return parsed?.kind === "catalog" && isDenRead(ctx, parsed)
 }

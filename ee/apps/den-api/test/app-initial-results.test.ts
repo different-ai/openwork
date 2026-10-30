@@ -81,57 +81,62 @@ test("a read past its time budget is left out rather than holding the launch", a
 
 function memoryStore() {
   const slots = new Map<string, unknown>()
+  let opened = 0
   const store: McpAppLaunchDataStore = {
     async open(timeZone) {
+      opened += 1
       const key = timeZone ?? ""
       return { kept: slots.get(key) ?? null, save: async (results) => { slots.set(key, results) } }
     },
   }
-  return { slots, store }
+  return { slots, store, opens: () => opened }
 }
 
-async function launch(store: McpAppLaunchDataStore | undefined, timeZone = "UTC", stillReadOnly: ((tool: McpAppToolBinding) => Promise<boolean>) | null = async () => true) {
+// In these fixtures, OpenWork's own reads are the api tools.
+const ownRead = (tool: McpAppToolBinding) => tool.kind === "api"
+
+async function launch(store: McpAppLaunchDataStore | undefined, options: { timeZone?: string; canKeep?: (tool: McpAppToolBinding) => boolean } = {}) {
   const calls: string[] = []
   const results = await launchInitialResults({
-    tools: TOOLS, scopes: new Set([DEN_MCP_READ_SCOPE]), timeZone, store, stillReadOnly: stillReadOnly ?? undefined,
-    callTool: async (tool) => { calls.push(tool.name); return { content: [{ type: "text", text: "ok" }] } },
+    tools: TOOLS, scopes: new Set([DEN_MCP_READ_SCOPE]), timeZone: options.timeZone ?? "UTC", store, canKeep: options.canKeep,
+    callTool: async (tool) => {
+      calls.push(tool.name)
+      return tool.name === "broken_read" ? { isError: true, content: [] } : { content: [{ type: "text", text: "ok" }] }
+    },
   })
   return { results, calls }
 }
 
-test("a member's next open gets what their last open loaded at once, marked kept", async () => {
+test("a member's next open reuses their kept OpenWork reads and runs provider reads again", async () => {
   const { slots, store } = memoryStore()
-  const first = await launch(store)
-  assert.equal(first.calls.length, 3)
-  assert.equal(slots.size, 1)
-  const second = await launch(store)
-  assert.deepEqual(second.calls, [])
-  assert.deepEqual(second.results.map((entry) => [entry.name, entry.kept]).sort(), [["broken_read", true], ["count_issues", true], ["load_mrr", true]])
+  const first = await launch(store, { canKeep: ownRead })
+  assert.deepEqual(first.calls.sort(), ["broken_read", "count_issues", "load_mrr"])
+  // A provider's data is never stored, nor a failed read.
+  assert.deepEqual((slots.get("UTC") as Array<{ name: string }>).map((entry) => entry.name), ["count_issues"])
+  const second = await launch(store, { canKeep: ownRead })
+  assert.deepEqual(second.calls.sort(), ["broken_read", "load_mrr"])
+  assert.deepEqual(second.results.map((entry) => [entry.name, entry.kept]).sort(), [["count_issues", true], ["load_mrr", undefined]])
   // Another time zone is another answer, loaded afresh.
-  assert.equal((await launch(store, "Asia/Tokyo")).calls.length, 3)
+  assert.ok((await launch(store, { timeZone: "Asia/Tokyo", canKeep: ownRead })).calls.includes("count_issues"))
 })
 
-test("kept launch data is used only while every read still passes its checks", async () => {
-  const { slots, store } = memoryStore()
+test("without a rule for what may be kept, nothing is kept or reused", async () => {
+  const { slots, store, opens } = memoryStore()
   await launch(store)
-  // A provider revoked one read: nothing kept is shown, every read runs again through its checks.
-  const revoked = await launch(store, "UTC", async (tool) => tool.name !== "load_mrr")
-  assert.equal(revoked.calls.length, 3)
-  assert.ok(revoked.results.every((entry) => entry.kept === undefined))
-  assert.equal(slots.size, 1)
-  // Without a way to recheck, kept data is never used.
-  assert.equal((await launch(store, "UTC", null)).calls.length, 3)
+  assert.equal((await launch(store)).calls.length, 3)
+  assert.equal(opens(), 0)
+  assert.equal(slots.size, 0)
 })
 
 test("kept launch data that does not parse, or a store that cannot keep it, loads afresh", async () => {
   const broken: McpAppLaunchDataStore = { open: async () => ({ kept: [{ name: 1 }], save: async () => {} }) }
-  const brokenOpen = await launch(broken)
+  const brokenOpen = await launch(broken, { canKeep: ownRead })
   assert.equal(brokenOpen.calls.length, 3)
   assert.ok(brokenOpen.results.every((entry) => entry.kept === undefined))
   // No slot, as when the inventory revision is unknown: nothing is kept or reused.
   const unavailable: McpAppLaunchDataStore = { open: async () => null }
-  assert.equal((await launch(unavailable)).calls.length, 3)
-  assert.equal((await launch(unavailable)).calls.length, 3)
+  assert.equal((await launch(unavailable, { canKeep: ownRead })).calls.length, 3)
+  assert.equal((await launch(unavailable, { canKeep: ownRead })).calls.length, 3)
 })
 
 test("Apps built from the starter read initial results, so new Apps load with their launch", () => {
