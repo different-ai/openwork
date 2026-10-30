@@ -248,7 +248,7 @@ export async function loadConnectFullTools(input: {
   }
 
   if (member && wants(REMOTE_SESSION_TOOL_NAMESPACE)) {
-    candidates.push(...listRemoteSessionCapabilities({ status: ctx.remoteSessionStatusEnabled }).map((capability) => ({
+    candidates.push(...listRemoteSessionCapabilities({ status: ctx.remoteSessionStatusEnabled, answer: ctx.remoteSessionAnswersEnabled }).map((capability) => ({
       namespace: REMOTE_SESSION_TOOL_NAMESPACE,
       toolName: capability.action,
       capability: capability.name,

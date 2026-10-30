@@ -8,6 +8,7 @@ import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema 
 import type { OrganizationContext } from "../../orgs.js"
 import {
   executeRemoteSessionCapability,
+  remoteSessionAnswerBodySchema,
   remoteSessionReadBodySchema,
   remoteSessionSendBodySchema,
   remoteSessionStopBodySchema,
@@ -142,6 +143,26 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
     jsonValidator(remoteSessionSendBodySchema),
     async (c) => {
       const result = await run(c.get("organizationContext"), c.req.raw.signal, "send", c.req.valid("json"))
+      c.header("Cache-Control", "no-store")
+      return c.json(result.payload, result.status)
+    },
+  )
+
+  app.post(
+    "/v1/remote-sessions/answer",
+    describeMemberRoute({
+      tags: ["Automations"],
+      summary: "Answer a remote session's question or permission",
+      description: "The member answers the question or permission one of their remote sessions waits on: the chosen option labels per question, or decision once or reject (never always). requestId names the pending request the member saw; one that is no longer pending answers 409 stale_request and nothing is sent. A desktop that has not answered within about 20 seconds returns state pending with a requestId to read later. Same result as the remote-session:answer capability.",
+      "x-mcp": false,
+      responses: { 200: jsonResponse("The answer reached the session, or is pending.", remoteSessionResultSchema), ...commonResponses },
+    }),
+    orgMemberRoute(),
+    requireFeature("remoteSessionSubagents"),
+    requireFeature("remoteSessionAnswers"),
+    jsonValidator(remoteSessionAnswerBodySchema),
+    async (c) => {
+      const result = await run(c.get("organizationContext"), c.req.raw.signal, "answer", c.req.valid("json"))
       c.header("Cache-Control", "no-store")
       return c.json(result.payload, result.status)
     },

@@ -150,6 +150,8 @@ export type CapabilityRegistryContext = {
   managedDeploymentsEnabled: boolean
   /** `remote-session:status`, rolled out with the desktop's remote sub-agents. */
   remoteSessionStatusEnabled: boolean
+  /** remote-session:answer: the member's agent answers a task's question for the person, after asking them. */
+  remoteSessionAnswersEnabled: boolean
   /** `slack_send_as_bot` (feature `slackSendAsBot`); it also needs a member and the write scope. */
   slackSendAsBotEnabled: boolean
   resolvePlatformAdmin: () => Promise<boolean>
@@ -170,7 +172,7 @@ export type CapabilityRegistryContextInput = {
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   /** Effective features of the organization (see features.ts). */
-  organizationFeatures: Partial<Pick<FeatureMap, "remoteSessionSubagents" | "managedDeployments" | "slackSendAsBot" | "outlookAttachments">>
+  organizationFeatures: Partial<Pick<FeatureMap, "remoteSessionSubagents" | "remoteSessionAnswers" | "managedDeployments" | "slackSendAsBot" | "outlookAttachments">>
   /** MCP transports pass the verified caller; route and Automation contexts omit it (their route records the request). */
   audit?: McpAuditPrincipal | null
   /**
@@ -210,6 +212,9 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     generatedArtifactViewsEnabled: input.generatedArtifactViewsEnabled,
     managedDeploymentsEnabled: input.organizationFeatures.managedDeployments === true,
     remoteSessionStatusEnabled: input.organizationFeatures.remoteSessionSubagents === true,
+    // Only a chat with the person in it may answer: never an Automation, a Workflow run or an App.
+    remoteSessionAnswersEnabled: input.organizationFeatures.remoteSessionSubagents === true
+      && input.organizationFeatures.remoteSessionAnswers === true && input.usageSource === "agent",
     slackSendAsBotEnabled: input.organizationFeatures.slackSendAsBot === true,
     resolvePlatformAdmin,
     resolveNamespaceContext,
@@ -258,7 +263,7 @@ export function slackSendAsBotAvailable(ctx: Pick<CapabilityRegistryContext, "sl
 }
 
 const remoteSessionAuditActions: Partial<Record<RemoteSessionAction, AuditServiceActionName>> = {
-  create: "remote_session.create", send: "remote_session.send", stop: "remote_session.stop",
+  create: "remote_session.create", send: "remote_session.send", stop: "remote_session.stop", answer: "remote_session.answer",
 }
 
 function remoteSessionResourceId(body: unknown): string | null {
@@ -766,7 +771,7 @@ const remoteSessionSource: CapabilitySource = {
   },
   search: async (ctx, query, limit) => {
     if (!ctx.sourceFilter.api || !ctx.member) return []
-    return searchRemoteSessionCapabilities(query, limit, { status: ctx.remoteSessionStatusEnabled })
+    return searchRemoteSessionCapabilities(query, limit, { status: ctx.remoteSessionStatusEnabled, answer: ctx.remoteSessionAnswersEnabled })
   },
   // Deliberately absent from the confined-script tool tree in v1: remote
   // sessions are long-lived side effects that agents should drive through
@@ -775,6 +780,7 @@ const remoteSessionSource: CapabilitySource = {
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "remoteSession")) return unknownCapabilityResult(input.name)
     if (parsed.action === "status" && !ctx.remoteSessionStatusEnabled) return unknownCapabilityResult(input.name)
+    if (parsed.action === "answer" && !ctx.remoteSessionAnswersEnabled) return unknownCapabilityResult(input.name)
     if (!ctx.member) {
       return capabilityErrorResult({
         error: "membership_required",
