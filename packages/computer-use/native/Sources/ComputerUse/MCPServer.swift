@@ -115,14 +115,20 @@ final class MCPServer {
             action("drag", ["path": ["type": "array", "minItems": 2, "maxItems": 32, "items": point]])]
         var observeFields: [String: Any] = ["session_id": string, "include_image": ["type": "boolean", "description": "Omit to let the session decide; true always sends a screenshot, false never does."]]
         if policy == .embedded {
-            variants += [action("triple_click", clickFields, optional: ["modifiers"]), action("wait", ["ms": ["type": "integer", "minimum": 50, "maximum": 3000]])]
+            variants += [action("triple_click", clickFields, optional: ["modifiers"]), action("wait", ["ms": ["type": "integer", "minimum": 50, "maximum": 3000]]),
+                action("menu", ["path": ["type": "array", "minItems": 2, "maxItems": MenuRules.maxDepth + 1, "items": ["type": "string", "minLength": 1, "maxLength": 200],
+                    "description": "A menu-bar command by its titles, as listed in an observation's menus, such as [\"Format\", \"Font\", \"Bold\"]."]])]
             observeFields["elements"] = ["type": "string", "enum": ["interactive", "all", "none"], "default": "interactive"]
+            observeFields["menus"] = ["type": "boolean", "default": false, "description": "Also list the app's enabled menu-bar commands, run with a menu action."]
         }
         var actFields: [String: Any] = ["session_id": string, "observation_id": string,
             "request_id": ["type": "string", "minLength": 1, "maxLength": 100], "action": ["oneOf": variants]]
         var actRequired = ["session_id", "observation_id", "request_id", "action"]
         if policy == .embedded {
             actFields["actions"] = ["type": "array", "minItems": 1, "maxItems": Action.batchLimit, "items": ["oneOf": variants]]
+            actFields["pacing"] = ["type": "string", "enum": ["fast", "wait", "wait_retry"], "default": "fast",
+                "description": "fast checks briefly after each press. wait lets the app finish reacting after every step. wait_retry also re-checks a control that is briefly disabled, moving or gone, until retry_ms. Nothing waits past a window, dialog or menu that opened."]
+            actFields["retry_ms"] = ["type": "integer", "minimum": 100, "maximum": 5000, "default": 1500, "description": "How long wait_retry keeps checking a control that is not ready yet."]
             actFields["intent"] = ["type": "string", "minLength": 1, "maxLength": 120, "description": "A few words for the person watching, such as \"opening the Export menu\". Shown on your cursor; not an instruction."]
             actRequired.removeLast()
         }
@@ -135,7 +141,7 @@ final class MCPServer {
             ? "Read the selected window's compact interactive elements (ref, role, label, value, x/y/w/h, press/settable/disabled) and optionally a PNG. elements=all includes static text; none requires an available image. If an image cannot be safely obtained, useful text remains available with image.included=false and image.unavailable. Never use absent image coordinates."
             : "Read the selected window's accessible elements and optionally a PNG. Returns an observation_id and exact image dimensions. An unavailable image is reported explicitly when useful text remains."
         let actionDescription = policy == .embedded
-            ? "Provide exactly one of action or actions (1–8). Steps use pinned observed refs/focus and stop at the first failure. A coordinate step must be the first input; only a click/press on an observed text field can continue into typing. After a press, more presses and set_value continue while nothing opens over the window and their controls are unchanged. Pointer steps, Enter/Tab/Escape and app shortcuts end the sequence: observe before more input. The receipt lists dispatched, uncertain and skipped steps; partial failures have ok=false. Short waits are pacing, not readiness proof."
+            ? "Provide exactly one of action or actions (1–8). Steps use pinned observed refs/focus and stop at the first failure. A coordinate step must be the first input; only a click/press on an observed text field can continue into typing. After a press or menu command, more presses, set_value and menu commands continue while nothing opens over the window and their controls are unchanged; pacing wait or wait_retry gives a slow app time to settle. Pointer steps, Enter/Tab/Escape and app shortcuts end the sequence: observe before more input. The receipt lists dispatched, uncertain and skipped steps; partial failures have ok=false. Short waits are pacing, not readiness proof."
             : "Perform one action against a fresh observation. Prefer press/set_value on observed refs. move sends scoped hover without guaranteeing system-cursor movement."
         var tools: [[String: Any]] = [
             tool("computer_discover", "List installed and running app identities, permissions, modes, keys and limits. Does not read window content or grant access.", [:], [], readOnly: true),

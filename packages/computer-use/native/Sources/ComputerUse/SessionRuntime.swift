@@ -157,15 +157,17 @@ final class SessionRuntime {
                 "next": next(opened)])
         case "computer_observe":
             let options = try ObservationOptions(values, policy: policy)
-            return try await observe(try a.string("session_id"), image: options.image, elements: options.elements,
+            return try await observe(try a.string("session_id"), image: options.image, elements: options.elements, menus: options.menus,
                 filePanelAccess: policy == .embedded ? (values["file_panel_access"] as? NSNumber)?.uint32Value : nil)
         case "computer_act":
-            try a.only(policy == .embedded ? ["session_id", "observation_id", "request_id", "action", "actions", "intent", "file_approval", "file_panel_access"] : ["session_id", "observation_id", "request_id", "action"])
+            try a.only(policy == .embedded ? ["session_id", "observation_id", "request_id", "action", "actions", "intent", "file_approval", "file_panel_access", "pacing", "retry_ms"] : ["session_id", "observation_id", "request_id", "action"])
             let id = try a.string("session_id")
             let observationID = try a.string("observation_id")
             let requestID = try a.string("request_id", max: 100)
             let actions = try Action.batch(values, policy: policy)
-            let raw = values["actions"] ?? values["action"] ?? NSNull()
+            let pacing = policy == .embedded ? try BatchPacing(values) : .fast
+            // Pacing changes how the batch runs, so a reused request_id must name it too.
+            let raw: Any = ["steps": values["actions"] ?? values["action"] ?? NSNull(), "pacing": pacing.mode.rawValue, "retry_ms": Int(pacing.retry * 1_000)]
             // Display only: shown on the person's desktop cursor, never part of the receipt identity.
             let intent = values["intent"] == nil ? nil : try a.string("intent", max: 120)
             // Set only by the trusted host: the exact names the person approved handing over,
@@ -174,7 +176,7 @@ final class SessionRuntime {
             // The panel the person allowed, by its window: never whichever panel is open now.
             let panelAccess = policy == .embedded ? (values["file_panel_access"] as? NSNumber)?.uint32Value : nil
             return try await act(id: id, observationID: observationID, requestID: requestID, actions: actions, raw: raw, intent: intent,
-                fileApproval: fileApproval, filePanelAccess: panelAccess)
+                fileApproval: fileApproval, filePanelAccess: panelAccess, pacing: pacing)
         case "computer_zoom" where policy == .embedded:
             try a.only(["session_id", "observation_id", "x", "y", "width", "height"])
             return try await zoom(try a.string("session_id"), observationID: try a.string("observation_id"),
@@ -335,7 +337,7 @@ final class SessionRuntime {
         text(["ok": false, "code": "file_panel_approval_required", "app": current.frontApp.name, "panel_id": Int(current.target.id), "dispatched": false, "next": "observe",
               "message": "A file panel opened. The person is asked before the agent sees their files; nothing was read."])
     }
-    private func observe(_ id: String, image: Bool?, elements: String, filePanelAccess: CGWindowID? = nil) async throws -> [[String: Any]] {
+    private func observe(_ id: String, image: Bool?, elements: String, menus: Bool = false, filePanelAccess: CGWindowID? = nil) async throws -> [[String: Any]] {
         // A paused session never resumes from an observation: only the person's Continue does.
         // Retry only read-only capture races. Never repeat an action or cross takeover.
         try await followDialog(id)
@@ -388,7 +390,7 @@ final class SessionRuntime {
         }, focus: bringBack, read: {
             for attempt in 0..<3 {
                 try self.checkActive(current)
-                do { return try await self.observeAttempt(id, image: image, elements: elements, otherWindowFocused: otherWindowFocused) }
+                do { return try await self.observeAttempt(id, image: image, elements: elements, menus: menus, otherWindowFocused: otherWindowFocused) }
                 catch let error as UseError {
                     if error.code == "window_not_frontmost", current.checksFront, attempt < 2 {
                         try await bringBack()
@@ -401,7 +403,7 @@ final class SessionRuntime {
             throw UseError("stale_observation", "The window is still changing. Observe again.", next: "observe")
         })
     }
-    private func observeAttempt(_ id: String, image requested: Bool?, elements filter: String, otherWindowFocused: Bool = false) async throws -> [[String: Any]] {
+    private func observeAttempt(_ id: String, image requested: Bool?, elements filter: String, menus: Bool = false, otherWindowFocused: Bool = false) async throws -> [[String: Any]] {
         let current = try current(id)
         session?.observation = nil; session?.records = []; session?.focus = nil
         let frontmost = current.checksFront && !otherWindowFocused
@@ -508,6 +510,13 @@ final class SessionRuntime {
             payload["refs"] = "stable"
             if let focus = observedFocus { payload["focused_ref"] = focus.ref }
             if let issue = state.privacyIssue { payload["privacy_issue"] = issue }
+            if menus {
+                // Read without opening a menu, so the agent can run a command in one step.
+                let catalog = access.menuCatalog(current.app)
+                payload["menus"] = catalog.entries.map(\.display)
+                if catalog.truncated { payload["menus_truncated"] = true }
+                payload["menus_note"] = "Enabled menu-bar commands. Run one with {\"type\":\"menu\",\"path\":[titles]}: no menu needs opening and no keyboard focus is needed."
+            }
         }
         var result: [[String: Any]] = []
         if let sent { result.append(["type": "image", "data": sent.base64EncodedString(), "mimeType": Self.observationMimeType]) }
@@ -554,7 +563,7 @@ final class SessionRuntime {
     }
 
     private func act(id: String, observationID: String, requestID: String, actions: [Action], raw: Any, intent: String? = nil,
-                     fileApproval: [String]? = nil, filePanelAccess: CGWindowID? = nil) async throws -> [[String: Any]] {
+                     fileApproval: [String]? = nil, filePanelAccess: CGWindowID? = nil, pacing: BatchPacing = .fast) async throws -> [[String: Any]] {
         let cached = try current(id, allowPaused: true)
         let fingerprint = try JSONSerialization.data(withJSONObject: ["observation_id": observationID, "action": raw], options: [.sortedKeys])
         if let receipt = cached.receipts[requestID] {
@@ -671,13 +680,17 @@ final class SessionRuntime {
         var primed = false
         var needsObservation = false
         var lastPressed = false
+        // The observed controls, refreshed when pacing confirms one that moved.
+        var records = current.records
         var failure: UseError?
         var uncertain = false
         for (index, action) in actions.enumerated() {
             do {
                 try checkInput()
-                if needsObservation, lastPressed, try await unchangedAfterPress(action, current: current, windowsBefore: windowsBefore, check: check) {
+                if needsObservation, lastPressed,
+                   case .ready(let live) = try await readyAfterPress(action, records: records, current: current, windowsBefore: windowsBefore, pacing: pacing, check: check) {
                     needsObservation = false
+                    if let live, let at = records.firstIndex(where: { $0.ref == live.ref }) { records[at] = live }
                 }
                 guard !needsObservation, !action.usesCoordinates || !progress.hasInput else {
                     throw UseError("observation_required", "The preceding step may have changed the view or focus. Observe before executing the remaining steps.", next: "observe")
@@ -739,7 +752,7 @@ final class SessionRuntime {
                 try observation.validate(id: observationID, generation: current.generation, frame: bounds, now: now)
                 session?.actionCount += 1
                 let path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
-                    access: access, records: current.records, focus: focus, pointerTarget: pointerTarget,
+                    access: access, records: records, focus: focus, pointerTarget: pointerTarget,
                     check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, feedback: { [weak self] feedback in
                         guard let self, self.session?.id == id else { return }
                         self.controls.inputFeedback(feedback)
@@ -747,24 +760,34 @@ final class SessionRuntime {
                 uncertain = path != "waited"
                 try check()
                 progress.dispatched(path: path); uncertain = false
-                controls.showAction(action, records: current.records)
+                let dispatchedAt = now
+                controls.showAction(action, records: records)
+                if case .menu = action, let menu = input.lastMenu { controls.showMenu(titleFrame: menu.titleFrame, path: menu.path, shortcut: menu.shortcut) }
                 switch action {
                 case .click:
                     focus = current.records.first { record in record.textField && pointerTarget.map { CFEqual($0, record.element) } == true }
                     needsObservation = focus == nil
                 case .press(let ref):
-                    focus = current.records.first { $0.ref == ref && $0.textField }
+                    focus = records.first { $0.ref == ref && $0.textField }
                     needsObservation = focus == nil
+                case .menu:
+                    focus = nil; needsObservation = true
                 case .setValue(let ref, _):
                     if focus?.ref != ref { focus = nil }
                 case .move, .scroll, .drag: needsObservation = true
                 case .key: needsObservation = action.endsFocusSequence
                 default: break
                 }
-                if case .press = action { lastPressed = true } else { lastPressed = false }
-                if policy == .embedded, !needsObservation, action.changesWindow, index + 1 < actions.count {
-                    try await Task.sleep(nanoseconds: 50_000_000)
-                    try check()
+                switch action { case .press, .menu: lastPressed = true; default: lastPressed = false }
+                if policy == .embedded, action.changesWindow, index + 1 < actions.count {
+                    if pacing.mode != .fast {
+                        // Let the app finish reacting before the next step looks at it.
+                        _ = try await InputSettle.wait(since: dispatchedAt, lastActivity: { activity?.last ?? 0 }, now: { self.now },
+                            check: check, sleep: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) })
+                    } else if !needsObservation {
+                        try await Task.sleep(nanoseconds: 50_000_000)
+                        try check()
+                    }
                 }
             } catch let interrupted as InputFailure {
                 failure = SharedDesktop.yielding(interrupted.cause); uncertain = interrupted.mayHaveActed
@@ -806,29 +829,46 @@ final class SessionRuntime {
         if session?.id == id { session?.receipts[requestID] = receipt }
         return text(receipt)
     }
-    /// After a press, the batch's next press or set_value still runs when nothing opened
-    /// over the window and its exact control reads back unchanged: the check a fresh
-    /// observation would make, without a model round trip. Anything else needs one.
-    private func unchangedAfterPress(_ action: Action, current: Session, windowsBefore: WindowChanges,
-                                     check: () throws -> Void) async throws -> Bool {
-        guard policy == .embedded else { return false }
-        let ref: String
+    private enum Readiness { case stop, ready(ElementRecord?) }
+    /// After a press or menu command, the batch's next press, set_value or menu command
+    /// still runs when nothing opened over the window and its exact control reads back
+    /// as observed: the check a fresh observation would make, without a model round trip.
+    /// wait_retry also waits for a control that is briefly disabled, moving or gone,
+    /// and returns it as it is now. Anything else needs an observation.
+    private func readyAfterPress(_ action: Action, records: [ElementRecord], current: Session, windowsBefore: WindowChanges,
+                                 pacing: BatchPacing, check: () throws -> Void) async throws -> Readiness {
+        guard policy == .embedded else { return .stop }
+        let observed: ElementRecord?
         switch action {
-        case .press(let value), .setValue(let value, _): ref = value
-        default: return false
+        case .press(let ref), .setValue(let ref, _):
+            guard let record = records.first(where: { $0.ref == ref }) else { return .stop }
+            observed = record
+        case .menu: observed = nil
+        default: return .stop
         }
-        guard let record = current.records.first(where: { $0.ref == ref }) else { return false }
-        try await Task.sleep(nanoseconds: 50_000_000); try check()
-        guard windowsBefore.diff(access.windowChanges(current.app), target: current.target.id) == nil,
-              access.personPrompt() == nil else { return false }
-        if await access.openMenu(of: current.app) != nil { return false }
-        if await access.dialog(over: current.target, app: current.app) != nil { return false }
-        // A read that fails only means the batch stops here and asks for an observation.
-        let live: WindowState
-        do { live = try await access.read(current.target, check: check) }
-        catch is CancellationError { throw CancellationError() }
-        catch { try check(); return false }
-        return live.records.contains { ElementRecord.sameControl($0, record) }
+        // The wait modes already let the app settle after the previous step.
+        if pacing.mode == .fast { try await Task.sleep(nanoseconds: 50_000_000); try check() }
+        let deadline = now + pacing.retry
+        while true {
+            // Nothing waits past a window, dialog, menu or system prompt that opened.
+            guard windowsBefore.diff(access.windowChanges(current.app), target: current.target.id) == nil,
+                  access.personPrompt() == nil else { return .stop }
+            if await access.openMenu(of: current.app) != nil { return .stop }
+            if await access.dialog(over: current.target, app: current.app) != nil { return .stop }
+            guard let observed else { return .ready(nil) }
+            var live: WindowState?
+            do { live = try await access.read(current.target, check: check) }
+            catch is CancellationError { throw CancellationError() }
+            catch { try check() }
+            if let live {
+                if let same = live.records.first(where: { ElementRecord.sameControl($0, observed) }) { return .ready(same.with(ref: observed.ref)) }
+                if pacing.mode == .waitRetry, let moved = live.records.first(where: { ElementRecord.sameControl($0, observed, allowMove: true) }) {
+                    return .ready(moved.with(ref: observed.ref))
+                }
+            }
+            guard pacing.mode == .waitRetry, now < deadline else { return .stop }
+            try await Task.sleep(nanoseconds: 100_000_000); try check()
+        }
     }
     private func next(_ current: Session) -> String {
         current.paused ? "human_takeover" : "observe"

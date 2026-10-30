@@ -18,8 +18,8 @@ export const COMPUTER_PROTOCOL = "openwork.computer-use/1";
 export const COMPUTER_STOP_GUIDANCE = "Computer session revocation could not be confirmed. Use Stop on the agent's pill over the app window or in the OpenWork Computer Use menu before continuing.";
 const ARGUMENTS = Object.freeze({
   computer_open: ["app_id", "pid", "window_id", "mode", "purpose", "screenshot"],
-  computer_observe: ["include_image", "elements"],
-  computer_act: ["observation_id", "action", "actions", "intent", "screenshot"],
+  computer_observe: ["include_image", "elements", "menus"],
+  computer_act: ["observation_id", "action", "actions", "intent", "screenshot", "pacing", "retry_ms"],
   computer_zoom: ["observation_id", "x", "y", "width", "height"],
 });
 const failure = (code, message, extra = {}) => ({ isError: true, content: [{ type: "text", text: JSON.stringify({ ok: false, code, message, ...extra }) }] });
@@ -825,8 +825,10 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
               // One read in this exact tool call, never a repeated input or a
               // continuation across a person takeover. Watch frames are unrelated.
               // Unless the model chose, the computer decides whether an image adds anything.
+              // Opening an app also lists its menu-bar commands, so the agent can run one at once.
               const observation = await current.transport.callTool("computer_observe", { session_id: current.nativeId,
-                ...(call.postImage === undefined ? {} : { include_image: call.postImage }) }, { signal: active });
+                ...(call.postImage === undefined ? {} : { include_image: call.postImage }),
+                ...(name === "computer_open" && platform === "darwin" && current.adapter?.placement === "local" && !call.program ? { menus: true } : {}) }, { signal: active });
               progress(); assertUiActive(current);
               if (!postStillOwned(call)) return postWarning(result, "observation_withheld", "human_takeover");
               const observed = stateOf(observation);

@@ -354,11 +354,14 @@ export async function runComputerProgram(request: ProgramRequest, host: ProgramH
       } while (performance.now() < until)
       return issue("find_field_unavailable", "Command-F was sent but no find field took focus. The app's Find bar may be open; inspect the current view.", true)
     }),
-    menu: add("Activate a pop-up or context menu path inside the window, or successive named browser controls, re-resolving after each transition. Menu-bar menus are outside the window.", z.object({ path: z.array(z.string().min(1).max(200)).min(1).max(6) }).strict(), async ({ path }) => {
+    menu: add("Run a menu-bar command by its titles (such as [\"Format\",\"Font\",\"Bold\"]) without opening the menu, or activate a pop-up or context menu path inside the window, or successive named browser controls.", z.object({ path: z.array(z.string().min(1).max(200)).min(1).max(6) }).strict(), async ({ path }) => {
       for (const [index, name] of path.entries()) {
-        // The menu bar is outside the selected window: say so now instead of waiting it out.
+        // A path that starts outside the window is the app's menu bar: one native step,
+        // no menu to open and nothing to wait for.
         if (index === 0 && request.surface === "computer" && !await find({ name }, false, true)) {
-          return issue("menu_not_in_window", `"${name}" is not a control in the selected window. Menu-bar menus are outside it; use the app's keyboard shortcut or a control in the window.`)
+          if (path.length < 2 || path.length > 4) return issue("menu_not_in_window", `"${name}" is not a control in the selected window. Name a menu-bar command by its menu and title, such as ["Format","Font","Bold"].`)
+          await act({ type: "menu", path })
+          return { activated: path.at(-1) }
         }
         await waitFor({ name }, "enabled", 3000); await click({ name })
       }

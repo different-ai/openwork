@@ -431,9 +431,16 @@ test("after an act the model gets only changed elements, while programs and open
   const openedView = opened.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {}).find((value) => value.observation_id);
   assert.equal(openedView.elements.length, 5);
   assert.equal(seen.find((call) => call.name === "computer_observe")?.args.include_image, false);
+  // Opening an app on this Mac lists its menu-bar commands as quick actions.
+  assert.equal(seen.find((call) => call.name === "computer_observe")?.args.menus, process.platform === "darwin" ? true : undefined);
   assert.equal(Object.hasOwn(seen.find((call) => call.name === "computer_open_session").args, "screenshot"), false);
 
-  const acted = await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", actions: [{ type: "press", ref: "e2" }, { type: "press", ref: "e3" }], screenshot: false } });
+  seen.length = 0;
+  const acted = await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", actions: [{ type: "press", ref: "e2" }, { type: "press", ref: "e3" }], screenshot: false, pacing: "wait_retry", retry_ms: 800 } });
+  const native = seen.find((call) => call.name === "computer_act").args;
+  assert.equal(native.pacing, "wait_retry");
+  assert.equal(native.retry_ms, 800);
+  assert.equal(seen.find((call) => call.name === "computer_observe")?.args.menus, undefined, "menus are listed on open, not after every act");
   const changes = acted.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {}).find((value) => value.observation_id);
   assert.equal(changes.elements_listing, "changes");
   assert.deepEqual(changes.elements, [{ ref: "e1", role: "StaticText", value: "12", x: 160, y: 90, w: 60, h: 36 }]);

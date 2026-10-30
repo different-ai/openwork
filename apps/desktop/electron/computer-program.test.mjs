@@ -166,16 +166,24 @@ test("findText fills the unnamed field that takes focus after Command-F", async 
   ]);
 });
 
-test("a menu-bar path fails at once with a code the program can read", async () => {
+test("a menu-bar path runs as one native menu command without waiting", async () => {
   const f = nativeFixture();
   const started = Date.now();
+  const result = await runComputerProgram({ surface: "computer", code: 'return await tools.ui.menu({path:["Format","Font","Bold"]});' }, f.host, new AbortController().signal);
+  assert.equal(result.ok, true, JSON.stringify(result.error));
+  assert.deepEqual(result.value, { activated: "Bold" });
+  assert.deepEqual(f.actions, [{ type: "menu", path: ["Format", "Font", "Bold"] }]);
+  assert.ok(Date.now() - started < 1000, "the menu bar is not waited out");
+});
+
+test("a single title outside the window fails at once with a code the program can read", async () => {
+  const f = nativeFixture();
   const result = await runComputerProgram({ surface: "computer", code: `
-    try { await tools.ui.menu({path:["Format","Font","Bold"]}); return "ran"; }
+    try { await tools.ui.menu({path:["Format"]}); return "ran"; }
     catch (error) { return error.message; }
   ` }, f.host, new AbortController().signal);
   assert.equal(result.ok, true);
   assert.match(result.value, /^menu_not_in_window: "Format" is not a control in the selected window/);
-  assert.ok(Date.now() - started < 1000, "the menu bar is not waited out");
   assert.deepEqual(f.actions, []);
 });
 
