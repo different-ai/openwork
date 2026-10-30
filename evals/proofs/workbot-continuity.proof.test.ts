@@ -54,6 +54,27 @@ test("a member's newest messages are on their way before the app's script arrive
   });
 });
 
+test("the message box stays where it is when the app takes over from the boot page", async ({ world, user, probe, step, evidence }) => {
+  await user.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
+  for (const [layout, query] of [["workspace", "?chat=sidechat000000001"], ["classic", "?assistant=off"]] as const) {
+    await step(`${layout === "workspace" ? "before" : "after"}: the ${layout} layout's message box doesn't move`, async () => {
+      world.holdScript();
+      await user.navigate(`${world.url}${query}`);
+      await probe.eventually(() => world.pendingScripts(), { within: 5000, label: "the app's script is held", until: count => count > 0 });
+      // The sign-in answer has come back once its conversation read is made, and the boot page has its layout.
+      await probe.eventually(() => world.threadReads().length, { within: 5000, label: "the sign-in answer is in", until: count => count > 0 });
+      const [boot] = (await probe.eventually(() => probe.dom("#workbot-boot form"), { within: 5000, label: "the boot message box", until: layout => layout.elements.length === 1 })).elements;
+      world.releaseScript();
+      const [app] = (await probe.eventually(() => probe.dom("[data-workbot-composer]"), { within: 10_000, label: "the app's message box", until: layout => layout.elements.some(element => element.rect.height > 0) })).elements.filter(element => element.rect.height > 0);
+      await probe.eventually(() => probe.dom("#workbot-boot"), { within: 5000, label: "the boot page is gone", until: layout => layout.elements.length === 0 });
+      const moved = Math.abs((app?.rect.bottom ?? Number.NaN) - (boot?.rect.bottom ?? Number.NaN));
+      expect(moved).toBeLessThanOrEqual(1);
+      evidence.recordAssertionEvidence(`The ${layout} message box keeps its place`, `Boot bottom ${Math.round(boot?.rect.bottom ?? 0)}px, app bottom ${Math.round(app?.rect.bottom ?? 0)}px`, moved <= 1);
+      await user.screenshot();
+    });
+  }
+});
+
 test("a member keeps separate chat drafts and one draft across Home and Documents", async ({ world, user, probe, step, evidence }) => {
   await user.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
   await step("the member leaves a question unsent in a side chat", async () => {

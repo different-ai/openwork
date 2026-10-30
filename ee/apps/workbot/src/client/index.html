@@ -6,6 +6,8 @@
     <meta name="theme-color" content="#fbfcfd" />
     <title>Workbot</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- The layout the boot page draws (workspace or classic), as the last visit had it, before the first paint. -->
+    <script>try { if (localStorage.getItem("workbot.layout") === "workspace") document.documentElement.dataset.workbotLayout = "workspace" } catch (error) {}</script>
     <!-- Ask who is signed in while the app's script downloads; host.ts uses this answer for its first read. -->
     <script>window.__workbotMe = fetch("/v1/workbot/me", { credentials: "same-origin", headers: { accept: "application/json" } }).catch(function () { return null })</script>
     <!-- Then read the newest messages for that person, still before the script arrives. The read names them the way
@@ -15,6 +17,11 @@
       window.__workbotThread = window.__workbotMe.then(function (response) {
         if (!response || !response.ok) return null
         return response.clone().json().then(function (me) {
+          // The sign-in answer says which layout the app will draw (screen.tsx's workspace shell): match it now.
+          var layout = me.workspaceAssistant || me.browserDemonstrations ? "workspace" : "classic"
+          if (layout === "workspace") document.documentElement.dataset.workbotLayout = layout
+          else delete document.documentElement.dataset.workbotLayout
+          try { localStorage.setItem("workbot.layout", layout) } catch (error) {}
           if (!me.enabled || !me.userId || !me.organizationId) return null
           var chat = me.sideChats ? new URLSearchParams(location.search).get("chat") : null
           var path = "/v1/workbot?turns=8" + (chat && /^[a-z0-9]{16,40}$/.test(chat) ? "&chat=" + chat : "")
@@ -49,6 +56,8 @@
         #workbot-boot form { padding: 8px 8px 8px 7px; }
         #workbot-boot textarea { padding: 9px 6px; font-size: 14px; line-height: 18px; }
       }
+      /* The workspace layout keeps the message box closer to the bottom at every width. */
+      [data-workbot-layout="workspace"] #workbot-boot .bar { padding: 12px 12px 16px; }
     </style>
   </head>
   <body>
