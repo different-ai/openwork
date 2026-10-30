@@ -67,7 +67,7 @@ function Label({ children }: { children: ReactNode }) {
 }
 
 function Chord({ children }: { children: ReactNode }) {
-  return <span className="text-xs text-muted-foreground/70">{children}</span>
+  return <span className="text-xs text-muted-foreground">{children}</span>
 }
 
 function typing(event: KeyboardEvent) {
