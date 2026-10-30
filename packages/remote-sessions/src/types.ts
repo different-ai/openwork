@@ -24,6 +24,8 @@ export interface Progress {
   finalText?: string
   error?: SessionError | null
   messageCount?: number
+  /** The step the session ran last, as a short sentence (≤240 chars); omitted by older runners. */
+  latestStep?: string | null
   observedAt: number
 }
 export type Complete =

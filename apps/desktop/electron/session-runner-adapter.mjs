@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { latestStep } from "@openwork/headless-threads"
 import { parseProgress, parseReadResult, SessionRunnerError } from "@openwork/remote-sessions"
 import {
   classifyRemoteSessionCommandError,
@@ -225,6 +226,10 @@ export function createDesktopSessionAdapter(options) {
           error: observation.error ?? null,
           engine: native.engine,
           ...(native.model ? { model: native.model } : {}),
+          // What it ran last, for the chat's row; only while this turn works.
+          latestStep: visible && (observation.status === "running" || observation.status === "waiting")
+            ? latestStep(native.snapshot.messages ?? [])
+            : null,
           observedAt: now(),
         })
       } catch (error) {
