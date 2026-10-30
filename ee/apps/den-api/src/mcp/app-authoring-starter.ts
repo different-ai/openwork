@@ -255,6 +255,24 @@ function dateOf(value) {
   return value && !Number.isNaN(date.getTime()) ? date : null;
 }
 
+// OpenWork's App server runs read-only tools that need no input as the App
+// opens and sends what they returned with the launch, under
+// "openwork/initialResults". One made with exactly these arguments is shown
+// instead of calling again; anything else is called as usual.
+function initialResultFor(result, name, args) {
+  const entries = result?._meta?.["openwork/initialResults"];
+  if (!Array.isArray(entries)) return null;
+  const asked = JSON.stringify(args);
+  return entries.find((entry) => entry?.name === name && JSON.stringify(entry.arguments ?? {}) === asked) ?? null;
+}
+
+// Shows the launch's result for these arguments, or calls the tool for one.
+function loadWith(call, result, name, args) {
+  const loaded = initialResultFor(result, name, args);
+  if (loaded) call.seed(args, loaded);
+  else call.call(args);
+}
+
 // One declared tool, with every state the person can see. Only the latest
 // call updates the view, so a slow earlier answer never replaces a newer one.
 // OpenWork keeps read-only results, so peek shows the last one at once
@@ -315,7 +333,15 @@ function useToolCall(app, name) {
     setState({ status: "ready", value: valueOf(response), updatedAt: dateOf(response?._meta?.["openwork/cachedAt"]) ?? new Date() });
     return true;
   }, [app, name, available]);
-  return { ...state, available, call, peek };
+  // A result that came with the launch answers like a call that just
+  // finished, and wins over any earlier peek or call still running.
+  const seed = React.useCallback((args, loaded) => {
+    latestArgs.current = JSON.stringify(args);
+    ++latest.current;
+    ++latestPeek.current;
+    setState({ status: "ready", value: valueOf(loaded.result), updatedAt: dateOf(loaded.loadedAt) ?? new Date() });
+  }, []);
+  return { ...state, available, call, peek, seed };
 }
 
 function humanize(key) {
@@ -528,7 +554,7 @@ export default function App({ app, input, result, hostContext }) {
   React.useEffect(() => {
     const next = initialValues(LOAD.fields, input);
     setValues(next);
-    if (delivered && isReady(LOAD.fields, next)) load.call(argumentsFor(LOAD, next));
+    if (delivered && isReady(LOAD.fields, next)) loadWith(load, result, LOAD.name, argumentsFor(LOAD, next));
   }, [launch, delivered]);
   // A later launch result is the host refreshing the open App, as a dashboard
   // does: load the same inputs again while the data stays on screen.
@@ -536,7 +562,7 @@ export default function App({ app, input, result, hostContext }) {
   React.useEffect(() => {
     const previous = refreshed.current;
     refreshed.current = result;
-    if (previous !== undefined && previous !== result && isReady(LOAD.fields, values)) load.call(argumentsFor(LOAD, values));
+    if (previous !== undefined && previous !== result && isReady(LOAD.fields, values)) loadWith(load, result, LOAD.name, argumentsFor(LOAD, values));
   }, [result]);
   // The last result for these inputs shows at once, from OpenWork's storage.
   const query = JSON.stringify(values);
@@ -589,7 +615,7 @@ export default function App({ app, input, result, hostContext }) {
     if (LOAD) load.peek(argumentsFor(LOAD, {}));
   }, []);
   React.useEffect(() => {
-    if (LOAD && delivered) load.call(argumentsFor(LOAD, {}));
+    if (LOAD && delivered) loadWith(load, result, LOAD.name, argumentsFor(LOAD, {}));
   }, [delivered]);
   // A later launch result is the host refreshing the open App, as a dashboard
   // does: load again while the data stays on screen.
@@ -597,7 +623,7 @@ export default function App({ app, input, result, hostContext }) {
   React.useEffect(() => {
     const previous = refreshed.current;
     refreshed.current = result;
-    if (LOAD && previous !== undefined && previous !== result) load.call(argumentsFor(LOAD, {}));
+    if (LOAD && previous !== undefined && previous !== result) loadWith(load, result, LOAD.name, argumentsFor(LOAD, {}));
   }, [result]);
   const reload = () => {
     if (LOAD) load.call(argumentsFor(LOAD, {}));
