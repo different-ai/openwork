@@ -90,10 +90,10 @@ function memoryStore() {
   return { slots, store }
 }
 
-async function launch(store: McpAppLaunchDataStore | undefined, timeZone = "UTC") {
+async function launch(store: McpAppLaunchDataStore | undefined, timeZone = "UTC", stillReadOnly: ((tool: McpAppToolBinding) => Promise<boolean>) | null = async () => true) {
   const calls: string[] = []
   const results = await launchInitialResults({
-    tools: TOOLS, scopes: new Set([DEN_MCP_READ_SCOPE]), timeZone, store,
+    tools: TOOLS, scopes: new Set([DEN_MCP_READ_SCOPE]), timeZone, store, stillReadOnly: stillReadOnly ?? undefined,
     callTool: async (tool) => { calls.push(tool.name); return { content: [{ type: "text", text: "ok" }] } },
   })
   return { results, calls }
@@ -109,6 +109,18 @@ test("a member's next open gets what their last open loaded at once, marked kept
   assert.deepEqual(second.results.map((entry) => [entry.name, entry.kept]).sort(), [["broken_read", true], ["count_issues", true], ["load_mrr", true]])
   // Another time zone is another answer, loaded afresh.
   assert.equal((await launch(store, "Asia/Tokyo")).calls.length, 3)
+})
+
+test("kept launch data is used only while every read still passes its checks", async () => {
+  const { slots, store } = memoryStore()
+  await launch(store)
+  // A provider revoked one read: nothing kept is shown, every read runs again through its checks.
+  const revoked = await launch(store, "UTC", async (tool) => tool.name !== "load_mrr")
+  assert.equal(revoked.calls.length, 3)
+  assert.ok(revoked.results.every((entry) => entry.kept === undefined))
+  assert.equal(slots.size, 1)
+  // Without a way to recheck, kept data is never used.
+  assert.equal((await launch(store, "UTC", null)).calls.length, 3)
 })
 
 test("kept launch data that does not parse, or a store that cannot keep it, loads afresh", async () => {

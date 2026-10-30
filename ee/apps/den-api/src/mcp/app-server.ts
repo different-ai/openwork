@@ -40,7 +40,7 @@ import {
 import { executeCapabilityWithBudget } from "./agent.js"
 import { runsWithoutClick } from "./app-tool-access.js"
 import { launchInitialResults, requiredScope, type McpAppLaunchDataStore } from "./app-launch-data.js"
-import { callMcpAppTool } from "./app-tools.js"
+import { callMcpAppTool, mcpAppToolStillReadOnly } from "./app-tools.js"
 import { mcpAuditPrincipal } from "../audit/mcp-service-audit.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
 import { createCapabilityRegistryContext, type ExecuteCapabilityToolResult } from "./capability-registry.js"
@@ -173,6 +173,8 @@ export function createMcpAppServer(input: {
   loadResource: (revision: { appId: string; revisionId: string }) => Promise<McpAppResource>
   callTool: (binding: McpAppToolBinding, args: Record<string, unknown>) => Promise<ExecuteCapabilityToolResult>
   launchData?: McpAppLaunchDataStore
+  /** Rechecks a read-only tool for this caller without running it, before kept data is used. */
+  stillReadOnly?: (binding: McpAppToolBinding) => Promise<boolean>
 }) {
   const { app, tools } = input.definition
   const server = new McpServer({ name: app.title, version: "1.0.0" }, {
@@ -196,7 +198,7 @@ export function createMcpAppServer(input: {
       // without any gets reads made ahead of it. They stay out of the model's
       // view in _meta, which hosts pass to the App with the result.
       const initialResults = input.definition.loadsWithLaunch && Object.keys(launchInput).length === 0
-        ? await launchInitialResults({ tools, scopes: input.scopes, timeZone: typeof args.timeZone === "string" ? args.timeZone : undefined, callTool: input.callTool, store: input.launchData })
+        ? await launchInitialResults({ tools, scopes: input.scopes, timeZone: typeof args.timeZone === "string" ? args.timeZone : undefined, callTool: input.callTool, store: input.launchData, stillReadOnly: input.stillReadOnly })
         : []
       return {
         content: [{ type: "text", text: app.textFallback }],
@@ -301,6 +303,7 @@ async function handleMcpAppServerRequestUntimed(input: {
       capability: binding.capability,
       invoke: () => callMcpAppTool(capabilityContext, binding, args),
     }),
+    stillReadOnly: (binding) => mcpAppToolStillReadOnly(capabilityContext, binding),
     launchData: {
       // Kept only at the organization's current inventory revision, which moves
       // after any write that can change what this member may use: connections,

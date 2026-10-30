@@ -287,3 +287,25 @@ export async function callMcpAppTool(
   }
   return withoutAgentServerMeta(result)
 }
+
+/**
+ * Whether a read-only App tool would still run for this caller now, checked
+ * the way a call checks it but without running it: a live Workflow's access
+ * and every tool it reaches, or a connection tool's current listing with the
+ * caller's own credential. A read that goes through a provider without such
+ * a check (a native provider route) is never answered from kept data.
+ */
+export async function mcpAppToolStillReadOnly(ctx: CapabilityRegistryContext, binding: McpAppToolBinding): Promise<boolean> {
+  if (!binding.readOnly) return false
+  const parsed = parseCapability(binding.capability)
+  if (binding.kind === "workflow" && binding.mode === "live") {
+    if (parsed?.kind !== "marketplace" || !ctx.member) return false
+    const [workflow] = await listAccessibleWorkflows({ member: ctx.member, organizationId: ctx.organizationId, configObjectIds: new Set([parsed.configObjectId]) })
+    if (!workflow) return false
+    const access = bindingAccess(await workflowAccesses(ctx, workflow.requiredCapabilities), binding.loadOnOpen)
+    return !("refused" in access) && access.readOnly
+  }
+  if (binding.kind === "api") return parsed?.kind === "catalog" && isDenRead(ctx, parsed)
+  if (binding.kind === "mcp") return parsed?.kind === "externalMcp" && await capabilityAccess(ctx, binding.capability) === "read"
+  return false
+}
