@@ -35,6 +35,7 @@ import {
   memberPolicy,
   parseStoredPreferences,
   savedReply,
+  sourceConnectionNames,
   usesAgentLibrary,
 } from "../../workbot-proactive/preferences.js"
 import {
@@ -46,8 +47,8 @@ import {
   saveMemberChoices,
   type AgentInstanceRow,
 } from "../../workbot-proactive/repository.js"
-import { resolveMemberSources, type ResolvedSource } from "../../workbot-proactive/sources.js"
-import { listMemberConnections } from "../../workbot-proactive/sources-repository.js"
+import { resolveMemberSources, type MemberConnection, type ResolvedSource } from "../../workbot-proactive/sources.js"
+import { countConnectedMembers, listMemberConnections } from "../../workbot-proactive/sources-repository.js"
 import { readAgentTemplate } from "../../workbot-proactive/template.js"
 import { workbotOrigin } from "../../workbot/config.js"
 
@@ -134,12 +135,14 @@ async function memberAgentView(input: {
     sentToday,
     preferences: stored.words,
     limits: memberLimits(settings, row?.overrides),
-    changes: memberAgentChanges(stored, settings, new Map(sources.map((source) => [source.id, source.name]))),
+    changes: memberAgentChanges(stored, settings, new Map(sources.map((source) => [source.id, source.name])), undefined, sourceConnectionNames(sources)),
     sources: sources.map((source) => ({
       id: source.id,
       kind: source.kind,
       name: source.name,
-      connections: source.connections.map((connection) => ({ id: connection.id, name: connection.name, url: connection.url, state: connection.state })),
+      connections: source.connections.map(memberConnectionView),
+      options: source.options.map(memberConnectionView),
+      chosenBy: source.chosenBy,
       policy: source.policy,
       on: source.on,
       instruction: source.instruction,
@@ -149,14 +152,25 @@ async function memberAgentView(input: {
   }
 }
 
-/** The member's sources as their agent sees them: the admin's policy, their choices and their connections. */
+function memberConnectionView(connection: MemberConnection) {
+  return { id: connection.id, name: connection.name, url: connection.url, state: connection.state }
+}
+
+/**
+ * The member's sources as their agent sees them: the admin's policy, their choices, their connections, and how many
+ * members connected each (for a core source's automatic default).
+ */
 async function memberSources(input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; settings: WorkbotProactiveSettings; row: ViewRow }): Promise<ResolvedSource[]> {
-  const connections = await listMemberConnections({ organizationId: input.organizationId, memberId: input.memberId })
+  const [connections, connectedMembers] = await Promise.all([
+    listMemberConnections({ organizationId: input.organizationId, memberId: input.memberId }),
+    countConnectedMembers(input.organizationId),
+  ])
   return resolveMemberSources({
     connections,
     policy: input.settings.sources,
     choices: parseStoredPreferences(input.row?.preferences).sources,
     lastLook: parseAgentState(input.row?.state).lastLook,
+    connectedMembers,
   })
 }
 
@@ -182,7 +196,7 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
       tags: ["Users"],
       summary: "Get my agent",
       description:
-        "The signed-in member's own agent in the active organization: whether it is on for them, what it will tell them about (each responsibility, whether the organization turned it on and whether they muted it), where its messages go (a DM from the Workbot Slack app) and whether they can arrive yet (the Slack app installed, their Slack account linked), the working hours and daily limit it follows, and when it looks next. With My agent on (workbotAgentLibrary) it also says what it did: `lastCheck` and `todayChecks` (each with an outcome sent, quiet, waited or failed, and a `summary` sentence that says why, for example \"Stayed quiet: nothing new.\" or \"Couldn't read Gmail: reconnect Google.\"), `sentToday` against `limits.dailyCap`, the member's own words (`preferences`: always, never, when, how), their narrower `limits` inside the admin's, their recent `changes`, and `sources`: what the agent reads (calendar, email, team chat and each other connection), each with the admin's `policy` (`everyone` = on for everyone, `members` = the member chooses, `off` = not allowed), whether it is `on`, the member's `instruction` for it, when it was last read, and whether the member's account on each connection is ready (`connected`, `needs_connection`, `reconnect`). Answer \"why was it quiet?\" from these records, never by guessing. Requires the workbotProactive feature and Workbot on this deployment.",
+        "The signed-in member's own agent in the active organization: whether it is on for them, what it will tell them about (each responsibility, whether the organization turned it on and whether they muted it), where its messages go (a DM from the Workbot Slack app) and whether they can arrive yet (the Slack app installed, their Slack account linked), the working hours and daily limit it follows, and when it looks next. With My agent on (workbotAgentLibrary) it also says what it did: `lastCheck` and `todayChecks` (each with an outcome sent, quiet, waited or failed, and a `summary` sentence that says why, for example \"Stayed quiet: nothing new.\" or \"Couldn't read Gmail: reconnect Google.\"), `sentToday` against `limits.dailyCap`, the member's own words (`preferences`: always, never, when, how), their narrower `limits` inside the admin's, their recent `changes`, and `sources`: what the agent reads (calendar, email, team chat and each other connection), each with the admin's `policy` (`everyone` = on for everyone, `members` = the member chooses, `off` = not allowed), whether it is `on`, the member's `instruction` for it, when it was last read, and whether the member's account on each connection is ready (`connected`, `needs_connection`, `reconnect`). Calendar, email and team chat each read exactly one connection: `connections` holds that one (none when nothing allowed is usable), `options` lists the allowed connections the member can pick from, and `chosenBy` says who picked it (`member`, `admin` = the organization's default, `auto` = the default most members use or the first allowed one the member already connected); other sources have empty `options` and null `chosenBy`. Answer \"why was it quiet?\" from these records, never by guessing. Requires the workbotProactive feature and Workbot on this deployment.",
       responses: {
         200: jsonResponse("The member's agent.", memberAgentDocumentSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -235,7 +249,7 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
       tags: ["Users"],
       summary: "Change my agent",
       description:
-        "Changes the signed-in member's own agent, as they would say it: turn it on or off (`on`), snooze it until the next working morning or resume (`snooze: \"tomorrow\"` or null), stop or restart one kind of message (`mute` / `unmute`: morning_brief, meeting_prep, calendar_changes, waiting_on_you). With My agent on (workbotAgentLibrary) also: what they want in their own words (`preferences.always`, `.never`, `.when`, `.how`; plain text, an empty string clears one), narrower working hours (`hours: {startHour, endHour}`, null for the admin's), a lower daily limit (`dailyCap`, null for the admin's), hours inside the day when only urgent messages go out (`quietWindow: {startHour, endHour}`, null removes it), `sources`: what the agent reads, by source id or name, each with `on` and/or an `instruction` in the member's words (for \"also look at my Granola for context, especially action items after meetings, and skip Linear\" send [{source: \"Granola\", on: true, instruction: \"Use for meeting context and action items after meetings.\"}, {source: \"Linear\", on: false}]); and `undo`: \"last\" reverts the member's last save, a change id reverts one change (send undo on its own). A source the admin didn't allow answers 400 source_not_allowed, one that is on for everyone can't be turned off (400 source_locked), each with a message that says who can change it; a source the member hasn't connected is saved and `saved.connect` names where to connect it. For \"between 12 and 2 only urgent stuff, stop telling me about calendar changes\" send preferences.when, quietWindow 12–14 and mute calendar_changes in one call. A member can only narrow the admin's limits: wider hours or a higher limit answer 400 limit_wider_than_admin with a message to relay. The response's `saved.reply` says exactly what was saved, \"Reply \\\"undo\\\" to revert.\" and the link to My agent: reply with it as is, in plain text. Organization settings and limits still apply. Requires the workbotProactive feature and Workbot on this deployment.",
+        "Changes the signed-in member's own agent, as they would say it: turn it on or off (`on`), snooze it until the next working morning or resume (`snooze: \"tomorrow\"` or null), stop or restart one kind of message (`mute` / `unmute`: morning_brief, meeting_prep, calendar_changes, waiting_on_you). With My agent on (workbotAgentLibrary) also: what they want in their own words (`preferences.always`, `.never`, `.when`, `.how`; plain text, an empty string clears one), narrower working hours (`hours: {startHour, endHour}`, null for the admin's), a lower daily limit (`dailyCap`, null for the admin's), hours inside the day when only urgent messages go out (`quietWindow: {startHour, endHour}`, null removes it), `sources`: what the agent reads, by source id or name, each with `on` and/or an `instruction` in the member's words (for \"also look at my Granola for context, especially action items after meetings, and skip Linear\" send [{source: \"Granola\", on: true, instruction: \"Use for meeting context and action items after meetings.\"}, {source: \"Linear\", on: false}]; for calendar, email or team chat also `connectionId`, one of that source's `options` ids from GET, for \"read my calendar from my Microsoft 365\" send [{source: \"calendar\", connectionId: \"<id>\"}]); and `undo`: \"last\" reverts the member's last save, a change id reverts one change (send undo on its own). A source the admin didn't allow answers 400 source_not_allowed, one that is on for everyone can't be turned off (400 source_locked), a `connectionId` that isn't one of the source's allowed options (or on a source other than calendar, email or team chat) answers 400 connection_not_allowed, each with a message that says who can change it; a source the member hasn't connected is saved and `saved.connect` names where to connect it. For \"between 12 and 2 only urgent stuff, stop telling me about calendar changes\" send preferences.when, quietWindow 12–14 and mute calendar_changes in one call. A member can only narrow the admin's limits: wider hours or a higher limit answer 400 limit_wider_than_admin with a message to relay. The response's `saved.reply` says exactly what was saved, \"Reply \\\"undo\\\" to revert.\" and the link to My agent: reply with it as is, in plain text. Organization settings and limits still apply. Requires the workbotProactive feature and Workbot on this deployment.",
       responses: {
         200: jsonResponse("The member's agent after the change.", memberAgentSavedDocumentSchema),
         400: jsonResponse("The request was invalid, or asked for more than the admin allows.", changeRefusedSchema),

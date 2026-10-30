@@ -22,7 +22,7 @@ import {
   toldAgentItems,
   type AgentInstanceRow,
 } from "./repository.js"
-import { listMemberConnections } from "./sources-repository.js"
+import { countConnectedMembers, listMemberConnections } from "./sources-repository.js"
 import { readAgentTemplate } from "./template.js"
 import { agentMessageId, agentSessionId, defaultAgentTurnDeps, runAgentTurn } from "./turn.js"
 import { wakeAgent, type AgentWakeDeps, type AgentWakeOutcome } from "./wake.js"
@@ -63,6 +63,7 @@ export function defaultAgentWakeDeps(): AgentWakeDeps {
     library: (organizationId, userId) => organizationFeatureEnabled(organizationId, "workbotAgentLibrary", { userId }),
     recordCheck: recordMemberCheck,
     connections: listMemberConnections,
+    connectedMembers: countConnectedMembers,
     connectLink: libraryConnectorLink,
   }
 }

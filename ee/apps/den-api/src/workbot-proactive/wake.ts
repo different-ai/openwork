@@ -68,6 +68,11 @@ export type AgentWakeDeps = {
   turn: (input: { actor: { userId: string; organizationId: string }; sessionId: string; instructions: string; model: string; prompt: string; messageId: string; scopes: readonly string[] }) => Promise<AgentTurnResult>
   /** The member's usable connections and whether their account on each is ready. */
   connections: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member"> }) => Promise<MemberConnection[]>
+  /**
+   * How many members connected their own account on each connection, by id: picks a core source's automatic default.
+   * Without it (or when it can't be read) the default is the first allowed connection.
+   */
+  connectedMembers?: (organizationId: DenTypeId<"organization">) => Promise<ReadonlyMap<string, number>>
   /** Where the member connects or reconnects a connection. */
   connectLink: (connectionId: string) => string
   sessionId: (organizationId: string, memberId: string) => string
@@ -177,10 +182,13 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
   // member's sources below decide what the agent reads and what they are told to fix.
   const stored = parseStoredPreferences(row.preferences)
   const choices = library ? stored.sources : {}
-  // The member's sources first: the calendar is read through the connections its source uses (the admin's picks),
-  // never a default another of the member's accounts could stand in for.
-  const listed = await deps.connections({ organizationId, memberId }).catch(() => null)
-  let sources = resolveMemberSources({ connections: listed ?? [], policy: settings.sources, choices, lastLook: state.lastLook })
+  // The member's sources first: the calendar is read through the one connection its source reads for them (their
+  // pick among the admin's allowed ones, else the default), never another of their accounts.
+  const [listed, connectedMembers] = await Promise.all([
+    deps.connections({ organizationId, memberId }).catch(() => null),
+    deps.connectedMembers ? deps.connectedMembers(organizationId).catch(() => undefined) : Promise.resolve(undefined),
+  ])
+  let sources = resolveMemberSources({ connections: listed ?? [], policy: settings.sources, choices, lastLook: state.lastLook, connectedMembers })
   let read: MemberCalendarRead | null = null
   const calendarSource = sources.find((source) => source.id === "calendar")
   const calendarConnections = calendarSource ? readableConnections(calendarSource).filter((connection) => connection.native === "google-workspace") : []
