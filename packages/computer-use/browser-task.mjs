@@ -101,8 +101,10 @@ function observePage(id, options = {}) {
   const entered = globalThis.__openworkAgentEntered ??= new WeakMap();
   const autocomplete = element => (element.getAttribute("autocomplete") || "").toLowerCase().split(/\s+/);
   const isPayment = element => autocomplete(element).some(token => token.startsWith("cc-"));
+  const isCredential = element => element.matches('input[type="password"]')
+    || autocomplete(element).some(token => ["current-password", "new-password", "one-time-code"].includes(token));
   // Passwords, one-time codes and card fields are never read back, even after the agent fills them.
-  const isSensitive = element => element.matches('input[type="password"]') || isPayment(element) || autocomplete(element).includes("one-time-code");
+  const isSensitive = element => isCredential(element) || isPayment(element);
   const isTextValue = element => element instanceof HTMLTextAreaElement ||
     element instanceof HTMLInputElement && !["button", "submit", "reset", "checkbox", "radio", "hidden", "file", "range", "color"].includes(element.type) ||
     element.isContentEditable || ["textbox", "combobox"].includes(element.getAttribute("role"));
@@ -294,12 +296,13 @@ function observePage(id, options = {}) {
     registry.last = { mode, items: current };
   }
   const focused = registry.byElement.get(document.activeElement);
-  // Browsers mask passwords on screen; a card field or a filled one-time code shows in an image.
+  // A card field shows its digits in an image. A filled password or code may too: a code
+  // field is not masked, and page script can copy what was typed into visible text.
   const onScreen = (element) => { const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; };
   const payment = [...candidates].some((element) => element instanceof HTMLElement && isPayment(element) && onScreen(element));
-  const code = [...candidates].some((element) => element instanceof HTMLElement && autocomplete(element).includes("one-time-code")
+  const secret = [...candidates].some((element) => element instanceof HTMLElement && isCredential(element)
     && Boolean(element instanceof HTMLInputElement ? element.value : element.textContent) && onScreen(element));
-  const page = { viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, hasPaymentField: payment, hasFilledCode: code };
+  const page = { viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, hasPaymentField: payment, hasFilledSecret: secret };
   if (!interactive) {
     return { truncated, scrollRegions, title: text(document.title, 300), ...(includeText ? { text: text(document.body?.innerText, 16000) } : {}), elements,
       ...page, ...(diff ? { diff } : {}), ...(focused ? { focused } : {}),
@@ -402,8 +405,8 @@ function credentialRefs(id, refs) {
   if (!registry?.observations.get(id)) throw new Error("stale_observation");
   return refs.filter((ref) => {
     const element = registry.byRef.get(ref)?.deref();
-    return element?.isConnected && (element.matches('input[type="password"]')
-      || (element.getAttribute("autocomplete") || "").toLowerCase().split(/\s+/).includes("one-time-code"));
+    return element?.isConnected && (element.matches('input[type="password"]') || (element.getAttribute("autocomplete") || "").toLowerCase()
+      .split(/\s+/).some((token) => ["current-password", "new-password", "one-time-code"].includes(token)));
   });
 }
 function applyFormAction(action) {
@@ -732,7 +735,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     let image, digest;
     if (includeImage) {
       if (page.hasPaymentField) fail("payment_required", "This page shows payment card fields. Take over and complete them directly in the browser, then resume.");
-      if (page.hasFilledCode) fail("code_on_screen", "A filled one-time code is on screen, so no image was taken. Submit it, or observe without an image.");
+      if (page.hasFilledSecret) fail("secret_on_screen", "A filled password or code is on screen, so no image was taken. Submit it, or observe without an image.");
       const png = await captureObservation(tab.view.webContents, page.viewport, (viewport) => capture(tab, viewport));
       digest = imageDigest(png);
       image = { mimeType: "image/png", data: png.toString("base64"), width: page.viewport.width, height: page.viewport.height };
@@ -746,10 +749,10 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     state.observations.set(id, record); state.latest = record;
     for (const old of state.observations.keys()) { if (state.observations.size <= 20) break; state.observations.delete(old); }
     if (mode === "interactive") {
-      const { hasPaymentField, hasFilledCode: _code, viewport: _viewport, scroll: _scroll, ...compact } = page;
+      const { hasPaymentField, hasFilledSecret: _secret, viewport: _viewport, scroll: _scroll, ...compact } = page;
       return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...compact, ...(hasPaymentField ? { payment: "take_over" } : {}), ...(image ? { image } : {}) };
     }
-    const { hasFilledCode: _code, ...full } = page;
+    const { hasFilledSecret: _secret, ...full } = page;
     return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...full, ...(image ? { image } : {}) };
   }
   /** Bounded wait after input: navigation, in-flight requests and DOM structure. */

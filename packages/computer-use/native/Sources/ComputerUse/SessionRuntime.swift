@@ -157,7 +157,7 @@ final class SessionRuntime {
             return try await observe(try a.string("session_id"), image: options.image, elements: options.elements,
                 filePanelAccess: policy == .embedded ? (values["file_panel_access"] as? NSNumber)?.uint32Value : nil)
         case "computer_act":
-            try a.only(policy == .embedded ? ["session_id", "observation_id", "request_id", "action", "actions", "intent", "file_approval", "file_panel_access"] : ["session_id", "observation_id", "request_id", "action"])
+            try a.only(policy == .embedded ? ["session_id", "observation_id", "request_id", "action", "actions", "intent", "file_approval", "file_panel_access", "credential_approval"] : ["session_id", "observation_id", "request_id", "action"])
             let id = try a.string("session_id")
             let observationID = try a.string("observation_id")
             let requestID = try a.string("request_id", max: 100)
@@ -170,8 +170,10 @@ final class SessionRuntime {
             let fileApproval = policy == .embedded ? values["file_approval"] as? [String] : nil
             // The panel the person allowed, by its window: never whichever panel is open now.
             let panelAccess = policy == .embedded ? (values["file_panel_access"] as? NSNumber)?.uint32Value : nil
+            // The app the person confirmed may receive a password or code they gave.
+            let credentialApproval = policy == .embedded ? values["credential_approval"] as? String : nil
             return try await act(id: id, observationID: observationID, requestID: requestID, actions: actions, raw: raw, intent: intent,
-                fileApproval: fileApproval, filePanelAccess: panelAccess)
+                fileApproval: fileApproval, filePanelAccess: panelAccess, credentialApproval: credentialApproval)
         case "computer_zoom" where policy == .embedded:
             try a.only(["session_id", "observation_id", "x", "y", "width", "height"])
             return try await zoom(try a.string("session_id"), observationID: try a.string("observation_id"),
@@ -515,7 +517,7 @@ final class SessionRuntime {
     }
 
     private func act(id: String, observationID: String, requestID: String, actions: [Action], raw: Any, intent: String? = nil,
-                     fileApproval: [String]? = nil, filePanelAccess: CGWindowID? = nil) async throws -> [[String: Any]] {
+                     fileApproval: [String]? = nil, filePanelAccess: CGWindowID? = nil, credentialApproval: String? = nil) async throws -> [[String: Any]] {
         let cached = try current(id, allowPaused: true)
         let fingerprint = try JSONSerialization.data(withJSONObject: ["observation_id": observationID, "action": raw], options: [.sortedKeys])
         if let receipt = cached.receipts[requestID] {
@@ -574,6 +576,14 @@ final class SessionRuntime {
         try observation.validate(id: observationID, generation: current.generation, frame: bounds, now: now)
         if actions.contains(where: \.usesCoordinates), observation.imageDigest == nil {
             throw UseError("image_required", "Coordinates require an observation with an image. Use accessible refs, or observe with include_image true.", next: "observe")
+        }
+        // Text typed while a secure field is on screen can land in it: the person confirms
+        // this exact app before a password or code they gave reaches it. Nothing is sent first.
+        if current.records.contains(where: \.protected), actions.contains(where: \.entersText),
+           credentialApproval != current.app.bundleID {
+            return text(["ok": false, "code": "credential_approval_required", "app": current.app.app.localizedName ?? current.app.bundleID,
+                "app_id": current.app.bundleID, "dispatched": false, "next": "observe",
+                "message": "This window has a password field. The person confirms this app before anything is typed; nothing was sent."])
         }
         // Confirming a file panel hands the chosen files to the app, which can upload them:
         // the person approves first. Nothing is sent and the observation stays valid.

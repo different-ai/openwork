@@ -117,12 +117,19 @@ test("a given password is filled only on the site the person confirms, and never
   const after = await observe();
   assert.equal(after.elements[0].filled, true);
   assert.ok(!JSON.stringify(after).includes(given));
+  // Page script can copy a typed password into visible text, so no image while one is filled.
+  assert.equal((await observe(host, { includeImage: true })).code, "secret_on_screen");
+  // A text field the page marks as a password is a credential field too.
+  field.type = "text"; field.value = ""; field.attributes.autocomplete = "current-password";
+  confirm = false;
+  assert.equal((await fill(host, given)).code, "credential_declined");
+  assert.equal(field.value, "");
   // A one-time code shows in an image once filled; an empty code field does not.
-  field.type = "text"; field.value = ""; field.attributes.autocomplete = "one-time-code";
+  field.attributes.autocomplete = "one-time-code";
   assert.equal((await observe(host, { includeImage: true })).ok, true);
   field.value = "123456";
   const code = await observe(host, { includeImage: true });
-  assert.equal(code.code, "code_on_screen");
+  assert.equal(code.code, "secret_on_screen");
   assert.ok(!JSON.stringify(code).includes("123456"));
 });
 

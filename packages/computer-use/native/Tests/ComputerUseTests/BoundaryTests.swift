@@ -80,6 +80,11 @@ final class BoundaryTests: XCTestCase {
         let masked = ElementRecord(ref: "e2", element: AXUIElementCreateApplication(getpid()), role: "AXGroup",
             label: "Protected", value: nil, frame: frame, actions: [], settable: false, enabled: true, protected: true)
         XCTAssertFalse(masked.textField, "Other protected content still never takes input")
+        // Only text entry waits for the person to confirm the app while a secure field is on screen.
+        XCTAssertTrue(try Action(["type": "type", "text": "given-password"]).entersText)
+        XCTAssertTrue(try Action(["type": "set_value", "ref": "e1", "text": "given-password"]).entersText)
+        XCTAssertFalse(try Action(["type": "click", "x": 1, "y": 1]).entersText)
+        XCTAssertFalse(try Action(["type": "key", "key": "enter"]).entersText)
     }
 
     func testMalformedInputNeverBecomesAnAction() throws {

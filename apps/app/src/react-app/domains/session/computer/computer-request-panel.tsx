@@ -147,8 +147,8 @@ function FilesRequest({ sessionId, request, files }: { sessionId: string; reques
 }
 
 /**
- * The built-in browser is about to type a password or one-time code on this exact
- * site. Nothing is typed until the person confirms it; another site asks again.
+ * A password or one-time code is about to be typed on this exact site, or into this
+ * app. Nothing is typed until the person confirms it; any other recipient asks again.
  */
 function CredentialRequest({ sessionId, request, credential }: { sessionId: string; request: ComputerRequest; credential: NonNullable<ComputerRequest["credential"]> }) {
   const [busy, setBusy] = useState<"allow" | "always" | "dismiss" | null>(null)
@@ -167,7 +167,8 @@ function CredentialRequest({ sessionId, request, credential }: { sessionId: stri
     }
   }
 
-  const site = credential.site.replace(/^https:\/\//, "")
+  const site = credential.site?.replace(/^https:\/\//, "")
+  const recipient = site ?? credential.app ?? "this app"
   return (
     <div className="overflow-hidden border-b border-dls-border bg-transparent" data-testid="session-computer-request" data-reason="credential">
       <div className="flex flex-col gap-3 px-4 py-3">
@@ -176,14 +177,16 @@ function CredentialRequest({ sessionId, request, credential }: { sessionId: stri
             <Monitor size={16} strokeWidth={1.9} />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-[13px] font-medium leading-5 text-dls-text">Enter your password or code on <span dir="ltr" className="break-all font-mono" data-testid="session-computer-credential-site">{site}</span>?</div>
-            <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">The agent types what you gave it into this site's sign-in field. Check the address is the site you meant; any other site asks again.</div>
+            <div className="text-[13px] font-medium leading-5 text-dls-text">Enter your password or code {site ? "on" : "in"} <span dir="ltr" className="break-all font-mono" data-testid="session-computer-credential-site">{recipient}</span>?</div>
+            <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{site
+              ? "The agent types what you gave it into this site's sign-in field. Check the address is the site you meant; any other site asks again."
+              : `The agent types what you gave it into this app on ${request.computer}. Any other app asks again.`}</div>
             {error ? <div role="alert" className="mt-1 text-[12px] leading-5 text-red-11">{error}</div> : null}
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button type="button" variant="ghost" size="sm" disabled={busy !== null} aria-busy={busy === "dismiss"} data-testid="session-computer-credential-dismiss" onClick={() => void answer("dismiss")}>Don't enter</Button>
-          <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-credential-always" onClick={() => void answer("always")}>Always for this site in this chat</Button>
+          <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-credential-always" onClick={() => void answer("always")}>Always for this {site ? "site" : "app"} in this chat</Button>
           <Button type="button" size="sm" disabled={busy !== null} aria-busy={busy === "allow"} data-testid="session-computer-credential-allow" onClick={() => void answer("allow")}>Enter</Button>
         </div>
       </div>

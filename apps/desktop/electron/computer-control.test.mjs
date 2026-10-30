@@ -845,6 +845,58 @@ test("the browser types a password only on a site the person confirmed, with com
   assert.equal(await other, false);
 });
 
+function credentialFixture() {
+  const seen = [];
+  const f = fixture({ seen, toolResult: (name) => {
+    if (name !== "computer_act") return undefined;
+    // Like the Mac helper with a secure field in the window: nothing is typed until the host sends the approved app.
+    return seen.at(-1).args.credential_approval === "com.example.editor" ? text({ ok: true, status: "dispatched" })
+      : text({ ok: false, code: "credential_approval_required", app: "Editor", app_id: "com.example.editor", dispatched: false, next: "observe" });
+  } });
+  const acts = () => seen.filter((call) => call.name === "computer_act").map((call) => call.args);
+  const cards = () => f.requests.filter((request) => request?.reason === "credential");
+  const answer = async (app, reply) => {
+    const before = cards().length;
+    for (let waited = 0; cards().length === before && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(cards().at(-1).credential, { app });
+    await f.control.answerRequest({ sessionId: "chat", answer: reply, id: cards().at(-1).id });
+  };
+  return { ...f, acts, cards, answer };
+}
+const typeInto = (control, action) => control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action } });
+
+test("typing next to a password field waits for the person to confirm the app", async (t) => {
+  const f = credentialFixture(); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "com.example.editor", mode: "control", purpose: "Sign in" } });
+  const declined = typeInto(f.control, { type: "type", text: "given-password" });
+  await f.answer("Editor", "dismiss");
+  assert.equal(payload(await declined).code, "credential_declined");
+  assert.equal(f.acts().length, 1, "Nothing is sent again without the person's yes");
+  const allowed = typeInto(f.control, { type: "type", text: "given-password" });
+  await f.answer("Editor", "allow");
+  assert.equal(payload(await allowed).status, "dispatched");
+  assert.equal(f.acts().at(-1).credential_approval, "com.example.editor");
+});
+
+test("text marked secret goes only to an app the person confirmed, where no field can be detected", async (t) => {
+  const f = credentialFixture(); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "com.example.editor", mode: "control", purpose: "Sign in" } });
+  const declined = typeInto(f.control, { type: "type", text: "given-password", secret: true });
+  await f.answer("com.example.editor", "dismiss");
+  assert.equal(payload(await declined).code, "credential_declined");
+  assert.equal(f.acts().length, 0, "A declined secret never reaches the computer");
+  const allowed = typeInto(f.control, { type: "type", text: "given-password", secret: true });
+  await f.answer("com.example.editor", "always");
+  assert.equal(payload(await allowed).status, "dispatched");
+  // One question covered both the mark and the helper's own check, and the mark never reaches it.
+  assert.equal(f.cards().length, 2);
+  assert.ok(f.acts().every((args) => !("secret" in args.action)));
+  assert.equal(payload(await typeInto(f.control, { type: "type", text: "given-password", secret: true })).status, "dispatched");
+  assert.equal(f.cards().length, 2, "Always covers this app in this chat");
+});
+
 test("allowing a file panel to be browsed never becomes a standing approval", async (t) => {
   const f = filePanelFixture({ browsing: true }); t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);

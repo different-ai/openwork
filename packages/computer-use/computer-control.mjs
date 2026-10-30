@@ -80,7 +80,7 @@ function deadline(ms) {
  * @typedef {{ isError?: boolean, content: Array<{ type: string, text?: string, data?: string, mimeType?: string }> }} ComputerResult
  * @typedef {{ sessionId?: string }} ChatInput
  * @typedef {{ ok?: boolean, error?: { code: string, message: string }, mayHaveActed?: boolean, [key: string]: unknown }} ScriptResult
- * @typedef {{ id: string, reason: "setup" | "script" | "files" | "credential", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, script?: { app: string, code: string }, files?: { app: string, names: string[] }, credential?: { site: string } }} ComputerRequest
+ * @typedef {{ id: string, reason: "setup" | "script" | "files" | "credential", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, script?: { app: string, code: string }, files?: { app: string, names: string[] }, credential?: { site?: string, app?: string } }} ComputerRequest
  * @typedef {{ targets?: Record<string, string>, computer?: string }} SavedChoices
  * @typedef {{
  *   callTool: (name: string, args: Record<string, unknown>, options?: { signal?: AbortSignal, timeoutMs?: number }) => Promise<ComputerResult>,
@@ -260,19 +260,24 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     return answer;
   }
   /**
-   * The built-in browser is about to type a password or one-time code into a page:
-   * the person confirms the exact site, so a credential given for one site never
-   * reaches another (a redirect or a lookalike) without their yes.
+   * A password or one-time code is about to be typed: into a page of the built-in
+   * browser (`site`, an exact origin) or into a native app (`app`, its id). The person
+   * confirms that recipient, so a credential given for one never reaches another
+   * (a redirect, a lookalike, a window the agent was steered to) without their yes.
+   * @param {{ site?: string, app?: string, label?: string }} recipient
    * @returns {Promise<"allow" | "always" | "dismiss" | "aborted" | "timeout" | "busy" | "too_many">}
    */
-  async function approveCredential(grant, site, signal) {
-    if (!site || site.length > 200) return "too_many";
-    if (grant.credentialsAlwaysFor?.has(site)) return "always";
+  async function approveCredential(grant, recipient, signal) {
+    const { site, app, label } = recipient;
+    const shown = site ?? label ?? app;
+    if (!(site || app) || !shown || shown.length > 200) return "too_many";
+    const key = site ? `site:${site}` : `app:${app}`;
+    if (grant.credentialsAlwaysFor?.has(key)) return "always";
     if (scriptRequests.has(grant.sessionId)) return "busy";
     const target = targetFor(grant);
     const answer = await approve(grant, { id: randomUUID(), reason: /** @type {const} */ ("credential"), computer: target.label, placement: target.placement,
-      credential: { site } }, signal);
-    if (answer === "always") (grant.credentialsAlwaysFor ??= new Set()).add(site);
+      credential: site ? { site } : { app: shown } }, signal);
+    if (answer === "always") (grant.credentialsAlwaysFor ??= new Set()).add(key);
     return answer;
   }
   /** One in-chat approval at a time per chat; answered through answerRequest. */
@@ -1220,7 +1225,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     async approveCredential({ sessionId, site } = {}, { signal = new AbortController().signal } = {}) {
       if (closed || resetting || typeof site !== "string") return false;
       const grant = await grantFor(sessionId);
-      return ["allow", "always"].includes(await approveCredential(grant, site, signal));
+      return ["allow", "always"].includes(await approveCredential(grant, { site }, signal));
     },
     async script(input, { signal = new AbortController().signal } = {}) {
       if (!featureEnabled || closed || resetting || !runScript) return { ok: false, error: { code: "computer_unavailable", message: "App scripting is not available in this OpenWork app." } };
@@ -1330,11 +1335,38 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         // screenshot:false returns the settled elements without an image; the native call never sees it.
         const { screenshot, ...nativeArgs } = args;
         const call = { name, includePostImage: includePostImage && screenshot !== false, args: structuredClone(nativeArgs), grant, revision: grant.revision, featureGeneration: generation, remoteGeneration: remoteRevision, remoteTarget: grant.adapter.placement === "remote" };
+        // Text marked secret is a password or code the person gave: they confirm the app it
+        // goes to first. The mark is the broker's; the native call never sees it.
+        const entries = name === "computer_act" ? [call.args.action, ...(Array.isArray(call.args.actions) ? call.args.actions : [])].filter((entry) => entry && typeof entry === "object") : [];
+        const secret = entries.some((entry) => entry.secret === true);
+        for (const entry of entries) delete entry.secret;
+        let confirmedApp = null;
+        if (secret) {
+          const app = typeof grant.lastOpen?.app_id === "string" ? grant.lastOpen.app_id : "";
+          const answer = app ? await approveCredential(grant, { app }, signal) : "too_many";
+          if (!["allow", "always"].includes(answer)) return failure("credential_declined", app
+            ? "The person did not confirm entering a password or code in this app. Nothing was sent."
+            : "Open the app first: a password or code goes only to an app the person confirms. Nothing was sent.");
+          confirmedApp = app;
+        }
         // The operation budget starts once the person has answered.
         limit = deadline(operationMs);
         const started = now();
         let result = await run(call, signal, limit);
         const asked = stateOf(result);
+        // The helper saw a password field in the window: the person confirms this app, then
+        // the same step is sent once more with that approval, which the helper checks again.
+        if (name === "computer_act" && asked?.code === "credential_approval_required" && asked.dispatched === false) {
+          const app = typeof asked.app_id === "string" ? asked.app_id : "";
+          const answer = !app ? "too_many" : app === confirmedApp ? "allow"
+            : await approveCredential(grant, { app, label: typeof asked.app === "string" ? asked.app : app }, signal);
+          if (!["allow", "always"].includes(answer)) result = failure("credential_declined", "The person did not confirm entering a password or code in this app. Nothing was sent.");
+          else {
+            limit.dispose(); limit = deadline(operationMs);
+            call.args = { ...call.args, credential_approval: app };
+            result = await run(call, signal, limit);
+          }
+        }
         // The helper stopped before a file panel: before showing its contents, and before
         // handing over a selection. The person answers in the chat; the approval sent back
         // is bound to exactly what they saw, and the helper checks it again.
