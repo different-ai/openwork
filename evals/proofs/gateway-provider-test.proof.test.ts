@@ -11,7 +11,23 @@ test("an admin tests a shared-key provider through AI Gateway before adding it",
     await user.see({ testId: "gateway-provider-title" }, { text: "Add Anthropic", timeoutMs: 60_000 });
     await user.see({ testId: "gateway-provider-test" }, { text: "Test Anthropic", timeoutMs: 60_000 });
     await user.notSee({ testId: "gateway-provider-save" });
+    await user.see({ testId: "gateway-provider-title-rename" });
     await user.screenshot();
+  });
+
+  await step("the admin renames the provider in the title, and Escape undoes an edit", async () => {
+    await user.click({ testId: "gateway-provider-title-rename" });
+    await user.see({ testId: "gateway-provider-title-done" });
+    await user.type({ testId: "gateway-provider-title-input" }, "Anthropic research", { replace: true });
+    await user.screenshot();
+    await user.click({ testId: "gateway-provider-title-done" });
+    await user.see({ testId: "gateway-provider-title" }, { text: "Add Anthropic research" });
+    await user.see({ testId: "gateway-provider-title-rename" });
+    await user.screenshot();
+    await user.click({ testId: "gateway-provider-title" });
+    await user.type({ testId: "gateway-provider-title-input" }, "Throwaway", { replace: true });
+    await user.press("Escape");
+    await user.see({ testId: "gateway-provider-title" }, { text: "Add Anthropic research" });
   });
 
   await step("testing without a key shows a red message, and changing the key dismisses it", async () => {

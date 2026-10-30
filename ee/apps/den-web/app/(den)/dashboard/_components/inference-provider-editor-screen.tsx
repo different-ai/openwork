@@ -10,6 +10,7 @@ import { createAuditOperationContext, type AuditOperationContext } from "@openwo
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCombobox } from "../../_components/ui/combobox";
+import { DenInlineEditableTitle } from "../../_components/ui/inline-editable-title";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSecretInput } from "../../_components/ui/secret-input";
@@ -308,7 +309,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
         if (!provider) {
           await saveInferenceProvider({ inferenceProviderId: null, body: buildInferenceProviderRequestBody({ ...formInput, name: name.trim() || displayName }), auditContext });
         } else {
-          await saveInferenceProvider({ inferenceProviderId: provider.id, body: { name: name.trim(), modelIds: allowAllModels ? [] : modelIds, status: "active" }, auditContext });
+          await saveInferenceProvider({ inferenceProviderId: provider.id, body: { name: name.trim() || provider.name, modelIds: allowAllModels ? [] : modelIds, status: "active" }, auditContext });
           await syncAccessAndCredential(auditContext);
           await reload();
         }
@@ -365,7 +366,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
       </nav>
       <div className="mt-3 flex items-center gap-3">
         <DenBrandMark name={displayName} simpleIconSlug={getProviderIconSlug(providerId)} serviceUrl={detail?.doc ?? (provider ? getProviderDocUrl(provider.providerConfig) : null)} className="h-8 w-8 rounded-[8px]" imageClassName="h-4 w-4" />
-        <Heading className="text-[20px] font-medium tracking-[-0.02em] text-gray-900" data-testid="gateway-provider-title">{provider ? provider.name : `Add ${displayName}`}</Heading>
+        <DenInlineEditableTitle as={Heading} className="text-[20px] font-medium tracking-[-0.02em] text-gray-900" testId="gateway-provider-title"
+          prefix={provider ? null : "Add "} value={name} onChange={setName} placeholder={provider?.name ?? displayName} />
       </div>
       {saveError ? <DenNotice tone="error" message={saveError} className="mt-4" /> : null}
       {provider?.catalogWarning ? <DenNotice tone="warning" message={provider.catalogWarning} className="mt-4" /> : null}
