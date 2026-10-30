@@ -251,6 +251,16 @@
               ],
               "description": "Computer use: Let agents use Mac apps or a managed cloud desktop with a live view and Take over and Stop controls. While enabled, requested apps and windows open directly without additional OpenWork approval prompts. GUI access is experimental and is not sandboxed by structured-tool permission rules. Renders DEN_FEATURE_COMPUTER_USE."
             },
+            "computerSessionHistory": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: computer session history: Computer actions share one compact session card in chat, with captured views to browse or replay. Turning it off restores individual actions and screenshots. Renders DEN_FEATURE_COMPUTER_SESSION_HISTORY."
+            },
             "computerUseBackground": {
               "enum": [
                 "",

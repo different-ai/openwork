@@ -163,6 +163,9 @@ import { cn } from "@/lib/utils"
 import { DevProfiler } from "@/react-app/shell/dev-profiler"
 import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, getRunStartedAt, getWaitedMs, formatMessageTimestamp, splitTurnAtAnswer, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, getSafeFileRevealPath } from "./utils"
 import type { AnyToolPart } from "@/lib/tool-aggregate"
+import { collectComputerSessionHistory, withoutComputerHistory, type ComputerSessionHistory as ComputerHistory } from "@/lib/computer-session-history"
+import { ComputerSessionHistory } from "./computer-session-history"
+import { useComputerSessionHistoryStore } from "./computer-session-history-store"
 import { resolveConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
@@ -183,6 +186,7 @@ const AppPanelFoldContext = React.createContext(false)
 const NO_PINNED_REMOTE_THREADS: ReadonlySet<string> = new Set()
 const PinnedRemoteThreadsContext = React.createContext<ReadonlySet<string>>(NO_PINNED_REMOTE_THREADS)
 const ParentRunActiveContext = React.createContext(true)
+const ComputerHistoryContext = React.createContext<ComputerHistory | null>(null)
 
 function MessageTimestamp({ message, className }: { message: UIMessage; className?: string }) {
   const created = getMessageCreated(message)
@@ -687,12 +691,13 @@ const AssistantMessage = React.memo(
   ({ message, isStreaming, hideReasoning }: AssistantMessageProps) => {
     const { showThinking, highlightQuery } = useMessageList()
     const textRail = useTextActivityRail()
+    const computerHistory = React.useContext(ComputerHistoryContext)
     const assistantRenderGroups = React.useMemo(
       () => {
-        const groups = getAssistantRenderGroups(message.parts, showThinking)
+        const groups = getAssistantRenderGroups(withoutComputerHistory(message.parts, computerHistory), showThinking)
         return hideReasoning ? groups.filter((group) => group.kind !== "reasoning") : groups
       },
-      [hideReasoning, message.parts, showThinking]
+      [hideReasoning, message.parts, showThinking, computerHistory]
     )
 
     return (
@@ -1581,6 +1586,8 @@ function MessageGroup({
   )
   const textRail = useTextActivityRail()
   const remoteThreadStarts = React.useMemo(() => collectRemoteThreadStarts(items), [items])
+  const computerHistoryEnabled = useComputerSessionHistoryStore(state => state.enabled)
+  const computerHistory = React.useMemo(() => computerHistoryEnabled ? collectComputerSessionHistory(items.map(item => item.message)) : null, [computerHistoryEnabled, items])
   // The skill this turn produced stays in view as its result, even when the
   // steps fold; later updates and shares change this card, not add another.
   const { cards: createdSkillCards } = useCreatedSkills()
@@ -1668,7 +1675,7 @@ function MessageGroup({
       (total, item) =>
         total +
         (item.message.role === "assistant" && !isSessionErrorMessage(item.message)
-          ? getAssistantRenderGroups(item.message.parts, showThinking).reduce(
+          ? getAssistantRenderGroups(withoutComputerHistory(item.message.parts, computerHistory), showThinking).reduce(
             (rows, group) => rows + (group.kind === "tool-aggregate" ? group.parts.length + group.thoughts.length : 1),
             0
           )
@@ -1749,6 +1756,8 @@ function MessageGroup({
       run = null
     }
     slice.forEach((item, sliceIndex) => {
+      if (computerHistory && item.message.role === "assistant" && !isSessionErrorMessage(item.message)
+        && getAssistantRenderGroups(withoutComputerHistory(item.message.parts, computerHistory), showThinking).length === 0) return
       const aggregateParts =
         item.message.role === "assistant" && !isSessionErrorMessage(item.message)
           ? getAggregateOnlyParts(item.message, showThinking)
@@ -1771,6 +1780,7 @@ function MessageGroup({
       <AppPanelFoldContext.Provider value={panelLive}>
       <PinnedRemoteThreadsContext.Provider value={pinnedRemoteIds}>
       <ConnectionCardPartsContext.Provider value={connectionCardParts}>
+      <ComputerHistoryContext.Provider value={computerHistory}>
       <ActionContextMenu
         actions={replyMenuActions}
         contentClassName="w-56"
@@ -1790,7 +1800,7 @@ function MessageGroup({
           {replyWorkedLabel && stepCountLabel && !textRail ? <RailMeta>{stepCountLabel}</RailMeta> : null}
         </div>
       </div> : null}
-      {stepItems.length > 0 ? (
+      {stepItems.length > 0 && stepRowCount > 0 ? (
         collapseSteps ? (
           <CompletedStepRun
             label={(resolvedReplyModel ? replyWorkedLabel : null) ?? stepRunLabel}
@@ -1819,6 +1829,9 @@ function MessageGroup({
         </Message>
       ))}
       {renderItems(proseItems, stepItems.length, collapseSteps || panelLive)}
+      {computerHistory ? <Message className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
+        <ComputerSessionHistory key={computerHistory.id} history={computerHistory} active={isLiveGroup && parentActive} renderAction={part => <ToolMessage part={part} />} />
+      </Message> : null}
       {groupSkillCards.length > 0 ? (
         <div data-created-skills="" className="mx-auto mt-1 flex w-full max-w-3xl flex-col gap-2 px-2 md:px-10">
           {groupSkillCards.map((card) => <CreatedSkillCard key={card.kind === "ready" ? card.skillId : card.key} card={card} />)}
@@ -1865,6 +1878,7 @@ function MessageGroup({
         </div>
       )}
       </ActionContextMenu>
+      </ComputerHistoryContext.Provider>
       </ConnectionCardPartsContext.Provider>
       </PinnedRemoteThreadsContext.Provider>
       </AppPanelFoldContext.Provider>

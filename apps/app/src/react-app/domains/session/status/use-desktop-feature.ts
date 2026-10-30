@@ -8,7 +8,7 @@ import { useAutomationsDenContext } from "@/react-app/domains/automations/use-au
 
 const FEATURE_STALE_MS = 30_000
 
-type DesktopFeatureKey = "computerUse" | "computerUseBackground" | "remoteComputers" | "desktopUpdateDownloadWindow" | "settledSessions"
+type DesktopFeatureKey = "computerUse" | "computerUseBackground" | "computerSessionHistory" | "remoteComputers" | "desktopUpdateDownloadWindow" | "settledSessions"
 
 /**
  * Reads one desktop feature from the registry. Signed in, it follows the

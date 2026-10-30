@@ -308,6 +308,18 @@ export const FEATURES = defineFeatures({
     default: false,
   },
 
+  computerSessionHistory: {
+    label: "Desktop: computer session history",
+    description: "Computer actions share one compact session card in chat, with captured views to browse or replay. Turning it off restores individual actions and screenshots.",
+    category: "computerUse",
+    added: "2026-10-30",
+    since: "2026-10",
+    author: "reachjalil",
+    docs: "docs/features/computer-session-history/README.md",
+    deployments: everywhere,
+    default: false,
+  },
+
   computerUseBackground: {
     label: "Desktop: computer use in the background",
     description: "On a Mac, agents work in app windows where they are, without bringing them to the front or moving your cursor, so you keep working and several chats can work at once. Agents read the app's controls first and take a screenshot only when they need one. Blender and other canvas apps still come to the front. Needs computer use.",

@@ -101,6 +101,7 @@ import { FloatingSlotProvider, SessionFloatingLayer } from "../panel/floating-sl
 import { useDesktopFeature } from "../status/use-desktop-feature";
 import { CloudComputerControl } from "../computer/cloud-computer-control";
 import { ComputerControl } from "../computer/computer-control";
+import { useComputerSessionHistoryStore } from "@/components/chat/computer-session-history-store";
 import { useComputerEndTurn } from "../computer/computer-store";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
@@ -651,6 +652,10 @@ export function SessionPage(props: SessionPageProps) {
   // Computer use on this Mac, behind its feature flag: the header Computer
   // button, its floating view, in-chat requests and the hand-back at turn end.
   const computerUseFeature = useDesktopFeature("computerUse");
+  const computerHistoryFeature = useDesktopFeature("computerSessionHistory");
+  useEffect(() => {
+    useComputerSessionHistoryStore.getState().setEnabled(computerHistoryFeature);
+  }, [computerHistoryFeature]);
   const remoteComputersFeature = useDesktopFeature("remoteComputers");
   // The button hides itself when this computer can't run it and no VM is connected.
   const computerUse = computerUseFeature && isElectronRuntime();
