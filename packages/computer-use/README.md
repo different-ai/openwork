@@ -209,7 +209,9 @@ Take over remains paused until Continue and interrupted actions are never replay
 System permissions still come from macOS. Editable controls do not expose their
 raw Accessibility values to the model; ordinary visible content remains in the
 screenshot. Protected controls that identify
-themselves through Accessibility are omitted and masked; a custom control
+themselves through Accessibility are masked. A secure text field is listed
+(`secure: true`) so the agent can type a password the person gave it; its
+value is never read. Other protected content is omitted. A custom control
 that does not identify its sensitive content cannot be recognized reliably.
 Computer use reads the selected app's visible content and is not a general
 credential-redaction boundary.

@@ -241,7 +241,6 @@ def read_accessibility(request):
         try:
             if item is None: continue
             role = item.get_role_name().lower()
-            if "password" in role: continue
             # Traverse even a nonvisual/container node whose other interfaces
             # are unavailable; otherwise a failed parent hides working controls.
             count = item.get_child_count()
@@ -257,13 +256,15 @@ def read_accessibility(request):
                     action = item.get_action_iface()
                     editable = item.get_editable_text_iface()
                     name = (item.get_name() or "")[:300]
-                    normalized = {"push button": "button", "text": "textbox", "entry": "textbox", "check box": "checkbox", "radio button": "radio", "combo box": "combobox", "scroll pane": "region", "table row": "row", "menu item": "menuitem"}.get(role, role)
+                    normalized = {"push button": "button", "text": "textbox", "entry": "textbox", "check box": "checkbox", "radio button": "radio", "combo box": "combobox", "scroll pane": "region", "table row": "row", "menu item": "menuitem", "password text": "textbox"}.get(role, role)
                     if name or action or editable:
                         ref = "a" + str(len(result) + 1)
                         ACCESSIBLE[ref] = item
                         result.append({"ref": ref, "role": normalized, "name": name, "label": name,
                           "press": bool(action and action.get_n_actions()), "settable": editable is not None,
                           "disabled": not states.contains(Atspi.StateType.SENSITIVE),
+                          # A password field takes a password the person gave; no element value is ever sent.
+                          **({"secure": True} if "password" in role else {}),
                           **({"checked": states.contains(Atspi.StateType.CHECKED)} if normalized in ["checkbox", "radio"] else {}),
                           "bounds": {"x": left - region["x"], "y": top - region["y"], "width": right - left, "height": bottom - top}})
         except Exception:
@@ -291,8 +292,6 @@ def perform_semantic_action(action, request, event, deadline):
     states = item.get_state_set()
     if not states.contains(Atspi.StateType.SHOWING) or not states.contains(Atspi.StateType.SENSITIVE):
         raise RuntimeError("The accessible control is no longer ready")
-    if "password" in item.get_role_name().lower():
-        raise RuntimeError("Use the desktop directly for protected fields")
     if action["type"] == "set_value":
         editable = item.get_editable_text_iface()
         check(event, deadline)

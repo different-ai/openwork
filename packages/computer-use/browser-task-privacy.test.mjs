@@ -58,7 +58,49 @@ test("withheld field values cannot escape through accessible labels", async () =
   password.type = "text";
   account.attributes.autocomplete = "section-checkout cc-number";
   const protectedImage = await host.request({ sessionId: "chat", operation: "observe", args: { tabId: "tab", includeImage: true } });
-  assert.equal(protectedImage.code, "sign_in_required", "Payment fields must block capture even without a password field");
+  assert.equal(protectedImage.code, "payment_required", "Payment fields must block capture even without a password field");
+});
+
+test("the agent fills a password it was given and never reads it back", async () => {
+  class Input {
+    tagName = "INPUT"; parentElement = null; labels = []; isConnected = true; type = "password"; value = "";
+    getAttribute(name) { return name === "aria-label" ? "Password" : null; }
+    hasAttribute() { return false; }
+    matches(selector) { return selector.includes('input[type="password"]'); }
+    closest() { return null; }
+    contains(element) { return element === this; }
+    getBoundingClientRect() { return { x: 10, y: 10, left: 10, top: 10, right: 210, bottom: 50, width: 200, height: 40 }; }
+    focus() { document.activeElement = this; }
+    select() {}
+  }
+  const field = new Input();
+  const document = { title: "Sign in", body: { innerText: "Password" }, activeElement: null,
+    getElementById: () => null, elementFromPoint: () => field, querySelectorAll: () => [field] };
+  const context = vm.createContext({ document, HTMLElement: Input, HTMLInputElement: Input,
+    HTMLSelectElement: class {}, HTMLTextAreaElement: class {}, HTMLLabelElement: class {},
+    getComputedStyle: () => ({ visibility: "visible", display: "block", overflowX: "visible", overflowY: "visible" }),
+    innerWidth: 800, innerHeight: 600, scrollX: 0, scrollY: 0, performance, setTimeout });
+  const tab = { tabId: "tab", webMcpRevision: 0, view: { webContents: { isDestroyed: () => false,
+    getURL: () => "https://example.com/login", insertText: async text => { field.value = text; },
+    captureObservation: async () => Buffer.from("png"),
+    executeJavaScriptInIsolatedWorld: async (_world, scripts) => vm.runInContext(scripts[0].code, context) } } };
+  const host = createBrowserTaskHost({ getTab: () => tab, tabsFor: () => [tab], ownerOf: () => "chat", activeFor: () => "tab",
+    enabled: () => true, allowed: async () => true, changed: () => {}, isVisible: () => true });
+  const observe = (args = {}) => host.request({ sessionId: "chat", operation: "observe", args: { tabId: "tab", ...args } });
+  const pictured = await observe({ includeImage: true });
+  assert.equal(pictured.ok, true, "A sign-in page can be seen: the browser masks the password itself");
+  assert.ok(pictured.image);
+  const given = "given-password-123";
+  const filled = await host.request({ sessionId: "chat", operation: "act", args: { tabId: "tab", observationId: pictured.observationId,
+    action: { type: "fill", ref: pictured.elements[0].ref, text: given } } });
+  assert.equal(filled.ok, true, JSON.stringify(filled));
+  assert.equal(field.value, given);
+  assert.equal(filled.control.filled, true);
+  assert.equal(filled.control.value, undefined);
+  assert.ok(!JSON.stringify(filled).includes(given));
+  const after = await observe();
+  assert.equal(after.elements[0].filled, true);
+  assert.ok(!JSON.stringify(after).includes(given));
 });
 
 test("select options keep backing identities private and revalidate before choosing", async () => {

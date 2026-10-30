@@ -43,7 +43,7 @@ const EDIT_COMMANDS = { a: "selectAll", z: "undo", "shift+z": "redo" };
 const ACTION_TYPES = ["click", "fill", "select", "set_checked", "key", "scroll", "reveal", "attach"];
 /** As many files as the approval card lists; the broker refuses more. */
 const MAX_FILES = 20;
-const PREPARE_CODES = ["stale_observation", "stale_element", "sign_in_required", "unverifiable_focus", "element_disabled", "element_outside_viewport",
+const PREPARE_CODES = ["stale_observation", "stale_element", "use_attach", "unverifiable_focus", "element_disabled", "element_outside_viewport",
   "element_obscured", "not_editable", "not_selectable", "option_unavailable", "not_checkable", "outside_viewport"];
 
 /** @param {{ key?: unknown, modifiers?: unknown }} action */
@@ -99,8 +99,10 @@ function observePage(id, options = {}) {
   // only whether a field is filled, unless the agent entered that exact value itself. In-page
   // staleness and verification checks read the real value (reveal).
   const entered = globalThis.__openworkAgentEntered ??= new WeakMap();
-  const isSensitive = element => element.matches('input[type="password"]') ||
-    (element.getAttribute("autocomplete") || "").toLowerCase().split(/\s+/).some(token => token === "one-time-code" || token.startsWith("cc-"));
+  const autocomplete = element => (element.getAttribute("autocomplete") || "").toLowerCase().split(/\s+/);
+  const isPayment = element => autocomplete(element).some(token => token.startsWith("cc-"));
+  // Passwords, one-time codes and card fields are never read back, even after the agent fills them.
+  const isSensitive = element => element.matches('input[type="password"]') || isPayment(element) || autocomplete(element).includes("one-time-code");
   const isTextValue = element => element instanceof HTMLTextAreaElement ||
     element instanceof HTMLInputElement && !["button", "submit", "reset", "checkbox", "radio", "hidden", "file", "range", "color"].includes(element.type) ||
     element.isContentEditable || ["textbox", "combobox"].includes(element.getAttribute("role"));
@@ -172,8 +174,8 @@ function observePage(id, options = {}) {
       readOnly: element.readOnly === true || element.getAttribute("aria-readonly") === "true",
     };
     if (input) state.type = element.type;
-    if (!sensitive && field) {
-      if (reveal || (!select && entered.get(element) === value)) { state.value = value.slice(0, 8000); state.valueTruncated = value.length > 8000; }
+    if (field) {
+      if (reveal || (!sensitive && !select && entered.get(element) === value)) { state.value = value.slice(0, 8000); state.valueTruncated = value.length > 8000; }
       else { state.filled = value.length > 0; state.valueWithheld = true; }
     }
     if (input && ["checkbox", "radio"].includes(element.type)) state.checked = element.indeterminate ? "mixed" : element.checked;
@@ -292,11 +294,12 @@ function observePage(id, options = {}) {
     registry.last = { mode, items: current };
   }
   const focused = registry.byElement.get(document.activeElement);
-  const signIn = [...candidates].some((element) => {
-    if (!(element instanceof HTMLElement) || !isSensitive(element)) return false;
+  // Browsers mask passwords on screen; a card field can show its digits in an image.
+  const payment = [...candidates].some((element) => {
+    if (!(element instanceof HTMLElement) || !isPayment(element)) return false;
     const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0;
   });
-  const page = { viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, hasPasswordField: signIn };
+  const page = { viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, hasPaymentField: payment };
   if (!interactive) {
     return { truncated, scrollRegions, title: text(document.title, 300), ...(includeText ? { text: text(document.body?.innerText, 16000) } : {}), elements,
       ...page, ...(diff ? { diff } : {}), ...(focused ? { focused } : {}),
@@ -337,12 +340,11 @@ function prepareAction(id, action) {
   const control = element ? registry.describe(element) : null;
   // The control must still be what the model saw: same kind and name.
   if (element && registry.identities.get(element) !== registry.identify(element, control)) throw new Error("stale_element");
-  if (element?.matches('input[type="password"],input[autocomplete="one-time-code"]')) throw new Error("sign_in_required");
   if (control?.disabled) throw new Error("element_disabled");
   if (action.type === "key") {
     if (element && document.activeElement !== element) element.focus();
     if (element && document.activeElement !== element) throw new Error("unverifiable_focus");
-    if (document.activeElement?.matches('input[type="password"],input[type="file"],input[autocomplete="one-time-code"]')) throw new Error("sign_in_required");
+    if (document.activeElement?.matches('input[type="file"]')) throw new Error("use_attach");
     // Only a directly focused, observed control can receive keys. Frames and
     // generic containers can conceal a different focused descendant.
     if (!document.activeElement?.matches('input,textarea,select,button,a,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="combobox"],[role="listbox"],[role="option"],[role="checkbox"],[role="radio"],[role="switch"]')
@@ -370,7 +372,7 @@ function prepareAction(id, action) {
   }
   if (action.type === "reveal" && !element) throw new Error("stale_element");
   if (action.type === "fill") {
-    const editable = element instanceof HTMLTextAreaElement || element?.isContentEditable || (element instanceof HTMLInputElement && ["text", "search", "email", "url", "tel", "number", "date", "time", "datetime-local", "month", "week"].includes(element.type));
+    const editable = element instanceof HTMLTextAreaElement || element?.isContentEditable || (element instanceof HTMLInputElement && ["text", "search", "email", "url", "tel", "number", "password", "date", "time", "datetime-local", "month", "week"].includes(element.type));
     if (!editable || control.readOnly) throw new Error("not_editable");
   }
   if (action.type === "select") {
@@ -390,7 +392,7 @@ function prepareAction(id, action) {
   if ((action.type === "click" || action.type === "scroll") && (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight)) throw new Error("outside_viewport");
   if (!element && action.type === "click") {
     const hit = document.elementFromPoint(x, y);
-    if (hit?.matches('input[type="password"],input[type="file"],input[autocomplete="one-time-code"]')) throw new Error("sign_in_required");
+    if (hit?.matches('input[type="file"]')) throw new Error("use_attach");
   }
   return { x, y, unchanged: action.type === "set_checked" && control.checked === action.checked };
 }
@@ -715,7 +717,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       ...(typeof options.includeText === "boolean" ? { includeText: options.includeText } : {}) });
     let image, digest;
     if (includeImage) {
-      if (page.hasPasswordField) fail("sign_in_required", "This page contains protected sign-in or payment fields. Take over and complete them directly in the browser, then resume.");
+      if (page.hasPaymentField) fail("payment_required", "This page shows payment card fields. Take over and complete them directly in the browser, then resume.");
       const png = await captureObservation(tab.view.webContents, page.viewport, (viewport) => capture(tab, viewport));
       digest = imageDigest(png);
       image = { mimeType: "image/png", data: png.toString("base64"), width: page.viewport.width, height: page.viewport.height };
@@ -729,8 +731,8 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     state.observations.set(id, record); state.latest = record;
     for (const old of state.observations.keys()) { if (state.observations.size <= 20) break; state.observations.delete(old); }
     if (mode === "interactive") {
-      const { hasPasswordField, viewport: _viewport, scroll: _scroll, ...compact } = page;
-      return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...compact, ...(hasPasswordField ? { signIn: "take_over" } : {}), ...(image ? { image } : {}) };
+      const { hasPaymentField, viewport: _viewport, scroll: _scroll, ...compact } = page;
+      return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...compact, ...(hasPaymentField ? { payment: "take_over" } : {}), ...(image ? { image } : {}) };
     }
     return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...page, ...(image ? { image } : {}) };
   }
@@ -967,7 +969,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
             const code = PREPARE_CODES.find((item) => String(error?.message).includes(item));
             if (!code) throw error;
             const message = code === "unverifiable_focus" ? "Keyboard input requires a directly focused observed page control. Pass the control's ref or click it first."
-              : code === "sign_in_required" ? "Take over and sign in directly in the browser, then resume."
+              : code === "use_attach" ? "Upload controls take files through attach with the control's ref."
               : "The observed control is no longer ready. Observe again before choosing an action.";
             if (!batch) fail(code, message);
             failure = { index, type: action.type, ...(action.ref ? { ref: action.ref } : {}), code, error: message };

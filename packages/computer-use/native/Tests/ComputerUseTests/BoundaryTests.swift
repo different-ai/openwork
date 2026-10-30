@@ -65,6 +65,23 @@ final class BoundaryTests: XCTestCase {
         }
     }
 
+    func testSecureTextFieldTakesTypingWithoutExposingItsValue() throws {
+        let frame = CGRect(x: 0, y: 0, width: 320, height: 240)
+        let secure = ElementRecord(ref: "e1", element: AXUIElementCreateApplication(getpid()), role: "AXTextField",
+            label: "Password", value: "given-password", frame: frame, actions: [], settable: true,
+            enabled: true, protected: true)
+        XCTAssertTrue(secure.textField, "A password the person gave can be typed into a secure field")
+        for compact in [false, true] {
+            let payload = try secure.payload(bounds: frame, width: 320, height: 240, compact: compact)
+            XCTAssertEqual(payload["secure"] as? Bool, true)
+            XCTAssertNil(payload["value"])
+            XCTAssertFalse(String(describing: payload).contains("given-password"))
+        }
+        let masked = ElementRecord(ref: "e2", element: AXUIElementCreateApplication(getpid()), role: "AXGroup",
+            label: "Protected", value: nil, frame: frame, actions: [], settable: false, enabled: true, protected: true)
+        XCTAssertFalse(masked.textField, "Other protected content still never takes input")
+    }
+
     func testMalformedInputNeverBecomesAnAction() throws {
         let invalid: [[String: Any]] = [
             ["type": "click", "x": true, "y": 1],
