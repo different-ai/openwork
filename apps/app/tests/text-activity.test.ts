@@ -98,8 +98,10 @@ test("thoughts say how long they took, or briefly, and never invent a duration",
 })
 
 test("capability sentences split into verb and object, keeping a negation with its verb", () => {
-  expect(splitSentence("Looked up people in your organization")).toEqual({ verb: "Looked", object: "up people in your organization" })
+  expect(splitSentence("Looked up people in your organization")).toEqual({ verb: "Looked up", object: "people in your organization" })
   expect(splitSentence("Couldn't remove the group")).toEqual({ verb: "Couldn't remove", object: "the group" })
+  expect(splitSentence("Searched your chats for “pricing”")).toEqual({ verb: "Searched", object: "your chats for “pricing”" })
+  expect(splitSentence("Ran")).toEqual({ verb: "Ran", object: "" })
   expect(sentenceCase("  move gh credentials ")).toBe("Move gh credentials")
 })
 

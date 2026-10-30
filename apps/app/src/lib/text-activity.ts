@@ -241,10 +241,12 @@ export function reasoningDurationMs(providerMetadata: unknown): number | null {
 /**
  * A capability sentence ("Looked up people in your organization") split
  * into its verb and the rest, so the verb reads darker. A negated verb
- * keeps its negation ("Couldn't remove", "the group").
+ * keeps its negation ("Couldn't remove", "the group"), and a phrasal verb
+ * its particle ("Looked up", "people in your organization").
  */
 export function splitSentence(sentence: string): TextSentence {
-  const match = /^(\s*(?:Couldn't|Could not|Didn't|Can't)\s+\S+|\s*\S+)(\s+[\s\S]*)?$/.exec(sentence)
+  // A phrasal verb keeps its particle ("Looked up", "Set up", "Signed in").
+  const match = /^(\s*(?:(?:Couldn't|Could not|Didn't|Can't)\s+)?\S+(?:\s+(?:up|out|in|on|off|over|back|through|down)(?=\s))?)(\s+[\s\S]*)?$/.exec(sentence)
   if (!match) return { verb: sentence, object: "" }
   return { verb: (match[1] ?? "").trim(), object: (match[2] ?? "").trim() }
 }

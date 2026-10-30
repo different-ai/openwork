@@ -53,7 +53,7 @@ export function TextCommandCard({ command, output, failed = false }: { command: 
       </p>
       {shown ? (
         <div className="mt-1.5 flex flex-col">
-          <pre data-text-command-output="" className={cn("whitespace-pre-wrap break-all font-mono", failed ? "text-red-11" : "text-slate-9")}>{shown.text}</pre>
+          <pre data-text-command-output="" data-failed={failed ? "" : undefined} className="whitespace-pre-wrap break-all font-mono text-slate-9">{shown.text}</pre>
           {shown.clipped || expanded ? <ShowMore expanded={expanded} onToggle={() => setExpanded(!expanded)} /> : null}
         </div>
       ) : null}
