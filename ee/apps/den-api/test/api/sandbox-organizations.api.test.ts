@@ -37,7 +37,9 @@ const grantRows = async (orgId: string) => {
   return Number(field(Array.isArray(rows) ? rows[0] : null, "total") ?? -1)
 }
 
-test("sandboxes stay unavailable until the platform turns the rollout on", async () => {
+test("sandboxes stay unavailable while the platform rollout is off", async () => {
+  const disabled = await den.request(admin.token, "PUT", "/v1/admin/features/sandboxOrgs", { body: { enabled: false } })
+  assert.equal(disabled.status, 200, summary(disabled))
   const listed = await den.request(admin.token, "GET", "/v1/admin/sandbox-orgs")
   assert.equal(listed.status, 200, summary(listed))
   assert.equal(field(listed.body, "enabled"), false)

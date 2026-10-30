@@ -14,9 +14,10 @@ function step(body: unknown, id: string) {
   return list(field(body, "steps")).find((entry) => entry.id === id)
 }
 
-test("the Get set up checklist is off by default, then reports each person's own steps from what actually happened", async () => {
+test("the Get set up checklist can be turned off, and when on reports each person's own steps from what actually happened", async () => {
   const workspace = await den.createOrg(await den.signUp("Avery Owner"), "Activation workspace")
   const owner = den.as(workspace.owner, workspace.orgId)
+  assert.equal((await den.setFeature(workspace.orgId, "activationChecklist", false)).status, 200)
 
   // Off: the routes answer as if they did not exist, for Desktop and Workbot alike.
   const off = await owner("GET", "/v1/me/activation")

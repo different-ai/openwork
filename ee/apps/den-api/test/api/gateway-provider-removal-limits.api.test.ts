@@ -163,6 +163,7 @@ test("limits orphaned before this rule are listed as provider removed", { timeou
 
 test("with the feature off, deleting a provider ignores its limits exactly as before", { timeout: 60_000 }, async () => {
   const legacy = await den.createOrg(await den.signUp("Legacy Gateway Owner"), "Acme legacy gateway")
+  assert.equal((await den.setFeature(legacy.orgId, "gatewayProviderRemovalLimits", false)).status, 200)
   const legacyTeammate = await den.newMember(legacy.owner, legacy.orgId, "Legacy Teammate")
   const legacyTeam = await den.createTeam(legacy.owner, legacy.orgId, "Acme legacy team", [legacyTeammate.memberId])
   const providerId = await createProvider(legacy.owner, legacy.orgId, "Acme legacy OpenRouter")
