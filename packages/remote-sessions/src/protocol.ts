@@ -1,5 +1,5 @@
 import type {
-  Command, Complete, Engine, Inventory, Journal, Model, Progress, ReadResult, Receipt,
+  AnswerInput, AnswerResult, Command, Complete, Engine, Inventory, Journal, Model, Pending, PendingQuestionItem, Progress, ReadResult, Receipt,
   Request, RequestComplete, SessionError, Status, TranscriptMessage, TranscriptToolCall, Turn,
 } from "./types.ts"
 import { MAX_COMMAND_ENTRIES, MAX_REQUEST_ENTRIES, REQUEST_RESULT_MAX_BYTES, SessionRunnerError } from "./types.ts"
@@ -62,6 +62,70 @@ function model(value: unknown): Model {
     ...(v.variant === undefined ? {} : { variant: nullable(v.variant, value => text(value, 60)) }),
   }
 }
+/** Bounds keep a pending request small enough for status reports and stored progress. */
+export const PENDING_QUESTIONS_MAX = 10
+export const PENDING_OPTIONS_MAX = 50
+function pendingQuestion(value: unknown): PendingQuestionItem {
+  const v = object(value); keys(v, ["header", "question", "options", "multiple", "custom"])
+  return {
+    header: text(v.header, 240, 0), question: text(v.question, 2000, 0),
+    options: array(v.options, PENDING_OPTIONS_MAX, value => {
+      const o = object(value); keys(o, ["label", "description"])
+      return { label: text(o.label, 240), description: text(o.description, 1000, 0) }
+    }),
+    multiple: boolean(v.multiple), custom: boolean(v.custom),
+  }
+}
+export function parsePending(value: unknown): Pending {
+  const v = object(value)
+  if (v.kind === "question") {
+    keys(v, ["kind", "requestId", "questions"])
+    const questions = array(v.questions, PENDING_QUESTIONS_MAX, pendingQuestion)
+    if (questions.length === 0) return invalid()
+    return { kind: "question", requestId: text(v.requestId, 240), questions }
+  }
+  if (v.kind !== "permission") return invalid()
+  keys(v, ["kind", "requestId", "title", "detail", "command"])
+  return { kind: "permission", requestId: text(v.requestId, 240), title: text(v.title, 240), detail: text(v.detail, 2000, 0),
+    ...(v.command === undefined ? {} : { command: text(v.command, 2000) }) }
+}
+export function parseAnswerInput(value: unknown): AnswerInput {
+  const v = object(value)
+  if (v.kind === "question") {
+    keys(v, ["kind", "requestId", "answers"])
+    const answers = array(v.answers, PENDING_QUESTIONS_MAX, value => array(value, PENDING_OPTIONS_MAX, value => text(value, 2000)))
+    if (answers.length === 0) return invalid()
+    return { kind: "question", requestId: text(v.requestId, 240), answers }
+  }
+  if (v.kind !== "permission") return invalid()
+  keys(v, ["kind", "requestId", "decision"])
+  // Never "always": a remote surface approves one request at a time.
+  if (v.decision !== "once" && v.decision !== "reject") return invalid()
+  return { kind: "permission", requestId: text(v.requestId, 240), decision: v.decision }
+}
+export function parseAnswerResult(value: unknown): AnswerResult {
+  const v = object(value); keys(v, ["requestId", "alreadyAnswered"])
+  return { requestId: text(v.requestId, 240), alreadyAnswered: boolean(v.alreadyAnswered) }
+}
+/**
+ * Checks answers against the live pending question: one answer per question,
+ * one choice unless it takes several, free text only where it is accepted.
+ * Returns the refusal message, or null when the answers fit.
+ */
+export function answerRefusal(pending: Extract<Pending, { kind: "question" }>, answers: string[][]): string | null {
+  if (answers.length !== pending.questions.length) {
+    return `Expected ${pending.questions.length} answer${pending.questions.length === 1 ? "" : "s"}, one per question, got ${answers.length}.`
+  }
+  for (const [index, question] of pending.questions.entries()) {
+    const answer = answers[index] ?? []
+    if (answer.length === 0) return `Question ${index + 1} needs an answer.`
+    if (!question.multiple && answer.length > 1) return `Question ${index + 1} takes one answer.`
+    const labels = new Set(question.options.map(option => option.label))
+    const unknown = answer.find(label => !labels.has(label))
+    if (unknown !== undefined && !question.custom) return `Question ${index + 1} does not take that answer; choose one of its options.`
+  }
+  return null
+}
 export function parseCommand(value: unknown): Command {
   const v = object(value); keys(v, ["commandId", "kind", "title", "prompt", "model", "expiresAt", "workspaceId"])
   if (v.kind !== "remote_session_create") return invalid()
@@ -81,7 +145,7 @@ export function parseReceipt(value: unknown): Receipt {
 }
 export function parseProgress(value: unknown): Progress {
   const v = object(value)
-  keys(v, ["status", "waitingFor", "engine", "model", "finalText", "error", "messageCount", "observedAt"])
+  keys(v, ["status", "waitingFor", "engine", "model", "finalText", "error", "messageCount", "pending", "observedAt"])
   return {
     status: status(v.status), observedAt: integer(v.observedAt),
     ...(v.waitingFor === undefined ? {} : { waitingFor: waiting(v.waitingFor) }),
@@ -90,6 +154,7 @@ export function parseProgress(value: unknown): Progress {
     ...(v.finalText === undefined ? {} : { finalText: text(v.finalText, 20_000, 0) }),
     ...(v.error === undefined ? {} : { error: nullable(v.error, parseError) }),
     ...(v.messageCount === undefined ? {} : { messageCount: integer(v.messageCount) }),
+    ...(v.pending === undefined ? {} : { pending: nullable(v.pending, parsePending) }),
   }
 }
 export function parseComplete(value: unknown): Complete {
@@ -124,6 +189,7 @@ export function parseRequest(value: unknown): Request {
     return { ...base, action: "send", input: { prompt: rawText(input.prompt, 100_000),
       messageId: nullable(input.messageId, messageId), model: nullable(input.model, model) } }
   }
+  if (v.action === "answer") return { ...base, action: "answer", input: parseAnswerInput(input) }
   if (v.action !== "stop") return invalid()
   keys(input, ["messageId"])
   return { ...base, action: "stop", input: { messageId: nullable(input.messageId, value => text(value, 160)) } }
@@ -145,12 +211,13 @@ function message(value: unknown): TranscriptMessage {
 }
 export function parseReadResult(value: unknown): ReadResult {
   const v = object(value)
-  keys(v, ["title", "status", "waitingFor", "lastError", "messageCount", "from", "messages", "nextCursor", "historyScope"])
+  keys(v, ["title", "status", "waitingFor", "lastError", "messageCount", "from", "messages", "nextCursor", "historyScope", "pending"])
   if (v.historyScope !== undefined && v.historyScope !== "context" && v.historyScope !== "full") return invalid()
   return { title: nullable(v.title, value => text(value, 240, 0)), status: status(v.status), waitingFor: waiting(v.waitingFor),
     lastError: nullable(v.lastError, parseError), messageCount: integer(v.messageCount), from: direction(v.from),
     messages: array(v.messages, 100, message), nextCursor: nullable(v.nextCursor, value => text(value, 160, 0)),
-    ...(v.historyScope === undefined ? {} : { historyScope: v.historyScope }) }
+    ...(v.historyScope === undefined ? {} : { historyScope: v.historyScope }),
+    ...(v.pending === undefined ? {} : { pending: nullable(v.pending, parsePending) }) }
 }
 export function parseSendResult(value: unknown): { messageId: string | null; alreadyPresent: boolean } {
   const v = object(value); keys(v, ["messageId", "alreadyPresent"])
@@ -174,6 +241,7 @@ export function parseRequestComplete(value: unknown): RequestComplete {
   if (outcome.action === "read") return { status: "done", outcome: { action: "read", result: parseReadResult(outcome.result) } }
   if (outcome.action === "send") return { status: "done", outcome: { action: "send", result: parseSendResult(outcome.result) } }
   if (outcome.action === "stop") return { status: "done", outcome: { action: "stop", result: parseStopResult(outcome.result) } }
+  if (outcome.action === "answer") return { status: "done", outcome: { action: "answer", result: parseAnswerResult(outcome.result) } }
   return invalid()
 }
 export function parseInventory(value: unknown): Inventory {
@@ -266,6 +334,8 @@ export function parseJournal(value: unknown): Journal {
       if (request.action === "read" && id !== null) return invalid()
       if (request.action === "send" && id !== (request.input.messageId ?? stableMessageId(request.requestId))) return invalid()
       if (request.action === "stop" && request.input.messageId !== null && id !== request.input.messageId) return invalid()
+      // An answer's marker is set to its pending requestId only once the native reply was dispatched.
+      if (request.action === "answer" && id !== null && id !== request.input.requestId) return invalid()
       return { request, sendReplay, messageId: id, turn, completion, completionAcknowledged: acknowledged }
     }),
   }

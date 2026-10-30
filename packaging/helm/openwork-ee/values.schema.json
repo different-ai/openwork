@@ -431,6 +431,16 @@
               ],
               "description": "Desktop: open a sub-agent task's conversation: Clicking the row of a task on another computer opens its conversation beside the chat, where people read it and follow up. Needs tasks on other computers as sub-agents. Renders DEN_FEATURE_REMOTE_SESSION_THREAD_VIEW."
             },
+            "remoteSessionAnswers": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: answer a sub-agent task's question here: When a task on the cloud or another computer asks a question or needs a permission, people answer it from its conversation beside the chat, or pick an option on its row, instead of going to that computer. Needs tasks on other computers as sub-agents. Renders DEN_FEATURE_REMOTE_SESSION_ANSWERS."
+            },
             "activationChecklist": {
               "enum": [
                 "",

@@ -508,6 +508,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  remoteSessionAnswers: {
+    label: "Desktop: answer a sub-agent task's question here",
+    description: "When a task on the cloud or another computer asks a question or needs a permission, people answer it from its conversation beside the chat, or pick an option on its row, instead of going to that computer. Needs tasks on other computers as sub-agents.",
+    category: "computerUse",
+    added: "2026-10-29",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/remote-session-answers/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   activationChecklist: {
     label: "Get set up checklist",
     description: "After their first answer, people see a Get set up checklist in Desktop and Workbot: invite a teammate, use a skill, add a model provider, share one on AI Gateway and connect an app, each checked off once it works.",
