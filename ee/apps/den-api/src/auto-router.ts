@@ -330,26 +330,35 @@ export async function saveAutoRouter(input: {
 }
 
 /**
- * Replaces who a router applies to. Returns false when `routerId` is not one
- * of the organization's routers.
+ * Replaces who a router applies to. Making it apply to everyone needs
+ * `canShareWithEveryone` unless it already does; that is decided against the
+ * assignment read under the router's row lock, so a concurrent change cannot
+ * slip an org-wide grant past the check. Returns `not_found` when `routerId`
+ * is not one of the organization's routers.
  */
 export async function saveAutoRouterAssignment(input: {
   organizationId: OrganizationId
   memberId: MemberId
   routerId: string
   assignment: AutoRouterAssignment
-}): Promise<boolean> {
-  if (!isDenTypeId("autoRouter", input.routerId)) return false
+  canShareWithEveryone: boolean
+}): Promise<"saved" | "not_found" | "needs_share_with_everyone"> {
+  if (!isDenTypeId("autoRouter", input.routerId)) return "not_found"
   return db.transaction(async (tx) => {
     const [existing] = await tx.select({ id: AutoRouterTable.id }).from(AutoRouterTable)
       .where(and(eq(AutoRouterTable.id, normalizeDenTypeId("autoRouter", input.routerId)), eq(AutoRouterTable.organizationId, input.organizationId)))
       .for("update").limit(1)
-    if (!existing) return false
+    if (!existing) return "not_found"
+    if (input.assignment.everyone && !input.canShareWithEveryone) {
+      const [orgWide] = await tx.select({ id: AutoRouterAccessTable.id }).from(AutoRouterAccessTable)
+        .where(and(eq(AutoRouterAccessTable.autoRouterId, existing.id), eq(AutoRouterAccessTable.orgWide, true))).limit(1)
+      if (!orgWide) return "needs_share_with_everyone"
+    }
     await tx.delete(AutoRouterAccessTable).where(eq(AutoRouterAccessTable.autoRouterId, existing.id))
     const rows = assignmentRows(input.organizationId, existing.id, input.assignment)
     if (rows.length > 0) await tx.insert(AutoRouterAccessTable).values(rows)
     await tx.update(AutoRouterTable).set({ updatedByOrgMemberId: input.memberId }).where(eq(AutoRouterTable.id, existing.id))
-    return true
+    return "saved"
   })
 }
 

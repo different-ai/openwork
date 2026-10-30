@@ -23,7 +23,6 @@ import {
   listAutoRouterOptions,
   listAutoRouters,
   memberAutoRouters,
-  readAutoRouter,
   readAutoRouterRouting,
   saveAutoRouter,
   saveAutoRouterAssignment,
@@ -119,20 +118,24 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
     const payload = c.get("organizationContext")
     if (!payload) return c.json({ error: "organization_not_found" }, 404)
     const organizationId = payload.organization.id
-    const existing = await readAutoRouter(organizationId, routerId)
-    if (!existing) return c.json({ error: "auto_router_not_found" }, 404)
-    // Everyone reaches every member, so it needs Share with everyone on its own.
-    // Keeping an already org-wide router org-wide shares nothing new.
-    if (write.assignment.everyone && !existing.assignment.everyone && !await hasPermission(c, "sharing.share_org_wide")) {
+    const problem = await checkAutoRouterAssignment(organizationId, write.assignment)
+    if (problem) return c.json(problem, 400)
+    // Everyone reaches every member, so it needs Share with everyone on its own;
+    // keeping an already org-wide router org-wide shares nothing new. The save
+    // decides that under the router's lock.
+    const result = await saveAutoRouterAssignment({
+      organizationId,
+      memberId: payload.currentMember.id,
+      routerId,
+      assignment: write.assignment,
+      canShareWithEveryone: !write.assignment.everyone || await hasPermission(c, "sharing.share_org_wide"),
+    })
+    if (result === "not_found") return c.json({ error: "auto_router_not_found" }, 404)
+    if (result === "needs_share_with_everyone") {
       const denied = { ...permissionDeniedResponse("sharing.share_org_wide"), message: ORG_WIDE_SHARE_DENIED_MESSAGE }
       return c.json(denied, 403, permissionFailureHeaders(denied))
     }
-    const problem = await checkAutoRouterAssignment(organizationId, write.assignment)
-    if (problem) return c.json(problem, 400)
-    if (!await saveAutoRouterAssignment({ organizationId, memberId: payload.currentMember.id, routerId, assignment: write.assignment })) {
-      return c.json({ error: "auto_router_not_found" }, 404)
-    }
-    return c.json({ ...await listView(c, organizationId), routerId: existing.id })
+    return c.json({ ...await listView(c, organizationId), routerId })
   }
 
   app.get(
