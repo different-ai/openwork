@@ -36,6 +36,10 @@ final class MenuAndPacingTests: XCTestCase {
         XCTAssertFalse(blocked("Make Plain Text", "t", 1))
         XCTAssertFalse(blocked("Show Ruler", nil))
         XCTAssertTrue(MenuRules.blockedMenus.contains("Window"))
+        XCTAssertFalse(MenuRules.offersTopLevelMenu("Window"))
+        XCTAssertFalse(MenuRules.offersTopLevelMenu(""))
+        XCTAssertTrue(MenuRules.offersTopLevelMenu("File"))
+        XCTAssertTrue(MenuRules.offersTopLevelMenu("Format"))
         XCTAssertEqual(MenuRules.leadingMenus, 2, "the Apple and app menus are never offered")
     }
 
@@ -67,6 +71,7 @@ final class MenuAndPacingTests: XCTestCase {
                       "打开最近使用", "최근 사용 열기", "Открытие недавних", "פתיחת האחרונים", "فتح العناصر الأخيرة",
                       "E\u{301}le\u{301}ments re\u{301}cents"] {
             XCTAssertTrue(MenuRules.blocked(title: title, shortcut: nil), "recent-document submenus must not be listed")
+            XCTAssertFalse(MenuRules.offersTopLevelMenu(title), "recent documents must not be listed as a top-level menu either")
             for path in [["File", title], ["File", title, "Private Example.txt"], ["File", "History", title, "Private Example.txt"]] {
                 XCTAssertThrowsError(try Action(["type": "menu", "path": path], policy: .embedded)) { error in
                     XCTAssertEqual((error as? UseError)?.code, "blocked_menu_item")
@@ -88,6 +93,7 @@ final class MenuAndPacingTests: XCTestCase {
                 let title = appKit.localizedString(forKey: key, value: key, table: table,
                     localizations: [Locale.Language(identifier: language)])
                 XCTAssertTrue(MenuRules.blocked(title: title, shortcut: nil), "\(language): \(title) must be omitted from catalogs")
+                XCTAssertFalse(MenuRules.offersTopLevelMenu(title), "\(language): \(title) must not be listed at the top level")
                 XCTAssertThrowsError(try Action(["type": "menu", "path": ["File", title, "Private Example.txt"]], policy: .embedded)) { error in
                     XCTAssertEqual((error as? UseError)?.code, "blocked_menu_item")
                 }

@@ -74,6 +74,10 @@ enum MenuRules {
             .lowercased().precomposedStringWithCanonicalMapping
     }
 
+    static func offersTopLevelMenu(_ title: String) -> Bool {
+        !title.isEmpty && !blockedMenus.contains(title) && !blockedSubmenus.contains(normalizedTitle(title))
+    }
+
     static func validatePath(_ path: [String]) throws {
         guard !path.contains(where: { blockedSubmenus.contains(normalizedTitle($0)) }) else {
             throw UseError("blocked_menu_item", "Recent documents require file approval and cannot be opened through a menu path.", next: "observe")
@@ -135,7 +139,7 @@ extension MacAccessibility {
         let items = attribute(bar, kAXChildrenAttribute) as? [AXUIElement] ?? []
         return items.dropFirst(MenuRules.leadingMenus).compactMap { item in
             let title = menuTitle(item)
-            return title.isEmpty || MenuRules.blockedMenus.contains(title) ? nil : (title, item)
+            return MenuRules.offersTopLevelMenu(title) ? (title, item) : nil
         }
     }
 
