@@ -13,12 +13,20 @@ const input = "w-full rounded-lg border border-[var(--wb-hairline)] bg-[var(--wb
 const saveSchema = z.object({ saved: skillCreatedPayloadSchema, markdown: z.string() });
 const identifier = (label: string) => label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 
-/** The same production panel is used beside the live browser and in its UI journey. */
-export function WorkbotTeaching({ onTakeControl, onTeachingChange, onRun, suspended = false }: { suspended?: boolean; onTakeControl(): void; onTeachingChange?(context: BrowserTeachingContext | undefined): void; onRun?(text: string): void | Promise<void> }) {
+/** The Browser view's tab strip, when the page stream draws one: its tabs in their places, and the one on screen. */
+export type TeachingLiveTabs = { frontId: string; tabs: Array<{ id: string; label: string }> };
+
+/**
+ * The same production panel is used beside the live browser and in its UI journey. With `liveTabs`, tabs are named and
+ * ordered as in the tab strip, teaching starts on the tab on screen unless another is chosen, and `onShowTab` brings
+ * the taught tab back to the front.
+ */
+export function WorkbotTeaching({ onTakeControl, onTeachingChange, onRun, suspended = false, liveTabs, onShowTab }: { suspended?: boolean; onTakeControl(): void; onTeachingChange?(context: BrowserTeachingContext | undefined): void; onRun?(text: string): void | Promise<void>; liveTabs?: TeachingLiveTabs; onShowTab?(id: string): void }) {
   const host = workbotHost();
   const [demo, setDemo] = useState<BrowserDemonstration | null>(null);
-  const [tabs, setTabs] = useState<Array<{ id: string; origin: string }>>([]);
-  const [tab, setTab] = useState("");
+  const [listed, setTabs] = useState<Array<{ id: string; origin: string }>>([]);
+  // Empty: the tab on screen, or the browser's most recent one.
+  const [chosen, setTab] = useState("");
   const [tabPickerOpen, setTabPickerOpen] = useState(false);
   const tabSurface = useRetainedSurface(tabPickerOpen && !suspended && host.browserDemonstrations === true);
   const [opened, setOpened] = useState(false);
@@ -39,6 +47,15 @@ export function WorkbotTeaching({ onTakeControl, onTeachingChange, onRun, suspen
   const selected = demo?.steps.find(step => step.id === stepId);
   const focused = selected ?? demo?.steps.at(-1);
   const focusedLabel = focused ? demonstrationStepLabel(focused) : "Task instructions";
+  // The browser lists tabs most recently used first; the strip keeps them where they opened.
+  const strip = new Map(liveTabs?.tabs.map((item, index) => [item.id, { label: item.label, place: index }]));
+  const tabs = liveTabs ? [...listed].sort((a, b) => (strip.get(a.id)?.place ?? Infinity) - (strip.get(b.id)?.place ?? Infinity)) : listed;
+  const tabLabel = (item: { id: string; origin: string }, index: number) => {
+    const shown = strip.get(item.id)?.label ?? `${item.origin === "null" ? "Blank page" : item.origin} · Tab ${index + 1}`;
+    return item.id === liveTabs?.frontId ? `${shown} (on screen)` : shown;
+  };
+  const tab = chosen || (liveTabs && listed.some(item => item.id === liveTabs.frontId) ? liveTabs.frontId : listed[0]?.id ?? "");
+  const taughtTab = demo && demo.phase !== "draft" && liveTabs ? liveTabs.tabs.find(item => item.id === demo.tabId) : undefined;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; onTeachingChange?.(undefined); }; }, [onTeachingChange]);
   useEffect(() => {
     onTeachingChange?.(demo && !saved && host.browserDemonstrations ? { id: demo.id, phase: demo.phase, ...(selected ? { stepId: selected.id } : {}), label: selected ? `Step ${selected.id}: ${focusedLabel}` : `Latest step: ${focusedLabel}` } : undefined);
@@ -46,7 +63,7 @@ export function WorkbotTeaching({ onTakeControl, onTeachingChange, onRun, suspen
   const accept = useCallback((payload: unknown) => {
     const reply = demonstrationReplySchema.parse(payload);
     setDemo(reply.demonstration);
-    if (reply.tabs) { setTabs(reply.tabs); setTab(current => reply.tabs?.some(tab => tab.id === current) ? current : reply.tabs?.[0]?.id ?? ""); }
+    if (reply.tabs) { setTabs(reply.tabs); setTab(current => reply.tabs?.some(tab => tab.id === current) ? current : ""); }
     return reply;
   }, []);
   useEffect(() => {
@@ -133,15 +150,16 @@ export function WorkbotTeaching({ onTakeControl, onTeachingChange, onRun, suspen
       {error && <p role="alert" className="text-[13px]">{error}</p>}
       {syncError && <p role="status" className="text-[13px]">{syncError}</p>}
       {demo?.notice && <p role="status" className="text-[13px]">{demo.notice}</p>}
+      {taughtTab && taughtTab.id !== liveTabs?.frontId && <p role="status" className="flex flex-wrap items-center gap-2 text-[13px]">Only “{taughtTab.label}” is recorded, not the tab on screen.{onShowTab && <Button className={button} onClick={() => onShowTab(taughtTab.id)}>Show taught tab</Button>}</p>}
       {!demo ? <>
         <div className="text-[13px]">
           <span>Browser tab</span>
-          <Select.Root items={tabs.map((item, index) => ({ value: item.id, label: `${item.origin === "null" ? "Blank page" : item.origin} · Tab ${index + 1}` }))} value={tab || null} onValueChange={value => setTab(value ?? "")} disabled={busy || !enabled} open={tabSurface.open} onOpenChange={value => { if (!tabSurface.blocked) setTabPickerOpen(value); }}>
+          <Select.Root items={tabs.map((item, index) => ({ value: item.id, label: tabLabel(item, index) }))} value={tab || null} onValueChange={value => setTab(value ?? "")} disabled={busy || !enabled} open={tabSurface.open} onOpenChange={value => { if (!tabSurface.blocked) setTabPickerOpen(value); }}>
             <Select.Trigger aria-label="Tab to teach" className={`${input} text-left`}><Select.Value placeholder="Choose a browser tab" /></Select.Trigger>
             <Select.Portal {...tabSurface.portal}>
               <Select.Positioner sideOffset={4} collisionPadding={8} alignItemWithTrigger={false} className="z-50">
                 <Select.Popup className="workbot w-[var(--anchor-width)] max-w-[var(--available-width)] rounded-lg bg-[var(--wb-surface)] p-1 text-[var(--wb-text)] shadow-[var(--wb-panel-shadow)]">
-                  <Select.List className="max-h-[var(--available-height)] overflow-y-auto">{tabs.map((item, index) => <Select.Item key={item.id} value={item.id} className={`${button} w-full justify-start data-[highlighted]:bg-[var(--wb-chip)]`}><Select.ItemText>{item.origin === "null" ? "Blank page" : item.origin} · Tab {index + 1}</Select.ItemText></Select.Item>)}</Select.List>
+                  <Select.List className="max-h-[var(--available-height)] overflow-y-auto">{tabs.map((item, index) => <Select.Item key={item.id} value={item.id} className={`${button} w-full justify-start data-[highlighted]:bg-[var(--wb-chip)]`}><Select.ItemText>{tabLabel(item, index)}</Select.ItemText></Select.Item>)}</Select.List>
                 </Select.Popup>
               </Select.Positioner>
             </Select.Portal>

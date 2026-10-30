@@ -5,16 +5,19 @@ steps in chat, and save the result as a private Cloud skill. This builds on the
 shared desktop and input controls; it uses the ordinary skill library and
 `create_skill` / `get_skill` tools.
 
-Enable `browserDemonstrations`, `computerUse`, and `remoteComputers` for the
-organization in `/admin`. The teaching rollout is off by default on cloud and
-self-hosted installations. The conversation needs a desktop snapshot built with
-the current guest bridge. An old snapshot reports that teaching is unavailable;
-it is never replaced automatically.
+Enable `browserDemonstrations`, `browserUse`, and `remoteComputers` for the
+organization in `/admin`; `computerUse` is not needed. The teaching rollout is
+off by default on cloud and self-hosted installations. The conversation needs a
+desktop built with the current guest bridge. An older one reports that teaching
+is unavailable until it moves to a current build (see
+[Prepare the headless runner](workbot.md#prepare-the-headless-runner)).
 
 ## Teach, review, and run
 
-1. Open Computer → Browser → Teach Workbot. Choose the browser tab, then
-   Start teaching. The person owns browser input while teaching.
+1. Open Browser → Teach Workbot. Choose the browser tab, then Start teaching.
+   With the browser live view, the tab on screen is chosen unless you pick
+   another, and tabs are named as in the tab strip. The taught tab comes to the
+   front. The person owns browser input while teaching.
 2. Navigate, enter search inputs, and use the page normally. Explain intentions
    in the conversation before or after an action. Workbot receives recent
    semantic steps with the explanation, using read-only turn credentials. The
@@ -53,8 +56,11 @@ rather than reopening the starting page after each action.
 ## Recording boundaries
 
 Recording is limited to the chosen tab's top document and trusted user events.
-It does not record other tabs, raw keystroke streams, screenshots, entered field
-values, passwords, payment fields, or session credentials. Extraction captures
+With the browser live view, switching to another tab says that only the taught
+tab is recorded, with Show taught tab to return to it. Closing the taught tab
+pauses recording. It does not record other tabs, raw keystroke streams,
+screenshots, entered field values, passwords, payment fields, or session
+credentials. Extraction captures
 an accessible field label or table heading rather than its example value.
 An unlabeled selection keeps only its structural descriptor and asks for an
 explanation; plain page-text clicks are not recorded as controls.

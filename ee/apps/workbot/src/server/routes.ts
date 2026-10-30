@@ -527,7 +527,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       let text = body.data.text
       if (body.data.teachingId) {
         const fresh = await den.session(member.accessToken)
-        if (scope.chat !== null || !fresh.enabled || !fresh.computer || !fresh.browserDemonstrations || fresh.user.id !== member.den.user.id || fresh.organization.id !== member.den.organization.id || fresh.memberId !== member.den.memberId) return c.json({ error: "feature_disabled" }, 403)
+        // Teaching rolls out with browser use, as the teaching route checks: an organization may have no Computer view.
+        if (scope.chat !== null || !fresh.enabled || !fresh.browser || !fresh.browserDemonstrations || fresh.user.id !== member.den.user.id || fresh.organization.id !== member.den.organization.id || fresh.memberId !== member.den.memberId) return c.json({ error: "feature_disabled" }, 403)
         const client = runnerClientFor(member)
         const sessionId = await workbotFor(member).sessionIdOf(actorOf(member))
         const state = await client.browserDemonstration(sessionId, { action: "read" })
@@ -541,7 +542,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         const annotated = await client.browserDemonstration(sessionId, { action: "annotate", text, messageId: body.data.id, ...(focused ? { stepId: focused.id } : {}) })
         if (!annotated.ok || !annotated.value.demonstration) return c.json({ error: "teaching_unavailable" }, 409)
         const confirmed = await den.session(member.accessToken)
-        if (!confirmed.enabled || !confirmed.computer || !confirmed.browserDemonstrations || confirmed.user.id !== fresh.user.id || confirmed.organization.id !== fresh.organization.id || confirmed.memberId !== fresh.memberId) return c.json({ error: "feature_disabled" }, 403)
+        if (!confirmed.enabled || !confirmed.browser || !confirmed.browserDemonstrations || confirmed.user.id !== fresh.user.id || confirmed.organization.id !== fresh.organization.id || confirmed.memberId !== fresh.memberId) return c.json({ error: "feature_disabled" }, 403)
         text = browserTeachingPrompt(text, annotated.value.demonstration.steps, { phase: annotated.value.demonstration.phase, stepId: focused?.id ?? annotated.value.demonstration.steps.at(-1)?.id })
         if (text.length > MAX_MESSAGE_CHARS) return c.json(messageTooLong, 400)
       }

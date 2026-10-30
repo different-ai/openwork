@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createServer } from "node:http"
 import { test } from "node:test"
 import { Hono } from "hono"
 import { compileBrowserDemonstration, browserTeachingPrompt, readBrowserTeachingPrompt, demonstrationSchema, browserSkillInputs, browserSkillRunPrompt, readBrowserSkillRunPrompt, replaceBrowserTeachingMessage, type BrowserDemonstration } from "@openwork/types/browser-demonstration"
@@ -91,6 +92,44 @@ test("teaching uses the authenticated member, rechecks revocation, and saves thr
   assert.equal(calls.length, 0)
   assert.equal((await call(save)).status, 403)
   assert.equal(saves.length, 1)
+})
+
+test("a workspace with browser use but no computer use can explain taught steps, read-only", async () => {
+  const recording: BrowserDemonstration = { ...demonstration, phase: "recording" }
+  const commands: unknown[] = []
+  const turns: { prompt: string; credentials: { readOnly?: boolean } }[] = []
+  const runner = createServer(async (req, res) => {
+    let body = ""
+    for await (const chunk of req) body += chunk
+    res.setHeader("content-type", "application/json")
+    if (req.url?.endsWith("/desktop/demonstration")) { commands.push(JSON.parse(body)); res.end(JSON.stringify({ demonstration: recording })); return }
+    if (req.method === "POST" && req.url?.endsWith("/turns")) { turns.push(JSON.parse(body)); res.statusCode = 202; res.end(JSON.stringify({ state: "accepted" })); return }
+    if (req.method === "PUT") { res.end(JSON.stringify({ id: decodeURIComponent((req.url ?? "").split("/").at(-1) ?? "") })); return }
+    if (req.method === "GET") { res.end(JSON.stringify({ turns: [], messages: [], finalAssistantText: "" })); return }
+    res.statusCode = 404; res.end(JSON.stringify({ error: "unknown_session" }))
+  })
+  await new Promise<void>(resolve => runner.listen(0, "127.0.0.1", resolve))
+  const address = runner.address()
+  if (!address || typeof address === "string") throw new Error("No runner address")
+  try {
+    const signed = member()
+    assert.equal(signed.den.computer, false)
+    let fresh = signed.den
+    const app = new Hono<AppEnv>()
+    const runnerConfig = loadConfig({ WORKBOT_PUBLIC_URL: "http://localhost:3020", WORKBOT_DEN_API_URL: "http://localhost:8790", WORKBOT_RUNNER_URL: `http://127.0.0.1:${address.port}`, WORKBOT_RUNNER_TOKEN: "r".repeat(32), WORKBOT_SESSION_SECRET: "s".repeat(32) })
+    registerWorkbotRoutes(app, { config: runnerConfig, den: {
+      ...createDen({ apiUrl: runnerConfig.denApiUrl, publicUrl: runnerConfig.publicUrl }), session: async () => fresh, runToken: async () => ({ token: "scoped-test-token" }), webUrl: async () => "http://localhost:3021",
+    }, member: async (c, next) => { c.set("member", signed); await next() }, sameOrigin: async (_c, next) => next() })
+    const explain = (id: string) => app.request("/v1/workbot/messages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, text: "Use the full legal name", teachingId: demonstration.id, teachingStepId: 2 }) })
+    assert.equal((await explain("teaching_001")).status, 202)
+    assert.deepEqual(commands, [{ action: "read" }, { action: "annotate", text: "Use the full legal name", messageId: "teaching_001", stepId: 2 }])
+    assert.equal(turns.length, 1)
+    assert.equal(turns[0]?.credentials.readOnly, true)
+    assert.equal(readBrowserTeachingPrompt(turns[0]!.prompt), "Use the full legal name")
+    fresh = { ...fresh, browser: false }
+    assert.equal((await explain("teaching_002")).status, 403)
+    assert.equal(turns.length, 1)
+  } finally { await new Promise(resolve => runner.close(resolve)) }
 })
 
 test("the teaching route requires both same-origin and member middleware before accessing a computer", async () => {
