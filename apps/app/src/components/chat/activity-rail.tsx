@@ -71,8 +71,9 @@ export function RailMeta({ children, className }: { children: React.ReactNode; c
 
 /**
  * "Verb object" (text-first): the verb in muted ink, the object lighter,
- * one line, truncated. Failed verbs are red; waiting is amber; the running
- * step shimmers (V6, reduced motion respected).
+ * one line, truncated. Failed verbs are red; waiting is amber; a running
+ * step's verb is in full ink and holds still: the turn's Working line is the
+ * one shimmer on screen, so two lines never sweep at once.
  */
 export function TextSentenceLine({ verb, object, mark, title, tone = "normal", className }: {
   verb: string
@@ -88,12 +89,11 @@ export function TextSentenceLine({ verb, object, mark, title, tone = "normal", c
       data-text-step=""
       data-text-step-tone={tone}
       title={title}
-      className={cn("min-w-0 truncate", tone === "running" && "ow-text-shimmer motion-reduce:animate-none", className)}
+      className={cn("min-w-0 truncate", className)}
     >
-      {/* The shimmer paints through the text, so a running step's parts keep no colour of their own. */}
-      <span className={cn(tone === "failed" ? "text-red-11" : tone === "waiting" ? "text-amber-11" : tone === "running" ? null : "text-muted-foreground")}>{verb}</span>
+      <span className={cn(tone === "failed" ? "text-red-11" : tone === "waiting" ? "text-amber-11" : tone === "running" ? "text-foreground" : "text-muted-foreground")}>{verb}</span>
       {mark ? <span data-text-rail-mark="" className="ms-1 inline-flex align-[-0.2em]">{mark}</span> : null}
-      {object ? <span className={cn(tone !== "running" && "text-slate-9")}>{` ${object}`}</span> : null}
+      {object ? <span className="text-slate-9">{` ${object}`}</span> : null}
     </span>
   )
 }

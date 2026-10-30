@@ -20,7 +20,10 @@ icon rail:
   the command or output. Opening an edit shows the change in the same card.
 - A failed step's verb is red (`Couldn't run …`); other failures open a
   quiet Technical details box. Waiting on the person reads `Waiting for you`
-  in amber. Only the running step shimmers.
+  in amber. A running step reads in full ink and holds still; the turn's
+  `Working` line is the one shimmer, and a running group's summary line
+  carries only its present-tense totals (`Editing 2 files, running 2
+  commands`). Background command and sub-agent notices drop their glyph.
 - Every line (thoughts, summaries, steps, opened cards, sub-agent rows)
   starts on the reply text's left edge. There is no leading icon or chevron
   column; chevrons trail the text.

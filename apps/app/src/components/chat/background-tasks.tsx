@@ -14,6 +14,7 @@ import { formatElapsedSeconds } from "@/lib/tool-call-duration"
 import { Message } from "@/components/ui/message"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
+import { useTextActivityRail } from "@/components/chat/text-activity-rail-store"
 import type { BackgroundShell } from "@/react-app/domains/session/status/background-shell-store"
 
 const COMMAND_PREVIEW_LENGTH = 80
@@ -37,9 +38,10 @@ export function backgroundShellNoticeFromMessage(message: UIMessage): Background
 /**
  * Where a background command ended, in the transcript: one quiet row in the
  * step rail's shape (terminal glyph, sentence, command), never the engine's
- * raw `<shell>` hand-off text.
+ * raw `<shell>` hand-off text. Text-first (`textActivityRail`) drops the glyph.
  */
 export const BackgroundTaskNotice = React.memo(function BackgroundTaskNotice({ message, notice }: { message: UIMessage; notice: BackgroundShellNotice }) {
+  const textRail = useTextActivityRail()
   const command = commandPreview(notice.command)
   return (
     <Message
@@ -51,9 +53,9 @@ export const BackgroundTaskNotice = React.memo(function BackgroundTaskNotice({ m
         data-background-task-notice={notice.outcome}
         className="flex w-full min-w-0 items-center gap-2 py-1 text-sm text-muted-foreground"
       >
-        <SquareTerminal aria-hidden="true" className="size-4 shrink-0" />
+        {textRail ? null : <SquareTerminal aria-hidden="true" className="size-4 shrink-0" />}
         <span className="shrink-0">{backgroundShellNoticeLabel(notice)}</span>
-        {command ? <code className="min-w-0 truncate font-mono text-xs opacity-80" title={notice.command}>{command}</code> : null}
+        {command ? <code className={cn("min-w-0 truncate font-mono text-xs", textRail ? "text-slate-9" : "opacity-80")} title={notice.command}>{command}</code> : null}
       </div>
     </Message>
   )
@@ -74,15 +76,18 @@ export function subagentNoticeFromMessage(message: UIMessage): SubagentNotice | 
  * Where a background sub-agent ended, in the transcript: one quiet row in the
  * same shape as a background command's, never the engine's raw `<subagent>`
  * hand-off text. It opens the sub-agent's chat, like its run line does.
+ * Text-first (`textActivityRail`) reads like every other step, "Sub-agent
+ * finished Diagnose stuck conversion", with no glyph.
  */
 export const SubagentNoticeRow = React.memo(function SubagentNoticeRow({ message, notice }: { message: UIMessage; notice: SubagentNotice }) {
   const { onOpenSubagentSession } = useMessageList()
+  const textRail = useTextActivityRail()
   const label = subagentNoticeLabel(notice)
   const content = (
     <>
-      <Bot aria-hidden="true" className="size-4 shrink-0" />
+      {textRail ? null : <Bot aria-hidden="true" className="size-4 shrink-0" />}
       <span className="shrink-0">{label}</span>
-      {notice.description ? <span className="min-w-0 truncate opacity-80" title={notice.description}>{notice.description}</span> : null}
+      {notice.description ? <span className={cn("min-w-0 truncate", textRail ? "text-slate-9" : "opacity-80")} title={notice.description}>{notice.description}</span> : null}
     </>
   )
   const rowClassName = "flex w-full min-w-0 items-center gap-2 py-1 text-start text-sm text-muted-foreground"

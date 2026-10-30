@@ -179,3 +179,56 @@ test("the OpenWork mark is recognised however the identity reaches the row", asy
   expect(isOpenWorkIdentity({ ...base, id: "connection:slack", name: "Slack", iconUrl: "https://cdn.simpleicons.org/slack", serviceUrl: "https://mcp.slack.com" })).toBe(false)
   expect(isOpenWorkIdentity({ ...base, id: "connection:evil", iconUrl: null, serviceUrl: "https://openworklabs.com.evil.example" })).toBe(false)
 })
+
+test("flag on, mid-turn: the Working line is the one shimmer and the group line carries only its totals", async () => {
+  const running: DynamicToolUIPart = {
+    type: "dynamic-tool", toolName: "bash", toolCallId: "call_live", state: "input-available",
+    input: { command: "pnpm test", description: "run the tests" },
+  }
+  const messages: UIMessage[] = [
+    {
+      id: "notice_1", role: "system", parts: [{
+        type: "text", text: "Sub-agent finished", state: "done",
+        providerMetadata: { opencode: { subagentNotice: { childSessionId: "ses_child", description: "Diagnose stuck conversion", outcome: "finished" } } },
+      }],
+    },
+    { id: "user_1", role: "user", parts: [{ type: "text", text: "Fix it." }], metadata: { opencode: { created: 900 } } },
+    {
+      id: "reply_1", role: "assistant", metadata: { opencode: { created: 1000 } },
+      parts: [
+        tool("call_edit", "edit", { filePath: "/work/a.ts", oldString: "a\n", newString: "b\n" }),
+        tool("call_ls", "bash", { command: "ls", description: "list files" }),
+        running,
+      ],
+    },
+  ]
+  useTextActivityRailStore.getState().setEnabled(true)
+  const container = document.createElement("div")
+  document.body.append(container)
+  const root = createRoot(container)
+  mounted = { root, container }
+  await act(async () => root.render(createElement(PlatformProvider, {
+    value: createDefaultPlatform(),
+    children: createElement(MessageListProvider, {
+      workspaceId: "workspace_fixture", sessionId: "session_fixture",
+      showThinking: true, developerMode: false, displaySuggestions: false, providerConnectedCount: 0,
+      dispatchAction: () => {}, setPrompt: () => {}, onRevertToUserMessage: () => {},
+      onForkAtMessage: () => {}, onEditUserMessage: () => {},
+      onMcpReconnect: async () => {}, onMcpReopenAuthorization: async () => {},
+      children: createElement(MessageList, { messages, status: "streaming", activityStatus: "busy" }),
+    }),
+  })))
+
+  const group = container.querySelector("[data-text-group-summary]")?.closest("button")
+  expect(group).not.toBeNull()
+  // Nothing rides after the totals: no second "Running a command" sentence.
+  expect(group?.querySelector("[data-text-step]")).toBeNull()
+  // The only shimmer on screen is the Working line.
+  const shimmers = [...container.querySelectorAll(".ow-text-shimmer")]
+  expect(shimmers.every((element) => element.closest("[data-loading-message]") !== null)).toBe(true)
+
+  // The sub-agent notice reads as text, with no glyph.
+  const notice = container.querySelector("[data-subagent-notice='finished']")
+  expect(notice?.textContent).toBe("Sub-agent finishedDiagnose stuck conversion")
+  expect(notice?.querySelector("svg")).toBeNull()
+})

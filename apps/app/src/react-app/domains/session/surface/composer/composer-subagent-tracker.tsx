@@ -283,10 +283,26 @@ function SubagentTrackerRow(props: {
           )} />
         )}
       </span>}
-      <span className="flex min-w-0 flex-1 items-baseline gap-2">
-        <span className="shrink-0 font-medium text-gray-12">{agent}</span>
-        <span data-subagent-tracker-task className="min-w-0 truncate text-gray-9 @max-[480px]/composer:hidden">{task}</span>
-      </span>
+      {/* The name and task open the agent's chat too, like Open does. Open
+          stays the keyboard and screen-reader target, so this is pointer-only. */}
+      {canOpen ? (
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-hidden="true"
+          data-subagent-tracker-name-open=""
+          onClick={open}
+          className="group/name flex min-w-0 flex-1 cursor-pointer items-baseline gap-2 text-start"
+        >
+          <span className="shrink-0 font-medium text-gray-12 underline-offset-2 group-hover/name:underline">{agent}</span>
+          <span data-subagent-tracker-task className="min-w-0 truncate text-gray-9 transition-colors group-hover/name:text-gray-11 @max-[480px]/composer:hidden">{task}</span>
+        </button>
+      ) : (
+        <span className="flex min-w-0 flex-1 items-baseline gap-2">
+          <span className="shrink-0 font-medium text-gray-12">{agent}</span>
+          <span data-subagent-tracker-task className="min-w-0 truncate text-gray-9 @max-[480px]/composer:hidden">{task}</span>
+        </span>
+      )}
       <span
         data-subagent-tracker-status
         className={cn(
