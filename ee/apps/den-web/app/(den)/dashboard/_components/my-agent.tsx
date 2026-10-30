@@ -421,7 +421,7 @@ function AccountPicker({ kind, options, chosen, disabled, onPick }: {
   return (
     <DenDropdownRoot open={open} onOpenChange={setOpen}>
       <DenDropdownTrigger ref={triggerRef} type="button" disabled={disabled} aria-label={`${title}: ${chosen?.name ?? "choose an app"}`} data-testid={`my-agent-picker-${kind}`}
-        className="flex h-7 min-w-0 max-w-[220px] items-center gap-2 rounded-lg px-2 text-[12px] font-medium text-gray-900 outline-hidden transition-colors duration-150 ease-out hover:bg-gray-100 focus-visible:ring-2 focus-visible:ring-gray-900/10 disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none">
+        className="flex h-8 min-w-0 max-w-[240px] items-center gap-2 rounded-lg border border-gray-200 bg-white pl-1.5 pr-2.5 text-[13px] text-gray-900 outline-hidden transition-colors duration-150 ease-out hover:border-gray-300 hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-gray-900/10 disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none">
         {chosen ? <ConnectorLogo name={chosen.name} url={chosen.url} size="xs" /> : null}
         <span className="truncate">{chosen?.name ?? "Choose an app"}</span>
         <ChevronDown size={14} strokeWidth={1.5} aria-hidden className="shrink-0 text-gray-500" />
