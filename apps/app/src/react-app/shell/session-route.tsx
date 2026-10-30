@@ -114,6 +114,7 @@ import { encodeConnectSkillToken } from "@/react-app/domains/session/surface/com
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
 import { CodePage } from "@/react-app/domains/code/code-page";
+import { SectionPlaceholder } from "@/react-app/domains/sidebar-sections/section-placeholder";
 import { CalendarPage } from "@/react-app/domains/calendar/calendar-page";
 import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature";
 import { useRemoteSessionSubagentsFeature } from "@/react-app/domains/session/remote-threads/use-remote-session-subagents-feature";
@@ -418,6 +419,8 @@ export function SessionRoute() {
   const dashboardRouteRequested = /^\/dashboard(?:\/|$)/.test(location.pathname);
   const calendarRouteRequested = /^\/calendar(?:\/|$)/.test(location.pathname);
   const codeRouteActive = /^\/code(?:\/|$)/.test(location.pathname);
+  const masterPlanSection = /^(?:\/projects|\/artifacts|\/scheduled|\/design|\/personalization)(?:\/|$)/.exec(location.pathname)?.[1]?.replace(/^\//, "") ?? null;
+  const masterPlanRouteActive = masterPlanSection !== null;
   const activityRouteRequested = location.pathname === "/activity";
   const {
     enabled: mcpAppsDashboardEnabled,
@@ -573,7 +576,7 @@ export function SessionRoute() {
   } = useWorkspaceRouteState({
     preservePendingConversationRoute: Boolean(requestedPendingId && pendingConversations[requestedPendingId]?.scope === sessionDraftScope),
     developerMode,
-    workspaceRoute: activityRouteActive ? "activity" : appsRouteActive ? "apps" : automationsRouteActive ? "automations" : calendarRouteActive || (calendarRouteRequested && calendarAvailabilityPending) ? "calendar" : dashboardWorkspaceRoute ? "dashboard" : codeRouteActive ? "code" : "session",
+    workspaceRoute: activityRouteActive ? "activity" : appsRouteActive ? "apps" : automationsRouteActive ? "automations" : calendarRouteActive || (calendarRouteRequested && calendarAvailabilityPending) ? "calendar" : dashboardWorkspaceRoute ? "dashboard" : codeRouteActive ? "code" : masterPlanRouteActive ? "projects" : "session",
     onServerSettingsChanged: () => undefined,
     onHostInfo: setOpenworkServerHostInfoState,
   });
@@ -3953,6 +3956,11 @@ export function SessionRoute() {
       primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation)}
       primarySlot={activityRouteActive ? <ActivityPage onTrySkill={trySkillInNewSession} /> : codeRouteActive ? (
         <CodePage openworkServerClient={client} />
+      ) : masterPlanRouteActive ? (
+        <SectionPlaceholder
+          title={masterPlanSection === "projects" ? "Proyectos" : masterPlanSection === "artifacts" ? "Artefactos" : masterPlanSection === "scheduled" ? "Programadas" : masterPlanSection === "design" ? "Design" : "Personalización"}
+          description="Esta sección está en construcción."
+        />
       ) : pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
         <WorkspaceProvider
           client={opencodeClient}

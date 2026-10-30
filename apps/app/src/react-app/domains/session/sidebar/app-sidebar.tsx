@@ -26,6 +26,8 @@ import {
   Pin,
   PinOff,
   Plus,
+  Palette,
+  Settings2,
   Trash2,
   RotateCcw,
   FolderOpen,
@@ -672,6 +674,16 @@ export type AppSidebarProps = {
   onOpenCalendar?: () => void;
   codeActive?: boolean;
   onOpenCode?: () => void;
+  projectsActive?: boolean;
+  onOpenProjects?: () => void;
+  artifactsActive?: boolean;
+  onOpenArtifacts?: () => void;
+  scheduledActive?: boolean;
+  onOpenScheduled?: () => void;
+  designActive?: boolean;
+  onOpenDesign?: () => void;
+  personalizationActive?: boolean;
+  onOpenPersonalization?: () => void;
   dashboardActive?: boolean;
   onOpenDashboard?: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
@@ -886,6 +898,46 @@ export function AppSidebar(props: AppSidebarProps) {
                 icon={SquareTerminal}
                 label="Code"
                 onSelect={props.onOpenCode}
+              />
+            ) : null}
+            {props.onOpenProjects ? (
+              <SidebarDestination
+                active={props.projectsActive === true}
+                icon={FolderOpen}
+                label="Proyectos"
+                onSelect={props.onOpenProjects}
+              />
+            ) : null}
+            {props.onOpenArtifacts ? (
+              <SidebarDestination
+                active={props.artifactsActive === true}
+                icon={FolderOpen}
+                label="Artefactos"
+                onSelect={props.onOpenArtifacts}
+              />
+            ) : null}
+            {props.onOpenScheduled ? (
+              <SidebarDestination
+                active={props.scheduledActive === true}
+                icon={CalendarDays}
+                label="Programadas"
+                onSelect={props.onOpenScheduled}
+              />
+            ) : null}
+            {props.onOpenDesign ? (
+              <SidebarDestination
+                active={props.designActive === true}
+                icon={Palette}
+                label="Design"
+                onSelect={props.onOpenDesign}
+              />
+            ) : null}
+            {props.onOpenPersonalization ? (
+              <SidebarDestination
+                active={props.personalizationActive === true}
+                icon={Settings2}
+                label="Personalización"
+                onSelect={props.onOpenPersonalization}
               />
             ) : null}
             <SidebarDestination

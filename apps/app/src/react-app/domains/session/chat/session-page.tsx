@@ -197,6 +197,16 @@ export type SessionPageSidebarProps = {
   onOpenCalendar?: () => void;
   codeActive?: boolean;
   onOpenCode?: () => void;
+  projectsActive?: boolean;
+  onOpenProjects?: () => void;
+  artifactsActive?: boolean;
+  onOpenArtifacts?: () => void;
+  scheduledActive?: boolean;
+  onOpenScheduled?: () => void;
+  designActive?: boolean;
+  onOpenDesign?: () => void;
+  personalizationActive?: boolean;
+  onOpenPersonalization?: () => void;
   dashboardActive?: boolean;
   onOpenDashboard?: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
@@ -1460,6 +1470,16 @@ export function SessionPage(props: SessionPageProps) {
           onOpenCalendar={props.sidebar.onOpenCalendar}
           codeActive={props.sidebar.codeActive}
           onOpenCode={props.sidebar.onOpenCode}
+          projectsActive={props.sidebar.projectsActive}
+          onOpenProjects={props.sidebar.onOpenProjects}
+          artifactsActive={props.sidebar.artifactsActive}
+          onOpenArtifacts={props.sidebar.onOpenArtifacts}
+          scheduledActive={props.sidebar.scheduledActive}
+          onOpenScheduled={props.sidebar.onOpenScheduled}
+          designActive={props.sidebar.designActive}
+          onOpenDesign={props.sidebar.onOpenDesign}
+          personalizationActive={props.sidebar.personalizationActive}
+          onOpenPersonalization={props.sidebar.onOpenPersonalization}
           dashboardActive={props.sidebar.dashboardActive}
           onOpenDashboard={props.sidebar.onOpenDashboard}
           conversationHistory={{
