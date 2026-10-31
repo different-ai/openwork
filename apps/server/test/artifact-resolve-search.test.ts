@@ -1,13 +1,23 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { findWorkspaceFileBySuffix, resolveWorkspaceArtifactTargets } from "../src/routes/files.js";
+import { findWorkspaceFileBySuffix, resolveScopedWorkspaceFilePath, resolveWorkspaceArtifactTargets } from "../src/routes/files.js";
 
 let base = "";
 let workspace = "";
 let home = "";
+
+async function duplicateRoots(name: string) {
+  const root = join(base, name, "workspace");
+  const conversation = join(base, name, "conversation");
+  await touch(root, "src/report.md");
+  await touch(conversation, "src/report.md");
+  await writeFile(join(root, "src/report.md"), "workspace contents");
+  await writeFile(join(conversation, "src/report.md"), "conversation contents");
+  return { root, conversation, conversationDirectory: async () => conversation };
+}
 
 async function touch(root: string, path: string) {
   const file = join(root, path);
@@ -86,6 +96,83 @@ describe("resolveWorkspaceArtifactTargets", () => {
     expect(outside).toEqual([]);
 
     expect(await resolveWorkspaceArtifactTargets(workspace, [fileTarget("~someone/notes.md")], { homeDir: home, search: true })).toEqual([]);
+  });
+
+  test("absolute references preserve the exact owning root for duplicate relative paths", async () => {
+    const { root, conversation, conversationDirectory } = await duplicateRoots("absolute-identity");
+    const items = await resolveWorkspaceArtifactTargets(root, [
+      fileTarget(join(root, "src/report.md")),
+      fileTarget(join(conversation, "src/report.md")),
+    ], { conversationDirectory, search: true });
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({ value: "src/report.md", resolvedPath: join(root, "src/report.md"), fileScope: "workspace", exists: true });
+    expect(items[1]).toMatchObject({ value: "src/report.md", resolvedPath: join(conversation, "src/report.md"), fileScope: "conversation", exists: true });
+  });
+
+  test("a missing absolute conversation reference never falls back to the workspace copy", async () => {
+    const { root, conversation, conversationDirectory } = await duplicateRoots("missing-absolute");
+    await rm(join(conversation, "src/report.md"));
+    const [item] = await resolveWorkspaceArtifactTargets(root, [fileTarget(join(conversation, "src/report.md"))], { conversationDirectory, search: true });
+    expect(item).toMatchObject({ value: "src/report.md", resolvedPath: join(conversation, "src/report.md"), fileScope: "conversation", exists: false });
+  });
+
+  test("absolute references prefer the nested conversation root", async () => {
+    const root = join(base, "nested-conversation");
+    const conversation = join(root, ".worktrees/task");
+    await touch(root, "src/report.md");
+    await touch(conversation, "src/report.md");
+    const [item] = await resolveWorkspaceArtifactTargets(root, [fileTarget(join(conversation, "src/report.md"))], { conversationDirectory: async () => conversation });
+    expect(item).toMatchObject({ value: "src/report.md", resolvedPath: join(conversation, "src/report.md"), fileScope: "conversation", exists: true });
+  });
+
+  test("a conversation suffix match keeps its scope despite a workspace duplicate", async () => {
+    const { root, conversation, conversationDirectory } = await duplicateRoots("suffix-identity");
+    const [item] = await resolveWorkspaceArtifactTargets(root, [fileTarget("report.md")], { conversationDirectory, search: true });
+    expect(item).toMatchObject({ value: "src/report.md", resolvedPath: join(conversation, "src/report.md"), fileScope: "conversation", exists: true });
+    const [revalidated] = await resolveWorkspaceArtifactTargets(root, [item], { conversationDirectory, search: true });
+    expect(revalidated).toEqual(item);
+    const path = await resolveScopedWorkspaceFilePath(root, "src/report.md", { conversationDirectory, fileScope: "conversation" });
+    expect(await readFile(path, "utf8")).toBe("conversation contents");
+    await writeFile(path, "edited conversation");
+    expect(await readFile(join(conversation, "src/report.md"), "utf8")).toBe("edited conversation");
+    expect(await readFile(join(root, "src/report.md"), "utf8")).toBe("workspace contents");
+  });
+
+  test("stale scoped targets neither change root nor search for a replacement", async () => {
+    const { root, conversation, conversationDirectory } = await duplicateRoots("stale-identity");
+    await rm(join(conversation, "src/report.md"));
+    await touch(conversation, "elsewhere/src/report.md");
+    const [item] = await resolveWorkspaceArtifactTargets(root, [{ ...fileTarget("src/report.md"), fileScope: "conversation" }], { conversationDirectory, search: true });
+    expect(item).toMatchObject({ value: "src/report.md", resolvedPath: join(conversation, "src/report.md"), fileScope: "conversation", exists: false });
+    expect(await resolveScopedWorkspaceFilePath(root, "src/report.md", { conversationDirectory, fileScope: "conversation" })).toBe(join(conversation, "src/report.md"));
+
+    await touch(conversation, "src/report.md");
+    await rm(join(root, "src/report.md"));
+    const [workspaceItem] = await resolveWorkspaceArtifactTargets(root, [{ ...fileTarget("src/report.md"), fileScope: "workspace" }], { conversationDirectory, search: true });
+    expect(workspaceItem).toMatchObject({ resolvedPath: join(root, "src/report.md"), fileScope: "workspace", exists: false });
+    expect(await resolveScopedWorkspaceFilePath(root, "src/report.md", { conversationDirectory, fileScope: "workspace" })).toBe(join(root, "src/report.md"));
+  });
+
+  test("scoped conversation access fails closed without a conversation folder", async () => {
+    const { root } = await duplicateRoots("missing-conversation");
+    expect(await resolveWorkspaceArtifactTargets(root, [{ ...fileTarget("src/report.md"), fileScope: "conversation" }], { search: true })).toEqual([]);
+    await expect(resolveScopedWorkspaceFilePath(root, "src/report.md", { fileScope: "conversation" })).rejects.toThrow("Conversation folder is no longer available");
+    await expect(resolveScopedWorkspaceFilePath(root, "src/report.md", { fileScope: "invalid" })).rejects.toThrow("fileScope must be workspace or conversation");
+  });
+
+  test("absolute scoped references never change their owning root", async () => {
+    const { root, conversation, conversationDirectory } = await duplicateRoots("absolute-scope");
+    expect(await resolveWorkspaceArtifactTargets(root, [
+      { ...fileTarget(join(conversation, "src/report.md")), fileScope: "workspace" },
+      { ...fileTarget(join(root, "src/report.md")), fileScope: "conversation" },
+    ], { conversationDirectory, search: true })).toEqual([]);
+  });
+
+  test("unscoped relative operations retain workspace-first compatibility", async () => {
+    const { root, conversation, conversationDirectory } = await duplicateRoots("legacy-fallback");
+    expect(await resolveScopedWorkspaceFilePath(root, "src/report.md", { conversationDirectory })).toBe(join(root, "src/report.md"));
+    await rm(join(root, "src/report.md"));
+    expect(await resolveScopedWorkspaceFilePath(root, "src/report.md", { conversationDirectory })).toBe(join(conversation, "src/report.md"));
   });
 
   test("never searches for paths that leave the workspace", async () => {

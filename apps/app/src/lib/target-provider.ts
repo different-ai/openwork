@@ -6,6 +6,8 @@ import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-targ
 export type OpenTargetOptions = {
   external?: boolean;
   reveal?: boolean;
+  /** A person-selected installed application; still uses the same resolver and native guards. */
+  appPath?: string;
 };
 
 type OpenTargetHandler = (target: OpenTarget, options?: OpenTargetOptions) => void;

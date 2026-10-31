@@ -25,6 +25,10 @@ export type OpenTarget = {
   confidence: number;
   reason: string;
   exists?: boolean;
+  /** Absolute path on the owning server, not necessarily this computer. */
+  resolvedPath?: string;
+  /** Pins subsequent file operations to the root that resolved this target. */
+  fileScope?: "workspace" | "conversation";
   size?: number;
   updatedAt?: number;
 };
@@ -55,6 +59,8 @@ export function sameOpenTargets(left: OpenTarget[], right: OpenTarget[]): boolea
       && target.confidence === other.confidence
       && target.reason === other.reason
       && target.exists === other.exists
+      && target.resolvedPath === other.resolvedPath
+      && target.fileScope === other.fileScope
       && target.size === other.size
       && target.updatedAt === other.updatedAt;
   });

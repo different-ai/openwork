@@ -10,6 +10,7 @@ import {
 import type { OpenTarget } from "../src/react-app/domains/session/artifacts/open-target";
 import {
   fileOriginForRuntime,
+  filePathForCopy,
   localArtifactPath,
   nativeFileAction,
   openTargetForHref,
@@ -241,6 +242,12 @@ describe("native file actions", () => {
 });
 
 describe("session file origin", () => {
+  test("Copy path keeps the remote machine's home instead of expanding it locally", () => {
+    const target = fileTarget("~/Downloads/report.pdf");
+    expect(filePathForCopy(target, { origin: "remote", workspaceRoot: ROOT, homeDir: HOME })).toBe("~/Downloads/report.pdf");
+    expect(filePathForCopy(target, { origin: "unknown", workspaceRoot: ROOT, homeDir: HOME })).toBe("~/Downloads/report.pdf");
+    expect(filePathForCopy(target, { origin: "local", workspaceRoot: ROOT, homeDir: HOME })).toBe(`${HOME}/Downloads/report.pdf`);
+  });
   test("uses the owning runtime, not an absolute-looking path", () => {
     expect(fileOriginForRuntime({ desktop: true, serverUrl: "http://127.0.0.1:8787" })).toBe("local");
     expect(fileOriginForRuntime({ desktop: true, serverUrl: "https://worker.example.com" })).toBe("remote");

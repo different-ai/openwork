@@ -1059,6 +1059,9 @@ export type OpenworkResolvedArtifactTarget = {
   size?: number;
   updatedAt?: number;
   contentType?: string;
+  /** Absolute path on the owning server; never implies native/local access. */
+  resolvedPath?: string;
+  fileScope?: "workspace" | "conversation";
 };
 
 export type OpenworkWorkspaceFileStat = {
@@ -2441,10 +2444,10 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       ),
 
     /** `sessionId` also finds files the conversation wrote after moving into a worktree. */
-    readWorkspaceFile: (workspaceId: string, path: string, options?: { sessionId?: string }) =>
+    readWorkspaceFile: (workspaceId: string, path: string, options?: { sessionId?: string; fileScope?: "workspace" | "conversation" }) =>
       requestJson<OpenworkWorkspaceFileContent>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/files/content?path=${encodeURIComponent(path)}${options?.sessionId ? `&session=${encodeURIComponent(options.sessionId)}` : ""}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/files/content?path=${encodeURIComponent(path)}${options?.sessionId ? `&session=${encodeURIComponent(options.sessionId)}` : ""}${options?.fileScope ? `&fileScope=${encodeURIComponent(options.fileScope)}` : ""}`,
         { token, hostToken },
       ),
 
@@ -2479,7 +2482,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
     writeWorkspaceFile: (
       workspaceId: string,
-      payload: { path: string; content: string; baseUpdatedAt?: number | null; force?: boolean; sessionId?: string },
+      payload: { path: string; content: string; baseUpdatedAt?: number | null; force?: boolean; sessionId?: string; fileScope?: "workspace" | "conversation" },
     ) =>
       requestJson<OpenworkWorkspaceFileWriteResult>(
         baseUrl,
@@ -2536,7 +2539,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
     writeWorkspaceBinaryFile: (
       workspaceId: string,
-      payload: { path: string; data: ArrayBuffer; baseUpdatedAt?: number | null; force?: boolean; sessionId?: string },
+      payload: { path: string; data: ArrayBuffer; baseUpdatedAt?: number | null; force?: boolean; sessionId?: string; fileScope?: "workspace" | "conversation" },
     ) =>
       requestJson<OpenworkWorkspaceFileWriteResult>(
         baseUrl,
@@ -2551,15 +2554,16 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
             baseUpdatedAt: payload.baseUpdatedAt,
             force: payload.force,
             sessionId: payload.sessionId,
+            fileScope: payload.fileScope,
           },
         },
       ),
 
     /** `sessionId` also finds files the conversation wrote after moving into a worktree. */
-    downloadWorkspaceFile: (workspaceId: string, path: string, options?: { sessionId?: string }) =>
+    downloadWorkspaceFile: (workspaceId: string, path: string, options?: { sessionId?: string; fileScope?: "workspace" | "conversation" }) =>
       requestBinary(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/files/raw?path=${encodeURIComponent(path)}${options?.sessionId ? `&session=${encodeURIComponent(options.sessionId)}` : ""}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/files/raw?path=${encodeURIComponent(path)}${options?.sessionId ? `&session=${encodeURIComponent(options.sessionId)}` : ""}${options?.fileScope ? `&fileScope=${encodeURIComponent(options.fileScope)}` : ""}`,
         { token, hostToken, timeoutMs: timeouts.binary },
       ),
 
@@ -2572,6 +2576,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         preview?: string;
         confidence?: number;
         reason?: string;
+        fileScope?: "workspace" | "conversation";
       }>,
       /** `search` also finds a file by name anywhere in the workspace when its path misses. */
       options?: { sessionId?: string; search?: boolean },

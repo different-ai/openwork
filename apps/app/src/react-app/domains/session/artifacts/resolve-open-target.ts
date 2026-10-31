@@ -139,6 +139,13 @@ export function fileOriginForRuntime(input: { desktop: boolean; serverUrl?: stri
   }
 }
 
+/** Copy a reference in its own machine's namespace, never expand a remote `~/` locally. */
+export function filePathForCopy(target: OpenTarget, context: { origin: FileOrigin; workspaceRoot?: string | null; homeDir?: string | null }): string {
+  if (target.resolvedPath) return target.resolvedPath;
+  if (context.origin !== "local") return target.value;
+  return localArtifactPath(context.workspaceRoot, target.value, context.homeDir) ?? target.value;
+}
+
 export function unavailableFileMessage(origin: FileOrigin): string {
   return origin === "local"
     ? "This file is no longer available on this computer."
@@ -172,9 +179,10 @@ function quoted(path: string) {
  * 1. Read the reference once (`~/`, `file://`, quotes, `:line[:col]`).
  * 2. Ask the workspace for it. The server also finds a bare name such as
  *    `computer-control.test.mjs` wherever it lives in the workspace.
- * 3. Otherwise open or reveal a real absolute location on this computer.
- * 4. Otherwise explain that the file could not be found, rather than handing
- *    the desktop a guessed path.
+ * 3. Only for a local-origin session, open/reveal an absolute location on this
+ *    computer; the desktop checks the item exists before acting.
+ * 4. Otherwise give a calm unavailable/other-machine result for the caller's
+ *    copy-path fallback, never hand the desktop a guessed or remote path.
  */
 export async function planFileOpen(target: OpenTarget, context: FileOpenContext): Promise<FileOpenPlan> {
   if (target.kind !== "file") return { kind: "unavailable", message: "This link is not a file." };

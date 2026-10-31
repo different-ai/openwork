@@ -17,7 +17,7 @@ import { useCloudSignIn } from "../../cloud/sign-in-return";
 import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
-import { getCachedDesktopHomeDir, openDesktopUrl, openDesktopWorkspaceFile, type WorkspaceInfo } from "../../../../app/lib/desktop";
+import { getCachedDesktopHomeDir, openDesktopUrl, openDesktopWithApp, openDesktopWorkspaceFile, type WorkspaceInfo } from "../../../../app/lib/desktop";
 import type {
   ComposerAttachment,
   PendingPermission,
@@ -789,6 +789,8 @@ export function SessionPage(props: SessionPageProps) {
 
     const openNative = (path: string, action: "open" | "reveal") => {
       if (!canOpenLocally) { showUnavailable(); return Promise.resolve(); }
+      // A named app is an explicit choice, not a shortcut around resolution.
+      if (options?.appPath && action === "open") return openDesktopWithApp(path, options.appPath, runtime.workspaceRoot);
       // Existence and symlink checks also apply to reveal; don't open the parent
       // folder of a missing file, or hand remote text to a same-named local file.
       return openDesktopWorkspaceFile(runtime.workspaceRoot, path, { reveal: action === "reveal" }).then((result) => {
@@ -801,7 +803,7 @@ export function SessionPage(props: SessionPageProps) {
       // A person's explicit native open is not a workspace preview request.
       if (options?.external || !isCollectibleArtifactTarget(fileTarget)) {
         if (!canOpenLocally || !isOpenableFileTarget(fileTarget)) { showUnavailable(); return; }
-        const native = nativeFileAction(runtime.workspaceRoot, fileTarget.value, options);
+        const native = nativeFileAction(runtime.workspaceRoot, fileTarget.resolvedPath ?? fileTarget.value, options);
         if (!native) {
           showUnavailable();
           return;
@@ -1429,6 +1431,8 @@ export function SessionPage(props: SessionPageProps) {
       client={props.openworkServerClient}
       workspaceId={props.runtimeWorkspaceId}
       workspaceRoot={props.selectedWorkspaceRoot}
+      onOpenTarget={openTarget}
+      isLocalWorkspace={fileOriginForRuntime({ desktop: isElectronRuntime(), serverUrl: props.openworkServerClient?.baseUrl, sandboxBackend: props.selectedWorkspaceDisplay.sandboxBackend }) === "local"}
       onClose={closeRightPane}
       onOpenExtensions={props.settingsSlot ? () => setCurrentSidePanel("extensions") : undefined}
       browserPresentation={browserPresentation.enabled ? { onPresent: browserPresentation.present } : undefined}
