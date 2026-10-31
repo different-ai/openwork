@@ -28,6 +28,14 @@ result from CodeQL" and need an admin bypass; the empty result prevents that.
 This hides nothing: those PRs do not change Swift code, and `dev` pushes
 always run the real Swift scan.
 
+CodeQL stays on PRs. The `code_scanning` rule blocks a merge until every
+category has a result for the PR, and the PR result is what blocks new
+high/critical alerts: between September 15 and October 31, 2026 it flagged 127
+PR commits with new high or critical alerts, 46 of them fixed in the next
+commit. Uploading empty results for every language would make PRs mergeable
+sooner but silently turn that rule off. JavaScript/TypeScript, the slowest
+analysis, runs on a 16-vCPU runner instead.
+
 ## Missing results after configuration changes
 
 GitHub can add a language automatically when repository contents change. Existing

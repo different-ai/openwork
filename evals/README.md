@@ -11,13 +11,17 @@ to the module they test (`packages/*/src/**/*.test.ts`) and run in the same
 
 Every PR to `dev` gets three things:
 
-1. **Unit tests and build** (`ci-tests.yml`: "Unit tests", "Build and boot the
-   desktop app"). Compiles everything, runs the unit tests, then packages the
-   real desktop app and boots it once. Red here means a normal code problem.
+1. **Unit tests and build** (`ci-tests.yml`: the "Unit tests (...)" jobs and
+   "Build the desktop app"). Runs the unit tests and typechecks and bundles the
+   desktop. When the PR changes what is packaged (desktop, app, server and their
+   packages), "Build and boot the desktop app" also packages the real desktop
+   and boots it once; Den API changes add the MySQL "Den API security tests".
+   Red here means a normal code problem.
 2. **The core journey** (`pr-proof.yml`: "Core journey"). One end-to-end test,
    [`core/core-chat.e2e.test.ts`](./core/core-chat.e2e.test.ts): open the app
    signed in, send "Say hello", read the reply. It runs on every PR that changes
-   more than docs. Any e2e spec your PR adds or changes also runs.
+   more than docs. Any e2e spec your PR adds or changes also runs. The other
+   core journeys run on every `dev` push and nightly (`core-journeys.yml`).
 3. **A preview card** on the PR. **Open preview** opens the app exactly where the
    core journey left it: signed in, with a chat. Each copy lives 1 hour; the
    link works for 12 hours.

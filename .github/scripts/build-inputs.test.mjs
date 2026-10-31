@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
-import { buildFingerprint, buildInputPatterns, changedFiles, isBuildAffected } from "./build-inputs.mjs";
+import { APP_SMOKE, buildFingerprint, buildInputPatterns, changedFiles, isBuildAffected } from "./build-inputs.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const images = ["den-api", "den-web", "inference", "client-web", "headless-runner", "workbot"];
-const targets = [...images, "native-den-api", "native-inference", "native-workbot", "desktop", "desktop-smoke", "core", "runtime", "sdk", "den-contract", "api-docs", "i18n", "review", "helm", "swift"];
+const targets = [...images, "native-den-api", "native-inference", "native-workbot", "desktop", "desktop-smoke", "core", "runtime", "sdk", "den-contract", "den-api-tests", "desktop-package", "api-docs", "i18n", "review", "helm", "swift"];
 
 for (const target of targets) {
   test(`landing content is not a ${target} input`, () => {
@@ -199,4 +199,25 @@ test("CLI defaults to building on missing history and reports a usable content f
   });
   assert.match(stdout, /affected=true/);
   assert.match(readFileSync(output, "utf8"), /fingerprint=[a-f0-9]{64}/);
+});
+
+test("the packaged smoke selects every evals file app-smoke imports", () => {
+  const seen = new Set();
+  const pending = ["evals/core/app-smoke.e2e.test.ts"];
+  while (pending.length) {
+    const file = pending.pop();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    for (const [, specifier] of readFileSync(join(root, file), "utf8").matchAll(/(?:from|import)\s*\(?\s*["'](\.{1,2}\/[^"']+)["']/g)) {
+      const base = join(dirname(file), specifier);
+      const found = [base, `${base}.ts`, `${base}.mjs`, `${base}/index.ts`].find((candidate) => existsSync(join(root, candidate)) && !candidate.endsWith("/"));
+      // Unresolved specifiers are code in strings that runs elsewhere (e.g. a server script).
+      if (found && !found.startsWith("evals/packages/")) pending.push(found);
+    }
+  }
+  assert.deepEqual([...seen].sort(), [...APP_SMOKE].sort(), "update APP_SMOKE in build-inputs.mjs");
+  for (const file of seen) {
+    assert.equal(isBuildAffected("desktop-smoke", [file]), true, file);
+    assert.equal(isBuildAffected("desktop-package", [file]), true, file);
+  }
 });

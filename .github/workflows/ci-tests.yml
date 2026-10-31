@@ -33,12 +33,23 @@ jobs:
       lane: ${{ steps.classify.outputs.lane }}
       core: ${{ steps.classify.outputs.core }}
       desktop_smoke: ${{ steps.classify.outputs.desktop_smoke }}
+      den_api: ${{ steps.classify.outputs.den_api }}
       snapshot: ${{ steps.classify.outputs.snapshot }}
       docs: ${{ steps.classify.outputs.docs }}
       den_contract: ${{ steps.classify.outputs.den_contract }}
     steps:
+      # Classification reads only its scripts and the workspace manifests.
       - name: Checkout build inputs
         uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            .github/scripts/
+            /apps/*/package.json
+            /packages/*/package.json
+            /ee/apps/*/package.json
+            /ee/packages/*/package.json
+          sparse-checkout-cone-mode: false
+          filter: blob:none
       - name: Classify changed files
         id: classify
         uses: actions/github-script@v8
@@ -106,8 +117,12 @@ jobs:
       - name: Check outbound access manifest
         run: node scripts/check-outbound-access.mjs
 
-  openwork-tests-core:
-    name: Unit tests
+  # Unit tests run as parallel jobs of about 25s of work each, so the slowest
+  # finishes in about the time one step group takes. Every job keeps its
+  # original steps and assertions; openwork-tests-required requires each one
+  # whenever `core` is selected.
+  openwork-tests-app:
+    name: Unit tests (app, server and desktop)
     needs: classify-changes
     if: needs.classify-changes.outputs.core == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
@@ -118,39 +133,6 @@ jobs:
       - name: Setup tests
         id: setup
         uses: ./.github/actions/setup-tests
-      - name: Check Den web hook order
-        run: pnpm --filter @openwork-ee/den-web lint
-      - name: Build the shared headless protocol
-        run: pnpm --filter @openwork-ee/headless-protocol build
-      - name: Typecheck the headless runner
-        run: pnpm --filter @openwork-ee/headless-runner typecheck
-      - name: Test shared headless computer and configuration
-        run: |
-          pnpm --filter @openwork-ee/headless-computer build
-          pnpm --filter @openwork-ee/headless-computer test
-          pnpm --filter @openwork-ee/headless-runner test:computer-config
-          pnpm --filter @openwork-ee/workbot exec tsx --conditions=development --test scripts/computer.test.ts scripts/browser-teaching.test.ts
-      - name: Test headless conversations (follow-ups, read-only lookups, waiting messages, bounded reads, moving to Node)
-        run: |
-          pnpm --filter @openwork-ee/headless-runner test:conversation
-          pnpm --filter @openwork-ee/headless-runner test:transfer
-      - name: Test Workbot sign-in and adoption boundary
-        run: |
-          pnpm --filter @openwork-ee/workbot test:auth
-          pnpm --filter @openwork-ee/workbot test:activation
-      - name: Test Workbot live events (relay and page reconnects)
-        run: pnpm --filter @openwork-ee/workbot test:events
-      - name: Test opt-in error reporting (runner and Workbot)
-        run: |
-          pnpm --filter @openwork-ee/headless-runner test:error-reporting
-          pnpm --filter @openwork-ee/workbot test:error-reporting
-      - name: Test service health authentication and readiness presentation
-        run: |
-          pnpm --filter @openwork-ee/headless-runner test:service-health
-          pnpm --filter @openwork-ee/workbot test:service-readiness
-          # Den web does not install tsx in CI; keep its JSX config with the API-owned loader.
-          TSX_TSCONFIG_PATH=../den-web/tsconfig.json pnpm --filter @openwork-ee/den-api exec node --conditions=development --import tsx --test '../den-web/components/diagnostics/*.test.ts' '../den-web/components/diagnostics/*.test.tsx' '../den-web/components/admin/services/*.test.ts' '../den-web/components/admin/feature-change.test.ts' '../den-web/components/admin/admin-organization-feature-usage.test.ts' '../den-web/components/admin/features/feature-usage-model.test.ts' '../den-web/components/admin/control-center/control-center-model.test.ts' '../den-web/components/services/*.test.tsx' '../den-web/app/(den)/dashboard/_lib/diagnostics-access.test.ts' '../den-web/app/(den)/_lib/service-readiness.test.ts' '../den-web/app/(den)/dashboard/_components/workbot-proactive-section.test.tsx' '../den-web/app/(den)/dashboard/_components/my-agent.test.tsx' '../den-web/app/(den)/dashboard/_components/slack-connector-setup.test.tsx' '../den-web/app/(den)/dashboard/_components/provider-removal-usage-limits.test.tsx' '../den-web/app/(den)/dashboard/_components/connector-discovery-checks.test.tsx' '../den-web/app/(den)/dashboard/_components/connector-discovery-stream.test.ts' '../den-web/app/(den)/dashboard/_components/oauth-app-draft.test.ts' '../den-web/app/(den)/dashboard/_components/connector-setup-fields.test.tsx' '../den-web/app/(den)/dashboard/_components/connector-oauth-access.test.ts' '../den-web/app/(den)/dashboard/_components/tool-tester/result-presentation.test.ts' '../den-web/app/(den)/dashboard/_components/tool-tester/tool-call-inspector.test.tsx' '../den-web/app/(den)/dashboard/_components/auto-router-model.test.ts' '../den-web/app/(den)/_components/ui/chips-combobox.test.tsx'
-          bun test apps/app/tests/deployment-service-readiness.test.ts apps/app/tests/opencode-zen-removal.test.ts apps/app/tests/activation-card-model.test.ts apps/app/tests/connector-readiness.test.ts apps/app/tests/control-undeclared-args.test.ts apps/app/tests/composer-session-references.test.ts apps/app/tests/session-title-marquee.test.ts
       - name: Boot the app provider tree
         run: pnpm test:boot
       - name: Test native dictation focus and draft boundaries
@@ -222,30 +204,72 @@ jobs:
         run: bun test apps/server/test/mcp-app-resource-cache.test.ts
       - name: Test the agent's Automation listing reads every schedule kind
         run: bun test apps/server/test/connect-automation-catalog.test.ts
-      - name: Setup headless Chrome for locator regression
-        uses: ./.github/actions/setup-browser
-      - name: Run eval framework tests (spec lint and its fixtures)
-        run: |
-          pnpm --dir evals run test:framework
-          pnpm --dir evals exec vitest run --config vitest.config.ts --project pr scripts/input-dialog.live.test.ts
-          pnpm --dir evals exec vitest run --config vitest.config.ts --project pr ../apps/server/test/session-title-sigv4.vitest.test.ts
       - name: Test native MCP readiness and Stop ownership
         run: pnpm --filter openwork-server test:readiness
-      # Uses the pinned OpenCode that Setup tests put on PATH.
-      - name: Run Den provider unit tests
+
+  openwork-tests-headless:
+    name: Unit tests (headless computer and runner)
+    needs: classify-changes
+    if: needs.classify-changes.outputs.core == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup tests
+        id: setup
+        uses: ./.github/actions/setup-tests
+      - name: Build the shared headless protocol
+        run: pnpm --filter @openwork-ee/headless-protocol build
+      - name: Typecheck the headless runner
+        run: pnpm --filter @openwork-ee/headless-runner typecheck
+      - name: Test shared headless computer and configuration
         run: |
-          pnpm --filter @openwork-ee/utils test
-          pnpm --filter @openwork/automations test
-          pnpm --filter @openwork-ee/den-api test
-          pnpm --filter @openwork-ee/den-api exec node --conditions=development --import tsx --test "../den-web/app/(den)/dashboard/_components/manual-oauth-draft.test.ts" "../den-web/app/(den)/dashboard/_components/connector-route.test.ts" "../den-web/app/(den)/dashboard/_components/connector-readiness.test.ts" "../den-web/app/(den)/dashboard/_components/my-agent-availability.test.ts" "../den-web/app/(den)/dashboard/_components/mcp-account-authorization-state.test.ts" "../den-web/app/(den)/dashboard/_components/mcp-authorization-url.test.ts" "../den-web/app/(den)/dashboard/_components/connector-picker-sign-in-note.test.ts" "../den-web/app/(den)/dashboard/_components/gateway-provider-models.test.ts" "../den-web/app/(den)/dashboard/_lib/workbot-entry.test.ts" "../den-web/app/(den)/_lib/billing-checkout.test.ts" "../den-web/app/(den)/_lib/plan-display.test.ts" "../den-web/app/(den)/_lib/org-boot-requests.test.ts" "../den-web/app/(den)/dashboard/_lib/workbot-team-link.test.ts" "../den-web/app/(den)/_lib/member-auth-routing.test.ts" "../den-web/app/(den)/_lib/last-sign-in.test.ts" "../den-web/app/api/_lib/signed-client-ip.test.ts"
-          pnpm --filter @openwork-ee/workbot test:model
-      # Security rules (roles, tenants, keys, OAuth, audit) against the real
-      # den-api app and a throwaway database on MySQL (root:password).
-      - name: Run Den API security tests
+          pnpm --filter @openwork-ee/headless-computer build
+          pnpm --filter @openwork-ee/headless-computer test
+          pnpm --filter @openwork-ee/headless-runner test:computer-config
+          pnpm --filter @openwork-ee/workbot exec tsx --conditions=development --test scripts/computer.test.ts scripts/browser-teaching.test.ts
+      - name: Test headless conversations (follow-ups, read-only lookups, waiting messages, bounded reads, moving to Node)
         run: |
-          pnpm --filter @openwork-ee/den-api build:workspace-dependencies
-          pnpm ci:den:mysql
-          pnpm --filter @openwork-ee/den-api test:api
+          pnpm --filter @openwork-ee/headless-runner test:conversation
+          pnpm --filter @openwork-ee/headless-runner test:transfer
+
+  openwork-tests-workbot:
+    name: Unit tests (Workbot, Den web and sandboxes)
+    needs: classify-changes
+    if: needs.classify-changes.outputs.core == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup tests
+        id: setup
+        uses: ./.github/actions/setup-tests
+      - name: Check Den web hook order
+        run: pnpm --filter @openwork-ee/den-web lint
+      # Workbot and the runner's non-development tests import these builds.
+      - name: Build the shared headless protocol and computer
+        run: |
+          pnpm --filter @openwork-ee/headless-protocol build
+          pnpm --filter @openwork-ee/headless-computer build
+      - name: Test Workbot sign-in and adoption boundary
+        run: |
+          pnpm --filter @openwork-ee/workbot test:auth
+          pnpm --filter @openwork-ee/workbot test:activation
+      - name: Test Workbot live events (relay and page reconnects)
+        run: pnpm --filter @openwork-ee/workbot test:events
+      - name: Test opt-in error reporting (runner and Workbot)
+        run: |
+          pnpm --filter @openwork-ee/headless-runner test:error-reporting
+          pnpm --filter @openwork-ee/workbot test:error-reporting
+      - name: Test service health authentication and readiness presentation
+        run: |
+          pnpm --filter @openwork-ee/headless-runner test:service-health
+          pnpm --filter @openwork-ee/workbot test:service-readiness
+          # Den web does not install tsx in CI; keep its JSX config with the API-owned loader.
+          TSX_TSCONFIG_PATH=../den-web/tsconfig.json pnpm --filter @openwork-ee/den-api exec node --conditions=development --import tsx --test '../den-web/components/diagnostics/*.test.ts' '../den-web/components/diagnostics/*.test.tsx' '../den-web/components/admin/services/*.test.ts' '../den-web/components/admin/feature-change.test.ts' '../den-web/components/admin/admin-organization-feature-usage.test.ts' '../den-web/components/admin/features/feature-usage-model.test.ts' '../den-web/components/admin/control-center/control-center-model.test.ts' '../den-web/components/services/*.test.tsx' '../den-web/app/(den)/dashboard/_lib/diagnostics-access.test.ts' '../den-web/app/(den)/_lib/service-readiness.test.ts' '../den-web/app/(den)/dashboard/_components/workbot-proactive-section.test.tsx' '../den-web/app/(den)/dashboard/_components/my-agent.test.tsx' '../den-web/app/(den)/dashboard/_components/slack-connector-setup.test.tsx' '../den-web/app/(den)/dashboard/_components/provider-removal-usage-limits.test.tsx' '../den-web/app/(den)/dashboard/_components/connector-discovery-checks.test.tsx' '../den-web/app/(den)/dashboard/_components/connector-discovery-stream.test.ts' '../den-web/app/(den)/dashboard/_components/oauth-app-draft.test.ts' '../den-web/app/(den)/dashboard/_components/connector-setup-fields.test.tsx' '../den-web/app/(den)/dashboard/_components/connector-oauth-access.test.ts' '../den-web/app/(den)/dashboard/_components/tool-tester/result-presentation.test.ts' '../den-web/app/(den)/dashboard/_components/tool-tester/tool-call-inspector.test.tsx' '../den-web/app/(den)/dashboard/_components/auto-router-model.test.ts' '../den-web/app/(den)/_components/ui/chips-combobox.test.tsx'
+          bun test apps/app/tests/deployment-service-readiness.test.ts apps/app/tests/opencode-zen-removal.test.ts apps/app/tests/activation-card-model.test.ts apps/app/tests/connector-readiness.test.ts apps/app/tests/control-undeclared-args.test.ts apps/app/tests/composer-session-references.test.ts apps/app/tests/session-title-marquee.test.ts
       - name: Check sandbox contracts and adapters (no cloud resources)
         run: |
           pnpm --filter @openwork/sandbox build
@@ -266,8 +290,62 @@ jobs:
           pnpm --filter @openwork/sandbox-freestyle build
           pnpm --filter @openwork/sandbox-daytona build
           pnpm --dir evals exec vitest run --config vitest.config.ts --project pr packages/hosts/src/sandbox-daytona.test.ts packages/env/src/freestyle-sandbox-preview.test.ts packages/env/src/workbot-oauth-url.test.ts
+
+  openwork-tests-den:
+    name: Unit tests (Den providers)
+    needs: classify-changes
+    if: needs.classify-changes.outputs.core == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup tests
+        id: setup
+        uses: ./.github/actions/setup-tests
+      # Uses the pinned OpenCode that Setup tests put on PATH.
+      - name: Run Den provider unit tests
+        run: |
+          pnpm --filter @openwork-ee/utils test
+          pnpm --filter @openwork/automations test
+          pnpm --filter @openwork-ee/den-api test
+          pnpm --filter @openwork-ee/den-api exec node --conditions=development --import tsx --test "../den-web/app/(den)/dashboard/_components/manual-oauth-draft.test.ts" "../den-web/app/(den)/dashboard/_components/connector-route.test.ts" "../den-web/app/(den)/dashboard/_components/connector-readiness.test.ts" "../den-web/app/(den)/dashboard/_components/my-agent-availability.test.ts" "../den-web/app/(den)/dashboard/_components/mcp-account-authorization-state.test.ts" "../den-web/app/(den)/dashboard/_components/mcp-authorization-url.test.ts" "../den-web/app/(den)/dashboard/_components/connector-picker-sign-in-note.test.ts" "../den-web/app/(den)/dashboard/_components/gateway-provider-models.test.ts" "../den-web/app/(den)/dashboard/_lib/workbot-entry.test.ts" "../den-web/app/(den)/_lib/billing-checkout.test.ts" "../den-web/app/(den)/_lib/plan-display.test.ts" "../den-web/app/(den)/_lib/org-boot-requests.test.ts" "../den-web/app/(den)/dashboard/_lib/workbot-team-link.test.ts" "../den-web/app/(den)/_lib/member-auth-routing.test.ts" "../den-web/app/(den)/_lib/last-sign-in.test.ts" "../den-web/app/api/_lib/signed-client-ip.test.ts"
+          pnpm --filter @openwork-ee/workbot test:model
+
+  openwork-tests-evals:
+    name: Unit tests (test framework and contract tooling)
+    needs: classify-changes
+    if: needs.classify-changes.outputs.core == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup tests
+        id: setup
+        uses: ./.github/actions/setup-tests
+      - name: Setup headless Chrome for locator regression
+        uses: ./.github/actions/setup-browser
+      - name: Run eval framework tests (spec lint and its fixtures)
+        run: |
+          pnpm --dir evals run test:framework
+          pnpm --dir evals exec vitest run --config vitest.config.ts --project pr scripts/input-dialog.live.test.ts
+          pnpm --dir evals exec vitest run --config vitest.config.ts --project pr ../apps/server/test/session-title-sigv4.vitest.test.ts
       - name: Check contract generation and commit-hook safety
         run: pnpm test:contracts
+
+  openwork-tests-evals-lint:
+    name: Unit tests (test framework lint and spec lint)
+    needs: classify-changes
+    if: needs.classify-changes.outputs.core == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup tests
+        id: setup
+        uses: ./.github/actions/setup-tests
       # About 20s. Runs on every PR so spec lint cannot drift;
       # it used to run only nightly, and debt piled up unnoticed.
       - name: Check the test framework (lint and spec lint)
@@ -275,6 +353,65 @@ jobs:
           git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
           pnpm evals:check
 
+  # Security rules (roles, tenants, keys, OAuth, audit) against the real den-api
+  # app and a throwaway database per test file on MySQL (root:password). PRs run
+  # them when Den API inputs change (build-inputs.mjs "den-api-tests"); every
+  # dev push that runs unit tests runs them too. Node's --test-shard splits the
+  # files across jobs; every file runs in exactly one shard.
+  den-api-security:
+    name: Den API security tests (${{ matrix.shard }}/6)
+    needs: classify-changes
+    if: needs.classify-changes.outputs.den_api == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      # MySQL boots while dependencies install; the tests wait for it below.
+      - name: Start MySQL
+        run: docker compose -p openwork-den-local -f packaging/docker/docker-compose.web-local.yml -f packaging/docker/docker-compose.ci-mysql.yml up -d mysql redis
+      - name: Setup tests
+        id: setup
+        uses: ./.github/actions/setup-tests
+      - name: Run Den API security tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          pnpm --filter @openwork-ee/den-api build:workspace-dependencies
+          pnpm ci:den:mysql
+          DEN_API_TEST_SHARD="$SHARD/6" pnpm --filter @openwork-ee/den-api test:api:shard
+
+  # Cheap "does the desktop build" checks for every non-docs PR.
+  openwork-tests-desktop-build:
+    name: Build the desktop app (Electron typecheck and server bundle)
+    needs: classify-changes
+    if: needs.classify-changes.outputs.core == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup tests
+        id: setup
+        uses: ./.github/actions/setup-tests
+      # Test source resolution differs from packaged Node plugin resolution.
+      - name: Bundle the server plugins the way packaged builds do
+        run: |
+          rm -rf packages/types/dist
+          pnpm --filter openwork-server build
+      - name: Typecheck Electron main against the IPC contract
+        run: pnpm --filter @openwork/desktop typecheck:electron
+
+  # Packages and boots the real desktop. PRs run it when the desktop shell, its
+  # embedded server, engine pins, dependencies, embedded docs or the app-smoke
+  # harness change (build-inputs.mjs "desktop-package"). Dev pushes run it for
+  # every packaged input, including app UI and shared packages ("desktop-smoke").
   openwork-tests-build:
     name: Build and boot the desktop app
     needs: classify-changes
@@ -400,8 +537,6 @@ jobs:
         run: |
           rm -rf packages/types/dist
           pnpm --filter openwork-server build
-      - name: Typecheck Electron main against the IPC contract
-        run: pnpm --filter @openwork/desktop typecheck:electron
       - name: Package and smoke-test the installed desktop
         timeout-minutes: 7
         env:
@@ -606,48 +741,34 @@ jobs:
         run: pnpm dlx "mint@$MINT_VERSION" broken-links
 
   # Pull requests that change Den API routes or schemas generate and validate
-  # OpenAPI and SDK artifacts directly from their source. Pushes to dev keep the dedicated
-  # Generated Den SDK and API Contract workflows.
+  # OpenAPI and SDK artifacts directly from their source. Pushes to dev keep the
+  # dedicated Generated Den SDK and API Contract workflows.
+  # MySQL stays: importing the live app initializes Better Auth's OAuth resource
+  # registry, which writes to the database, and den:contract pushes the schema
+  # into a disposable database first. The audit route coverage check imports
+  # the same app, so it shares this database rather than moving to dev pushes.
   den-contract:
     needs: classify-changes
     if: needs.classify-changes.outputs.den_contract == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-16vcpu-ubuntu-2204
     timeout-minutes: 15
-    # Loading the live app initializes Better Auth's OAuth resource registry,
-    # which needs a reachable database even though generation never reads one.
-    services:
-      mysql:
-        image: mysql:8.4
-        env:
-          MYSQL_ROOT_PASSWORD: password
-          MYSQL_DATABASE: openwork_den_contract_ci
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -ppassword"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=20
     env:
-      DATABASE_URL: mysql://root:password@127.0.0.1:3306/openwork_den_contract_ci
+      DATABASE_URL: mysql://root:password@127.0.0.1:3306/openwork_den
       DEN_DB_ENCRYPTION_KEY: local-dev-db-encryption-key-please-change-1234567890
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24.22.1
-      - name: Setup pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-        with:
-          version: 11.4.0
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      # MySQL boots while dependencies install; generation waits for it below.
+      - name: Start MySQL
+        run: docker compose -p openwork-den-local -f packaging/docker/docker-compose.web-local.yml -f packaging/docker/docker-compose.ci-mysql.yml up -d mysql
+      - name: Setup tests
+        uses: ./.github/actions/setup-tests
       - name: Test contract generation guards
         run: node --test scripts/tests/den-contract-hook.test.mjs scripts/tests/den-contract-database.test.mjs scripts/tests/den-contract-cache.test.mjs scripts/tests/den-contract-format.test.mjs
+      - name: Wait for MySQL
+        run: docker compose -p openwork-den-local -f packaging/docker/docker-compose.web-local.yml -f packaging/docker/docker-compose.ci-mysql.yml up -d --wait mysql
       # den:contract owns schema preparation and cleanup, just as locally.
       - name: Regenerate the OpenAPI snapshot and SDK
         run: pnpm den:contract
@@ -674,27 +795,37 @@ jobs:
   # must succeed, every unselected check must be skipped, and static guards
   # always run. Classification failure/cancellation must never green-skip a gate.
   openwork-tests-required:
-    needs: [classify-changes, static-checks, openwork-tests-core, openwork-tests-build, validate-models-snapshot, validate-docs, den-contract]
+    needs: [classify-changes, static-checks, openwork-tests-app, openwork-tests-headless, openwork-tests-workbot, openwork-tests-den, openwork-tests-evals, openwork-tests-evals-lint, openwork-tests-desktop-build, openwork-tests-build, den-api-security, validate-models-snapshot, validate-docs, den-contract]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
+      # Only the policy module is needed; the runner's preinstalled Node runs it.
       - name: Checkout required-check policy
         uses: actions/checkout@v6
-      - name: Setup Node
-        uses: actions/setup-node@v6
         with:
-          node-version: 24.22.1
+          sparse-checkout: .github/scripts/classify-ci-changes.mjs
+          sparse-checkout-cone-mode: false
+          filter: blob:none
       - name: Require every selected check to pass
         env:
           CLASSIFY_RESULT: ${{ needs.classify-changes.result }}
           STATIC_RESULT: ${{ needs.static-checks.result }}
           CORE: ${{ needs.classify-changes.outputs.core }}
           DESKTOP_SMOKE: ${{ needs.classify-changes.outputs.desktop_smoke }}
+          DEN_API: ${{ needs.classify-changes.outputs.den_api }}
           SNAPSHOT: ${{ needs.classify-changes.outputs.snapshot }}
           DOCS: ${{ needs.classify-changes.outputs.docs }}
           DEN_CONTRACT: ${{ needs.classify-changes.outputs.den_contract }}
-          CORE_RESULT: ${{ needs.openwork-tests-core.result }}
+          CORE_APP_RESULT: ${{ needs.openwork-tests-app.result }}
+          CORE_HEADLESS_RESULT: ${{ needs.openwork-tests-headless.result }}
+          CORE_WORKBOT_RESULT: ${{ needs.openwork-tests-workbot.result }}
+          CORE_DEN_RESULT: ${{ needs.openwork-tests-den.result }}
+          CORE_EVALS_RESULT: ${{ needs.openwork-tests-evals.result }}
+          CORE_EVALS_LINT_RESULT: ${{ needs.openwork-tests-evals-lint.result }}
+          DESKTOP_BUILD_RESULT: ${{ needs.openwork-tests-desktop-build.result }}
           BUILD_RESULT: ${{ needs.openwork-tests-build.result }}
+          DEN_API_RESULT: ${{ needs.den-api-security.result }}
           SNAPSHOT_RESULT: ${{ needs.validate-models-snapshot.result }}
           DOCS_RESULT: ${{ needs.validate-docs.result }}
           DEN_CONTRACT_RESULT: ${{ needs.den-contract.result }}
@@ -708,13 +839,21 @@ jobs:
             selected: {
               core: env.CORE,
               desktop_smoke: env.DESKTOP_SMOKE,
+              den_api: env.DEN_API,
               snapshot: env.SNAPSHOT,
               docs: env.DOCS,
               den_contract: env.DEN_CONTRACT,
             },
             results: {
-              core: env.CORE_RESULT,
+              core_app: env.CORE_APP_RESULT,
+              core_headless: env.CORE_HEADLESS_RESULT,
+              core_workbot: env.CORE_WORKBOT_RESULT,
+              core_den: env.CORE_DEN_RESULT,
+              core_evals: env.CORE_EVALS_RESULT,
+              core_evals_lint: env.CORE_EVALS_LINT_RESULT,
+              desktop_build: env.DESKTOP_BUILD_RESULT,
               desktop_smoke: env.BUILD_RESULT,
+              den_api: env.DEN_API_RESULT,
               snapshot: env.SNAPSHOT_RESULT,
               docs: env.DOCS_RESULT,
               den_contract: env.DEN_CONTRACT_RESULT,
