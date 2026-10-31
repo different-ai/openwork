@@ -29,7 +29,7 @@ A turn's steps read as plain sentences instead of an icon rail:
 - OpenWork and connected services keep their real mark inline after the
   verb (`Looked up [mark] people in your organization`); no spinner. The
   OpenWork mark is drawn in the text's ink, so it is white on dark.
-- The composer's Agents list (`composerSubagentTracker`) reads as text too:
+- The composer's Agents list reads as text too:
   no status dot or check column, the status word carries the state, and
   `Review`, `Stop` and `Open` are words.
 - GitHub pull request and issue links in replies show the GitHub glyph

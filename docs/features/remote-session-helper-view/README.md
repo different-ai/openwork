@@ -17,7 +17,7 @@ task in the main pane instead of beside the chat:
   shimmers while it runs), then how long it has worked and the step it ran last:
   `1s, last ran: Read script.md`. Waiting reads `Waiting for you on …` in amber;
   a finished task reads `Finished in the Cloud · …` with how long it took.
-- The composer's Agents list (`composerSubagentTracker`) lists the task next to the
+- The composer's Agents list lists the task next to the
   turn's local helpers, and is the main place to follow it: where it runs as the agent
   name, the task title, then the same status, time and actions as a local helper (one
   shared row): its working time, `Needs permission` / `Waiting for your answer` with
