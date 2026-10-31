@@ -15,7 +15,6 @@ import {
   Archive,
   ArchiveRestore,
   Blocks,
-  CalendarDays,
   CheckCheck,
   Folder,
   Clock3,
@@ -761,8 +760,6 @@ export type AppSidebarProps = {
   automationsActive?: boolean;
   automationsNeedAttention?: boolean;
   onOpenAutomations?: () => void;
-  calendarActive?: boolean;
-  onOpenCalendar?: () => void;
   dashboardActive?: boolean;
   dashboardLabel?: string;
   onOpenDashboard?: () => void;
@@ -973,14 +970,6 @@ export function AppSidebar(props: AppSidebarProps) {
                   </span>
                 )}
                 onSelect={props.onOpenAutomations}
-              />
-            ) : null}
-            {props.onOpenCalendar ? (
-              <SidebarDestination
-                active={props.calendarActive === true}
-                icon={CalendarDays}
-                label="Calendar"
-                onSelect={props.onOpenCalendar}
               />
             ) : null}
             <SidebarDestination

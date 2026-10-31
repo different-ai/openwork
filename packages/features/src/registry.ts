@@ -243,16 +243,6 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
-  automationCalendar: {
-    label: "Calendar: desktop app",
-    description: "Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar.",
-    category: "automations",
-    added: "2026-10-07",
-    since: "2026-10",
-    author: "benjaminshafii",
-    deployments: everywhere,
-    default: false,
-  },
   computerUse: {
     label: "Computer use",
     description: "Let agents use Mac apps or a managed cloud desktop with a live view and Take over and Stop controls. While enabled, requested apps and windows open directly without additional OpenWork approval prompts. GUI access is experimental and is not sandboxed by structured-tool permission rules.",

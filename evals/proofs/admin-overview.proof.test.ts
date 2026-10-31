@@ -75,7 +75,7 @@ test("an admin navigates organizations and member usage without loading every de
     const tabs = await adminProbe.dom('nav[aria-label="Organization sections"] [aria-current="page"]');
     const traffic = await world.traffic("admin");
     const location = await world.location();
-    const blocked = await adminProbe.dom('[data-testid="admin-capability-automationCalendar"][disabled]');
+    const blocked = await adminProbe.dom('[data-testid="admin-capability-computerUse"][disabled]');
     const ok = location.pathname === `${world.detailPath}/features` && tabs.elements[0]?.text === "Features"
       && traffic.features === 1 && traffic.organizationUsage === 0 && traffic.organizationInsights === 0 && blocked.elements.length === 1;
     evidence.recordAssertionEvidence("The Features tab loads only this organization's flags and keeps the global kill switch locked", `${JSON.stringify(location)}; feature reads=${traffic.features}; locked controls=${blocked.elements.length}`, ok);

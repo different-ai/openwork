@@ -200,8 +200,6 @@ export type SessionPageSidebarProps = {
   automationsActive?: boolean;
   automationsNeedAttention?: boolean;
   onOpenAutomations?: () => void;
-  calendarActive?: boolean;
-  onOpenCalendar?: () => void;
   dashboardActive?: boolean;
   dashboardLabel?: string;
   onOpenDashboard?: () => void;
@@ -1487,8 +1485,6 @@ export function SessionPage(props: SessionPageProps) {
           automationsActive={props.sidebar.automationsActive}
           automationsNeedAttention={props.sidebar.automationsNeedAttention}
           onOpenAutomations={props.sidebar.onOpenAutomations}
-          calendarActive={props.sidebar.calendarActive}
-          onOpenCalendar={props.sidebar.onOpenCalendar}
           dashboardActive={props.sidebar.dashboardActive}
           dashboardLabel={props.sidebar.dashboardLabel}
           onOpenDashboard={props.sidebar.onOpenDashboard}
