@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react"
 import type { DynamicToolUIPart } from "ai"
-import { ArrowUpRight, ChevronRight, ShieldAlert, Square } from "lucide-react"
+import { ChevronRight, Square } from "lucide-react"
 
 import { useMessageList } from "@/components/chat/message-list-provider"
 import { t } from "@/i18n"
@@ -12,7 +12,7 @@ import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-st
 import { RemoteThreadRowAnswers } from "@/react-app/domains/session/remote-threads/remote-thread-row-answers"
 import { stopRemoteThread } from "@/react-app/domains/session/remote-threads/remote-thread-actions"
 import {
-  useFollowRemoteThread, useRemoteThread, useRemoteThreadHelperViewEnabled,
+  useFollowRemoteThread, useRemoteThread,
 } from "@/react-app/domains/session/remote-threads/remote-thread-store"
 import { rowQuestionOptions } from "@/lib/remote-session-answers"
 import { remoteThreadSentence, remoteThreadView, type RemoteThreadView } from "@/react-app/domains/session/remote-threads/remote-thread-view"
@@ -31,10 +31,10 @@ export function openRemoteThreadPanel(sessionId: string, workspaceId: string, st
 }
 
 /**
- * A task the agent started on another computer, shown like a sub-agent: line 1
- * names the task and where it runs, line 2 says what it is doing now.
- * The row opens its conversation in the side panel,
- * where the person follows up; its own Stop ends just that task. Its state
+ * A task the agent started on another computer, shown like a helper: a sentence
+ * names the task and where it runs, followed by its duration and last step.
+ * The row opens it in the main pane (or beside a split chat);
+ * its own Stop ends just that task. Its state
  * comes from the chat's one shared follower (remote-thread-store), never a
  * poll of its own.
  */
@@ -42,7 +42,6 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
   const { workspaceId, sessionId, readOnly, onOpenRemoteTask } = useMessageList()
   useFollowRemoteThread(start, { workspaceId, sessionId }, remoteToolCallStartedAt(part))
   const entry = useRemoteThread(start.key)
-  const helperView = useRemoteThreadHelperViewEnabled()
   const [stopping, setStopping] = useState(false)
   const [stoppedHere, setStoppedHere] = useState(false)
   const [now, setNow] = useState(() => Date.now())
@@ -60,8 +59,8 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
     }).finally(() => setStopping(false))
   } : null
 
-  // A single-choice question's options sit under the
-  // row, whichever row style shows, unless read-only or the question needs a full card.
+  // A single-choice question's options sit under the row,
+  // unless read-only or the question needs a full card.
   const choices = entry && !readOnly && view.waitingFor === "question" ? rowQuestionOptions(entry.status?.pending) : null
   const withAnswers = (row: ReactNode, openTask: (() => void) | null) => {
     if (!entry || !choices) return row
@@ -73,49 +72,12 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
     )
   }
 
-  if (helperView) {
-    // Opens like a local helper: in the main pane where it can be steered,
-    // or beside the chat where this chat can't navigate (a split pane).
-    const open = onOpenRemoteTask
-      ? () => onOpenRemoteTask(start)
-      : () => openRemoteThreadPanel(sessionId, workspaceId, start, view.title)
-    return withAnswers(<RemoteThreadSentenceRow start={start} view={view} className={className} open={open} stop={stop} stopping={stopping} />, open)
-  }
-
-  return withAnswers((
-    <div
-      data-remote-thread={start.key}
-      data-remote-thread-state={view.state}
-      data-remote-thread-waiting={view.waitingFor ?? undefined}
-      // The open button stays a direct child of the row, like a sub-agent row.
-      className={cn("flex min-w-0 max-w-full items-start gap-2", className)}
-    >
-      <RemoteThreadSummary
-        open={() => openRemoteThreadPanel(sessionId, workspaceId, start, view.title)}
-        label={t("session.remote_task_open", { title: view.title, computer: view.computer })}
-      >
-        <span className="flex min-w-0 items-center gap-2">
-          <span className={cn("min-w-0 truncate", ticking && "ow-text-shimmer")}>
-            {view.title}
-            <span className="text-muted-foreground/70"> · {view.computer}</span>
-          </span>
-          {view.waitingFor === "permission" ? (
-            <ShieldAlert aria-hidden="true" className="size-3.5 shrink-0 text-amber-10" />
-          ) : null}
-          <ArrowUpRight
-            aria-hidden="true"
-            className="size-3.5 shrink-0 text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
-          />
-        </span>
-        <span className={cn("min-w-0 truncate text-xs", view.waitingFor ? "font-medium text-amber-11" : "text-muted-foreground/70")}>
-          {view.status}
-          {view.lastChecked ? ` · ${view.lastChecked}` : ""}
-        </span>
-      </RemoteThreadSummary>
-      {/* Stop just this task; the turn's own Stop stays in the composer. */}
-      {stop ? <RemoteThreadStopButton title={view.title} stopping={stopping} onStop={stop} /> : null}
-    </div>
-  ), () => openRemoteThreadPanel(sessionId, workspaceId, start, view.title))
+  // Opens like a local helper: in the main pane where it can be steered,
+  // or beside the chat where this chat can't navigate (a split pane).
+  const open = onOpenRemoteTask
+    ? () => onOpenRemoteTask(start)
+    : () => openRemoteThreadPanel(sessionId, workspaceId, start, view.title)
+  return withAnswers(<RemoteThreadSentenceRow start={start} view={view} className={className} open={open} stop={stop} stopping={stopping} />, open)
 }
 
 function RemoteThreadStopButton({ title, stopping, onStop }: { title: string; stopping: boolean; onStop: () => void }) {
@@ -134,7 +96,7 @@ function RemoteThreadStopButton({ title, stopping, onStop }: { title: string; st
 }
 
 /**
- * `remoteSessionHelperView`: the row reads as one sentence, like a local
+ * The row reads as one sentence, like a local
  * helper's (DESIGN.md C4): "Working on Studio computer · Check the release
  * notes ›" with the text shimmering while it runs (V6), then
  * "12m 4s, last ran: Read v1.1.md". Waiting is amber, everything else neutral.
@@ -182,20 +144,5 @@ export function RemoteThreadSentenceRow({ start, view, className, open, stop, st
       </button>
       {stop ? <RemoteThreadStopButton title={view.title} stopping={stopping} onStop={stop} /> : null}
     </div>
-  )
-}
-
-/** The row's two lines: a button that opens the conversation, or just progress. */
-function RemoteThreadSummary({ open, label, children }: { open: (() => void) | null; label: string; children: ReactNode }) {
-  if (!open) return <div className="flex min-w-0 max-w-full flex-col gap-0.5 text-sm text-muted-foreground">{children}</div>
-  return (
-    <button
-      type="button"
-      className="group flex min-w-0 max-w-full cursor-pointer flex-col gap-0.5 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
-      aria-label={label}
-      onClick={open}
-    >
-      {children}
-    </button>
   )
 }

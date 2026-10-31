@@ -13,12 +13,12 @@ import { RemoteFollowUpComposer } from "./remote-follow-up-composer"
 import { RemoteThreadTranscriptBody } from "./remote-thread-panel"
 import { answerRemoteThread, stopRemoteThread } from "./remote-thread-actions"
 import { RemoteThreadAnswerCard } from "./remote-thread-answer-card"
-import { useFollowRemoteThread, useRemoteThread, useRemoteThreadHelperViewEnabled, type RemoteThreadEntry } from "./remote-thread-store"
+import { useFollowRemoteThread, useRemoteThread, type RemoteThreadEntry } from "./remote-thread-store"
 import { remoteThreadView } from "./remote-thread-view"
 import { useRemoteThreadConversation } from "./use-remote-thread-conversation"
 
 /**
- * `remoteSessionHelperView`: a task on another computer opened in the main
+ * A task on another computer opened in the main
  * pane, the way a local helper opens (#6590). Enter steers it, the round
  * button stops it while it runs, and Esc or the breadcrumb return to the chat
  * that started it at the same pane, scroll position and row, with the draft
@@ -109,12 +109,11 @@ export function RemoteSessionHeader({ threadKey, navigation }: { threadKey: stri
 }
 
 export function RemoteSessionSurface({ threadKey, navigation }: { threadKey: string; navigation: RemoteHelperNavigation }) {
-  const enabled = useRemoteThreadHelperViewEnabled()
   const { origin, entry } = useRemoteHelper(threadKey)
-  if (!enabled || !origin) {
+  if (!origin) {
     return (
       <div className="mx-auto max-w-3xl px-6 py-12 text-sm text-muted-foreground" data-remote-session-missing={threadKey}>
-        {t(enabled ? "session.remote_task_missing" : "session.remote_task_helper_disabled")}
+        {t("session.remote_task_missing")}
       </div>
     )
   }

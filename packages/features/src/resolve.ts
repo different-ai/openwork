@@ -98,6 +98,10 @@ export const RETIRED_FEATURE_KEYS = [
   // Folded (2026-10): Your agent includes health and Library; browser use includes
   // its live view; computer use includes background interaction on supported Macs.
   "workbotAgentHealthView", "workbotAgentLibrary", "browserLiveView", "computerUseBackground",
+  // Generally available (2026-10): remembered sign-in and helper-style tasks on other computers.
+  "lastUsedSignIn", "remoteSessionHelperView",
+  // Removed, not graduated (2026-10): early restart and its download-progress window.
+  "desktopUpdateDownloadWindow",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

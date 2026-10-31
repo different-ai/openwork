@@ -116,8 +116,7 @@ import { encodeConnectSkillToken } from "@/react-app/domains/session/surface/com
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
 import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
-import { useRemoteSessionSubagentsFeature } from "@/react-app/domains/session/remote-threads/use-remote-session-subagents-feature";
-import { remoteThreadAttentionBySession, useRemoteThreadAttentionKey, useRemoteThreadHelperViewEnabled } from "@/react-app/domains/session/remote-threads/remote-thread-store";
+import { remoteThreadAttentionBySession, useRemoteThreadAttentionKey } from "@/react-app/domains/session/remote-threads/remote-thread-store";
 import { RemoteSessionHeader, RemoteSessionSurface } from "@/react-app/domains/session/remote-threads/remote-session-surface";
 import { remoteSessionRouteId } from "@/lib/remote-session-route";
 import { AppsPage } from "@/react-app/domains/apps/apps-page";
@@ -444,7 +443,6 @@ export function SessionRoute() {
   const automationsEnabled = automationDeploymentEnabled;
   const automationsSurfaceAvailable = automationsEnabled || signedOutDesktopSurfaces;
   const automationsRouteActive = automationsSurfaceAvailable && automationsRouteRequested;
-  useRemoteSessionSubagentsFeature();
   const denSettings = readDenSettings();
   const retainedArtifactsScope = dashboardSurfaceAvailable && denAuth.isSignedIn && denAuth.verifiedIdentity
     && denAuth.verifiedIdentity.organizationId === denSettings.activeOrgId
@@ -1652,9 +1650,8 @@ export function SessionRoute() {
   const [dashboardHeaderActionsTarget, setDashboardHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
   const [automationsHeaderActionsTarget, setAutomationsHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
 
-  // `remoteSessionHelperView`: a task on another computer opens in the main
-  // pane under `remote:<threadKey>` and returns to its chat like a helper.
-  const remoteHelperViewEnabled = useRemoteThreadHelperViewEnabled();
+  // A task on another computer opens in the main pane under
+  // `remote:<threadKey>` and returns to its chat like a helper.
   const remoteTaskRouteActive = Boolean(remoteThreadKey) && !activityRouteActive && !pendingConversation;
   const remoteHelperNavigation = useMemo(() => ({
     // The same scope the chat pane remembers its return in (session-page.tsx).
@@ -4003,7 +4000,7 @@ export function SessionRoute() {
       primarySurface={activityRouteActive || dashboardRouteActive || automationsRouteActive || extensionsMainOpen ? "flat" : undefined}
       primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation || remoteTaskRouteActive)}
       primaryHeader={remoteTaskRouteActive && remoteThreadKey ? <RemoteSessionHeader key={remoteThreadKey} threadKey={remoteThreadKey} navigation={remoteHelperNavigation} /> : undefined}
-      onOpenRemoteTask={remoteHelperViewEnabled ? openRemoteTask : undefined}
+      onOpenRemoteTask={openRemoteTask}
       retainedArtifactSlot={retainedArtifactsScope ? {
         scope: retainedArtifactsScope,
         active: dashboardRouteActive && !appsRouteActive,

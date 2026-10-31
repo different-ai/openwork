@@ -30,13 +30,13 @@ function entry(start: RemoteThreadStart, value: RemoteSessionThreadStatus, activ
     firstSeenAt: activeSince, followedUpAt: null, owners: { "ws_1:session-1": { workspaceId: "ws_1", sessionId: "session-1" } }, viewers: 0, lastViewedAt: Date.now() }
 }
 
-async function withRow(input: { helperView: boolean; start: RemoteThreadStart; entry: RemoteThreadEntry; onOpenRemoteTask?: (start: RemoteThreadStart) => void },
+async function withRow(input: { start: RemoteThreadStart; entry: RemoteThreadEntry; onOpenRemoteTask?: (start: RemoteThreadStart) => void },
   check: (row: HTMLElement) => Promise<void> | void) {
   const ownedDom = typeof window === "undefined"
   if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" })
   const actEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT")
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true)
-  useRemoteThreadStore.setState({ helperView: input.helperView, threads: { [input.start.key]: input.entry } })
+  useRemoteThreadStore.setState({ threads: { [input.start.key]: input.entry } })
   const container = document.createElement("div")
   document.body.append(container)
   const root = createRoot(container)
@@ -54,7 +54,7 @@ async function withRow(input: { helperView: boolean; start: RemoteThreadStart; e
   } finally {
     await act(async () => { root.unmount() })
     container.remove()
-    useRemoteThreadStore.setState({ helperView: false, threads: {} })
+    useRemoteThreadStore.setState({ threads: {} })
     Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment)
     if (ownedDom) await GlobalRegistrator.unregister()
   }
@@ -62,10 +62,10 @@ async function withRow(input: { helperView: boolean; start: RemoteThreadStart; e
 
 const text = (row: HTMLElement, attribute: string) => row.querySelector(`[${attribute}]`)?.textContent ?? null
 
-test("a running task reads as a sentence with how long it has worked and the step it ran last, and opens like a helper", async () => {
+test("without a helper rollout key, a running task reads as a sentence with its duration and last step, and opens like a helper", async () => {
   const opened: string[] = []
   const since = Date.now() - 12 * 60_000
-  await withRow({ helperView: true, start: desktop, entry: entry(desktop, status(desktop, { latestStep: "Ran List Daytona sandboxes" }), since),
+  await withRow({ start: desktop, entry: entry(desktop, status(desktop, { latestStep: "Ran List Daytona sandboxes" }), since),
     onOpenRemoteTask: (start) => opened.push(start.key) }, async (row) => {
     expect(row.dataset.remoteThreadSentence).toBe("running")
     expect(text(row, "data-remote-thread-lead")).toBe("Working on Benjamin's Mac Studio")
@@ -78,7 +78,7 @@ test("a running task reads as a sentence with how long it has worked and the ste
 })
 
 test("a task waiting on the person reads in amber and says what it needs", async () => {
-  await withRow({ helperView: true, start: desktop, entry: entry(desktop, status(desktop, { state: "waiting", waitingFor: "permission" }), Date.now()) }, (row) => {
+  await withRow({ start: desktop, entry: entry(desktop, status(desktop, { state: "waiting", waitingFor: "permission" }), Date.now()) }, (row) => {
     expect(row.dataset.remoteThreadSentence).toBe("waiting")
     expect(text(row, "data-remote-thread-lead")).toBe("Waiting for you on Benjamin's Mac Studio")
     expect(row.querySelector("[data-remote-thread-lead]")?.className).toContain("text-amber-11")
@@ -89,7 +89,7 @@ test("a task waiting on the person reads in amber and says what it needs", async
 
 test("a finished Cloud task says where it ran and how long it took, without shimmer", async () => {
   const observedAt = Date.now()
-  await withRow({ helperView: true, start: cloud, entry: entry(cloud, status(cloud, { state: "idle", observedAt, preview: "Done" }), observedAt - 4 * 60_000 - 3_000) }, (row) => {
+  await withRow({ start: cloud, entry: entry(cloud, status(cloud, { state: "idle", observedAt, preview: "Done" }), observedAt - 4 * 60_000 - 3_000) }, (row) => {
     expect(row.dataset.remoteThreadSentence).toBe("done")
     expect(text(row, "data-remote-thread-lead")).toBe("Finished in the Cloud")
     expect(text(row, "data-remote-thread-title")).toBe("Draft the GA changelog")
@@ -98,10 +98,13 @@ test("a finished Cloud task says where it ran and how long it took, without shim
   })
 })
 
-test("with the helper view off the row is today's row", async () => {
-  await withRow({ helperView: false, start: desktop, entry: entry(desktop, status(desktop, { latestStep: "Ran List Daytona sandboxes" }), Date.now()) }, (row) => {
-    expect(row.dataset.remoteThreadSentence).toBeUndefined()
-    expect(row.textContent).toContain("Record 23 demo videos · Benjamin's Mac Studio")
-    expect(row.textContent).not.toContain("last ran")
+test("without a helper rollout key, a split pane keeps the sentence row and opens the conversation beside the chat", async () => {
+  await withRow({ start: desktop, entry: entry(desktop, status(desktop, { latestStep: "Ran List Daytona sandboxes" }), Date.now()) }, async (row) => {
+    expect(Object.hasOwn(useRemoteThreadStore.getState(), "helperView")).toBe(false)
+    expect(row.dataset.remoteThreadSentence).toBe("running")
+    expect(row.textContent).toContain("last ran: Ran List Daytona sandboxes")
+    await act(async () => { row.querySelector<HTMLButtonElement>("button")?.click() })
+    const { usePanelTabStore } = await import("../src/react-app/domains/session/panel/panel-tab-store")
+    expect(usePanelTabStore.getState().sessions["session-1"]?.tabs).toContainEqual(expect.objectContaining({ type: "remote-thread", threadKey: desktop.key }))
   })
 })

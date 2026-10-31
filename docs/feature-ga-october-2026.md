@@ -133,6 +133,31 @@ longer opt organizations out. Rendering GA does not change stored chat data
 or App permissions. Scheduling GA does not bypass Automation access checks,
 runner configuration, calendar authorization or connector consent.
 
-`remoteSessionHelperView` remains a separate opt-in rollout. Its Agents list
-prerequisite is now generally available and needs no tracker override. All
-other unlisted flags retain their existing behavior.
+## Remembered sign-in and helper-style tasks (October 30)
+
+`lastUsedSignIn` and `remoteSessionHelperView` are retired on cloud and
+self-hosted; their behavior is generally available, not controlled by rollout
+rows, member/organization overrides or operator locks.
+
+- Den web remembers successful password, Google and GitHub sign-ins and shows
+  the last-used method next time. SSO clears the hint; it never bypasses an
+  organization's SSO requirements or enables an unconfigured provider.
+- Clicking a task on another computer opens it in the main pane like a helper.
+  Enter sends a follow-up, Stop interrupts the task, and Esc returns to the
+  prior chat. Chat rows retain the last step and the sidebar nests tasks under
+  their originating chat. The conversation-view prerequisite is preserved;
+  connected-computer access and authorization still apply.
+
+`desktopUpdateDownloadWindow` is **removed, not generally available**. The early
+"Restart to update" titlebar action and download-progress window are gone. The
+pre-existing updater still downloads in the background, offers restart after
+an update is ready, and retains its normal Settings progress and install flow.
+Old overrides and Helm locks for all three retired keys are ignored. The API
+retains response-only compatibility values for older published clients:
+`lastUsedSignIn` and `remoteSessionHelperView` are fixed true;
+`desktopUpdateDownloadWindow` is fixed false. These are not registry entries
+or configurable switches. Helm accepts legacy values only as ignored retired
+keys, so existing operator values do not prevent an upgrade.
+
+Rollback requires reverting this code change, not editing rollout settings.
+All other unlisted flags retain their existing behavior.

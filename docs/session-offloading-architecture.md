@@ -109,20 +109,22 @@ Task rows, conversation views and answers are generally available. Their former
 `remoteSessionSubagents`, `remoteSessionThreadView` and `remoteSessionAnswers`
 rollouts are retired.
 
-- `remoteSessionHelperView` (cloud and self-hosted, off by default): the row reads as a sentence
-  (`Working on <computer> · <task>`, then `<elapsed>, last ran: <latestStep>`)
-  and opens the session in the main pane under the session route
-  `remote:<threadKey>`, like a local helper. The app never treats that id as
-  a local session: the route state reads it as "no local session" plus a
-  remote task, so no engine call uses it. Enter sends a follow-up through
-  `send`, Stop goes through `stop`, and Esc returns to the parent chat
-  through the same `child-navigation.ts` return as local helpers. The task
-  and its parent are kept per window in sessionStorage so a reload on the
-  route still renders it. The generally available composer's Agents list
-  shows the turn's remote tasks beside local helpers (computer,
-  task, status word, Open, Stop) on either engine, from the same shared
-  follower. The sidebar also lists followed tasks under their chat with a
-  status word. Off, the generally available row and side-panel conversation remain.
+The helper view is generally available on cloud and self-hosted; its former
+`remoteSessionHelperView` rollout is retired with no usage tracking or prerequisite
+rollout flag. The row reads as a sentence
+(`Working on <computer> · <task>`, then `<elapsed>, last ran: <latestStep>`)
+and opens the session in the main pane under the session route
+`remote:<threadKey>`, like a local helper. The app never treats that id as
+a local session: the route state reads it as "no local session" plus a
+remote task, so no engine call uses it. Enter sends a follow-up through
+`send`, Stop goes through `stop`, and Esc returns to the parent chat
+through the same `child-navigation.ts` return as local helpers. The task
+and its parent are kept per window in sessionStorage so a reload on the
+route still renders it. The generally available composer's Agents list
+shows the turn's remote tasks beside local helpers (computer,
+task, status word, Open, Stop) on either engine, from the same shared
+follower. The sidebar also lists followed tasks under their chat with a
+status word. `Open beside` and split panes retain the side-panel conversation.
 
 ### Transcript steps
 

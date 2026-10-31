@@ -124,7 +124,6 @@ import { ComputerRequestPanel } from "@/react-app/domains/session/computer/compu
 import { useComputerRequest, useComputerStore } from "@/react-app/domains/session/computer/computer-store";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
 import { ComposerSubagentTracker, currentTurnSubagentParts, useComposerRemoteTasks } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
-import { useRemoteThreadHelperViewEnabled } from "@/react-app/domains/session/remote-threads/remote-thread-store";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
 import { deriveOpenTargets, sameOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
@@ -806,7 +805,7 @@ export type SessionSurfaceProps = {
   onForkAtMessage?: (messageId: string | null, sessionId: string, isCurrent: () => boolean) => Promise<void>;
   /** Open a sub-agent (child) session in the main chat surface. */
   onOpenSubagentSession?: (sessionId: string) => void;
-  /** Open a task on another computer in the main pane (`remoteSessionHelperView`); absent opens it beside the chat. */
+  /** Open a task on another computer in the main pane; absent opens it beside the chat. */
   onOpenRemoteTask?: (threadKey: string) => void;
   onReturnToParent?: () => void;
   parentSessionTitle?: string;
@@ -2258,15 +2257,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
       : []),
     [snapshotEngine, visibleMessages],
   );
-  // `remoteSessionHelperView`: tasks the turn started on other computers join
-  // the list on either engine; their state comes from Den, not the local engine.
-  const remoteHelperView = useRemoteThreadHelperViewEnabled();
+  // Tasks the turn started on other computers join the list on either engine;
+  // their state comes from Den, not the local engine.
   const remoteTrackerOwner = useMemo(() => ({ workspaceId: props.workspaceId, sessionId: props.sessionId }), [props.workspaceId, props.sessionId]);
   // An earlier turn's task stays listed while it works or waits, or once this turn follows up on it.
   const remoteTrackerTasks = useComposerRemoteTasks(
     visibleMessages,
     remoteTrackerOwner,
-    remoteHelperView,
   );
   const subagentTrackerShown = subagentTrackerToolCallIds.size > 0 || remoteTrackerTasks.length > 0;
 

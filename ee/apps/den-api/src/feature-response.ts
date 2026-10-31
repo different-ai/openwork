@@ -3,7 +3,8 @@ import { z } from "zod"
 /**
  * Published desktop clients interpret a missing rollout key as a rollback.
  * These response-only values preserve the graduated behavior during API-first
- * upgrades. They are not registry entries, rollout state or admin controls.
+ * upgrades, or keep removed behavior off. They are not registry entries,
+ * rollout state or admin controls.
  *
  * Remove a value only when no supported published desktop version still reads
  * that key (and the minimum supported client version enforces that boundary).
@@ -46,10 +47,17 @@ const retiredClientFeaturesSchema = z.object({
   artifactsListFirst: retired,
   automationIntervalSchedules: retired,
   automationCalendarTriggers: retired,
+  lastUsedSignIn: retired,
+  remoteSessionHelperView: retired,
+  // Removed, not GA: older desktops must keep the pre-existing updater path.
+  desktopUpdateDownloadWindow: z.literal(false).default(false).meta({
+    deprecated: true,
+    description: "Fixed false compatibility value for a removed desktop updater experiment; not configurable.",
+  }),
 })
 
 export const clientFeaturesSchema = retiredClientFeaturesSchema.meta({
-  description: "Effective feature state plus deprecated fixed true compatibility values for graduated behavior. Compatibility values are not configurable features.",
+  description: "Effective feature state plus deprecated fixed compatibility values for graduated or removed behavior. Compatibility values are not configurable features.",
 }).catchall(z.boolean())
 
 /** Response-only compatibility: never persist these keys as registry/admin state. */

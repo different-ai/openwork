@@ -16,7 +16,7 @@ const AGENT_ROW = "[data-subagent-tracker-remote]";
 /** The running step, once the transcript has loaded in the helper view. */
 const STEER_READY_TEXT = /Reading script\.md/;
 
-test("a member follows a task on their other computer from the Agents list, opens it like a helper, steers it with Enter, returns with Esc where they left off, and stops it", async ({ world, user, probe, step, evidence }) => {
+test("a member in a default organization follows a task on their other computer from the Agents list, opens it like a helper, steers it with Enter, returns with Esc where they left off, and stops it", async ({ world, user, probe, step, evidence }) => {
   const texts = async (selector: string) => (await probe.dom(selector)).elements.map((element) => element.text);
   const lefts = async (selector: string) => (await probe.dom(selector)).elements.map((element) => Math.round(element.rect.left));
 
@@ -62,13 +62,15 @@ test("a member follows a task on their other computer from the Agents list, open
   });
 
   await step("Open in the Agents list opens the task in the main pane, with the chat as its breadcrumb and the task folded to one line", async () => {
+    await user.hover({ text: COMPUTER_LABEL });
     await user.click({ role: "button", label: `Open ${TASK_TITLE} on ${COMPUTER_LABEL}` });
     await user.see({ label: "Follow up" }, { editable: true, timeoutMs: 30_000 });
+    const focused = (await probe.dom(`${SURFACE} textarea`)).elements.some((element) => element.focused);
+    await user.click({ role: "button", label: "Exploring 1 file, running 1 command" });
     await user.see({ text: STEER_READY_TEXT }, { timeoutMs: 30_000 });
     const route = decodeURIComponent(await probe.hash());
     const breadcrumb = await texts("[data-remote-session-header]");
     const brief = await texts("[data-remote-session-brief]");
-    const focused = (await probe.dom(`${SURFACE} textarea`)).elements.some((element) => element.focused);
     const ok = route.includes(`remote:command:${world.commandId}`)
       && (breadcrumb[0] ?? "").includes(CHAT_TITLE) && (breadcrumb[0] ?? "").includes(TASK_TITLE) && (breadcrumb[0] ?? "").includes("Open beside")
       && (brief[0] ?? "").startsWith(`Task ${TASK_PROMPT.slice(0, 20)}`) && focused;
