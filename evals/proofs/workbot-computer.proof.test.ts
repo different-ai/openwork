@@ -48,6 +48,10 @@ test("a member opens Workbot's Computer tab directly when the rollout is enabled
     await user.screenshot();
     // This fixture has no desktop provider to rebuild against, so the proof stops at the confirmation.
     await user.click({ role: "button", label: "Cancel" });
+    // notSee requires absence for the whole interval; first let the close transition finish.
+    await probe.eventually(async () => (await probe.dom('[role="alertdialog"]')).elements.length, {
+      within: 5_000, until: count => count === 0, label: "Rebuild confirmation closes after Cancel",
+    });
     await user.notSee({ text: "Rebuild your computer?" });
     await user.see({ role: "button", label: "Reconnect" });
   });
