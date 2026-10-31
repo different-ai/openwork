@@ -1,5 +1,6 @@
 import { createReadStream } from "node:fs";
 import { readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { recordAudit } from "../audit.js";
@@ -274,14 +275,84 @@ function pathInside(root: string | null, path: string): string | null {
   return fromRoot;
 }
 
+const ARTIFACT_SEARCH_SKIPPED_DIRECTORIES = new Set([
+  ...FILE_BROWSER_EXCLUDED_DIRECTORIES,
+  ".hg",
+  ".svn",
+  ".next",
+  ".nuxt",
+  ".turbo",
+  ".cache",
+  ".venv",
+  "venv",
+  "__pycache__",
+  "dist",
+  "build",
+  "out",
+  "target",
+  "coverage",
+]);
+const ARTIFACT_SEARCH_MAX_DIRECTORIES = 4000;
+const ARTIFACT_SEARCH_MAX_DEPTH = 12;
+
+/**
+ * Find a file the chat named by a partial path (`report.pdf`,
+ * `electron/main.mjs`) somewhere below `root`. Walks breadth-first so the
+ * shallowest match wins, ties broken by path order; never follows symlinks,
+ * skips build and dependency folders, and gives up after a bounded number of
+ * folders so a huge workspace cannot stall a click.
+ */
+export async function findWorkspaceFileBySuffix(
+  root: string,
+  relativePath: string,
+  options: { maxDirectories?: number; maxDepth?: number } = {},
+): Promise<string | null> {
+  const rootResolved = resolve(root);
+  const wanted = relativePath.split("/").filter(Boolean);
+  const name = wanted.at(-1);
+  if (!name) return null;
+  const maxDirectories = options.maxDirectories ?? ARTIFACT_SEARCH_MAX_DIRECTORIES;
+  const maxDepth = options.maxDepth ?? ARTIFACT_SEARCH_MAX_DEPTH;
+  const matchesSuffix = (candidate: string[]) => candidate.length >= wanted.length
+    && wanted.every((segment, index) => candidate[candidate.length - wanted.length + index] === segment);
+
+  let level: Array<{ path: string; segments: string[] }> = [{ path: rootResolved, segments: [] }];
+  let visited = 0;
+  for (let depth = 0; level.length && depth <= maxDepth; depth++) {
+    const matches: string[] = [];
+    const next: typeof level = [];
+    for (const dir of level) {
+      if (visited++ >= maxDirectories) return null;
+      const entries = await readdir(dir.path, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        const segments = [...dir.segments, entry.name];
+        if (entry.isDirectory()) {
+          if (!ARTIFACT_SEARCH_SKIPPED_DIRECTORIES.has(entry.name)) next.push({ path: join(dir.path, entry.name), segments });
+          continue;
+        }
+        if (entry.isFile() && entry.name === name && matchesSuffix(segments)) matches.push(segments.join("/"));
+      }
+    }
+    if (matches.length) return matches.sort()[0] ?? null;
+    next.sort((left, right) => left.path.localeCompare(right.path));
+    level = next;
+  }
+  return null;
+}
+
 /**
  * `conversationDirectory` names the folder the conversation runs in when it moved
  * into a worktree. Files missing from the workspace are also looked up there.
+ *
+ * `search` is for a person clicking a reference: a relative path that does not
+ * exist as written (a bare `report.pdf`, `main.mjs:12` from a reply) is looked up
+ * by name below the conversation folder and the workspace. `~/` paths expand to
+ * this computer's home folder and count only when they land inside either one.
  */
 export async function resolveWorkspaceArtifactTargets(
   workspaceRoot: string,
   input: unknown,
-  options: { conversationDirectory?: () => Promise<string | null> } = {},
+  options: { conversationDirectory?: () => Promise<string | null>; search?: boolean; homeDir?: string } = {},
 ): Promise<Array<Record<string, unknown>>> {
   const targets = Array.isArray(input) ? input.slice(0, 80) : [];
   const results = new Map<string, Record<string, unknown>>();
@@ -319,26 +390,42 @@ export async function resolveWorkspaceArtifactTargets(
     }
 
     let relativePath: string;
+    let searchable = false;
     try {
-      if (isAbsolute(rawValue)) {
+      const home = options.homeDir ?? homedir();
+      const expanded = /^~[/\\]/.test(rawValue) && home ? join(home, rawValue.slice(2)) : rawValue;
+      if (expanded.startsWith("~")) continue;
+      if (isAbsolute(expanded)) {
         // An absolute path may also name a file in the folder the conversation runs in.
-        const pathFromRoot = pathInside(workspaceResolved, rawValue)
-          ?? pathInside(await conversationDirectory(), rawValue);
+        const pathFromRoot = pathInside(workspaceResolved, expanded)
+          ?? pathInside(await conversationDirectory(), expanded);
         if (!pathFromRoot) continue;
         relativePath = normalizeWorkspaceRelativePath(pathFromRoot, { allowSubdirs: true });
       } else {
-        relativePath = normalizeWorkspaceRelativePath(rawValue, { allowSubdirs: true });
+        relativePath = normalizeWorkspaceRelativePath(expanded, { allowSubdirs: true });
+        searchable = options.search === true;
       }
     } catch {
       continue;
     }
-    const key = `file:${relativePath.toLowerCase()}`;
     let absPath = resolveSafeChildPath(workspaceRoot, relativePath);
     if (!(await exists(absPath))) {
       const directory = await conversationDirectory();
       const conversationPath = directory ? resolveSafeChildPath(directory, relativePath) : null;
-      if (conversationPath && await exists(conversationPath)) absPath = conversationPath;
+      if (conversationPath && await exists(conversationPath)) {
+        absPath = conversationPath;
+      } else if (searchable) {
+        // The conversation's folder first: that is where its replies were written.
+        for (const root of directory ? [directory, workspaceRoot] : [workspaceRoot]) {
+          const found = await findWorkspaceFileBySuffix(root, relativePath);
+          if (!found) continue;
+          relativePath = normalizeWorkspaceRelativePath(found, { allowSubdirs: true });
+          absPath = resolveSafeChildPath(root, relativePath);
+          break;
+        }
+      }
     }
+    const key = `file:${relativePath.toLowerCase()}`;
     let existsFile = false;
     let size: number | undefined;
     let updatedAt: number | undefined;
@@ -760,6 +847,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const body = await readJsonBody(ctx.request);
     const items = await resolveWorkspaceArtifactTargets(workspace.path, body.targets, {
       conversationDirectory: () => conversationDirectory(workspace, body.sessionId),
+      search: body.search === true,
     });
     return jsonResponse({ items });
   });

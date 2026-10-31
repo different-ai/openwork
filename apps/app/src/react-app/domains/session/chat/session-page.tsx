@@ -17,7 +17,7 @@ import { useCloudSignIn } from "../../cloud/sign-in-return";
 import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
-import { openDesktopUrl, openDesktopWorkspaceFile, revealDesktopItemInDir, type WorkspaceInfo } from "../../../../app/lib/desktop";
+import { getCachedDesktopHomeDir, openDesktopUrl, openDesktopWorkspaceFile, revealDesktopItemInDir, type WorkspaceInfo } from "../../../../app/lib/desktop";
 import type {
   ComposerAttachment,
   PendingPermission,
@@ -87,7 +87,7 @@ import {
 
 import { isElectronRuntime, isMacPlatform } from "../../../../app/utils";
 import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTarget, type OpenTarget } from "../artifacts/open-target";
-import { nativeFileAction, resolveCollectibleOpenTarget } from "../artifacts/resolve-open-target";
+import { nativeFileAction, planFileOpen, resolveCollectibleOpenTarget } from "../artifacts/resolve-open-target";
 import type { OpenTargetOptions } from "@/lib/target-provider";
 import { SidePanel } from "../panel/side-panel";
 import { getSidePanelSessionKey } from "../panel/side-panel-session";
@@ -772,40 +772,32 @@ export function SessionPage(props: SessionPageProps) {
       toast.error(error instanceof Error ? error.message : "Could not open this file.");
     };
     const canOpenLocally = isElectronRuntime();
-    const openLocalFile = (fileTarget: OpenTarget) => {
+    const sessionId = sourceSessionId ?? props.selectedSessionId;
+
+    const openNative = (path: string, action: "open" | "reveal") => {
       // Files outside the workspace are revealed, never launched; see nativeFileAction.
       // The desktop re-checks the resolved file on disk before launching anything.
-      const native = nativeFileAction(runtime.workspaceRoot, fileTarget.value, options);
-      if (!native) {
-        reportOpenError(new Error("This is not a local file path."));
-        return;
+      if (action === "reveal") {
+        return revealDesktopItemInDir(path);
       }
-      if (native.action === "reveal") {
-        void revealDesktopItemInDir(native.path).catch(reportOpenError);
-        return;
-      }
-      void openDesktopWorkspaceFile(runtime.workspaceRoot, native.path)
-        .then((action) => {
-          if (action === "revealed") toast.info("This file points outside the workspace, so it was shown in its folder instead.");
-        })
-        .catch(reportOpenError);
+      return openDesktopWorkspaceFile(runtime.workspaceRoot, path).then((result) => {
+        if (result === "revealed") toast.info("This file points outside the workspace, so it was shown in its folder instead.");
+      });
     };
 
-    // A person's explicit native open is not a workspace preview request.
-    if (canOpenLocally && options?.external) {
-      openLocalFile(target);
-      return;
-    }
-
-    const openFileTarget = (fileTarget: OpenTarget) => {
-      if (!isCollectibleArtifactTarget(fileTarget)) {
-        if (isOpenableFileTarget(fileTarget)) {
-          if (canOpenLocally) openLocalFile(fileTarget);
+    const openWorkspaceFile = (fileTarget: OpenTarget) => {
+      // A person's explicit native open is not a workspace preview request.
+      if (options?.external || !isCollectibleArtifactTarget(fileTarget)) {
+        if (!canOpenLocally || !isOpenableFileTarget(fileTarget)) return;
+        const native = nativeFileAction(runtime.workspaceRoot, fileTarget.value, options);
+        if (!native) {
+          reportOpenError(new Error(`Couldn\u2019t open \u201c${fileTarget.name}\u201d.`));
+          return;
         }
+        void openNative(native.path, native.action).catch(reportOpenError);
         return;
       }
 
-      const sessionId = sourceSessionId ?? props.selectedSessionId;
       if (!sessionId) return;
       openTab(sessionId, {
         id: fileTarget.id,
@@ -817,23 +809,28 @@ export function SessionPage(props: SessionPageProps) {
       setCurrentSidePanel("panel");
     };
 
-    if (target.exists !== true) {
-      if (!runtime.client || !runtime.runtimeWorkspaceId) {
-        if (canOpenLocally) openLocalFile(target);
-        else reportOpenError(new Error("Connect to the workspace to open this file."));
+    // One decision for every chat file reference: see planFileOpen.
+    const { client, runtimeWorkspaceId } = runtime;
+    void (async () => {
+      const plan = await planFileOpen(target, {
+        workspaceRoot: runtime.workspaceRoot,
+        homeDir: canOpenLocally ? await getCachedDesktopHomeDir() : null,
+        canOpenLocally,
+        reveal: options?.reveal,
+        findInWorkspace: client && runtimeWorkspaceId
+          ? (lookup) => resolveCollectibleOpenTarget(client, runtimeWorkspaceId, lookup, sessionId, { search: true })
+          : undefined,
+      });
+      if (plan.kind === "workspace") {
+        openWorkspaceFile(plan.target);
         return;
       }
-      void resolveCollectibleOpenTarget(runtime.client, runtime.runtimeWorkspaceId, target, sourceSessionId ?? props.selectedSessionId)
-        .then((resolvedTarget) => {
-          if (resolvedTarget) openFileTarget(resolvedTarget);
-          else if (canOpenLocally) openLocalFile(target);
-          else reportOpenError(new Error("This file is missing or outside the workspace."));
-        })
-        .catch(reportOpenError);
-      return;
-    }
-
-    openFileTarget(target);
+      if (plan.kind === "unavailable") {
+        toast.error(plan.message);
+        return;
+      }
+      await openNative(plan.path, plan.action);
+    })().catch(reportOpenError);
   }, [browserUrlForTarget, createBrowserTab, openOwnerSidePanel, openTab, props.selectedSessionId, setCurrentSidePanel]);
   const openTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     openTargetForRuntime({

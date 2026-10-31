@@ -1,26 +1,42 @@
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 
-import { classifyOpenTarget, filePathFromLinkHref, isOpenableFileTarget, openTargetFromUrl, type OpenTarget } from "./open-target";
+import {
+  localPathName,
+  parseLocalPathReference,
+  resolveLocalPath,
+  workspaceLookupValue,
+  type LocalPathReference,
+} from "./local-path";
+import { classifyOpenTarget, isOpenableFileTarget, openTargetFromUrl, type OpenTarget } from "./open-target";
+
+/** A file target for a path written in chat, cleaned up by the shared path reader. */
+export function openTargetFromLocalPath(
+  value: string,
+  options: { decode?: boolean; confidence?: number; reason?: string } = {},
+): OpenTarget | null {
+  const reference = parseLocalPathReference(value, { decode: options.decode });
+  if (!reference) return null;
+  return {
+    id: `file:${reference.path}`,
+    kind: "file",
+    value: reference.path,
+    name: localPathName(reference.path),
+    preview: classifyOpenTarget(reference.path, "file"),
+    confidence: options.confidence ?? 100,
+    reason: options.reason ?? "explicit link",
+  };
+}
 
 export function openTargetForHref(href: string, targets: OpenTarget[], root?: string): OpenTarget | null {
   const url = openTargetFromUrl(href);
   if (url) return url;
   if (!href.trim() || href.trim().startsWith("#")) return null;
-  const value = filePathFromLinkHref(href).replace(/^\.\//, "");
-  const path = localArtifactPath(root, value);
-  if (!path && !localArtifactPath("/", value)) return null;
-  const exact = targets.find((target) => target.kind === "file"
-    && (target.value === value || (path !== null && localArtifactPath(root, target.value) === path)));
-  if (exact) return exact;
-  return {
-    id: `file:${value}`,
-    kind: "file",
-    value,
-    name: (path ?? value).split(/[/\\]/).pop() || value,
-    preview: classifyOpenTarget(path ?? value, "file"),
-    confidence: 100,
-    reason: "explicit link",
-  };
+  const target = openTargetFromLocalPath(href, { decode: true });
+  if (!target) return null;
+  const path = localArtifactPath(root, target.value);
+  const exact = targets.find((candidate) => candidate.kind === "file"
+    && (candidate.value === target.value || (path !== null && localArtifactPath(root, candidate.value) === path)));
+  return exact ?? target;
 }
 
 type ArtifactTargetResolver = Pick<OpenworkServerClient, "resolveArtifacts">;
@@ -34,37 +50,14 @@ export function isWorkspaceContainedArtifactTarget(target: OpenTarget) {
   return normalized.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
-/** Explicit native opens accept local paths, never URLs or network shares. */
-export function localArtifactPath(root: string | null | undefined, value: string): string | null {
-  let path = value.trim();
-  if (/^file:/i.test(path)) {
-    try {
-      const url = new URL(path);
-      if (url.hostname || url.search || url.hash) return null;
-      path = decodeURIComponent(url.pathname);
-      if (/^\/[A-Za-z]:\//.test(path)) path = path.slice(1);
-    } catch {
-      return null;
-    }
-  }
-  const isAbsolute = (path: string) => path.startsWith("/") || /^[A-Za-z]:[/\\]/.test(path);
-  const isLocal = (path: string) => !/[\x00-\x1f]/.test(path)
-    && !/^[/\\]{2}/.test(path)
-    && (!/^[A-Za-z][A-Za-z\d+.-]*:/.test(path) || /^[A-Za-z]:[/\\]/.test(path));
-  if (!path || !isLocal(path)) return null;
-  if (isAbsolute(path)) return path;
-  // Validate decoded components without changing the literal filesystem name.
-  let decoded = path;
-  try {
-    decoded = decodeURIComponent(path);
-  } catch {
-    // A literal percent sign is part of the name (`50% off.pdf`).
-  }
-  if (!isLocal(decoded) || isAbsolute(decoded)
-    || decoded.split(/[/\\]/).some((segment) => !segment || /^\.{1,2}\s*$/.test(segment))) return null;
-  const base = root?.trim();
-  if (!base || !isAbsolute(base) || !isLocal(base) || path.startsWith("~")) return null;
-  return `${base.replace(/[/\\]+$/, "")}/${path}`;
+/**
+ * The absolute local path an explicit native open may use, never a URL or a
+ * network share. `~/` expands only when the home folder is known.
+ */
+export function localArtifactPath(root: string | null | undefined, value: string, homeDir?: string | null): string | null {
+  const reference = parseLocalPathReference(value);
+  if (!reference) return null;
+  return resolveLocalPath(reference, { workspaceRoot: root, homeDir });
 }
 
 /** Compare locations only; the literal path handed to the desktop is never rewritten. */
@@ -98,9 +91,9 @@ export type NativeFileAction = { path: string; action: "open" | "reveal" };
 export function nativeFileAction(
   root: string | null | undefined,
   value: string,
-  options?: { reveal?: boolean },
+  options?: { reveal?: boolean; homeDir?: string | null },
 ): NativeFileAction | null {
-  const path = localArtifactPath(root, value);
+  const path = localArtifactPath(root, value, options?.homeDir);
   if (!path) return null;
   if (options?.reveal || !isWorkspaceContainedPath(root, path)) return { path, action: "reveal" };
   return { path, action: "open" };
@@ -111,9 +104,91 @@ export async function resolveCollectibleOpenTarget(
   workspaceId: string,
   target: OpenTarget,
   sessionId?: string | null,
+  options?: { search?: boolean },
 ): Promise<OpenTarget | null> {
   if (target.kind !== "file") return null;
 
-  const response = await client.resolveArtifacts(workspaceId, [target], { sessionId: sessionId ?? undefined });
+  const response = await client.resolveArtifacts(workspaceId, [target], {
+    sessionId: sessionId ?? undefined,
+    search: options?.search,
+  });
   return response.items.find(isWorkspaceContainedArtifactTarget) ?? null;
+}
+
+/** Where a clicked file reference leads. */
+export type FileOpenPlan =
+  /** The workspace has this file; `target.value` is workspace-relative. */
+  | { kind: "workspace"; target: OpenTarget }
+  /** A file on this computer outside what the workspace can show; hand it to the desktop. */
+  | { kind: "native"; path: string; action: "open" | "reveal"; reference: LocalPathReference }
+  /** Nothing to open; say why in words a person understands. */
+  | { kind: "unavailable"; message: string };
+
+export type FileOpenContext = {
+  workspaceRoot?: string | null;
+  homeDir?: string | null;
+  /** Can this app hand files to the operating system (desktop)? */
+  canOpenLocally: boolean;
+  /** Reveal in the file manager instead of opening. */
+  reveal?: boolean;
+  /**
+   * Ask the workspace for the file, searching for it by name when the path
+   * does not exist as written. Absent when the workspace is not connected.
+   */
+  findInWorkspace?: (target: OpenTarget) => Promise<OpenTarget | null>;
+};
+
+function quoted(path: string) {
+  return `\u201c${path}\u201d`;
+}
+
+/**
+ * Decide how to open a file reference from chat. Every chat surface (inline
+ * code, Markdown links, file chips, tool rows) reaches this one decision:
+ *
+ * 1. Read the reference once (`~/`, `file://`, quotes, `:line[:col]`).
+ * 2. Ask the workspace for it. The server also finds a bare name such as
+ *    `computer-control.test.mjs` wherever it lives in the workspace.
+ * 3. Otherwise open or reveal a real absolute location on this computer.
+ * 4. Otherwise explain that the file could not be found, rather than handing
+ *    the desktop a guessed path.
+ */
+export async function planFileOpen(target: OpenTarget, context: FileOpenContext): Promise<FileOpenPlan> {
+  if (target.kind !== "file") return { kind: "unavailable", message: "This link is not a file." };
+  if (target.exists === true) return { kind: "workspace", target };
+
+  const reference = parseLocalPathReference(target.value);
+  if (!reference) {
+    return { kind: "unavailable", message: `${quoted(target.name || target.value)} is not a file OpenWork can open.` };
+  }
+
+  const pathContext = { workspaceRoot: context.workspaceRoot, homeDir: context.homeDir };
+  const value = workspaceLookupValue(reference, pathContext);
+  const lookup: OpenTarget = {
+    ...target,
+    value,
+    name: localPathName(reference.path),
+    preview: classifyOpenTarget(reference.path, "file"),
+  };
+
+  if (context.findInWorkspace) {
+    const found = await context.findInWorkspace(lookup);
+    if (found) return { kind: "workspace", target: found };
+  }
+
+  const notFound: FileOpenPlan = {
+    kind: "unavailable",
+    message: `Couldn\u2019t find ${quoted(reference.path)} in this workspace.`,
+  };
+  if (!context.canOpenLocally) {
+    if (context.findInWorkspace) return notFound;
+    return { kind: "unavailable", message: "Connect to the workspace to open this file." };
+  }
+  // The workspace already looked for a relative name and has no such file;
+  // joining it to the workspace folder would only name a file that is not there.
+  if (reference.anchor === "relative" && context.findInWorkspace) return notFound;
+
+  const native = nativeFileAction(context.workspaceRoot, reference.path, { reveal: context.reveal, homeDir: context.homeDir });
+  if (!native) return notFound;
+  return { kind: "native", path: native.path, action: native.action, reference };
 }

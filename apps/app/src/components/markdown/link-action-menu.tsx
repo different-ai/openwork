@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent } from "@/components/ui/popover";
 
 import type { DesktopApplication } from "@/app/lib/desktop";
-import { getDesktopApplicationsForFile, openDesktopWithApp } from "@/app/lib/desktop";
+import { getCachedDesktopHomeDir, getDesktopApplicationsForFile, openDesktopWithApp } from "@/app/lib/desktop";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { useOpenTargets, type OpenTargetOptions } from "@/lib/target-provider";
@@ -28,12 +28,19 @@ export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkAc
   const [appsLoading, setAppsLoading] = useState(false);
   const canOpenInPanel = target.kind === "file" && SUPPORTED_PANEL_PREVIEWS.has(target.preview);
   const { workspaceRoot, isLocalWorkspace } = useOpenTargets();
+  // `~/` links name a file in the home folder; the menu can reveal them once it is known.
+  const [homeDir, setHomeDir] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void getCachedDesktopHomeDir().then((home) => { if (!cancelled) setHomeDir(home); });
+    return () => { cancelled = true; };
+  }, []);
   const native = isLocalWorkspace && platform.capabilities.revealInFileManager && target.kind === "file"
-    ? nativeFileAction(workspaceRoot, target.value) : null;
+    ? nativeFileAction(workspaceRoot, target.value, { homeDir }) : null;
   const canOpenExternally = native !== null;
   const canLaunch = native?.action === "open";
   const nativePath = native?.path;
-  const copyPath = localArtifactPath(workspaceRoot, target.value) ?? target.value;
+  const copyPath = localArtifactPath(workspaceRoot, target.value, homeDir) ?? target.value;
 
   // Follow the link while the chat scrolls; a streamed re-render can replace
   // the link element, so keep its last position instead of jumping to 0,0.
