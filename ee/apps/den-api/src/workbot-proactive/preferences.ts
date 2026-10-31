@@ -26,7 +26,7 @@ import { z } from "zod"
 import { findSource, type MemberSourceChoice, type ResolvedSource } from "./sources.js"
 
 /**
- * My agent (`workbotAgentLibrary`): what a member tells their agent in their own words, the limits they narrow, which
+ * My agent (`workbotProactive`): what a member tells their agent in their own words, the limits they narrow, which
  * sources it reads, which allowed connection calendar, email and team chat read from, their instruction for each, and
  * the short change log behind "Saved from chat at 11:20 AM ·
  * Undo". Pure: no database, no clock, no ids of its own.
@@ -265,12 +265,6 @@ export type MemberAgentChangeResult =
       error: "limit_wider_than_admin" | "nothing_to_undo" | "undo_superseded" | "undo_alone" | "source_locked" | "source_not_allowed" | "connection_not_allowed"
       message: string
     }
-
-/** The fields of a request that only My agent understands. */
-export function usesAgentLibrary(input: MemberAgentInput) {
-  return input.preferences !== undefined || input.hours !== undefined || input.dailyCap !== undefined || input.quietWindow !== undefined
-    || input.sources !== undefined || input.undo !== undefined
-}
 
 const ADMIN_PLACE = "An admin can change it in Manage › Workbot."
 

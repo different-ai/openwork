@@ -5,11 +5,11 @@ import { compatJsonColumn, denTypeIdColumn, encryptedMediumTextColumn } from "..
 export type AgentInstanceOverrides = {
   /** Responsibilities the member turned off. */
   muted?: string[]
-  /** Narrower working hours than the organization's (`workbotAgentLibrary`); read clamped to the organization's. */
+  /** Narrower working hours than the organization's (`workbotProactive`); read clamped to the organization's. */
   hours?: { startHour: number; endHour: number }
-  /** A lower daily limit than the organization's (`workbotAgentLibrary`). */
+  /** A lower daily limit than the organization's (`workbotProactive`). */
   dailyCap?: number
-  /** Inside the working day, only messages the agent marks urgent go out (`workbotAgentLibrary`). */
+  /** Inside the working day, only messages the agent marks urgent go out (`workbotProactive`). */
   quietWindow?: { startHour: number; endHour: number }
 }
 
@@ -77,7 +77,7 @@ export type AgentMemberCheckMessage = { channelId: string; messageTs: string; pe
 export type AgentMemberCheckSource = { id: string; name: string; connectionId: string | null }
 
 /**
- * One row per check of one member's agent, for the member only ("My agent", `workbotAgentLibrary`): when it looked,
+ * One row per check of one member's agent, for the member only ("My agent", `workbotProactive`): when it looked,
  * what came of it (`sent`, `quiet`, `waited`, `failed`), a reason code and the sentence the member reads, which
  * responsibilities it was about, and a reference to the DM it sent. No email or message content. Written by the
  * wake; kept about 14 days. The id makes a repeated skip (Google still disconnected) one row whose time moves.

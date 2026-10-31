@@ -28,7 +28,7 @@ import { appLogger } from "../observability/logger.js"
 import type { MemberCalendarRead } from "../routes/org/google-workspace.js"
 import { describeAgentCheck, type AgentCheckRecord } from "./checks.js"
 import type { DeliveryResult } from "./deliver.js"
-import { activeResponsibilities, enabledOf, memberAgentOn, mutedOf, proactivePolicy } from "./policy.js"
+import { activeResponsibilities, enabledOf, memberAgentOn, mutedOf } from "./policy.js"
 import { memberLimits, memberPolicy, parseStoredPreferences } from "./preferences.js"
 import {
   blockedConnections,
@@ -88,8 +88,6 @@ export type AgentWakeDeps = {
   deliver: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; text: string }) => Promise<DeliveryResult>
   /** Adds a completed pass to the organization's daily counters (the admin's health view). */
   recordChecks: (input: { organizationId: DenTypeId<"organization">; day: string; counts: readonly AgentCheckCount[] }) => Promise<void>
-  /** My agent (`workbotAgentLibrary`) is on for this member: their words, narrower limits and check records. */
-  library: (organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">) => Promise<boolean>
   /** Keeps one check for the member to read ("Last check at 11:20 AM. Stayed quiet."). */
   recordCheck: (record: AgentCheckRecord) => Promise<void>
 }
@@ -121,16 +119,13 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
   if (!userId || !(await deps.allowed(organizationId, userId))) return skip("not_allowed", now + HOUR_MS)
   if (!memberAgentOn(row, settings)) return skip("opted_out", now + 6 * HOUR_MS)
 
-  // My agent: the member's narrower limits, their own words, and a record of each check they can read. Off, the
-  // agent runs exactly as before on the organization's policy.
-  const library = await deps.library(organizationId, userId).catch(() => false)
-  const limits = memberLimits(settings, library ? row.overrides : null)
-  const policy = library ? memberPolicy(limits) : proactivePolicy(settings)
+  // Every agent honors the member's narrower limits and words, and records its checks.
+  const limits = memberLimits(settings, row.overrides)
+  const policy = memberPolicy(limits)
   const state = parseAgentState(row.state)
   // Skips repeat until their cause is fixed; keyed by the pass they hold up, they stay one record.
   const slot = String(state.nextPassAt ?? "first")
   const record = async (input: { reason: AgentCheckReason; key: string; kind?: AgentCheckKind; responsibilities?: readonly AgentResponsibility[]; sources?: readonly AgentMemberCheckSource[]; message?: AgentMemberCheckMessage | null }) => {
-    if (!library) return
     const described = describeAgentCheck({ reason: input.reason, responsibilities: input.responsibilities, sources: input.sources, limits })
     await deps.recordCheck({
       organizationId,
@@ -181,7 +176,7 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
   // the member turned it off). It also tells us their time zone. A failed read only stops the event source here; the
   // member's sources below decide what the agent reads and what they are told to fix.
   const stored = parseStoredPreferences(row.preferences)
-  const choices = library ? stored.sources : {}
+  const choices = stored.sources
   // The member's sources first: the calendar is read through the one connection its source reads for them (their
   // pick among the admin's allowed ones, else the default), never another of their accounts.
   const [listed, connectedMembers] = await Promise.all([
@@ -288,7 +283,7 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
         id: source.id,
         name: source.name,
         via: source.kind === "other" ? [] : readableConnections(source).map((connection) => connection.name),
-        instruction: library ? source.instruction : "",
+        instruction: source.instruction,
         lastReadAt: source.lastReadAt,
       })),
       unavailable: sources
@@ -298,7 +293,7 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
       instructions: template.instructions,
       now,
       timeZone,
-      wishes: library ? { preferences: stored.words, quietWindow: limits.quietWindow } : null,
+      wishes: { preferences: stored.words, quietWindow: limits.quietWindow },
     }),
     messageId: deps.messageId(memberId, row.nextWakeAt.getTime()),
     scopes: agentReadScopes(allowlist),
@@ -337,7 +332,7 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
       at: deps.now(),
       timeZone,
       snoozedUntil: row.snoozedUntil?.getTime() ?? null,
-      quietWindow: library ? limits.quietWindow : null,
+      quietWindow: limits.quietWindow,
       urgent: result.urgent === true,
     })
     outcome = { reason: "already_told" }

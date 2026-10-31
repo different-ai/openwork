@@ -191,8 +191,6 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
   /** Per computer: whose control call has the keyboard and pointer, and who waits. */
   const slots = new Map();
   let featureEnabled = false;
-  // `computerUseBackground`: new sessions on a parallel computer work behind other windows.
-  let backgroundEnabled = false;
   let featureGeneration = 0;
   let remoteGeneration = 0;
   let remoteUpdateRevision = 0;
@@ -702,7 +700,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       if (Number.isSafeInteger(window) && others.some((other) => other.windowId === window)) {
         return failure("window_busy", "Another chat is working in this window. Choose another window, or wait for that chat to finish. Nothing was dispatched.");
       }
-      if (!own) leases.set(grant.sessionId, { grant, adapter: target, background: backgroundEnabled && target.parallel === true, controller: new AbortController(), nativeId: null, session: null, busy: false, handoffGeneration: 0 });
+      if (!own) leases.set(grant.sessionId, { grant, adapter: target, background: target.parallel === true, controller: new AbortController(), nativeId: null, session: null, busy: false, handoffGeneration: 0 });
       const current = leases.get(grant.sessionId);
       clearTimeout(current.idleTimer);
       current.busy = true;
@@ -1155,15 +1153,13 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       return false;
     },
     /**
-     * The renderer reports the `computerUseBackground` feature. A change hands
-     * idle sessions back, so each chat's next call reopens with the new setting;
-     * a call in flight keeps its own until it ends.
+     * Compatibility for older renderers. Background delivery is part of
+     * `computerUse` now; a stale child-flag value must not change its behavior.
+     * Remove with the corresponding desktop IPC when old renderers are unsupported.
+     * @param {boolean} [_enabled] Retired child-flag value; intentionally ignored.
      */
-    async setBackgroundEnabled(enabled) {
-      if (backgroundEnabled === (enabled === true)) return backgroundEnabled;
-      backgroundEnabled = enabled === true;
-      await Promise.all([...leases.values()].filter((current) => current.background !== (backgroundEnabled && current.adapter.parallel === true)).map((current) => release(current, true)));
-      return backgroundEnabled;
+    async setBackgroundEnabled(_enabled) {
+      return featureEnabled;
     },
     /**
      * The renderer reports the `remoteComputers` feature. Turning it off ends a

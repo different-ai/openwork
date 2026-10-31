@@ -643,7 +643,7 @@ function parallelFixture(options = {}) {
           if (name === "computer_open_session") {
             onUi({ kind: "state", id: `view-${app}`, phase: "working", appID: app, appName: app, windowTitle: app, mode: args.mode, task: args.purpose });
             return text({ ok: true, session_id: `native-${app}`, window_id: args.window_id ?? windows[app], state: "active",
-              ...(options.delivery ? { delivery: options.delivery(app) } : {}) });
+              delivery: options.delivery?.(app) ?? "foreground" });
           }
           if (name === "computer_session_status") return text({ ok: true, state: "active" });
           if (name === "computer_act") return text({ ok: true, status: "dispatched" });
@@ -778,7 +778,6 @@ test("background sessions act at the same time instead of taking turns", async (
     beforeTool: async (name, app) => { if (name === "computer_act" && app === "blender") { started.resolve(); await gate.promise; } } });
   t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);
-  await f.control.setBackgroundEnabled(true);
   await openApp(f.control, "chat-blender", "blender");
   await openApp(f.control, "chat-photoshop", "photoshop");
   assert.deepEqual(f.started, [{ background: true }, { background: true }], "each helper starts with background delivery");
@@ -795,7 +794,6 @@ test("a session the helper keeps in front still takes turns, without holding up 
     beforeTool: async (name, app) => { if (name === "computer_act" && app === "blender") { started.resolve(); await gate.promise; } } });
   t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);
-  await f.control.setBackgroundEnabled(true);
   for (const app of ["blender", "photoshop", "notes"]) await openApp(f.control, `chat-${app}`, app);
   const blender = click(f.control, "chat-blender");
   await started.promise;
@@ -808,22 +806,24 @@ test("a session the helper keeps in front still takes turns, without holding up 
   assert.ok(f.events.indexOf("blender:computer_act:end") < f.events.indexOf("notes:computer_act:start"));
 });
 
-test("turning background off hands idle sessions back so the next call starts in front", async (t) => {
+test("older renderers cannot disable background delivery independently of computer use", async (t) => {
   const f = parallelFixture({ delivery: () => "background" }); t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);
-  await f.control.setBackgroundEnabled(true);
   await openApp(f.control, "chat-notes", "notes");
-  await f.control.setBackgroundEnabled(false);
-  assert.ok(f.events.includes("notes:close"), "the idle background session was handed back");
+  assert.equal(await f.control.setBackgroundEnabled(false), true);
+  assert.ok(!f.events.includes("notes:close"), "the obsolete child flag cannot end an active session");
   assert.equal(payload(await f.control.execute({ sessionId: "chat-notes", name: "computer_observe", args: {} })).ok, true);
-  assert.deepEqual(f.started.at(-1), { background: false });
+  assert.deepEqual(f.started.at(-1), { background: true });
+  await f.control.setFeatureEnabled(false);
+  assert.ok(f.events.includes("notes:close"), "the parent switch still hands the session back");
+  assert.equal(await f.control.setBackgroundEnabled(true), false);
+  assert.equal(payload(await f.control.execute({ sessionId: "chat-notes", name: "computer_observe", args: {} })).code, "computer_unavailable");
 });
 
 test("background stays off on a computer that is not parallel", async (t) => {
   const connected = [];
   const f = fixture({ connected }); t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);
-  await f.control.setBackgroundEnabled(true);
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit" } })).ok, true);
   assert.deepEqual(connected, [{ background: false }]);
 });

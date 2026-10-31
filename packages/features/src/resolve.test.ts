@@ -111,6 +111,42 @@ test("managed deployments stays opt-in and cloud-only after folding GCP and agen
   assert.equal(resolveFeature("managedDeployments", { ...base, locks: legacyLocks.locks }).enabled, false)
 })
 
+test("Your agent, browser and computer use each have one opt-in rollout", () => {
+  const retired = ["workbotAgentHealthView", "workbotAgentLibrary", "browserLiveView", "computerUseBackground"]
+  for (const key of retired) {
+    assert.ok(RETIRED_FEATURE_KEYS.some((retiredKey) => retiredKey === key))
+    assert.equal(featureKeySchema.safeParse(key).success, false)
+    assert.equal(Object.hasOwn(resolveFeatures(base), key), false)
+  }
+  const legacyLocks = parseFeatureEnvironment({
+    DEN_FEATURE_WORKBOT_AGENT_HEALTH_VIEW: "true",
+    DEN_FEATURE_WORKBOT_AGENT_LIBRARY: "true",
+    DEN_FEATURE_BROWSER_LIVE_VIEW: "true",
+    DEN_FEATURE_COMPUTER_USE_BACKGROUND: "true",
+  })
+  assert.deepEqual(legacyLocks.locks, {})
+  assert.equal(legacyLocks.problems.length, 4)
+  assert.ok(legacyLocks.problems.every((problem) => !problem.fatal))
+  const parents = ["workbotProactive", "browserUse", "computerUse"] satisfies Array<keyof typeof FEATURES>
+  for (const key of parents) {
+    for (const deployment of ["cloud", "self_hosted"] satisfies Array<FeatureContext["deployment"]>) {
+      const context = { ...base, deployment, locks: legacyLocks.locks }
+      assert.equal(resolveFeature(key, context).enabled, false)
+      assert.equal(resolveFeature(key, { ...context, overrides: { [key]: true } }).enabled, true)
+      assert.equal(resolveFeature(key, {
+        ...context,
+        overrides: { [key]: true },
+        rollouts: { [key]: { enabled: true, killed: true } },
+      }).enabled, false)
+      assert.equal(resolveFeature(key, {
+        ...context,
+        overrides: { [key]: true },
+        memberOverrides: { [key]: false },
+      }).enabled, false)
+    }
+  }
+})
+
 test("retired GA locks cannot disable models, skills, permissions or team membership caching", () => {
   const parsed = parseFeatureEnvironment({
     DEN_FEATURE_ORG_DEFAULT_MODEL: "false",

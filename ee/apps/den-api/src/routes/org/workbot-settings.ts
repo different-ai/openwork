@@ -121,7 +121,7 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       tags: ["Organizations"],
       summary: "Get how members' agents are doing",
       description:
-        "For the last 7 days (UTC) and each responsibility: how many checks members' agents ran about it, how many of those stayed quiet, how many messages it produced, and how many members muted it, with the number of members who have an agent. Counts only: no member names, message text or email content. Requires the workbotProactive and workbotAgentHealthView features, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
+        "For the last 7 days (UTC) and each responsibility: how many checks members' agents ran about it, how many of those stayed quiet, how many messages it produced, and how many members muted it, with the number of members who have an agent. Counts only: no member names, message text or email content. Requires the workbotProactive feature, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
       responses: {
         200: jsonResponse("Agent health returned.", workbotProactiveHealthDocumentSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -131,7 +131,6 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
     }),
     orgMemberRoute(),
     requireFeature("workbotProactive"),
-    requireFeature("workbotAgentHealthView"),
     requireWorkbotDeployed,
     requireWorkbotSettingsRead,
     async (c) => {

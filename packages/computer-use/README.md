@@ -30,9 +30,10 @@ access. Neither renewal nor cleanup clears a human takeover. The modes are
 `control` (the default: accessibility plus targeted mouse and keyboard input),
 `assist` (accessibility press/set value) and `observe` (read only). The agent is
 told to use control to finish the task and to pick a narrower mode only when the
-person asks for one. Control brings the selected window to
-the front for each step; with `computerUseBackground` on it works in the window
-where it is ([docs](../../docs/features/computer-use-background/README.md)).
+person asks for one. On a parallel Mac computer, control works in the window
+where it is, without taking the front unless the app or step needs it
+([docs](../../docs/features/computer-use-background/README.md)). This is
+included in `computerUse`, not a separate rollout.
 A kernel-held lock allows one session per window, so chats in different windows
 work at once. Grants, element references,
 screenshots and receipts live in process memory and are discarded on close.

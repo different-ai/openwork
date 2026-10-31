@@ -15,7 +15,7 @@ enum InputDelivery: String {
     /// Bundled toolkits whose surfaces take only hardware-origin input (Qt, wxWidgets, Tk).
     static let foregroundFrameworkPrefixes = ["qtcore", "qtgui", "libwx_", "tk.framework", "tcl.framework", "libtk", "_tkinter"]
 
-    /// Set by the trusted host only while the `computerUseBackground` feature is on.
+    /// Set by the trusted host for parallel computer-use sessions.
     static let hostVariable = "OPENWORK_COMPUTER_USE_DELIVERY"
 
     /// `frameworks` are the names in the app's Contents/Frameworks.

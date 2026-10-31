@@ -1,8 +1,8 @@
 # Workbot: My agent in the Library
 
-Feature `workbotAgentLibrary` (cloud and self-hosted, off by default). Author: `benjaminshafii`.
-It needs `workbotProactive` ("Your agent", see [its doc](../workbot-proactive/README.md)) and Workbot on the
-deployment. The rollout is per member, like every feature: turn it on for one organization or one member in `/admin`.
+Included in `workbotProactive` (cloud and self-hosted, off by default). Author: `benjaminshafii`.
+It needs Workbot on the deployment. [Your agent](../workbot-proactive/README.md), its member view and the admin health
+view share one rollout: turn it on for one organization or one member in `/admin`. There is no separate Library gate.
 
 Members can see what their agent did and why it stayed quiet, and tell it what they care about in their own words.
 Chat (Workbot in Slack or on the web) is the main way to change it; the Library page shows the same agent with an
@@ -67,20 +67,22 @@ scheduled check (never inside a snooze or outside their hours). A check is
 `GET /v1/me/agent/checks?days=7` (`getMeAgentChecks`, at most 14 days) lists checks newest first.
 
 `PUT /v1/me/agent` (`putMeAgent`) also takes `preferences`, `hours`, `dailyCap`, `quietWindow` (each `null` to go back
-to the admin's) and `undo`, and answers with the agent plus `saved: {changes, reply, link}`. With the feature off
-these fields answer 404 `feature_disabled` and everything else works as before.
+to the admin's) and `undo`, and answers with the agent plus `saved: {changes, reply, link}`. With `workbotProactive` off, all agent endpoints answer 404 `feature_disabled`, including the basic controls.
+Response fields remain optional in shared schemas so current clients can still read responses from older servers;
+the current server always includes the member view and save receipt when the parent is on.
 
 ## Turning it off
 
-The kill switch hides the row and page, refuses the new fields and stops writing records. The wake goes back to the
-organization's hours and limit and drops the member's words from the prompt. Stored words, limits, the change log and
-records stay and come back when it is turned on again; records age out after 14 days.
+The `workbotProactive` kill switch hides the member page and admin health view, refuses all agent endpoints and
+stops agent wakes, including writing new member check records. It does not fall back to an agent that ignores the
+member's words or narrowed limits. Stored words, limits, the change log and records stay and come back when it is
+turned on again; records age out after 14 days.
 
 ## Try it
 
 ```sh
 pnpm dev:den:mysql && pnpm dev:workbot
-# /admin › Features › Workbot: Your agent and Workbot: My agent in the Library › on for your organization
+# /admin › Features › Workbot: Your agent › on for your organization
 # Den › Manage › Workbot › Members' agents › on; then My Library
 ```
 
@@ -88,4 +90,4 @@ pnpm dev:den:mysql && pnpm dev:workbot
 `pnpm --filter @openwork-ee/den-api test` (records for each outcome, narrowing, undo, the guidance sentence),
 `pnpm --filter @openwork-ee/den-api test:api` with `workbot-agent-library.api.test.ts` (chat and page in sync through
 Connect, server-side limits, records and isolation), the Den web render tests in `my-agent.test.tsx`, and
-`evals/proofs/workbot-agent-library.proof.test.ts` (the Library row and page, before and after).
+`evals/proofs/workbot-agent-library.proof.test.ts` (the parent rollout off/on, member page, and chat/page sync).

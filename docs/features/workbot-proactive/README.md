@@ -146,7 +146,9 @@ The page previews each kind of message as plain text, as the DM from the Workbot
 locked, with the reason, when there is nowhere to send messages, when the Slack app is not installed, or when the
 headless runner is missing (DESIGN.md P4, C5).
 
-## Health (`workbotAgentHealthView`, off)
+## Health
+
+Included in `workbotProactive`; there is no separate health rollout.
 
 Under the settings, a "Last 7 days" table shows per responsibility: checks (passes that asked the agent about it), the
 share that stayed quiet, messages sent, and how many members muted it. It reads `agent_check`, daily counters per
@@ -162,9 +164,9 @@ yet (`slack_app_not_installed`, `member_not_linked`). Both are tagged for Connec
 can say "stop telling me about calendar changes" or "snooze until tomorrow" to Workbot. The agent's own `mcp:read`
 token can read them but never change them. There are no buttons on messages and no Slack Home tab.
 
-With [My agent in the Library](../workbot-agent-library/README.md) (`workbotAgentLibrary`, off) members also see each
-check and why it stayed quiet, tell it what they care about in their own words, narrow its hours or limit, and undo
-any change, from chat or the Library page.
+The same `workbotProactive` rollout includes [the member's agent view](../workbot-agent-library/README.md): members see
+each check and why it stayed quiet, tell it what they care about in their own words, narrow its hours or limit, and
+undo any change, from chat or the My bot page. There is no separate member-library rollout.
 
 With it, My bot's **Uses** is one switch per source: when it was last read, a "Connect <name>" action when the
 member's account isn't ready, sources the admin decided shown locked with the reason (DESIGN.md P4), and an optional
@@ -173,9 +175,9 @@ saved ("Saved from chat at 10:42 AM. Edit"). `GET /v1/me/agent` lists `sources`;
 `sources: [{ source, on?, instruction? }]` by id or name, with undo. In chat, "also look at my Granola for context,
 especially action items after meetings, and skip Linear" becomes one `putMeAgent` call and the reply "Saved: Granola on,
 for …; Linear off. Reply "undo" to revert." plus a link, a "Connect <name>" line for a source it can't read yet, or the
-admin's refusal with who can change it (`source_not_allowed`, `source_locked`). Without `workbotAgentLibrary`, other
-connections stay off and core sources follow the admin's policy. The wake prompt carries each instruction as words the
-member wrote, never as instructions from content it read.
+admin's refusal with who can change it (`source_not_allowed`, `source_locked`). Other connections stay off until a
+member chooses them, unless the admin sets them on for everyone. The wake prompt carries each instruction as words
+the member wrote, never as instructions from content it read.
 
 ## Where notes live
 

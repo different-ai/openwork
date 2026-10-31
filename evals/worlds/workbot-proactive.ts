@@ -43,7 +43,7 @@ export async function workbotProactiveWorld(seed: Seed) {
         DEN_DB_ENCRYPTION_KEY: ENCRYPTION_KEY,
       },
     });
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { workbotProactive: true, workbotAgentHealthView: true });
+    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { workbotProactive: true });
     const context = await seed.api(den.admin, "/v1/org");
     const currentMember = isRecord(context.body) && isRecord(context.body.currentMember) ? context.body.currentMember : null;
     const ownerMemberId = typeof currentMember?.id === "string" ? currentMember.id : "";

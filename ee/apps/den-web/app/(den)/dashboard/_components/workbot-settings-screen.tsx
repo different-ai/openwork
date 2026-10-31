@@ -293,7 +293,7 @@ export function WorkbotSettingsScreen() {
           {proactive && orgId ? (
             <WorkbotProactiveSection orgId={orgId} canManage={canManage} connectorsHref={getMcpConnectionsRoute(orgSlug)} />
           ) : null}
-          {proactive && orgId && orgFeatureEnabled(orgContext, "workbotAgentHealthView") ? (
+          {proactive && orgId ? (
             <WorkbotProactiveHealthSection orgId={orgId} />
           ) : null}
           {!canManage && settings ? (

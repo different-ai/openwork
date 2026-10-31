@@ -13,7 +13,6 @@ export const meSchema = z.object({
   computer: z.boolean().default(false),
   browser: z.boolean().default(false),
   browserDemonstrations: z.boolean().default(false),
-  browserLiveView: z.boolean().default(false),
   /** Workbot's Calendar tab (on while Workbot is on); older servers omit it. */
   calendar: z.boolean().default(false),
   documents: z.boolean().default(false),
@@ -120,7 +119,6 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     computer: me.computer,
     browser: me.browser,
     browserDemonstrations: me.browserDemonstrations,
-    browserLiveView: me.browserLiveView,
     documentEditing: me.documents && me.documentEditing,
     nativeDictation: me.nativeDictation,
     workspaceAssistant: me.workspaceAssistant,

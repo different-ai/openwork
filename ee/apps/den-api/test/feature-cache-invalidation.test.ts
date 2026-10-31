@@ -247,6 +247,33 @@ test("organization maps resolve cached rollout and organization overrides", asyn
   assert.deepEqual(state.mock.calls[0].arguments, [organizationId, undefined])
 })
 
+test("cached retired child settings cannot split the consolidated rollouts", async () => {
+  mock.method(cache.features, "state", async () => ({
+    rollouts: {
+      workbotProactive: { enabled: false, killed: false },
+      browserUse: { enabled: true, killed: true },
+      computerUse: { enabled: false, killed: false },
+      browserLiveView: { enabled: true, killed: false },
+    },
+    overrides: {
+      workbotProactive: true,
+      workbotAgentHealthView: false,
+      workbotAgentLibrary: false,
+      browserUse: true,
+      computerUse: true,
+      computerUseBackground: false,
+    },
+    memberOverrides: { workbotAgentLibrary: false, browserLiveView: true },
+  }))
+  const features = await getOrganizationFeatures(organizationId, { userId })
+  assert.equal(features.workbotProactive, true)
+  assert.equal(features.browserUse, false, "the retained browser kill switch still wins")
+  assert.equal(features.computerUse, true)
+  for (const key of ["workbotAgentHealthView", "workbotAgentLibrary", "browserLiveView", "computerUseBackground"]) {
+    assert.equal(Object.hasOwn(features, key), false, "old cached child settings must not reappear in the feature map")
+  }
+})
+
 test("member overrides come from the feature cache with the organization state, not a database read per request", async () => {
   const state = mock.method(cache.features, "state", async () => ({
     rollouts: { nativeDictation: { enabled: false, killed: false } },
