@@ -44,7 +44,7 @@ Everything below runs from dev and never executes PR code:
   - **AI screen clear:** it approves only this PR's waiting test runs on
     the reviewed SHA and runs the Warden security review
     (`contributor-pr/warden`). Check Warden is clear and
-    `openwork-tests-required` (ci-tests.yml, no secrets) succeeds before
+    `openwork-tests-required` (quick-check.yml, no secrets) succeeds before
     approving the PR; no combined contributor status is posted.
   - **AI screen flagged or incomplete:** nothing else runs. Read the
     findings in its PR comment; comment `/test` again to proceed anyway.

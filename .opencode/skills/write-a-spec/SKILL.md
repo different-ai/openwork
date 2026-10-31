@@ -28,9 +28,9 @@ it decides the world you can build.
 
 | If the spec… | Name / tag | CI lane |
 | --- | --- | --- |
-| proves your change (default) | `evals/proofs/<name>.proof.test.ts` | PR change proof, unprotected |
-| changes one of the nine core journeys in `evals/journeys.ts` | `evals/core/<journey>.e2e.test.ts` | PR change proof + core journeys |
-| needs a reviewer to reopen the *running* browser at a screenshot | add `{ tags: ["checkpoints"] }` to the `test(...)` options | protected checkpoint lane on Freestyle |
+| proves your change (default) | `evals/proofs/<name>.proof.test.ts` | the dev push that adds or changes it ("Core journeys"); on demand with `PR change proof` |
+| changes one of the nine core journeys in `evals/journeys.ts` | `evals/core/<journey>.e2e.test.ts` | core journeys on every dev push and nightly |
+| needs a reviewer to reopen the *running* browser at a screenshot | add `{ tags: ["checkpoints"] }` to the `test(...)` options | protected checkpoint lane on Freestyle (not run by manual proof runs) |
 
 Tag `checkpoints` only when a still image cannot show what the reviewer has to
 check: an open stream, a populated workspace to explore, a state that costs
@@ -256,6 +256,7 @@ placeholder, or test id. Bound every wait; declare external requirements in
   ```sh
   pnpm --dir evals design:review -- --test-run latest
   ```
-- In CI the spec runs on `PR change proof`, one job per spec; the trusted
-  publisher aggregates every changed spec's records into one report. Failed,
+- PRs do not run specs automatically. Run yours with `run-tests`, or by hand in
+  CI: `gh workflow run pr-proof.yml --ref <branch> -f pr=<number>` runs each
+  changed spec in its own job and keeps the records as artifacts. Failed,
   skipped, and cancelled runs stay visible as such; nothing substitutes for them.

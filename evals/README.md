@@ -9,22 +9,21 @@ to the module they test (`packages/*/src/**/*.test.ts`) and run in the same
 
 ## How CI works (start here)
 
-Every PR to `dev` gets three things:
+Every PR to `dev` gets one quick check ("Quick check", `quick-check.yml`, about
+a minute): static CI guards, the feature registry, a typecheck of the shipped
+code it changes, and the Den API auth tests when Den API code changes. Red here
+means a normal code problem. Everything else runs after merge:
 
-1. **Unit tests and build** (`ci-tests.yml`: the "Unit tests (...)" jobs and
-   "Build the desktop app"). Runs the unit tests and typechecks and bundles the
-   desktop. When the PR changes what is packaged (desktop, app, server and their
-   packages), "Build and boot the desktop app" also packages the real desktop
-   and boots it once; Den API changes add the MySQL "Den API security tests".
-   Red here means a normal code problem.
-2. **The core journey** (`pr-proof.yml`: "Core journey"). One end-to-end test,
-   [`core/core-chat.e2e.test.ts`](./core/core-chat.e2e.test.ts): open the app
-   signed in, send "Say hello", read the reply. It runs on every PR that changes
-   more than docs. Any e2e spec your PR adds or changes also runs. The other
-   core journeys run on every `dev` push and nightly (`core-journeys.yml`).
-3. **A preview card** on the PR. **Open preview** opens the app exactly where the
-   core journey left it: signed in, with a chat. Each copy lives 1 hour; the
-   link works for 12 hours.
+1. **Unit tests and build** (`ci-tests.yml`, every `dev` push): the "Unit tests
+   (...)" jobs, the full Den API security suite and "Build the desktop app".
+2. **Core journeys** (`core-journeys.yml`, every `dev` push and nightly), and
+   [`core/core-chat.e2e.test.ts`](./core/core-chat.e2e.test.ts) in the nightly
+   Freestyle world check. A dev push also runs every proof it adds or changes.
+3. **The packaged desktop** ("Packaged desktop smoke") before every alpha release.
+
+PR evidence is on demand: `gh workflow run pr-proof.yml --ref <branch> -f
+pr=<number>` runs the PR's changed specs on its head and keeps their records as
+artifacts.
 
 ### The world
 
@@ -522,10 +521,11 @@ A failed assertion is `Failed`; missing requirements, tooling failure, or
 missing test evidence is `Incomplete` or a named skip. A green suite containing
 skips is not proof.
 
-CI publishes. `PR change proof` runs every changed spec on the PR head and
-`evidence-review` posts one sticky comment linking the report; nobody runs the
-publisher by hand. `evals:e2e --publish` remains for that trusted CI path
-only. Custom screenshots and recordings are supplementary and never determine
+CI publishes. A `PR change proof` run on a PR event runs every changed spec on
+the PR head and `evidence-review` posts one sticky comment linking the report;
+PRs no longer start it automatically, and manual runs keep records as artifacts
+without publishing. Nobody runs the publisher by hand; `evals:e2e --publish`
+remains for that trusted CI path only. Custom screenshots and recordings are supplementary and never determine
 the pass/fail verdict.
 
 ## Standalone isolated Den

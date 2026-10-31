@@ -2,8 +2,9 @@ import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { coreWebCredentials, coreWebWorld } from "../worlds/core-web.ts";
 
-// Core PR journey. CI runs it on every non-docs PR (see CORE_SPECS in
-// .github/scripts/pr-proof.mjs); its end-state checkpoint is the PR preview.
+// Core journey on a Freestyle world. CI runs it nightly ("Freestyle world
+// check") and in PR change proof (see CORE_SPECS in .github/scripts/pr-proof.mjs);
+// its end-state checkpoint is the PR preview.
 const test = spec.world(coreWebWorld, {
   resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
   needs: { placement: "local", env: coreWebCredentials() },

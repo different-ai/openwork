@@ -10,10 +10,10 @@ the artifacts users download, never on a local build. macOS arm64 host, `gh`
 authenticated.
 
 Booting packaged builds is covered before release, not here: the Linux
-packaged smoke (`app-smoke`, "Build and boot the desktop app" in
-`ci-tests.yml`) and the macOS signed update install
+packaged smoke (`app-smoke`, "Packaged desktop smoke", which every alpha
+release waits for) and the macOS signed update install
 (`packaged-update-install`) in the scheduled `ci-tests.yml` run. Check that
-the release commit's latest scheduled run passed both.
+the release commit's alpha run and latest scheduled run passed both.
 
 ## 1. Download and unpack
 

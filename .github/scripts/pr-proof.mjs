@@ -37,9 +37,9 @@ export function safePath(path) {
     && path.split("/").every(part => part.length > 0 && part !== "." && part !== "..");
 }
 
-// core-chat, the one PR core journey, runs on every PR that changes more than
-// docs. It is off the required merge gate, and its end-state checkpoint is the
-// PR's hands-on preview in the review app.
+// PR change proof no longer runs on PRs automatically (only the quick check
+// does). When it runs on a PR event, core-chat runs for every PR that changes
+// more than docs; its end-state checkpoint is the PR's preview in the review app.
 const repoRoot = new URL("../../", import.meta.url);
 const journeyPath = name => ["core", "specs", "proofs"].map(folder => `evals/${folder}/${name}`).find(path => existsSync(new URL(path, repoRoot))) ?? `evals/core/${name}`;
 export const CORE_SPECS = [journeyPath("core-chat.e2e.test.ts")];
