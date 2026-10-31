@@ -57,7 +57,9 @@ Members' apps apply changes the next time they refresh their organization's sett
 
 ## What members see
 
-When something is blocked, the agent is told what was blocked, by which pattern, and for whom it is set, for example: *Your organization's agent permissions block the command `rm -rf build` ("rm *" is blocked for Contractors).*
+On OpenCode v2, tools whose every use is blocked are hidden from the agent. For example, when web search is off, the agent isn't offered the built-in web search tool and can choose an available organization connection instead. Tools with allowed exceptions or **Ask first** rules stay available.
+
+When a particular call is blocked, the agent is told what was blocked, by which pattern, and for whom it is set, for example: *Your organization's agent permissions block the command `rm -rf build` ("rm *" is blocked for Contractors).*
 
 In the built-in browser, a blocked website doesn't load and the browser shows the same reason. A website set to **Ask first** opens once the member approves it, and stays approved until the permissions change. Right after signing in on a new computer, the built-in browser waits a few seconds for the member's permissions.
 

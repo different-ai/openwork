@@ -1,6 +1,7 @@
 import {
   agentPermissionEngineMcpDenial,
   agentPermissionEngineV2Decision,
+  agentPermissionEngineV2ToolHidden,
   parseAgentPermissionRules,
 } from "../agent-permission-engine.js";
 import { parseOrganizationMcpServers } from "../organization-mcp-names.js";
@@ -25,6 +26,7 @@ type Context = {
   mcp: { transform(callback: (editor: McpEditor) => void): Promise<Registration> };
   permission: { hook(name: "evaluate", callback: (event: PermissionEvent) => void): Promise<Registration> };
   tool: {
+    transform(callback: (editor: { list(): readonly { id: string }[]; remove(id: string): void }) => void): Promise<Registration>;
     hook(name: "execute.before", callback: (event: ExecuteBefore) => void): Promise<Registration>;
     hook(name: "execute.after", callback: (event: ExecuteAfter) => void): Promise<Registration>;
   };
@@ -47,6 +49,14 @@ export default {
   async setup(context: Context) {
     const rules = parseAgentPermissionRules(context.options.rules);
     const organizationMcp = parseOrganizationMcpServers(context.options.organizationMcp);
+    // Fully denied tools never reach the model or Code Mode discovery. Keep
+    // the permission hooks too: an in-flight snapshot can still hold a tool,
+    // and partial restrictions must be checked against the actual resource.
+    const catalog = await context.tool.transform((editor) => {
+      for (const tool of editor.list()) {
+        if (agentPermissionEngineV2ToolHidden(rules, tool.id)) editor.remove(tool.id);
+      }
+    });
     // The engine asks about each command of a shell call's line on its own,
     // without the assignments that may name a program (`x=rm; $x -rf dir`), so
     // keep the whole line of recent calls by call id for their evaluation.
@@ -89,6 +99,7 @@ export default {
       await explain.dispose();
       await permission.dispose();
       await lines.dispose();
+      await catalog.dispose();
     };
   },
 };
