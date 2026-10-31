@@ -123,7 +123,7 @@ import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permis
 import { ComputerRequestPanel } from "@/react-app/domains/session/computer/computer-request-panel";
 import { useComputerRequest, useComputerStore } from "@/react-app/domains/session/computer/computer-store";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
-import { ComposerSubagentTracker, currentTurnRemoteTasks, currentTurnSubagentParts } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
+import { ComposerSubagentTracker, currentTurnSubagentParts, useComposerRemoteTasks } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
 import { useRemoteThreadHelperViewEnabled } from "@/react-app/domains/session/remote-threads/remote-thread-store";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
 import { deriveOpenTargets, sameOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
@@ -2261,9 +2261,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // `remoteSessionHelperView`: tasks the turn started on other computers join
   // the list on either engine; their state comes from Den, not the local engine.
   const remoteHelperView = useRemoteThreadHelperViewEnabled();
-  const remoteTrackerTasks = useMemo(
-    () => remoteHelperView ? currentTurnRemoteTasks(visibleMessages) : [],
-    [remoteHelperView, visibleMessages],
+  const remoteTrackerOwner = useMemo(() => ({ workspaceId: props.workspaceId, sessionId: props.sessionId }), [props.workspaceId, props.sessionId]);
+  // An earlier turn's task stays listed while it works or waits, or once this turn follows up on it.
+  const remoteTrackerTasks = useComposerRemoteTasks(
+    visibleMessages,
+    remoteTrackerOwner,
+    remoteHelperView,
   );
   const subagentTrackerShown = subagentTrackerToolCallIds.size > 0 || remoteTrackerTasks.length > 0;
 
@@ -4121,7 +4124,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     includeLocal={subagentTrackerToolCallIds.size > 0}
                     remote={remoteTrackerTasks.length > 0 ? {
                       tasks: remoteTrackerTasks,
-                      owner: { workspaceId: props.workspaceId, sessionId: props.sessionId },
+                      owner: remoteTrackerOwner,
                       onOpen: props.onOpenRemoteTask ? openRemoteTask : undefined,
                     } : undefined}
                   />

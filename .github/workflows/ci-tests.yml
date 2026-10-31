@@ -158,6 +158,8 @@ jobs:
         run: pnpm --filter @openwork/app exec bun test --isolate ./tests/library-connector-setup.test.tsx ./tests/connection-sign-in-problem.test.ts ./tests/i18n-placeholders.test.ts
       - name: Test sub-agent completion notices live and after reload
         run: pnpm --filter @openwork/app exec bun --conditions=development test --isolate ./tests/subagent-notices.test.tsx
+      - name: Test remote tasks in the Agents list across turns and follow-ups
+        run: pnpm --filter @openwork/app exec bun test --isolate ./tests/composer-remote-follow-up.test.tsx ./tests/composer-subagent-tracker-remote.test.tsx
       - name: Test the shared Calendar logic
         run: pnpm --filter @openwork/calendar test
       - name: Test that a streaming reply keeps its place in the chat

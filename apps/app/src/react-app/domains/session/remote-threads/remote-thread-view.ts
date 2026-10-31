@@ -4,7 +4,7 @@ import { formatRelativeTime } from "@/app/utils"
 import { t } from "@/i18n"
 import type { RemoteThreadStart } from "@/lib/remote-session-thread"
 import { formatElapsedSeconds } from "@/lib/tool-call-duration"
-import type { RemoteThreadEntry } from "./remote-thread-store"
+import { remoteThreadAwaitingFollowUp, type RemoteThreadEntry } from "./remote-thread-store"
 
 /** One reading of a task for its row and its panel, so both always say the same thing. */
 export type RemoteThreadView = {
@@ -32,7 +32,9 @@ const STOPPED = /abort|interrupt|cancel/i
 export function remoteThreadView(start: RemoteThreadStart, entry: RemoteThreadEntry | null, now: number, stoppedHere = false): RemoteThreadView {
   const status = entry?.status ?? null
   // Before the first answer: Cloud tasks are already running, others wait for their computer.
-  const state: RemoteSessionThreadState = status?.state ?? (start.target === "cloud" ? "running" : "starting")
+  // Just after a follow-up was accepted, a finished status is still the previous turn: it works again.
+  const state: RemoteSessionThreadState = entry && remoteThreadAwaitingFollowUp(entry, now) ? "running"
+    : status?.state ?? (start.target === "cloud" ? "running" : "starting")
   const computer = start.target === "cloud"
     ? t("session.remote_task_cloud")
     : status?.computerLabel ?? t("session.remote_task_your_computer")

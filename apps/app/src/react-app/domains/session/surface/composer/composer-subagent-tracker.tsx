@@ -10,10 +10,24 @@ import {
   useSubagentRunState,
 } from "@/components/chat/subagent-run-line"
 import { isTaskToolPart, type TaskToolPart } from "@/lib/build-in-tools"
-import { remoteToolCallStartedAt, type RemoteThreadStart } from "@/lib/remote-session-thread"
-import { remoteThreadStartsInParts } from "@/lib/remote-thread-starts"
+import { REMOTE_SESSION_STATUS_THREADS_MAX } from "@openwork/types/automations"
+import { readDenSettings } from "@/app/lib/den"
+import {
+  remoteFollowUpMatches,
+  remoteToolCallStartedAt,
+  type RemoteThreadFollowUp,
+  type RemoteThreadStart,
+} from "@/lib/remote-session-thread"
+import { remoteThreadFollowUpsInParts, remoteThreadStartsInParts } from "@/lib/remote-thread-starts"
 import { RemoteTrackerRow } from "@/react-app/domains/session/remote-threads/remote-tracker-row"
-import type { RemoteThreadOwner } from "@/react-app/domains/session/remote-threads/remote-thread-store"
+import {
+  REMOTE_THREAD_FOLLOW_MAX_MS,
+  remoteThreadAwaitingFollowUp,
+  reviveRemoteThreads,
+  useRemoteThreadStore,
+  type RemoteThreadEntry,
+  type RemoteThreadOwner,
+} from "@/react-app/domains/session/remote-threads/remote-thread-store"
 import { formatElapsedSeconds } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
 import { t } from "@/i18n"
@@ -64,6 +78,137 @@ export function currentTurnRemoteTasks(messages: readonly UIMessage[]): RemoteTr
     }
   }
   return tasks
+}
+
+/** A conversation's tasks on other computers, as the Agents list needs them. */
+export type ConversationRemoteTasks = {
+  /** Started by the current turn: always listed, as before. */
+  current: RemoteTrackerTask[]
+  /** Started by an earlier turn and recent enough to still be followed, newest first: listed while they work or wait, or once this turn follows up on them. */
+  earlier: RemoteTrackerTask[]
+  /** Follow-ups the current turn sent that their computer accepted. */
+  followUps: RemoteThreadFollowUp[]
+}
+
+function latest(left: number | null, right: number | null): number | null {
+  return left === null ? right : right === null ? left : Math.max(left, right)
+}
+
+/**
+ * Every task the conversation started on other computers, directly or from
+ * a script, once each. An earlier turn's task is a candidate only while Den
+ * would still follow it (6 hours after it last got work), and at most as
+ * many as one status call checks, so reopening a long chat costs one call.
+ */
+export function conversationRemoteTasks(messages: readonly UIMessage[], now = Date.now()): ConversationRemoteTasks {
+  const turnStart = currentTurnStart(messages)
+  const current = currentTurnRemoteTasks(messages)
+  const currentKeys = new Set(current.map((task) => task.start.key))
+  const earlier = new Map<string, RemoteTrackerTask>()
+  const allFollowUps: RemoteThreadFollowUp[] = []
+  const followUps: RemoteThreadFollowUp[] = []
+  messages.forEach((message, index) => {
+    if (message.role !== "assistant") return
+    if (index < turnStart) {
+      for (const { start, part } of remoteThreadStartsInParts(message.parts)) {
+        if (!currentKeys.has(start.key) && !earlier.has(start.key)) earlier.set(start.key, { start, startedAt: remoteToolCallStartedAt(part) })
+      }
+    }
+    const sent = remoteThreadFollowUpsInParts(message.parts)
+    allFollowUps.push(...sent)
+    if (index >= turnStart) followUps.push(...sent)
+  })
+  const candidates = [...earlier.values()]
+    // The task last got work when it started or was last followed up.
+    .map((task) => ({
+      ...task,
+      startedAt: allFollowUps.filter((followUp) => remoteFollowUpMatches(followUp, task.start, null))
+        .reduce<number | null>((at, followUp) => latest(at, followUp.sentAt), task.startedAt),
+    }))
+    .filter((task) => task.startedAt === null || now - task.startedAt <= REMOTE_THREAD_FOLLOW_MAX_MS)
+    .reverse()
+    .sort((left, right) => (right.startedAt ?? 0) - (left.startedAt ?? 0))
+    .slice(0, REMOTE_SESSION_STATUS_THREADS_MAX)
+  return { current, earlier: candidates, followUps }
+}
+
+function remoteEntryListed(entry: RemoteThreadEntry, followUps: readonly RemoteThreadFollowUp[], now: number): boolean {
+  // Until Den answers, an earlier task may long be finished: list it only once its state is known.
+  if (!entry.status) return false
+  if (followUps.some((followUp) => remoteFollowUpMatches(followUp, entry.start, entry.status?.sessionId ?? null))) return true
+  if (remoteThreadAwaitingFollowUp(entry, now)) return true
+  const state = entry.status?.state
+  return state !== undefined && state !== "idle" && state !== "error"
+}
+
+/**
+ * Which of a conversation's tasks the Agents list shows: the current turn's,
+ * plus an earlier turn's task while it still works or waits on the person,
+ * or once this turn sent it a follow-up. Earlier tasks are followed (not
+ * shown) until Den says which they are, so a finished task never flashes and
+ * reopening the chat finds the ones still working. A follow-up the agent just
+ * sent revives its task, however the agent sent it.
+ */
+export function selectComposerRemoteTasks(
+  tasks: ConversationRemoteTasks,
+  threads: Readonly<Record<string, RemoteThreadEntry>>,
+  organizationId: string | null,
+  now: number,
+  owner?: RemoteThreadOwner,
+): RemoteTrackerTask[] {
+  const listable = (entry: RemoteThreadEntry | undefined): entry is RemoteThreadEntry =>
+    Boolean(entry && organizationId && entry.organizationId === organizationId && remoteEntryListed(entry, tasks.followUps, now))
+  const listed = tasks.earlier.filter((task) => listable(threads[task.start.key]))
+  // A task this window already follows for this conversation, whose start is
+  // outside the loaded history (a long chat opens on its newest page): the
+  // sidebar lists it under the chat, so the Agents list does too.
+  const known = new Set([...tasks.earlier, ...tasks.current].map((task) => task.start.key))
+  const ownerKey = owner ? `${owner.workspaceId}:${owner.sessionId}` : null
+  const followed = ownerKey === null ? [] : Object.values(threads)
+    .filter((entry) => !known.has(entry.start.key) && Object.hasOwn(entry.owners, ownerKey) && listable(entry))
+    .sort((left, right) => (left.activeSince ?? left.firstSeenAt) - (right.activeSince ?? right.firstSeenAt))
+    .map((entry) => ({ start: entry.start, startedAt: entry.activeSince }))
+  // Oldest first, in the order the conversation started them.
+  return [...followed, ...listed.reverse(), ...tasks.current]
+}
+
+const NO_FOLLOW_UPS: readonly RemoteThreadFollowUp[] = []
+
+/** The Agents list's tasks on other computers for one conversation, following earlier ones while it is open. */
+export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: RemoteThreadOwner, enabled: boolean): RemoteTrackerTask[] {
+  const tasks = useMemo<ConversationRemoteTasks>(
+    () => enabled ? conversationRemoteTasks(messages) : { current: [], earlier: [], followUps: [] },
+    [enabled, messages],
+  )
+  const organizationId = readDenSettings().activeOrgId?.trim() || null
+  const { workspaceId, sessionId } = owner
+  const earlierSignature = tasks.earlier.map((task) => task.start.key).join("\n")
+  const latestTasks = useRef(tasks)
+  latestTasks.current = tasks
+  // Follow earlier tasks while the conversation is open, so their state is known before they are listed.
+  useEffect(() => {
+    if (!earlierSignature || !organizationId) return
+    const store = useRemoteThreadStore.getState()
+    const stops = latestTasks.current.earlier.map((task) => store.watch(task.start, { owner: { workspaceId, sessionId }, organizationId, startedAt: task.startedAt }))
+    return () => { for (const stop of stops) stop() }
+  }, [earlierSignature, organizationId, workspaceId, sessionId])
+  // The current turn's accepted follow-ups revive their task once its entry can be matched (a registered task's sessionId arrives with its status).
+  const followUps = tasks.followUps.length > 0 ? tasks.followUps : NO_FOLLOW_UPS
+  const matchSignature = useRemoteThreadStore((state) => followUps.length === 0 ? ""
+    : Object.values(state.threads).map((entry) => `${entry.start.key}=${entry.status?.sessionId ?? entry.start.sessionId ?? ""}`).sort().join("\n"))
+  useEffect(() => {
+    if (followUps.length > 0) reviveRemoteThreads(followUps)
+  }, [followUps, matchSignature])
+  // A string that changes only when the listed set does: status updates that change nothing here never re-render the chat.
+  const listedSignature = useRemoteThreadStore((state) => enabled
+    ? selectComposerRemoteTasks(tasks, state.threads, organizationId, Date.now(), owner).map((task) => task.start.key).join("\n") : "")
+  return useMemo(() => {
+    if (!listedSignature) return []
+    const keys = new Set(listedSignature.split("\n"))
+    const threads = useRemoteThreadStore.getState().threads
+    return selectComposerRemoteTasks(tasks, threads, organizationId, Date.now(), { workspaceId, sessionId })
+      .filter((task) => keys.has(task.start.key))
+  }, [tasks, listedSignature, organizationId, workspaceId, sessionId])
 }
 
 /** The header's counts, attention first; empty groups are left out. */
