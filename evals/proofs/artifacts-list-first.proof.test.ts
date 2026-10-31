@@ -1,11 +1,8 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { artifactsListFirstWorld, artifactsListControlWorld } from "../worlds/artifacts-list-first.ts";
+import { artifactsListFirstWorld } from "../worlds/artifacts-list-first.ts";
 
 const test = spec.world(artifactsListFirstWorld, {
-  resources: { surfaces: ["appWeb"], services: ["den", "mock"] }, timeout: 600_000,
-});
-const control = spec.world(artifactsListControlWorld, {
   resources: { surfaces: ["appWeb"], services: ["den", "mock"] }, timeout: 600_000,
 });
 
@@ -13,7 +10,7 @@ test("a member browses artifacts before opening one and keeps its unsaved review
   const inside = { resourceUri: world.checklist.resourceUri };
   let openedFrames: Awaited<ReturnType<typeof world.frames>> = [];
 
-  await step("after: your artifacts and team artifacts are listed without opening any of them", async () => {
+  await step("your artifacts and team artifacts are listed without opening any of them or enabling a list rollout", async () => {
     await user.click({ role: "button", label: "Artifacts" });
     await user.see({ role: "button", label: "Open Project checklist" }, { timeoutMs: 60_000 });
     await user.see({ role: "button", label: "Open Release notes" });
@@ -109,57 +106,6 @@ test("a member browses artifacts before opening one and keeps its unsaved review
     const returned = await world.frames();
     expect(returned).toEqual(openedFrames);
     evidence.recordAssertionEvidence("A narrow pane switch keeps the original iframe and unsaved review", JSON.stringify({ before: openedFrames, inTools, returned }), JSON.stringify(inTools) === JSON.stringify(openedFrames) && JSON.stringify(returned) === JSON.stringify(openedFrames));
-    await user.screenshot();
-  });
-});
-
-control("a member outside the rollout keeps the dashboard and its existing artifact picker", async ({ world, user, step, evidence }) => {
-  await step("before: the rollout is off and the dashboard still offers Add to dashboard", async () => {
-    await user.click({ role: "button", label: "Dashboard" });
-    await user.see({ role: "button", label: "Add to dashboard" }, { timeoutMs: 60_000 });
-    await user.notSee({ role: "button", label: "New artifact" });
-    await user.notSee({ role: "button", label: "Open Project checklist" });
-    const frames = await world.frames();
-    expect(frames).toHaveLength(0);
-    evidence.recordAssertionEvidence("Flag-off members keep the original dashboard rather than the new list", JSON.stringify({ dashboard: true, listRows: false, frames: frames.length }), frames.length === 0);
-    await user.screenshot();
-  });
-
-  await step("the existing picker still offers the member's accessible artifacts", async () => {
-    await user.click({ role: "button", label: "Add to dashboard" });
-    await user.see({ role: "heading", label: "Choose an existing artifact" });
-    await user.see({ label: "Add Project checklist" });
-    await user.see({ label: "Add Release notes" });
-    await user.see({ label: "Add Team overview" });
-    const frames = await world.frames();
-    expect(frames).toHaveLength(0);
-    evidence.recordAssertionEvidence("The original picker lists all three accessible Apps without launching them", JSON.stringify({ available: 3, frames: frames.length }), frames.length === 0);
-    await user.screenshot();
-  });
-
-  await step("after: adding an artifact still opens the original live dashboard tile", async () => {
-    await user.click({ label: "Add Project checklist" });
-    await user.see({ role: "heading", label: "Project checklist", mcpApp: { resourceUri: world.checklist.resourceUri } }, { timeoutMs: 90_000 });
-    const frames = await world.frames();
-    expect(frames).toHaveLength(1);
-    evidence.recordAssertionEvidence("With the rollout off, Add still mounts a working dashboard App", JSON.stringify({ frames }), frames.length === 1);
-    await user.screenshot();
-  });
-
-  await step("before: returning to the old dashboard recreates the checklist and loses its unsaved review", async () => {
-    const inside = { resourceUri: world.checklist.resourceUri };
-    await user.click({ role: "button", label: "Mark reviewed", mcpApp: inside });
-    await user.see({ role: "heading", label: "Reviewed", mcpApp: inside });
-    const before = await world.frames();
-    await user.click({ role: "button", label: "Calendar" });
-    await user.see({ role: "button", label: "Today" });
-    await user.click({ role: "button", label: "Dashboard" });
-    await user.see({ role: "heading", label: "Project checklist", mcpApp: inside }, { timeoutMs: 90_000 });
-    await user.notSee({ role: "heading", label: "Reviewed", mcpApp: inside });
-    const returned = await world.frames();
-    expect(returned).toHaveLength(1);
-    expect(returned).not.toEqual(before);
-    evidence.recordAssertionEvidence("The old Dashboard recreates the iframe and resets its unsaved review", JSON.stringify({ before, returned, review: "Project checklist" }), returned.length === 1 && JSON.stringify(before) !== JSON.stringify(returned));
     await user.screenshot();
   });
 });

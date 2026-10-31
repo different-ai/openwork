@@ -115,15 +115,11 @@ import type { ActivityResource } from "@/react-app/kernel/activity-types";
 import { encodeConnectSkillToken } from "@/react-app/domains/session/surface/composer/connect-skill-token";
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
-import { CalendarPage } from "@/react-app/domains/calendar/calendar-page";
-import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature";
 import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { useRemoteSessionSubagentsFeature } from "@/react-app/domains/session/remote-threads/use-remote-session-subagents-feature";
 import { remoteThreadAttentionBySession, useRemoteThreadAttentionKey, useRemoteThreadHelperViewEnabled } from "@/react-app/domains/session/remote-threads/remote-thread-store";
 import { RemoteSessionHeader, RemoteSessionSurface } from "@/react-app/domains/session/remote-threads/remote-session-surface";
 import { remoteSessionRouteId } from "@/lib/remote-session-route";
-import { useTextActivityRailFeature } from "@/react-app/domains/session/chat/use-text-activity-rail-feature";
-import { useLiveReplyModelFeature } from "@/react-app/domains/session/chat/use-live-reply-model-feature";
 import { AppsPage } from "@/react-app/domains/apps/apps-page";
 import { DashboardPage } from "@/react-app/domains/dashboard/dashboard-page";
 import { useDashboardDeploymentAvailability } from "@/react-app/domains/dashboard/dashboard-availability";
@@ -293,7 +289,6 @@ import {
   legacySessionRoute,
   mergeWorkspaceRouteSession,
   automationsRoute,
-  calendarRoute,
   dashboardRoute,
   workspaceExtensionsRoute,
   workspaceSessionRoute,
@@ -423,7 +418,6 @@ export function SessionRoute() {
   const appsRouteActive = /^(?:\/apps|\/dashboard\/apps)(?:\/|$)/.test(location.pathname);
   const automationsRouteRequested = /^\/automations(?:\/|$)/.test(location.pathname);
   const dashboardRouteRequested = /^\/dashboard(?:\/|$)/.test(location.pathname);
-  const calendarRouteRequested = /^\/calendar(?:\/|$)/.test(location.pathname);
   const activityRouteRequested = location.pathname === "/activity";
   const {
     enabled: mcpAppsDashboardEnabled,
@@ -432,8 +426,7 @@ export function SessionRoute() {
   const platform = usePlatform();
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
   const denAuth = useDenAuth();
-  const artifactsListFirstEnabled = useDesktopFeature("artifactsListFirst");
-  const artifactsLabel = artifactsListFirstEnabled ? "Artifacts" : "Dashboard";
+  const artifactsLabel = "Artifacts";
   // On desktop, Dashboard and Automations stay in the sidebar while signed
   // out: each page explains that it needs OpenWork Cloud and calls nothing.
   const denAuthChecking = denAuth.status === "checking";
@@ -451,16 +444,9 @@ export function SessionRoute() {
   const automationsEnabled = automationDeploymentEnabled;
   const automationsSurfaceAvailable = automationsEnabled || signedOutDesktopSurfaces;
   const automationsRouteActive = automationsSurfaceAvailable && automationsRouteRequested;
-  // The Calendar is an Automations view behind the automationCalendar feature.
-  const calendarFeature = useOrgFeatureState("automationCalendar");
   useRemoteSessionSubagentsFeature();
-  useTextActivityRailFeature();
-  useLiveReplyModelFeature();
-  const calendarSurfaceAvailable = automationsEnabled && denAuth.isSignedIn && calendarFeature.data === true;
-  const calendarAvailabilityPending = denAuthChecking || (automationsEnabled && denAuth.isSignedIn && calendarFeature.isLoading);
-  const calendarRouteActive = calendarSurfaceAvailable && calendarRouteRequested;
   const denSettings = readDenSettings();
-  const retainedArtifactsScope = artifactsListFirstEnabled && dashboardSurfaceAvailable && denAuth.isSignedIn && denAuth.verifiedIdentity
+  const retainedArtifactsScope = dashboardSurfaceAvailable && denAuth.isSignedIn && denAuth.verifiedIdentity
     && denAuth.verifiedIdentity.organizationId === denSettings.activeOrgId
     ? JSON.stringify([denSettings.baseUrl, denSettings.apiBaseUrl, denAuth.verifiedIdentity.principalId, denAuth.verifiedIdentity.organizationId])
     : null;
@@ -478,10 +464,6 @@ export function SessionRoute() {
     if (!automationsRouteRequested || denAuthChecking || automationsSurfaceAvailable) return;
     navigate("/", { replace: true });
   }, [automationsRouteRequested, automationsSurfaceAvailable, denAuthChecking, navigate]);
-  useEffect(() => {
-    if (!calendarRouteRequested || calendarAvailabilityPending || calendarSurfaceAvailable) return;
-    navigate("/", { replace: true });
-  }, [calendarAvailabilityPending, calendarRouteRequested, calendarSurfaceAvailable, navigate]);
   useEffect(() => {
     if (!dashboardRouteRequested || dashboardAvailabilityLoading || denAuthChecking || dashboardSurfaceAvailable) return;
     navigate("/", { replace: true });
@@ -588,7 +570,7 @@ export function SessionRoute() {
   } = useWorkspaceRouteState({
     preservePendingConversationRoute: Boolean(requestedPendingId && pendingConversations[requestedPendingId]?.scope === sessionDraftScope),
     developerMode,
-    workspaceRoute: activityRouteActive ? "activity" : appsRouteActive ? "apps" : automationsRouteActive ? "automations" : calendarRouteActive || (calendarRouteRequested && calendarAvailabilityPending) ? "calendar" : dashboardWorkspaceRoute ? "dashboard" : "session",
+    workspaceRoute: activityRouteActive ? "activity" : appsRouteActive ? "apps" : automationsRouteActive ? "automations" : dashboardWorkspaceRoute ? "dashboard" : "session",
     onServerSettingsChanged: () => undefined,
     onHostInfo: setOpenworkServerHostInfoState,
   });
@@ -4016,9 +3998,9 @@ export function SessionRoute() {
         />
       }
       // Page titles match their sidebar labels.
-      primaryTitle={activityRouteActive ? t("activity.title") : appsRouteActive ? artifactsLabel : automationsRouteActive ? "Automations" : calendarRouteActive ? "Calendar" : dashboardRouteActive ? artifactsLabel : undefined}
+      primaryTitle={activityRouteActive ? t("activity.title") : appsRouteActive ? artifactsLabel : automationsRouteActive ? "Automations" : dashboardRouteActive ? artifactsLabel : undefined}
       // Dashboard, Automations and Library share one flat page surface.
-      primarySurface={activityRouteActive || dashboardRouteActive || automationsRouteActive || calendarRouteActive || extensionsMainOpen ? "flat" : undefined}
+      primarySurface={activityRouteActive || dashboardRouteActive || automationsRouteActive || extensionsMainOpen ? "flat" : undefined}
       primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation || remoteTaskRouteActive)}
       primaryHeader={remoteTaskRouteActive && remoteThreadKey ? <RemoteSessionHeader key={remoteThreadKey} threadKey={remoteThreadKey} navigation={remoteHelperNavigation} /> : undefined}
       onOpenRemoteTask={remoteHelperViewEnabled ? openRemoteTask : undefined}
@@ -4059,13 +4041,6 @@ export function SessionRoute() {
           workspaceId={selectedWorkspaceId}
           headerActionsTarget={automationsHeaderActionsTarget}
           onSignIn={() => handleOpenSettings("/settings/cloud-account")}
-        />
-      ) : calendarRouteActive ? (
-        <CalendarPage
-          providerCatalog={automationCatalog}
-          workspaceId={selectedWorkspaceId}
-          onSignIn={() => handleOpenSettings("/settings/cloud-account")}
-          onOpenConnections={() => handleOpenExtensions()}
         />
       ) : dashboardRouteActive && retainedArtifactsScope ? <></> : dashboardRouteActive ? (
         <WorkspaceProvider
@@ -4108,12 +4083,6 @@ export function SessionRoute() {
         onOpenAutomations: automationsSurfaceAvailable
           ? () => {
               navigate(automationsRoute());
-            }
-          : undefined,
-        calendarActive: calendarRouteActive,
-        onOpenCalendar: calendarSurfaceAvailable
-          ? () => {
-              navigate(calendarRoute());
             }
           : undefined,
         dashboardActive: dashboardRouteActive || appsRouteActive,
@@ -4335,7 +4304,6 @@ export function SessionRoute() {
       onOpenExtensions={(section) => handleOpenExtensions(section)}
       onToggleSidebar={toggleSidebar}
       onOpenAutomations={() => navigate(automationsRoute())}
-      onOpenCalendar={calendarSurfaceAvailable ? () => navigate(calendarRoute()) : undefined}
       onOpenDashboard={() => navigate(dashboardRoute())}
       dashboardLabel={artifactsLabel}
       onCreateWorkspace={handleOpenCreateWorkspace}

@@ -10,9 +10,8 @@ import { t } from "../../../i18n";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { dashboardTileCacheScopeKey } from "./dashboard-tile-cache";
 import type { DashboardLaunchEndpoint } from "./mcp-app-tile";
-import { DashboardApps, type CreateDashboardApp } from "./dashboard-apps";
+import type { CreateDashboardApp } from "./dashboard-apps";
 import { useSavedApps } from "../apps/use-apps";
-import { useDesktopFeature } from "../session/status/use-desktop-feature";
 import { ArtifactsPage } from "./artifacts-page";
 
 /** The member's dashboard. Placement belongs to each member. */
@@ -27,7 +26,6 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTar
   /** Other workspace MCP runtimes tiles may launch through when the primary one lacks their server. */
   fallbackEndpoints?: DashboardLaunchEndpoint[];
 }) {
-  const listFirst = useDesktopFeature("artifactsListFirst");
   const denAuth = useDenAuth();
   const personal = useSavedApps();
   // The active org lives in den settings, which change outside React; track
@@ -56,7 +54,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTar
     || (Boolean(personal.client && personal.orgId) && personal.query.isPending && !personal.query.isFetched)) {
     return (
       <div className="mx-auto w-full max-w-5xl px-6 py-8 sm:px-8" data-dashboard-page>
-        <div className="space-y-2 pt-3" role="status" aria-label={listFirst ? "Loading artifacts" : "Loading dashboard"}>
+        <div className="space-y-2 pt-3" role="status" aria-label="Loading artifacts">
           <Skeleton className="h-8 w-1/3" />
           <Skeleton className="h-40 w-full" />
         </div>
@@ -65,13 +63,11 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTar
   }
   return (
     <div
-      className={listFirst ? "h-full w-full" : "mx-auto w-full max-w-5xl px-6 py-8 sm:px-8"}
+      className="h-full w-full"
       data-dashboard-page
       data-dashboard-cache-scope={cacheScopeKey}
     >
-      {listFirst
-        ? <ArtifactsPage key={cacheScopeKey} active={active} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} headerActionsTarget={headerActionsTarget} />
-        : <DashboardApps key={cacheScopeKey} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} headerActionsTarget={headerActionsTarget} />}
+      <ArtifactsPage key={cacheScopeKey} active={active} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} headerActionsTarget={headerActionsTarget} />
     </div>
   );
 }

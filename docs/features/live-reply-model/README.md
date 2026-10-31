@@ -1,7 +1,7 @@
 # See a reply's model while it streams
 
-Feature key: `liveReplyModel` · deployments: cloud and self-hosted · default
-off · author: [@benjaminshafii](https://github.com/benjaminshafii)
+Generally available on cloud and self-hosted. Former rollout key:
+`liveReplyModel` (retired). Author: [@benjaminshafii](https://github.com/benjaminshafii).
 
 ## What it does
 
@@ -32,13 +32,10 @@ checkout's Vite dev server, hovered with a real pointer move.
 
 ## How to try it
 
-1. Turn `liveReplyModel` on for your organization in `/admin`.
-2. Send a message and hover the "Working" line while it runs.
-
-## Turning it off
-
-Rendering only. Off (or the kill switch) removes the caption from the
-Working line on the next features refresh. Nothing is stored.
+Send a message and hover the "Working" line while it runs. No organization
+override or admin setup is needed. The former rollout's disabled overrides,
+kill switch and operator locks no longer affect this rendering. Nothing is
+stored differently.
 
 ## What to watch
 

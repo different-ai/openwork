@@ -108,6 +108,10 @@ test("a sub-agent waiting on permission reads Needs permission with Review, and 
 
   expect(container.querySelector("[data-subagent-tracker]")?.getAttribute("data-subagent-tracker-expanded")).toBe("true")
   expect(rowKinds(container)).toEqual(["working", "attention"])
+  const workingRow = container.querySelector("[data-subagent-tracker-row='t1']")
+  expect(workingRow?.querySelector(".rounded-full")).toBeNull()
+  expect(workingRow?.querySelector("[data-subagent-tracker-stop]")?.textContent).toBe("Stop")
+  expect(workingRow?.querySelector("[data-subagent-tracker-open]")?.textContent).toBe("Open")
   const permissionRow = container.querySelector("[data-subagent-tracker-row='t2']")
   expect(permissionRow?.querySelector("[data-subagent-tracker-status]")?.textContent).toBe("Needs permission")
   expect(permissionRow?.querySelector("[data-subagent-tracker-review]")).not.toBeNull()

@@ -1,9 +1,16 @@
 name: Core journeys
 
-# Runs every core journey in evals/core (listed in evals/journeys.ts) nightly
-# on dev and on demand. On PRs, PR change proof runs them once (pr-proof.mjs).
+# Runs every core journey in evals/core (listed in evals/journeys.ts) on every
+# dev push that changes more than docs, nightly on dev, and on demand. PRs run
+# only the core-chat journey and the specs they add or change (pr-proof.mjs),
+# so a journey regression a PR did not touch is reported here, on the dev push.
 # Packaged journeys run in packaged smoke instead.
 on:
+  push:
+    branches: [dev]
+    paths-ignore:
+      - "packages/docs/**"
+      - "**/*.md"
   schedule:
     - cron: "17 8 * * *"
   workflow_dispatch:
@@ -11,9 +18,11 @@ on:
 permissions:
   contents: read
 
+# Never cancel a running dev check: GitHub keeps only the newest pending run, so
+# bursts of pushes queue one run instead of cancelling each other.
 concurrency:
   group: core-journeys-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   list:

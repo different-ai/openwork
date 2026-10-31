@@ -246,7 +246,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       nativeDictation: who.enabled && who.nativeDictation,
       workspaceAssistant: who.enabled && who.workspaceAssistant,
       guidedNavigation: who.enabled && who.workspaceAssistant && who.guidedNavigation,
-      usageRecovery: who.enabled && who.usageRecovery,
+      usageRecovery: who.enabled,
       activationChecklist: who.enabled,
       canSchedule: who.enabled && who.canSchedule,
       sideChats: who.enabled && who.sideChats,
@@ -368,7 +368,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
 
   app.get("/v1/workbot/model-recovery", async (c) => {
     const member = c.get("member")
-    if (!member.den.enabled || !member.den.usageRecovery) return c.json({ error: "feature_disabled" }, 404)
+    if (!member.den.enabled) return c.json({ error: "feature_disabled" }, 404)
     const result = await den.modelRecovery(member.accessToken)
     return new Response(JSON.stringify(result.payload), { status: result.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } })
   })

@@ -28,7 +28,6 @@ import { setOrganizationPlanByAdmin } from "./admin-organization-plan.js"
 import { utcDate } from "./organization-plan.js"
 import { updateOrganizationMetadata } from "./organization-metadata.js"
 import { env } from "./env.js"
-import { updateOrganizationFeatureOverrides } from "./features.js"
 import { cache } from "./cache.js"
 import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
@@ -260,13 +259,6 @@ export async function createSandbox(actor: UserId, input: SandboxCreateInput): P
   if (input.allowedEmailDomains.length > 0) {
     await db.update(OrganizationTable).set({ allowedEmailDomains: [...new Set(input.allowedEmailDomains)] }).where(eq(OrganizationTable.id, organizationId))
   }
-
-  await updateOrganizationFeatureOverrides({
-    organizationId,
-    changes: { workbotIncludedModels: true },
-    source: "platform",
-    setByUserId: actor,
-  })
 
   const [owner] = await db.select({ id: MemberTable.id }).from(MemberTable)
     .where(and(eq(MemberTable.organizationId, organizationId), eq(MemberTable.userId, actor), isNull(MemberTable.removedAt))).limit(1)

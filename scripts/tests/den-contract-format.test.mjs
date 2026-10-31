@@ -64,9 +64,9 @@ test("Git merges edits to neighbouring routes without a conflict", () => {
 test("Git merges two PRs that each add a feature flag without a conflict", () => {
   // Same shape as #5823 against #5820: each side inserts one flag elsewhere in the registry.
   const left = [...flags.slice(0, 2), "slackAssistant", ...flags.slice(2)];
-  const right = [...flags.slice(0, 4), "automationCalendar", ...flags.slice(4)];
+  const right = [...flags.slice(0, 4), "computerUse", ...flags.slice(4)];
   const merged = merge(document({}), document({}, left), document({}, right));
-  const expected = ["managedDeployments", "remoteSessionEvents", "slackAssistant", "workbot", "slackWorkbotReplies", "automationCalendar", "permissions"];
+  const expected = ["managedDeployments", "remoteSessionEvents", "slackAssistant", "workbot", "slackWorkbotReplies", "computerUse", "permissions"];
   assert.deepEqual(merged.components.schemas.AdminFeature.properties.key.enum, expected);
   assert.deepEqual(merged.components.schemas.CapabilityDisabledError.properties.feature.enum, expected);
 });

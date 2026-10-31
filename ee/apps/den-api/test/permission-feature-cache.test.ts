@@ -26,6 +26,7 @@ const retired = [
   "mcpSkillsExtension", "memberListToolbars", "modelRemovalRecovery", "nativeCloudSkills", "orgDefaultModel",
   "permissions", "rememberLastOrganization", "sharedRoles", "slackWorkbotReplies", "teamAccessRows",
   "teamMembershipCache", "teamPageTabs", "teamRoles", "workbot", "workbotLunaDefault",
+  "workbotIncludedModels", "workbotUsageRecovery",
 ]
 afterEach(() => mock.restoreAll())
 

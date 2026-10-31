@@ -124,8 +124,8 @@ const problems = []
 const FEATURES_WITHOUT_DOCS = new Set([
   "administratorRecovery",
   "connectionMcpServers", "workbotDocuments",
-  "workbotDocumentEditing", "workbotWorkspaceAssistant", "workbotIncludedModels", "workbotUsageRecovery",
-  "automationCalendar", "computerUse", "browserLiveView",
+  "workbotDocumentEditing", "workbotWorkspaceAssistant",
+  "computerUse", "browserLiveView",
   "remoteComputers",
   "connectStandardTools",
 ])

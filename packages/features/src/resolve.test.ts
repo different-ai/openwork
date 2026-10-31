@@ -176,6 +176,18 @@ test("service readiness is retired: no key, and an old operator lock is ignored 
   assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
 })
 
+test("desktop Calendar is retired and legacy operator locks are ignored", () => {
+  assert.equal(featureKeySchema.safeParse("automationCalendar").success, false)
+  assert.equal(Object.hasOwn(resolveFeatures(base), "automationCalendar"), false)
+  assert.ok(RETIRED_FEATURE_KEYS.includes("automationCalendar"))
+  for (const value of ["true", "false"]) {
+    const parsed = parseFeatureEnvironment({ DEN_FEATURE_AUTOMATION_CALENDAR: value })
+    assert.deepEqual(parsed.locks, {})
+    assert.equal(parsed.problems.length, 1)
+    assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
+  }
+})
+
 test("every key maps to a unique DEN_FEATURE_ name", () => {
   const names = FEATURE_KEYS.map(featureLockEnvName)
   for (const name of names) assert.match(name, /^DEN_FEATURE_[A-Z0-9]+(?:_[A-Z0-9]+)*$/)
@@ -288,6 +300,8 @@ test("completed GA rollouts have no active keys and legacy operator locks cannot
     "activationChecklist", "gatewayProviderAuthErrors", "providerCredentialStatus", "sessionTokenHashing",
     "customConnectorSetup", "expandedMcpPresets", "analyticsDailyTrends", "gatewayProviderRemovalLimits",
     "guidedSlackSetup", "libraryConnectorOrgSetup",
+    "liveReplyModel", "composerSubagentTracker", "textActivityRail", "artifactsListFirst",
+    "automationIntervalSchedules", "automationCalendarTriggers",
   ]
   for (const key of retired) {
     assert.equal(featureKeySchema.safeParse(key).success, false, key)
@@ -301,8 +315,19 @@ test("completed GA rollouts have no active keys and legacy operator locks cannot
   assert.deepEqual(parsed.locks, {})
   assert.equal(parsed.problems.length, retired.length)
   assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
-  // A rollout with an explicit opt-out is not part of this graduation.
-  assert.equal(featureKeySchema.safeParse("composerSubagentTracker").success, true)
+})
+
+test("Workbot included models and recovery are GA and ignore old operator opt-outs", () => {
+  for (const key of ["workbotIncludedModels", "workbotUsageRecovery"]) {
+    assert.equal(featureKeySchema.safeParse(key).success, false, key)
+    assert.ok(RETIRED_FEATURE_KEYS.some((retiredKey) => retiredKey === key), key)
+  }
+  const parsed = parseFeatureEnvironment({
+    DEN_FEATURE_WORKBOT_INCLUDED_MODELS: "false",
+    DEN_FEATURE_WORKBOT_USAGE_RECOVERY: "false",
+  })
+  assert.deepEqual(parsed.locks, {})
+  assert.equal(parsed.problems.length, 2)
 })
 
 test("billing has no plan flags: Team checkout and self-serve Enterprise keys are retired", () => {

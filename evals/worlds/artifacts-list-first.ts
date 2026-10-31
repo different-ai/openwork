@@ -14,7 +14,7 @@ const checklistSource = `export default function Checklist() {
 }`;
 const cssSource = "main { padding: 24px; font: 14px/1.5 system-ui; color: var(--color-text-primary, CanvasText); } h1 { font-size: 22px; } button { font: inherit; padding: 8px 12px; }";
 
-async function arrangeArtifacts(seed: Seed, enabled: boolean) {
+export async function artifactsListFirstWorld(seed: Seed) {
   const engine = "v2";
   const providerId = "artifact-review-proof";
   const modelId = "review";
@@ -29,15 +29,8 @@ async function arrangeArtifacts(seed: Seed, enabled: boolean) {
     env: { DEN_APP_MCP_SERVERS_ENABLED: "true", DEN_DASHBOARDS_ENABLED: "true", DEN_AUTOMATIONS_ENABLED: "true" },
   });
   const orgId = await enableOrganizationCapabilities(seed, den.admin, {
-    appMcpServers: true, automationCalendar: true, ...(enabled ? { artifactsListFirst: true } : {}),
+    appMcpServers: true, automationCalendar: true,
   });
-  // Explicitly off in the control, including when running against a reused Den.
-  if (!enabled) {
-    const result = await seed.api(den.admin, `/v1/admin/organizations/${orgId}/capabilities`, {
-      method: "PUT", body: JSON.stringify({ capabilities: { artifactsListFirst: false } }),
-    });
-    if (!result.response.ok) throw new Error(`Disabling the list rollout failed: HTTP ${result.response.status}`);
-  }
   const author = den.members.author;
   if (!author) throw new Error("The artifact author was not provisioned");
   const mint = async (person: Parameters<Seed["api"]>[0]) => {
@@ -82,8 +75,8 @@ async function arrangeArtifacts(seed: Seed, enabled: boolean) {
   });
   if (!shared.response.ok) throw new Error(`Sharing the team artifact failed: HTTP ${shared.response.status}`);
   const { app, workspace } = await signedInAppWeb(seed, {
-    den, webPort, as: "author", engine, name: enabled ? "artifacts-list-first" : "artifacts-list-control",
-    workspacePath: seed.tmpPath(enabled ? "artifacts-list-first" : "artifacts-list-control"),
+    den, webPort, as: "author", engine, name: "artifacts-list-first",
+    workspacePath: seed.tmpPath("artifacts-list-first"),
     env: process.env.OPENWORK_OPENCODE2_BIN ? { OPENWORK_OPENCODE2_BIN: process.env.OPENWORK_OPENCODE2_BIN } : {},
     mocks: { agent: mock },
   });
@@ -114,6 +107,3 @@ async function arrangeArtifacts(seed: Seed, enabled: boolean) {
     },
   };
 }
-
-export async function artifactsListFirstWorld(seed: Seed) { return arrangeArtifacts(seed, true); }
-export async function artifactsListControlWorld(seed: Seed) { return arrangeArtifacts(seed, false); }

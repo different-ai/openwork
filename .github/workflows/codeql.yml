@@ -83,8 +83,10 @@ jobs:
     name: Analyze (${{ matrix.language }})
     needs: changes
     # Swift needs macOS (AppKit). When Swift is skipped, its leg finishes on
-    # Linux in seconds instead of waiting for a macOS runner.
-    runs-on: ${{ matrix.language == 'swift' && needs.changes.outputs.swift == 'true' && 'blacksmith-12vcpu-macos-15' || 'ubuntu-latest' }}
+    # Linux in seconds instead of waiting for a macOS runner. JavaScript and
+    # TypeScript is the largest analysis (p50 143s on ubuntu-latest) and uses
+    # every core it gets, so it runs on a larger runner.
+    runs-on: ${{ matrix.language == 'swift' && needs.changes.outputs.swift == 'true' && 'blacksmith-12vcpu-macos-15' || matrix.language == 'javascript-typescript' && 'blacksmith-16vcpu-ubuntu-2204' || 'ubuntu-latest' }}
     timeout-minutes: ${{ matrix.language == 'swift' && 45 || 30 }}
     permissions:
       actions: read

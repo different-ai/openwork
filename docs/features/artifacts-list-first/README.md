@@ -1,9 +1,9 @@
 # List-first Artifacts
 
-- **Feature:** `artifactsListFirst`
+- **Former rollout:** `artifactsListFirst` (retired)
 - **Deployments:** Cloud and self-hosted
 - **Author:** [benjaminshafii](https://github.com/benjaminshafii)
-- **Default:** off
+- **Availability:** generally available; no organization override needed
 
 The desktop and web app replace the Dashboard masonry with an Artifacts list.
 The groups are **Pinned**, **Yours** (created by this member), and **Team**
@@ -25,27 +25,27 @@ App/plugin permissions continue to control access and sharing.
   attached to the same App id; they do not create a new list entry.
 - App build progress becomes one named artifact row, with the existing stages
   and technical output available on disclosure.
-- Legacy saved artifacts remain available. The rollout does not migrate or
+- Legacy saved artifacts remain available. The list does not migrate or
   delete them, or infer authorship from an admin's edit permissions.
 
 The list does not run connectors to fill speculative summary columns. The first
-open still needs the normal authorized App launch and data reads. This rollout
+open still needs the normal authorized App launch and data reads. The list
 makes no sub-second latency promise and does not pre-authorize a tool, bypass
 consent, or convert a mutating workflow into a read-only one.
 
 ## Try it
 
-Enable the feature for a test organization/member in `/admin`, sign in, and open
-Artifacts. Create an App in chat or open one already shared with the member.
+Sign in and open Artifacts; no rollout setup is needed. Create an App in chat
+or open one already shared with the member.
 Use Pin in the preview and verify it moves to Pinned. Interact with the opened
 artifact, visit Calendar or a chat, and return: the same interaction should
 still be visible. No sibling App should have launched.
 
-## Turn it off
+## Availability
 
-The kill switch restores Dashboard and its existing picker immediately. The
-retained artifact frame is torn down; App records, revisions, grants, and pins
-are not removed. Existing placements remain compatible with the old grid.
+The former rollout's disabled overrides, kill switch and operator locks no
+longer restore Dashboard or its old picker. App records, revisions, grants,
+and local pins keep their existing meaning.
 
 ## Watch
 
@@ -57,18 +57,18 @@ The selected view must not survive sign-out or a member/org/deployment change.
 
 `evals/proofs/artifacts-list-first.proof.test.ts` covers list-first entry,
 ownership groups, one selected live App, unsaved review state across page
-navigation and pinning, plus the unchanged feature-off Dashboard.
+navigation and pinning, without an `artifactsListFirst` override.
 
 Screenshots below are captured from the real headless app with isolated test
 accounts, not the design video.
 
-### Before: Dashboard tiles
+### Historical: Dashboard tiles (no longer an opt-out)
 
-![Feature off: the existing Dashboard tile and add control](./dashboard-before.png)
+![Historical Dashboard tile and add control](./dashboard-before.png)
 
-### After: list first
+### List first (now generally available)
 
-![Feature on: Yours and Team are listed without mounting their Apps](./artifacts-list.png)
+![Yours and Team are listed without mounting their Apps](./artifacts-list.png)
 
 ### After: one retained view
 

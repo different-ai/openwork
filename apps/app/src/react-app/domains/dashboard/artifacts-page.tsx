@@ -6,7 +6,6 @@ import { ArrowLeft, Blocks, ChevronRight, MessageSquare, Pin, PinOff, Plus, Refr
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { markFeatureUsed } from "@/app/lib/den";
 import { BuiltAppShareDialog } from "../apps/built-app-share-button";
 import { useSavedApps } from "../apps/use-apps";
 import { useBuiltDashboardApps } from "./built-dashboard-apps";
@@ -77,9 +76,8 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
     if (window.matchMedia("(max-width: 767px)").matches) {
       requestAnimationFrame(() => detailPane.current?.focus({ preventScroll: true }));
     }
-    void markFeatureUsed("artifactsListFirst");
   };
-  const controls = <Button size="sm" disabled={create.isPending || !built.identityVerified} onClick={() => { void markFeatureUsed("artifactsListFirst"); create.mutate(); }}><Plus className="size-4" />New artifact</Button>;
+  const controls = <Button size="sm" disabled={create.isPending || !built.identityVerified} onClick={() => create.mutate()}><Plus className="size-4" />New artifact</Button>;
   const loading = built.identityVerified && built.query.isPending;
   const matching = groups.some((group) => group.rows.length > 0);
   return <div className="flex h-full min-h-0 flex-col" data-artifacts-workspace>

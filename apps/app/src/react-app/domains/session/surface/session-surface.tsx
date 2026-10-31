@@ -123,7 +123,6 @@ import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permis
 import { ComputerRequestPanel } from "@/react-app/domains/session/computer/computer-request-panel";
 import { useComputerRequest, useComputerStore } from "@/react-app/domains/session/computer/computer-store";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
-import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
 import { ComposerSubagentTracker, currentTurnSubagentParts, useComposerRemoteTasks } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
 import { useRemoteThreadHelperViewEnabled } from "@/react-app/domains/session/remote-threads/remote-thread-store";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
@@ -418,7 +417,7 @@ function createChatTranscriptEvalMessages(sessionId: string) {
   return { messages };
 }
 
-/** Dev-only: one turn that exercises every text-first activity sentence (flag `textActivityRail`). */
+/** Dev-only: one turn that exercises every text-first activity sentence. */
 function createTextActivityEvalMessages(sessionId: string): UIMessage[] {
   const now = Date.now();
   return [
@@ -2252,13 +2251,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [admissionOutcome, admissionOutcomeUnresolved, autoSending, evalThreadStatus, liveStatus, queuedDrainState.phase.kind, sending]);
   const composerBusy = chatStreaming || status === "submitted";
   // Sub-agents of the current turn, attached to the composer (OpenCode v2 only).
-  const subagentTrackerFeature = useOrgFeature("composerSubagentTracker");
   const subagentTrackerParentActive = status === "streaming" || status === "retrying" || status === "submitted";
   const subagentTrackerToolCallIds = useMemo<ReadonlySet<string>>(
-    () => new Set(subagentTrackerFeature && snapshotEngine === "v2"
+    () => new Set(snapshotEngine === "v2"
       ? currentTurnSubagentParts(visibleMessages).map((part) => part.toolCallId)
       : []),
-    [subagentTrackerFeature, snapshotEngine, visibleMessages],
+    [snapshotEngine, visibleMessages],
   );
   // `remoteSessionHelperView`: tasks the turn started on other computers join
   // the list on either engine; their state comes from Den, not the local engine.
@@ -2268,7 +2266,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const remoteTrackerTasks = useComposerRemoteTasks(
     visibleMessages,
     remoteTrackerOwner,
-    Boolean(subagentTrackerFeature && remoteHelperView),
+    remoteHelperView,
   );
   const subagentTrackerShown = subagentTrackerToolCallIds.size > 0 || remoteTrackerTasks.length > 0;
 

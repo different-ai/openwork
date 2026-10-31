@@ -46,7 +46,7 @@ test("billing that cannot be bought here shows no checkout, even to an admin", (
   assert.equal(view.changeModel?.label, "Change model");
 });
 
-test("a model admin out of included use without in-conversation upgrades can review Models or change the model", () => {
+test("a model admin without purchase permission can review Models or change the model", () => {
   const view = modelRecoveryView("free_limit", options({ canManageModels: true }));
   assert.equal(view.title, "You've used the free model allowance for now");
   assert.equal(view.resetsAt, resetsAt);

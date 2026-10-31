@@ -109,6 +109,19 @@ runs:
         restore-keys: |
           ${{ runner.os }}-pnpm-
 
+    # pnpm records each lockfile it has checked against the supply-chain policy
+    # (minimumReleaseAge) by content hash and policy, and re-checks only a
+    # lockfile or policy it has not seen (~9s of registry lookups otherwise).
+    # The key covers both, so a changed lockfile or policy is always re-checked.
+    - name: Cache pnpm's lockfile policy check
+      uses: actions/cache@v5
+      continue-on-error: true
+      with:
+        path: |
+          ~/.cache/pnpm/lockfile-verified.jsonl
+          ~/Library/Caches/pnpm/lockfile-verified.jsonl
+        key: ${{ runner.os }}-pnpm-lockfile-verified-${{ hashFiles('pnpm-lock.yaml', 'evals/pnpm-lock.yaml', 'pnpm-workspace.yaml', 'evals/pnpm-workspace.yaml') }}
+
     - name: Install dependencies
       shell: bash
       run: pnpm install --frozen-lockfile --prefer-offline

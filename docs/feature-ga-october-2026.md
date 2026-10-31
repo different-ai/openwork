@@ -114,5 +114,25 @@ all replicas to a version that reads hashed tokens before introducing this
 release into a self-hosted rolling deployment; pre-October-23 replicas cannot
 read them. There is no token-storage rollback switch.
 
-`composerSubagentTracker` is **not retired**. It remains on by default with an
-organization opt-out. All other unlisted flags retain their existing behavior.
+## Chat, Artifacts and Automation schedules (October 30)
+
+These six rollout switches are also retired on cloud and self-hosted. Their
+behavior is unconditional, with no organization feature overrides:
+
+| Area | Retired switches |
+| --- | --- |
+| Model shown while a reply streams | `liveReplyModel` |
+| Agents above the composer | `composerSubagentTracker` |
+| Text-first chat activity | `textActivityRail` |
+| List-first Artifacts with retained live views | `artifactsListFirst` |
+| Every-few-hours Automation schedules | `automationIntervalSchedules` |
+| Meeting-based Automation triggers | `automationCalendarTriggers` |
+
+Old disabled overrides, killed rollout rows and operator feature locks no
+longer opt organizations out. Rendering GA does not change stored chat data
+or App permissions. Scheduling GA does not bypass Automation access checks,
+runner configuration, calendar authorization or connector consent.
+
+`remoteSessionHelperView` remains a separate opt-in rollout. Its Agents list
+prerequisite is now generally available and needs no tracker override. All
+other unlisted flags retain their existing behavior.

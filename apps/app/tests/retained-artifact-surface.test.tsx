@@ -55,7 +55,7 @@ test("a different verified member, organization or deployment discards retained 
   expect(host.textContent).toBe("Mark reviewed");
   expect(mounts).toBe(2);
 });
-test("turning off the feature tears down the retained frame", async () => {
+test("losing verified access tears down the retained frame", async () => {
   await render(true);
   await render(false, "member-org-deployment", false);
   expect(unmounts).toBe(1);

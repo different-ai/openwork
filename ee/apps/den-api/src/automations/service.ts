@@ -148,8 +148,6 @@ export function configureHeadlessAgentExecutor(execute: (input: CloudAgentExecut
 export type AutomationServiceOptions = {
   getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
   cloudRuntime?: (organizationId: string) => Promise<CloudAutomationRuntime>
-  /** Whether Den reads an owner's calendar for their calendar triggers; defaults to always (the flag is GA). */
-  calendarTriggersEnabled?: CalendarTriggerSourceDeps["enabled"]
   /** Reads an owner's primary Google Calendar around now. */
   readCalendar?: CalendarTriggerSourceDeps["read"]
 }
@@ -179,7 +177,6 @@ export class AutomationService {
       list: (limit) => automationRepository.listActiveCalendarTriggers({ limit }),
       // GA: Den reads the owner's calendar for every active calendar-triggered Automation,
       // gated only by Cloud placement and the Google Calendar connection.
-      enabled: options.calendarTriggersEnabled ?? (async () => true),
       read: options.readCalendar ?? readOwnerCalendar,
       claim: (item, occurrence) => this.claimAndDispatch(item, occurrence, Date.now()),
       needsConnection: async (item, message) => {

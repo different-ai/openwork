@@ -6,10 +6,7 @@ import { builtAppSummary } from "@/react-app/domains/apps/built-mcp-app-model"
 import { AppBuilderStep } from "./app-builder-step"
 import * as React from "react"
 import {
-  AlertTriangle,
   Check,
-  ChevronRight,
-  CirclePause,
   Copy,
   Download,
   FileIcon,
@@ -34,7 +31,6 @@ import { openDesktopUrl, revealDesktopItemInDir } from "@/app/lib/desktop"
 import { isElectronRuntime } from "@/app/lib/runtime-env"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { t } from "@/i18n"
-import { markFeatureUsed } from "@/app/lib/den"
 import { useOpenTargets } from "@/lib/target-provider"
 import { openTargetFromUrl } from "@/react-app/domains/session/artifacts/open-target"
 import { presentOpencodeSessionError, sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error"
@@ -47,7 +43,6 @@ import { OpenWorkModelsLimitCard } from "@/react-app/domains/cloud/usage-limit-c
 import type { OpenWorkModelsLimit } from "@/react-app/domains/cloud/usage-limit-state"
 import { rejectedRecoveryFromMessage } from "@/react-app/domains/session/sync/rejected-turn"
 import { replyModelLabel, replyModelProvider } from "@/react-app/domains/session/sync/reply-model"
-import { useLiveReplyModel } from "@/components/chat/live-reply-model-store"
 import { ProviderIcon } from "@/react-app/design-system/provider-icon"
 import { openAlternativeModelPicker } from "@/app/lib/inference-access"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
@@ -110,8 +105,7 @@ import { CreatedSkillCard, CreatedSkillsContext, useCreatedSkills, type CreatedS
 import { readCreatedSkillAccess } from "@/components/chat/created-skill-access"
 import { collectCreatedSkills, type ConfirmedSkillAccess, type CreatedSkillsModel } from "@/lib/created-skill"
 import { openWorkNativeFailure } from "@/lib/openwork-native-activity"
-import { LaneChevron, LeadingLane, RailMeta, TextSentenceLine, TrailingChevron } from "@/components/chat/activity-rail"
-import { useTextActivityRail } from "@/components/chat/text-activity-rail-store"
+import { TextSentenceLine, TrailingChevron } from "@/components/chat/activity-rail"
 import { ConnectionCard } from "@/components/chat/connection-card"
 import { CredentialPromptCard } from "@/components/chat/credential-prompt-card"
 import { credentialPromptCall } from "@/components/chat/credential-prompt"
@@ -281,7 +275,6 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   const connectionCardParts = React.useContext(ConnectionCardPartsContext)
   const appCreationParts = React.useContext(AppCreationPartsContext)
   const appPanelFold = React.useContext(AppPanelFoldContext)
-  const textRail = useTextActivityRail()
   if (appCreationParts.has(part.toolCallId)) return null
   if (part.toolCallId === connectionQuestionToolCallId || isReservedConnectionQuestionPart(part)) return null
   const promptCall = credentialPromptCall(part)
@@ -321,27 +314,11 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     }
   }
 
-  if (lifecycle === "waiting" && textRail) {
+  if (lifecycle === "waiting") {
     // Text-first: waiting on the person is one amber sentence; the decision itself sits above the composer (T4).
     return (
       <div className="flex min-h-6.5 items-center text-sm" data-tool-lifecycle="waiting" role="status">
         <TextSentenceLine verb={t("text_activity.waiting_for_you")} tone="waiting" />
-      </div>
-    )
-  }
-
-  if (lifecycle === "waiting") {
-    return (
-      <div
-        className="flex items-start gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-foreground"
-        data-tool-lifecycle="waiting"
-        role="status"
-      >
-        <CirclePause aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-        <div>
-          <div className="font-medium">Waiting for your action</div>
-          <div className="text-xs text-amber-11">Choose an option or approve the request to continue.</div>
-        </div>
       </div>
     )
   }
@@ -690,7 +667,6 @@ type AssistantMessageProps = {
 const AssistantMessage = React.memo(
   ({ message, isStreaming, hideReasoning }: AssistantMessageProps) => {
     const { showThinking, highlightQuery } = useMessageList()
-    const textRail = useTextActivityRail()
     const computerHistory = React.useContext(ComputerHistoryContext)
     const assistantRenderGroups = React.useMemo(
       () => {
@@ -715,12 +691,11 @@ const AssistantMessage = React.memo(
               // to the rail's left (DESIGN.md T1 — one quiet rail).
               return (
                 <div key={`text-${index}`} className="flex min-w-0 items-start gap-2">
-                  <LeadingLane />
                   <MessageContent
                     className="text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
                     markdown
                     sessionReferences
-                    githubReferences={textRail}
+                    githubReferences
                     isStreaming={isStreaming}
                     highlightQuery={highlightQuery}
                   >
@@ -1216,7 +1191,7 @@ type WorkingModel = { label: string; providerId?: string }
 const LoadingMessage = React.memo(({ elapsedSeconds, starting, backgroundShells = NO_BACKGROUND_SHELLS, backgroundStale = false, model = null }: {
   elapsedSeconds: number
   starting: boolean
-  /** Feature `liveReplyModel`: the model writing this turn, shown on hover after the timer. */
+  /** The model writing this turn, shown on hover after the timer. */
   model?: WorkingModel | null
   /** Commands left running in the background share this line while the turn runs. */
   backgroundShells?: BackgroundShell[]
@@ -1243,7 +1218,6 @@ const LoadingMessage = React.memo(({ elapsedSeconds, starting, backgroundShells 
         {model ? (
           <span
             data-working-model=""
-            onMouseEnter={() => markFeatureUsed("liveReplyModel")}
             className="opacity-0 transition-opacity duration-150 ease-out group-hover/working:opacity-100 pointer-coarse:opacity-100 motion-reduce:transition-none"
           >
             <span aria-hidden="true"> · </span>
@@ -1476,24 +1450,19 @@ function LiveSteps({ children, active }: { children: React.ReactNode; active: bo
  * unprompted; once the answer is in, the reasoning is available but out
  * of the way.
  */
-function CompletedStepRun({ label, count, modelLabel, children }: { label: string; count?: string | null; modelLabel?: string | null; children: React.ReactNode }) {
+function CompletedStepRun({ label, count, children }: { label: string; count?: string | null; children: React.ReactNode }) {
   const [open, setOpen] = React.useState(false)
   // Text-first: "Worked for 43m 29s ›", no step count beside it.
-  const textRail = useTextActivityRail()
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="flex w-full flex-col gap-2">
       <div className="mx-auto flex w-full max-w-3xl px-2 md:px-10">
         <CollapsibleTrigger
           className="group flex min-h-6 cursor-pointer items-center gap-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
-          aria-label={`${label}${count ? `, ${count}` : ""}${modelLabel ? ` · ${modelLabel}` : ""}. ${open ? "Hide steps" : "Show steps"}`}
+          aria-label={`${label}${count ? `, ${count}` : ""}. ${open ? "Hide steps" : "Show steps"}`}
           data-testid="completed-work-rail"
         >
-          {/* The chevron sits in the rail's 20px leading lane, so step labels line up below it. */}
-          <LaneChevron open={open} />
           <span>{label}</span>
-          {count && !textRail ? <RailMeta>{count}</RailMeta> : null}
-          {modelLabel ? <span data-testid="reply-model"> · {modelLabel}</span> : null}
           <TrailingChevron open={open} />
         </CollapsibleTrigger>
       </div>
@@ -1584,7 +1553,6 @@ function MessageGroup({
     () => panelLive ? appBuildActivity(items.map(item => item.message), creationParts, showThinking) : null,
     [panelLive, items, creationParts, showThinking],
   )
-  const textRail = useTextActivityRail()
   const remoteThreadStarts = React.useMemo(() => collectRemoteThreadStarts(items), [items])
   const computerHistoryEnabled = useComputerSessionHistoryStore(state => state.enabled)
   const computerHistory = React.useMemo(() => computerHistoryEnabled ? collectComputerSessionHistory(items.map(item => item.message)) : null, [computerHistoryEnabled, items])
@@ -1791,22 +1759,17 @@ function MessageGroup({
       {/* The scroll area keeps the same 8px rhythm the parts inside a single
           message use, so a step row is spaced identically whether or not a
           message boundary happens to fall between it and the previous row. */}
-      {/* A finished turn kept open (it needs the person, T2) still says how long it worked,
-          on the same line the fold would use: lane, duration, quiet count (C7). */}
+      {/* A finished turn kept open (it needs the person, T2) still reports its work duration. */}
       {!isLiveGroup && resolvedReplyModel && !collapseSteps && replySummaryLabel ? <div data-testid="completed-work-rail" data-completed-work-rail="open" className="mx-auto flex w-full max-w-3xl px-2 md:px-10">
         <div className="flex min-h-6 items-center gap-2 text-xs text-muted-foreground">
-          <LeadingLane />
           <span>{replyWorkedLabel ?? replySummaryLabel}</span>
-          {replyWorkedLabel && stepCountLabel && !textRail ? <RailMeta>{stepCountLabel}</RailMeta> : null}
         </div>
       </div> : null}
       {stepItems.length > 0 && stepRowCount > 0 ? (
         collapseSteps ? (
           <CompletedStepRun
             label={(resolvedReplyModel ? replyWorkedLabel : null) ?? stepRunLabel}
-            // "2 steps" is quiet metadata beside the duration, not a middle-dot string (C7).
             count={((resolvedReplyModel ? replyWorkedLabel : null) ?? stepRunLabel).startsWith("Worked for") ? stepCountLabel : null}
-            modelLabel={null}
           >
             <div className="flex flex-col gap-2">
               {renderItems(stepItems, 0)}
@@ -1951,17 +1914,15 @@ export function shouldShowRunReconnecting(status: ThreadStatus, syncDegraded: bo
 
 export function MessageList({ messages, messageIdReplacements, status, activityStatus, retryStatus, syncHealth, viewport, sessionErrorHandled = false }: MessageListProps) {
   const { workspaceId, sessionId, onStopSubagentSession, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName } = useMessageList()
-  const liveReplyModel = useLiveReplyModel()
   // Only this turn's reply: before it starts there is no model to show, never the previous turn's.
   const workingModel = React.useMemo<WorkingModel | null>(() => {
-    if (!liveReplyModel) return null
     const lastUser = messages.findLastIndex((message) => message.role === "user")
     const reply = messages.slice(lastUser + 1).findLast((message) => message.role === "assistant")
     const label = reply ? replyModelLabel(reply, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName) : null
     if (!reply || !label) return null
     const providerId = replyModelProvider(reply, autoRoutes)
     return providerId ? { label, providerId } : { label }
-  }, [liveReplyModel, messages, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName])
+  }, [messages, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName])
   const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[workspaceId]?.running)
   const backgroundShells = React.useMemo(
     () => sessionBackgroundShells(runningShells, sessionId),

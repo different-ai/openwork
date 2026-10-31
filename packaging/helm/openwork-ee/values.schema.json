@@ -61,16 +61,6 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "artifactsListFirst": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Artifacts: list-first workspace: Browse pinned, personal and team artifacts in a list, open one live view at a time, and pin new artifacts directly from their chat preview. Renders DEN_FEATURE_ARTIFACTS_LIST_FIRST."
-            },
             "desktopUpdateDownloadWindow": {
               "enum": [
                 "",
@@ -201,36 +191,6 @@
               ],
               "description": "Workbot: My agent in the Library: Members see their agent in the Library: when it last checked and what happened, why it stayed quiet, today's checks with the messages it sent, and what it tells them about. They tell it what they care about in their own words, in chat or on the page (always, never, when, how), narrow its hours or limit within the admin's, and undo any change. The agent honors those words and the narrower limits. Needs Workbot: Your agent. Renders DEN_FEATURE_WORKBOT_AGENT_LIBRARY."
             },
-            "workbotIncludedModels": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Workbot: included OpenWork models by default: Signed-in members chat in Workbot on their included OpenWork models without an AI Gateway provider. When the free allowance runs out, Workbot says when it resets and links admins to OpenWork Models or the workspace's model settings. Renders DEN_FEATURE_WORKBOT_INCLUDED_MODELS."
-            },
-            "workbotUsageRecovery": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Workbot: usage limits and upgrades: Signed-in Workbot uses free Auto or the member’s paid Models Luna entitlement, with allowance recovery and permission-aware upgrades in the conversation. Renders DEN_FEATURE_WORKBOT_USAGE_RECOVERY."
-            },
-            "automationCalendar": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Calendar: desktop app: Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar. Renders DEN_FEATURE_AUTOMATION_CALENDAR."
-            },
             "computerUse": {
               "enum": [
                 "",
@@ -360,36 +320,6 @@
                 false
               ],
               "description": "Remember last sign-in method: People who last signed in with a password, Google or GitHub skip the email step next time: Den web lists the sign-in methods with a Last used badge, and Single sign-on returns to the email step. Signing in with SSO forgets the method. Renders DEN_FEATURE_LAST_USED_SIGN_IN."
-            },
-            "liveReplyModel": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Desktop: see a reply's model while it streams: While a turn runs, hovering its Working line shows which model is writing it, right after the timer. Turning it off shows the model only after the reply finishes. Renders DEN_FEATURE_LIVE_REPLY_MODEL."
-            },
-            "composerSubagentTracker": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Desktop: sub-agents above the composer: While a turn's sub-agents run on OpenCode v2, a compact Agents list sits on top of the composer and stays in view as the chat scrolls: each agent's name, whether it is working, needs permission, waits for an answer, is done, stopped or hit an error, with Open, Stop and Review. Turning it off leaves only the sub-agent rows in the chat. Renders DEN_FEATURE_COMPOSER_SUBAGENT_TRACKER."
-            },
-            "textActivityRail": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Desktop: text-first activity in chat: A turn's steps read as plain sentences (Ran, Read, Edited, Searched, Thought 12s) with no icon column or duration lane; grouped steps say what they explored, opened commands show their output, and GitHub links in replies show their pull request or issue mark. Turning it off restores the previous activity rail. Renders DEN_FEATURE_TEXT_ACTIVITY_RAIL."
             },
             "gatewayDashboard": {
               "enum": [
@@ -702,6 +632,16 @@
               "description": "Retired: no longer a feature switch. Ignored."
             },
             "workbotSharing": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "automationCalendar": {
               "enum": [
                 "",
                 "true",
@@ -1512,6 +1452,66 @@
               "description": "Retired: no longer a feature switch. Ignored."
             },
             "libraryConnectorOrgSetup": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "workbotIncludedModels": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "workbotUsageRecovery": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "liveReplyModel": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "composerSubagentTracker": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "textActivityRail": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "artifactsListFirst": {
               "enum": [
                 "",
                 "true",
