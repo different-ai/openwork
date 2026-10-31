@@ -1156,8 +1156,9 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
      * Compatibility for older renderers. Background delivery is part of
      * `computerUse` now; a stale child-flag value must not change its behavior.
      * Remove with the corresponding desktop IPC when old renderers are unsupported.
+     * @param {boolean} [_enabled] Retired child-flag value; intentionally ignored.
      */
-    async setBackgroundEnabled() {
+    async setBackgroundEnabled(_enabled) {
       return featureEnabled;
     },
     /**

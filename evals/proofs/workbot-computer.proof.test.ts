@@ -44,7 +44,7 @@ test("a member opens Workbot's Computer tab directly when the rollout is enabled
   await step("after: a computer that won't connect offers Rebuild, which asks before erasing it", async () => {
     await user.click({ role: "button", label: "Rebuild computer" });
     await user.see({ text: "Rebuild your computer?" });
-    await user.see({ text: "Its open apps, browser tabs and files are erased." });
+    await user.see({ text: "Workbot replaces this computer with a fresh one. Its open apps, browser tabs and files are erased. Your chat and the files in Files are kept." });
     await user.screenshot();
     // This fixture has no desktop provider to rebuild against, so the proof stops at the confirmation.
     await user.click({ role: "button", label: "Cancel" });
