@@ -248,6 +248,11 @@ jobs:
         uses: ./.github/actions/setup-tests
       - name: Check Den web hook order
         run: pnpm --filter @openwork-ee/den-web lint
+      # Workbot and the runner's non-development tests import these builds.
+      - name: Build the shared headless protocol and computer
+        run: |
+          pnpm --filter @openwork-ee/headless-protocol build
+          pnpm --filter @openwork-ee/headless-computer build
       - name: Test Workbot sign-in and adoption boundary
         run: |
           pnpm --filter @openwork-ee/workbot test:auth
