@@ -104,6 +104,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  artifactsListFirst: {
+    label: "Artifacts: list-first workspace",
+    description: "Browse pinned, personal and team artifacts in a list, open one live view at a time, and pin new artifacts directly from their chat preview.",
+    category: "experience",
+    added: "2026-10-30",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/artifacts-list-first/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   desktopUpdateDownloadWindow: {
     label: "Desktop: restart to update before the download",
     description: "Restart to update shows in the desktop title bar as soon as an update is found. Clicking it opens a small window that downloads the update with its progress, then restarts, instead of waiting with no sign of the download.",
@@ -252,30 +263,6 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     deployments: everywhere,
     default: false,
-  },
-  automationIntervalSchedules: {
-    label: "Automations: every few hours",
-    description: "Members and their agents can schedule an Automation to run every few hours, for example every 3 hours between 9:00 and 18:00 on weekdays, instead of once a day or once a week.",
-    category: "automations",
-    added: "2026-10-26",
-    since: "2026-10",
-    author: "benjaminshafii",
-    docs: "docs/features/automation-interval-schedules/README.md",
-    deployments: everywhere,
-    default: false,
-    outcomes: true,
-  },
-  automationCalendarTriggers: {
-    label: "Automations: before or after meetings",
-    description: "Members and their agents can run a Cloud Automation a set time before or after each meeting on their Google Calendar, for example 5 minutes after every meeting with people outside the organization.",
-    category: "automations",
-    added: "2026-10-26",
-    since: "2026-10",
-    author: "benjaminshafii",
-    docs: "docs/features/automation-calendar-triggers/README.md",
-    deployments: everywhere,
-    default: false,
-    outcomes: true,
   },
   computerUse: {
     label: "Computer use",

@@ -1,5 +1,4 @@
 import { featureHasOutcomes, type FeatureKey, type OutcomeFeatureKey } from "@openwork/features"
-import { automationRunOutcomes } from "./automations.js"
 import type { FeatureOutcomeReader } from "./outcomes.js"
 import { readAgentOutcomes } from "./workbot-proactive.js"
 
@@ -12,9 +11,6 @@ import { readAgentOutcomes } from "./workbot-proactive.js"
  */
 export const FEATURE_OUTCOME_READERS = {
   workbotProactive: readAgentOutcomes,
-  automationIntervalSchedules: automationRunOutcomes("interval", "run"),
-  // One run per meeting: "Most meetings skipped".
-  automationCalendarTriggers: automationRunOutcomes("calendar", "meeting"),
 } satisfies Record<OutcomeFeatureKey, FeatureOutcomeReader>
 
 export function featureOutcomeReader(key: FeatureKey): FeatureOutcomeReader | null {

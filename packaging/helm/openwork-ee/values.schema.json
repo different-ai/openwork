@@ -61,6 +61,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "artifactsListFirst": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Artifacts: list-first workspace: Browse pinned, personal and team artifacts in a list, open one live view at a time, and pin new artifacts directly from their chat preview. Renders DEN_FEATURE_ARTIFACTS_LIST_FIRST."
+            },
             "desktopUpdateDownloadWindow": {
               "enum": [
                 "",
@@ -200,26 +210,6 @@
                 false
               ],
               "description": "Calendar: desktop app: Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar. Renders DEN_FEATURE_AUTOMATION_CALENDAR."
-            },
-            "automationIntervalSchedules": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Automations: every few hours: Members and their agents can schedule an Automation to run every few hours, for example every 3 hours between 9:00 and 18:00 on weekdays, instead of once a day or once a week. Renders DEN_FEATURE_AUTOMATION_INTERVAL_SCHEDULES."
-            },
-            "automationCalendarTriggers": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Automations: before or after meetings: Members and their agents can run a Cloud Automation a set time before or after each meeting on their Google Calendar, for example 5 minutes after every meeting with people outside the organization. Renders DEN_FEATURE_AUTOMATION_CALENDAR_TRIGGERS."
             },
             "computerUse": {
               "enum": [
@@ -1522,6 +1512,26 @@
               "description": "Retired: no longer a feature switch. Ignored."
             },
             "workbotUsageRecovery": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "automationIntervalSchedules": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "automationCalendarTriggers": {
               "enum": [
                 "",
                 "true",

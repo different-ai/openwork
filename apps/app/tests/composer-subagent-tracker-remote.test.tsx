@@ -89,7 +89,10 @@ test("remote tasks list with where they run, a status word, Open and Stop, and c
   expect(rows.map((row) => row.dataset.subagentTrackerKind)).toEqual(["working", "attention"])
   expect(rows[0]?.querySelector("[data-subagent-tracker-agent]")?.textContent).toBe("Studio computer")
   expect(rows[0]?.querySelector("[data-subagent-tracker-task]")?.textContent).toBe("Record the demo videos")
-  expect(rows.map((row) => row.querySelector("[data-subagent-tracker-status]")?.textContent)).toEqual(["Working", "Needs you"])
+  expect(rows.map((row) => row.querySelector("[data-subagent-tracker-status]")?.textContent)).toEqual(["Working 0s", "Waiting for your answer"])
+  // The same row as a local helper: a waiting task offers Review, and its visible status is the time alone.
+  expect(rows[1]?.querySelector("[data-subagent-tracker-review]")?.textContent).toBe("Review")
+  expect(rows[0]?.querySelector("[data-subagent-tracker-status] .sr-only")?.textContent).toBe("Working ")
   expect(container.querySelector("[data-subagent-tracker-summary]")?.textContent).toBe("1 need you, 1 working")
   expect(rows[0]?.querySelector("[data-subagent-tracker-stop]")?.textContent).toBe("Stop")
   await act(async () => { rows[1]?.querySelector<HTMLButtonElement>("[data-subagent-tracker-open]")?.click() })
@@ -115,7 +118,7 @@ test("a stopped task and one that failed read differently, and a settled list go
   })
   await render(true)
   const words = [...container.querySelectorAll("[data-subagent-tracker-remote] [data-subagent-tracker-status]")].map((node) => node.textContent)
-  expect(words).toEqual(["Stopped", "Couldn't finish"])
+  expect(words).toEqual(["Stopped", "Failed"])
   expect(container.querySelector("[data-subagent-tracker-open]")).toBeNull()
   await render(false)
   expect(container.querySelector("[data-subagent-tracker]")).toBeNull()
@@ -141,7 +144,7 @@ test("text-first rail: remote rows drop the status dot like local rows, the word
     const row = container.querySelector<HTMLElement>("[data-subagent-tracker-remote]")
     expect(row?.querySelector(".rounded-full")).toBeNull()
     expect(row?.firstElementChild?.querySelector("[data-subagent-tracker-agent]")?.textContent).toBe("Studio computer")
-    expect(row?.querySelector("[data-subagent-tracker-status]")?.textContent).toBe("Working")
+    expect(row?.querySelector("[data-subagent-tracker-status]")?.textContent).toBe("Working 0s")
   } finally {
     useTextActivityRailStore.getState().setEnabled(false)
   }

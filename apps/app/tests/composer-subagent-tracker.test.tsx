@@ -87,7 +87,7 @@ test("only the current turn's sub-agents are tracked", () => {
 
 test("the header counts what needs the person first and folds finished agents together", () => {
   expect(tracker.subagentTrackerSummary(["working", "attention", "done", "stopped", "error"]).map((entry) => entry.text))
-    .toEqual(["1 need you", "1 working", "1 with an error", "2 done"])
+    .toEqual(["1 need you", "1 working", "1 failed", "2 done"])
 })
 
 test("no sub-agents in the turn: nothing attaches to the composer", async () => {
@@ -141,7 +141,7 @@ test("finished, failed and stopped agents keep distinct words; several quiet age
   ]))
   expect(rowKinds(container)).toEqual(["done", "error", "stopped", "done"])
   const words = [...container.querySelectorAll("[data-subagent-tracker-status]")].map((node) => node.textContent)
-  expect(words).toEqual(["Done", "Error", "Stopped", "Done"])
+  expect(words).toEqual(["Done", "Failed", "Stopped", "Done"])
   expect(container.querySelector("[data-subagent-tracker]")?.getAttribute("data-subagent-tracker-expanded")).toBe("false")
   await act(async () => { container.querySelector<HTMLButtonElement>("[data-subagent-tracker] > button")?.click() })
   expect(container.querySelector("[data-subagent-tracker]")?.getAttribute("data-subagent-tracker-expanded")).toBe("true")

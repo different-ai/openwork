@@ -2,9 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { isToolUIPart, type UIMessage } from "ai"
-import { ArrowUpRight, Check, ChevronRight, Square } from "lucide-react"
+import { ChevronRight } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
 import {
   agentName,
   useElapsedSeconds,
@@ -17,11 +16,11 @@ import { RemoteTrackerRow } from "@/react-app/domains/session/remote-threads/rem
 import type { RemoteThreadOwner } from "@/react-app/domains/session/remote-threads/remote-thread-store"
 import { formatElapsedSeconds } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
-import { useTextActivityRail } from "@/components/chat/text-activity-rail-store"
 import { t } from "@/i18n"
+import { AgentTrackerRow, type AgentTrackerKind } from "./agent-tracker-row"
 
 /** What the person needs to know about one agent, in the order the header reports it. */
-export type SubagentTrackerKind = "attention" | "working" | "error" | "done" | "stopped"
+export type SubagentTrackerKind = AgentTrackerKind
 
 /** Interaction cards (approval, question) the Review action brings into focus. */
 export const COMPOSER_INTERACTION_SELECTOR = "[data-composer-interaction]"
@@ -104,9 +103,9 @@ const NO_REMOTE_TASKS: readonly RemoteTrackerTask[] = []
 
 /**
  * The current turn's sub-agents, attached to the top of the composer so they
- * stay in view while their transcript rows scroll away. One line per agent:
- * status dot, agent name, task, status word (DESIGN.md V2: colour marks one
- * dot and one word, never a panel), then a fixed action lane.
+ * stay in view while their transcript rows scroll away. Local helpers and
+ * tasks on other computers share one row (AgentTrackerRow): name, task, one
+ * status word or time, then a fixed action lane (DESIGN.md OW-LIST, V2).
  */
 export function ComposerSubagentTracker(props: ComposerSubagentTrackerProps) {
   const includeLocal = props.includeLocal !== false
@@ -143,33 +142,31 @@ export function ComposerSubagentTracker(props: ComposerSubagentTrackerProps) {
       data-subagent-tracker-count={ids.length}
       data-subagent-tracker-expanded={expanded ? "true" : "false"}
       data-subagent-tracker-parts={partIds}
-      className="overflow-hidden border-b border-dls-border bg-transparent"
+      className="overflow-hidden bg-transparent"
     >
       <button
         type="button"
         data-testid="subagent-tracker-toggle"
         aria-expanded={expanded}
-        className="flex w-full cursor-pointer items-center justify-between gap-3 px-4 py-2.5 text-xs transition-colors hover:bg-gray-2/50"
+        className="group/toggle flex w-full cursor-pointer items-center gap-1.5 px-4 pt-3 pb-1.5 text-start text-xs"
         onClick={() => setManualExpanded(!expanded)}
       >
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="font-medium text-gray-11">{t("session.subagent_tracker_label")}</span>
-          <span data-subagent-tracker-summary className="min-w-0 truncate text-gray-9">
-            {summary.map((entry, index) => (
-              <span key={entry.kind} className={cn(entry.kind === "attention" && "font-medium text-amber-11")}>
-                {index > 0 ? ", " : ""}{entry.text}
-              </span>
-            ))}
-          </span>
+        <span className="shrink-0 font-medium text-gray-12">{t("session.subagent_tracker_label")}</span>
+        <span data-subagent-tracker-summary className="min-w-0 truncate text-gray-9 transition-colors group-hover/toggle:text-gray-11">
+          {summary.map((entry, index) => (
+            <span key={entry.kind} className={cn(entry.kind === "attention" && "font-medium text-amber-11")}>
+              {index > 0 ? ", " : ""}{entry.text}
+            </span>
+          ))}
         </span>
         <ChevronRight
           aria-hidden="true"
           size={14}
-          className={cn("shrink-0 text-gray-8 transition-transform duration-150 ease-out motion-reduce:transition-none", expanded && "rotate-90")}
+          className={cn("shrink-0 text-gray-9 transition-transform duration-150 ease-out group-hover/toggle:text-gray-11 motion-reduce:transition-none", expanded && "rotate-90")}
         />
       </button>
       {/* Rows stay mounted while collapsed so the header's counts stay live. */}
-      <div hidden={!expanded} className="max-h-44 overflow-y-auto border-t border-dls-border py-1">
+      <div hidden={!expanded} className="max-h-44 overflow-y-auto pt-0.5 pb-2">
         {parts.map((part) => (
           <SubagentTrackerRow
             key={part.toolCallId}
@@ -193,6 +190,8 @@ export function ComposerSubagentTracker(props: ComposerSubagentTrackerProps) {
           />
         )) : null}
       </div>
+      {/* Inset hairline between the list and the message, on the composer text's edges. */}
+      <div aria-hidden="true" className={cn("mx-4 h-px bg-dls-border", !expanded && "mt-1.5")} />
     </div>
   )
 }
@@ -216,7 +215,6 @@ function SubagentTrackerRow(props: {
   onKind: (toolCallId: string, kind: SubagentTrackerKind) => void
 }) {
   const { part, onKind } = props
-  const textRail = useTextActivityRail()
   const [stopping, setStopping] = useState(false)
   const stoppedByPerson = useRef(false)
   const state = useSubagentRunState(part, props.parentActive, props.workspaceId, props.syncDegraded)
@@ -231,15 +229,6 @@ function SubagentTrackerRow(props: {
     : "working"
   useEffect(() => { onKind(part.toolCallId, kind) }, [kind, onKind, part.toolCallId])
 
-  const status = stopping ? t("session.subagent_tracker_stopping")
-    : state.activity === "waiting-permission" ? t("session.subagent_permission_needed")
-    : state.activity === "waiting-question" ? t("session.subagent_question_pending")
-    : kind === "stopped" ? t("session.subagent_tracker_stopped")
-    : kind === "error" ? t("session.subagent_tracker_error")
-    : kind === "done" ? t("session.subagent_tracker_done")
-    : state.activity === "retrying" ? t("session.subagent_tracker_retrying")
-    : state.activity === "reconnecting" ? t("session.subagent_tracker_reconnecting")
-    : t("session.subagent_tracker_working", { elapsed: formatElapsedSeconds(elapsedSeconds) })
   const childSessionId = state.childSessionId
   const canOpen = Boolean(childSessionId && props.onOpenSubagentSession)
   const canStop = Boolean(childSessionId && state.childRunning && props.onStopSubagentSession)
@@ -262,93 +251,27 @@ function SubagentTrackerRow(props: {
   }
 
   return (
-    <div
-      data-subagent-tracker-row={part.toolCallId}
-      data-subagent-tracker-kind={kind}
-      data-subagent-activity={state.activity}
-      {...(childSessionId ? { "data-subagent-session-id": childSessionId } : {})}
-      className="flex h-9 min-w-0 items-center gap-2.5 px-4 text-[13px]"
-    >
-      {/* Text-first: the status word carries the state; no dot or check column. */}
-      {textRail ? null : <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center">
-        {kind === "done" ? (
-          <Check size={12} className="text-gray-9" />
-        ) : (
-          <span className={cn(
-            "size-1.5 rounded-full",
-            kind === "attention" ? "bg-amber-9"
-              : kind === "error" ? "bg-red-9"
-              : kind === "stopped" ? "bg-gray-6"
-              : "bg-gray-9",
-          )} />
-        )}
-      </span>}
-      {/* The name and task open the agent's chat too, like Open does. Open
-          stays the keyboard and screen-reader target, so this is pointer-only. */}
-      {canOpen ? (
-        <button
-          type="button"
-          tabIndex={-1}
-          aria-hidden="true"
-          data-subagent-tracker-name-open=""
-          onClick={open}
-          className="group/name flex min-w-0 flex-1 cursor-pointer items-baseline gap-2 text-start"
-        >
-          <span className="shrink-0 font-medium text-gray-12 underline-offset-2 group-hover/name:underline">{agent}</span>
-          <span data-subagent-tracker-task className="min-w-0 truncate text-gray-9 transition-colors group-hover/name:text-gray-11 @max-[480px]/composer:hidden">{task}</span>
-        </button>
-      ) : (
-        <span className="flex min-w-0 flex-1 items-baseline gap-2">
-          <span className="shrink-0 font-medium text-gray-12">{agent}</span>
-          <span data-subagent-tracker-task className="min-w-0 truncate text-gray-9 @max-[480px]/composer:hidden">{task}</span>
-        </span>
-      )}
-      <span
-        data-subagent-tracker-status
-        className={cn(
-          "shrink-0 text-xs",
-          kind === "attention" ? "font-medium text-amber-11"
-            : kind === "error" ? "text-red-11"
-            : "text-gray-9",
-          state.activity === "shimmer" && !stopping && "ow-text-shimmer",
-        )}
-      >
-        {status}
-      </span>
-      <span className={cn("flex shrink-0 items-center justify-end gap-0.5", textRail ? "w-auto" : "w-[104px] max-sm:w-auto")}>
-        {kind === "attention" ? (
-          <Button type="button" variant="ghost" size="xs" className="text-gray-11 hover:text-gray-12" data-subagent-tracker-review="" data-testid="subagent-tracker-review" onClick={review}>
-            {t("session.subagent_tracker_review")}
-          </Button>
-        ) : null}
-        {canStop ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size={textRail ? "xs" : "icon-xs"}
-            className="text-gray-9 hover:text-gray-12"
-            data-subagent-tracker-stop=""
-            disabled={stopping}
-            aria-label={t("session.subagent_tracker_stop", { agent })}
-            onClick={stop}
-          >
-            {textRail ? t("text_activity.stop") : <Square className="size-2.5 fill-current" aria-hidden="true" />}
-          </Button>
-        ) : null}
-        {canOpen ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size={textRail ? "xs" : "icon-xs"}
-            className="text-gray-9 hover:text-gray-12"
-            data-subagent-tracker-open=""
-            aria-label={t("session.subagent_tracker_open", { agent })}
-            onClick={open}
-          >
-            {textRail ? t("text_activity.open") : <ArrowUpRight aria-hidden="true" />}
-          </Button>
-        ) : null}
-      </span>
-    </div>
+    <AgentTrackerRow
+      id={part.toolCallId}
+      name={agent}
+      task={task}
+      status={{
+        kind,
+        elapsed: formatElapsedSeconds(elapsedSeconds),
+        workingNote: state.activity === "retrying" ? "retrying" : state.activity === "reconnecting" ? "reconnecting" : null,
+        waitingFor: state.activity === "waiting-permission" ? "permission" : state.activity === "waiting-question" ? "question" : null,
+        stopping,
+        shimmer: state.activity === "shimmer",
+      }}
+      onOpen={canOpen ? open : undefined}
+      openLabel={t("session.subagent_tracker_open", { agent })}
+      onStop={canStop ? stop : undefined}
+      stopLabel={t("session.subagent_tracker_stop", { agent })}
+      onReview={review}
+      rowAttributes={{
+        "data-subagent-activity": state.activity,
+        ...(childSessionId ? { "data-subagent-session-id": childSessionId } : {}),
+      }}
+    />
   )
 }

@@ -99,6 +99,7 @@ import { DebugRailProvider, DebugRailSlot } from "../panel/debug-rail-slot";
 import { SessionDebugPanel } from "../surface/debug-panel";
 import { FloatingSlotProvider, SessionFloatingLayer } from "../panel/floating-slot";
 import { useDesktopFeature } from "../status/use-desktop-feature";
+import { RetainedArtifactSurface } from "../../dashboard/retained-artifact-surface";
 import { CloudComputerControl } from "../computer/cloud-computer-control";
 import { ComputerControl } from "../computer/computer-control";
 import { useComputerSessionHistoryStore } from "@/components/chat/computer-session-history-store";
@@ -202,6 +203,7 @@ export type SessionPageSidebarProps = {
   calendarActive?: boolean;
   onOpenCalendar?: () => void;
   dashboardActive?: boolean;
+  dashboardLabel?: string;
   onOpenDashboard?: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
   onOpenSessionSearch?: () => void;
@@ -309,6 +311,8 @@ export type SessionPageProps = {
   settingsSlot?: React.ReactNode;
   /** Workspace-scoped first-class surface rendered in place of the conversation. */
   primarySlot?: React.ReactNode;
+  /** Scope-keyed artifacts remain mounted, hidden and inert, while another page is open. */
+  retainedArtifactSlot?: { scope: string; active: boolean; content: React.ReactNode };
   /** The primary slot is itself a conversation (a first send still being created), so it keeps chat chrome. */
   primarySlotIsConversation?: boolean;
   /** Standalone pages use the main canvas instead of the inset conversation pane. */
@@ -554,6 +558,8 @@ export function SessionPage(props: SessionPageProps) {
   const pendingSideConversation = splitSession?.pendingConversationId ? pendingConversations[splitSession.pendingConversationId] : undefined;
   const [narrowPane, setNarrowPane] = useState<NarrowSessionPane>("chat");
   const narrowPaneNavigationRef = useRef<HTMLElement>(null);
+  const artifactSurfaceVisible = Boolean(props.retainedArtifactSlot?.active)
+    && !(isMobile && narrowPane === "panel" && sidePanelOpen);
   const activeWorkbenchPane = isMobile
     ? narrowPane === "split" ? "secondary" : "primary"
     : focusedWorkbenchPane;
@@ -1484,6 +1490,7 @@ export function SessionPage(props: SessionPageProps) {
           calendarActive={props.sidebar.calendarActive}
           onOpenCalendar={props.sidebar.onOpenCalendar}
           dashboardActive={props.sidebar.dashboardActive}
+          dashboardLabel={props.sidebar.dashboardLabel}
           onOpenDashboard={props.sidebar.onOpenDashboard}
           conversationHistory={{
             canGoBack: canGoBackInConversationHistory,
@@ -1763,6 +1770,13 @@ export function SessionPage(props: SessionPageProps) {
               />
             )) : null}
 
+          <div className="flex min-h-0 flex-1 flex-col">
+            {props.retainedArtifactSlot ? (
+              <RetainedArtifactSurface key={props.retainedArtifactSlot.scope} active={artifactSurfaceVisible}>
+                {props.retainedArtifactSlot.content}
+              </RetainedArtifactSurface>
+            ) : null}
+            <div className={artifactSurfaceVisible ? "hidden" : "flex min-h-0 flex-1 flex-col"} hidden={artifactSurfaceVisible} inert={artifactSurfaceVisible}>
           {isMobile && narrowPane === "panel" && sidePanelOpen ? (
             <div
               id="narrow-session-pane-panel"
@@ -1783,7 +1797,7 @@ export function SessionPage(props: SessionPageProps) {
             <ResizablePanel minSize="180px" className="min-h-0">
             <div className="relative h-full min-w-0 overflow-hidden bg-dls-surface mac:bg-dls-surface/85">
               <SessionFloatingLayer />
-              {props.primarySlot ? (
+              {props.primarySlot && !props.retainedArtifactSlot?.active ? (
                 <div className="h-full overflow-y-auto" data-workspace-primary-slot>
                   {props.primarySlot}
                 </div>
@@ -2070,6 +2084,8 @@ export function SessionPage(props: SessionPageProps) {
             ) : null}
           </ResizablePanelGroup>
           )}
+            </div>
+          </div>
 
               </main>
             </ResizablePanel>

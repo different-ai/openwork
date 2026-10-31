@@ -41,6 +41,8 @@ const retiredClientFeaturesSchema = z.object({
   libraryConnectorOrgSetup: retired,
   workbotIncludedModels: retired,
   workbotUsageRecovery: retired,
+  automationIntervalSchedules: retired,
+  automationCalendarTriggers: retired,
 })
 
 export const clientFeaturesSchema = retiredClientFeaturesSchema.meta({

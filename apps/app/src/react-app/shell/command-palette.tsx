@@ -112,6 +112,7 @@ export type CommandPaletteProps = {
   onOpenAutomations?: () => void;
   onOpenCalendar?: () => void;
   onOpenDashboard?: () => void;
+  dashboardLabel?: string;
   onCreateWorkspace?: () => void;
   /** Optional: open the full default-model picker. */
   onOpenModelPicker?: () => void;
@@ -413,8 +414,8 @@ export function CommandPalette(props: CommandPaletteProps) {
     ...(props.onOpenDashboard
       ? [{
           id: "dashboard.open",
-          title: "Dashboard",
-          keywords: ["home", "overview", "apps"],
+          title: props.dashboardLabel ?? "Dashboard",
+          keywords: ["home", "overview", "apps", "artifacts", "dashboard"],
           group: ACTIONS_GROUP,
           action: () => {
             props.onClose();

@@ -16,6 +16,8 @@ const entrySchema = z
     pluginId: z.string(),
     pluginName: z.string(),
     requiresApproval: z.boolean(),
+    // Older deployments cannot classify provenance; never guess ownership.
+    isOwner: z.boolean().optional(),
   })
   .refine(
     (entry) =>

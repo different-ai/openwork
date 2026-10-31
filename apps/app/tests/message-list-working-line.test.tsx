@@ -1,4 +1,4 @@
-import { afterAll, afterEach, expect, setSystemTime, test } from "bun:test"
+import { afterAll, afterEach, expect, mock, setSystemTime, test } from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -11,6 +11,10 @@ afterAll(() => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct)
   GlobalRegistrator.unregister()
 })
+
+// These isolated message-timing tests do not mount a signed-in application.
+// Keep the unrelated artifacts rollout off, as it is on fresh deployments.
+mock.module("../src/react-app/domains/session/status/use-desktop-feature", () => ({ useDesktopFeature: () => false }))
 
 const { PlatformProvider, createDefaultPlatform } = await import("../src/react-app/kernel/platform")
 const { MessageListProvider } = await import("../src/components/chat/message-list-provider")

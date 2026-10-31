@@ -764,6 +764,7 @@ export type AppSidebarProps = {
   calendarActive?: boolean;
   onOpenCalendar?: () => void;
   dashboardActive?: boolean;
+  dashboardLabel?: string;
   onOpenDashboard?: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
   onOpenSessionSearch?: () => void;
@@ -950,7 +951,7 @@ export function AppSidebar(props: AppSidebarProps) {
               <SidebarDestination
                 active={props.dashboardActive === true}
                 icon={Blocks}
-                label="Dashboard"
+                label={props.dashboardLabel ?? "Dashboard"}
                 onSelect={props.onOpenDashboard}
               />
             ) : null}

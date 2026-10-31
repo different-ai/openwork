@@ -1,3 +1,5 @@
+import { z } from "zod"
+import { isDeepStrictEqual } from "node:util"
 import type { McpAppToolBinding } from "@openwork/types/mcp-app"
 import type { ExecuteCapabilityToolResult } from "./capability-registry.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
@@ -19,6 +21,25 @@ export type InitialResult = {
   arguments: Record<string, unknown>
   loadedAt: string
   result: { content: unknown[]; structuredContent?: Record<string, unknown> }
+  /** Matches this member's earlier snapshot, confirmed by this open's checked read. */
+  kept?: true
+}
+
+const keptLaunchDataSchema = z.array(z.object({
+  name: z.string(),
+  arguments: z.record(z.string(), z.unknown()),
+  loadedAt: z.string(),
+  result: z.object({ content: z.array(z.unknown()), structuredContent: z.record(z.string(), z.unknown()).optional() }),
+}))
+
+/**
+ * Where an App's launch data waits for the same member's next open. `open`
+ * names one slot for this open, or null when nothing may be kept, and the slot
+ * keeps its name for the save. The slot is an optimization hint, never proof
+ * that the caller may still read its contents.
+ */
+export type McpAppLaunchDataStore = {
+  open(timeZone: string | undefined): Promise<{ kept: unknown; save(results: InitialResult[]): Promise<void> } | null>
 }
 
 /** A connection tool always needs mcp:write, whatever its label, because external dispatch requires it. */
@@ -86,4 +107,34 @@ export async function loadInitialResults(input: {
     kept.push(entry)
   }
   return kept
+}
+
+/**
+ * The launch data for this open. Every read runs through its current route
+ * authorization and filtering, even when a snapshot exists: the inventory
+ * revision is best effort and cannot authorize a cached response. Only a
+ * snapshot identical to that checked result is marked kept. Denials, changed
+ * visibility, failed reads and timeouts never fall back to stored data.
+ */
+export async function launchInitialResults(input: Parameters<typeof loadInitialResults>[0] & {
+  store?: McpAppLaunchDataStore
+  canKeep?: (binding: McpAppToolBinding) => boolean
+}): Promise<InitialResult[]> {
+  const { canKeep } = input
+  const keepable = new Set(canKeep ? input.tools.filter((binding) => canKeep(binding)).map((binding) => binding.name) : [])
+  const [fresh, slot] = await Promise.all([
+    loadInitialResults(input),
+    input.store && keepable.size > 0 ? input.store.open(input.timeZone).catch(() => null) : null,
+  ])
+  const parsed = keptLaunchDataSchema.safeParse(slot?.kept ?? null)
+  const snapshots = new Map(parsed.success ? parsed.data.filter((entry) => keepable.has(entry.name)).map((entry) => [entry.name, entry]) : [])
+  // Replacing or clearing the slot is best effort; serving data is always
+  // gated by the fresh read above, including when this save fails.
+  if (slot) void slot.save(fresh.filter((entry) => keepable.has(entry.name))).catch(() => undefined)
+  return fresh.map((entry): InitialResult => {
+    const saved = snapshots.get(entry.name)
+    return saved && isDeepStrictEqual(saved.arguments, entry.arguments) && isDeepStrictEqual(saved.result, entry.result)
+      ? { ...entry, kept: true }
+      : entry
+  })
 }

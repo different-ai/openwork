@@ -267,10 +267,14 @@ function initialResultFor(result, name, args) {
 }
 
 // Shows the launch's result for these arguments, or calls the tool for one.
+// A checked matching snapshot seeds the view too. Older launch producers can
+// supply an earlier load time, in which case refresh behind the visible data.
 function loadWith(call, result, name, args) {
   const loaded = initialResultFor(result, name, args);
-  if (loaded) call.seed(args, loaded);
-  else call.call(args);
+  if (!loaded) return call.call(args);
+  call.seed(args, loaded);
+  const loadedAt = dateOf(loaded.loadedAt);
+  if (loaded.kept && (!loadedAt || Date.now() - loadedAt.getTime() > 60000)) call.call(args);
 }
 
 // One declared tool, with every state the person can see. Only the latest

@@ -111,7 +111,7 @@ export function DashboardApps({ onCreateApp, fallbackEndpoints, headerActionsTar
   </>;
 }
 
-function SavedDashboardApp({ app, onRemove, removing, onCreateApp, fallbackEndpoints }: { fallbackEndpoints?: DashboardLaunchEndpoint[]; app: SavedAppSummary; onRemove: (geometry?: GeneratedAppPreviewGeometry) => void; removing: boolean; onCreateApp: CreateDashboardApp }) {
+export function SavedDashboardApp({ app, onRemove, removing, onCreateApp, fallbackEndpoints }: { fallbackEndpoints?: DashboardLaunchEndpoint[]; app: SavedAppSummary; onRemove: (geometry?: GeneratedAppPreviewGeometry) => void; removing: boolean; onCreateApp: CreateDashboardApp }) {
   const navigate = useNavigate();
   const { client, orgId, scope, canManage } = useAppsClient();
   const { workspaceId } = useWorkspace();
