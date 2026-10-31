@@ -28,7 +28,7 @@ afterEach(async () => {
   if (root) await act(async () => root?.unmount())
   root = null
   document.body.innerHTML = ""
-  store.setState({ helperView: false, threads: {} })
+  store.setState({ threads: {} })
 })
 
 function createCall(id: string, commandId: string, title: string): UIMessage["parts"][number] {
@@ -71,7 +71,7 @@ test("remote tasks list with where they run, a status word, Open and Stop, and c
   const tasks = tracker.currentTurnRemoteTasks(turn([createCall("c1", "rsc_1", "Record the demo videos"), createCall("c2", "rsc_2", "Draft the changelog")]))
   const [first, second] = tasks
   if (!first || !second) throw new Error("expected two tasks")
-  store.setState({ helperView: true, threads: {
+  store.setState({ threads: {
     [first.start.key]: entry(first.start, { state: "running" }),
     [second.start.key]: entry(second.start, { state: "waiting", waitingFor: "question" }),
   } })
@@ -103,7 +103,7 @@ test("a stopped task and one that failed read differently, and a settled list go
   const tasks = tracker.currentTurnRemoteTasks(turn([createCall("c1", "rsc_1", "Record the demo videos"), createCall("c2", "rsc_2", "Draft the changelog")]))
   const [first, second] = tasks
   if (!first || !second) throw new Error("expected two tasks")
-  store.setState({ helperView: true, threads: {
+  store.setState({ threads: {
     [first.start.key]: entry(first.start, { state: "error", error: { code: "MessageAbortedError", message: "The task was stopped." } }),
     [second.start.key]: entry(second.start, { state: "error", error: { code: "session_error", message: "Disk full" } }),
   } })
@@ -128,7 +128,7 @@ test("text-first rail: remote rows drop the status dot like local rows, the word
   const tasks = tracker.currentTurnRemoteTasks(turn([createCall("c1", "rsc_1", "Record the demo videos")]))
   const [first] = tasks
   if (!first) throw new Error("expected a task")
-  store.setState({ helperView: true, threads: { [first.start.key]: entry(first.start, { state: "running" }) } })
+  store.setState({ threads: { [first.start.key]: entry(first.start, { state: "running" }) } })
   const container = document.createElement("div")
   document.body.append(container)
   root = createRoot(container)

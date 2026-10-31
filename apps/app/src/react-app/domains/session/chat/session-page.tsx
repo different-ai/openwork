@@ -318,7 +318,7 @@ export type SessionPageProps = {
   primaryTitle?: string;
   /** Replaces the header's title, e.g. a task on another computer's `Chat / Task` breadcrumb. */
   primaryHeader?: React.ReactNode;
-  /** Open a task on another computer in the main pane (`remoteSessionHelperView`). */
+  /** Open a task on another computer in the main pane. */
   onOpenRemoteTask?: (threadKey: string) => void;
   terminalOpen?: boolean;
   onTerminalOpenChange?: (open: boolean) => void;

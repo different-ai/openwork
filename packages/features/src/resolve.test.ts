@@ -190,6 +190,29 @@ test("completed desktop, Workbot and organization rollouts ignore legacy opt-out
   assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
 })
 
+test("remembered sign-in, helper tasks and the removed update window have no rollout keys", () => {
+  const retired = ["lastUsedSignIn", "remoteSessionHelperView", "desktopUpdateDownloadWindow"]
+  for (const deployment of ["cloud", "self_hosted"] satisfies Array<FeatureContext["deployment"]>) {
+    const resolved = resolveFeatures({ ...base, deployment })
+    for (const key of retired) {
+      assert.ok(RETIRED_FEATURE_KEYS.some((retiredKey) => retiredKey === key), key)
+      assert.equal(featureKeySchema.safeParse(key).success, false, key)
+      assert.equal(Object.hasOwn(resolved, key), false, key)
+    }
+    for (const lock of ["true", "false"]) {
+      const parsed = parseFeatureEnvironment({
+        DEN_DEPLOYMENT: deployment,
+        DEN_FEATURE_LAST_USED_SIGN_IN: lock,
+        DEN_FEATURE_REMOTE_SESSION_HELPER_VIEW: lock,
+        DEN_FEATURE_DESKTOP_UPDATE_DOWNLOAD_WINDOW: lock,
+      })
+      assert.deepEqual(parsed.locks, {})
+      assert.equal(parsed.problems.length, retired.length)
+      assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
+    }
+  }
+})
+
 test("automatic v2 migration has no feature key and ignores legacy opt-out locks", () => {
   for (const key of ["engineV2Upgrade", "engineV2ForceUpgrade"]) {
     assert.equal(featureKeySchema.safeParse(key).success, false)

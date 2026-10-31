@@ -104,17 +104,6 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
-  desktopUpdateDownloadWindow: {
-    label: "Desktop: restart to update before the download",
-    description: "Restart to update shows in the desktop title bar as soon as an update is found. Clicking it opens a small window that downloads the update with its progress, then restarts, instead of waiting with no sign of the download.",
-    category: "experience",
-    added: "2026-10-28",
-    since: "2026-10",
-    author: "reachjalil",
-    docs: "docs/features/desktop-update-download-window/README.md",
-    deployments: everywhere,
-    default: false,
-  },
   autoRouter: {
     label: "AI Gateway: Smart Model Router",
     description: "Admins create Smart Routers for everyone, teams or people, listing AI Gateway models and the tasks each handles. Members pick \"Smart: <name>\": each prompt goes to the model whose tasks fit it best, at the thinking level it needs.",
@@ -291,17 +280,6 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
-  remoteSessionHelperView: {
-    label: "Desktop: open a task on another computer like a helper",
-    description: "Clicking a task on another computer opens it in the main pane like a helper: follow up with Enter, stop it, and press Esc to return to the chat where you left off. The chat row says what it ran last, and the sidebar lists the task under its chat. Needs the task conversation view.",
-    category: "computerUse",
-    added: "2026-10-29",
-    since: "2026-10",
-    author: "benjaminshafii",
-    docs: "docs/features/remote-session-helper-view/README.md",
-    deployments: everywhere,
-    default: false,
-  },
   connectStandardTools: {
     label: "Connect: standard tools",
     description: "Claude Code and standalone OpenCode discover connected actions, Workflows and Apps as individual tools; OpenWork Desktop, Web and automation runs keep capability search. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas.",
@@ -331,17 +309,6 @@ export const FEATURES = defineFeatures({
     since: "2026-10",
     author: "reachjalil",
     docs: "docs/features/outlook-attachments/README.md",
-    deployments: everywhere,
-    default: false,
-  },
-  lastUsedSignIn: {
-    label: "Remember last sign-in method",
-    description: "People who last signed in with a password, Google or GitHub skip the email step next time: Den web lists the sign-in methods with a Last used badge, and Single sign-on returns to the email step. Signing in with SSO forgets the method.",
-    category: "experience",
-    added: "2026-10-26",
-    since: "2026-10",
-    author: "benjaminshafii",
-    docs: "docs/features/last-used-sign-in/README.md",
     deployments: everywhere,
     default: false,
   },
