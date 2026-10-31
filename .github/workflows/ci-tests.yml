@@ -152,6 +152,10 @@ jobs:
         run: pnpm --filter @openwork/app exec bun --conditions=development test --isolate ./tests/message-list-working-line.test.tsx ./tests/run-working-time.test.ts
       - name: Test where a new task goes (workspace and group list)
         run: pnpm --filter @openwork/app exec bun test --isolate ./tests/new-task-destination-options.test.ts
+      - name: Test chat file links resolve to real files
+        run: |
+          pnpm --filter @openwork/app exec bun test --isolate ./tests/chat-file-links.test.ts
+          bun test apps/server/test/artifact-resolve-search.test.ts
       - name: Check desktop links open real Den pages
         run: pnpm --filter @openwork/app test:den-links
       - name: Test Library connector setup and translated placeholders

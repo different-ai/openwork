@@ -13,6 +13,7 @@ import { useUntrustedMarkdown } from "./untrusted-markdown";
 import { useOpenArtifactPath } from "@/lib/artifacts";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { openTargetForHref } from "@/react-app/domains/session/artifacts/resolve-open-target";
+import { parseLocalPathReference, workspaceLookupValue } from "@/react-app/domains/session/artifacts/local-path";
 
 import { applyTextHighlights } from "./text-highlights";
 import {
@@ -35,33 +36,6 @@ import { enhanceNearViewport } from "./near-viewport";
 export { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "./markdown-primitive";
 
 const CODE_COPY_RESET_DELAY_MS = 2000;
-
-function localPathFromHref(href: string) {
-  const trimmed = href.trim();
-
-  if (!trimmed || trimmed.startsWith("#") || /^(?:https?|mailto):/i.test(trimmed)) {
-    return "";
-  }
-
-  if (/^file:/i.test(trimmed)) {
-    try {
-      const parsed = new URL(trimmed);
-      const host = decodeURIComponent(parsed.hostname);
-      const pathname = decodeURIComponent(parsed.pathname);
-      const localPath = /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname;
-
-      if (host && host !== "localhost") {
-        return `//${host}${localPath.startsWith("/") ? localPath : `/${localPath}`}`;
-      }
-
-      return localPath;
-    } catch {
-      return "";
-    }
-  }
-
-  return trimmed.split(/[?#]/)[0] ?? trimmed;
-}
 
 type MarkdownBlockInnerProps = {
   className?: string;
@@ -269,17 +243,20 @@ function MarkdownBlockInner({
         if (objectUrl) URL.revokeObjectURL(objectUrl);
       });
       if (/^https?:/i.test(href)) continue;
-      let path = localPathFromHref(href);
-      try { if (!/^file:/i.test(href)) path = decodeURIComponent(path); } catch { /* Keep literal percent signs in filenames. */ }
-      const rootPath = workspaceRoot?.replace(/\\/g, "/").replace(/\/+$/, "");
-      path = path.replace(/\\/g, "/");
-      if (rootPath && path.startsWith(`${rootPath}/`)) path = path.slice(rootPath.length + 1);
-      if (!client || !workspaceId || !path) {
+      // Only the workspace can stream a video; a home or outside path falls back
+      // to its clickable reference, which reveals it on this computer.
+      const target = openTargetForHref(href, openTargets, workspaceRoot);
+      const reference = parseLocalPathReference(href, { decode: true });
+      const path = target?.exists === true
+        ? target.value
+        : reference && reference.anchor !== "home"
+          ? workspaceLookupValue(reference, { workspaceRoot }).replace(/\\/g, "/")
+          : "";
+      if (!client || !workspaceId || !path || /^(?:\/|[A-Za-z]:\/)/.test(path)) {
         showError();
         continue;
       }
-      const target = openTargetForHref(href, openTargets, workspaceRoot);
-      void client.downloadWorkspaceFile(workspaceId, target?.exists === true ? target.value : path, { sessionId }).then((result) => {
+      void client.downloadWorkspaceFile(workspaceId, path, { sessionId }).then((result) => {
         if (cancelled) return;
         const extension = path.split(".").pop()?.toLowerCase();
         const fallbackType = extension === "webm" ? "video/webm" : extension === "ogv" ? "video/ogg" : extension === "mov" ? "video/quicktime" : "video/mp4";

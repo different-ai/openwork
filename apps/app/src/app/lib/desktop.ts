@@ -631,6 +631,20 @@ export async function getDesktopHomeDir(): Promise<string> {
   return invokeElectronHelper("__homeDir");
 }
 
+let cachedHomeDir: Promise<string | null> | null = null;
+
+/** The home folder for expanding `~/` in chat file links; null outside the desktop app. */
+export function getCachedDesktopHomeDir(): Promise<string | null> {
+  if (typeof window === "undefined" || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return Promise.resolve(null);
+  cachedHomeDir ??= getDesktopHomeDir()
+    .then((home) => (typeof home === "string" && home.trim() ? home : null))
+    .catch(() => {
+      cachedHomeDir = null;
+      return null;
+    });
+  return cachedHomeDir;
+}
+
 export async function joinDesktopPath(...parts: string[]): Promise<string> {
   return invokeElectronHelper("__joinPath", ...parts);
 }

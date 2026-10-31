@@ -2573,12 +2573,18 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         confidence?: number;
         reason?: string;
       }>,
-      options?: { sessionId?: string },
+      /** `search` also finds a file by name anywhere in the workspace when its path misses. */
+      options?: { sessionId?: string; search?: boolean },
     ) =>
       requestJson<{ items: OpenworkResolvedArtifactTarget[] }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/artifacts/resolve`,
-        { token, hostToken, method: "POST", body: { targets, sessionId: options?.sessionId } },
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: { targets, sessionId: options?.sessionId, ...(options?.search ? { search: true } : {}) },
+        },
       ),
 
     // User-level env vars (host-auth only — desktop shell is the sole caller).

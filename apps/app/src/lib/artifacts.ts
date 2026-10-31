@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { useOpenTargets } from "@/lib/target-provider";
+import { parseLocalPathReference } from "@/react-app/domains/session/artifacts/local-path";
 import type { OpenTarget, OpenTargetPreview } from "@/react-app/domains/session/artifacts/open-target";
 
 export type ArtifactType = "website" | "markdown" | "sheet" | "slides" | "document" | "image" | "video" | "audio" | "pdf" | "html" | "text" | "unknown";
@@ -82,8 +83,11 @@ function artifactTypeToPreview(type: ArtifactType): OpenTargetPreview {
 export function useOpenArtifactPath() {
   const { onOpenTarget } = useOpenTargets();
 
-  return React.useCallback((path: string, options?: { external?: boolean }) => {
-    // Explicit file actions must not strip path prefixes or reuse suffix matches.
+  return React.useCallback((rawPath: string, options?: { external?: boolean }) => {
+    // Explicit file actions must not strip path prefixes or reuse suffix matches,
+    // but `:line` suffixes and quotes are not part of the file name. A path the
+    // reader turns away is passed through so the opener can explain why.
+    const path = parseLocalPathReference(rawPath)?.path ?? rawPath;
     const target: OpenTarget = {
       id: `file:${path}`,
       kind: "file",
