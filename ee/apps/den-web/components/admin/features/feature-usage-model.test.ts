@@ -28,7 +28,7 @@ test("the report parses, keeps counts only and drops features this build does no
     organizations: 42,
     generatedAt: "2026-10-28T15:00:00.000Z",
     features: [
-      { key: "automationCalendarTriggers", organizationsOn: 2, membersUsing: 3, lastUsedAt: "2026-10-28T10:00:00.000Z", health: { status: "mostly_skipped", count: null }, outcomes },
+      { key: "workbotProactive", organizationsOn: 2, membersUsing: 3, lastUsedAt: "2026-10-28T10:00:00.000Z", health: { status: "mostly_skipped", count: null }, outcomes },
       { key: "administratorRecovery", organizationsOn: 0, membersUsing: 0, lastUsedAt: null, health: { status: "not_used", count: null }, outcomes: null },
       { key: "aFeatureFromANewerServer", organizationsOn: 1, membersUsing: 1, lastUsedAt: null, health: { status: "healthy", count: null }, outcomes: null },
     ],
@@ -36,7 +36,7 @@ test("the report parses, keeps counts only and drops features this build does no
   assert.ok(report);
   assert.equal(report.range, "30d");
   assert.equal(report.organizations, 42);
-  assert.deepEqual(report.features.map((row) => row.key), ["automationCalendarTriggers", "administratorRecovery"]);
+  assert.deepEqual(report.features.map((row) => row.key), ["workbotProactive", "administratorRecovery"]);
   assert.equal(report.features[0]?.outcomes?.unit, "meeting");
   assert.equal(report.features[0]?.outcomes?.days.length, 2);
   assert.equal(report.features[1]?.outcomes, null);
@@ -46,7 +46,7 @@ test("the report parses, keeps counts only and drops features this build does no
 test("a feature's detail parses its reasons and organizations", () => {
   const detail = parseFeatureUsageDetail({
     feature: {
-      key: "automationCalendarTriggers", organizationsOn: 2, membersUsing: 1, lastUsedAt: null, health: { status: "mostly_skipped", count: null }, outcomes,
+      key: "workbotProactive", organizationsOn: 2, membersUsing: 1, lastUsedAt: null, health: { status: "mostly_skipped", count: null }, outcomes,
       reasons: [{ reason: "execution_runtime_unavailable", outcome: "skipped", count: 5 }, { reason: "bad", outcome: "maybe", count: 1 }],
       byOrganization: [
         { organizationId: "org_a", name: "Acme Robotics", enabled: true, membersUsing: 1, lastUsedAt: "2026-10-28T10:00:00.000Z", outcomes: { runs: 10, succeeded: 1, failed: 1, skipped: 8, delivered: null, limited: null, lastRunAt: null } },
