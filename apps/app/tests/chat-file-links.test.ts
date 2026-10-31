@@ -9,6 +9,7 @@ import {
 } from "../src/react-app/domains/session/artifacts/local-path";
 import type { OpenTarget } from "../src/react-app/domains/session/artifacts/open-target";
 import {
+  fileOriginForRuntime,
   localArtifactPath,
   nativeFileAction,
   openTargetForHref,
@@ -239,12 +240,62 @@ describe("native file actions", () => {
   });
 });
 
+describe("session file origin", () => {
+  test("uses the owning runtime, not an absolute-looking path", () => {
+    expect(fileOriginForRuntime({ desktop: true, serverUrl: "http://127.0.0.1:8787" })).toBe("local");
+    expect(fileOriginForRuntime({ desktop: true, serverUrl: "https://worker.example.com" })).toBe("remote");
+    expect(fileOriginForRuntime({ desktop: true, serverUrl: "http://localhost:8787", sandboxBackend: "docker" })).toBe("remote");
+    expect(fileOriginForRuntime({ desktop: false, serverUrl: "http://localhost:8787" })).toBe("remote");
+    expect(fileOriginForRuntime({ desktop: true })).toBe("unknown");
+  });
+
+  test("never sends unresolved remote references to this computer's native opener", async () => {
+    for (const value of ["/home/runner/work/report.pdf", "/workspace/report.pdf", "/Users/other/Downloads/report.pdf", `${ROOT}/docs/plan.md`, "main.mjs:12", "~/Downloads/clip.mp4"]) {
+      const lookups: string[] = [];
+      const plan = await planFileOpen(fileTarget(value), {
+        origin: "remote", workspaceRoot: ROOT, homeDir: HOME, canOpenLocally: true,
+        findInWorkspace: async (lookup) => { lookups.push(lookup.value); return null; },
+      });
+      expect(plan).toEqual({ kind: "unavailable", message: "This file is on another machine or is no longer available." });
+      if (value.startsWith("~/")) expect(lookups).toEqual([value]);
+    }
+  });
+
+  test("opens a remote absolute path through its own workspace when available", async () => {
+    const remoteTarget = fileTarget("results/report.pdf", { exists: true, preview: "pdf" });
+    expect(await planFileOpen(fileTarget("/home/runner/task/results/report.pdf"), {
+      origin: "remote", workspaceRoot: "/home/runner/task", canOpenLocally: true,
+      findInWorkspace: async (lookup) => lookup.value === "results/report.pdf" ? remoteTarget : null,
+    })).toEqual({ kind: "workspace", target: remoteTarget });
+  });
+
+  test("offline and unknown origins degrade calmly instead of falling through to disk", async () => {
+    expect(await planFileOpen(fileTarget(`${ROOT}/notes.md`), { origin: "unknown", workspaceRoot: ROOT, canOpenLocally: true }))
+      .toMatchObject({ kind: "unavailable" });
+    expect(await planFileOpen(fileTarget("/workspace/a.md"), {
+      origin: "remote", canOpenLocally: true, findInWorkspace: async () => { throw new Error("offline"); },
+    })).toEqual({ kind: "unavailable", message: "This file is on another machine or is no longer available." });
+  });
+
+  test("nonexistent local and other-user paths do not become scary disk errors", async () => {
+    expect(await planFileOpen(fileTarget("missing-local.md"), {
+      origin: "local", workspaceRoot: ROOT, canOpenLocally: true, findInWorkspace: async () => null,
+    })).toEqual({ kind: "unavailable", message: "This file is no longer available on this computer." });
+    // Absolute local references are checked at the native boundary; no heuristic
+    // infers ownership just from /Users/<name> (the real home may be elsewhere).
+    expect(await planFileOpen(fileTarget("/Users/other/notes.md"), {
+      origin: "local", workspaceRoot: ROOT, homeDir: HOME, canOpenLocally: true,
+    })).toMatchObject({ kind: "native", action: "reveal" });
+  });
+});
+
 describe("planFileOpen", () => {
   const found = (value: string): OpenTarget => fileTarget(value, { exists: true });
 
   test("finds a bare file name with a line suffix through the workspace search", async () => {
     const lookups: string[] = [];
     const plan = await planFileOpen(fileTarget("computer-control.test.mjs:813"), {
+      origin: "local",
       workspaceRoot: ROOT,
       homeDir: HOME,
       canOpenLocally: true,
@@ -259,6 +310,7 @@ describe("planFileOpen", () => {
 
   test("reveals a home-folder file outside the workspace instead of failing", async () => {
     const plan = await planFileOpen(fileTarget("~/Downloads/openwork-launch-edit.mp4"), {
+      origin: "local",
       workspaceRoot: ROOT,
       homeDir: HOME,
       canOpenLocally: true,
@@ -270,6 +322,7 @@ describe("planFileOpen", () => {
   test("looks up a home path that lands in the workspace by its workspace path", async () => {
     const lookups: string[] = [];
     await planFileOpen(fileTarget("~/openwork-repo/docs/plan.md"), {
+      origin: "local",
       workspaceRoot: ROOT,
       homeDir: HOME,
       canOpenLocally: true,
@@ -280,35 +333,38 @@ describe("planFileOpen", () => {
 
   test("says the file was not found instead of opening a guessed path", async () => {
     const plan = await planFileOpen(fileTarget("missing.mjs:12"), {
+      origin: "local",
       workspaceRoot: ROOT,
       canOpenLocally: true,
       findInWorkspace: async () => null,
     });
-    expect(plan).toEqual({ kind: "unavailable", message: "Couldn\u2019t find \u201cmissing.mjs\u201d in this workspace." });
+    expect(plan).toEqual({ kind: "unavailable", message: "This file is no longer available on this computer." });
   });
 
   test("explains a reference that is not a file", async () => {
-    const plan = await planFileOpen(fileTarget("https://example.com/a.pdf", { name: "a.pdf" }), { workspaceRoot: ROOT, canOpenLocally: true });
+    const plan = await planFileOpen(fileTarget("https://example.com/a.pdf", { name: "a.pdf" }), { origin: "local", workspaceRoot: ROOT, canOpenLocally: true });
     expect(plan).toEqual({ kind: "unavailable", message: "\u201ca.pdf\u201d is not a file OpenWork can open." });
   });
 
-  test("opens verified workspace files directly", async () => {
+  test("rechecks verified files at click time in case they have been deleted", async () => {
     const target = found("docs/plan.md");
     let searched = false;
-    const plan = await planFileOpen(target, { workspaceRoot: ROOT, canOpenLocally: true, findInWorkspace: async () => { searched = true; return null; } });
-    expect(plan).toEqual({ kind: "workspace", target });
-    expect(searched).toBe(false);
+    const plan = await planFileOpen(target, { origin: "local", workspaceRoot: ROOT, canOpenLocally: true, findInWorkspace: async () => { searched = true; return null; } });
+    expect(plan).toEqual({ kind: "unavailable", message: "This file is no longer available on this computer." });
+    expect(searched).toBe(true);
+    expect(await planFileOpen(target, { origin: "remote", canOpenLocally: false, findInWorkspace: async () => target }))
+      .toEqual({ kind: "workspace", target });
   });
 
   test("falls back to the desktop when the workspace is not connected", async () => {
-    expect(await planFileOpen(fileTarget("docs/plan.md:2"), { workspaceRoot: ROOT, canOpenLocally: true }))
+    expect(await planFileOpen(fileTarget("docs/plan.md:2"), { origin: "local", workspaceRoot: ROOT, canOpenLocally: true }))
       .toMatchObject({ kind: "native", path: `${ROOT}/docs/plan.md`, action: "open" });
-    expect(await planFileOpen(fileTarget("docs/plan.md"), { workspaceRoot: ROOT, canOpenLocally: false }))
-      .toEqual({ kind: "unavailable", message: "Connect to the workspace to open this file." });
+    expect(await planFileOpen(fileTarget("docs/plan.md"), { origin: "local", workspaceRoot: ROOT, canOpenLocally: false }))
+      .toEqual({ kind: "unavailable", message: "This file is no longer available on this computer." });
   });
 
   test("reports a missing file in the web app without trying the desktop", async () => {
-    expect(await planFileOpen(fileTarget("/Users/me/a.md"), { workspaceRoot: ROOT, canOpenLocally: false, findInWorkspace: async () => null }))
-      .toEqual({ kind: "unavailable", message: "Couldn\u2019t find \u201c/Users/me/a.md\u201d in this workspace." });
+    expect(await planFileOpen(fileTarget("/Users/me/a.md"), { origin: "local", workspaceRoot: ROOT, canOpenLocally: false, findInWorkspace: async () => null }))
+      .toEqual({ kind: "unavailable", message: "This file is no longer available on this computer." });
   });
 });

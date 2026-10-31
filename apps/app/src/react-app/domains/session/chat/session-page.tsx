@@ -17,7 +17,7 @@ import { useCloudSignIn } from "../../cloud/sign-in-return";
 import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
-import { getCachedDesktopHomeDir, openDesktopUrl, openDesktopWorkspaceFile, revealDesktopItemInDir, type WorkspaceInfo } from "../../../../app/lib/desktop";
+import { getCachedDesktopHomeDir, openDesktopUrl, openDesktopWorkspaceFile, type WorkspaceInfo } from "../../../../app/lib/desktop";
 import type {
   ComposerAttachment,
   PendingPermission,
@@ -87,7 +87,7 @@ import {
 
 import { isElectronRuntime, isMacPlatform } from "../../../../app/utils";
 import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTarget, type OpenTarget } from "../artifacts/open-target";
-import { nativeFileAction, planFileOpen, resolveCollectibleOpenTarget } from "../artifacts/resolve-open-target";
+import { fileOriginForRuntime, nativeFileAction, planFileOpen, resolveCollectibleOpenTarget, unavailableFileMessage } from "../artifacts/resolve-open-target";
 import type { OpenTargetOptions } from "@/lib/target-provider";
 import { SidePanel } from "../panel/side-panel";
 import { getSidePanelSessionKey } from "../panel/side-panel-session";
@@ -219,6 +219,7 @@ export type SessionPagePaneRuntime = {
   workspaceTitle: string;
   workspaceRoot: string;
   workspaceType?: WorkspaceInfo["workspaceType"];
+  sandboxBackend?: string | null;
   runtimeWorkspaceId: string;
   opencodeBaseUrl: string;
   openworkToken: string;
@@ -246,6 +247,7 @@ export type SessionPageProps = {
     name?: string;
     displayName?: string;
     workspaceType?: WorkspaceInfo["workspaceType"];
+    sandboxBackend?: string | null;
   };
   selectedWorkspaceRoot: string;
   selectedWorkspaceError?: string | null;
@@ -744,6 +746,7 @@ export function SessionPage(props: SessionPageProps) {
     runtimeWorkspaceId: string | null;
     workspaceRoot: string;
     workspaceType?: WorkspaceInfo["workspaceType"];
+    sandboxBackend?: string | null;
   }, target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     if (target.kind === "url" || target.preview === "browser") {
       const url = browserUrlForTarget(target);
@@ -768,30 +771,39 @@ export function SessionPage(props: SessionPageProps) {
       return;
     }
 
-    const reportOpenError = (error: unknown) => {
-      toast.error(error instanceof Error ? error.message : "Could not open this file.");
+    const origin = fileOriginForRuntime({ desktop: isElectronRuntime(), serverUrl: runtime.client?.baseUrl, sandboxBackend: runtime.sandboxBackend });
+    const showUnavailable = (message = unavailableFileMessage(origin)) => {
+      toast.info(message, {
+        action: {
+          label: "Copy path",
+          onClick: () => {
+            void navigator.clipboard.writeText(target.value).catch(() => toast.info("Select the path in the message to copy it."));
+          },
+        },
+      });
     };
-    const canOpenLocally = isElectronRuntime();
+    // Never leak native ENOENT or transport diagnostics into a file-link toast.
+    const reportOpenError = () => showUnavailable();
+    const canOpenLocally = isElectronRuntime() && origin === "local";
     const sessionId = sourceSessionId ?? props.selectedSessionId;
 
     const openNative = (path: string, action: "open" | "reveal") => {
-      // Files outside the workspace are revealed, never launched; see nativeFileAction.
-      // The desktop re-checks the resolved file on disk before launching anything.
-      if (action === "reveal") {
-        return revealDesktopItemInDir(path);
-      }
-      return openDesktopWorkspaceFile(runtime.workspaceRoot, path).then((result) => {
-        if (result === "revealed") toast.info("This file points outside the workspace, so it was shown in its folder instead.");
+      if (!canOpenLocally) { showUnavailable(); return Promise.resolve(); }
+      // Existence and symlink checks also apply to reveal; don't open the parent
+      // folder of a missing file, or hand remote text to a same-named local file.
+      return openDesktopWorkspaceFile(runtime.workspaceRoot, path, { reveal: action === "reveal" }).then((result) => {
+        if (result === "unavailable") showUnavailable();
+        else if (result === "revealed" && action !== "reveal") toast.info("This file points outside the workspace, so it was shown in its folder instead.");
       });
     };
 
     const openWorkspaceFile = (fileTarget: OpenTarget) => {
       // A person's explicit native open is not a workspace preview request.
       if (options?.external || !isCollectibleArtifactTarget(fileTarget)) {
-        if (!canOpenLocally || !isOpenableFileTarget(fileTarget)) return;
+        if (!canOpenLocally || !isOpenableFileTarget(fileTarget)) { showUnavailable(); return; }
         const native = nativeFileAction(runtime.workspaceRoot, fileTarget.value, options);
         if (!native) {
-          reportOpenError(new Error(`Couldn\u2019t open \u201c${fileTarget.name}\u201d.`));
+          showUnavailable();
           return;
         }
         void openNative(native.path, native.action).catch(reportOpenError);
@@ -813,6 +825,7 @@ export function SessionPage(props: SessionPageProps) {
     const { client, runtimeWorkspaceId } = runtime;
     void (async () => {
       const plan = await planFileOpen(target, {
+        origin,
         workspaceRoot: runtime.workspaceRoot,
         homeDir: canOpenLocally ? await getCachedDesktopHomeDir() : null,
         canOpenLocally,
@@ -826,7 +839,7 @@ export function SessionPage(props: SessionPageProps) {
         return;
       }
       if (plan.kind === "unavailable") {
-        toast.error(plan.message);
+        showUnavailable(plan.message);
         return;
       }
       await openNative(plan.path, plan.action);
@@ -838,12 +851,14 @@ export function SessionPage(props: SessionPageProps) {
       runtimeWorkspaceId: props.runtimeWorkspaceId,
       workspaceRoot: props.selectedWorkspaceRoot,
       workspaceType: props.selectedWorkspaceDisplay.workspaceType,
+      sandboxBackend: props.selectedWorkspaceDisplay.sandboxBackend,
     }, target, options, sourceSessionId);
   }, [
     openTargetForRuntime,
     props.openworkServerClient,
     props.runtimeWorkspaceId,
     props.selectedWorkspaceDisplay.workspaceType,
+    props.selectedWorkspaceDisplay.sandboxBackend,
     props.selectedWorkspaceRoot,
   ]);
   const closeRightPane = useCallback(() => {
@@ -1881,6 +1896,7 @@ export function SessionPage(props: SessionPageProps) {
                             // SessionRoute, not from anything in `surface`.
                             {...props.surface!}
                             client={props.openworkServerClient!}
+                            sandboxBackend={props.selectedWorkspaceDisplay.sandboxBackend}
                             environmentClient={props.environmentClient}
                             workspaceId={props.runtimeWorkspaceId!}
                             sessionId={props.selectedSessionId!}
@@ -1965,6 +1981,7 @@ export function SessionPage(props: SessionPageProps) {
                                   environmentClient={splitPaneRuntime.environmentClient}
                                   workspaceId={splitPaneRuntime.runtimeWorkspaceId}
                                   workspaceRoot={splitPaneRuntime.workspaceRoot}
+                                  sandboxBackend={splitPaneRuntime.sandboxBackend}
                                   sessionId={splitSession.sessionId}
                                   archived={archivedInWorkspace(splitSession.workspaceId, splitSession.sessionId)}
                                   onRestoreSession={async () => { await props.onArchiveSession?.(splitSession.sessionId, false); }}
@@ -1977,6 +1994,7 @@ export function SessionPage(props: SessionPageProps) {
                                     runtimeWorkspaceId: splitPaneRuntime.runtimeWorkspaceId,
                                     workspaceRoot: splitPaneRuntime.workspaceRoot,
                                     workspaceType: splitPaneRuntime.workspaceType,
+                                    sandboxBackend: splitPaneRuntime.sandboxBackend,
                                   }, target, options, sourceSessionId)}
                                   sessionTitle={splitSession.title}
                                   onOpenSubagentSession={(sessionId) => {

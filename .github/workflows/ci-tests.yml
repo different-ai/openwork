@@ -156,6 +156,7 @@ jobs:
         run: |
           pnpm --filter @openwork/app exec bun test --isolate ./tests/chat-file-links.test.ts
           bun test apps/server/test/artifact-resolve-search.test.ts
+          node --test apps/desktop/electron/workspace-file-access.test.mjs
       - name: Check desktop links open real Den pages
         run: pnpm --filter @openwork/app test:den-links
       - name: Test Library connector setup and translated placeholders

@@ -1,4 +1,5 @@
 import type { UIMessage } from "ai";
+import { parseLocalPathReference } from "./local-path";
 
 type OpenTargetKind = "url" | "file";
 export type OpenTargetPreview = "browser" | "markdown" | "code" | "sheet" | "slides" | "document" | "image" | "pdf" | "html" | "text" | "external";
@@ -159,21 +160,7 @@ function textWithoutRedundantMarkdownLinkLabels(text: string) {
  * valid percent-encoding stays literal.
  */
 export function filePathFromLinkHref(href: string): string {
-  const value = href.trim();
-  if (/^file:/i.test(value)) {
-    try {
-      const url = new URL(value);
-      if (url.hostname || url.search || url.hash) return value;
-    } catch {
-      return value;
-    }
-    return filePathFromFileUrl(value) ?? value;
-  }
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
+  return parseLocalPathReference(href, { decode: true })?.path ?? href.trim();
 }
 
 /**
@@ -183,18 +170,14 @@ export function filePathFromLinkHref(href: string): string {
  * because attachment filenames often contain spaces).
  */
 export function filePathFromFileUrl(url: string): string | null {
-  if (!url.startsWith("file://")) return null;
-  try {
-    const pathname = decodeURIComponent(new URL(url).pathname);
-    if (!pathname) return null;
-    return /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname;
-  } catch {
-    return null;
-  }
+  if (!/^file:\/\//i.test(url)) return null;
+  return parseLocalPathReference(url)?.path ?? null;
 }
 
 function targetFromFile(path: string, confidence: number, reason: string): OpenTarget | null {
-  const normalized = normalizePath(path).replace(/[.,;:]+$/, "");
+  const reference = parseLocalPathReference(path);
+  if (!reference) return null;
+  const normalized = normalizePath(reference.path);
   if (!normalized || normalized.length > 500 || !normalized.includes(".")) return null;
   return {
     id: `file:${normalized.toLowerCase()}`,

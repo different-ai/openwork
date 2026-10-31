@@ -54,7 +54,7 @@ import {
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
-import { resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
+import { openChatWorkspaceFile, resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
 import { fetchFiniteDesktopHttp } from "./finite-http-fetch.mjs";
@@ -2344,17 +2344,11 @@ const desktopCommandHandlers = {
       // file inside the real workspace launches; anything else is revealed, never run.
       const workspaceRoot = String(args[0] ?? "").trim();
       const target = String(args[1] ?? "").trim();
-      const decision = await resolveWorkspaceFileLaunch(workspaceRoot, target);
-      if (decision.ok === true) {
-        const error = await shell.openPath(decision.path);
-        if (error && error.trim()) return { ok: false, error };
-        return { ok: true, action: "opened" };
-      }
-      if (decision.reason === "outside" && existsSync(target)) {
-        shell.showItemInFolder(target);
-        return { ok: true, action: "revealed" };
-      }
-      return { ok: false, error: decision.error };
+      return openChatWorkspaceFile(workspaceRoot, target, {
+        reveal: args[2]?.reveal === true,
+        openPath: (file) => shell.openPath(file),
+        revealPath: (file) => shell.showItemInFolder(file),
+      });
   },
   "__revealItemInDir": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();
