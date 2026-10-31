@@ -13,17 +13,11 @@ on:
         required: false
         default: ""
         type: string
-  # Recipe/selection changes prove the real images and existing health/migration
-  # assertions before merge. Ordinary source PRs do not fan out into six builds.
-  pull_request:
-    branches:
-      - "dev"
-    paths:
-      - ".github/workflows/publish-ee-images.yml"
-      - ".github/scripts/build-inputs.mjs"
-      - ".github/scripts/ee-image*.mjs"
-      - ".dockerignore"
-      - "packaging/docker/Dockerfile*"
+  # Not on PRs. Nightly (and manual runs with push off) build all six images
+  # from dev without publishing and run the health and migration assertions on
+  # them; dev pushes and v* tags build and publish.
+  schedule:
+    - cron: "41 6 * * *"
   push:
     branches:
       - "dev"
@@ -300,8 +294,8 @@ jobs:
         with:
           context: .
           file: ${{ steps.config.outputs.dockerfile }}
-          platforms: ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/dev') && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
-          load: ${{ github.event_name == 'pull_request' }}
+          platforms: ${{ (needs.artifact-version.outputs.publish != 'true' || github.ref == 'refs/heads/dev') && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          load: ${{ needs.artifact-version.outputs.publish != 'true' }}
           push: ${{ needs.artifact-version.outputs.publish == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -320,7 +314,7 @@ jobs:
         with:
           context: .
           file: ${{ steps.config.outputs.dockerfile }}
-          platforms: ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/dev') && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          platforms: ${{ (needs.artifact-version.outputs.publish != 'true' || github.ref == 'refs/heads/dev') && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -342,7 +336,7 @@ jobs:
             sentry_dist=${{ secrets.SENTRY_DIST }}
 
       - name: Assert Den DB migration assets
-        if: ${{ steps.inputs.outputs.build == 'true' && github.event_name == 'pull_request' && steps.config.outputs.image == 'openwork-den-api' }}
+        if: ${{ steps.inputs.outputs.build == 'true' && needs.artifact-version.outputs.publish != 'true' && steps.config.outputs.image == 'openwork-den-api' }}
         shell: bash
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
@@ -356,7 +350,7 @@ jobs:
           '
 
       - name: Smoke health endpoint
-        if: ${{ steps.inputs.outputs.build == 'true' && github.event_name == 'pull_request' }}
+        if: ${{ steps.inputs.outputs.build == 'true' && needs.artifact-version.outputs.publish != 'true' }}
         shell: bash
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}

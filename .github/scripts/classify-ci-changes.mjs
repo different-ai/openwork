@@ -1,12 +1,12 @@
 // CI selection policy only; build inputs live in build-inputs.mjs. Keep the
 // classifier pure so its fail-open and required-check behavior can be tested
 // without GitHub, package installs, or a desktop build.
-// Selection outputs. `core` selects the unit-test jobs and the desktop build
-// check; the slow suites below it are path-scoped on PRs and always follow
-// their inputs on dev pushes.
-const CHECKS = ["core", "desktop_smoke", "den_api", "snapshot", "docs", "den_contract"];
-// Required jobs and the selection output each one follows. Every selected job
-// must succeed and every unselected job must be skipped.
+// Dev-push selection ("Build and core checks"). PRs run only the quick check
+// (quick-check.yml); everything below runs after merge. `core` selects the
+// unit-test jobs and the desktop build check.
+const CHECKS = ["core", "den_api", "snapshot", "docs"];
+// Jobs and the selection output each one follows. Every selected job must
+// succeed and every unselected job must be skipped.
 export const REQUIRED_JOBS = {
   core_app: "core",
   core_headless: "core",
@@ -15,19 +15,20 @@ export const REQUIRED_JOBS = {
   core_evals: "core",
   core_evals_lint: "core",
   desktop_build: "core",
-  desktop_smoke: "desktop_smoke",
   den_api: "den_api",
   snapshot: "snapshot",
   docs: "docs",
-  den_contract: "den_contract",
 };
+// PR quick-check selection: the Den API auth and permission tests run when
+// Den API inputs change. Typecheck and static checks always run.
+export const QUICK_CHECKS = ["den_quick"];
 const SNAPSHOT = "ee/apps/gateway/src/models/base.json";
 const STATUSES = new Set(["added", "modified", "removed", "renamed", "copied", "changed", "unchanged"]);
 const objectId = (value) => typeof value === "string" && /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i.test(value) && !/^0+$/.test(value);
 const safePath = (value) => typeof value === "string" && value.length > 0
   && !/[\\\0-\x1f\x7f]/u.test(value)
   && value.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
-const full = () => ({ lane: "full", core: true, desktop_smoke: true, den_api: true, snapshot: true, docs: true, den_contract: true });
+const full = () => ({ lane: "full", core: true, den_api: true, snapshot: true, docs: true });
 
 function changesFrom(files) {
   if (!Array.isArray(files)) return null;
@@ -46,21 +47,19 @@ function changesFrom(files) {
 }
 
 /** A null/incomplete listing or failed input calculation selects every check. */
-export function classifyCiChanges({ eventName, files, expectedCount }, isAffected) {
-  if (eventName === "schedule" || eventName === "workflow_dispatch") return full();
-  if (eventName !== "pull_request" && eventName !== "push") return full();
+export function classifyCiChanges({ eventName, files }, isAffected) {
+  // Only dev pushes are narrowed; schedules, manual runs and anything
+  // unexpected (this workflow no longer runs on PRs) run every check.
+  if (eventName !== "push") return full();
   const changes = changesFrom(files);
   if (!changes) return full();
-  if (eventName === "pull_request" && (!Number.isSafeInteger(expectedCount)
-    || expectedCount < 0 || expectedCount > 3000 || expectedCount !== changes.length
-    || changes.some((file) => !STATUSES.has(file.status)))) return full();
 
-  // Push diffs are --no-renames paths; PRs carry status and both rename ends.
-  // A deleted snapshot fails validation instead of silently passing a fast lane.
+  // Push diffs are --no-renames paths. A deleted snapshot fails validation
+  // instead of silently passing a fast lane.
   const snapshotOnly = changes.length === 1 && changes[0].filename === SNAPSHOT
     && !changes[0].previous_filename
-    && (changes[0].status === "modified" || (eventName === "push" && changes[0].status === undefined));
-  if (snapshotOnly) return { lane: "snapshot", core: false, desktop_smoke: false, den_api: false, snapshot: true, docs: false, den_contract: false };
+    && (changes[0].status === "modified" || changes[0].status === undefined);
+  if (snapshotOnly) return { lane: "snapshot", core: false, den_api: false, snapshot: true, docs: false };
 
   const paths = [...new Set(changes.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean)))];
   const docsOnly = paths.length > 0 && paths.every((path) => path.startsWith("packages/docs/"));
@@ -70,38 +69,35 @@ export function classifyCiChanges({ eventName, files, expectedCount }, isAffecte
     return result;
   };
   try {
-    if (eventName === "pull_request") {
-      if (docsOnly) return { lane: "docs", core: false, desktop_smoke: affected("desktop-smoke"), den_api: false, snapshot: false, docs: true, den_contract: false };
-      // Every non-docs PR runs the unit tests and the desktop build check. The
-      // slow suites run only when their inputs change: the packaged desktop
-      // (desktop shell, embedded server, engine pins, dependencies; dev pushes
-      // package for every desktop input), the MySQL-backed Den API tests, and
-      // the generated API contract. A docs-affecting workflow/helper or mixed
-      // PR still exercises docs validation before merge.
-      return {
-        lane: "full", core: true,
-        desktop_smoke: affected("desktop-package"),
-        den_api: affected("den-api-tests"),
-        snapshot: false,
-        docs: affected("docs"),
-        den_contract: affected("den-contract"),
-      };
-    }
     const core = affected("core");
     const selected = {
       core,
-      desktop_smoke: affected("desktop-smoke"),
-      // Dev pushes run the Den API security tests whenever unit tests run.
+      // Dev pushes run the full Den API security suite whenever unit tests run.
       den_api: core,
       snapshot: affected("models"),
       docs: affected("docs"),
-      // Dev pushes retain the dedicated Generated Den SDK / API Contract
-      // workflows. Unknown diffs above still fail open to all checks here.
-      den_contract: false,
     };
     return { lane: docsOnly ? "docs" : CHECKS.some((check) => selected[check]) ? "affected" : "none", ...selected };
   } catch {
     return full();
+  }
+}
+
+/** PR quick check: which conditional quick jobs run. Unknown or incomplete diffs select them. */
+export function classifyQuickChanges({ eventName, files, expectedCount }, isAffected) {
+  // Dev pushes run the full suites in "Build and core checks"; a manual run checks everything.
+  if (eventName === "push") return { den_quick: false };
+  if (eventName !== "pull_request") return { den_quick: true };
+  const changes = changesFrom(files);
+  if (!changes || !Number.isSafeInteger(expectedCount) || expectedCount < 0 || expectedCount > 3000
+    || expectedCount !== changes.length || changes.some((file) => !STATUSES.has(file.status))) return { den_quick: true };
+  const paths = [...new Set(changes.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean)))];
+  try {
+    const result = isAffected("den-api-tests", paths);
+    if (typeof result !== "boolean") throw new Error("Invalid input selection for den-api-tests");
+    return { den_quick: result };
+  } catch {
+    return { den_quick: true };
   }
 }
 
@@ -138,9 +134,8 @@ export function pushChanges({ base, head, readDiff, fetchBase }) {
 }
 
 /** The stable required context must check the actual booleans, not a lane label. */
-export function assertSelectedChecks({ classification, staticChecks, selected, results }) {
+export function assertSelectedChecks({ classification, selected, results }) {
   if (classification !== "success") throw new Error("Changed-file classification did not succeed; blocking merge.");
-  if (staticChecks !== "success") throw new Error("Independent static checks did not pass; blocking merge.");
   const jobs = Object.keys(REQUIRED_JOBS);
   for (const [values, keys] of [[selected, CHECKS], [results, jobs]]) {
     if (!values || Object.keys(values).length !== keys.length || Object.keys(values).some((key) => !keys.includes(key))) {
@@ -157,5 +152,27 @@ export function assertSelectedChecks({ classification, staticChecks, selected, r
     const value = selected[REQUIRED_JOBS[job]];
     const expected = value === true || value === "true" ? "success" : "skipped";
     if (results[job] !== expected) throw new Error(`${job}: expected ${expected}, received ${results[job]}; blocking merge.`);
+  }
+}
+
+/** The PR quick check's required context: always-run checks pass, selected ones pass, unselected ones skip. */
+export function assertQuickChecks({ classification, always, selected, results }) {
+  if (classification !== "success") throw new Error("Changed-file classification did not succeed; blocking merge.");
+  if (!always || Object.keys(always).length === 0) throw new Error("Missing always-run quick checks; blocking merge.");
+  for (const [check, result] of Object.entries(always)) {
+    if (result !== "success") throw new Error(`${check}: expected success, received ${result}; blocking merge.`);
+  }
+  for (const values of [selected, results]) {
+    if (!values || Object.keys(values).length !== QUICK_CHECKS.length || Object.keys(values).some((key) => !QUICK_CHECKS.includes(key))) {
+      throw new Error("Missing or unexpected selected-check outputs; blocking merge.");
+    }
+  }
+  for (const check of QUICK_CHECKS) {
+    const value = selected[check];
+    if (value !== true && value !== false && value !== "true" && value !== "false") {
+      throw new Error(`Invalid selection for ${check}; blocking merge.`);
+    }
+    const expected = value === true || value === "true" ? "success" : "skipped";
+    if (results[check] !== expected) throw new Error(`${check}: expected ${expected}, received ${results[check]}; blocking merge.`);
   }
 }

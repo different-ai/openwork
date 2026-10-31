@@ -54,10 +54,10 @@ If it passes on `dev`, the assertion is looser than the change: tighten it.
 
 ## 5. Hand it over
 
-Open the PR with `open-a-pr`. CI runs your proof and the core-chat journey on
-the PR head and posts the evidence; the other core journeys run on every `dev`
-push and nightly ("Core journeys"), and on a PR only when it changes them. Name the proof and its before → after in
-the PR's Evidence section.
+Open the PR with `open-a-pr`. PRs run only the quick check; run your proof
+yourself before opening it (or `gh workflow run pr-proof.yml --ref <branch> -f
+pr=<number>`). The core journeys run on every `dev` push and nightly. Name the
+proof and its before → after in the PR's Evidence section.
 
 ## The nine core journeys (feature map)
 

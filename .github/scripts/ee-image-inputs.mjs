@@ -67,7 +67,8 @@ export function publisherVersion({ root = ROOT, ref = "HEAD" } = {}) {
 
 /** A surviving publishing queue holder reconciles HEAD, including manual dev publishes. */
 export function sourceDecision({ eventName, ref, publish, sha, latestSha, expectedPublisher, latestPublisher }) {
-  if (typeof publish !== "boolean" || !["push", "workflow_dispatch", "pull_request"].includes(eventName) || (publish && eventName === "pull_request")) {
+  // Nightly runs and PR builds only verify; they never publish.
+  if (typeof publish !== "boolean" || !["push", "workflow_dispatch", "pull_request", "schedule"].includes(eventName) || (publish && ["pull_request", "schedule"].includes(eventName))) {
     throw new Error("Image publication mode/event is unavailable or invalid");
   }
   if (!objectIdValid(sha)) throw new Error("Build source revision is unavailable");

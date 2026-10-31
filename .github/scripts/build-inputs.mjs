@@ -38,7 +38,7 @@ const APP_SMOKE_HARNESS = [
   "evals/pnpm-workspace.yaml", "evals/vitest*.ts", "evals/tsconfig*.json",
 ];
 const PACKAGED_SMOKE_CI = [
-  CI_WORKFLOW, ".github/scripts/classify-ci-changes.mjs", ".github/actions/setup-tests/**", ".github/actions/setup-browser/**",
+  ".github/workflows/packaged-smoke.yml", ".github/actions/setup-tests/**", ".github/actions/setup-browser/**",
 ];
 const snapshots = new Map();
 
@@ -152,16 +152,8 @@ export function buildInputPatterns(target, options = {}) {
     case "headless-runner": patterns = [...runner(), ...copies("packaging/docker/Dockerfile.headless-runner"), EE_WORKFLOW, EE_SELECTION]; break;
     case "workbot": patterns = [...workbot(), ...copies("packaging/docker/Dockerfile.workbot"), EE_WORKFLOW, EE_SELECTION]; break;
     case "desktop": patterns = desktop(); break;
-    // Everything the packaged desktop contains, for dev pushes.
+    // Everything the packaged desktop contains.
     case "desktop-smoke": patterns = [...desktop(), ...PACKAGED_SMOKE_CI, ...APP_SMOKE_HARNESS]; break;
-    // PRs: the desktop shell, its embedded server and engine pins, dependencies
-    // (lockfile and manifests via SHARED) and the smoke harness. App UI and
-    // shared packages are typechecked and bundled on every PR and packaged on
-    // every dev push.
-    case "desktop-package": patterns = [
-      "apps/desktop/**", "apps/server/**", "packages/opencode-plugin/**", "constants.json", ...EMBEDDED_DOCS,
-      ...PACKAGED_SMOKE_CI, ...APP_SMOKE_HARNESS,
-    ]; break;
     case "runtime": patterns = [
       ...closure("@openwork/app", "openwork-server"), "packages/opencode-plugin/**", "packages/documents/**",
       "apps/desktop/package.json", "constants.json", WORKSPACE_BUILD,

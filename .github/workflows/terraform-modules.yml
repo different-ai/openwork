@@ -1,7 +1,10 @@
 name: Terraform modules
 
+# Not on PRs (only the quick check runs there): dev pushes that change a
+# module, and manual runs.
 on:
-  pull_request:
+  workflow_dispatch:
+  push:
     branches: [dev]
     paths:
       - "infra/terraform/modules/**"
@@ -12,8 +15,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: terraform-modules-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: terraform-modules-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   changes:
@@ -26,20 +29,27 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Select changed modules against PR base
+      # The pushed range; a manual run (or an unknown base) checks every module.
+      - name: Select changed modules in the pushed range
         id: diff
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event_name == 'push' && github.event.before || 'MANUAL' }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           python3 - <<'PY'
           import json, os, subprocess
           modules = ["openwork-aws-ecs", "openwork-gcp-cloud-run", "openwork-azure-container-apps"]
-          paths = subprocess.check_output([
-              "git", "diff", "--name-only", "--no-renames", "-z", os.environ["BASE_SHA"] + "..." + os.environ["HEAD_SHA"]
-          ]).decode().split("\0")
+          base = os.environ["BASE_SHA"]
+          try:
+              if base == "MANUAL" or not base.strip("0"):
+                  raise ValueError("no pushed range")
+              paths = subprocess.check_output([
+                  "git", "diff", "--name-only", "--no-renames", "-z", base + "..." + os.environ["HEAD_SHA"]
+              ]).decode().split("\0")
+          except (subprocess.CalledProcessError, ValueError):
+              paths = None  # unknown range: verify every module
           shared = {".github/workflows/terraform-modules.yml", "infra/terraform/.trivyignore.yaml"}
-          selected = [m for m in modules if shared.intersection(paths) or any(
+          selected = [m for m in modules if paths is None or shared.intersection(paths) or any(
               p.startswith("infra/terraform/modules/" + m + "/") for p in paths
           )]
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:

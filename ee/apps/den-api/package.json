@@ -22,8 +22,10 @@
     "migrate:skills-to-plugins": "pnpm run build:den-db && tsx scripts/migrate-skills-to-plugins.ts",
     "seed:demo-org": "pnpm run build:den-db && OPENWORK_DEV_MODE=${OPENWORK_DEV_MODE:-1} DATABASE_URL=${DATABASE_URL:-mysql://root:password@127.0.0.1:3306/openwork_den} DEN_DB_ENCRYPTION_KEY=${DEN_DB_ENCRYPTION_KEY:-local-dev-db-encryption-key-please-change-1234567890} BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-local-dev-secret-not-for-production-use!!} BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:${DEN_WEB_PORT:-3005}} tsx --conditions=development scripts/seed-demo-org.ts",
     "start": "sh scripts/start.sh",
+    "typecheck": "pnpm --filter @openwork/mcp-apps build && tsc -p tsconfig.json --noEmit",
     "test": "node --conditions=development --import tsx --test test/*.test.ts",
     "test:api": "node --conditions=development --import tsx --test test/api/*.api.test.ts",
+    "test:api:security": "node --conditions=development --import tsx --test test/api/admin-security.api.test.ts test/api/audit-secrets.api.test.ts test/api/auth-rate-limits.api.test.ts test/api/feature-outcomes.api.test.ts test/api/ga-shared-roles.api.test.ts test/api/gateway-keys.api.test.ts test/api/mcp-oauth.api.test.ts test/api/mcp-policy.api.test.ts test/api/me-invitations.api.test.ts test/api/member-api-keys.api.test.ts test/api/member-features.api.test.ts test/api/oauth-token-rate-limit.api.test.ts test/api/session-token-hashing.api.test.ts test/api/skill-access.api.test.ts test/api/tenant-isolation.api.test.ts test/api/workbot-settings-permissions.api.test.ts",
     "test:api:shard": "node --conditions=development --import tsx --test --test-shard=${DEN_API_TEST_SHARD:-1/1} test/api/*.api.test.ts"
   },
   "dependencies": {

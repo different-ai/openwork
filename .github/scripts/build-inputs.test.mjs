@@ -9,7 +9,7 @@ import { APP_SMOKE, buildFingerprint, buildInputPatterns, changedFiles, isBuildA
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const images = ["den-api", "den-web", "inference", "client-web", "headless-runner", "workbot"];
-const targets = [...images, "native-den-api", "native-inference", "native-workbot", "desktop", "desktop-smoke", "core", "runtime", "sdk", "den-contract", "den-api-tests", "desktop-package", "api-docs", "i18n", "review", "helm", "swift"];
+const targets = [...images, "native-den-api", "native-inference", "native-workbot", "desktop", "desktop-smoke", "core", "runtime", "sdk", "den-contract", "den-api-tests", "api-docs", "i18n", "review", "helm", "swift"];
 
 for (const target of targets) {
   test(`landing content is not a ${target} input`, () => {
@@ -218,6 +218,5 @@ test("the packaged smoke selects every evals file app-smoke imports", () => {
   assert.deepEqual([...seen].sort(), [...APP_SMOKE].sort(), "update APP_SMOKE in build-inputs.mjs");
   for (const file of seen) {
     assert.equal(isBuildAffected("desktop-smoke", [file]), true, file);
-    assert.equal(isBuildAffected("desktop-package", [file]), true, file);
   }
 });

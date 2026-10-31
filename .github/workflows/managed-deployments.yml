@@ -1,7 +1,10 @@
 name: Managed Deployments
 
+# Not on PRs (only the quick check runs there): dev pushes that change the
+# installers or their Terraform, and manual runs.
 on:
-  pull_request:
+  push:
+    branches: [dev]
     paths:
       - "infra/managed-deployments/**"
       - "infra/terraform/modules/openwork-aws-ecs/**"
