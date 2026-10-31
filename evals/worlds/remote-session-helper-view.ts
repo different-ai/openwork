@@ -25,6 +25,10 @@ export const LATEST_STEP = "Read script.md";
 export const STEER = "Use the new logo in the intro.";
 export const DRAFT = "Also export a square version";
 export const PARENT_DRAFT = "Next, the launch email";
+/** The person's next turn: more work for the task already running on the other computer. */
+export const FOLLOW_UP_CHAT_PROMPT = "Ask my other computer to add captions to the videos as well.";
+export const FOLLOW_UP_CHAT_REPLY = "I asked your other computer to add captions too.";
+export const FOLLOW_UP = "Add captions to every video.";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -167,12 +171,25 @@ async function startRunner(seed: Seed, input: { apiUrl: string; member: Paramete
  * command to a registered runner, and the task reads that runner's transcript.
  */
 export async function remoteSessionHelperViewWorld(seed: Seed) {
+  return remoteSessionWorld(seed, { followUp: false });
+}
+
+/**
+ * The same member and computer, where the chat's next turn sends the running
+ * task more work (remote-session:send, answered with Den's real acceptance
+ * receipt for that task's session) instead of starting a new one.
+ */
+export async function remoteSessionFollowUpWorld(seed: Seed) {
+  return remoteSessionWorld(seed, { followUp: true });
+}
+
+async function remoteSessionWorld(seed: Seed, options: { followUp: boolean }) {
   const { den, webPort } = await denForAppWeb(seed, { web: false, org: { name: "Launch team", admin: { name: "Launch Owner" } } });
   const orgId = await enableOrganizationCapabilities(seed, den.admin, { remoteSessionHelperView: true, composerSubagentTracker: true });
 
   const runner = await startRunner(seed, { apiUrl: den.ref.apiUrl, member: den.admin, orgId });
   try {
-    return await withRunner(seed, { den, webPort, orgId, runner });
+    return await withRunner(seed, { den, webPort, orgId, runner, followUp: options.followUp });
   } catch (error) {
     await runner.stop();
     throw error;
@@ -181,9 +198,9 @@ export async function remoteSessionHelperViewWorld(seed: Seed) {
 
 async function withRunner(
   seed: Seed,
-  { den, webPort, orgId, runner }: {
+  { den, webPort, orgId, runner, followUp }: {
     den: Awaited<ReturnType<typeof denForAppWeb>>["den"]; webPort: number; orgId: string
-    runner: Awaited<ReturnType<typeof startRunner>>
+    runner: Awaited<ReturnType<typeof startRunner>>; followUp: boolean
   },
 ) {
   const engine = "v1";
@@ -214,14 +231,34 @@ async function withRunner(
   const created = await capability("remote-session:create", createBody);
   if (typeof created.commandId !== "string") throw new Error(`remote-session:create failed: ${JSON.stringify(created).slice(0, 400)}`);
 
+  // The follow-up the chat's next turn sends: Den's real receipt once the computer started the task's session.
+  let sent: Record<string, unknown> | null = null;
+  if (followUp) {
+    let sessionId: string | null = null;
+    for (const deadline = Date.now() + 60_000; !sessionId && Date.now() < deadline;) {
+      const status = await capability("remote-session:status", { threads: [{ commandId: created.commandId }] });
+      const thread = Array.isArray(status.threads) ? status.threads[0] : null;
+      sessionId = isRecord(thread) && typeof thread.sessionId === "string" ? thread.sessionId : null;
+      if (!sessionId) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (!sessionId) throw new Error("The other computer never started the task's session");
+    sent = await capability("remote-session:send", { sessionId, prompt: FOLLOW_UP });
+    if (sent.state !== "accepted" || sent.commandId !== created.commandId) throw new Error(`remote-session:send was not accepted: ${JSON.stringify(sent).slice(0, 400)}`);
+  }
+
   const inputSchema = { type: "object", properties: { name: { type: "string" }, body: { type: "object" } } };
   const mock = seed.mock({ isolatedProcessEnv: true, allowUnauthenticatedMcp: true, tools: [
     { name: "execute_capability", description: "Run an OpenWork capability.", whenArguments: { name: "remote-session:create" }, inputSchema,
       result: { content: [{ type: "text", text: JSON.stringify(created) }], structuredContent: created } },
+    ...(sent ? [{ name: "execute_capability", description: "Run an OpenWork capability.", whenArguments: { name: "remote-session:send" }, inputSchema,
+      result: { content: [{ type: "text" as const, text: JSON.stringify(sent) }], structuredContent: sent } }] : []),
   ], agentWorkloads: [
     { promptMarker: CHAT_PROMPT, latestUserTurn: true, finalReply: CHAT_REPLY, steps: [
       { tool: "execute_capability", arguments: { name: "remote-session:create", body: createBody } },
     ] },
+    ...(sent ? [{ promptMarker: FOLLOW_UP_CHAT_PROMPT, latestUserTurn: true, finalReply: FOLLOW_UP_CHAT_REPLY, steps: [
+      { tool: "execute_capability", arguments: { name: "remote-session:send", body: { sessionId: sent.sessionId, prompt: FOLLOW_UP } } },
+    ] }] : []),
   ] });
 
   const tmp = seed.tmpPath("remote-session-helper-view");
@@ -243,7 +280,7 @@ async function withRunner(
   }, engine);
   const session = await seed.session(app, { title: CHAT_TITLE });
   return {
-    app, den, workspace, session, commandId: created.commandId, runnerReads: runner.reads, followUps: runner.followUps, stops: runner.stops,
+    app, den, workspace, session, commandId: created.commandId, mock: witness, runnerReads: runner.reads, followUps: runner.followUps, stops: runner.stops,
     async [Symbol.asyncDispose]() { await runner.stop(); },
   };
 }
