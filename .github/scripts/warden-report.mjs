@@ -177,6 +177,10 @@ export function securityFindings(report, raw) {
       path: typeof finding.location?.path === "string" ? finding.location.path.slice(0, 240) : null,
       line: Number.isSafeInteger(finding.location?.startLine) && finding.location.startLine > 0
         ? finding.location.startLine : null,
+      // For the Warden fixer (docs/ci/warden-fixer.md); display ignores them.
+      confidence: ["high", "medium", "low"].includes(finding.confidence) ? finding.confidence : null,
+      suggested_fix: typeof finding.suggestedFix?.diff === "string" && finding.suggestedFix.diff.length <= 20_000
+        ? { description: String(finding.suggestedFix.description ?? "").slice(0, 500), diff: finding.suggestedFix.diff } : null,
     })),
   };
 }
