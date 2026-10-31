@@ -13,7 +13,11 @@ test("a member reads their agent's turn as plain sentences without organization 
     await user.click({ role: "menuitem", label: "Settings" });
     await user.click({ role: "button", label: "Preferences" });
     await user.click({ role: "switch", label: "Show model reasoning" });
-    await user.press("Escape");
+    await probe.eventually(() => probe.dom('[role="switch"][aria-label="Show model reasoning"][aria-checked="true"], [role="switch"][aria-label="Show model reasoning"][data-checked]'), {
+      within: 10_000, label: "Show model reasoning is on", until: (value) => value.elements.length === 1,
+    });
+    // Settings is a page, not a dialog: return to the conversation the way a person does.
+    await user.click({ role: "button", label: "Back to app" });
     await user.see("composer", { editable: true });
     await user.type("composer", RAIL_PROMPT);
     await probe.eventually(() => probe.dom('button[aria-label="Run task"]:not(:disabled)'), {
