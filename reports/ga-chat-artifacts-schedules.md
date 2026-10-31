@@ -1,47 +1,36 @@
-# Chat, artifacts and Automation schedules: GA handoff
+# Chat, Artifacts and Automation schedules: GA status
 
 ## Scope
 
-Retire these six rollout keys, remove their product checks and old UI branches, keep fixed-true response-only compatibility for published clients, and ignore legacy operator/organization/member overrides:
+Six rollout keys are retired. Their product checks and old UI branches are gone; published clients still receive each key as a fixed `true` (response-only compatibility), and legacy operator, organization and member overrides are accepted and ignored.
 
-- `liveReplyModel`
-- `composerSubagentTracker`
-- `textActivityRail`
-- `artifactsListFirst`
-- `automationIntervalSchedules`
-- `automationCalendarTriggers`
+| Feature | Former key | Where it now lives |
+| --- | --- | --- |
+| Model on the Working line while a reply streams | `liveReplyModel` | `message-list.tsx` (`LoadingMessage`), v2 model forwarding in `opencode-v2-adapter.ts` |
+| Agents list above the composer | `composerSubagentTracker` | `composer-subagent-tracker.tsx`, `agent-tracker-row.tsx` |
+| Text-first chat activity | `textActivityRail` | `activity-rail.tsx`, `text-tool-aggregate-group.tsx`, `github-references.ts` |
+| List-first Artifacts with retained live views | `artifactsListFirst` | `artifacts-page.tsx`, `retained-artifact-surface.tsx`, `built-app-pin-button.tsx` |
+| Every-few-hours Automation schedules | `automationIntervalSchedules` | graduated on `dev` by #6774; this branch removes no further code |
+| Automations before/after Google Calendar meetings | `automationCalendarTriggers` | graduated on `dev` by #6774; this branch removes the leftover always-on per-owner enable hook |
 
-The first three implementations were already on the newer `origin/dev` baseline. This branch also carries the list-first Artifacts implementation and its test follow-up from the existing feature branch. The original workspace's unrelated uncommitted changes were not copied or modified.
+Calendar triggers remain Cloud-only and need a connected Google Calendar with calendar access; an unreadable calendar puts the Automation in "needs attention". Old-client schedule-kind negotiation is unchanged. No production data is changed and historical feature-usage rows are kept.
 
-Calendar triggers remain Cloud-only and require a connected Google Calendar. Existing Automation authority, placement and old-client schedule-kind negotiation remain enforced. No production data was changed. Historical feature records are not deleted.
+## Changes found during review
 
-## Verification before remote handoff
+- On OpenCode v2 the Working-line hover showed no model while a reply streamed: v2 names the model only on `session.step.started`, which the adapter dropped. Fixed; `apps/app/tests/live-reply-model-v2.test.ts` fails without the fix and passes with it.
+- The text-activity proof fixture used v1 argument names for v2 `write`/`edit` (`path` is required) and pressed Escape to leave the Settings page. Both fixed; the proof's assertions are unchanged.
+- Rebased onto `dev` after #6774, #6790 and #6792 landed overlapping work; `dev`'s Automation and Agents-list code was kept.
+- `workbot-luna-default.api.test.ts` was red on `dev` f72b0a48c1 (clean control, same failure): with the Gateway unreadable, Workbot default readiness read `unavailable` instead of `unverified`. Fixed in `workbot/model.ts`; all Workbot API tests pass.
 
-- `pnpm typecheck`: passed on Node 24.22.1.
-- `pnpm features:check`: passed.
-- `pnpm --filter @openwork/features test`: 22 passed, no skips.
-- API-first feature response compatibility: 2 passed.
-- Focused chat/activity/composer unit tests: 50 passed across 8 files (subagent).
-- Artifact creation-row: 7 passed; pinning: 8 passed; artifacts page: 9 passed.
-- Backend calendar-source, interval/calendar API, model-authority and availability checks: 19 passed (subagent; its Node 24.15 run emitted engine warnings; rerun under supported Node for final evidence).
-- Feature outcomes unit: 7 passed; frontend feature-usage model: 7 passed (subagent).
-- Feature outcomes API: 6 passed on Node 24.22.1 with an isolated MySQL 8.4 container.
-- Evals lint: 124 files, no errors; evals typecheck: 477 files passed (subagent, before the final text-rail proof adjustment).
-- Headless product proofs, each cold booted with no schedule/artifact/chat rollout overrides: automation-schedule-triggers, artifacts-list-first, composer-subagent-tracker each passed (1 test each, no skips).
-- `git diff --check`: passed.
+## Verification (local, Node 24.22.1, OpenCode v2 2.2.0 pinned)
 
-### Unfinished verification
+- App typecheck, Den API typecheck, `pnpm features:check`: pass.
+- App unit tests for the touched areas (run per file): pass.
+- Den API: feature-response, calendar-trigger source, interval/calendar/feature-outcomes API tests, all Workbot API and unit tests: pass.
+- Headless proofs with no rollout overrides: text-activity-rail passes locally and in CI; artifacts-list-first and composer-subagent-tracker pass in CI.
 
-The text-activity-rail product proof is not green yet. Initial fixture attempted a native `openwork_query` tool that is now Code Mode-only; the fixture now invokes it through `execute`. The next run reached a rendered text-first summary and two inline OpenWork marks, but failed its expected visible `Thought` row (reasoning is off by default). The proof now explicitly enables **Show model reasoning** through Settings before the task; that version was not verified before handoff. The earlier screenshot also showed three failed local tool steps, so inspect the fixture's current v2 read/edit argument shapes and technical details instead of weakening assertions. Do not claim this is pre-existing without running a clean control.
+## Not covered
 
-No before/after baseline proof has been run yet. Overall verification remains **Incomplete** until the outstanding proof, remote review, and video evidence are complete.
-
-## Continue on the requested remote machine/model
-
-Use the exact pushed branch and commit; preserve unrelated remote work using a fresh worktree. Verify the session is actually running Claude Opus 5.5, not a default or fallback model. Review changes and fix any defects with meaningful tests. Re-run final checks on the final tree.
-
-Record six separate real-product videos, one for each scope item above. Demonstrate the behavior without enabling its retired flag. Keep screens legible, use generic fixture data, show real interactions and outcomes, and do not represent static screenshots or simulated motion as a real recording. Capture the streaming hover while the turn is still active, Agents list states and actions, text activity and expanded output, list-first artifact opening/pinning/retained state, interval schedule creation, and Cloud-only meeting trigger creation with connected-calendar behavior. Report any unavailable prerequisite honestly. Review every video before sharing and provide a manifest with the commit, runtime/model identity, check verdicts, and video paths/links. Do not merge or deploy without further instruction.
-
-## Deployment / rollback notes
-
-API-first upgrade is supported by fixed true compatibility keys in `feature-response.ts`; newer clients need no rollout keys. Retired Helm settings are accepted-and-ignored with warnings. Deploy the API and compatible desktop/web clients; no destructive data migration is required. Rollback is a code revert, not a retired kill switch. Before deployment, finish a read-only effective-state comparison (deployment defaults, rollout/kill state, organization and member overrides) and check that no unrelated authorization or runtime prerequisites changed. Production dry-run discovery was started but was not completed in this session.
+- Real-product recordings could not show the Agents list "needs you" state with Review: on v2 the general helper is not offered the `question` tool, and the fixture's command-approval rule did not reach helpers. Review is covered by the composer-subagent-tracker proof, which drives those states through a development-only control.
+- A real Google Calendar connection was not available in the isolated test organization, so no meeting-triggered run was recorded.
+- The production effective-state comparison (deployment defaults, rollout and kill state, organization and member overrides) was not run.
