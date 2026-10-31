@@ -1629,9 +1629,20 @@ export function translateV2Event(
   if (type === "session.step.started") {
     if (isRetiredV2Event(state, value, properties)) return null;
     if (sessionID) trackV2Execution(state, value, properties);
-    return sessionID ? [{ type: "session.execution.progress", properties: {
-      sessionID, sequence: readNumber(value.durable, "seq"),
-    } }] : null;
+    if (!sessionID) return null;
+    // A step names its reply's model only here; later text and tool events carry no model.
+    // Forwarding it lets the Working line show the model while the reply is still being written.
+    const messageID = readMessageID(properties);
+    const modelInfo = mapV2ReplyModel(properties);
+    return [
+      ...(messageID && Object.keys(modelInfo).length ? [{ type: "message.updated", properties: { info: {
+        id: messageID, sessionID, role: "assistant", ...modelInfo,
+        time: { created: readNumber(properties, "started") ?? toolEventTimestamp(value, properties) },
+      } } }] : []),
+      { type: "session.execution.progress", properties: {
+        sessionID, sequence: readNumber(value.durable, "seq"),
+      } },
+    ];
   }
 
   const kind = type.startsWith("session.reasoning.") || type.startsWith("session.next.reasoning.") ? "reasoning" : "text";
