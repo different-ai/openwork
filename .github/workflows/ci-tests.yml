@@ -117,9 +117,10 @@ jobs:
       - name: Check outbound access manifest
         run: node scripts/check-outbound-access.mjs
 
-  # Unit tests run as parallel jobs so the slowest finishes in about the time a
-  # single step group takes. Every job keeps its original steps and assertions;
-  # openwork-tests-required requires each one whenever `core` is selected.
+  # Unit tests run as parallel jobs of about 25s of work each, so the slowest
+  # finishes in about the time one step group takes. Every job keeps its
+  # original steps and assertions; openwork-tests-required requires each one
+  # whenever `core` is selected.
   openwork-tests-app:
     name: Unit tests (app, server and desktop)
     needs: classify-changes
@@ -206,8 +207,8 @@ jobs:
       - name: Test native MCP readiness and Stop ownership
         run: pnpm --filter openwork-server test:readiness
 
-  openwork-tests-ee:
-    name: Unit tests (headless, Workbot and Den web)
+  openwork-tests-headless:
+    name: Unit tests (headless computer and runner)
     needs: classify-changes
     if: needs.classify-changes.outputs.core == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
@@ -218,8 +219,6 @@ jobs:
       - name: Setup tests
         id: setup
         uses: ./.github/actions/setup-tests
-      - name: Check Den web hook order
-        run: pnpm --filter @openwork-ee/den-web lint
       - name: Build the shared headless protocol
         run: pnpm --filter @openwork-ee/headless-protocol build
       - name: Typecheck the headless runner
@@ -234,6 +233,21 @@ jobs:
         run: |
           pnpm --filter @openwork-ee/headless-runner test:conversation
           pnpm --filter @openwork-ee/headless-runner test:transfer
+
+  openwork-tests-workbot:
+    name: Unit tests (Workbot, Den web and sandboxes)
+    needs: classify-changes
+    if: needs.classify-changes.outputs.core == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup tests
+        id: setup
+        uses: ./.github/actions/setup-tests
+      - name: Check Den web hook order
+        run: pnpm --filter @openwork-ee/den-web lint
       - name: Test Workbot sign-in and adoption boundary
         run: |
           pnpm --filter @openwork-ee/workbot test:auth
@@ -251,27 +265,6 @@ jobs:
           # Den web does not install tsx in CI; keep its JSX config with the API-owned loader.
           TSX_TSCONFIG_PATH=../den-web/tsconfig.json pnpm --filter @openwork-ee/den-api exec node --conditions=development --import tsx --test '../den-web/components/diagnostics/*.test.ts' '../den-web/components/diagnostics/*.test.tsx' '../den-web/components/admin/services/*.test.ts' '../den-web/components/admin/feature-change.test.ts' '../den-web/components/admin/admin-organization-feature-usage.test.ts' '../den-web/components/admin/features/feature-usage-model.test.ts' '../den-web/components/admin/control-center/control-center-model.test.ts' '../den-web/components/services/*.test.tsx' '../den-web/app/(den)/dashboard/_lib/diagnostics-access.test.ts' '../den-web/app/(den)/_lib/service-readiness.test.ts' '../den-web/app/(den)/dashboard/_components/workbot-proactive-section.test.tsx' '../den-web/app/(den)/dashboard/_components/my-agent.test.tsx' '../den-web/app/(den)/dashboard/_components/slack-connector-setup.test.tsx' '../den-web/app/(den)/dashboard/_components/provider-removal-usage-limits.test.tsx' '../den-web/app/(den)/dashboard/_components/connector-discovery-checks.test.tsx' '../den-web/app/(den)/dashboard/_components/connector-discovery-stream.test.ts' '../den-web/app/(den)/dashboard/_components/oauth-app-draft.test.ts' '../den-web/app/(den)/dashboard/_components/connector-setup-fields.test.tsx' '../den-web/app/(den)/dashboard/_components/connector-oauth-access.test.ts' '../den-web/app/(den)/dashboard/_components/tool-tester/result-presentation.test.ts' '../den-web/app/(den)/dashboard/_components/tool-tester/tool-call-inspector.test.tsx' '../den-web/app/(den)/dashboard/_components/auto-router-model.test.ts' '../den-web/app/(den)/_components/ui/chips-combobox.test.tsx'
           bun test apps/app/tests/deployment-service-readiness.test.ts apps/app/tests/opencode-zen-removal.test.ts apps/app/tests/activation-card-model.test.ts apps/app/tests/connector-readiness.test.ts apps/app/tests/control-undeclared-args.test.ts apps/app/tests/composer-session-references.test.ts apps/app/tests/session-title-marquee.test.ts
-
-  openwork-tests-den:
-    name: Unit tests (Den providers and sandboxes)
-    needs: classify-changes
-    if: needs.classify-changes.outputs.core == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Setup tests
-        id: setup
-        uses: ./.github/actions/setup-tests
-      # Uses the pinned OpenCode that Setup tests put on PATH.
-      - name: Run Den provider unit tests
-        run: |
-          pnpm --filter @openwork-ee/utils test
-          pnpm --filter @openwork/automations test
-          pnpm --filter @openwork-ee/den-api test
-          pnpm --filter @openwork-ee/den-api exec node --conditions=development --import tsx --test "../den-web/app/(den)/dashboard/_components/manual-oauth-draft.test.ts" "../den-web/app/(den)/dashboard/_components/connector-route.test.ts" "../den-web/app/(den)/dashboard/_components/connector-readiness.test.ts" "../den-web/app/(den)/dashboard/_components/my-agent-availability.test.ts" "../den-web/app/(den)/dashboard/_components/mcp-account-authorization-state.test.ts" "../den-web/app/(den)/dashboard/_components/mcp-authorization-url.test.ts" "../den-web/app/(den)/dashboard/_components/connector-picker-sign-in-note.test.ts" "../den-web/app/(den)/dashboard/_components/gateway-provider-models.test.ts" "../den-web/app/(den)/dashboard/_lib/workbot-entry.test.ts" "../den-web/app/(den)/_lib/billing-checkout.test.ts" "../den-web/app/(den)/_lib/plan-display.test.ts" "../den-web/app/(den)/_lib/org-boot-requests.test.ts" "../den-web/app/(den)/dashboard/_lib/workbot-team-link.test.ts" "../den-web/app/(den)/_lib/member-auth-routing.test.ts" "../den-web/app/(den)/_lib/last-sign-in.test.ts" "../den-web/app/api/_lib/signed-client-ip.test.ts"
-          pnpm --filter @openwork-ee/workbot test:model
       - name: Check sandbox contracts and adapters (no cloud resources)
         run: |
           pnpm --filter @openwork/sandbox build
@@ -292,6 +285,27 @@ jobs:
           pnpm --filter @openwork/sandbox-freestyle build
           pnpm --filter @openwork/sandbox-daytona build
           pnpm --dir evals exec vitest run --config vitest.config.ts --project pr packages/hosts/src/sandbox-daytona.test.ts packages/env/src/freestyle-sandbox-preview.test.ts packages/env/src/workbot-oauth-url.test.ts
+
+  openwork-tests-den:
+    name: Unit tests (Den providers)
+    needs: classify-changes
+    if: needs.classify-changes.outputs.core == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup tests
+        id: setup
+        uses: ./.github/actions/setup-tests
+      # Uses the pinned OpenCode that Setup tests put on PATH.
+      - name: Run Den provider unit tests
+        run: |
+          pnpm --filter @openwork-ee/utils test
+          pnpm --filter @openwork/automations test
+          pnpm --filter @openwork-ee/den-api test
+          pnpm --filter @openwork-ee/den-api exec node --conditions=development --import tsx --test "../den-web/app/(den)/dashboard/_components/manual-oauth-draft.test.ts" "../den-web/app/(den)/dashboard/_components/connector-route.test.ts" "../den-web/app/(den)/dashboard/_components/connector-readiness.test.ts" "../den-web/app/(den)/dashboard/_components/my-agent-availability.test.ts" "../den-web/app/(den)/dashboard/_components/mcp-account-authorization-state.test.ts" "../den-web/app/(den)/dashboard/_components/mcp-authorization-url.test.ts" "../den-web/app/(den)/dashboard/_components/connector-picker-sign-in-note.test.ts" "../den-web/app/(den)/dashboard/_components/gateway-provider-models.test.ts" "../den-web/app/(den)/dashboard/_lib/workbot-entry.test.ts" "../den-web/app/(den)/_lib/billing-checkout.test.ts" "../den-web/app/(den)/_lib/plan-display.test.ts" "../den-web/app/(den)/_lib/org-boot-requests.test.ts" "../den-web/app/(den)/dashboard/_lib/workbot-team-link.test.ts" "../den-web/app/(den)/_lib/member-auth-routing.test.ts" "../den-web/app/(den)/_lib/last-sign-in.test.ts" "../den-web/app/api/_lib/signed-client-ip.test.ts"
+          pnpm --filter @openwork-ee/workbot test:model
 
   openwork-tests-evals:
     name: Unit tests (test framework and contract tooling)
@@ -314,6 +328,19 @@ jobs:
           pnpm --dir evals exec vitest run --config vitest.config.ts --project pr ../apps/server/test/session-title-sigv4.vitest.test.ts
       - name: Check contract generation and commit-hook safety
         run: pnpm test:contracts
+
+  openwork-tests-evals-lint:
+    name: Unit tests (test framework lint and spec lint)
+    needs: classify-changes
+    if: needs.classify-changes.outputs.core == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup tests
+        id: setup
+        uses: ./.github/actions/setup-tests
       # About 20s. Runs on every PR so spec lint cannot drift;
       # it used to run only nightly, and debt piled up unnoticed.
       - name: Check the test framework (lint and spec lint)
@@ -762,7 +789,7 @@ jobs:
   # must succeed, every unselected check must be skipped, and static guards
   # always run. Classification failure/cancellation must never green-skip a gate.
   openwork-tests-required:
-    needs: [classify-changes, static-checks, openwork-tests-app, openwork-tests-ee, openwork-tests-den, openwork-tests-evals, openwork-tests-desktop-build, openwork-tests-build, den-api-security, validate-models-snapshot, validate-docs, den-contract]
+    needs: [classify-changes, static-checks, openwork-tests-app, openwork-tests-headless, openwork-tests-workbot, openwork-tests-den, openwork-tests-evals, openwork-tests-evals-lint, openwork-tests-desktop-build, openwork-tests-build, den-api-security, validate-models-snapshot, validate-docs, den-contract]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -785,9 +812,11 @@ jobs:
           DOCS: ${{ needs.classify-changes.outputs.docs }}
           DEN_CONTRACT: ${{ needs.classify-changes.outputs.den_contract }}
           CORE_APP_RESULT: ${{ needs.openwork-tests-app.result }}
-          CORE_EE_RESULT: ${{ needs.openwork-tests-ee.result }}
+          CORE_HEADLESS_RESULT: ${{ needs.openwork-tests-headless.result }}
+          CORE_WORKBOT_RESULT: ${{ needs.openwork-tests-workbot.result }}
           CORE_DEN_RESULT: ${{ needs.openwork-tests-den.result }}
           CORE_EVALS_RESULT: ${{ needs.openwork-tests-evals.result }}
+          CORE_EVALS_LINT_RESULT: ${{ needs.openwork-tests-evals-lint.result }}
           DESKTOP_BUILD_RESULT: ${{ needs.openwork-tests-desktop-build.result }}
           BUILD_RESULT: ${{ needs.openwork-tests-build.result }}
           DEN_API_RESULT: ${{ needs.den-api-security.result }}
@@ -811,9 +840,11 @@ jobs:
             },
             results: {
               core_app: env.CORE_APP_RESULT,
-              core_ee: env.CORE_EE_RESULT,
+              core_headless: env.CORE_HEADLESS_RESULT,
+              core_workbot: env.CORE_WORKBOT_RESULT,
               core_den: env.CORE_DEN_RESULT,
               core_evals: env.CORE_EVALS_RESULT,
+              core_evals_lint: env.CORE_EVALS_LINT_RESULT,
               desktop_build: env.DESKTOP_BUILD_RESULT,
               desktop_smoke: env.BUILD_RESULT,
               den_api: env.DEN_API_RESULT,

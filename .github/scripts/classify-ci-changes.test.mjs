@@ -296,7 +296,7 @@ test("a PR that skips the slow suites still requires every unit-test job", () =>
   const report = passingReport(pr([modified(landing)]));
   assert.equal(report.results.den_api, "skipped");
   assert.equal(report.results.desktop_smoke, "skipped");
-  for (const job of ["core_app", "core_ee", "core_den", "core_evals", "desktop_build"]) {
+  for (const job of ["core_app", "core_headless", "core_workbot", "core_den", "core_evals", "core_evals_lint", "desktop_build"]) {
     assert.equal(report.results[job], "success");
     assert.throws(() => assertSelectedChecks({ ...report, results: { ...report.results, [job]: "skipped" } }), new RegExp(job));
   }
@@ -343,7 +343,8 @@ test("cheap source guards have no unrelated install/build/classification depende
 
 test("jobs and the required context consume each real boolean, not a shared full lane", () => {
   const jobs = {
-    core_app: "openwork-tests-app", core_ee: "openwork-tests-ee", core_den: "openwork-tests-den", core_evals: "openwork-tests-evals",
+    core_app: "openwork-tests-app", core_headless: "openwork-tests-headless", core_workbot: "openwork-tests-workbot",
+    core_den: "openwork-tests-den", core_evals: "openwork-tests-evals", core_evals_lint: "openwork-tests-evals-lint",
     desktop_build: "openwork-tests-desktop-build", desktop_smoke: "openwork-tests-build", den_api: "den-api-security",
     snapshot: "validate-models-snapshot", docs: "validate-docs", den_contract: "den-contract",
   };

@@ -9,9 +9,11 @@ const CHECKS = ["core", "desktop_smoke", "den_api", "snapshot", "docs", "den_con
 // must succeed and every unselected job must be skipped.
 export const REQUIRED_JOBS = {
   core_app: "core",
-  core_ee: "core",
+  core_headless: "core",
+  core_workbot: "core",
   core_den: "core",
   core_evals: "core",
+  core_evals_lint: "core",
   desktop_build: "core",
   desktop_smoke: "desktop_smoke",
   den_api: "den_api",
