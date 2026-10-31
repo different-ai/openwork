@@ -9,6 +9,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   stat,
@@ -55,6 +56,8 @@ import {
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import { openChatWorkspaceFile, resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
+import { createOpenWithApplications, installedApplicationCommand } from "./open-with-applications.mjs";
+const openWithApplications = createOpenWithApplications();
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
 import { fetchFiniteDesktopHttp } from "./finite-http-fetch.mjs";
@@ -2395,6 +2398,8 @@ const desktopCommandHandlers = {
   "__getApplicationsForFile": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();
       if (!target) return [];
+      const canonicalTarget = await realpath(target).catch(() => null);
+      if (!canonicalTarget) return [];
       const platform = process.platform;
       const results = [];
 
@@ -2438,8 +2443,9 @@ const desktopCommandHandlers = {
                 const execMatch = content.match(/^Exec=(.+)$/m);
                 if (!nameMatch || !execMatch) continue;
                 const name = nameMatch[1].trim();
-                const appPath = execMatch[1].trim().replace(/%[fFuU]/g, "").trim();
-                if (!appPath) continue;
+                // The installed desktop entry is the identity. Never return its
+                // Exec string as an executable path controlled by the renderer.
+                const appPath = filePath;
                 let icon = null;
                 try {
                   const img = await app.getFileIcon(filePath, { size: "small" });
@@ -2452,6 +2458,7 @@ const desktopCommandHandlers = {
         }
       } catch {}
 
+      openWithApplications.remember(event.sender.id, canonicalTarget, results.map((application) => application.appPath));
       return results;
   },
   "__openWithApp": async (event, ...args) => {
@@ -2462,18 +2469,19 @@ const desktopCommandHandlers = {
       const decision = await resolveWorkspaceFileLaunch(workspaceRoot, requested);
       if (decision.ok === false) return decision.error;
       const target = decision.path;
-      const platform = process.platform;
+      if (!openWithApplications.allows(event.sender.id, target, appPath)) {
+        return "Choose an installed application from the file menu.";
+      }
+      const command = installedApplicationCommand(process.platform, appPath, target);
+      if (!command) return "This installed application cannot open files here.";
       try {
-        if (platform === "darwin") {
-          execFileSync("open", ["-a", appPath, target]);
-        } else if (platform === "linux") {
-          const child = spawn(appPath, [target], { detached: true, stdio: "ignore" });
-          child.unref();
-        } else {
-          return `Open with app is not supported on ${platform}`;
-        }
-      } catch (err) {
-        return String(err?.message ?? err);
+        // Both the command and installed app identifier are main-process
+        // choices. Never spawn a renderer-supplied executable or use a shell.
+        await new Promise((resolve, reject) => {
+          execFile(command.command, command.args, (error) => error ? reject(error) : resolve(undefined));
+        });
+      } catch {
+        return "This application could not open the file.";
       }
   },
   "__fetch": async (event, ...args) => {
