@@ -9,7 +9,7 @@ import { buildFingerprint, buildInputPatterns, changedFiles, isBuildAffected } f
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const images = ["den-api", "den-web", "inference", "client-web", "headless-runner", "workbot"];
-const targets = [...images, "native-den-api", "native-inference", "native-workbot", "desktop", "desktop-smoke", "core", "runtime", "sdk", "den-contract", "api-docs", "i18n", "review", "helm", "swift"];
+const targets = [...images, "native-den-api", "native-inference", "native-workbot", "desktop", "desktop-smoke", "core", "runtime", "sdk", "den-contract", "den-api-tests", "api-docs", "i18n", "review", "helm", "swift"];
 
 for (const target of targets) {
   test(`landing content is not a ${target} input`, () => {

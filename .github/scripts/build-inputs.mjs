@@ -137,8 +137,10 @@ export function buildInputPatterns(target, options = {}) {
     case "workbot": patterns = [...workbot(), ...copies("packaging/docker/Dockerfile.workbot"), EE_WORKFLOW, EE_SELECTION]; break;
     case "desktop": patterns = desktop(); break;
     case "desktop-smoke": patterns = [
-      ...desktop(), CI_WORKFLOW, ".github/actions/setup-tests/**", ".github/actions/setup-browser/**",
+      ...desktop(), CI_WORKFLOW, ".github/scripts/classify-ci-changes.mjs", ".github/actions/setup-tests/**", ".github/actions/setup-browser/**",
       "evals/bin/**", "evals/scripts/**", "evals/packages/**", "evals/core/app-smoke.e2e.test.ts",
+      // app-smoke's world and the harness it loads.
+      "evals/worlds/**", "evals/helpers/**", "evals/drivers/**", "evals/support/**", "evals/runner/**", "evals/fixtures/**",
       "evals/journeys.ts", "evals/config.ts", "evals/package.json", "evals/pnpm-lock.yaml",
       "evals/pnpm-workspace.yaml", "evals/vitest*.ts", "evals/tsconfig*.json",
     ]; break;
@@ -151,6 +153,14 @@ export function buildInputPatterns(target, options = {}) {
       "scripts/prune-daytona-dev-snapshots.mjs", ".github/workflows/dev-daytona-snapshot.yml",
     ]; break;
     case "den-contract": case "sdk": patterns = contract(); break;
+    // The MySQL-backed Den API tests (ee/apps/den-api/test/api) and the files
+    // they read outside the den-api workspace closure.
+    case "den-api-tests": patterns = [
+      ...api(), ...closure("@openwork-ee/headless-runner"), "evals/packages/labs/**",
+      "packaging/helm/openwork-ee/values.schema.json",
+      "packaging/docker/docker-compose.web-local.yml", "packaging/docker/docker-compose.ci-mysql.yml",
+      CI_WORKFLOW, ".github/scripts/classify-ci-changes.mjs", ".github/actions/setup-tests/**",
+    ]; break;
     case "api-docs": patterns = [...api(), ...render, ...CONTRACT_SCRIPTS, ".github/scripts/runtime-scope.mjs", ".github/workflows/refresh-api-docs.yml"]; break;
     case "i18n": patterns = ["apps/app/src/**", "scripts/i18n-audit.mjs", ".github/workflows/ci-i18n.yml"]; break;
     case "docs": patterns = ["packages/docs/**", CI_WORKFLOW, ".github/scripts/classify-ci-changes.mjs"]; break;
