@@ -2329,6 +2329,7 @@ export function SessionRoute() {
       workspaceTitle: paneEndpoint.workspaceTitle,
       workspaceRoot,
       workspaceType: paneEndpoint.workspaceType,
+      sandboxBackend: paneEndpoint.workspace.sandboxBackend,
       runtimeWorkspaceId: endpoint.workspaceId,
       opencodeBaseUrl: endpoint.opencodeBaseUrl,
       openworkToken: endpoint.token,
@@ -3915,6 +3916,7 @@ export function SessionRoute() {
         name: selectedWorkspace.name ?? undefined,
         displayName: selectedWorkspace.displayNameResolved,
         workspaceType: selectedWorkspace.workspaceType,
+        sandboxBackend: selectedWorkspace.sandboxBackend,
       } : { workspaceType: "local" }}
       selectedWorkspaceRoot={selectedWorkspaceRoot}
       selectedWorkspaceError={selectedWorkspaceError}

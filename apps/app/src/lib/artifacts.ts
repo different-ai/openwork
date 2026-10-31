@@ -1,6 +1,6 @@
 import * as React from "react";
 
-import { useOpenTargets } from "@/lib/target-provider";
+import { useOpenTargets, type OpenTargetOptions } from "@/lib/target-provider";
 import { parseLocalPathReference } from "@/react-app/domains/session/artifacts/local-path";
 import type { OpenTarget, OpenTargetPreview } from "@/react-app/domains/session/artifacts/open-target";
 
@@ -83,7 +83,7 @@ function artifactTypeToPreview(type: ArtifactType): OpenTargetPreview {
 export function useOpenArtifactPath() {
   const { onOpenTarget } = useOpenTargets();
 
-  return React.useCallback((rawPath: string, options?: { external?: boolean }) => {
+  return React.useCallback((rawPath: string, options?: OpenTargetOptions) => {
     // Explicit file actions must not strip path prefixes or reuse suffix matches,
     // but `:line` suffixes and quotes are not part of the file name. A path the
     // reader turns away is passed through so the opener can explain why.

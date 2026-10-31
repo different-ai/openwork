@@ -176,6 +176,7 @@ import {
   type ChatMcpReconnectScope,
 } from "./mcp-chat-reconnect";
 import { OpenTargetProvider, type OpenTargetOptions } from "@/lib/target-provider";
+import { fileOriginForRuntime } from "../artifacts/resolve-open-target";
 import type { ThreadStatus } from "@/lib/messages";
 import {
   EnvironmentVariableProvider,
@@ -730,6 +731,7 @@ export type SessionSurfaceProps = {
   environmentClient?: OpenworkServerClient | null;
   workspaceId: string;
   workspaceRoot: string;
+  sandboxBackend?: string | null;
   sessionId: string;
   draftScope: string | null;
   isControlTarget: boolean;
@@ -3884,7 +3886,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   workspaceId={props.workspaceId}
                   workspaceRoot={props.workspaceRoot}
                   sessionId={props.sessionId}
-                  isLocalWorkspace
+                  isLocalWorkspace={fileOriginForRuntime({ desktop: isDesktopRuntime(), serverUrl: props.client.baseUrl, sandboxBackend: props.sandboxBackend }) === "local"}
                   openTargets={verifiedOpenTargets}
                   onOpenTarget={handleOpenTarget}
                 >
