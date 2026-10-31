@@ -31,6 +31,7 @@ import { openDesktopUrl, revealDesktopItemInDir } from "@/app/lib/desktop"
 import { isElectronRuntime } from "@/app/lib/runtime-env"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { t } from "@/i18n"
+import { textDirectionOf } from "@/lib/text-direction"
 import { useOpenTargets } from "@/lib/target-provider"
 import { openTargetFromUrl } from "@/react-app/domains/session/artifacts/open-target"
 import { presentOpencodeSessionError, sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error"
@@ -1030,6 +1031,7 @@ const UserMessage = React.memo(
                 {hasContent ? (
                   <MessageContent
                     className="bg-muted text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 sm:max-w-[75%] !select-text not-prose"
+                    dir={textDirectionOf(messageText) ?? "ltr"}
                     style={{ userSelect: "text" }}
                     onClick={openLink}
                   >

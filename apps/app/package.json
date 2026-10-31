@@ -40,6 +40,7 @@
     "@codemirror/view": "^6.38.0",
     "@fontsource-variable/geist": "^5.2.8",
     "@fontsource-variable/ibm-plex-sans": "^5.2.8",
+    "@fontsource/vazirmatn": "^5.3.0",
     "@heroicons/react": "^2.2.0",
     "@lexical/react": "^0.35.0",
     "@modelcontextprotocol/ext-apps": "^1.7.5",

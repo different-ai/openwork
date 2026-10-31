@@ -154,6 +154,9 @@ importers:
       '@fontsource-variable/ibm-plex-sans':
         specifier: ^5.2.8
         version: 5.2.8
+      '@fontsource/vazirmatn':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@heroicons/react':
         specifier: ^2.2.0
         version: 2.2.0(react@19.2.8)
@@ -3049,6 +3052,9 @@ packages:
 
   '@fontsource-variable/ibm-plex-sans@5.2.8':
     resolution: {integrity: sha512-n5PF2iFa0CZT0QYTPzxvZ39opC9LnU0zdoRccoADbs+Dtsd+lbXOZF7RNuIPHcQX1dKjF63sxnRImQIB5eD0Ag==}
+
+  '@fontsource/vazirmatn@5.3.0':
+    resolution: {integrity: sha512-XC/2yN2r5gwhFT3klSuWaqncODX2DOfRYfNmbyzgtWYxHxMC+tcoaX+tgggrm6hSkEgpR1TuSDEf1PiI91G7qg==}
 
   '@graphql-typed-document-node/core@3.2.0':
     resolution: {integrity: sha512-mB9oAsNCm9aM3/SOv4YtBMqZbYj10R7dkq8byBqxGY/ncFwhf2oQzMV+LCRlWoDSEBJ3COiR1yeDvMtsoOsuFQ==}
@@ -12860,6 +12866,8 @@ snapshots:
   '@fontsource-variable/geist@5.2.8': {}
 
   '@fontsource-variable/ibm-plex-sans@5.2.8': {}
+
+  '@fontsource/vazirmatn@5.3.0': {}
 
   '@graphql-typed-document-node/core@3.2.0(graphql@16.13.2)':
     dependencies:
