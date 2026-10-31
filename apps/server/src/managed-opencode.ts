@@ -7,6 +7,7 @@ import { deleteEnv, mergeEnv } from "@openwork/paths";
 import { startupPhase } from "./startup-phase.js";
 import { randomUUID } from "node:crypto";
 import { appendEngineOutputTail, createEngineStartupLineReader } from "./engine-output.js";
+import { engineSpawnTimeoutMs } from "./engine-spawn-timeout.js";
 
 export type ManagedChildProcess = {
   exitCode: number | null;
@@ -302,7 +303,8 @@ async function startManagedOpencodeServer(
         if (!match?.[1]) return fail(new Error(`Failed to parse OpenCode server URL from: ${line}\n${output()}`));
         done(match[1]);
       });
-      const timeout = setTimeout(() => fail(new Error(`Timeout waiting for OpenCode server after ${options.timeoutMs ?? 15000}ms\n${output()}`)), options.timeoutMs ?? 15000);
+      const timeoutMs = options.timeoutMs ?? engineSpawnTimeoutMs(15_000);
+      const timeout = setTimeout(() => fail(new Error(`Timeout waiting for OpenCode server after ${timeoutMs}ms\n${output()}`)), timeoutMs);
       const onClose = (code: number | null) => {
         if (!settled) fail(new ManagedOpencodeExitError(code, output(),
           addressInUse || /\bEADDRINUSE$/.test(stdout) || /\bEADDRINUSE$/.test(stderr)));
