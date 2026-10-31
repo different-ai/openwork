@@ -49,7 +49,7 @@ afterEach(async () => {
   if (root) await act(async () => root?.unmount())
   root = null
   document.body.innerHTML = ""
-  storeModule.useRemoteThreadStore.setState({ helperView: false, threads: {} })
+  storeModule.useRemoteThreadStore.setState({ threads: {} })
 })
 
 const COMMAND = "rsc_fixture_release"
@@ -119,7 +119,7 @@ async function den_answers(...threads: RemoteSessionThreadStatus[]) {
 
 /** What session-surface renders above the composer for one conversation. */
 function Composer(props: { messages: UIMessage[]; parentActive: boolean }) {
-  const tasks = tracker.useComposerRemoteTasks(props.messages, OWNER, true)
+  const tasks = tracker.useComposerRemoteTasks(props.messages, OWNER)
   if (tasks.length === 0) return null
   return (
     <tracker.ComposerSubagentTracker messages={props.messages} workspaceId={OWNER.workspaceId} parentActive={props.parentActive}
@@ -310,7 +310,7 @@ test("a long chat opened on its newest page still lists a task this window follo
     activeSince: now - 60 * 60_000, firstSeenAt: now - 60 * 60_000, followedUpAt: null, followUpVersion: null, revivedAt: null,
     owners: { [`${OWNER.workspaceId}:${sessionId}`]: { workspaceId: OWNER.workspaceId, sessionId } }, viewers: 0, lastViewedAt: now,
   })
-  storeModule.useRemoteThreadStore.setState({ helperView: true, threads: {
+  storeModule.useRemoteThreadStore.setState({ threads: {
     [KEY]: owned(OWNER.sessionId, "running"),
     "command:rsc_fixture_done": owned(OWNER.sessionId, "idle", "command:rsc_fixture_done"),
     "command:rsc_fixture_other": owned("ses_fixture_other_chat", "running", "command:rsc_fixture_other"),

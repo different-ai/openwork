@@ -6,7 +6,6 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { isSingleOrgSignupDisabled, resolveVisibleAuthMode } from "../_lib/auth-ui-policy";
 import { isSamePathname } from "../_lib/client-route";
 import { getDesktopGrant } from "../_lib/desktop-handoff";
-import { fetchDeploymentFeatureEnabled } from "../_lib/deployment-features";
 import { readLastSignInMethod, type LastSignInMethod } from "../_lib/last-sign-in";
 import { getErrorMessage, getSocialCallbackUrl, requestJson, type AuthMode } from "../_lib/den-flow";
 import { signsInInPlace } from "../_lib/auth-resume";
@@ -306,8 +305,8 @@ export function AuthPanel({
   const [loginOption, setLoginOption] = useState<LoginOption | null>(null);
   const [loginOptionBusy, setLoginOptionBusy] = useState(false);
   const [loginOptionError, setLoginOptionError] = useState<string | null>(null);
-  // Feature lastUsedSignIn: the method a password or social sign-in left in a
-  // long-lived cookie. "pending" until the cookie and the feature are checked.
+  // The method a password or social sign-in left in a long-lived cookie.
+  // "pending" until the browser cookie is read after hydration.
   const [rememberedMethod, setRememberedMethod] = useState<LastSignInMethod | null | "pending">("pending");
   const [rememberedDismissed, setRememberedDismissed] = useState(false);
   const [rememberedPasswordOpen, setRememberedPasswordOpen] = useState(false);
@@ -425,16 +424,9 @@ export function AuthPanel({
       setRememberedMethod(null);
       return;
     }
-    let cancelled = false;
-    void fetchDeploymentFeatureEnabled("lastUsedSignIn").then((enabled) => {
-      if (cancelled) return;
-      setRememberedMethod(enabled ? method : null);
-      setRememberedPasswordOpen(enabled && method === "password");
-      if (enabled) setAuthMode("sign-in");
-    });
-    return () => {
-      cancelled = true;
-    };
+    setRememberedMethod(method);
+    setRememberedPasswordOpen(method === "password");
+    setAuthMode("sign-in");
   }, [canRememberSignIn, setAuthMode]);
 
   const rememberedSignInPending = canRememberSignIn && rememberedMethod === "pending" && emailFirstStep === "email";

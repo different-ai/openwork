@@ -12,7 +12,7 @@ import {
   type TranscriptMessage,
 } from "../../packages/remote-sessions/src/index.ts";
 import { configureProvider } from "./chat.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
 
 export const TASK_TITLE = "Record the demo videos";
@@ -165,8 +165,8 @@ async function startRunner(seed: Seed, input: { apiUrl: string; member: Paramete
 
 /**
  * A member whose chat hands a task to their other computer, with the task
- * opening like a helper (`remoteSessionHelperView`) and the generally available
- * composer's Agents list, in dark mode: the chat's agent calls
+ * opening like a helper and the composer's Agents list, both generally
+ * available with no feature overrides, in dark mode: the chat's agent calls
  * remote-session:create (answered with the real Den receipt), Den hands the
  * command to a registered runner, and the task reads that runner's transcript.
  */
@@ -185,7 +185,9 @@ export async function remoteSessionFollowUpWorld(seed: Seed) {
 
 async function remoteSessionWorld(seed: Seed, options: { followUp: boolean }) {
   const { den, webPort } = await denForAppWeb(seed, { web: false, org: { name: "Launch team", admin: { name: "Launch Owner" } } });
-  const orgId = await enableOrganizationCapabilities(seed, den.admin, { remoteSessionHelperView: true });
+  // No feature overrides: task progress, conversation and helper navigation are GA.
+  const orgId = await seededOrganizationId(seed, den.admin);
+  if (!orgId) throw new Error("Could not resolve the seeded organization.");
 
   const runner = await startRunner(seed, { apiUrl: den.ref.apiUrl, member: den.admin, orgId });
   try {

@@ -69,10 +69,7 @@ export type RemoteThreadEntry = {
 }
 
 type RemoteThreadState = {
-  /** `remoteSessionHelperView`: a row opens the task in the main pane, like a helper. */
-  helperView: boolean
   threads: Record<string, RemoteThreadEntry>
-  setHelperView: (helperView: boolean) => void
   watch: (start: RemoteThreadStart, input: { owner: RemoteThreadOwner; organizationId: string; startedAt: number | null }) => () => void
   followedUp: (key: string) => void
   /** The agent sent the task a follow-up itself; reviving for the same follow-up again changes nothing. */
@@ -100,9 +97,7 @@ export function remoteThreadNeedsStatus(entry: RemoteThreadEntry, organizationId
 }
 
 export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
-  helperView: false,
   threads: {},
-  setHelperView: (helperView) => set({ helperView }),
   watch: (start, input) => {
     const ownerKey = `${input.owner.workspaceId}:${input.owner.sessionId}`
     const now = Date.now()
@@ -316,11 +311,6 @@ async function follow() {
   } finally {
     loopRunning = false
   }
-}
-
-/** Whether a task opens in the main pane like a helper; it needs the conversation view too. */
-export function useRemoteThreadHelperViewEnabled(): boolean {
-  return useRemoteThreadStore((state) => state.helperView)
 }
 
 export function useRemoteThread(key: string | null): RemoteThreadEntry | null {

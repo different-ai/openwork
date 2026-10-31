@@ -27,6 +27,7 @@ const retired = [
   "permissions", "rememberLastOrganization", "sharedRoles", "slackWorkbotReplies", "teamAccessRows",
   "teamMembershipCache", "teamPageTabs", "teamRoles", "workbot", "workbotLunaDefault",
   "workbotIncludedModels", "workbotUsageRecovery",
+  "lastUsedSignIn", "remoteSessionHelperView", "desktopUpdateDownloadWindow",
 ]
 afterEach(() => mock.restoreAll())
 

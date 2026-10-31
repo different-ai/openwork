@@ -13,7 +13,7 @@ import { remoteThreadView } from "./remote-thread-view"
 export type RemoteTrackerKind = AgentTrackerKind
 
 /**
- * `remoteSessionHelperView` in the composer's Agents list: a task the turn
+ * In the composer's Agents list: a task the turn
  * started on another computer, drawn by the same row as a local helper, with
  * the same words, time, Review, Stop and Open. Name = where it runs, task =
  * its title.

@@ -1,13 +1,13 @@
 # Open a task on another computer like a helper
 
-Feature key: `remoteSessionHelperView`
-Deployments: cloud and self-hosted, off by default
+Status: generally available on cloud and self-hosted.
+Former feature key: `remoteSessionHelperView` (retired; no override or usage tracking).
 Author: [@benjaminshafii](https://github.com/benjaminshafii)
-Task progress and conversation views are generally available (no prerequisite flags).
-The Agents list above the composer is generally available; its former
-`composerSubagentTracker` rollout needs no override.
 
-## What changes
+Task progress, conversation views, answers and the composer's Agents list are also
+generally available. No prerequisite rollout flag is required.
+
+## What people see
 
 When the agent starts a task on another computer (`remote-session:create`), its row
 in the chat reads as one sentence, like a local helper's, and clicking it opens the
@@ -37,17 +37,18 @@ task in the main pane instead of beside the chat:
 - One left edge: the chat row's sentence, the folded `Task …` line and the header's
   breadcrumb start where their surroundings' text does; disclosure chevrons trail the
   text. No leading chevron, glyph or lane is added.
-- `remote-session:status` gains `latestStep`, a short sentence for the step a
+- `remote-session:status` includes `latestStep`, a short sentence for the step a
   running or waiting task ran last. Desktop runners report it with their progress
   (stored in `remote_session_command.session_latest_step`); Cloud tasks derive it
   from the last few messages Den already reads. Older runners and Den deployments
   leave it out and the row shows just the duration.
 
-All screenshots are dark mode with the Agents list, which is now generally available.
+All screenshots are dark mode with the generally available Agents list.
+The former two-line row is retained here only as a historical comparison:
 
-| Off (today) | On |
+| Before graduation | Generally available |
 | --- | --- |
-| ![Row with the feature off](row-off.png) | ![Row with the feature on](row-on.png) |
+| ![Former two-line task row](row-off.png) | ![Generally available sentence task row](row-on.png) |
 
 The task opened in the main pane (from the Agents list's `Open`), after a follow-up:
 
@@ -59,20 +60,22 @@ After Stop, with the unsent follow-up kept:
 
 ## How to try it
 
-Turn on `remoteSessionHelperView` for an organization (it remains a separate
-opt-in rollout), sign in on two computers, and ask the
-agent to start a task on the other one. `evals/proofs/remote-session-helper-view.proof.test.ts`
-walks the whole flow against a registered runner.
+Sign in on two computers and ask the agent to start a task on the other one.
+No feature override is needed. `evals/proofs/remote-session-helper-view.proof.test.ts`
+walks the whole flow in a default organization without admin feature enabling,
+against a registered runner: sentence and last step, nested sidebar
+row, Agents list, main-pane task, Enter follow-up, Esc return with drafts, and Stop.
 
-## Turning it off
+## Compatibility and recovery
 
-Rows go back to the two-line progress row that opens the side panel, the sidebar
-and the Agents list stop listing tasks, and an open `remote:` route shows a one-line note pointing back
-to the chat. Nothing is stored in the app; the `session_latest_step` column stays
-and is simply not shown. Running tasks are unaffected.
+`Open beside` keeps the side-panel conversation available. A split chat pane that
+cannot navigate also opens the task beside the chat. Existing remote-session
+access rules and runner capabilities still apply; graduation does not bypass them.
+Running tasks, stored progress and transcripts are unchanged. There is no separate
+helper rollout to turn off; reverting the UI requires a code revert.
 
 ## What to watch
 
-- `remote-session:status` call volume: a running desktop task now changes version on
+- `remote-session:status` call volume: a running desktop task changes version on
   each new step, so a following chat makes a few more (still long-polled) calls.
 - Errors from `POST /v1/remote-session-commands/:id/session` (runner reports).

@@ -61,16 +61,6 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "desktopUpdateDownloadWindow": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Desktop: restart to update before the download: Restart to update shows in the desktop title bar as soon as an update is found. Clicking it opens a small window that downloads the update with its progress, then restarts, instead of waiting with no sign of the download. Renders DEN_FEATURE_DESKTOP_UPDATE_DOWNLOAD_WINDOW."
-            },
             "autoRouter": {
               "enum": [
                 "",
@@ -231,16 +221,6 @@
               ],
               "description": "Workbot: computers through the sandbox gateway: Workbot's cloud computers for this organization run through the runner's sandbox gateway (Differently), which holds the provider keys and picks the provider, instead of the runner's own Freestyle or Daytona account. Needs a runner with SANDBOX_GATEWAY set; without one, or while it is down, new computers use the runner's own provider. Renders DEN_FEATURE_SANDBOX_GATEWAY."
             },
-            "remoteSessionHelperView": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Desktop: open a task on another computer like a helper: Clicking a task on another computer opens it in the main pane like a helper: follow up with Enter, stop it, and press Esc to return to the chat where you left off. The chat row says what it ran last, and the sidebar lists the task under its chat. Needs the task conversation view. Renders DEN_FEATURE_REMOTE_SESSION_HELPER_VIEW."
-            },
             "connectStandardTools": {
               "enum": [
                 "",
@@ -270,16 +250,6 @@
                 false
               ],
               "description": "Outlook attachments: Agents read the files attached to Outlook messages and create Outlook drafts and replies with workspace files attached, after the member approves each draft. Drafts are never sent. Renders DEN_FEATURE_OUTLOOK_ATTACHMENTS."
-            },
-            "lastUsedSignIn": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Remember last sign-in method: People who last signed in with a password, Google or GitHub skip the email step next time: Den web lists the sign-in methods with a Last used badge, and Single sign-on returns to the email step. Signing in with SSO forgets the method. Renders DEN_FEATURE_LAST_USED_SIGN_IN."
             },
             "gatewayDashboard": {
               "enum": [
@@ -1532,6 +1502,36 @@
               "description": "Retired: no longer a feature switch. Ignored."
             },
             "computerUseBackground": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "lastUsedSignIn": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "remoteSessionHelperView": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "desktopUpdateDownloadWindow": {
               "enum": [
                 "",
                 "true",

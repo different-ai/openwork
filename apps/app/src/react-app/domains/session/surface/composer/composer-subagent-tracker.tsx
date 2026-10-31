@@ -62,7 +62,7 @@ export function currentTurnSubagentParts(messages: readonly UIMessage[]): TaskTo
   return parts
 }
 
-/** A task the current turn started on another computer (`remoteSessionHelperView`). */
+/** A task the current turn started on another computer. */
 export type RemoteTrackerTask = { start: RemoteThreadStart; startedAt: number | null }
 
 /** Tasks the current turn started on other computers, directly or from a script, once each. */
@@ -175,10 +175,10 @@ export function selectComposerRemoteTasks(
 const NO_FOLLOW_UPS: readonly RemoteThreadFollowUp[] = []
 
 /** The Agents list's tasks on other computers for one conversation, following earlier ones while it is open. */
-export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: RemoteThreadOwner, enabled: boolean): RemoteTrackerTask[] {
+export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: RemoteThreadOwner): RemoteTrackerTask[] {
   const tasks = useMemo<ConversationRemoteTasks>(
-    () => enabled ? conversationRemoteTasks(messages) : { current: [], earlier: [], followUps: [] },
-    [enabled, messages],
+    () => conversationRemoteTasks(messages),
+    [messages],
   )
   const organizationId = readDenSettings().activeOrgId?.trim() || null
   const { workspaceId, sessionId } = owner
@@ -200,8 +200,8 @@ export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: Re
     if (followUps.length > 0) reviveRemoteThreads(followUps)
   }, [followUps, matchSignature])
   // A string that changes only when the listed set does: status updates that change nothing here never re-render the chat.
-  const listedSignature = useRemoteThreadStore((state) => enabled
-    ? selectComposerRemoteTasks(tasks, state.threads, organizationId, Date.now(), owner).map((task) => task.start.key).join("\n") : "")
+  const listedSignature = useRemoteThreadStore((state) =>
+    selectComposerRemoteTasks(tasks, state.threads, organizationId, Date.now(), owner).map((task) => task.start.key).join("\n"))
   return useMemo(() => {
     if (!listedSignature) return []
     const keys = new Set(listedSignature.split("\n"))
