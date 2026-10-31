@@ -403,9 +403,10 @@ jobs:
       - name: Typecheck Electron main against the IPC contract
         run: pnpm --filter @openwork/desktop typecheck:electron
 
-  # Packages and boots the real desktop. PRs run it when the packaged inputs
-  # change (desktop, app, server, their workspace closure, the app-smoke harness;
-  # build-inputs.mjs "desktop-smoke"); dev pushes follow the same inputs.
+  # Packages and boots the real desktop. PRs run it when the desktop shell, its
+  # embedded server, engine pins, dependencies, embedded docs or the app-smoke
+  # harness change (build-inputs.mjs "desktop-package"). Dev pushes run it for
+  # every packaged input, including app UI and shared packages ("desktop-smoke").
   openwork-tests-build:
     name: Build and boot the desktop app
     needs: classify-changes

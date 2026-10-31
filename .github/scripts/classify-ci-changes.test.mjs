@@ -70,20 +70,25 @@ test("every non-docs PR runs the unit tests; slow suites follow their inputs", (
   expectFlags(pr([modified("ee/packages/den-db/src/schema.ts")]), { core: true, den_api: true, den_contract: true });
   expectFlags(pr([modified(electron)]), { core: true, desktop_smoke: true });
   expectFlags(pr([modified("apps/server/src/server.ts")]), { core: true, desktop_smoke: true });
-  expectFlags(pr([modified("apps/app/src/index.ts")]), { core: true, desktop_smoke: true });
-  expectFlags(pr([modified("packages/types/src/index.ts")]), { core: true, desktop_smoke: true, den_api: true, den_contract: true });
+  expectFlags(pr([modified("apps/app/src/index.ts")]), { core: true });
+  expectFlags(pr([modified("packages/ui/src/components/button.tsx")]), { core: true });
+  expectFlags(pr([modified("packages/types/src/index.ts")]), { core: true, den_api: true, den_contract: true });
   expectFlags(pr([modified("pnpm-lock.yaml")]), { core: true, desktop_smoke: true, den_api: true, docs: true, den_contract: true });
   expectFlags(pr([modified(".github/workflows/ci-tests.yml")]), { core: true, desktop_smoke: true, den_api: true, docs: true, den_contract: true });
 });
 
 // Regression boundaries for the path-scoped PR suites (see reports in the PR):
 // each input a suite reads must select it.
-test("the packaged smoke follows the app-smoke harness and everything packaged", () => {
-  for (const path of ["apps/desktop/scripts/prepare-sidecar.mjs", "constants.json", "packages/opencode-plugin/index.ts", "evals/core/app-smoke.e2e.test.ts", "evals/worlds/first-run.ts", "evals/packages/testkit/src/index.ts", ".github/actions/setup-tests/action.yml"]) {
+test("PRs package the desktop when the shell, embedded server, pins, dependencies or harness change", () => {
+  for (const path of [electron, "apps/desktop/scripts/prepare-sidecar.mjs", "apps/server/src/server.ts", "constants.json", "packages/opencode-plugin/index.ts", "pnpm-lock.yaml", "package.json", "patches/example.patch", "packages/docs/docs.json", "evals/core/app-smoke.e2e.test.ts", "evals/worlds/first-run.ts", "evals/packages/testkit/src/index.ts", ".github/actions/setup-tests/action.yml"]) {
     assert.equal(pr([modified(path)]).desktop_smoke, true, path);
   }
-  for (const path of [backend, "ee/apps/den-web/app/page.tsx", "evals/specs/drive-files.e2e.test.ts", "infra/managed-deployments/README.md"]) {
+  for (const path of [backend, "apps/app/src/index.ts", "packages/types/src/index.ts", "ee/apps/den-web/app/page.tsx", "evals/specs/drive-files.e2e.test.ts", "evals/worlds/drive-files.ts", "infra/managed-deployments/README.md"]) {
     assert.equal(pr([modified(path)]).desktop_smoke, false, path);
+  }
+  // Dev pushes still package for every desktop input, including app UI and shared packages.
+  for (const path of ["apps/app/src/index.ts", "packages/types/src/index.ts", "packages/ui/src/components/button.tsx"]) {
+    assert.equal(push([path]).desktop_smoke, true, path);
   }
 });
 
@@ -110,6 +115,7 @@ test("the Den API security tests follow every file they read", () => {
 test("renames retain both ends for contract selection and the docs exception", () => {
   expectFlags(pr([{ filename: landing, previous_filename: backend, status: "renamed" }]), { core: true, den_api: true, den_contract: true });
   expectFlags(pr([{ filename: "packages/docs/old-code.mdx", previous_filename: electron, status: "renamed" }]), { core: true, desktop_smoke: true, docs: true });
+  expectFlags(pr([{ filename: "apps/app/src/moved.ts", previous_filename: "apps/server/src/old.ts", status: "renamed" }]), { core: true, desktop_smoke: true });
   expectFlags(pr([{ filename: "packages/docs/images/guide.png", previous_filename: "packages/docs/guide.mdx", status: "renamed" }]), { desktop_smoke: true, docs: true });
   expectFlags(push(["packages/docs/guide.mdx", "packages/docs/images/guide.png"]), { desktop_smoke: true, docs: true });
   expectFlags(push(["packages/docs/deleted.md"]), { desktop_smoke: true, docs: true });

@@ -74,12 +74,13 @@ export function classifyCiChanges({ eventName, files, expectedCount }, isAffecte
       if (docsOnly) return { lane: "docs", core: false, desktop_smoke: affected("desktop-smoke"), den_api: false, snapshot: false, docs: true, den_contract: false };
       // Every non-docs PR runs the unit tests and the desktop build check. The
       // slow suites run only when their inputs change: the packaged desktop
-      // (desktop, app, server and their workspace closure), the MySQL-backed
-      // Den API tests, and the generated API contract. A docs-affecting
-      // workflow/helper or mixed PR still exercises docs validation before merge.
+      // (desktop shell, embedded server, engine pins, dependencies; dev pushes
+      // package for every desktop input), the MySQL-backed Den API tests, and
+      // the generated API contract. A docs-affecting workflow/helper or mixed
+      // PR still exercises docs validation before merge.
       return {
         lane: "full", core: true,
-        desktop_smoke: affected("desktop-smoke"),
+        desktop_smoke: affected("desktop-package"),
         den_api: affected("den-api-tests"),
         snapshot: false,
         docs: affected("docs"),
