@@ -28,7 +28,9 @@ must be diagnosed and fixed, not retried until green or silently ignored.
 ## Broader coverage
 
 The test-framework checks (`pnpm evals:check`) also run on every PR in "Unit
-tests". Nightly at 07:37 UTC (or through **Run workflow** on a selected branch)
+tests (test framework and contract tooling)". The core journeys other than
+core-chat run on every `dev` push and nightly ("Core journeys"), and on a PR only
+when it changes them. Nightly at 07:37 UTC (or through **Run workflow** on a selected branch)
 the same workflow runs all PR specs (`pnpm evals:pr`, Linux, with MySQL and the
 bundled OpenCode binary) and the engine smoke (`pnpm test:e2e`, Linux and macOS).
 Packaging can be reproduced with `pnpm --filter openwork-server build` and
