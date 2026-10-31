@@ -154,13 +154,22 @@ export function selectComposerRemoteTasks(
   threads: Readonly<Record<string, RemoteThreadEntry>>,
   organizationId: string | null,
   now: number,
+  owner?: RemoteThreadOwner,
 ): RemoteTrackerTask[] {
-  const listed = tasks.earlier.filter((task) => {
-    const entry = threads[task.start.key]
-    return Boolean(entry && organizationId && entry.organizationId === organizationId && remoteEntryListed(entry, tasks.followUps, now))
-  })
+  const listable = (entry: RemoteThreadEntry | undefined): entry is RemoteThreadEntry =>
+    Boolean(entry && organizationId && entry.organizationId === organizationId && remoteEntryListed(entry, tasks.followUps, now))
+  const listed = tasks.earlier.filter((task) => listable(threads[task.start.key]))
+  // A task this window already follows for this conversation, whose start is
+  // outside the loaded history (a long chat opens on its newest page): the
+  // sidebar lists it under the chat, so the Agents list does too.
+  const known = new Set([...tasks.earlier, ...tasks.current].map((task) => task.start.key))
+  const ownerKey = owner ? `${owner.workspaceId}:${owner.sessionId}` : null
+  const followed = ownerKey === null ? [] : Object.values(threads)
+    .filter((entry) => !known.has(entry.start.key) && Object.hasOwn(entry.owners, ownerKey) && listable(entry))
+    .sort((left, right) => (left.activeSince ?? left.firstSeenAt) - (right.activeSince ?? right.firstSeenAt))
+    .map((entry) => ({ start: entry.start, startedAt: entry.activeSince }))
   // Oldest first, in the order the conversation started them.
-  return [...listed.reverse(), ...tasks.current]
+  return [...followed, ...listed.reverse(), ...tasks.current]
 }
 
 const NO_FOLLOW_UPS: readonly RemoteThreadFollowUp[] = []
@@ -191,12 +200,15 @@ export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: Re
     if (followUps.length > 0) reviveRemoteThreads(followUps)
   }, [followUps, matchSignature])
   // A string that changes only when the listed set does: status updates that change nothing here never re-render the chat.
-  const listedSignature = useRemoteThreadStore((state) =>
-    selectComposerRemoteTasks(tasks, state.threads, organizationId, Date.now()).map((task) => task.start.key).join("\n"))
+  const listedSignature = useRemoteThreadStore((state) => enabled
+    ? selectComposerRemoteTasks(tasks, state.threads, organizationId, Date.now(), owner).map((task) => task.start.key).join("\n") : "")
   return useMemo(() => {
-    const keys = new Set(listedSignature ? listedSignature.split("\n") : [])
-    return [...[...tasks.earlier].reverse(), ...tasks.current].filter((task) => keys.has(task.start.key))
-  }, [tasks, listedSignature])
+    if (!listedSignature) return []
+    const keys = new Set(listedSignature.split("\n"))
+    const threads = useRemoteThreadStore.getState().threads
+    return selectComposerRemoteTasks(tasks, threads, organizationId, Date.now(), { workspaceId, sessionId })
+      .filter((task) => keys.has(task.start.key))
+  }, [tasks, listedSignature, organizationId, workspaceId, sessionId])
 }
 
 /** The header's counts, attention first; empty groups are left out. */

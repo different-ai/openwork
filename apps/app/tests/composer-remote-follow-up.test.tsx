@@ -300,3 +300,28 @@ test("the follow-up a transcript row shows revives its task once, from a script 
   expect(done.followedUpAt).toBeNull()
   expect(storeModule.remoteThreadAwaitingFollowUp(done, Date.now())).toBe(false)
 })
+
+test("a long chat opened on its newest page still lists a task this window follows for it, like the sidebar does, and no other chat's", async () => {
+  const now = Date.now()
+  const created = thread.remoteThreadFromToolPart(createPart("call_create", now - 60 * 60_000))
+  if (!created) throw new Error("expected the task")
+  const owned = (sessionId: string, state: RemoteSessionThreadStatus["state"], key = KEY): RemoteThreadEntry => ({
+    start: { ...created, key }, organizationId: "org_fixture", version: "v1", status: status(state), stale: false, checkedAt: now,
+    activeSince: now - 60 * 60_000, firstSeenAt: now - 60 * 60_000, followedUpAt: null, followUpVersion: null, revivedAt: null,
+    owners: { [`${OWNER.workspaceId}:${sessionId}`]: { workspaceId: OWNER.workspaceId, sessionId } }, viewers: 0, lastViewedAt: now,
+  })
+  storeModule.useRemoteThreadStore.setState({ helperView: true, threads: {
+    [KEY]: owned(OWNER.sessionId, "running"),
+    "command:rsc_fixture_done": owned(OWNER.sessionId, "idle", "command:rsc_fixture_done"),
+    "command:rsc_fixture_other": owned("ses_fixture_other_chat", "running", "command:rsc_fixture_other"),
+  } })
+  // Only the newest page is loaded: the turn that started the task is not in it.
+  const newestPage: UIMessage[] = [
+    { id: "u9", role: "user", parts: [{ type: "text", text: "Anything else on the launch?" }] },
+    { id: "a9", role: "assistant", parts: [{ type: "text", text: "Nothing else for now." }] },
+  ]
+  await show(newestPage, false)
+  expect(rows()).toEqual([{ kind: "working", task: TITLE, status: expect.stringMatching(/^Working/) }])
+  await den_answers(status("idle", { preview: "Done." }))
+  expect(trackerShown()).toBe(false)
+})
