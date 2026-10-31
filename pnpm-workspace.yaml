@@ -92,8 +92,9 @@ overrides:
   "browserslist@<=4.28.6": 4.28.7
   "fast-uri@>=3.0.0 <3.1.9": 3.1.9
   "fast-xml-parser@>=5.0.0 <5.7.0": 5.7.0
-  "follow-redirects@<1.16.1": 1.16.1
+  "follow-redirects@<1.16.2": 1.16.2
   "form-data@>=4.0.0 <4.0.6": 4.0.6
+  "glob@>=9.0.0 <14.0.2": 14.0.2
   # 0.25.12 keeps the >=0.25.0 dev-server CORS fix. Do not bump to 0.28.x:
   # its browser-name target lists (Vite optimizeDeps defaults) refuse to
   # lower plain destructuring, which kills `vite dev` on every fresh install.
@@ -106,6 +107,10 @@ overrides:
   "zod@<4.6.6": 4.6.6
   "js-yaml@>=4.0.0 <4.3.2": 4.3.2
   "katex@>=0.11.0 <0.18.2": 0.18.2
+  # Only 9.x/10.x share v11's named-export API. 3.x and 5.x export a bare
+  # function (require("minimatch")(...)), so forcing them onto 11 breaks
+  # eslint 8, @electron/asar and spectral; they have no patched release.
+  "minimatch@>=9.0.0 <11.0.1": 11.0.1
   "nanoid@<3.3.18": 3.3.18
   "nanoid@>=4.0.0 <5.1.16": 5.1.16
   "postcss@<8.5.23": 8.5.23
