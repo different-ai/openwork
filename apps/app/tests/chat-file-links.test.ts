@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { getSafeFileRevealPath } from "../src/components/chat/utils";
 import { inlineCodeArtifactPath, renderMarkdownHtml } from "../src/components/markdown/markdown-primitive";
 import {
   parseLocalPathReference,
@@ -198,6 +199,15 @@ describe("rendered chat Markdown", () => {
     expect(html).not.toContain("data-openwork-link-href");
     expect(html).toContain("top");
     expect(html).toContain("share");
+  });
+});
+
+describe("attachment file references", () => {
+  test("uses the same local URL reader as links and rejects network shares", () => {
+    expect(getSafeFileRevealPath({ url: "file:///Users/me/a%20b.pdf" })).toBe("/Users/me/a b.pdf");
+    expect(getSafeFileRevealPath({ url: "file://server/share/a.pdf" })).toBeNull();
+    expect(getSafeFileRevealPath({ url: "file:///Users/me/a.pdf?x=1" })).toBeNull();
+    expect(getSafeFileRevealPath({ url: "https://example.com/a.pdf" })).toBeNull();
   });
 });
 
