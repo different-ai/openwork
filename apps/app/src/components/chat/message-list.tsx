@@ -27,7 +27,7 @@ import {
   type UIMessage,
 } from "ai"
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
-import { openDesktopUrl, revealDesktopItemInDir } from "@/app/lib/desktop"
+import { openDesktopUrl } from "@/app/lib/desktop"
 import { isElectronRuntime } from "@/app/lib/runtime-env"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { t } from "@/i18n"
@@ -493,7 +493,8 @@ function FileMessage({ part, tone }: FileMessageProps) {
   const revealPath = getSafeFileRevealPath(part)
   const isImage = part.mediaType.startsWith("image/") && Boolean(part.url) && !revealPath
   const downloadUrl = getSafeFileDownloadUrl(part)
-  const canReveal = isElectronRuntime() && Boolean(revealPath)
+  const { isLocalWorkspace } = useOpenTargets()
+  const canReveal = isLocalWorkspace && isElectronRuntime() && Boolean(revealPath)
 
   const handleDownload = React.useCallback(() => {
     if (!downloadUrl) return
@@ -508,8 +509,8 @@ function FileMessage({ part, tone }: FileMessageProps) {
 
   const handleReveal = React.useCallback(() => {
     if (!revealPath) return
-    void revealDesktopItemInDir(revealPath)
-  }, [revealPath])
+    openArtifactPath(revealPath, { external: true, reveal: true })
+  }, [openArtifactPath, revealPath])
 
   const fileContent = (
     <>

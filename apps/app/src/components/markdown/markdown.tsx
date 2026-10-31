@@ -256,7 +256,7 @@ function MarkdownBlockInner({
         showError();
         continue;
       }
-      void client.downloadWorkspaceFile(workspaceId, path, { sessionId }).then((result) => {
+      void client.downloadWorkspaceFile(workspaceId, path, { sessionId, fileScope: target?.fileScope }).then((result) => {
         if (cancelled) return;
         const extension = path.split(".").pop()?.toLowerCase();
         const fallbackType = extension === "webm" ? "video/webm" : extension === "ogv" ? "video/ogg" : extension === "mov" ? "video/quicktime" : "video/mp4";

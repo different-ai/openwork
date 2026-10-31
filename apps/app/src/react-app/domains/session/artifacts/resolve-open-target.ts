@@ -124,7 +124,37 @@ export type FileOpenPlan =
   /** Nothing to open; say why in words a person understands. */
   | { kind: "unavailable"; message: string };
 
+export type FileOrigin = "local" | "remote" | "unknown";
+
+/** Origin comes from the session's owning runtime, never from the spelling of a path. */
+export function fileOriginForRuntime(input: { desktop: boolean; serverUrl?: string | null; sandboxBackend?: string | null }): FileOrigin {
+  if (!input.serverUrl) return "unknown";
+  try {
+    const host = new URL(input.serverUrl).hostname;
+    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(host);
+    const sandboxed = Boolean(input.sandboxBackend && input.sandboxBackend !== "none");
+    return input.desktop && loopback && !sandboxed ? "local" : "remote";
+  } catch {
+    return "unknown";
+  }
+}
+
+/** Copy a reference in its own machine's namespace, never expand a remote `~/` locally. */
+export function filePathForCopy(target: OpenTarget, context: { origin: FileOrigin; workspaceRoot?: string | null; homeDir?: string | null }): string {
+  if (target.resolvedPath) return target.resolvedPath;
+  if (context.origin !== "local") return target.value;
+  return localArtifactPath(context.workspaceRoot, target.value, context.homeDir) ?? target.value;
+}
+
+export function unavailableFileMessage(origin: FileOrigin): string {
+  return origin === "local"
+    ? "This file is no longer available on this computer."
+    : "This file is on another machine or is no longer available.";
+}
+
 export type FileOpenContext = {
+  /** Only a session owned by this computer's native runtime may use local file APIs. */
+  origin: FileOrigin;
   workspaceRoot?: string | null;
   homeDir?: string | null;
   /** Can this app hand files to the operating system (desktop)? */
@@ -149,20 +179,24 @@ function quoted(path: string) {
  * 1. Read the reference once (`~/`, `file://`, quotes, `:line[:col]`).
  * 2. Ask the workspace for it. The server also finds a bare name such as
  *    `computer-control.test.mjs` wherever it lives in the workspace.
- * 3. Otherwise open or reveal a real absolute location on this computer.
- * 4. Otherwise explain that the file could not be found, rather than handing
- *    the desktop a guessed path.
+ * 3. Only for a local-origin session, open/reveal an absolute location on this
+ *    computer; the desktop checks the item exists before acting.
+ * 4. Otherwise give a calm unavailable/other-machine result for the caller's
+ *    copy-path fallback, never hand the desktop a guessed or remote path.
  */
 export async function planFileOpen(target: OpenTarget, context: FileOpenContext): Promise<FileOpenPlan> {
   if (target.kind !== "file") return { kind: "unavailable", message: "This link is not a file." };
-  if (target.exists === true) return { kind: "workspace", target };
+  // Transcript verification is a snapshot, not a promise the file still exists.
+  if (target.exists === true && !context.findInWorkspace) return { kind: "workspace", target };
 
   const reference = parseLocalPathReference(target.value);
   if (!reference) {
     return { kind: "unavailable", message: `${quoted(target.name || target.value)} is not a file OpenWork can open.` };
   }
 
-  const pathContext = { workspaceRoot: context.workspaceRoot, homeDir: context.homeDir };
+  // A remote `~/` belongs to that runtime's account, not this computer's user.
+  const homeDir = context.origin === "local" ? context.homeDir : null;
+  const pathContext = { workspaceRoot: context.workspaceRoot, homeDir };
   const value = workspaceLookupValue(reference, pathContext);
   const lookup: OpenTarget = {
     ...target,
@@ -171,24 +205,23 @@ export async function planFileOpen(target: OpenTarget, context: FileOpenContext)
     preview: classifyOpenTarget(reference.path, "file"),
   };
 
+  const notFound: FileOpenPlan = { kind: "unavailable", message: unavailableFileMessage(context.origin) };
   if (context.findInWorkspace) {
-    const found = await context.findInWorkspace(lookup);
-    if (found) return { kind: "workspace", target: found };
+    try {
+      const found = await context.findInWorkspace(lookup);
+      if (found) return { kind: "workspace", target: found };
+    } catch {
+      // An offline/expired remote connection is not a reason to try this computer's disk.
+      return notFound;
+    }
   }
 
-  const notFound: FileOpenPlan = {
-    kind: "unavailable",
-    message: `Couldn\u2019t find ${quoted(reference.path)} in this workspace.`,
-  };
-  if (!context.canOpenLocally) {
-    if (context.findInWorkspace) return notFound;
-    return { kind: "unavailable", message: "Connect to the workspace to open this file." };
-  }
+  if (!context.canOpenLocally || context.origin !== "local") return notFound;
   // The workspace already looked for a relative name and has no such file;
   // joining it to the workspace folder would only name a file that is not there.
   if (reference.anchor === "relative" && context.findInWorkspace) return notFound;
 
-  const native = nativeFileAction(context.workspaceRoot, reference.path, { reveal: context.reveal, homeDir: context.homeDir });
+  const native = nativeFileAction(context.workspaceRoot, reference.path, { reveal: context.reveal, homeDir });
   if (!native) return notFound;
   return { kind: "native", path: native.path, action: native.action, reference };
 }

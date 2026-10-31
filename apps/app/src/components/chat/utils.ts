@@ -5,6 +5,7 @@ import type { ThreadStatus } from "@/lib/messages"
 import { isAggregatableToolPart, type AggregateThought } from "../../lib/tool-aggregate"
 import { reasoningDurationMs } from "../../lib/text-activity"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../app/types"
+import { parseLocalPathReference } from "../../react-app/domains/session/artifacts/local-path"
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -86,15 +87,8 @@ export function getSafeFileDownloadUrl(part: Pick<FileUIPart, "url">) {
 }
 
 export function getSafeFileRevealPath(part: Pick<FileUIPart, "url">) {
-  try {
-    const url = new URL(part.url)
-    if (url.protocol !== "file:") return null
-    const pathname = decodeURIComponent(url.pathname)
-    if (!pathname) return null
-    return /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname
-  } catch {
-    return null
-  }
+  if (!/^file:\/\//i.test(part.url)) return null
+  return parseLocalPathReference(part.url)?.path ?? null
 }
 
 function getMessageOpencodeMetadata(message: UIMessage): object | null {

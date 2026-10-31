@@ -6,11 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent } from "@/components/ui/popover";
 
 import type { DesktopApplication } from "@/app/lib/desktop";
-import { getCachedDesktopHomeDir, getDesktopApplicationsForFile, openDesktopWithApp } from "@/app/lib/desktop";
+import { getCachedDesktopHomeDir, getDesktopApplicationsForFile } from "@/app/lib/desktop";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { useOpenTargets, type OpenTargetOptions } from "@/lib/target-provider";
-import { localArtifactPath, nativeFileAction } from "@/react-app/domains/session/artifacts/resolve-open-target";
+import { filePathForCopy, nativeFileAction } from "@/react-app/domains/session/artifacts/resolve-open-target";
 
 const SUPPORTED_PANEL_PREVIEWS = new Set(["markdown", "code", "sheet", "slides", "image", "pdf", "html", "text"]);
 
@@ -32,15 +32,19 @@ export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkAc
   const [homeDir, setHomeDir] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    void getCachedDesktopHomeDir().then((home) => { if (!cancelled) setHomeDir(home); });
+    if (isLocalWorkspace) {
+      void getCachedDesktopHomeDir().then((home) => { if (!cancelled) setHomeDir(home); });
+    }
     return () => { cancelled = true; };
-  }, []);
+  }, [isLocalWorkspace]);
   const native = isLocalWorkspace && platform.capabilities.revealInFileManager && target.kind === "file"
-    ? nativeFileAction(workspaceRoot, target.value, { homeDir }) : null;
+    ? nativeFileAction(workspaceRoot, target.resolvedPath ?? target.value, { homeDir }) : null;
   const canOpenExternally = native !== null;
-  const canLaunch = native?.action === "open";
+  // Named-app launches bypass the chat opener: offer them only for a file the
+  // owning workspace has verified, never a guessed root + bare filename.
+  const canLaunch = native?.action === "open" && target.exists === true;
   const nativePath = native?.path;
-  const copyPath = localArtifactPath(workspaceRoot, target.value, homeDir) ?? target.value;
+  const copyPath = filePathForCopy(target, { origin: isLocalWorkspace ? "local" : "unknown", workspaceRoot, homeDir });
 
   // Follow the link while the chat scrolls; a streamed re-render can replace
   // the link element, so keep its last position instead of jumping to 0,0.
@@ -93,14 +97,12 @@ export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkAc
     }
   };
 
-  const handleOpenWithApp = async (app: DesktopApplication) => {
-    if (!canLaunch || !nativePath || !workspaceRoot) return;
-    try {
-      await openDesktopWithApp(nativePath, app.appPath, workspaceRoot);
-      onClose();
-    } catch {
-      toast.error("Could not open this file. Try another app or reveal it in the file manager.");
-    }
+  const handleOpenWithApp = (app: DesktopApplication) => {
+    if (!canLaunch) return;
+    // Re-resolve on activation, just like default open/reveal. A verified menu
+    // snapshot may already be stale by the time a person chooses an app.
+    onOpenTarget(target, { external: true, appPath: app.appPath });
+    onClose();
   };
 
   return (
