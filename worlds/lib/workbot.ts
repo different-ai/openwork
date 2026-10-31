@@ -53,7 +53,7 @@ export type WorkbotWorldOptions = {
   /** Daytona only: a published Linux microVM desktop snapshot. The key stays in its runner host. */
   computerSnapshot?: string;
   /**
-   * `--calendar`: seed the owner's Automations and runs, turn on the desktop and Workbot Calendars, and read
+   * `--calendar`: seed the owner's Automations and runs, publish model choices for Workbot's Calendar, and read
    * meetings from the calendar mock (worlds/lib/calendar.ts).
    */
   calendar?: boolean;
@@ -292,9 +292,8 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
       } : {}),
     },
   });
-  // --calendar also turns on the desktop Calendar; Workbot's Calendar comes with Workbot.
-  const orgId = await enableWorkbot(den, { ...options.features, ...(options.calendar ? { automationCalendar: true } : {}) });
-  // --calendar: a real provider (Anthropic, fixture key) so the Calendar's model pickers show logos and choices.
+  const orgId = await enableWorkbot(den, options.features);
+  // --calendar: a real provider (Anthropic, fixture key) so Workbot Calendar's model pickers show logos and choices.
   if (options.calendar) await publishCalendarModels(den.admin, orgId);
   // The Acme team's apps (in memory), so Workbot has a real-looking calendar, inbox and Slack to read.
   await connectDemoWorkspace(den, demo);

@@ -69,7 +69,7 @@ export async function adminOverviewWorld(seed: Seed) {
     method: "PUT", body: JSON.stringify({ capabilities: { settledSessions: false, workbotDocuments: true } }),
   });
   if (!overrides.response.ok) throw new Error("Could not set up organization feature overrides.");
-  const killed = await seed.api(den.admin, "/v1/admin/features/automationCalendar", { method: "PUT", body: JSON.stringify({ killed: true }) });
+  const killed = await seed.api(den.admin, "/v1/admin/features/computerUse", { method: "PUT", body: JSON.stringify({ killed: true }) });
   if (!killed.response.ok) throw new Error("Could not set up a globally disabled feature.");
   const viewport = { width: 1280, height: 700 };
   const anonymous = await seed.web({ den, startPath: "/admin/users?search=Routing&page=2", headless: true, viewport });

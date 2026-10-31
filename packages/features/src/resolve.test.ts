@@ -176,6 +176,18 @@ test("service readiness is retired: no key, and an old operator lock is ignored 
   assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
 })
 
+test("desktop Calendar is retired and legacy operator locks are ignored", () => {
+  assert.equal(featureKeySchema.safeParse("automationCalendar").success, false)
+  assert.equal(Object.hasOwn(resolveFeatures(base), "automationCalendar"), false)
+  assert.ok(RETIRED_FEATURE_KEYS.includes("automationCalendar"))
+  for (const value of ["true", "false"]) {
+    const parsed = parseFeatureEnvironment({ DEN_FEATURE_AUTOMATION_CALENDAR: value })
+    assert.deepEqual(parsed.locks, {})
+    assert.equal(parsed.problems.length, 1)
+    assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
+  }
+})
+
 test("every key maps to a unique DEN_FEATURE_ name", () => {
   const names = FEATURE_KEYS.map(featureLockEnvName)
   for (const name of names) assert.match(name, /^DEN_FEATURE_[A-Z0-9]+(?:_[A-Z0-9]+)*$/)

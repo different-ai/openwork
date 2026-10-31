@@ -45,5 +45,5 @@ test("the guard catches multiline keys and getOrgFeatures under alternate query 
   expect(handrolledReads(`useQuery({ queryKey: [\n'den',\n'org-features', orgId] })`)).toEqual([3]);
   expect(handrolledReads(`useQuery({queryKey: ['other-key'], queryFn: () => client.getOrgFeatures(orgId)})`)).toEqual([1]);
   expect(handrolledReads(`useQuery({queryFn: () => client['getOrgFeatures'](orgId)})`)).toEqual([1]);
-  expect(handrolledReads(`useOrgFeature('automationCalendar')`)).toEqual([]);
+  expect(handrolledReads(`useOrgFeature('computerUse')`)).toEqual([]);
 });

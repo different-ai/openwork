@@ -1,4 +1,4 @@
-export const summary = "Workbot with Den sign-in and the headless runner: the seeded Acme org with demo Slack, Gmail, Calendar, Notion and Linear; -- --live adds a real model locally; Daytona -- --computer-snapshot <name> adds a managed desktop; -- --calendar adds the Calendars locally.";
+export const summary = "Workbot with Den sign-in and the headless runner: the seeded Acme org with demo Slack, Gmail, Calendar, Notion and Linear; -- --live adds a real model locally; Daytona -- --computer-snapshot <name> adds a managed desktop; -- --calendar adds seeded Automations, model choices and mock meetings to Workbot's Calendar locally.";
 export const supportedTargets = ["local/host", "daytona/linux", "freestyle/linux"];
 
 import { execFile } from "node:child_process";
@@ -9,7 +9,7 @@ import { hold } from "../packages/world/src/hold.ts";
 import { normalizeOutputs, output, secret } from "../packages/world/src/outputs.ts";
 import { resolvePlace } from "../evals/packages/env/src/place.ts";
 import { bootWorkbot, parseWorkbotOptions, probeWorkbot, workbotOutputs } from "./lib/workbot.ts";
-import { bootCalendarDesktop, calendarOutputs, startCalendarMockProcess } from "./lib/calendar.ts";
+import { calendarOutputs, startCalendarMockProcess } from "./lib/calendar.ts";
 
 const NAME = "preview-workbot";
 
@@ -59,12 +59,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const world = await bootWorkbot(stack, undefined, options);
   const proof = await probeWorkbot(world);
   const verified = world.live ? `Signed in through Den; ${proof.reply}` : `Signed in through Den and answered: ${proof.reply}`;
-  // `-- --calendar`: the desktop Calendar over Workbot's Acme org, its seeded Automations and the calendar mock.
-  let calendar = {};
-  if (mock) {
-    const desktop = await bootCalendarDesktop(stack, { den: world.den, place, mock });
-    calendar = { ...calendarOutputs(mock, desktop), workbotCalendar: output(`${world.workbotUrl}/calendar`, { group: "Calendar", note: "Workbot's Calendar tab (sign in as alex@acme.test); meetings come from the mock" }) };
-  }
+  // `-- --calendar`: Workbot's Calendar over the Acme org, its seeded Automations and the calendar mock.
+  const calendar = mock ? {
+    ...calendarOutputs(mock),
+    workbotCalendar: output(`${world.workbotUrl}/calendar`, { group: "Calendar", note: "Workbot's Calendar tab (sign in as alex@acme.test); meetings come from the mock" }),
+  } : {};
   await hold({ name: NAME, outputs: workbotOutputs(world, { verified: output(verified, { group: "Verification" }), ...calendar }) });
 }
 

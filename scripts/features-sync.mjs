@@ -125,7 +125,7 @@ const FEATURES_WITHOUT_DOCS = new Set([
   "administratorRecovery",
   "connectionMcpServers", "workbotDocuments",
   "workbotDocumentEditing", "workbotWorkspaceAssistant",
-  "automationCalendar", "computerUse", "browserLiveView",
+  "computerUse", "browserLiveView",
   "remoteComputers",
   "connectStandardTools",
 ])

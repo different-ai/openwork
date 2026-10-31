@@ -37,12 +37,13 @@ export const RETIRED_FEATURE_KEYS = [
   "implicitCloudSkills", "platformAuditReads",
   // Folded into another feature (2026-10): analyticsIntegrated → libraryUsage; the rest → workbot.
   "analyticsIntegrated", "workbotCalendar", "workbotSideChats", "workbotDefaultModel",
-  // Generally available (2026-10, second pass). calendarPolish is always on
-  // wherever Workbot or the desktop Calendar is.
+  // Generally available (2026-10, second pass). calendarPolish is always on in Workbot.
   "denFlatPageHeaders", "dashboardActivity", "libraryIntegrated", "libraryUsage", "modelsAnalytics",
   "headlessAutomations", "calendarPolish",
   // Removed (2026-10): organization Dashboards and copy-only Workbot sharing
   "orgManagedDashboards", "workbotSharing",
+  // Removed (2026-10): desktop Calendar; Workbot Calendar and meeting triggers remain separate.
+  "automationCalendar",
   // Generally available (2026-10, third pass): always on, on cloud and self-hosted.
   "agentPermissions", "appBuildProgress", "backgroundShellTasks", "desktopPolicyScreenRemoval",
   "gatewayProviderUsageLimits", "googleDocumentTools", "inviteLinkVerifiesEmail", "lastTurnModelFooter",

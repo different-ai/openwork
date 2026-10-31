@@ -175,9 +175,6 @@ importers:
       '@openwork/browser-tabs':
         specifier: workspace:*
         version: link:../../packages/browser-tabs
-      '@openwork/calendar':
-        specifier: workspace:*
-        version: link:../../packages/calendar
       '@openwork/install-config':
         specifier: workspace:*
         version: link:../../packages/install-config
