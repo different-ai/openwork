@@ -36,7 +36,7 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "zod": "^4.6.6",
-    "@modelcontextprotocol/sdk": "^1.31.0"
+    "@modelcontextprotocol/sdk": "^1.32.2"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
