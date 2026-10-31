@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { z } from "zod";
 import { spec } from "@openwork/testkit";
 import { workbotComputerWorld } from "../worlds/workbot-computer.ts";
 
@@ -10,7 +11,11 @@ test("a member opens Workbot's Computer tab directly when the rollout is enabled
   const reloadWhenComputer = async (enabled: boolean) => {
     await probe.eventually(async () => {
       const me = await world.call("/v1/workbot/me");
-      return me.ok ? (await me.json() as { computer?: boolean }).computer === true : null;
+      if (!me.ok) return null;
+      const access = z.object({ computer: z.boolean(), browser: z.boolean(), browserLiveView: z.boolean() }).parse(await me.json());
+      // The world enables only the parent browser rollout. Older-client wire compatibility follows it on and off.
+      expect(access.browserLiveView).toBe(access.browser);
+      return access.computer;
     }, { within: 65_000, until: value => value === enabled });
     await user.reload();
   };

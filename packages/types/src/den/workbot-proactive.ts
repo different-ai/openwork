@@ -327,7 +327,7 @@ export const workbotProactiveViewSchema = z.object({
 })
 export type WorkbotProactiveView = z.infer<typeof workbotProactiveViewSchema>
 
-/** `GET /v1/org/workbot-settings/proactive/health` (`workbotAgentHealthView`): counts only, no members or content. */
+/** `GET /v1/org/workbot-settings/proactive/health` (`workbotProactive`): counts only, no members or content. */
 export const workbotProactiveHealthSchema = z.object({
   /** The window, in days, ending today (UTC). */
   days: z.number().int().min(1),
@@ -347,7 +347,7 @@ export const workbotProactiveHealthSchema = z.object({
 })
 export type WorkbotProactiveHealth = z.infer<typeof workbotProactiveHealthSchema>
 
-// ---- My agent in the Library (`workbotAgentLibrary`) ----------------------------------------------------------------
+// ---- My agent in the Library (`workbotProactive`) ----------------------------------------------------------------
 
 /** What a member tells their agent in their own words. Plain text the agent reads as the person's wishes. */
 export const AGENT_PREFERENCE_FIELDS = ["always", "never", "when", "how"] as const
@@ -531,7 +531,7 @@ export const memberAgentViewSchema = z.object({
   }).nullable(),
   workingHours: z.object({ workingDays: z.enum(["weekdays", "everyday"]), startHour: z.number(), endHour: z.number(), dailyCap: z.number() }),
   nextCheckAt: z.iso.datetime().nullable(),
-  // With `workbotAgentLibrary` on:
+  // Optional for responses from released servers predating the consolidated member view.
   /** The member's calendar time zone, from the agent's last look. */
   timeZone: z.string().optional(),
   /** The most recent check, or null before the first. */
@@ -561,7 +561,6 @@ export const memberAgentInputSchema = z
     snooze: z.enum(["tomorrow"]).nullable().optional(),
     mute: z.array(agentResponsibilitySchema).max(AGENT_RESPONSIBILITIES.length).optional(),
     unmute: z.array(agentResponsibilitySchema).max(AGENT_RESPONSIBILITIES.length).optional(),
-    // With `workbotAgentLibrary` on:
     /** The member's own words; an empty string clears one. */
     preferences: z.object({ always: preferenceInputText, never: preferenceInputText, when: preferenceInputText, how: preferenceInputText }).partial().strict().optional(),
     /** Narrower working hours inside the organization's; null goes back to the organization's. */
@@ -588,7 +587,7 @@ export const memberAgentInputSchema = z
   .strict()
 export type MemberAgentInput = z.infer<typeof memberAgentInputSchema>
 
-/** `PUT /v1/me/agent` with `workbotAgentLibrary` on: the agent after the change, and exactly what was saved. */
+/** `PUT /v1/me/agent` with `workbotProactive` on: the agent after the change, and exactly what was saved. */
 export const memberAgentSavedSchema = memberAgentViewSchema.extend({
   saved: z.object({
     /** Sources it can't read until the member connects them: "Connect Granola" and where. */

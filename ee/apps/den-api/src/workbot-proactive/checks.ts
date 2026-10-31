@@ -18,7 +18,7 @@ import {
 import { hoursLabel } from "./preferences.js"
 
 /**
- * One check of a member's agent, in the member's words (My agent, `workbotAgentLibrary`): what came of it and one
+ * One check of a member's agent, in the member's words (My agent, `workbotProactive`): what came of it and one
  * sentence that says why. Pure; the wake decides the reason and the repository stores the record. Sentences never
  * carry email or message content, only what the agent was about.
  */

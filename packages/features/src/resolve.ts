@@ -95,6 +95,9 @@ export const RETIRED_FEATURE_KEYS = [
   // Generally available (2026-10): every-few-hours and before/after-meetings schedules are always on;
   // Desktop or Cloud placement, calendar scope and the headless runner stay enforced without a flag.
   "automationIntervalSchedules", "automationCalendarTriggers",
+  // Folded (2026-10): Your agent includes health and Library; browser use includes
+  // its live view; computer use includes background interaction on supported Macs.
+  "workbotAgentHealthView", "workbotAgentLibrary", "browserLiveView", "computerUseBackground",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

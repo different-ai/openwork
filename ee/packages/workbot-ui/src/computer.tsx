@@ -33,8 +33,8 @@ export function openBrowserPage(id: string) {
 }
 
 /**
- * Both views belong to the main conversation's computer. noVNC carries pixels and native input; with the browser live
- * view on, watching the browser streams the page itself instead.
+ * Both views belong to the main conversation's computer. noVNC carries the desktop's pixels and native input;
+ * watching the browser streams the page itself instead.
  */
 export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onViewChange, onContextChange }: { onTeachingChange?(context: BrowserTeachingContext | undefined): void; onRun?(text: string): void | Promise<void>; canTeach?: boolean; onViewChange?(view: ComputerView): void; /** The tab in front of the Browser view, for the chat beside it; null when none is on screen. */ onContextChange?(context: WorkbotViewContext | null): void }) {
   const host = workbotHost();
@@ -85,7 +85,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
     // Nobody watching a hidden tab, so stop streaming until it is shown again.
     if (!target || paused || away) return;
     setError(null); setConnected(false); setReconnecting(false); setUpdating(false); setLivePage(null); setStream(null);
-    return connectDesktopViewer(target, host, { view, control, chat, wake: true, screencast: host.browserLiveView === true }, {
+    return connectDesktopViewer(target, host, { view, control, chat, wake: true }, {
       paused: () => setPaused(true),
       agentPaused: setAgentPaused,
       connected: () => { setConnected(true); setReconnecting(false); setUpdating(false); setError(null); },
@@ -162,11 +162,11 @@ type ViewerEvents = {
 
 /**
  * Streams one view of a chat's computer (`chat` null: the main chat's) into `target`, renewing the connection before
- * the computer closes it and reconnecting a few times when it drops. Returns the function that closes it. With `screencast`, the browser view
+ * the computer closes it and reconnecting a few times when it drops. Returns the function that closes it. The browser view
  * uses the computer's page stream, for watching and for control; a computer whose image predates it refuses the stream,
  * and the view falls back to noVNC. With `wake`, a paused computer is resumed instead of reported as paused.
  */
-export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeof workbotHost>, options: { view: ComputerView; control: boolean; chat?: string | null; wake?: boolean; screencast?: boolean }, events: ViewerEvents) {
+export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeof workbotHost>, options: { view: ComputerView; control: boolean; chat?: string | null; wake?: boolean }, events: ViewerEvents) {
   const { view, control } = options;
   let disposed = false;
   let screencastRefused = false;
@@ -206,7 +206,7 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
       if (session.state === "paused") { events.paused(); return; }
       events.agentPaused(session.paused);
       // The computer issues one ticket for watching the browser; its page stream and VNC accept it at sibling paths.
-      const streamUrl = options.screencast && view === "browser" && !screencastRefused && /\/vnc\/[A-Za-z0-9_-]{43}$/.test(session.url)
+      const streamUrl = view === "browser" && !screencastRefused && /\/vnc\/[A-Za-z0-9_-]{43}$/.test(session.url)
         ? session.url.replace(/\/vnc\/([A-Za-z0-9_-]{43})$/, "/screencast/$1") : null;
       const RFB = streamUrl ? null : (await import("@novnc/novnc")).default;
       if (disposed) return;

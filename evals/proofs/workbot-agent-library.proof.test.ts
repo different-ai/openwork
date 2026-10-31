@@ -13,18 +13,18 @@ test("a member sees what their agent did and why it stayed quiet, and changes it
   const agent = async () => memberAgentViewSchema.parse((await probe.api(world.den.members.member, "/v1/me/agent")).body);
   const checked = (testId: string) => probe.dom(`[data-testid="${testId}"] button[role="switch"][aria-checked="true"]`);
 
-  await step("before: without My bot, the Work sidebar has no agent and chat can't save their words", async () => {
+  await step("before: with Your agent off, the sidebar has no agent and its API and chat refuse access", async () => {
     await user.see({ role: "heading", label: "My Library" }, { timeoutMs: 90_000 });
     await user.notSee({ testId: "dashboard-nav-my-bot" });
     await user.notSee({ testId: "my-agent-row" });
-    const view = await agent();
+    const hidden = await probe.api(world.den.members.member, "/v1/me/agent");
     const said = await world.sayInChat("putMeAgent", { preferences: { when: "Mornings only" } });
     evidence.recordAssertionEvidence(
-      "My agent is off: no checks in the API and chat's change is refused",
-      `GET /v1/me/agent lastCheck=${String(view.lastCheck)}; putMeAgent with words → refused=${!said.ok} ${JSON.stringify(said.body).slice(0, 90)}`,
-      view.lastCheck === undefined && !said.ok,
+      "Your agent is off: its API and chat changes are refused",
+      `GET /v1/me/agent status=${hidden.response.status}; putMeAgent with words → refused=${!said.ok} ${JSON.stringify(said.body).slice(0, 90)}`,
+      hidden.response.status === 404 && !said.ok,
     );
-    expect(view.lastCheck).toBeUndefined();
+    expect(hidden.response.status).toBe(404);
     expect(said.ok).toBe(false);
     await user.screenshot();
   });

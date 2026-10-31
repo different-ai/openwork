@@ -241,7 +241,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       computer: who.enabled && who.computer,
       browser: who.enabled && who.browser,
       browserDemonstrations: who.enabled && who.browser && who.browserDemonstrations,
-      browserLiveView: who.enabled && who.browser && who.browserLiveView,
+      // Older clients still read this field; the Browser view now always uses the page stream.
+      browserLiveView: who.enabled && who.browser,
       documentEditing: who.enabled && who.documents === true && who.documentEditing,
       nativeDictation: who.enabled && who.nativeDictation,
       workspaceAssistant: who.enabled && who.workspaceAssistant,

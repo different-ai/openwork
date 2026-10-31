@@ -17,6 +17,22 @@ const member = (id: string, computer = true, browser = computer): Member => ({
   den: denSessionSchema.parse({ user: { id, name: "Member", email: `${id}@example.test` }, organization: { id: "org", name: "Workspace", brandAppName: null }, memberId: id, enabled: true, canSchedule: false, computer, browser }),
 })
 
+test("browser live-view compatibility follows browser access without a separate child flag", async () => {
+  let signed = member("browser_member", false, true)
+  const app = new Hono<AppEnv>()
+  registerWorkbotRoutes(app, {
+    config, den: { ...createDen({ apiUrl: config.denApiUrl, publicUrl: config.publicUrl }), session: async () => signed.den },
+    member: async (c, next) => { c.set("member", signed); await next() }, sameOrigin: async (_c, next) => next(),
+  })
+  const me = () => app.request("/v1/workbot/me").then(response => response.json())
+  assert.equal((await me()).browserLiveView, true, "browser access includes the page stream even when Den omits the retired field")
+  signed = member("browser_member", true, false)
+  assert.equal((await me()).browserLiveView, false, "native computer access alone cannot enable browser streaming")
+  signed = member("browser_member", false, true)
+  signed.den.enabled = false
+  assert.equal((await me()).browserLiveView, false, "disabled access remains off for older clients")
+})
+
 test("an explicit desktop off value preserves side chats on an older runner", async () => {
   const bodies: unknown[] = []
   const client = createHeadlessRunnerClient({

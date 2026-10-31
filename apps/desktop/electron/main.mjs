@@ -2094,9 +2094,10 @@ const desktopCommandHandlers = {
       assertComputerSender(event);
       return computerControl.setRemoteEnabled(enabled === true);
   },
-  "computerSetBackgroundEnabled": async (event, enabled) => {
+  // Compatibility for older renderers; background delivery now follows computerUse.
+  "computerSetBackgroundEnabled": async (event) => {
       assertComputerSender(event);
-      return computerControl.setBackgroundEnabled(enabled === true);
+      return computerControl.setBackgroundEnabled();
   },
   "computerResetPermission": async (event, permission) => {
       assertComputerSender(event);
