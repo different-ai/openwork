@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { CORE_SPECS, everyCoreJourney, selectProof } from "./pr-proof.mjs";
+import { CORE_SPECS, NIGHTLY_ONLY, PROOF_MACHINERY, everyCoreJourney, selectProof } from "./pr-proof.mjs";
 
 const coreChat = "evals/core/core-chat.e2e.test.ts";
 const restart = "evals/core/thread-continues-after-restart.e2e.test.ts";
@@ -29,8 +29,17 @@ test("a docs-only PR runs no journeys, a changed spec still runs", () => {
   assert.deepEqual(selectProof([{ filename: "packages/docs/guide.mdx", status: "modified" }]).specs, []);
 });
 
+test("a PR that changes the proof machinery runs every core journey but the nightly-only one", () => {
+  for (const filename of PROOF_MACHINERY) {
+    const { specs } = selectProof([{ filename, status: "modified" }]);
+    assert.deepEqual(specs, [coreChat, ...everyCoreJourney()].sort(), filename);
+    assert.equal(specs.includes(restart), false);
+  }
+  assert.ok(NIGHTLY_ONLY.has("thread-continues-after-restart.e2e.test.ts"));
+});
+
 test("every core journey a PR no longer runs still runs on dev pushes and nightly", () => {
-  const journeys = everyCoreJourney();
+  const journeys = [...everyCoreJourney(), ...[...NIGHTLY_ONLY].map((name) => `evals/core/${name}`)];
   assert.ok(journeys.length >= 5);
   assert.ok(journeys.includes(restart));
   assert.ok(journeys.every((spec) => !/\/(core-chat|app-smoke|packaged-[^/]+)\.e2e\.test\.ts$/.test(spec)));

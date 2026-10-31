@@ -46,27 +46,35 @@ export const CORE_SPECS = [journeyPath("core-chat.e2e.test.ts")];
 const docsOnlyFile = path => path.startsWith("packages/docs/") || path.endsWith(".md");
 
 // The other core journeys run on every dev push and nightly (core-journeys.yml),
-// not on each PR; a PR runs one only when it adds or changes it. Packaged
-// journeys need packaged binaries: app-smoke runs in packaged smoke, and
-// packaged-update-install (macOS) runs nightly and when it changes.
+// not on each PR; a PR runs one only when it adds or changes it, or when it
+// changes this proof machinery. Packaged journeys need packaged binaries:
+// app-smoke runs in packaged smoke, and packaged-update-install (macOS) runs
+// nightly and when it changes.
 const PACKAGED_ONLY = /^(packaged-[^/]+|app-smoke)\.e2e\.test\.ts$/;
-/** Every core journey core-journeys.yml runs on dev pushes and nightly (all but core-chat and packaged ones). */
+// Too slow for machinery PRs (it relaunches the desktop app twice, ~8.5 min).
+// It runs on dev pushes and nightly, and on any PR that changes it.
+export const NIGHTLY_ONLY = new Set(["thread-continues-after-restart.e2e.test.ts"]);
+// A PR that changes how proof is selected or run proves every core journey
+// still runs under it. The trusted publisher on dev applies the same rule.
+export const PROOF_MACHINERY = new Set([".github/scripts/pr-proof.mjs", ".github/scripts/pr-proof-controller.mjs", ".github/workflows/pr-proof.yml"]);
+/** Core journeys other than core-chat, packaged and nightly-only ones. */
 export function everyCoreJourney(root = repoRoot) {
   const directory = new URL("evals/core/", root);
   if (!existsSync(directory)) return [];
-  return readdirSync(directory).filter(name => name.endsWith(".e2e.test.ts") && !PACKAGED_ONLY.test(name) && name !== "core-chat.e2e.test.ts").sort().map(name => `evals/core/${name}`);
+  return readdirSync(directory).filter(name => name.endsWith(".e2e.test.ts") && !PACKAGED_ONLY.test(name) && !NIGHTLY_ONLY.has(name) && name !== "core-chat.e2e.test.ts").sort().map(name => `evals/core/${name}`);
 }
 
 // Every E2E spec the PR added or changed is a proof of its work, plus the
 // core-chat journey unless the PR only touches docs.
-export function selectProof(files) {
+export function selectProof(files, coreJourneys = everyCoreJourney()) {
   if (!Array.isArray(files) || files.some(file => !safePath(file.filename) || (file.previous_filename !== undefined && !safePath(file.previous_filename))))
     throw new Error("Missing or unsafe changed-file listing; proof selection is unavailable.");
   if (new Set(files.map(file => file.filename)).size !== files.length) throw new Error("Duplicate changed files; proof selection is unavailable.");
   const changed = files
     .filter(file => ["added", "modified", "renamed", "changed", "copied"].includes(file.status) && SPEC.test(file.filename))
     .map(file => file.filename);
-  const core = files.some(file => !docsOnlyFile(file.filename)) ? CORE_SPECS : [];
+  const machinery = files.some(file => PROOF_MACHINERY.has(file.filename) || PROOF_MACHINERY.has(file.previous_filename));
+  const core = files.some(file => !docsOnlyFile(file.filename)) ? [...CORE_SPECS, ...(machinery ? coreJourneys : [])] : [];
   const specs = [...new Set([...changed, ...core])].sort();
   return { specs };
 }
