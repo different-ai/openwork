@@ -257,7 +257,7 @@ async function processHandoff(handoff: HandoffRow, deps: HandoffSweepDeps) {
     await deps.slack(installation.botToken)("chat.postMessage", {
       channel: handoff.channelId,
       thread_ts: handoff.threadTs,
-      text: desktopHandoffMessage(handoff.recipientUserId, step.notice),
+      ...desktopHandoffMessage(handoff.recipientUserId, step.notice),
       unfurl_links: false,
       unfurl_media: false,
     })
